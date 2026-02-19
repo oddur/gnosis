@@ -18,4 +18,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('load-review', id),
   deleteReview: (id: string): Promise<void> =>
     ipcRenderer.invoke('delete-review', id),
+  onReviewProgress: (callback: (chunk: string, isThinking: boolean) => void): void => {
+    ipcRenderer.on('review-progress', (_event, { chunk, isThinking }: { chunk: string; isThinking: boolean }) => callback(chunk, isThinking));
+  },
+  offReviewProgress: (): void => {
+    ipcRenderer.removeAllListeners('review-progress');
+  },
 });

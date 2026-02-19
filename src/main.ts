@@ -343,7 +343,7 @@ ipcMain.handle('delete-review', async (_event, id: string) => {
   fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
 });
 
-ipcMain.handle('generate-review', async (_event, { prUrl, model, instructions }: GenerateReviewRequest) => {
+ipcMain.handle('generate-review', async (_event, { prUrl, model, instructions, thinking }: GenerateReviewRequest) => {
   const token = getResolvedToken();
   const octokit = new Octokit({ auth: token ?? undefined });
 
@@ -402,7 +402,11 @@ ipcMain.handle('generate-review', async (_event, { prUrl, model, instructions }:
   );
 
   console.log('[main] Generating review guide...');
-  const reviewGuide = await generateReviewGuide(contextPackage, prUrl, model, instructions);
+  const reviewGuide = await generateReviewGuide(
+    contextPackage, prUrl, model, instructions,
+    (chunk, isThinking) => _event.sender.send('review-progress', { chunk, isThinking }),
+    thinking ?? false,
+  );
 
   reviewGuide.prTitle = reviewGuide.prTitle || prData.title;
   reviewGuide.prDescription = reviewGuide.prDescription || prData.description;

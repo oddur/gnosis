@@ -34,8 +34,11 @@ export function HomePage({ onReviewReady }: Props) {
   const [authStatus, setAuthStatus] = useState<AuthStatus>('checking');
   const [prUrl, setPrUrl] = useState('');
   const [model, setModel] = useState<'opus' | 'sonnet'>('opus');
+  const [thinking, setThinking] = useState(false);
   const [instructions, setInstructions] = useState('');
   const [loading, setLoading] = useState(false);
+  const [streamingText, setStreamingText] = useState('');
+  const [isThinkingPhase, setIsThinkingPhase] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [history, setHistory] = useState<ReviewHistoryEntry[]>([]);
@@ -69,20 +72,34 @@ export function HomePage({ onReviewReady }: Props) {
     e.preventDefault();
     if (!prUrl.trim()) return;
 
+    setStreamingText('');
+    setIsThinkingPhase(false);
     setLoading(true);
     setError(null);
+
+    window.electronAPI.onReviewProgress((chunk, isThinking) => {
+      if (isThinking) {
+        setIsThinkingPhase(true);
+      } else {
+        setIsThinkingPhase(false);
+        setStreamingText((prev) => prev + chunk);
+      }
+    });
 
     try {
       const review = await window.electronAPI.generateReview({
         prUrl: prUrl.trim(),
         model,
         instructions: instructions.trim() || undefined,
+        thinking,
       });
       window.electronAPI.listReviews().then(setHistory);
       onReviewReady(review);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An unexpected error occurred.');
       setLoading(false);
+    } finally {
+      window.electronAPI.offReviewProgress();
     }
   }
 
@@ -104,7 +121,12 @@ export function HomePage({ onReviewReady }: Props) {
   }
 
   if (loading) {
-    return <LoadingScreen message="Analyzing your PR with Claude... This takes 30–60 seconds for large PRs." />;
+    return (
+      <LoadingScreen
+        message={isThinkingPhase ? 'Claude is thinking...' : 'Generating review guide...'}
+        streamingText={streamingText}
+      />
+    );
   }
 
   const isAuthenticated = typeof authStatus === 'object';
@@ -224,6 +246,31 @@ export function HomePage({ onReviewReady }: Props) {
                   <p className="text-xs text-muted-foreground">
                     {model === 'opus' ? 'Best quality · slower' : 'Faster · lower cost'}
                   </p>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-col gap-0.5">
+                    <label htmlFor="thinking" className="text-sm font-medium">Extended thinking</label>
+                    <p className="text-xs text-muted-foreground">
+                      {thinking ? 'Deeper reasoning · slower' : 'Standard speed'}
+                    </p>
+                  </div>
+                  <button
+                    id="thinking"
+                    type="button"
+                    role="switch"
+                    aria-checked={thinking}
+                    onClick={() => setThinking((t) => !t)}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                      thinking ? 'bg-primary' : 'bg-input'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-transform ${
+                        thinking ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
                 </div>
 
                 {error && (

@@ -55,6 +55,7 @@ export interface GenerateReviewRequest {
   prUrl: string;
   model: 'opus' | 'sonnet';
   instructions?: string;
+  thinking?: boolean;
 }
 
 export interface GenerateReviewResponse {

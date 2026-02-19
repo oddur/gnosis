@@ -11,6 +11,8 @@ declare global {
       listReviews: () => Promise<ReviewHistoryEntry[]>;
       loadReview: (id: string) => Promise<ReviewGuide>;
       deleteReview: (id: string) => Promise<void>;
+      onReviewProgress: (callback: (chunk: string, isThinking: boolean) => void) => void;
+      offReviewProgress: () => void;
     };
   }
 }

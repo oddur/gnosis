@@ -1,6 +1,7 @@
 import { spawn, execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
+import path from 'path';
 import type { ReviewGuide } from './types';
 
 // ── Claude binary resolution ─────────────────────────────────────
@@ -154,20 +155,27 @@ function callClaudeCLI(
   userContent: string,
   systemPrompt: string,
   model: string,
+  thinking: boolean,
+  onChunk?: (chunk: string, isThinking: boolean) => void,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const env = { ...process.env };
     delete env.CLAUDECODE;
 
+    if (!thinking) env.MAX_THINKING_TOKENS = '0';
+
     const claudePath = resolveClaudePath();
-    const proc = spawn(claudePath, [
+    const args = [
       '-p',
       '--model', model,
       '--system-prompt', systemPrompt,
       '--tools', '',
-      '--output-format', 'text',
+      '--output-format', 'stream-json',
+      '--include-partial-messages',
       '--no-session-persistence',
-    ], { env });
+      ...(thinking ? ['--effort', 'high'] : []),
+    ];
+    const proc = spawn(claudePath, args, { env });
 
     proc.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'ENOENT') {
@@ -180,17 +188,64 @@ function callClaudeCLI(
       }
     });
 
-    let stdout = '';
+    const debugPath = path.join(os.tmpdir(), 'gnosis-last-response.txt');
+    const debugStream = fs.createWriteStream(debugPath, { flags: 'w' });
+    const startMs = Date.now();
+
+    let lineBuffer = '';
+    let fullText = '';
     let stderr = '';
-    proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+
+    function processLine(line: string) {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      try {
+        const outer = JSON.parse(trimmed) as Record<string, unknown>;
+        if (outer.type === 'result' && typeof outer.result === 'string') {
+          fullText = outer.result;
+          return;
+        }
+        if (outer.type !== 'stream_event') return;
+        const inner = outer.event as Record<string, unknown> | undefined;
+        if (!inner || inner.type !== 'content_block_delta') return;
+        const delta = inner.delta as Record<string, unknown> | undefined;
+        if (!delta) return;
+        if (delta.type === 'thinking_delta' && typeof delta.thinking === 'string') {
+          onChunk?.(delta.thinking, true);
+        } else if (delta.type === 'text_delta' && typeof delta.text === 'string') {
+          fullText += delta.text;
+          onChunk?.(delta.text, false);
+        }
+      } catch {
+        // not a JSON event — ignore
+      }
+    }
+
+    proc.stdout.on('data', (chunk: Buffer) => {
+      const str = chunk.toString();
+      debugStream.write(str);
+      lineBuffer += str;
+      const newlineIdx = lineBuffer.lastIndexOf('\n');
+      if (newlineIdx === -1) return;
+      const completeLines = lineBuffer.slice(0, newlineIdx);
+      lineBuffer = lineBuffer.slice(newlineIdx + 1);
+      for (const line of completeLines.split('\n')) processLine(line);
+      const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
+      console.log(`[agent] +${elapsed}s fullText=${fullText.length} bytes`);
+    });
     proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
 
     proc.stdin.write(userContent);
     proc.stdin.end();
 
     proc.on('close', (code: number | null) => {
+      debugStream.end();
+      // Flush any remaining buffered line
+      if (lineBuffer.trim()) processLine(lineBuffer);
       if (code === 0) {
-        resolve(stdout.trim());
+        const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
+        console.log(`[agent] CLI finished in ${elapsed}s, ${fullText.length} chars → ${debugPath}`);
+        resolve(fullText.trim());
       } else {
         reject(new Error(`Claude CLI exited with code ${code}: ${stderr.slice(0, 300)}`));
       }
@@ -199,15 +254,11 @@ function callClaudeCLI(
 }
 
 function extractJson(text: string): string {
-  // Strip markdown code fences if present (with or without closing fence)
-  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]+?)\s*(?:```|$)/);
-  if (fenceMatch) return fenceMatch[1].trim();
-
-  // Find the first { and last } to strip any preamble/postamble text
+  // Find the first { and last } — works regardless of markdown fences or
+  // whether the JSON content itself contains ``` sequences.
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start !== -1 && end > start) return text.slice(start, end + 1);
-
   return text.trim();
 }
 
@@ -231,6 +282,8 @@ export async function generateReviewGuide(
   prUrl: string,
   model: 'opus' | 'sonnet' = 'opus',
   instructions?: string,
+  onChunk?: (chunk: string, isThinking: boolean) => void,
+  thinking: boolean = false,
 ): Promise<ReviewGuide> {
   const modelId = MODEL_IDS[model];
 
@@ -242,7 +295,7 @@ export async function generateReviewGuide(
       : SYSTEM_PROMPT;
 
     console.log('[agent] Calling Claude CLI...');
-    const fullText = await callClaudeCLI(userMessage, system, modelId);
+    const fullText = await callClaudeCLI(userMessage, system, modelId, thinking, onChunk);
     console.log('[agent] Generation complete, parsing response...');
 
     const jsonText = extractJson(fullText);
