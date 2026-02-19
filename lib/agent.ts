@@ -134,7 +134,7 @@ function validateReviewGuide(obj: unknown): obj is ReviewGuide {
   return (
     typeof o.prTitle === 'string' &&
     typeof o.summary === 'string' &&
-    typeof o.riskLevel === 'string' &&
+    typeof o.riskLevel === 'string' && ['low', 'medium', 'high'].includes(o.riskLevel as string) &&
     Array.isArray(o.slides)
   );
 }

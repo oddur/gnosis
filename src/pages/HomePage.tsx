@@ -506,7 +506,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                 <CardContent className="p-0 flex-1 overflow-y-auto min-h-0">
                   <ul className="divide-y">
                     {prGroups.map((group) => {
-                      const risk = riskConfig[group.latestReview.riskLevel];
+                      const risk = riskConfig[group.latestReview.riskLevel] ?? riskConfig.medium;
                       const hasMultiple = group.reviews.length > 1;
                       const isExpanded = expandedPRs.has(group.prUrl);
 
@@ -566,7 +566,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                           {hasMultiple && isExpanded && (
                             <ul className="border-t border-border/50">
                               {group.reviews.map((review) => {
-                                const reviewRisk = riskConfig[review.riskLevel];
+                                const reviewRisk = riskConfig[review.riskLevel] ?? riskConfig.medium;
                                 return (
                                   <li key={review.id}>
                                     <button
