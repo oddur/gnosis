@@ -199,9 +199,15 @@ function callClaudeCLI(
 }
 
 function extractJson(text: string): string {
-  // Try to strip markdown code fences if present
-  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
-  if (fenceMatch) return fenceMatch[1];
+  // Strip markdown code fences if present (with or without closing fence)
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]+?)\s*(?:```|$)/);
+  if (fenceMatch) return fenceMatch[1].trim();
+
+  // Find the first { and last } to strip any preamble/postamble text
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start !== -1 && end > start) return text.slice(start, end + 1);
+
   return text.trim();
 }
 
