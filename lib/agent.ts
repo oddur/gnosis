@@ -1,4 +1,5 @@
 import { spawn, execFileSync } from 'child_process';
+import { app } from 'electron';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -188,7 +189,9 @@ function callClaudeCLI(
       }
     });
 
-    const debugPath = path.join(os.tmpdir(), 'gnosis-last-response.txt');
+    const debugDir = path.join(app.getPath('userData'), 'debug');
+    if (!fs.existsSync(debugDir)) fs.mkdirSync(debugDir, { recursive: true });
+    const debugPath = path.join(debugDir, 'last-response.txt');
     const debugStream = fs.createWriteStream(debugPath, { flags: 'w' });
     const startMs = Date.now();
 
