@@ -1,5 +1,49 @@
-import { spawn } from 'child_process';
+import { spawn, execFileSync } from 'child_process';
+import fs from 'fs';
+import os from 'os';
 import type { ReviewGuide } from './types';
+
+// ── Claude binary resolution ─────────────────────────────────────
+// When launched from Dock/Finder the app gets a minimal PATH that
+// won't include npm/homebrew/volta/nvm bin dirs. Ask the login shell
+// once so the user's full profile is sourced, then cache the result.
+
+let resolvedClaudePath: string | null = null;
+
+function resolveClaudePath(): string {
+  if (resolvedClaudePath) return resolvedClaudePath;
+
+  if (process.platform === 'win32') {
+    try {
+      const result = execFileSync('where.exe', ['claude'], { encoding: 'utf-8', timeout: 5000 }).trim().split('\n')[0].trim();
+      if (result) return (resolvedClaudePath = result);
+    } catch { /* fall through */ }
+  } else {
+    for (const shell of ['/bin/zsh', '/bin/bash']) {
+      if (!fs.existsSync(shell)) continue;
+      try {
+        const result = execFileSync(shell, ['-lc', 'which claude'], { encoding: 'utf-8', timeout: 5000 }).trim();
+        if (result) return (resolvedClaudePath = result);
+      } catch { /* try next */ }
+    }
+  }
+
+  // Common install locations as a fast fallback
+  const home = os.homedir();
+  const candidates = [
+    '/usr/local/bin/claude',
+    '/opt/homebrew/bin/claude',
+    `${home}/.volta/bin/claude`,
+    `${home}/.npm-global/bin/claude`,
+    `${home}/.nvm/current/bin/claude`,
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return (resolvedClaudePath = p);
+  }
+
+  // Last resort — let spawn try PATH as-is
+  return (resolvedClaudePath = 'claude');
+}
 
 const SYSTEM_PROMPT = `You are an expert code reviewer helping a developer understand a pull request before they review it. Your job is to analyze the PR and produce a guided review — a sequence of "slides" that walks the reviewer through the changes in the best possible order.
 
@@ -115,7 +159,8 @@ function callClaudeCLI(
     const env = { ...process.env };
     delete env.CLAUDECODE;
 
-    const proc = spawn('claude', [
+    const claudePath = resolveClaudePath();
+    const proc = spawn(claudePath, [
       '-p',
       '--model', model,
       '--system-prompt', systemPrompt,
@@ -126,7 +171,10 @@ function callClaudeCLI(
 
     proc.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'ENOENT') {
-        reject(new Error('Claude Code CLI not found. Install it from claude.ai/code and authenticate with `claude auth`.'));
+        reject(new Error(
+          `Claude Code CLI not found at "${claudePath}". ` +
+          'Install it from claude.ai/code and authenticate with `claude auth`.',
+        ));
       } else {
         reject(err);
       }
