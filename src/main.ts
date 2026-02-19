@@ -89,7 +89,8 @@ function deleteStoredToken() {
 
 function getResolvedToken(): string | null {
   if (cachedToken) return cachedToken;
-  return loadStoredToken();
+  cachedToken = loadStoredToken();
+  return cachedToken;
 }
 
 // ── OAuth flow ──────────────────────────────────────────────────
