@@ -287,7 +287,7 @@ export async function generateReviewGuide(
 ): Promise<ReviewGuide> {
   const modelId = MODEL_IDS[model];
 
-  async function attempt(extraInstruction: string = ''): Promise<{ guide: ReviewGuide; truncated: boolean }> {
+  async function attempt(extraInstruction: string = ''): Promise<ReviewGuide> {
     const userMessage = contextPackage + USER_SUFFIX + extraInstruction;
 
     const system = instructions?.trim()
@@ -311,36 +311,19 @@ export async function generateReviewGuide(
     }
 
     (parsed as ReviewGuide).prUrl = prUrl;
-    return { guide: parsed as ReviewGuide, truncated: false };
+    return parsed as ReviewGuide;
   }
 
-  // First attempt
-  let result: { guide: ReviewGuide; truncated: boolean };
   try {
-    result = await attempt();
+    return await attempt();
   } catch (err) {
-    const isTruncated = err instanceof Error && err.message === 'truncated';
-    console.warn(`[agent] First attempt failed (${isTruncated ? 'truncated' : 'parse error'}), retrying concisely`);
+    console.warn(`[agent] First attempt failed, retrying concisely:`, err instanceof Error ? err.message : err);
     try {
-      result = await attempt(CONCISE_SUFFIX);
+      return await attempt(CONCISE_SUFFIX);
     } catch (retryErr) {
       throw new Error(
         `AI review generation failed after retry: ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`
       );
     }
   }
-
-  // If first attempt succeeded but was truncated, retry concisely
-  if (result.truncated) {
-    console.warn('[agent] Response was truncated, retrying with concise instructions');
-    try {
-      result = await attempt(CONCISE_SUFFIX);
-    } catch (retryErr) {
-      throw new Error(
-        `AI review generation failed after retry: ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`
-      );
-    }
-  }
-
-  return result.guide;
 }
