@@ -457,6 +457,7 @@ ipcMain.handle('list-reviews', () => {
 });
 
 ipcMain.handle('load-review', async (_event, id: string) => {
+  if (!/^\d+$/.test(id)) throw new Error('Invalid review ID');
   const reviewPath = path.join(getReviewsDir(), `${id}.json`);
   const review = JSON.parse(fs.readFileSync(reviewPath, 'utf-8')) as ReviewGuide;
   const prefs = loadPreferences();
@@ -471,6 +472,7 @@ ipcMain.handle('re-render-hunks', async (_event, review: ReviewGuide) => {
 });
 
 ipcMain.handle('delete-review', (_event, id: string) => {
+  if (!/^\d+$/.test(id)) throw new Error('Invalid review ID');
   const filePath = path.join(getReviewsDir(), `${id}.json`);
   if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
   const index = readReviewsIndex().filter((e) => e.id !== id);
