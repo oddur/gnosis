@@ -33,6 +33,10 @@ import type {
   FreshnessResult,
 } from '../lib/types';
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 // Injected by Electron Forge Vite plugin
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -162,7 +166,7 @@ function runOAuthFlow(): Promise<void> {
       if (errorParam || !code) {
         const desc = url.searchParams.get('error_description') ?? errorParam ?? 'Unknown error';
         res.writeHead(400, { 'Content-Type': 'text/html' });
-        res.end(`<html><body><p>Sign-in failed: ${desc}</p></body></html>`);
+        res.end(`<html><body><p>Sign-in failed: ${escapeHtml(desc)}</p></body></html>`);
         server.close();
         reject(new Error(desc));
         return;
@@ -665,7 +669,7 @@ ipcMain.handle(
           hunk.renderedHtml = await renderDiffHunk(hunk.content, hunk.language, codeTheme);
         } catch (err) {
           console.warn(`[main] Failed to render hunk for ${hunk.filePath}:`, err);
-          hunk.renderedHtml = `<pre class="diff-block">${hunk.content}</pre>`;
+          hunk.renderedHtml = `<pre class="diff-block">${escapeHtml(hunk.content)}</pre>`;
         }
       }
     }
