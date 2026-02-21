@@ -125,6 +125,21 @@ export interface Preferences {
   geminiPath: string;
 }
 
+export interface SendSlideChatRequest {
+  prTitle: string;
+  prDescription: string;
+  summary: string;
+  slideTitle: string;
+  slideNarrative: string;
+  slideReviewFocus: string;
+  affectedFiles: string[];
+  diffContent: string;
+  history: Array<{ role: 'user' | 'assistant'; content: string }>;
+  question: string;
+  provider: Provider;
+  model: ModelId;
+}
+
 export interface GenerateReviewRequest {
   prUrl: string;
   provider: Provider;

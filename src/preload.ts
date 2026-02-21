@@ -6,6 +6,7 @@ import type {
   PrStatus,
   ReviewGuide,
   ReviewHistoryEntry,
+  SendSlideChatRequest,
   SubmitReviewRequest,
   FreshnessResult,
   UpdateInfo,
@@ -20,6 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listReviews: (): Promise<ReviewHistoryEntry[]> => ipcRenderer.invoke('list-reviews'),
   loadReview: (id: string): Promise<ReviewGuide> => ipcRenderer.invoke('load-review', id),
   deleteReview: (id: string): Promise<void> => ipcRenderer.invoke('delete-review', id),
+  deleteAllReviews: (): Promise<void> => ipcRenderer.invoke('delete-all-reviews'),
   onReviewProgress: (callback: (chunk: string, isThinking: boolean) => void): void => {
     ipcRenderer.on('review-progress', (_event, { chunk, isThinking }: { chunk: string; isThinking: boolean }) =>
       callback(chunk, isThinking)
@@ -27,6 +29,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   offReviewProgress: (): void => {
     ipcRenderer.removeAllListeners('review-progress');
+  },
+  sendSlideChat: (req: SendSlideChatRequest): Promise<string> => ipcRenderer.invoke('send-slide-chat', req),
+  onChatProgress: (callback: (chunk: string) => void): void => {
+    ipcRenderer.on('chat-progress', (_event, { chunk }: { chunk: string }) => callback(chunk));
+  },
+  offChatProgress: (): void => {
+    ipcRenderer.removeAllListeners('chat-progress');
   },
   submitReview: (req: SubmitReviewRequest): Promise<{ reviewUrl: string; droppedCommentCount: number }> =>
     ipcRenderer.invoke('submit-review', req),

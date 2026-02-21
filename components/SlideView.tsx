@@ -1,7 +1,8 @@
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from 'react-resizable-panels';
-import { Eye } from 'lucide-react';
+import { Eye, MessageCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { DiffHunkGroup } from '@/components/DiffHunk';
 import { InteractiveDiffHunkGroup } from '@/components/InteractiveDiffHunk';
 import { Markdown } from '@/components/Markdown';
@@ -29,6 +30,7 @@ interface Props {
   totalSlides: number;
   pendingComments?: PendingReviewComment[];
   commentCallbacks?: CommentCallbacks;
+  onAskQuestion?: () => void;
 }
 
 // Group hunks by filePath so we can render them under a single file header
@@ -45,7 +47,7 @@ function groupHunksByFile(hunks: DiffHunk[]): { filePath: string; hunks: DiffHun
   return Array.from(map.entries()).map(([filePath, hunks]) => ({ filePath, hunks }));
 }
 
-export function SlideView({ slide, slideNumber, pendingComments, commentCallbacks }: Props) {
+export function SlideView({ slide, slideNumber, pendingComments, commentCallbacks, onAskQuestion }: Props) {
   const typeConfig = slideTypeConfig[slide.slideType];
   const Icon = typeConfig.icon;
   const groupedHunks = groupHunksByFile(slide.diffHunks);
@@ -106,6 +108,13 @@ export function SlideView({ slide, slideNumber, pendingComments, commentCallback
                 ))}
               </div>
             </details>
+          )}
+
+          {onAskQuestion && (
+            <Button variant="outline" size="sm" onClick={onAskQuestion} className="gap-1.5 w-full mt-2">
+              <MessageCircle className="h-3.5 w-3.5" />
+              Ask a question
+            </Button>
           )}
         </div>
       </Panel>

@@ -5,10 +5,12 @@ import { StaleBanner } from '../../components/StaleBanner';
 import { OverviewSlide } from '../../components/OverviewSlide';
 import { SlideView } from '../../components/SlideView';
 import { SlideNav } from '../../components/SlideNav';
+import { SlideChatSheet } from '../../components/SlideChatSheet';
 import { SubmitReviewDialog } from '../../components/SubmitReviewDialog';
 import { SettingsDialog } from '../../components/SettingsDialog';
 import { useReviewComments } from '../../lib/use-review-comments';
-import type { ReviewGuide, ReviewEvent, FreshnessResult, PrStatus } from '../../lib/types';
+import { useSlideChat } from '../../lib/use-slide-chat';
+import type { ReviewGuide, ReviewEvent, FreshnessResult, PrStatus, Provider, ModelId } from '../../lib/types';
 
 interface Props {
   review: ReviewGuide;
@@ -24,7 +26,18 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
   const [currentLogin, setCurrentLogin] = useState<string | null>(null);
   const [freshness, setFreshness] = useState<FreshnessResult | null>(null);
   const [prStatus, setPrStatus] = useState<PrStatus | null>(null);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatProvider, setChatProvider] = useState<Provider>('claude');
+  const [chatModel, setChatModel] = useState<ModelId>('claude-sonnet-4-6');
   const { comments, addComment, removeComment, editComment, clearAll } = useReviewComments();
+  const slideChat = useSlideChat(review, chatProvider, chatModel);
+
+  useEffect(() => {
+    void window.electronAPI.loadPreferences().then((prefs) => {
+      setChatProvider(prefs.provider);
+      setChatModel(prefs.model);
+    });
+  }, []);
 
   useEffect(() => {
     void window.electronAPI.getAuthState().then((state) => setCurrentLogin(state.login));
@@ -49,10 +62,12 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
   }, [review.prUrl, review.headSha]);
 
   const handlePrev = useCallback(() => {
+    setChatOpen(false);
     setCurrentSlide((n) => Math.max(0, n - 1));
   }, []);
 
   const handleNext = useCallback(() => {
+    setChatOpen(false);
     setCurrentSlide((n) => Math.min(review.slides.length, n + 1));
   }, [review.slides.length]);
 
@@ -124,6 +139,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
             totalSlides={review.slides.length}
             pendingComments={comments}
             commentCallbacks={commentCallbacks}
+            onAskQuestion={() => setChatOpen(true)}
           />
         )}
       </div>
@@ -155,6 +171,18 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
           setReview(updated);
         }}
       />
+
+      {currentSlide > 0 && (
+        <SlideChatSheet
+          open={chatOpen}
+          onOpenChange={setChatOpen}
+          slideTitle={review.slides[currentSlide - 1].title}
+          reviewFocus={review.slides[currentSlide - 1].reviewFocus}
+          messages={slideChat.getMessages(currentSlide)}
+          isStreaming={slideChat.isStreaming}
+          onSend={(text) => void slideChat.send(currentSlide, text)}
+        />
+      )}
     </div>
   );
 }

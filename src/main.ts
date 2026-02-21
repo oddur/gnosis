@@ -23,12 +23,15 @@ import { checkForUpdate } from '../lib/updater';
 import { renderDiffHunk, inferLanguage, reRenderAllHunks } from '../lib/highlight';
 import { parsePatchValidLines } from '../lib/diff-lines';
 import { setBinaryOverride, detectBinaryPath, resolveBinaryPath } from '../lib/providers/shared';
+import { getProvider } from '../lib/provider';
+import { buildSlideChatSystemPrompt, buildSlideChatUserMessage } from '../lib/chat-agent';
 import type {
   GenerateReviewRequest,
   ModelId,
   Preferences,
   ReviewGuide,
   ReviewHistoryEntry,
+  SendSlideChatRequest,
   SubmitReviewRequest,
   FreshnessResult,
 } from '../lib/types';
@@ -684,6 +687,25 @@ ipcMain.handle(
     return reviewGuide;
   }
 );
+
+ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
+  const provider = getProvider(req.provider);
+  const systemPrompt = buildSlideChatSystemPrompt();
+  const userMessage = buildSlideChatUserMessage(req);
+
+  const result = await provider.generate({
+    content: userMessage,
+    systemPrompt,
+    model: req.model,
+    thinking: false,
+    onChunk: (chunk, isThinking) => {
+      if (!isThinking) {
+        _event.sender.send('chat-progress', { chunk });
+      }
+    },
+  });
+  return result;
+});
 
 ipcMain.handle('submit-review', async (_event, req: SubmitReviewRequest) => {
   const token = getResolvedToken();
