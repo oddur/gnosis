@@ -250,6 +250,12 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
     setHistory((prev) => prev.filter((h) => h.id !== id));
   }
 
+  async function handleDeleteAllHistory() {
+    await window.electronAPI.deleteAllReviews();
+    setHistory([]);
+    setExpandedPRs(new Set());
+  }
+
   function handleProviderChange(p: Provider) {
     setProvider(p);
     setModel(PROVIDERS[p].models[0].id);
@@ -498,11 +504,18 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
             {/* History */}
             {prGroups.length > 0 && (
               <Card className="min-h-0 max-h-[calc(100vh-12rem)] sticky top-8 overflow-hidden flex flex-col bg-card/50">
-                <div className="px-4 pt-4 pb-2">
+                <div className="px-4 pt-4 pb-2 flex items-center justify-between">
                   <p className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                     <History className="h-3 w-3" />
                     Review history
                   </p>
+                  <button
+                    onClick={handleDeleteAllHistory}
+                    className="text-muted-foreground hover:text-destructive transition-colors"
+                    title="Delete all history"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
                 </div>
                 <CardContent className="p-0 flex-1 overflow-y-auto min-h-0">
                   <ul className="divide-y">

@@ -19,6 +19,7 @@ export function applyCodeFont(fontId: string) {
 export function SettingsDialog({ open, onOpenChange, onThemeChange }: Props) {
   const [codeTheme, setCodeTheme] = useState<CodeTheme>('aurora-x');
   const [codeFont, setCodeFont] = useState<CodeFont>('jetbrains-mono');
+  const [enableTools, setEnableTools] = useState(false);
   const [claudePath, setClaudePath] = useState('');
   const [geminiPath, setGeminiPath] = useState('');
   const [claudeDetected, setClaudeDetected] = useState('');
@@ -29,6 +30,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange }: Props) {
     void window.electronAPI.loadPreferences().then((prefs) => {
       if (prefs.codeTheme) setCodeTheme(prefs.codeTheme as CodeTheme);
       if (prefs.codeFont) setCodeFont(prefs.codeFont as CodeFont);
+      setEnableTools(prefs.enableTools);
       setClaudePath(prefs.claudePath || '');
       setGeminiPath(prefs.geminiPath || '');
     });
@@ -36,7 +38,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange }: Props) {
     void window.electronAPI.detectBinaryPath('gemini').then(setGeminiDetected);
   }, [open]);
 
-  function saveField(overrides: Record<string, string>) {
+  function saveField(overrides: Partial<Record<string, string | boolean>>) {
     void window.electronAPI.loadPreferences().then((prefs) => {
       void window.electronAPI.savePreferences({ ...prefs, ...overrides });
     });
@@ -102,6 +104,34 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange }: Props) {
                 </button>
               ))}
             </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-col gap-0.5">
+              <label className="text-sm font-medium">Enable AI tools</label>
+              <p className="text-xs text-muted-foreground">
+                Allow the AI to search the web and fetch GitHub context (slower but more thorough)
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={enableTools}
+              onClick={() => {
+                const next = !enableTools;
+                setEnableTools(next);
+                saveField({ enableTools: next });
+              }}
+              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
+                enableTools ? 'bg-primary' : 'bg-muted'
+              }`}
+            >
+              <span
+                className={`pointer-events-none block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                  enableTools ? 'translate-x-4' : 'translate-x-0'
+                }`}
+              />
+            </button>
           </div>
 
           <div className="flex flex-col gap-1.5">

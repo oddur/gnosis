@@ -23,17 +23,23 @@ export const claudeProvider: LLMProvider = {
     { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', quick: true },
   ],
 
-  async generate({ content, systemPrompt, model, thinking, onChunk }) {
+  async generate({ content, systemPrompt, model, thinking, onChunk, mcpConfigPath, allowedTools }) {
     const claudePath = resolveClaudePath();
     let fullText = '';
+
+    let streamError = '';
 
     function processLine(line: string): void {
       const trimmed = line.trim();
       if (!trimmed) return;
       try {
         const outer = JSON.parse(trimmed) as Record<string, unknown>;
-        if (outer.type === 'result' && typeof outer.result === 'string') {
-          fullText = outer.result;
+        if (outer.type === 'result') {
+          if (outer.is_error === true && typeof outer.result === 'string') {
+            streamError = outer.result;
+          } else if (typeof outer.result === 'string') {
+            fullText = outer.result;
+          }
           return;
         }
         if (outer.type !== 'stream_event') return;
@@ -52,6 +58,16 @@ export const claudeProvider: LLMProvider = {
       }
     }
 
+    const toolArgs: string[] = [];
+    if (mcpConfigPath) {
+      toolArgs.push('--mcp-config', mcpConfigPath, '--strict-mcp-config');
+      if (allowedTools && allowedTools.length > 0) {
+        toolArgs.push('--allowedTools', allowedTools.join(','));
+      }
+    } else {
+      toolArgs.push('--tools', '');
+    }
+
     await spawnCliStreaming({
       binPath: claudePath,
       cliName: 'Claude',
@@ -61,8 +77,7 @@ export const claudeProvider: LLMProvider = {
         model,
         '--system-prompt',
         systemPrompt,
-        '--tools',
-        '',
+        ...toolArgs,
         '--output-format',
         'stream-json',
         '--verbose',
@@ -74,6 +89,11 @@ export const claudeProvider: LLMProvider = {
       processLine,
       env: makeClaudeEnv(thinking),
       installHint: INSTALL_HINT,
+      handleExitError: (stderr: string) => {
+        if (streamError) return new Error(streamError);
+        if (stderr) return new Error(stderr.slice(0, 300));
+        return undefined;
+      },
     });
 
     return fullText.trim();

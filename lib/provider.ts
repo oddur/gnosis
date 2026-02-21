@@ -8,6 +8,8 @@ export interface GenerateOptions {
   model: ModelId;
   thinking: boolean;
   onChunk?: (chunk: string, isThinking: boolean) => void;
+  mcpConfigPath?: string;
+  allowedTools?: string[];
 }
 
 export interface QuickOptions {

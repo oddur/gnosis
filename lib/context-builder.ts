@@ -1,7 +1,7 @@
 import type { PrMetadata, ChangedFile } from './types';
 
 const CHARS_PER_TOKEN = 4;
-const MAX_TOKENS = 180_000;
+const MAX_TOKENS = 150_000;
 const MAX_CHARS = MAX_TOKENS * CHARS_PER_TOKEN;
 const MAX_FILE_LINES = 200;
 const DIFF_CONTEXT_LINES = 10;
@@ -159,55 +159,96 @@ ${expandedDiff}
   }
   neighborSection += '</neighbor_files>';
 
-  const baseContent = metaSection + '\n\n' + diffSection + '\n\n';
-  const baseChars = baseContent.length;
-  let remaining = MAX_CHARS - baseChars;
-
+  let diffStr = diffSection;
   let fileContentsStr = fileContentsSection;
   let headContentsStr = headContentsSection;
   let neighborStr = neighborSection;
 
-  const totalWithAll = baseChars + fileContentsStr.length + headContentsStr.length + neighborStr.length;
+  function totalSize(): number {
+    return (
+      metaSection.length +
+      4 +
+      diffStr.length +
+      4 +
+      fileContentsStr.length +
+      4 +
+      headContentsStr.length +
+      4 +
+      neighborStr.length
+    );
+  }
 
-  if (totalWithAll > MAX_CHARS) {
-    // Drop neighbor files first
-    const neighborBudget = Math.max(0, remaining - fileContentsStr.length - headContentsStr.length);
+  // Step 1: Drop neighbor files to fit budget
+  if (totalSize() > MAX_CHARS) {
+    const neighborBudget = Math.max(
+      0,
+      MAX_CHARS - metaSection.length - diffStr.length - fileContentsStr.length - headContentsStr.length - 20
+    );
     let neighborChars = 0;
     const truncatedNeighbor: Record<string, string> = {};
-    for (const [path, content] of Object.entries(neighborFiles)) {
-      const entry = `  <file path="${path}" relationship="imported by changed files">\n${content}\n  </file>\n`;
+    for (const [p, content] of Object.entries(neighborFiles)) {
+      const entry = `  <file path="${p}" relationship="imported by changed files">\n${content}\n  </file>\n`;
       if (neighborChars + entry.length > neighborBudget) break;
-      truncatedNeighbor[path] = content;
+      truncatedNeighbor[p] = content;
       neighborChars += entry.length;
     }
     neighborStr = '<neighbor_files>\n';
-    for (const [path, content] of Object.entries(truncatedNeighbor)) {
-      neighborStr += `  <file path="${path}" relationship="imported by changed files">\n${content}\n  </file>\n`;
+    for (const [p, content] of Object.entries(truncatedNeighbor)) {
+      neighborStr += `  <file path="${p}" relationship="imported by changed files">\n${content}\n  </file>\n`;
     }
     neighborStr += '</neighbor_files>';
-
-    remaining = MAX_CHARS - baseChars - neighborStr.length;
-
-    if (baseChars + fileContentsStr.length + headContentsStr.length + neighborStr.length > MAX_CHARS) {
-      console.warn('[context-builder] Context too large — truncating file contents to 200 lines each');
-      fileContentsStr = '<file_contents_before>\n';
-      for (const [path, content] of Object.entries(fileContents)) {
-        fileContentsStr += `  <file path="${path}">\n${truncateFileContent(content, MAX_FILE_LINES)}\n  </file>\n`;
-      }
-      fileContentsStr += '</file_contents_before>';
-
-      headContentsStr = '<file_contents_after>\n';
-      for (const [path, content] of Object.entries(headFileContents)) {
-        headContentsStr += `  <file path="${path}">\n${truncateFileContent(content, MAX_FILE_LINES)}\n  </file>\n`;
-      }
-      headContentsStr += '</file_contents_after>';
-
-      if (baseChars + fileContentsStr.length + headContentsStr.length + neighborStr.length > MAX_CHARS) {
-        console.warn('[context-builder] Still too large — dropping neighbor files');
-        neighborStr = '<neighbor_files>\n<!-- omitted: context budget exceeded -->\n</neighbor_files>';
-      }
-    }
   }
 
-  return baseContent + fileContentsStr + '\n\n' + headContentsStr + '\n\n' + neighborStr;
+  // Step 2: Truncate file contents to 200 lines each
+  if (totalSize() > MAX_CHARS) {
+    console.warn('[context-builder] Context too large — truncating file contents to 200 lines each');
+    fileContentsStr = '<file_contents_before>\n';
+    for (const [p, content] of Object.entries(fileContents)) {
+      fileContentsStr += `  <file path="${p}">\n${truncateFileContent(content, MAX_FILE_LINES)}\n  </file>\n`;
+    }
+    fileContentsStr += '</file_contents_before>';
+
+    headContentsStr = '<file_contents_after>\n';
+    for (const [p, content] of Object.entries(headFileContents)) {
+      headContentsStr += `  <file path="${p}">\n${truncateFileContent(content, MAX_FILE_LINES)}\n  </file>\n`;
+    }
+    headContentsStr += '</file_contents_after>';
+  }
+
+  // Step 3: Drop neighbor files entirely
+  if (totalSize() > MAX_CHARS) {
+    console.warn('[context-builder] Still too large — dropping neighbor files');
+    neighborStr = '<neighbor_files>\n<!-- omitted: context budget exceeded -->\n</neighbor_files>';
+  }
+
+  // Step 4: Drop file contents entirely (keep only the diff)
+  if (totalSize() > MAX_CHARS) {
+    console.warn('[context-builder] Still too large — dropping file contents, keeping diff only');
+    fileContentsStr = '<file_contents_before>\n<!-- omitted: context budget exceeded -->\n</file_contents_before>';
+    headContentsStr = '<file_contents_after>\n<!-- omitted: context budget exceeded -->\n</file_contents_after>';
+  }
+
+  // Step 5: Truncate the diff itself as a last resort
+  if (totalSize() > MAX_CHARS) {
+    const overhead = metaSection.length + fileContentsStr.length + headContentsStr.length + neighborStr.length + 20;
+    const diffBudget = MAX_CHARS - overhead;
+    console.warn(
+      `[context-builder] Diff too large (${expandedDiff.length} chars) — truncating to fit budget (${diffBudget} chars)`
+    );
+    const truncatedDiff = expandedDiff.slice(0, diffBudget);
+    diffStr = `<full_diff>\n${truncatedDiff}\n... [truncated — diff exceeded context budget]\n</full_diff>`;
+  }
+
+  const finalPackage =
+    metaSection + '\n\n' + diffStr + '\n\n' + fileContentsStr + '\n\n' + headContentsStr + '\n\n' + neighborStr;
+  const estimatedTokens = Math.ceil(finalPackage.length / CHARS_PER_TOKEN);
+
+  console.log(
+    `[context-builder] Section sizes (chars): diff=${expandedDiff.length}, fileBefore=${fileContentsStr.length}, fileAfter=${headContentsStr.length}, neighbors=${neighborStr.length}`
+  );
+  console.log(
+    `[context-builder] Total context: ${finalPackage.length} chars (~${estimatedTokens.toLocaleString()} tokens) | Budget: ${MAX_CHARS} chars (~${MAX_TOKENS.toLocaleString()} tokens)`
+  );
+
+  return finalPackage;
 }

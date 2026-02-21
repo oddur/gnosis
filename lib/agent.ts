@@ -149,7 +149,9 @@ export async function generateReviewGuide(
   instructions?: string,
   onChunk?: (chunk: string, isThinking: boolean) => void,
   thinking: boolean = false,
-  signalBoost: boolean = false
+  signalBoost: boolean = false,
+  mcpConfigPath?: string,
+  allowedTools?: string[]
 ): Promise<ReviewGuide> {
   const provider = getProvider(providerName);
 
@@ -168,7 +170,12 @@ export async function generateReviewGuide(
       ? `${baseSystem}\n\nIMPORTANT — CUSTOM REVIEWER INSTRUCTIONS:\nThe reviewer has provided the following instructions. These take precedence over the default writing style and tone guidelines above. Adapt your narrative, reviewFocus, summary, and all prose fields accordingly.\n\n<instructions>\n${customInstructions}\n</instructions>`
       : baseSystem;
 
+    const totalInputChars = system.length + userMessage.length;
+    const estimatedTokens = Math.ceil(totalInputChars / 4);
     console.log('[agent] Custom instructions:', customInstructions ?? '(none)');
+    console.log(
+      `[agent] Input size: system=${system.length} + user=${userMessage.length} = ${totalInputChars} chars (~${estimatedTokens.toLocaleString()} tokens)`
+    );
     console.log(`[agent] Calling ${providerName} (${model})...`);
     const fullText = await provider.generate({
       content: userMessage,
@@ -176,6 +183,8 @@ export async function generateReviewGuide(
       model,
       thinking,
       onChunk,
+      mcpConfigPath,
+      allowedTools,
     });
     console.log('[agent] Generation complete, parsing response...');
 
@@ -198,9 +207,14 @@ export async function generateReviewGuide(
   try {
     return await attempt();
   } catch (err) {
-    console.warn(
-      `[agent] First attempt failed (${err instanceof Error ? err.message : 'unknown'}), retrying concisely`
-    );
+    const msg = err instanceof Error ? err.message : 'unknown';
+
+    // Don't retry on errors where retrying won't help
+    if (msg.toLowerCase().includes('rate limit') || msg.toLowerCase().includes('prompt is too long')) {
+      throw new Error(msg);
+    }
+
+    console.warn(`[agent] First attempt failed (${msg}), retrying concisely`);
     try {
       return await attempt(CONCISE_SUFFIX);
     } catch (retryErr) {

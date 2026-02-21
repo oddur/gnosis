@@ -129,17 +129,31 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
 
       {freshness && <StaleBanner freshness={freshness} onReReview={() => onReReview(review.prUrl)} />}
 
-      <div key={currentSlide} className="slide-enter flex-1 overflow-hidden flex flex-col">
-        {currentSlide === 0 ? (
-          <OverviewSlide review={review} prStatus={prStatus} onNavigate={(n) => setCurrentSlide(n)} />
-        ) : (
-          <SlideView
-            slide={review.slides[currentSlide - 1]}
-            slideNumber={currentSlide}
-            totalSlides={review.slides.length}
-            pendingComments={comments}
-            commentCallbacks={commentCallbacks}
-            onAskQuestion={() => setChatOpen(true)}
+      <div key={currentSlide} className="slide-enter flex-1 overflow-hidden flex flex-row">
+        <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
+          {currentSlide === 0 ? (
+            <OverviewSlide review={review} prStatus={prStatus} onNavigate={(n) => setCurrentSlide(n)} />
+          ) : (
+            <SlideView
+              slide={review.slides[currentSlide - 1]}
+              slideNumber={currentSlide}
+              totalSlides={review.slides.length}
+              pendingComments={comments}
+              commentCallbacks={commentCallbacks}
+              onAskQuestion={() => setChatOpen(true)}
+            />
+          )}
+        </div>
+
+        {currentSlide > 0 && (
+          <SlideChatSheet
+            open={chatOpen}
+            onOpenChange={setChatOpen}
+            slideTitle={review.slides[currentSlide - 1].title}
+            reviewFocus={review.slides[currentSlide - 1].reviewFocus}
+            messages={slideChat.getMessages(currentSlide)}
+            isStreaming={slideChat.isStreaming}
+            onSend={(text) => void slideChat.send(currentSlide, text)}
           />
         )}
       </div>
@@ -171,18 +185,6 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
           setReview(updated);
         }}
       />
-
-      {currentSlide > 0 && (
-        <SlideChatSheet
-          open={chatOpen}
-          onOpenChange={setChatOpen}
-          slideTitle={review.slides[currentSlide - 1].title}
-          reviewFocus={review.slides[currentSlide - 1].reviewFocus}
-          messages={slideChat.getMessages(currentSlide)}
-          isStreaming={slideChat.isStreaming}
-          onSend={(text) => void slideChat.send(currentSlide, text)}
-        />
-      )}
     </div>
   );
 }

@@ -119,6 +119,7 @@ export interface Preferences {
   thinking: boolean;
   signalBoost: boolean;
   smartImports: boolean;
+  enableTools: boolean;
   codeTheme: string;
   codeFont: string;
   claudePath: string;

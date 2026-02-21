@@ -25,6 +25,7 @@ import { parsePatchValidLines } from '../lib/diff-lines';
 import { setBinaryOverride, detectBinaryPath, resolveBinaryPath } from '../lib/providers/shared';
 import { getProvider } from '../lib/provider';
 import { buildSlideChatSystemPrompt, buildSlideChatUserMessage } from '../lib/chat-agent';
+import { writeMcpConfig, cleanupMcpConfig } from '../lib/mcp-config';
 import type {
   GenerateReviewRequest,
   ModelId,
@@ -355,6 +356,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   thinking: true,
   signalBoost: true,
   smartImports: true,
+  enableTools: false,
   codeTheme: 'aurora-x',
   codeFont: 'jetbrains-mono',
   claudePath: '',
@@ -378,6 +380,25 @@ function loadPreferences(): Preferences {
 function savePreferences(prefs: Preferences): void {
   fs.writeFileSync(getPreferencesPath(), JSON.stringify(prefs, null, 2));
 }
+
+// ── MCP tools constants ─────────────────────────────────────────
+
+const ALLOWED_TOOLS = [
+  'WebFetch',
+  'WebSearch',
+  'mcp__github__get_file_contents',
+  'mcp__github__get_issue',
+  'mcp__github__list_issues',
+  'mcp__github__get_pull_request',
+  'mcp__github__get_pull_request_files',
+  'mcp__github__get_pull_request_comments',
+  'mcp__github__get_pull_request_reviews',
+  'mcp__github__list_commits',
+  'mcp__github__search_code',
+  'mcp__github__search_issues',
+];
+
+const WEB_ONLY_TOOLS = ['WebFetch', 'WebSearch'];
 
 // ── IPC handlers ────────────────────────────────────────────────
 
@@ -645,16 +666,37 @@ ipcMain.handle(
 
     console.log('[main] Generating review guide...');
     const generationStart = Date.now();
-    const reviewGuide = await generateReviewGuide(
-      contextPackage,
-      prUrl,
-      provider,
-      model,
-      instructions,
-      (chunk, isThinking) => _event.sender.send('review-progress', { chunk, isThinking }),
-      thinking ?? false,
-      signalBoost ?? false
-    );
+
+    const prefs = loadPreferences();
+    let mcpConfigPath: string | undefined;
+    let allowedTools: string[] | undefined;
+
+    if (prefs.enableTools && provider === 'claude') {
+      if (token) {
+        mcpConfigPath = writeMcpConfig(token);
+        allowedTools = ALLOWED_TOOLS;
+      } else {
+        allowedTools = WEB_ONLY_TOOLS;
+      }
+    }
+
+    let reviewGuide: ReviewGuide;
+    try {
+      reviewGuide = await generateReviewGuide(
+        contextPackage,
+        prUrl,
+        provider,
+        model,
+        instructions,
+        (chunk, isThinking) => _event.sender.send('review-progress', { chunk, isThinking }),
+        thinking ?? false,
+        signalBoost ?? false,
+        mcpConfigPath,
+        allowedTools
+      );
+    } finally {
+      if (mcpConfigPath) cleanupMcpConfig(mcpConfigPath);
+    }
 
     const generationDurationMs = Date.now() - generationStart;
 
@@ -689,22 +731,42 @@ ipcMain.handle(
 );
 
 ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
-  const provider = getProvider(req.provider);
+  const chatProvider = getProvider(req.provider);
   const systemPrompt = buildSlideChatSystemPrompt();
   const userMessage = buildSlideChatUserMessage(req);
 
-  const result = await provider.generate({
-    content: userMessage,
-    systemPrompt,
-    model: req.model,
-    thinking: false,
-    onChunk: (chunk, isThinking) => {
-      if (!isThinking) {
-        _event.sender.send('chat-progress', { chunk });
-      }
-    },
-  });
-  return result;
+  const prefs = loadPreferences();
+  let mcpConfigPath: string | undefined;
+  let allowedTools: string[] | undefined;
+
+  if (prefs.enableTools && req.provider === 'claude') {
+    const token = getResolvedToken();
+    if (token) {
+      mcpConfigPath = writeMcpConfig(token);
+      allowedTools = ALLOWED_TOOLS;
+    } else {
+      allowedTools = WEB_ONLY_TOOLS;
+    }
+  }
+
+  try {
+    const result = await chatProvider.generate({
+      content: userMessage,
+      systemPrompt,
+      model: req.model,
+      thinking: false,
+      onChunk: (chunk, isThinking) => {
+        if (!isThinking) {
+          _event.sender.send('chat-progress', { chunk });
+        }
+      },
+      mcpConfigPath,
+      allowedTools,
+    });
+    return result;
+  } finally {
+    if (mcpConfigPath) cleanupMcpConfig(mcpConfigPath);
+  }
 });
 
 ipcMain.handle('submit-review', async (_event, req: SubmitReviewRequest) => {

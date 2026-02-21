@@ -169,6 +169,8 @@ export function spawnCliStreaming(opts: StreamingCliOptions): Promise<void> {
         console.log(`${tag} CLI finished in ${elapsed}s -> ${debugPath}`);
         resolve();
       } else {
+        console.error(`${tag} CLI exited with code ${String(code)}. stderr: ${stderr || '(empty)'}`);
+        console.error(`${tag} Raw stdout saved to: ${debugPath}`);
         const custom = opts.handleExitError?.(stderr);
         reject(custom ?? new Error(`${opts.cliName} CLI exited with code ${String(code)}: ${stderr.slice(0, 300)}`));
       }
