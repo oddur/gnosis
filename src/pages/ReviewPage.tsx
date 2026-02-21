@@ -62,12 +62,10 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
   }, [review.prUrl, review.headSha]);
 
   const handlePrev = useCallback(() => {
-    setChatOpen(false);
     setCurrentSlide((n) => Math.max(0, n - 1));
   }, []);
 
   const handleNext = useCallback(() => {
-    setChatOpen(false);
     setCurrentSlide((n) => Math.min(review.slides.length, n + 1));
   }, [review.slides.length]);
 
