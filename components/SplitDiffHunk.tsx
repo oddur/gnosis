@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { MessageSquarePlus } from 'lucide-react';
 import { parseDiffLines, buildSplitRows, type DiffLineInfo, type SplitRow } from '@/lib/diff-lines';
 import type { DiffHunk, PendingReviewComment } from '@/lib/types';
+import { FilePathLink } from '@/components/FilePathLink';
 import {
   type CommentCallbacks,
   parseShikiLines,
@@ -16,6 +17,7 @@ interface SplitDiffHunkGroupProps {
   pendingComments?: PendingReviewComment[];
   slideIndex?: number;
   commentCallbacks?: CommentCallbacks;
+  gitFileUrlBase?: string | null;
 }
 
 function SplitDiffCell({
@@ -292,13 +294,14 @@ export function SplitDiffHunkGroup({
   pendingComments = [],
   slideIndex = 0,
   commentCallbacks,
+  gitFileUrlBase,
 }: SplitDiffHunkGroupProps) {
   const fileCommentCount = pendingComments.filter((c) => c.filePath === filePath).length;
 
   return (
     <div className="rounded-md border overflow-x-auto">
       <div className="bg-muted/50 px-3 py-2 font-mono text-xs text-muted-foreground border-b truncate flex items-center justify-between">
-        <span>{filePath}</span>
+        <FilePathLink filePath={filePath} gitFileUrlBase={gitFileUrlBase} />
         {commentCallbacks && fileCommentCount > 0 && (
           <span className="ml-2 inline-flex items-center gap-1 text-blue-400">
             <MessageSquarePlus className="h-3 w-3" />

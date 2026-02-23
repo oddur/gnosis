@@ -10,6 +10,7 @@ import { SubmitReviewDialog } from '../../components/SubmitReviewDialog';
 import { SettingsDialog } from '../../components/SettingsDialog';
 import { useReviewComments } from '../../lib/use-review-comments';
 import { useSlideChat } from '../../lib/use-slide-chat';
+import { buildFileUrlBase } from '../../lib/github-url';
 import type {
   ReviewGuide,
   ReviewEvent,
@@ -41,6 +42,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
   const [prefs, setPrefs] = useState<Preferences | null>(null);
   const { comments, addComment, removeComment, editComment, clearAll } = useReviewComments();
   const slideChat = useSlideChat(review, chatProvider, chatModel);
+  const gitFileUrlBase = useMemo(() => buildFileUrlBase(review.prUrl, review.headSha), [review.prUrl, review.headSha]);
 
   useEffect(() => {
     void window.electronAPI.loadPreferences().then((p) => {
@@ -165,6 +167,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
               diffLayout={diffLayout}
               onDiffLayoutChange={handleDiffLayoutChange}
               onAskQuestion={() => setChatOpen(true)}
+              gitFileUrlBase={gitFileUrlBase}
             />
           )}
         </div>

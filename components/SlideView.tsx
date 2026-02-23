@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { DiffHunkGroup } from '@/components/DiffHunk';
 import { InteractiveDiffHunkGroup } from '@/components/InteractiveDiffHunk';
 import { SplitDiffHunkGroup } from '@/components/SplitDiffHunk';
+import { FilePathLink } from '@/components/FilePathLink';
 import { Markdown } from '@/components/Markdown';
 import { MermaidDiagram } from '@/components/MermaidDiagram';
 import { slideTypeConfig } from '@/lib/constants';
@@ -21,6 +22,7 @@ interface Props {
   diffLayout: Preferences['diffLayout'];
   onDiffLayoutChange: (layout: Preferences['diffLayout']) => void;
   onAskQuestion?: () => void;
+  gitFileUrlBase?: string | null;
 }
 
 // Group hunks by filePath so we can render them under a single file header
@@ -74,6 +76,7 @@ export function SlideView({
   diffLayout,
   onDiffLayoutChange,
   onAskQuestion,
+  gitFileUrlBase,
 }: Props) {
   const typeConfig = slideTypeConfig[slide.slideType];
   const Icon = typeConfig.icon;
@@ -113,7 +116,7 @@ export function SlideView({
               <ul className="space-y-1">
                 {slide.affectedFiles.map((f) => (
                   <li key={f} className="font-mono text-xs text-muted-foreground truncate">
-                    {f}
+                    <FilePathLink filePath={f} gitFileUrlBase={gitFileUrlBase} />
                   </li>
                 ))}
               </ul>
@@ -175,6 +178,7 @@ export function SlideView({
                   pendingComments={pendingComments}
                   slideIndex={slideNumber}
                   commentCallbacks={commentCallbacks}
+                  gitFileUrlBase={gitFileUrlBase}
                 />
               );
             }
@@ -188,9 +192,10 @@ export function SlideView({
                 onAddComment={commentCallbacks.onAddComment}
                 onRemoveComment={commentCallbacks.onRemoveComment}
                 onEditComment={commentCallbacks.onEditComment}
+                gitFileUrlBase={gitFileUrlBase}
               />
             ) : (
-              <DiffHunkGroup key={filePath} filePath={filePath} hunks={hunks} />
+              <DiffHunkGroup key={filePath} filePath={filePath} hunks={hunks} gitFileUrlBase={gitFileUrlBase} />
             );
           })}
         </div>

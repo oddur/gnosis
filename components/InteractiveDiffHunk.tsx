@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { MessageSquarePlus } from 'lucide-react';
 import { parseDiffLines, type DiffLineInfo } from '@/lib/diff-lines';
 import type { DiffHunk, PendingReviewComment } from '@/lib/types';
+import { FilePathLink } from '@/components/FilePathLink';
 import {
   type CommentCallbacks,
   parseShikiLines,
@@ -15,6 +16,7 @@ interface InteractiveDiffHunkGroupProps extends CommentCallbacks {
   hunks: DiffHunk[];
   pendingComments: PendingReviewComment[];
   slideIndex: number;
+  gitFileUrlBase?: string | null;
 }
 
 interface ParsedLine {
@@ -187,6 +189,7 @@ export function InteractiveDiffHunkGroup({
   onAddComment,
   onRemoveComment,
   onEditComment,
+  gitFileUrlBase,
 }: InteractiveDiffHunkGroupProps) {
   // Count comments for this file
   const fileCommentCount = pendingComments.filter((c) => c.filePath === filePath).length;
@@ -194,7 +197,7 @@ export function InteractiveDiffHunkGroup({
   return (
     <div className="rounded-md border overflow-x-auto">
       <div className="bg-muted/50 px-3 py-2 font-mono text-xs text-muted-foreground border-b truncate flex items-center justify-between">
-        <span>{filePath}</span>
+        <FilePathLink filePath={filePath} gitFileUrlBase={gitFileUrlBase} />
         {fileCommentCount > 0 && (
           <span className="ml-2 inline-flex items-center gap-1 text-blue-400">
             <MessageSquarePlus className="h-3 w-3" />
