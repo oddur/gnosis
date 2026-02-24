@@ -256,11 +256,17 @@ function setupLogging() {
   }
 
   const stream = fs.createWriteStream(logPath, { flags: 'a' });
+  let streamOk = true;
+  stream.on('error', () => {
+    streamOk = false;
+  });
+
   const origLog = console.log.bind(console);
   const origWarn = console.warn.bind(console);
   const origError = console.error.bind(console);
 
   function write(level: string, args: unknown[]) {
+    if (!streamOk) return;
     const ts = new Date().toISOString();
     const msg = args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
     stream.write(`${ts} [${level}] ${msg}\n`);
