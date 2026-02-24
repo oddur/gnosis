@@ -158,6 +158,9 @@ export function spawnCliStreaming(opts: StreamingCliOptions): Promise<void> {
       stderr += chunk.toString();
     });
 
+    proc.stdin.on('error', () => {
+      // Ignore EPIPE — the process exited before we finished writing
+    });
     proc.stdin.write(opts.stdinContent);
     proc.stdin.end();
 
@@ -214,6 +217,9 @@ export function spawnCliQuick(opts: QuickCliOptions): Promise<string> {
       stderr += chunk.toString();
     });
 
+    proc.stdin.on('error', () => {
+      // Ignore EPIPE — the process exited before we finished writing
+    });
     proc.stdin.write(opts.stdinContent);
     proc.stdin.end();
 
