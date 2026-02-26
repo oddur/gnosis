@@ -177,7 +177,9 @@ export async function generateReviewGuide(
   allowedTools?: string[],
   reviewSuggestions: boolean = true,
   webResearch: boolean = false,
-  onToolUse?: (toolName: string) => void
+  onToolUse?: (toolName: string) => void,
+  onPromptReady?: (system: string, userMessage: string) => void,
+  signal?: AbortSignal
 ): Promise<AIReviewGuide> {
   const provider = getProvider(providerName);
 
@@ -212,6 +214,7 @@ export async function generateReviewGuide(
       `[agent] Input size: system=${system.length} + user=${userMessage.length} = ${totalInputChars} chars (~${estimatedTokens.toLocaleString()} tokens)`
     );
     console.log(`[agent] Calling ${providerName} (${model})...`);
+    onPromptReady?.(system, userMessage);
     const fullText = await provider.generate({
       content: userMessage,
       systemPrompt: system,
@@ -221,6 +224,7 @@ export async function generateReviewGuide(
       onToolUse,
       mcpConfigPath,
       allowedTools,
+      signal,
     });
     console.log('[agent] Generation complete, parsing response...');
 

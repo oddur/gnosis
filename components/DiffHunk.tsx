@@ -18,7 +18,7 @@ export function DiffHunk({ hunk, showFileHeader = true, gitFileUrlBase }: Props)
       {hunk.hunkHeader && (
         <div className="bg-muted/30 px-3 py-1 font-mono text-xs text-muted-foreground border-b">{hunk.hunkHeader}</div>
       )}
-      <div dangerouslySetInnerHTML={{ __html: hunk.renderedHtml }} />
+      <div className="select-text" dangerouslySetInnerHTML={{ __html: hunk.renderedHtml }} />
     </div>
   );
 }
@@ -43,7 +43,7 @@ export function DiffHunkGroup({ filePath, hunks, gitFileUrlBase }: GroupedProps)
               {hunk.hunkHeader}
             </div>
           )}
-          <div dangerouslySetInnerHTML={{ __html: hunk.renderedHtml }} />
+          <div className="select-text" dangerouslySetInnerHTML={{ __html: hunk.renderedHtml }} />
         </div>
       ))}
     </div>

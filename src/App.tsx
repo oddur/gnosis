@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { TooltipProvider } from '../components/ui/tooltip';
 import { HomePage } from './pages/HomePage';
 import { ReviewPage } from './pages/ReviewPage';
@@ -22,11 +22,11 @@ export function App() {
   const [review, setReview] = useState<ReviewGuide | null>(null);
   const [prefillPrUrl, setPrefillPrUrl] = useState<string | undefined>();
 
-  function handleReviewReady(r: ReviewGuide) {
+  const handleReviewReady = useCallback((r: ReviewGuide) => {
     setPrefillPrUrl(undefined);
     setReview(r);
     setPage('review');
-  }
+  }, []);
 
   function handleBack() {
     setReview(null);
@@ -38,6 +38,18 @@ export function App() {
     setReview(null);
     setPage('home');
   }
+
+  // Navigate to a completed review when notification is clicked
+  useEffect(() => {
+    window.electronAPI.onReviewNavigate((reviewId) => {
+      void window.electronAPI.loadReview(reviewId).then((r) => {
+        handleReviewReady(r);
+      });
+    });
+    return () => {
+      window.electronAPI.offReviewNavigate();
+    };
+  }, [handleReviewReady]);
 
   return (
     <>

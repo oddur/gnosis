@@ -1,6 +1,7 @@
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
+import { MakerDMG } from '@electron-forge/maker-dmg';
 import { MakerDeb } from '@electron-forge/maker-deb';
 import { MakerRpm } from '@electron-forge/maker-rpm';
 import { PublisherGithub } from '@electron-forge/publisher-github';
@@ -13,6 +14,7 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     executableName: 'gnosis',
+    icon: path.resolve(__dirname, 'Icon/macos/AppIcon'),
     ...(process.env.APPLE_TEAM_ID
       ? {
           osxSign: {
@@ -31,8 +33,13 @@ const config: ForgeConfig = {
   },
   rebuildConfig: {},
   makers: [
-    new MakerSquirrel({ authors: 'Oddur Magnusson' }),
+    new MakerSquirrel({
+      authors: 'Oddur Magnusson',
+      iconUrl: 'https://raw.githubusercontent.com/oddur/gnosis/main/Icon/web/favicon.ico',
+      setupIcon: path.resolve(__dirname, 'Icon/web/favicon.ico'),
+    }),
     new MakerZIP({}, ['darwin']),
+    new MakerDMG({ name: 'Gnosis' }),
     new MakerDeb({}),
     new MakerRpm({ options: { license: 'MIT' } }),
   ],

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Notification, safeStorage, shell } from 'electron';
+import { app, autoUpdater, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -29,6 +29,7 @@ import { buildIndexedHunks, expandFullDiff, formatHunkIndexForPrompt, sortDiffHu
 import { classifyFiles, filterDiff, buildExcludedFilesSummary } from '../lib/file-filter';
 import { writeMcpConfig, cleanupMcpConfig } from '../lib/mcp-config';
 import type {
+  ChangedFile,
   DiffHunk,
   GenerateReviewRequest,
   ModelId,
@@ -37,6 +38,7 @@ import type {
   ReviewHistoryEntry,
   Slide,
   SendSlideChatRequest,
+  StartReviewResult,
   SubmitReviewRequest,
   FreshnessResult,
 } from '../lib/types';
@@ -144,6 +146,16 @@ async function fetchGitHubLogin(token: string): Promise<string> {
   return data.login ?? 'unknown';
 }
 
+async function validateAndFetchLogin(token: string): Promise<string> {
+  const res = await fetch('https://api.github.com/user', {
+    headers: { Authorization: `token ${token}`, 'User-Agent': 'Gnosis-App' },
+  });
+  if (!res.ok) throw new Error(`Invalid token (GitHub returned ${res.status})`);
+  const data = (await res.json()) as { login?: string };
+  if (!data.login) throw new Error('Token validated but could not retrieve GitHub username');
+  return data.login;
+}
+
 function generatePkce(): { verifier: string; challenge: string } {
   const verifier = crypto.randomBytes(32).toString('base64url');
   const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
@@ -241,7 +253,56 @@ function runOAuthFlow(): Promise<void> {
   });
 }
 
+// ── Persistent logging ───────────────────────────────────────────
+
+function getLogsDir() {
+  return path.join(app.getPath('userData'), 'logs');
+}
+
+function setupLogging() {
+  const logsDir = getLogsDir();
+  if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
+
+  const logPath = path.join(logsDir, 'main.log');
+  const prevPath = path.join(logsDir, 'main.log.1');
+
+  // Rotate previous log
+  if (fs.existsSync(logPath)) {
+    try {
+      fs.renameSync(logPath, prevPath);
+    } catch {
+      // Best-effort rotation
+    }
+  }
+
+  const stream = fs.createWriteStream(logPath, { flags: 'a' });
+  const origLog = console.log.bind(console);
+  const origWarn = console.warn.bind(console);
+  const origError = console.error.bind(console);
+
+  function write(level: string, args: unknown[]) {
+    const ts = new Date().toISOString();
+    const msg = args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
+    stream.write(`${ts} [${level}] ${msg}\n`);
+  }
+
+  console.log = (...args: unknown[]) => {
+    origLog(...args);
+    write('info', args);
+  };
+  console.warn = (...args: unknown[]) => {
+    origWarn(...args);
+    write('warn', args);
+  };
+  console.error = (...args: unknown[]) => {
+    origError(...args);
+    write('error', args);
+  };
+}
+
 // ── Window ───────────────────────────────────────────────────────
+
+let quitConfirmed = false;
 
 function createWindow() {
   const mainWindow = new BrowserWindow({
@@ -262,6 +323,28 @@ function createWindow() {
     return { action: 'deny' };
   });
 
+  // On non-macOS, closing the window quits the app — confirm if a review is in progress.
+  // On macOS, closing the window leaves the app running so reviews complete in the background.
+  if (process.platform !== 'darwin') {
+    mainWindow.on('close', (event) => {
+      if (quitConfirmed || activeGenerations.size === 0) return;
+      event.preventDefault();
+      const count = activeGenerations.size;
+      const response = dialog.showMessageBoxSync(mainWindow, {
+        type: 'question',
+        buttons: ['Cancel', 'Quit Anyway'],
+        defaultId: 0,
+        cancelId: 0,
+        message: `Quit while ${count === 1 ? 'a review is' : `${count} reviews are`} generating?`,
+        detail: `${count === 1 ? 'It' : 'They'} will be cancelled if you quit now.`,
+      });
+      if (response === 1) {
+        quitConfirmed = true;
+        mainWindow.destroy();
+      }
+    });
+  }
+
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     void mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
   } else {
@@ -274,7 +357,7 @@ function createWindow() {
 let dismissedUpdateVersion: string | null = null;
 
 async function runUpdateCheck() {
-  const update = await checkForUpdate(app.getVersion());
+  const update = await checkForUpdate(app.getVersion(), getResolvedToken() ?? undefined);
   if (!update) return;
   if (dismissedUpdateVersion === update.version) return;
 
@@ -316,219 +399,38 @@ function saveSeenReviewRequests(seen: Set<string>) {
 // Loaded once into memory; updated as reviews are triggered
 let seenReviewRequests = new Set<string>();
 
-async function triggerBackgroundReview(prUrl: string, prefs: Preferences, prTitle: string): Promise<void> {
-  // cachedToken is guaranteed to be set by the caller (runAutoReviewCheck).
-  const octokit = new Octokit({ auth: cachedToken ?? undefined });
-  const { owner, repo, pullNumber } = parsePrUrl(prUrl);
+async function triggerBackgroundReview(prUrl: string, prefs: Preferences): Promise<void> {
+  // cachedToken is guaranteed non-null by the caller (runAutoReviewCheck).
+  console.log(`[auto-review] Starting background review for ${prUrl}`);
+  const reviewId = crypto.randomUUID();
 
   try {
-    console.log(`[auto-review] Starting background review for ${prUrl}`);
+    const octokit = new Octokit({ auth: cachedToken ?? undefined });
+    const { owner, repo, pullNumber } = parsePrUrl(prUrl);
+    const prData = await getPrMetadata(octokit, owner, repo, pullNumber);
 
-    const [prData, diff, changedFiles] = await Promise.all([
-      getPrMetadata(octokit, owner, repo, pullNumber),
-      getPrDiff(octokit, owner, repo, pullNumber),
-      getChangedFiles(octokit, owner, repo, pullNumber),
-    ]);
+    const abortController = new AbortController();
+    createPendingHistoryEntry(reviewId, prData.title, prUrl, prData.author, prefs.model, 'open', prData.headSha, true);
+    activeGenerations.set(reviewId, { abortController });
 
-    if (changedFiles.length === 0) {
-      console.warn(`[auto-review] PR has no changed files: ${prUrl}`);
-      return;
-    }
-
-    const { normalFiles, generatedFiles } = classifyFiles(changedFiles);
-    const generatedFilenames = new Set(generatedFiles.map((f) => f.filename));
-    const filteredDiff = filterDiff(diff, generatedFilenames);
-    const excludedFilesSummary = buildExcludedFilesSummary(generatedFiles);
-
-    const baseRef = prData.baseBranch;
-    const headRef = prData.headSha;
-
-    const fileContents: Record<string, string> = {};
-    const headFileContents: Record<string, string> = {};
-    const concurrency = 5;
-    const filesToFetch = normalFiles.filter((f) => f.status !== 'deleted');
-    const filesToFetchBase = normalFiles.filter((f) => f.status !== 'added');
-
-    for (let i = 0; i < Math.max(filesToFetch.length, filesToFetchBase.length); i += concurrency) {
-      const headBatch = filesToFetch.slice(i, i + concurrency);
-      const baseBatch = filesToFetchBase.slice(i, i + concurrency);
-      await Promise.all([
-        ...headBatch.map(async (f) => {
-          const content = await getFileContent(octokit, owner, repo, f.filename, headRef);
-          if (content !== null) headFileContents[f.filename] = content;
-        }),
-        ...baseBatch.map(async (f) => {
-          const content = await getFileContent(octokit, owner, repo, f.filename, baseRef);
-          if (content !== null) fileContents[f.filename] = content;
-        }),
-      ]);
-    }
-
-    const allFileContents = { ...fileContents, ...headFileContents };
-    const neighborFiles = await getNeighborFiles(
-      octokit,
-      owner,
-      repo,
-      normalFiles.map((f) => f.filename),
-      allFileContents,
-      baseRef,
-      prefs.smartImports ? prefs.provider : undefined
-    );
-
-    const indexedHunks = buildIndexedHunks(filteredDiff, fileContents, headFileContents);
-    const expandedDiff = expandFullDiff(filteredDiff, fileContents, headFileContents);
-    const hunkIndex = formatHunkIndexForPrompt(indexedHunks);
-
-    const contextPackage = buildContextPackage(
-      prData,
-      expandedDiff,
-      changedFiles,
-      fileContents,
-      headFileContents,
-      neighborFiles,
-      hunkIndex,
-      excludedFilesSummary
-    );
-
-    const generationStart = Date.now();
-    const aiResult = await generateReviewGuide(
-      contextPackage,
+    const request: GenerateReviewRequest = {
       prUrl,
-      prefs.provider,
-      prefs.model,
-      prefs.instructions,
-      () => {}, // no streaming for background reviews
-      prefs.thinking,
-      prefs.signalBoost,
-      undefined,
-      undefined,
-      prefs.reviewSuggestions,
-      false,
-      () => {}
-    );
-    const generationDurationMs = Date.now() - generationStart;
-
-    const hunkMap = new Map(indexedHunks.map((h) => [h.id, h]));
-    const assignedIds = new Set<string>();
-
-    const resolvedSlides: Slide[] = aiResult.slides.map((aiSlide) => {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
-      const ids = aiSlide.diffHunkIds ?? [];
-      const diffHunks: DiffHunk[] = ids
-        .filter((id: string) => hunkMap.has(id) && !assignedIds.has(id))
-        .map((id: string) => {
-          assignedIds.add(id);
-          const h = hunkMap.get(id);
-          if (!h) throw new Error(`Hunk ${id} not found in index`);
-          return {
-            filePath: h.filePath,
-            hunkHeader: h.expandedHunkHeader,
-            content: h.expandedContent,
-            language: h.language,
-            renderedHtml: '',
-          };
-        });
-
-      return {
-        id: aiSlide.id,
-        slideNumber: aiSlide.slideNumber,
-        title: aiSlide.title,
-        slideType: aiSlide.slideType,
-        narrative: aiSlide.narrative,
-        reviewFocus: aiSlide.reviewFocus,
-        diffHunks: sortDiffHunks(diffHunks),
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
-        contextSnippets: aiSlide.contextSnippets ?? [],
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
-        affectedFiles: aiSlide.affectedFiles ?? [],
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
-        dependsOn: aiSlide.dependsOn ?? [],
-        mermaidDiagram: aiSlide.mermaidDiagram,
-        reviewChecks: aiSlide.reviewChecks,
-      };
-    });
-
-    const unassigned = indexedHunks.filter((h) => !assignedIds.has(h.id));
-    if (unassigned.length > 0) {
-      const otherHunks: DiffHunk[] = unassigned.map((h) => ({
-        filePath: h.filePath,
-        hunkHeader: h.expandedHunkHeader,
-        content: h.expandedContent,
-        language: h.language,
-        renderedHtml: '',
-      }));
-      resolvedSlides.push({
-        id: 'other-changes',
-        slideNumber: resolvedSlides.length + 1,
-        title: 'Other changes',
-        slideType: 'refactor',
-        narrative: 'Additional changes not covered in previous slides.',
-        reviewFocus: null,
-        diffHunks: sortDiffHunks(otherHunks),
-        contextSnippets: [],
-        affectedFiles: [...new Set(unassigned.map((h) => h.filePath))],
-        dependsOn: [],
-        mermaidDiagram: null,
-      });
-    }
-
-    const reviewGuide: ReviewGuide = {
-      prTitle: aiResult.prTitle || prData.title,
-      prDescription: aiResult.prDescription || prData.description,
-      prUrl,
-      author: aiResult.author || prData.author,
-      summary: aiResult.summary,
-      riskLevel: aiResult.riskLevel,
-      riskRationale: aiResult.riskRationale,
-      totalFilesChanged: changedFiles.length,
-      totalLinesChanged: changedFiles.reduce((sum, f) => sum + f.additions + f.deletions, 0),
-      neighborFileCount: Object.keys(neighborFiles).length,
-      excludedFiles: generatedFiles.length > 0 ? generatedFiles.map((f) => f.filename) : undefined,
-      generationDurationMs,
-      slides: resolvedSlides,
-      headSha: prData.headSha,
-      webSources: aiResult.webSources,
+      provider: prefs.provider,
+      model: prefs.model,
+      instructions: prefs.instructions,
+      thinking: prefs.thinking,
+      signalBoost: prefs.signalBoost,
+      smartImports: prefs.smartImports,
+      reviewSuggestions: prefs.reviewSuggestions,
     };
 
-    const codeTheme = loadPreferences().codeTheme;
-    for (const slide of reviewGuide.slides) {
-      for (const hunk of slide.diffHunks) {
-        try {
-          hunk.renderedHtml = await renderDiffHunk(hunk.content, hunk.language, codeTheme, hunk.hunkHeader);
-        } catch {
-          hunk.renderedHtml = `<pre class="diff-block">${hunk.content}</pre>`;
-        }
-      }
-    }
+    await runBackgroundGeneration(reviewId, request, prData, abortController.signal);
 
-    saveReviewToHistory(reviewGuide, prefs.model, true);
+    // Refresh the history list in all open windows
+    broadcastToAllWindows('new-review-in-history');
     console.log(`[auto-review] Completed review for ${prUrl}`);
-
-    // Tell open windows to refresh their history list
-    const windows = BrowserWindow.getAllWindows();
-    for (const win of windows) {
-      win.webContents.send('new-review-in-history');
-    }
-
-    // Show native OS notification; clicking just surfaces the app
-    if (Notification.isSupported()) {
-      const notification = new Notification({
-        title: 'Review ready',
-        body: prTitle || reviewGuide.prTitle,
-        silent: false,
-      });
-      notification.on('click', () => {
-        const win = BrowserWindow.getAllWindows()[0];
-        if (win) {
-          if (win.isMinimized()) win.restore();
-          win.focus();
-          win.webContents.send('new-review-in-history');
-        }
-      });
-      notification.show();
-    }
   } catch (err) {
-    console.error(`[auto-review] Failed to generate review for ${prUrl}:`, err);
+    console.error(`[auto-review] Failed to start background review for ${prUrl}:`, err);
   }
 }
 
@@ -555,7 +457,7 @@ async function runAutoReviewCheck() {
         // Only review PRs updated in the last 24 h — avoids flooding on first enable
         const updatedAt = new Date(pr.updatedAt).getTime();
         if (now - updatedAt <= AUTO_REVIEW_MAX_AGE_MS) {
-          void triggerBackgroundReview(pr.url, prefs, pr.title);
+          void triggerBackgroundReview(pr.url, prefs);
         } else {
           console.log(`[auto-review] Skipping stale PR (${Math.round((now - updatedAt) / 3_600_000)}h old): ${pr.url}`);
         }
@@ -583,17 +485,95 @@ function stopAutoReviewPolling() {
   }
 }
 
+// ── Auto-updater (Squirrel) ─────────────────────────────────────
+function setupAutoUpdater() {
+  if (!app.isPackaged) return;
+  if (process.platform === 'linux') return;
+
+  const feedURL = `https://update.electronjs.org/oddur/gnosis/${process.platform}-${process.arch}/${app.getVersion()}`;
+  try {
+    autoUpdater.setFeedURL({ url: feedURL });
+  } catch (err) {
+    console.warn('[main] Failed to set autoUpdater feed URL:', err);
+    return;
+  }
+
+  autoUpdater.on('update-downloaded', (_event, _releaseNotes, releaseName) => {
+    const version = releaseName.replace(/^v/, '');
+    const label = version ? ` ${version}` : '';
+    console.log(`[main] Update${label} downloaded, will install on exit`);
+    if (loadPreferences().notifications) {
+      const notif = new Notification({
+        title: 'A new update is ready to install',
+        body: `Gnosis${label} has been downloaded and will be automatically installed on exit`,
+        silent: true,
+      });
+      notif.show();
+    }
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send('update-ready', version);
+    }
+  });
+
+  autoUpdater.on('error', (err: Error) => {
+    console.warn('[main] Auto-updater error:', err.message);
+  });
+
+  // Check for updates automatically — download happens silently
+  autoUpdater.checkForUpdates();
+  setInterval(() => autoUpdater.checkForUpdates(), 4 * 60 * 60 * 1_000);
+}
+
 void app.whenReady().then(() => {
+  setupLogging();
+
+  // Expose packaged state to preload via env var (before creating windows)
+  process.env.APP_IS_PACKAGED = app.isPackaged ? '1' : '0';
+
+  // Mark any stale "generating" entries from a previous crash as failed
+  cleanupStaleGeneratingEntries();
   applyBinaryOverrides(loadPreferences());
   createWindow();
-  startUpdateChecks();
+  setupAutoUpdater();
+
+  // GitHub release polling only needed on Linux (no native auto-update)
+  if (process.platform === 'linux') {
+    startUpdateChecks();
+  }
+
   startAutoReviewPolling();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
-    if (!updateInterval) startUpdateChecks();
+    if (!updateInterval && process.platform === 'linux') startUpdateChecks();
     if (!autoReviewInterval) startAutoReviewPolling();
   });
+});
+
+app.on('before-quit', (event) => {
+  if (!quitConfirmed && activeGenerations.size > 0) {
+    event.preventDefault();
+    const count = activeGenerations.size;
+    const win = BrowserWindow.getAllWindows()[0];
+    const response = dialog.showMessageBoxSync(win, {
+      type: 'question',
+      buttons: ['Cancel', 'Quit Anyway'],
+      defaultId: 0,
+      cancelId: 0,
+      message: `Quit while ${count === 1 ? 'a review is' : `${count} reviews are`} generating?`,
+      detail: `${count === 1 ? 'It' : 'They'} will be cancelled if you quit now.`,
+    });
+    if (response === 1) {
+      quitConfirmed = true;
+      app.quit();
+    }
+    return;
+  }
+  // Mark any in-flight generations as failed
+  for (const [id] of activeGenerations) {
+    updateHistoryEntry(id, { status: 'failed', error: 'App quit during generation' });
+  }
+  activeGenerations.clear();
 });
 
 app.on('window-all-closed', () => {
@@ -622,34 +602,74 @@ function ensureReviewsDir() {
 
 function readReviewsIndex(): ReviewHistoryEntry[] {
   try {
-    return JSON.parse(fs.readFileSync(getReviewsIndexPath(), 'utf-8')) as ReviewHistoryEntry[];
+    const entries = JSON.parse(fs.readFileSync(getReviewsIndexPath(), 'utf-8')) as ReviewHistoryEntry[];
+    // Backward compat: entries without status are completed
+    return entries.map((e) => ({ ...e, status: e.status ?? 'completed' }));
   } catch {
     return [];
   }
 }
 
-function saveReviewToHistory(review: ReviewGuide, model?: ModelId, unread?: boolean): void {
+// ── Background generation tracking ──────────────────────────────
+
+const activeGenerations = new Map<string, { abortController?: AbortController }>();
+
+function createPendingHistoryEntry(
+  id: string,
+  prTitle: string,
+  prUrl: string,
+  author: string,
+  model?: ModelId,
+  prState?: 'open' | 'merged' | 'closed',
+  prHeadSha?: string,
+  unread?: boolean
+): void {
   ensureReviewsDir();
-  const id = Date.now().toString();
-  const savedAt = new Date().toISOString();
-
-  fs.writeFileSync(path.join(getReviewsDir(), `${id}.json`), JSON.stringify(review));
-
   const entry: ReviewHistoryEntry = {
     id,
-    prTitle: review.prTitle,
-    prUrl: review.prUrl,
-    author: review.author,
-    riskLevel: review.riskLevel,
+    prTitle,
+    prUrl,
+    author,
+    riskLevel: 'low', // placeholder until generation completes
+    status: 'generating',
     model,
-    generationDurationMs: review.generationDurationMs,
-    savedAt,
+    savedAt: new Date().toISOString(),
+    prState,
+    prHeadSha,
     ...(unread ? { unread: true } : {}),
   };
-
   const index = readReviewsIndex();
-  index.unshift(entry); // newest first
+  index.unshift(entry);
   fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+}
+
+function updateHistoryEntry(id: string, updates: Partial<ReviewHistoryEntry>): void {
+  const index = readReviewsIndex();
+  const idx = index.findIndex((e) => e.id === id);
+  if (idx === -1) return;
+  index[idx] = { ...index[idx], ...updates };
+  fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+}
+
+function broadcastToAllWindows(channel: string, ...args: unknown[]): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send(channel, ...args);
+  }
+}
+
+function cleanupStaleGeneratingEntries(): void {
+  const index = readReviewsIndex();
+  let changed = false;
+  for (const entry of index) {
+    if (entry.status === 'generating') {
+      entry.status = 'failed';
+      entry.error = 'Generation was interrupted';
+      changed = true;
+    }
+  }
+  if (changed) {
+    fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+  }
 }
 
 // ── Preferences helpers ─────────────────────────────────────────
@@ -673,7 +693,10 @@ const DEFAULT_PREFERENCES: Preferences = {
   codeFont: 'jetbrains-mono',
   claudePath: '',
   geminiPath: '',
+  notifications: true,
   diffLayout: 'unified',
+  includeAllFiles: true,
+  reviewSignature: true,
 };
 
 function applyBinaryOverrides(prefs: Preferences): void {
@@ -729,6 +752,19 @@ ipcMain.handle('open-external', (_event, url: string) => {
   }
 });
 
+ipcMain.handle('open-logs-directory', () => {
+  const logsDir = getLogsDir();
+  if (!fs.existsSync(logsDir)) fs.mkdirSync(logsDir, { recursive: true });
+  void shell.openPath(logsDir);
+});
+
+ipcMain.handle('open-review-prompt', (_event, id: string) => {
+  const promptPath = path.join(getReviewsDir(), `${id}-prompt.md`);
+  if (fs.existsSync(promptPath)) {
+    void shell.openPath(promptPath);
+  }
+});
+
 // Backward-compat shim — renderer still calls getConfig to check if signed in
 ipcMain.handle('get-config', () => {
   const token = getResolvedToken();
@@ -737,6 +773,16 @@ ipcMain.handle('get-config', () => {
 
 ipcMain.handle('start-oauth', async () => {
   await runOAuthFlow();
+});
+
+ipcMain.handle('save-pat', async (_event, token: string) => {
+  const trimmed = token.trim();
+  if (!trimmed) throw new Error('Token must not be empty');
+  const login = await validateAndFetchLogin(trimmed);
+  persistToken(trimmed);
+  cachedToken = trimmed;
+  cachedLogin = login;
+  return login;
 });
 
 ipcMain.handle('get-auth-state', async () => {
@@ -781,12 +827,12 @@ ipcMain.handle('save-preferences', (_event, prefs: Preferences) => {
 });
 
 ipcMain.handle('detect-binary-path', (_event, name: string) => {
-  const extra = name === 'claude' ? [`${os.homedir()}/.volta/bin/claude`] : [];
+  const extra = name === 'claude' ? [`${os.homedir()}/.volta/bin/claude`, `${os.homedir()}/.local/bin/claude`] : [];
   return detectBinaryPath(name, extra);
 });
 
 ipcMain.handle('check-cli-installed', (_event, provider: string) => {
-  const extra = provider === 'claude' ? [`${os.homedir()}/.volta/bin/claude`] : [];
+  const extra = provider === 'claude' ? [`${os.homedir()}/.volta/bin/claude`, `${os.homedir()}/.local/bin/claude`] : [];
   const resolved = resolveBinaryPath(provider, extra);
   const installed = path.isAbsolute(resolved) && fs.existsSync(resolved);
   return { installed, resolvedPath: resolved };
@@ -816,8 +862,10 @@ ipcMain.handle('mark-review-read', (_event, id: string) => {
 });
 
 ipcMain.handle('delete-review', (_event, id: string) => {
-  const filePath = path.join(getReviewsDir(), `${id}.json`);
-  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  const reviewPath = path.join(getReviewsDir(), `${id}.json`);
+  const promptPath = path.join(getReviewsDir(), `${id}-prompt.md`);
+  if (fs.existsSync(reviewPath)) fs.unlinkSync(reviewPath);
+  if (fs.existsSync(promptPath)) fs.unlinkSync(promptPath);
   const index = readReviewsIndex().filter((e) => e.id !== id);
   fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
 });
@@ -826,7 +874,7 @@ ipcMain.handle('delete-all-reviews', () => {
   const dir = getReviewsDir();
   if (fs.existsSync(dir)) {
     for (const file of fs.readdirSync(dir)) {
-      if (file.endsWith('.json')) fs.unlinkSync(path.join(dir, file));
+      if (file.endsWith('.json') || file.endsWith('-prompt.md')) fs.unlinkSync(path.join(dir, file));
     }
   }
   fs.writeFileSync(getReviewsIndexPath(), JSON.stringify([], null, 2));
@@ -840,7 +888,8 @@ ipcMain.handle(
     }
 
     const token = getResolvedToken();
-    const octokit = new Octokit({ auth: token ?? undefined });
+    if (!token) return { status: 'unknown', reason: 'Not signed in' };
+    const octokit = new Octokit({ auth: token });
     const { owner, repo, pullNumber } = parsePrUrl(prUrl);
 
     try {
@@ -921,31 +970,52 @@ ipcMain.handle('get-pr-status', async (_event, prUrl: string): Promise<PrStatus>
 });
 
 ipcMain.handle(
-  'generate-review',
-  async (
-    _event,
-    {
-      prUrl,
-      provider,
-      model,
-      instructions,
-      thinking,
-      signalBoost,
-      smartImports,
-      reviewSuggestions,
-      webResearch,
-    }: GenerateReviewRequest
-  ) => {
+  'get-pr-state',
+  async (_event, prUrl: string): Promise<{ prState: 'open' | 'merged' | 'closed'; headSha: string }> => {
     const token = getResolvedToken();
     const octokit = new Octokit({ auth: token ?? undefined });
+    const { owner, repo, pullNumber } = parsePrUrl(prUrl);
+    const prData = await getPrMetadata(octokit, owner, repo, pullNumber);
+    const prState = prData.merged ? 'merged' : prData.state === 'open' ? 'open' : 'closed';
+    return { prState, headSha: prData.headSha };
+  }
+);
 
+ipcMain.handle('get-pr-files', async (_event, prUrl: string): Promise<ChangedFile[]> => {
+  const token = getResolvedToken();
+  const octokit = new Octokit({ auth: token ?? undefined });
+  const { owner, repo, pullNumber } = parsePrUrl(prUrl);
+  return getChangedFiles(octokit, owner, repo, pullNumber);
+});
+
+// ── Background review generation ────────────────────────────────
+
+async function runBackgroundGeneration(
+  reviewId: string,
+  request: GenerateReviewRequest,
+  prData: Awaited<ReturnType<typeof getPrMetadata>>,
+  signal: AbortSignal
+): Promise<void> {
+  const { prUrl, provider, model, instructions, thinking, signalBoost, smartImports, reviewSuggestions, webResearch } =
+    request;
+
+  try {
+    const token = getResolvedToken();
+    const octokit = new Octokit({ auth: token ?? undefined });
     const { owner, repo, pullNumber } = parsePrUrl(prUrl);
 
-    const [prData, diff, changedFiles] = await Promise.all([
-      getPrMetadata(octokit, owner, repo, pullNumber),
+    broadcastToAllWindows('review-phase', { reviewId, phase: 'Fetching PR data' });
+
+    const [diff, allChangedFiles] = await Promise.all([
       getPrDiff(octokit, owner, repo, pullNumber),
       getChangedFiles(octokit, owner, repo, pullNumber),
     ]);
+
+    // Apply user exclusions before any other processing
+    const userExcludedSet = new Set(request.excludedFiles ?? []);
+    const changedFiles =
+      userExcludedSet.size > 0 ? allChangedFiles.filter((f) => !userExcludedSet.has(f.filename)) : allChangedFiles;
+    const userFilteredDiff = userExcludedSet.size > 0 ? filterDiff(diff, userExcludedSet) : diff;
 
     if (changedFiles.length === 0) {
       throw new Error('PR has no changed files');
@@ -954,7 +1024,7 @@ ipcMain.handle(
     // Filter out generated/lock files early to avoid token budget blowup
     const { normalFiles, generatedFiles } = classifyFiles(changedFiles);
     const generatedFilenames = new Set(generatedFiles.map((f) => f.filename));
-    const filteredDiff = filterDiff(diff, generatedFilenames);
+    const filteredDiff = filterDiff(userFilteredDiff, generatedFilenames);
     const excludedFilesSummary = buildExcludedFilesSummary(generatedFiles);
 
     if (generatedFiles.length > 0) {
@@ -966,6 +1036,8 @@ ipcMain.handle(
 
     const baseRef = prData.baseBranch;
     const headRef = prData.headSha;
+
+    broadcastToAllWindows('review-phase', { reviewId, phase: 'Fetching file contents' });
 
     const fileContents: Record<string, string> = {};
     const headFileContents: Record<string, string> = {};
@@ -988,6 +1060,8 @@ ipcMain.handle(
       ]);
     }
 
+    broadcastToAllWindows('review-phase', { reviewId, phase: 'Resolving imports' });
+
     const allFileContents = { ...fileContents, ...headFileContents };
     const neighborFiles = await getNeighborFiles(
       octokit,
@@ -998,6 +1072,8 @@ ipcMain.handle(
       baseRef,
       smartImports ? provider : undefined
     );
+
+    broadcastToAllWindows('review-phase', { reviewId, phase: 'Building context' });
 
     // Parse diff into indexed hunks and build expanded diff (using filtered diff)
     const indexedHunks = buildIndexedHunks(filteredDiff, fileContents, headFileContents);
@@ -1015,7 +1091,9 @@ ipcMain.handle(
       excludedFilesSummary
     );
 
-    console.log('[main] Generating review guide...');
+    broadcastToAllWindows('review-phase', { reviewId, phase: 'Generating review' });
+
+    console.log(`[main] Generating review guide (${reviewId})...`);
     const generationStart = Date.now();
 
     const prefs = loadPreferences();
@@ -1034,6 +1112,7 @@ ipcMain.handle(
     }
 
     let aiResult;
+    let lastStreamPhase: string | null = null;
     try {
       aiResult = await generateReviewGuide(
         contextPackage,
@@ -1041,20 +1120,56 @@ ipcMain.handle(
         provider,
         model,
         instructions,
-        (chunk, isThinking) => _event.sender.send('review-progress', { chunk, isThinking }),
+        (chunk, isThinking) => {
+          const phase = isThinking ? 'Thinking' : 'Generating review';
+          if (phase !== lastStreamPhase) {
+            lastStreamPhase = phase;
+            broadcastToAllWindows('review-phase', { reviewId, phase });
+          }
+          broadcastToAllWindows('review-progress', { reviewId, chunk, isThinking });
+        },
         thinking ?? false,
         signalBoost ?? false,
         mcpConfigPath,
         allowedTools,
         reviewSuggestions ?? true,
         webResearch ?? false,
-        (toolName) => _event.sender.send('review-tool-use', { toolName })
+        (toolName) => broadcastToAllWindows('review-tool-use', { reviewId, toolName }),
+        (system, userMessage) => {
+          broadcastToAllWindows('review-stats', {
+            reviewId,
+            inputBytes: system.length + userMessage.length,
+          });
+          try {
+            ensureReviewsDir();
+            fs.writeFileSync(
+              path.join(getReviewsDir(), `${reviewId}-prompt.md`),
+              `# System Prompt\n\n${system}\n\n# User Message\n\n${userMessage}\n`
+            );
+          } catch {
+            // Best-effort — don't fail the review if prompt save fails
+          }
+        },
+        signal
       );
     } finally {
       if (mcpConfigPath) cleanupMcpConfig(mcpConfigPath);
     }
 
     const generationDurationMs = Date.now() - generationStart;
+
+    // Append raw model response to prompt file (best-effort)
+    try {
+      const promptPath = path.join(getReviewsDir(), `${reviewId}-prompt.md`);
+      if (fs.existsSync(promptPath)) {
+        fs.appendFileSync(
+          promptPath,
+          `\n---\n\n# Model Response\n\n\`\`\`json\n${JSON.stringify(aiResult, null, 2)}\n\`\`\`\n`
+        );
+      }
+    } catch {
+      // Best-effort
+    }
 
     // Resolve hunk IDs → real DiffHunk objects
     const hunkMap = new Map(indexedHunks.map((h) => [h.id, h]));
@@ -1067,7 +1182,6 @@ ipcMain.handle(
         .filter((id: string) => hunkMap.has(id) && !assignedIds.has(id))
         .map((id: string) => {
           assignedIds.add(id);
-          // Safe: filter above guarantees hunkMap.has(id)
           const h = hunkMap.get(id);
           if (!h) throw new Error(`Hunk ${id} not found in index`);
           return {
@@ -1171,6 +1285,8 @@ ipcMain.handle(
       webSources: aiResult.webSources,
     };
 
+    broadcastToAllWindows('review-phase', { reviewId, phase: 'Rendering' });
+
     // Render syntax-highlighted HTML for each hunk
     const codeTheme = loadPreferences().codeTheme;
     for (const slide of reviewGuide.slides) {
@@ -1184,10 +1300,98 @@ ipcMain.handle(
       }
     }
 
-    saveReviewToHistory(reviewGuide, model);
-    return reviewGuide;
+    // Save review JSON and update history entry to completed
+    fs.writeFileSync(path.join(getReviewsDir(), `${reviewId}.json`), JSON.stringify(reviewGuide));
+    updateHistoryEntry(reviewId, {
+      status: 'completed',
+      riskLevel: reviewGuide.riskLevel,
+      generationDurationMs,
+    });
+
+    broadcastToAllWindows('review-completed', { reviewId });
+
+    // Desktop notification
+    if (loadPreferences().notifications) {
+      const notif = new Notification({
+        title: 'Review ready',
+        body: prData.title,
+        silent: true,
+      });
+      notif.on('click', () => {
+        broadcastToAllWindows('review-navigate', { reviewId });
+        const windows = BrowserWindow.getAllWindows();
+        if (windows.length > 0) {
+          const win = windows[0];
+          if (win.isMinimized()) win.restore();
+          win.focus();
+        }
+      });
+      notif.show();
+    }
+
+    console.log(`[main] Review ${reviewId} completed in ${formatMs(generationDurationMs)}`);
+  } catch (err) {
+    const isCancelled = err instanceof Error && err.message === 'GNOSIS_CANCELLED';
+    const errorMessage = isCancelled ? 'Cancelled' : err instanceof Error ? err.message : 'Unknown error';
+    if (!isCancelled) console.error(`[main] Review ${reviewId} failed:`, errorMessage);
+
+    updateHistoryEntry(reviewId, {
+      status: 'failed',
+      error: errorMessage,
+    });
+
+    broadcastToAllWindows('review-failed', { reviewId, error: errorMessage });
+  } finally {
+    activeGenerations.delete(reviewId);
   }
-);
+}
+
+function formatMs(ms: number): string {
+  const s = Math.round(ms / 1000);
+  return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+}
+
+ipcMain.handle('start-review', async (_event, request: GenerateReviewRequest): Promise<StartReviewResult> => {
+  const token = getResolvedToken();
+  const octokit = new Octokit({ auth: token ?? undefined });
+  const { owner, repo, pullNumber } = parsePrUrl(request.prUrl);
+
+  // Fetch PR metadata (fast, single API call)
+  const prData = await getPrMetadata(octokit, owner, repo, pullNumber);
+
+  const reviewId = crypto.randomUUID();
+  const prState = prData.merged ? 'merged' : prData.state === 'open' ? 'open' : 'closed';
+
+  // Create pending history entry
+  createPendingHistoryEntry(
+    reviewId,
+    prData.title,
+    request.prUrl,
+    prData.author,
+    request.model,
+    prState,
+    prData.headSha
+  );
+
+  // Track and fire off background generation (no await)
+  const abortController = new AbortController();
+  activeGenerations.set(reviewId, { abortController });
+  void runBackgroundGeneration(reviewId, request, prData, abortController.signal);
+
+  return {
+    reviewId,
+    prTitle: prData.title,
+    prUrl: request.prUrl,
+    author: prData.author,
+  };
+});
+
+ipcMain.handle('cancel-review', (_event, reviewId: string) => {
+  const gen = activeGenerations.get(reviewId);
+  if (gen?.abortController) {
+    gen.abortController.abort('User cancelled');
+  }
+});
 
 ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
   const chatProvider = getProvider(req.provider);
@@ -1274,6 +1478,11 @@ ipcMain.handle('submit-review', async (_event, req: SubmitReviewRequest) => {
     const droppedText = droppedComments.map((c) => `**${c.path}:${c.line}** — ${c.body}`).join('\n\n');
     const suffix = `\n\n---\n_${droppedComments.length} comment(s) could not be posted inline (lines outside the diff range):_\n\n${droppedText}`;
     reviewBody = (reviewBody || '') + suffix;
+  }
+
+  const prefs = loadPreferences();
+  if (prefs.reviewSignature) {
+    reviewBody = (reviewBody || '') + '\n\n---\n_Reviewed using [gnosis.to](https://gnosis.to)_';
   }
 
   const { data } = await octokit.pulls.createReview({

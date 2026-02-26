@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
+import { FolderOpen } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
 import { CODE_THEMES, CODE_FONTS } from '@/lib/constants';
 import type { CodeTheme, CodeFont } from '@/lib/constants';
 
@@ -21,6 +23,8 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange }: Props) {
   const [codeFont, setCodeFont] = useState<CodeFont>('jetbrains-mono');
   const [enableTools, setEnableTools] = useState(false);
   const [autoReviewOnRequest, setAutoReviewOnRequest] = useState(false);
+  const [notifications, setNotifications] = useState(true);
+  const [reviewSignature, setReviewSignature] = useState(true);
   const [claudePath, setClaudePath] = useState('');
   const [geminiPath, setGeminiPath] = useState('');
   const [claudeDetected, setClaudeDetected] = useState('');
@@ -33,6 +37,8 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange }: Props) {
       if (prefs.codeFont) setCodeFont(prefs.codeFont as CodeFont);
       setEnableTools(prefs.enableTools);
       setAutoReviewOnRequest(prefs.autoReviewOnRequest ?? false);
+      setNotifications(prefs.notifications);
+      setReviewSignature(prefs.reviewSignature);
       setClaudePath(prefs.claudePath || '');
       setGeminiPath(prefs.geminiPath || '');
     });
@@ -164,6 +170,60 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange }: Props) {
             </button>
           </div>
 
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-col gap-0.5">
+              <label className="text-sm font-medium">Desktop notifications</label>
+              <p className="text-xs text-muted-foreground">Notify when a review completes</p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={notifications}
+              onClick={() => {
+                const next = !notifications;
+                setNotifications(next);
+                saveField({ notifications: next });
+              }}
+              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
+                notifications ? 'bg-primary' : 'bg-muted'
+              }`}
+            >
+              <span
+                className={`pointer-events-none block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                  notifications ? 'translate-x-4' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-col gap-0.5">
+              <label className="text-sm font-medium">Review signature</label>
+              <p className="text-xs text-muted-foreground">
+                Append a &ldquo;Reviewed using gnosis.to&rdquo; link to posted reviews
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={reviewSignature}
+              onClick={() => {
+                const next = !reviewSignature;
+                setReviewSignature(next);
+                saveField({ reviewSignature: next });
+              }}
+              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
+                reviewSignature ? 'bg-primary' : 'bg-muted'
+              }`}
+            >
+              <span
+                className={`pointer-events-none block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                  reviewSignature ? 'translate-x-4' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+
           <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium">Claude CLI path</label>
             <input
@@ -188,6 +248,18 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange }: Props) {
               className="rounded-md border border-input bg-transparent px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
             />
             <p className="text-xs text-muted-foreground">Leave empty to auto-detect</p>
+          </div>
+
+          <div className="border-t border-border pt-4">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={() => void window.electronAPI.openLogsDirectory()}
+            >
+              <FolderOpen className="h-3.5 w-3.5" />
+              Open logs
+            </Button>
           </div>
         </div>
       </DialogContent>

@@ -54,7 +54,7 @@ function InteractiveHunk({
           `parsed=${lineInfos.length} html=${lineHtmls.length}, falling back to non-interactive`
       );
     }
-    return <div dangerouslySetInnerHTML={{ __html: hunk.renderedHtml }} />;
+    return <div className="select-text" dangerouslySetInnerHTML={{ __html: hunk.renderedHtml }} />;
   }
 
   const lines: ParsedLine[] = lineInfos.map((info, i) => ({
@@ -82,7 +82,7 @@ function InteractiveHunk({
   const hasDiff = lineInfos.some((l) => l.type !== 'context');
 
   return (
-    <pre className={shikiStyles.preClass} style={shikiStyles.preStyle}>
+    <pre className={`${shikiStyles.preClass} select-text`} style={shikiStyles.preStyle}>
       <code style={{ display: 'block', fontSize: 0, minWidth: '100%', width: 'max-content' }}>
         {lines.map((line, idx) => {
           const lineComments = pendingComments.filter(

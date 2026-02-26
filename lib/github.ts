@@ -31,6 +31,7 @@ export async function getPrMetadata(
     headSha: data.head.sha,
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- GitHub API can return null
     merged: data.merged ?? false,
+    state: data.state,
     createdAt: data.created_at,
     updatedAt: data.updated_at,
     url: data.html_url,

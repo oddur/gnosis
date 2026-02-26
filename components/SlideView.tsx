@@ -114,7 +114,7 @@ export function SlideView({
             </Badge>
           </div>
 
-          <h2 className="text-lg font-semibold leading-tight font-display">{slide.title}</h2>
+          <h2 className="text-lg font-semibold leading-tight font-display select-text">{slide.title}</h2>
 
           <Markdown className="text-sm text-muted-foreground leading-relaxed">{slide.narrative}</Markdown>
 
@@ -140,7 +140,7 @@ export function SlideView({
                 })}
               </ul>
             ) : (
-              <Markdown className="text-sm review-focus-content">{slide.reviewFocus}</Markdown>
+              <Markdown className="text-sm review-focus-content">{slide.reviewFocus ?? ''}</Markdown>
             )}
           </div>
 

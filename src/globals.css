@@ -129,10 +129,79 @@
   * {
     @apply border-border outline-ring/50;
     scrollbar-color: oklch(0.35 0 0) transparent;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
   }
+
+  html,
+  body {
+    overscroll-behavior: none;
+    overflow: hidden;
+  }
+
   body {
     @apply bg-background text-foreground;
     font-family: var(--font-sans);
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  input,
+  textarea,
+  [contenteditable],
+  .selectable {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  label,
+  button,
+  [role='button'],
+  span,
+  p,
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  .ui-label {
+    cursor: default;
+  }
+
+  input,
+  textarea,
+  [contenteditable] {
+    cursor: text;
+  }
+
+  a,
+  button,
+  summary,
+  [role='button'],
+  .clickable {
+    cursor: pointer;
+  }
+
+  img,
+  a,
+  svg {
+    -webkit-user-drag: none;
+  }
+
+  button:focus:not(:focus-visible),
+  [role='button']:focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  button:focus-visible,
+  [role='button']:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
   }
 }
 

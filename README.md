@@ -25,13 +25,16 @@ It runs locally and uses the [Claude Code CLI](https://claude.ai/code) or [Gemin
 - **Smart imports** — uses a fast model to detect local file imports across all languages (C#, Rust, Python, Go, etc.), giving reviewers context beyond just JS/TS `import` statements
 - **PR browser** — browse your open PRs and review requests instead of pasting URLs
 - **Stale review detection** — if a PR receives new commits after your review was generated, a banner shows what changed and offers to re-generate
+- **Background generation** — reviews generate in the background with live phase indicators; submit multiple PRs and keep browsing while they run
 - **Review history** — past reviews are saved locally and grouped by PR on the home screen
+- **Clickable review checks** — click a "what to check" item to scroll directly to the relevant code in the diff
+- **Large file filtering** — automatically detects and excludes large generated files (lockfiles, bundles) from the review to keep the AI focused on meaningful changes
 - **Mermaid diagrams** — slides can include architecture and flow diagrams, viewable in fullscreen
 - **Risk assessment** — each review is rated low/medium/high risk based on what changed
 - **Clickable file paths** — diff header file paths link directly to the file on GitHub
 - **Configurable CLI paths** — if the CLI isn't auto-detected (e.g. Finder/Dock launch), set the path manually in Settings
 - **Code appearance** — pick your code font and syntax theme in Settings
-- **Update notifications** — in-app banner when a new release is available
+- **Auto-update** — automatically downloads and installs new releases; falls back to an in-app banner on platforms without auto-update support
 - **Cross-platform** — builds for macOS, Windows, and Linux (deb/rpm)
 
 ## Requirements
@@ -39,7 +42,6 @@ It runs locally and uses the [Claude Code CLI](https://claude.ai/code) or [Gemin
 - **At least one** of the following CLIs installed and authenticated:
   - [Claude Code CLI](https://claude.ai/code) — authenticate with `claude auth`
   - [Gemini CLI](https://github.com/google-gemini/gemini-cli)
-- Node.js 20+
 
 ## Install
 
@@ -48,11 +50,7 @@ brew tap oddur/gnosis
 brew install --cask gnosis
 ```
 
-Or download manually from [GitHub Releases](https://github.com/oddur/gnosis/releases). The app is not code-signed — macOS will block it on first launch. After moving to `/Applications`, run:
-
-```bash
-xattr -cr /Applications/Gnosis.app
-```
+Or download manually from [GitHub Releases](https://github.com/oddur/gnosis/releases). The macOS build is code-signed and notarized.
 
 ## Update
 
@@ -68,7 +66,7 @@ On first launch, click **Sign in with GitHub** to authenticate via OAuth.
 2. Choose a provider (Claude or Gemini) and model
 3. Optionally enable **Extended thinking** for deeper analysis (Claude only, slower)
 4. Optionally add custom instructions — e.g. _focus on security_, _explain the auth flow_
-5. Hit **Generate Review**
+5. Hit **Generate Review** — the review generates in the background so you can submit more PRs or browse existing reviews while it runs
 
 Navigate slides with **← →** or the Prev/Next buttons. Drag the divider between the narrative and diff panels to resize.
 

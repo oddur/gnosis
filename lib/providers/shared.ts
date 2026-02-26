@@ -50,6 +50,7 @@ export function detectBinaryPath(name: string, extraCandidates: string[] = []): 
   const candidates = [
     `/usr/local/bin/${name}`,
     `/opt/homebrew/bin/${name}`,
+    `${home}/.local/bin/${name}`,
     `${home}/.npm-global/bin/${name}`,
     `${home}/.nvm/current/bin/${name}`,
     ...extraCandidates,
@@ -116,16 +117,31 @@ export interface StreamingCliOptions {
   installHint: string;
   /** Custom error handler for non-zero exit codes. Return an Error or undefined to use default. */
   handleExitError?: (stderr: string) => Error | undefined;
+  /** When aborted, kills the child process and rejects with a cancellation error. */
+  signal?: AbortSignal;
 }
 
 /**
  * Spawn a CLI process with streaming stdout line-buffering, debug logging,
  * and ENOENT handling. Used by both Claude and Gemini providers.
  */
+function withBinDir(binPath: string, env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv {
+  const binDir = path.dirname(binPath);
+  const existing = env?.PATH ?? process.env.PATH ?? '';
+  return { ...env, PATH: `${binDir}${path.delimiter}${existing}` };
+}
+
 export function spawnCliStreaming(opts: StreamingCliOptions): Promise<void> {
   return new Promise((resolve, reject) => {
-    const proc = spawn(opts.binPath, opts.args, { env: opts.env });
+    const proc = spawn(opts.binPath, opts.args, { env: withBinDir(opts.binPath, opts.env) });
     const tag = `[${opts.cliName}]`;
+
+    if (opts.signal) {
+      const onAbort = () => {
+        proc.kill();
+      };
+      opts.signal.addEventListener('abort', onAbort, { once: true });
+    }
 
     proc.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'ENOENT') {
@@ -158,12 +174,19 @@ export function spawnCliStreaming(opts: StreamingCliOptions): Promise<void> {
       stderr += chunk.toString();
     });
 
+    proc.stdin.on('error', () => {
+      // Ignore EPIPE — the process may exit before stdin write completes
+    });
     proc.stdin.write(opts.stdinContent);
     proc.stdin.end();
 
     proc.on('close', (code: number | null) => {
       debugStream.end();
       if (lineBuffer.trim()) opts.processLine(lineBuffer);
+      if (opts.signal?.aborted) {
+        reject(new Error('GNOSIS_CANCELLED'));
+        return;
+      }
       if (code === 0) {
         const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
         console.log(`${tag} CLI finished in ${elapsed}s -> ${debugPath}`);
@@ -194,7 +217,7 @@ export interface QuickCliOptions {
  */
 export function spawnCliQuick(opts: QuickCliOptions): Promise<string> {
   return new Promise((resolve, reject) => {
-    const proc = spawn(opts.binPath, opts.args, { env: opts.env });
+    const proc = spawn(opts.binPath, opts.args, { env: withBinDir(opts.binPath, opts.env) });
 
     proc.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'ENOENT') {
@@ -214,6 +237,9 @@ export function spawnCliQuick(opts: QuickCliOptions): Promise<string> {
       stderr += chunk.toString();
     });
 
+    proc.stdin.on('error', () => {
+      // Ignore EPIPE — the process may exit before stdin write completes
+    });
     proc.stdin.write(opts.stdinContent);
     proc.stdin.end();
 

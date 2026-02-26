@@ -1,6 +1,7 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
+import { cn } from '@/lib/utils';
 
 interface Props {
   children: string;
@@ -58,7 +59,7 @@ const components: Components = {
 
 export function Markdown({ children, className }: Props) {
   return (
-    <div className={className}>
+    <div className={cn('select-text', className)}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {children}
       </ReactMarkdown>

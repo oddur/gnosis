@@ -72,7 +72,7 @@ function SplitDiffCell({
         {lineNum ?? ''}
       </span>
       <span
-        className={`split-diff-code ${cellClass}`}
+        className={`split-diff-code select-text ${cellClass}`}
         style={{ paddingLeft: '0.5ch', paddingRight: '1ch', whiteSpace: 'pre' }}
       >
         {html ? <span dangerouslySetInnerHTML={{ __html: html }} /> : null}
@@ -106,7 +106,7 @@ function SplitHunk({
   }, [lineInfos, lineHtmls]);
 
   if (!splitRows) {
-    return <div dangerouslySetInnerHTML={{ __html: hunk.renderedHtml }} />;
+    return <div className="select-text" dangerouslySetInnerHTML={{ __html: hunk.renderedHtml }} />;
   }
 
   const isInteractive = !!commentCallbacks;

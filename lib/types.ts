@@ -138,10 +138,21 @@ export interface ReviewHistoryEntry {
   prUrl: string;
   author: string;
   riskLevel: 'low' | 'medium' | 'high';
+  status?: 'generating' | 'completed' | 'failed'; // undefined defaults to 'completed' (backward compat)
+  error?: string;
   model?: ModelId;
   generationDurationMs?: number;
   savedAt: string; // ISO date string
   unread?: boolean;
+  prState?: 'open' | 'merged' | 'closed';
+  prHeadSha?: string;
+}
+
+export interface StartReviewResult {
+  reviewId: string;
+  prTitle: string;
+  prUrl: string;
+  author: string;
 }
 
 export type Provider = 'claude' | 'gemini';
@@ -172,7 +183,10 @@ export interface Preferences {
   codeFont: string;
   claudePath: string;
   geminiPath: string;
+  notifications: boolean;
   diffLayout: 'unified' | 'split';
+  includeAllFiles: boolean;
+  reviewSignature: boolean;
 }
 
 export interface SendSlideChatRequest {
@@ -200,6 +214,7 @@ export interface GenerateReviewRequest {
   smartImports?: boolean;
   reviewSuggestions?: boolean;
   webResearch?: boolean;
+  excludedFiles?: string[];
 }
 
 export interface GenerateReviewResponse {
@@ -252,6 +267,7 @@ export interface PrMetadata {
   headBranch: string;
   headSha: string;
   merged: boolean;
+  state: 'open' | 'closed';
   createdAt: string;
   updatedAt: string;
   url: string;

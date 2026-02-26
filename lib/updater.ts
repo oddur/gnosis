@@ -18,11 +18,11 @@ function isNewer(remote: string, local: string): boolean {
   return false;
 }
 
-export async function checkForUpdate(currentVersion: string): Promise<UpdateInfo | null> {
+export async function checkForUpdate(currentVersion: string, token?: string): Promise<UpdateInfo | null> {
   try {
-    const res = await fetch('https://api.github.com/repos/oddur/gnosis/releases/latest', {
-      headers: { 'User-Agent': 'Gnosis-App' },
-    });
+    const headers: Record<string, string> = { 'User-Agent': 'Gnosis-App' };
+    if (token) headers['Authorization'] = `token ${token}`;
+    const res = await fetch('https://api.github.com/repos/oddur/gnosis/releases/latest', { headers });
     if (!res.ok) return null;
 
     const data = (await res.json()) as GitHubRelease;

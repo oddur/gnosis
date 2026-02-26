@@ -23,7 +23,7 @@ export const claudeProvider: LLMProvider = {
     { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', quick: true },
   ],
 
-  async generate({ content, systemPrompt, model, thinking, onChunk, onToolUse, mcpConfigPath, allowedTools }) {
+  async generate({ content, systemPrompt, model, thinking, onChunk, onToolUse, mcpConfigPath, allowedTools, signal }) {
     const claudePath = resolveClaudePath();
     let fullText = '';
 
@@ -97,9 +97,14 @@ export const claudeProvider: LLMProvider = {
       processLine,
       env: makeClaudeEnv(thinking),
       installHint: INSTALL_HINT,
+      signal,
       handleExitError: (stderr: string) => {
+        const stderrTrimmed = stderr.trim();
+        if (streamError && stderrTrimmed && !stderrTrimmed.includes(streamError)) {
+          return new Error(`${streamError} — ${stderrTrimmed.slice(0, 200)}`);
+        }
         if (streamError) return new Error(streamError);
-        if (stderr) return new Error(stderr.slice(0, 300));
+        if (stderrTrimmed) return new Error(stderrTrimmed.slice(0, 300));
         return undefined;
       },
     });

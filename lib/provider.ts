@@ -11,6 +11,7 @@ export interface GenerateOptions {
   onToolUse?: (toolName: string) => void;
   mcpConfigPath?: string;
   allowedTools?: string[];
+  signal?: AbortSignal;
 }
 
 export interface QuickOptions {

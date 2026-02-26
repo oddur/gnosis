@@ -26,7 +26,7 @@ export const geminiProvider: LLMProvider = {
     { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
   ],
 
-  async generate({ content, systemPrompt, model, onChunk }) {
+  async generate({ content, systemPrompt, model, onChunk, signal }) {
     const geminiPath = resolveGeminiPath();
     let fullText = '';
 
@@ -55,6 +55,7 @@ export const geminiProvider: LLMProvider = {
       processLine,
       installHint: INSTALL_HINT,
       handleExitError: handleGeminiExitError,
+      signal,
     });
 
     return fullText.trim();
