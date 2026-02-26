@@ -141,6 +141,7 @@ export interface ReviewHistoryEntry {
   model?: ModelId;
   generationDurationMs?: number;
   savedAt: string; // ISO date string
+  unread?: boolean;
 }
 
 export type Provider = 'claude' | 'gemini';

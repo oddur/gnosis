@@ -69,11 +69,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   detectBinaryPath: (name: string): Promise<string> => ipcRenderer.invoke('detect-binary-path', name),
   checkCliInstalled: (provider: string): Promise<{ installed: boolean; resolvedPath: string }> =>
     ipcRenderer.invoke('check-cli-installed', provider),
-  onAutoReviewReady: (callback: (review: ReviewGuide) => void): void => {
-    ipcRenderer.on('auto-review-ready', (_event, review: ReviewGuide) => callback(review));
+  onNewReviewInHistory: (callback: () => void): void => {
+    ipcRenderer.on('new-review-in-history', () => callback());
   },
-  offAutoReviewReady: (): void => {
-    ipcRenderer.removeAllListeners('auto-review-ready');
+  offNewReviewInHistory: (): void => {
+    ipcRenderer.removeAllListeners('new-review-in-history');
   },
+  markReviewRead: (id: string): Promise<void> => ipcRenderer.invoke('mark-review-read', id),
   platform: process.platform,
 });

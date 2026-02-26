@@ -285,6 +285,7 @@ function startUpdateChecks() {
 // ── Auto-review on reviewer assignment ──────────────────────────
 
 const AUTO_REVIEW_POLL_INTERVAL_MS = 5 * 60 * 1_000; // 5 minutes
+const AUTO_REVIEW_MAX_AGE_MS = 24 * 60 * 60 * 1_000; // ignore PRs not updated within 24 h
 
 function getSeenReviewRequestsPath() {
   return path.join(app.getPath('userData'), 'seen-review-requests.json');
@@ -491,16 +492,16 @@ async function triggerBackgroundReview(prUrl: string, prefs: Preferences, prTitl
       }
     }
 
-    saveReviewToHistory(reviewGuide, prefs.model);
+    saveReviewToHistory(reviewGuide, prefs.model, true);
     console.log(`[auto-review] Completed review for ${prUrl}`);
 
-    // Notify all open windows so the renderer can navigate to the review
+    // Tell open windows to refresh their history list
     const windows = BrowserWindow.getAllWindows();
     for (const win of windows) {
-      win.webContents.send('auto-review-ready', reviewGuide);
+      win.webContents.send('new-review-in-history');
     }
 
-    // Show native OS notification
+    // Show native OS notification; clicking just surfaces the app
     if (Notification.isSupported()) {
       const notification = new Notification({
         title: 'Review ready',
@@ -512,7 +513,7 @@ async function triggerBackgroundReview(prUrl: string, prefs: Preferences, prTitl
         if (win) {
           if (win.isMinimized()) win.restore();
           win.focus();
-          win.webContents.send('auto-review-ready', reviewGuide);
+          win.webContents.send('new-review-in-history');
         }
       });
       notification.show();
@@ -531,13 +532,23 @@ async function runAutoReviewCheck() {
   try {
     const octokit = new Octokit({ auth: token });
     const prs = await searchPullRequests(octokit, cachedLogin);
+    // searchPullRequests already queries `is:open`, so merged/closed PRs are excluded
     const reviewRequested = prs.filter((pr) => pr.role === 'review-requested');
+    const now = Date.now();
 
     for (const pr of reviewRequested) {
       if (!seenReviewRequests.has(pr.url)) {
+        // Always mark as seen so we never trigger the same PR twice
         seenReviewRequests.add(pr.url);
         saveSeenReviewRequests(seenReviewRequests);
-        void triggerBackgroundReview(pr.url, prefs, pr.title);
+
+        // Only review PRs updated in the last 24 h — avoids flooding on first enable
+        const updatedAt = new Date(pr.updatedAt).getTime();
+        if (now - updatedAt <= AUTO_REVIEW_MAX_AGE_MS) {
+          void triggerBackgroundReview(pr.url, prefs, pr.title);
+        } else {
+          console.log(`[auto-review] Skipping stale PR (${Math.round((now - updatedAt) / 3_600_000)}h old): ${pr.url}`);
+        }
       }
     }
   } catch (err) {
@@ -607,7 +618,7 @@ function readReviewsIndex(): ReviewHistoryEntry[] {
   }
 }
 
-function saveReviewToHistory(review: ReviewGuide, model?: ModelId): void {
+function saveReviewToHistory(review: ReviewGuide, model?: ModelId, unread?: boolean): void {
   ensureReviewsDir();
   const id = Date.now().toString();
   const savedAt = new Date().toISOString();
@@ -623,6 +634,7 @@ function saveReviewToHistory(review: ReviewGuide, model?: ModelId): void {
     model,
     generationDurationMs: review.generationDurationMs,
     savedAt,
+    ...(unread ? { unread: true } : {}),
   };
 
   const index = readReviewsIndex();
@@ -786,6 +798,11 @@ ipcMain.handle('re-render-hunks', async (_event, review: ReviewGuide) => {
   const prefs = loadPreferences();
   await reRenderAllHunks(review, prefs.codeTheme);
   return review;
+});
+
+ipcMain.handle('mark-review-read', (_event, id: string) => {
+  const index = readReviewsIndex().map((e) => (e.id === id ? { ...e, unread: false } : e));
+  fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
 });
 
 ipcMain.handle('delete-review', (_event, id: string) => {

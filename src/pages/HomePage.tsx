@@ -133,6 +133,15 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   const prGroups = useMemo(() => groupReviewsByPR(history), [history]);
 
   useEffect(() => {
+    window.electronAPI.onNewReviewInHistory(() => {
+      void window.electronAPI.listReviews().then(setHistory);
+    });
+    return () => {
+      window.electronAPI.offNewReviewInHistory();
+    };
+  }, []);
+
+  useEffect(() => {
     void window.electronAPI.getAuthState().then(({ authenticated, login }) => {
       setAuthStatus(authenticated && login ? { login } : 'unauthenticated');
     });
@@ -252,7 +261,11 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   async function handleLoadFromHistory(id: string) {
     setLoading(true);
     try {
-      const review = await window.electronAPI.loadReview(id);
+      const [review] = await Promise.all([
+        window.electronAPI.loadReview(id),
+        window.electronAPI.markReviewRead(id),
+      ]);
+      setHistory((prev) => prev.map((e) => (e.id === id ? { ...e, unread: false } : e)));
       onReviewReady(review);
     } catch {
       setError('Failed to load saved review.');
@@ -589,7 +602,12 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                               className="flex-1 min-w-0 flex items-center gap-3 text-left"
                             >
                               <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-                                <span className="text-sm font-medium truncate">{group.prTitle}</span>
+                                <span className="text-sm font-medium truncate flex items-center gap-2">
+                                  {group.latestReview.unread && (
+                                    <span className="shrink-0 h-2 w-2 rounded-full bg-blue-500" title="Unread" />
+                                  )}
+                                  {group.prTitle}
+                                </span>
                                 <span className="text-xs text-muted-foreground truncate">
                                   {group.repoRef} · {group.author} · {timeAgo(group.latestReview.savedAt)}
                                   {hasMultiple && ` · ${group.reviews.length} reviews`}
