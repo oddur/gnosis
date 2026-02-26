@@ -166,6 +166,7 @@ export interface Preferences {
   reviewSuggestions: boolean;
   enableTools: boolean;
   enableWebResearch: boolean;
+  autoReviewOnRequest: boolean;
   codeTheme: string;
   codeFont: string;
   claudePath: string;

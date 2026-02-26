@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, safeStorage, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -282,14 +282,296 @@ function startUpdateChecks() {
   updateInterval = setInterval(() => void runUpdateCheck(), 4 * 60 * 60 * 1_000);
 }
 
+// ── Auto-review on reviewer assignment ──────────────────────────
+
+const AUTO_REVIEW_POLL_INTERVAL_MS = 5 * 60 * 1_000; // 5 minutes
+
+function getSeenReviewRequestsPath() {
+  return path.join(app.getPath('userData'), 'seen-review-requests.json');
+}
+
+function loadSeenReviewRequests(): Set<string> {
+  try {
+    const data = JSON.parse(fs.readFileSync(getSeenReviewRequestsPath(), 'utf-8')) as string[];
+    return new Set(data);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveSeenReviewRequests(seen: Set<string>) {
+  fs.writeFileSync(getSeenReviewRequestsPath(), JSON.stringify([...seen], null, 2));
+}
+
+// Loaded once into memory; updated as reviews are triggered
+let seenReviewRequests = new Set<string>();
+
+async function triggerBackgroundReview(prUrl: string, prefs: Preferences, prTitle: string): Promise<void> {
+  const token = getResolvedToken();
+  const octokit = new Octokit({ auth: token ?? undefined });
+  const { owner, repo, pullNumber } = parsePrUrl(prUrl);
+
+  try {
+    console.log(`[auto-review] Starting background review for ${prUrl}`);
+
+    const [prData, diff, changedFiles] = await Promise.all([
+      getPrMetadata(octokit, owner, repo, pullNumber),
+      getPrDiff(octokit, owner, repo, pullNumber),
+      getChangedFiles(octokit, owner, repo, pullNumber),
+    ]);
+
+    if (changedFiles.length === 0) {
+      console.warn(`[auto-review] PR has no changed files: ${prUrl}`);
+      return;
+    }
+
+    const { normalFiles, generatedFiles } = classifyFiles(changedFiles);
+    const generatedFilenames = new Set(generatedFiles.map((f) => f.filename));
+    const filteredDiff = filterDiff(diff, generatedFilenames);
+    const excludedFilesSummary = buildExcludedFilesSummary(generatedFiles);
+
+    const baseRef = prData.baseBranch;
+    const headRef = prData.headSha;
+
+    const fileContents: Record<string, string> = {};
+    const headFileContents: Record<string, string> = {};
+    const concurrency = 5;
+    const filesToFetch = normalFiles.filter((f) => f.status !== 'deleted');
+    const filesToFetchBase = normalFiles.filter((f) => f.status !== 'added');
+
+    for (let i = 0; i < Math.max(filesToFetch.length, filesToFetchBase.length); i += concurrency) {
+      const headBatch = filesToFetch.slice(i, i + concurrency);
+      const baseBatch = filesToFetchBase.slice(i, i + concurrency);
+      await Promise.all([
+        ...headBatch.map(async (f) => {
+          const content = await getFileContent(octokit, owner, repo, f.filename, headRef);
+          if (content !== null) headFileContents[f.filename] = content;
+        }),
+        ...baseBatch.map(async (f) => {
+          const content = await getFileContent(octokit, owner, repo, f.filename, baseRef);
+          if (content !== null) fileContents[f.filename] = content;
+        }),
+      ]);
+    }
+
+    const allFileContents = { ...fileContents, ...headFileContents };
+    const neighborFiles = await getNeighborFiles(
+      octokit,
+      owner,
+      repo,
+      normalFiles.map((f) => f.filename),
+      allFileContents,
+      baseRef,
+      prefs.smartImports ? prefs.provider : undefined
+    );
+
+    const indexedHunks = buildIndexedHunks(filteredDiff, fileContents, headFileContents);
+    const expandedDiff = expandFullDiff(filteredDiff, fileContents, headFileContents);
+    const hunkIndex = formatHunkIndexForPrompt(indexedHunks);
+
+    const contextPackage = buildContextPackage(
+      prData,
+      expandedDiff,
+      changedFiles,
+      fileContents,
+      headFileContents,
+      neighborFiles,
+      hunkIndex,
+      excludedFilesSummary
+    );
+
+    const generationStart = Date.now();
+    const aiResult = await generateReviewGuide(
+      contextPackage,
+      prUrl,
+      prefs.provider,
+      prefs.model,
+      prefs.instructions,
+      () => {}, // no streaming for background reviews
+      prefs.thinking,
+      prefs.signalBoost,
+      undefined,
+      undefined,
+      prefs.reviewSuggestions,
+      false,
+      () => {}
+    );
+    const generationDurationMs = Date.now() - generationStart;
+
+    const hunkMap = new Map(indexedHunks.map((h) => [h.id, h]));
+    const assignedIds = new Set<string>();
+
+    const resolvedSlides: Slide[] = aiResult.slides.map((aiSlide) => {
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
+      const ids = aiSlide.diffHunkIds ?? [];
+      const diffHunks: DiffHunk[] = ids
+        .filter((id: string) => hunkMap.has(id) && !assignedIds.has(id))
+        .map((id: string) => {
+          assignedIds.add(id);
+          const h = hunkMap.get(id);
+          if (!h) throw new Error(`Hunk ${id} not found in index`);
+          return {
+            filePath: h.filePath,
+            hunkHeader: h.expandedHunkHeader,
+            content: h.expandedContent,
+            language: h.language,
+            renderedHtml: '',
+          };
+        });
+
+      return {
+        id: aiSlide.id,
+        slideNumber: aiSlide.slideNumber,
+        title: aiSlide.title,
+        slideType: aiSlide.slideType,
+        narrative: aiSlide.narrative,
+        reviewFocus: aiSlide.reviewFocus,
+        diffHunks: sortDiffHunks(diffHunks),
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
+        contextSnippets: aiSlide.contextSnippets ?? [],
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
+        affectedFiles: aiSlide.affectedFiles ?? [],
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
+        dependsOn: aiSlide.dependsOn ?? [],
+        mermaidDiagram: aiSlide.mermaidDiagram,
+        reviewChecks: aiSlide.reviewChecks,
+      };
+    });
+
+    const unassigned = indexedHunks.filter((h) => !assignedIds.has(h.id));
+    if (unassigned.length > 0) {
+      const otherHunks: DiffHunk[] = unassigned.map((h) => ({
+        filePath: h.filePath,
+        hunkHeader: h.expandedHunkHeader,
+        content: h.expandedContent,
+        language: h.language,
+        renderedHtml: '',
+      }));
+      resolvedSlides.push({
+        id: 'other-changes',
+        slideNumber: resolvedSlides.length + 1,
+        title: 'Other changes',
+        slideType: 'refactor',
+        narrative: 'Additional changes not covered in previous slides.',
+        reviewFocus: null,
+        diffHunks: sortDiffHunks(otherHunks),
+        contextSnippets: [],
+        affectedFiles: [...new Set(unassigned.map((h) => h.filePath))],
+        dependsOn: [],
+        mermaidDiagram: null,
+      });
+    }
+
+    const reviewGuide: ReviewGuide = {
+      prTitle: aiResult.prTitle || prData.title,
+      prDescription: aiResult.prDescription || prData.description,
+      prUrl,
+      author: aiResult.author || prData.author,
+      summary: aiResult.summary,
+      riskLevel: aiResult.riskLevel,
+      riskRationale: aiResult.riskRationale,
+      totalFilesChanged: changedFiles.length,
+      totalLinesChanged: changedFiles.reduce((sum, f) => sum + f.additions + f.deletions, 0),
+      neighborFileCount: Object.keys(neighborFiles).length,
+      excludedFiles: generatedFiles.length > 0 ? generatedFiles.map((f) => f.filename) : undefined,
+      generationDurationMs,
+      slides: resolvedSlides,
+      headSha: prData.headSha,
+      webSources: aiResult.webSources,
+    };
+
+    const codeTheme = loadPreferences().codeTheme;
+    for (const slide of reviewGuide.slides) {
+      for (const hunk of slide.diffHunks) {
+        try {
+          hunk.renderedHtml = await renderDiffHunk(hunk.content, hunk.language, codeTheme, hunk.hunkHeader);
+        } catch {
+          hunk.renderedHtml = `<pre class="diff-block">${hunk.content}</pre>`;
+        }
+      }
+    }
+
+    saveReviewToHistory(reviewGuide, prefs.model);
+    console.log(`[auto-review] Completed review for ${prUrl}`);
+
+    // Notify all open windows so the renderer can navigate to the review
+    const windows = BrowserWindow.getAllWindows();
+    for (const win of windows) {
+      win.webContents.send('auto-review-ready', reviewGuide);
+    }
+
+    // Show native OS notification
+    if (Notification.isSupported()) {
+      const notification = new Notification({
+        title: 'Review ready',
+        body: prTitle || reviewGuide.prTitle,
+        silent: false,
+      });
+      notification.on('click', () => {
+        const win = BrowserWindow.getAllWindows()[0];
+        if (win) {
+          if (win.isMinimized()) win.restore();
+          win.focus();
+          win.webContents.send('auto-review-ready', reviewGuide);
+        }
+      });
+      notification.show();
+    }
+  } catch (err) {
+    console.error(`[auto-review] Failed to generate review for ${prUrl}:`, err);
+  }
+}
+
+async function runAutoReviewCheck() {
+  const token = getResolvedToken();
+  if (!token || !cachedLogin) return;
+  const prefs = loadPreferences();
+  if (!prefs.autoReviewOnRequest) return;
+
+  try {
+    const octokit = new Octokit({ auth: token });
+    const prs = await searchPullRequests(octokit, cachedLogin);
+    const reviewRequested = prs.filter((pr) => pr.role === 'review-requested');
+
+    for (const pr of reviewRequested) {
+      if (!seenReviewRequests.has(pr.url)) {
+        seenReviewRequests.add(pr.url);
+        saveSeenReviewRequests(seenReviewRequests);
+        void triggerBackgroundReview(pr.url, prefs, pr.title);
+      }
+    }
+  } catch (err) {
+    console.error('[auto-review] Poll check failed:', err);
+  }
+}
+
+let autoReviewInterval: ReturnType<typeof setInterval> | null = null;
+
+function startAutoReviewPolling() {
+  if (autoReviewInterval) return;
+  seenReviewRequests = loadSeenReviewRequests();
+  // Initial check after 10 seconds to let the app fully initialize
+  setTimeout(() => void runAutoReviewCheck(), 10_000);
+  autoReviewInterval = setInterval(() => void runAutoReviewCheck(), AUTO_REVIEW_POLL_INTERVAL_MS);
+}
+
+function stopAutoReviewPolling() {
+  if (autoReviewInterval) {
+    clearInterval(autoReviewInterval);
+    autoReviewInterval = null;
+  }
+}
+
 void app.whenReady().then(() => {
   applyBinaryOverrides(loadPreferences());
   createWindow();
   startUpdateChecks();
+  startAutoReviewPolling();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
     if (!updateInterval) startUpdateChecks();
+    if (!autoReviewInterval) startAutoReviewPolling();
   });
 });
 
@@ -298,6 +580,7 @@ app.on('window-all-closed', () => {
     clearInterval(updateInterval);
     updateInterval = null;
   }
+  stopAutoReviewPolling();
   if (process.platform !== 'darwin') app.quit();
 });
 
@@ -363,6 +646,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   reviewSuggestions: true,
   enableTools: false,
   enableWebResearch: false,
+  autoReviewOnRequest: false,
   codeTheme: 'aurora-x',
   codeFont: 'jetbrains-mono',
   claudePath: '',
@@ -469,6 +753,9 @@ ipcMain.handle('load-preferences', () => {
 ipcMain.handle('save-preferences', (_event, prefs: Preferences) => {
   savePreferences(prefs);
   applyBinaryOverrides(prefs);
+  // Restart polling so the new autoReviewOnRequest value takes effect immediately
+  stopAutoReviewPolling();
+  if (prefs.autoReviewOnRequest) startAutoReviewPolling();
 });
 
 ipcMain.handle('detect-binary-path', (_event, name: string) => {

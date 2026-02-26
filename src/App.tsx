@@ -16,6 +16,16 @@ export function App() {
       if (prefs.codeFont) applyCodeFont(prefs.codeFont);
     });
   }, []);
+
+  useEffect(() => {
+    window.electronAPI.onAutoReviewReady((review) => {
+      setReview(review);
+      setPage('review');
+    });
+    return () => {
+      window.electronAPI.offAutoReviewReady();
+    };
+  }, []);
   const [review, setReview] = useState<ReviewGuide | null>(null);
   const [prefillPrUrl, setPrefillPrUrl] = useState<string | undefined>();
 
