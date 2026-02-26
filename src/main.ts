@@ -97,7 +97,9 @@ function deleteStoredToken() {
 
 function getResolvedToken(): string | null {
   if (cachedToken) return cachedToken;
-  return loadStoredToken();
+  const token = loadStoredToken();
+  if (token) cachedToken = token; // cache so keychain is only unlocked once per session
+  return token;
 }
 
 // ── OAuth flow ──────────────────────────────────────────────────
@@ -524,8 +526,11 @@ async function triggerBackgroundReview(prUrl: string, prefs: Preferences, prTitl
 }
 
 async function runAutoReviewCheck() {
+  // cachedLogin is populated by get-auth-state IPC on renderer load.
+  // Checking it first avoids a keychain access when the user isn't authenticated yet.
+  if (!cachedLogin) return;
   const token = getResolvedToken();
-  if (!token || !cachedLogin) return;
+  if (!token) return;
   const prefs = loadPreferences();
   if (!prefs.autoReviewOnRequest) return;
 
