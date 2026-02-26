@@ -67,17 +67,24 @@ function getPlainTokenPath() {
 }
 
 function loadStoredToken(): string | null {
+  // Avoid calling safeStorage.isEncryptionAvailable() — on macOS it can trigger its
+  // own Keychain prompt before decryptString() does, causing two prompts on startup.
+  // Instead, try decryptString() directly and fall back to plaintext on any error.
   try {
-    if (safeStorage.isEncryptionAvailable() && fs.existsSync(getTokenPath())) {
+    if (fs.existsSync(getTokenPath())) {
       return safeStorage.decryptString(fs.readFileSync(getTokenPath()));
     }
+  } catch {
+    // Encryption unavailable or data corrupted — fall through to plaintext
+  }
+  try {
     if (fs.existsSync(getPlainTokenPath())) {
       return fs.readFileSync(getPlainTokenPath(), 'utf-8').trim();
     }
-    return null;
   } catch {
-    return null;
+    // ignore
   }
+  return null;
 }
 
 function persistToken(token: string) {
@@ -310,8 +317,8 @@ function saveSeenReviewRequests(seen: Set<string>) {
 let seenReviewRequests = new Set<string>();
 
 async function triggerBackgroundReview(prUrl: string, prefs: Preferences, prTitle: string): Promise<void> {
-  const token = getResolvedToken();
-  const octokit = new Octokit({ auth: token ?? undefined });
+  // cachedToken is guaranteed to be set by the caller (runAutoReviewCheck).
+  const octokit = new Octokit({ auth: cachedToken ?? undefined });
   const { owner, repo, pullNumber } = parsePrUrl(prUrl);
 
   try {
@@ -526,16 +533,14 @@ async function triggerBackgroundReview(prUrl: string, prefs: Preferences, prTitl
 }
 
 async function runAutoReviewCheck() {
-  // cachedLogin is populated by get-auth-state IPC on renderer load.
-  // Checking it first avoids a keychain access when the user isn't authenticated yet.
-  if (!cachedLogin) return;
-  const token = getResolvedToken();
-  if (!token) return;
+  // Use only in-memory state — never touch the keychain from a background timer.
+  // cachedToken and cachedLogin are populated when the user authenticates via IPC.
+  if (!cachedToken || !cachedLogin) return;
   const prefs = loadPreferences();
   if (!prefs.autoReviewOnRequest) return;
 
   try {
-    const octokit = new Octokit({ auth: token });
+    const octokit = new Octokit({ auth: cachedToken });
     const prs = await searchPullRequests(octokit, cachedLogin);
     // searchPullRequests already queries `is:open`, so merged/closed PRs are excluded
     const reviewRequested = prs.filter((pr) => pr.role === 'review-requested');
