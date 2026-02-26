@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { AlertTriangle, Check, ExternalLink, MessageSquare, ShieldCheck, ShieldX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -28,6 +28,14 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
   const [successUrl, setSuccessUrl] = useState<string | null>(null);
   const [droppedCount, setDroppedCount] = useState(0);
   const [submittedCount, setSubmittedCount] = useState(0);
+  const [reviewSignature, setReviewSignature] = useState(true);
+
+  useEffect(() => {
+    if (!open) return;
+    void window.electronAPI.loadPreferences().then((prefs) => {
+      setReviewSignature(prefs.reviewSignature);
+    });
+  }, [open]);
 
   // Group comments by file for the summary
   const fileGroups = new Map<string, PendingReviewComment[]>();
@@ -154,14 +162,30 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
         )}
 
         {/* Review body */}
-        <div>
-          <label className="text-xs text-muted-foreground mb-1 block">Review summary (optional)</label>
-          <textarea
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            placeholder="Overall feedback..."
-            className="w-full min-h-[80px] bg-transparent text-sm resize-y border rounded p-2 focus:outline-none focus:ring-1 focus:ring-ring"
-          />
+        <div className="flex flex-col gap-2">
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">Review summary (optional)</label>
+            <textarea
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              placeholder="Overall feedback..."
+              className="w-full min-h-[80px] bg-transparent text-sm resize-y border rounded p-2 focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={reviewSignature}
+              onChange={(e) => {
+                setReviewSignature(e.target.checked);
+                void window.electronAPI
+                  .loadPreferences()
+                  .then((prefs) => window.electronAPI.savePreferences({ ...prefs, reviewSignature: e.target.checked }));
+              }}
+              className="rounded border"
+            />
+            <span className="text-xs text-muted-foreground">Add &ldquo;Reviewed using gnosis.to&rdquo; signature</span>
+          </label>
         </div>
 
         {error && <p className="text-sm text-destructive">{error}</p>}
