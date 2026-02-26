@@ -146,6 +146,14 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   const [reviewPhases, setReviewPhases] = useState<Map<string, string>>(new Map());
   const [pendingReviews, setPendingReviews] = useState<PrSearchResult[]>([]);
   const [pendingLoading, setPendingLoading] = useState(false);
+  const [dismissedPendingPrs, setDismissedPendingPrs] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem('dismissed-pending-prs');
+      return stored ? new Set(JSON.parse(stored) as string[]) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
   const [generationStartTimes, setGenerationStartTimes] = useState<Map<string, number>>(new Map());
   const [elapsedSeconds, setElapsedSeconds] = useState<Map<string, number>>(new Map());
   const [reviewBytes, setReviewBytes] = useState<Map<string, { inputBytes: number; outputBytes: number }>>(new Map());
@@ -259,6 +267,20 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
     if (typeof authStatus !== 'object') return;
     fetchPendingReviews();
   }, [authStatus, fetchPendingReviews]);
+
+  function dismissPendingPr(url: string) {
+    setDismissedPendingPrs((prev) => {
+      const next = new Set(prev);
+      next.add(url);
+      localStorage.setItem('dismissed-pending-prs', JSON.stringify([...next]));
+      return next;
+    });
+  }
+
+  const visiblePendingReviews = useMemo(
+    () => pendingReviews.filter((pr) => !dismissedPendingPrs.has(pr.url)),
+    [pendingReviews, dismissedPendingPrs]
+  );
 
   // Tick elapsed seconds for active generations
   useEffect(() => {
@@ -703,30 +725,42 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                           <Loader2 className="h-3 w-3 animate-spin" />
                           Loading…
                         </div>
-                      ) : pendingReviews.length === 0 ? (
+                      ) : visiblePendingReviews.length === 0 ? (
                         <p className="text-xs text-muted-foreground py-1">No pending reviews</p>
                       ) : (
                         <>
-                          {pendingReviews.slice(0, 10).map((pr) => (
-                            <button
+                          {visiblePendingReviews.slice(0, 10).map((pr) => (
+                            <div
                               key={pr.url}
-                              type="button"
-                              onClick={() => setPrUrl(pr.url)}
-                              className="flex items-center gap-2 text-left rounded-md px-2 py-1.5 hover:bg-muted/50 transition-colors min-w-0"
+                              className="group flex items-center gap-1 rounded-md hover:bg-muted/50 transition-colors min-w-0 pr-1"
                             >
-                              <span className="text-xs text-muted-foreground shrink-0">
-                                {pr.repoName} #{pr.number}
-                              </span>
-                              <span className="text-sm truncate">{pr.title}</span>
-                            </button>
+                              <button
+                                type="button"
+                                onClick={() => setPrUrl(pr.url)}
+                                className="flex items-center gap-2 text-left flex-1 px-2 py-1.5 min-w-0"
+                              >
+                                <span className="text-xs text-muted-foreground shrink-0">
+                                  {pr.repoName} #{pr.number}
+                                </span>
+                                <span className="text-sm truncate">{pr.title}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => dismissPendingPr(pr.url)}
+                                className="shrink-0 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                                aria-label="Dismiss"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </div>
                           ))}
-                          {pendingReviews.length > 10 && (
+                          {visiblePendingReviews.length > 10 && (
                             <button
                               type="button"
                               onClick={() => setPrPickerOpen(true)}
                               className="text-xs text-muted-foreground hover:text-foreground px-2 py-1 text-left"
                             >
-                              Show {pendingReviews.length - 10} more…
+                              Show {visiblePendingReviews.length - 10} more…
                             </button>
                           )}
                         </>
