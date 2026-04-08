@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { TooltipProvider } from '../components/ui/tooltip';
 import { HomePage } from './pages/HomePage';
 import { ReviewPage } from './pages/ReviewPage';
 import { UpdateBanner } from '../components/UpdateBanner';
 import { applyCodeFont } from '../components/SettingsDialog';
+import { applyTheme } from '../lib/theme';
 import type { ReviewGuide } from '../lib/types';
 
 type Page = 'home' | 'review';
@@ -14,6 +14,7 @@ export function App() {
   useEffect(() => {
     void window.electronAPI.loadPreferences().then((prefs) => {
       if (prefs.codeFont) applyCodeFont(prefs.codeFont);
+      applyTheme(prefs.theme);
     });
   }, []);
 
@@ -53,11 +54,22 @@ export function App() {
 
   return (
     <>
+      {/* Skip-to-content link — visually hidden until focused. Lets
+          keyboard users jump straight to the slide/page content
+          without tabbing through the persistent header chrome. */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[100] focus:bg-background focus:text-foreground focus:px-3 focus:py-2 focus:border focus:border-[var(--ring)] focus:text-sm"
+      >
+        Skip to content
+      </a>
       <UpdateBanner />
-      <TooltipProvider>
+      <div id="main-content">
         {page === 'home' && <HomePage onReviewReady={handleReviewReady} prefillPrUrl={prefillPrUrl} />}
-        {page === 'review' && review && <ReviewPage review={review} onBack={handleBack} onReReview={handleReReview} />}
-      </TooltipProvider>
+        {page === 'review' && review && (
+          <ReviewPage review={review} onBack={handleBack} onReReview={handleReReview} />
+        )}
+      </div>
     </>
   );
 }

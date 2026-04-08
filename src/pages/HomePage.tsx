@@ -1,12 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  LogOut,
-  Search,
-  SlidersHorizontal,
   Play,
-  History,
   Trash2,
-  Settings,
   ChevronDown,
   ChevronRight,
   Loader2,
@@ -22,14 +17,16 @@ import {
 } from 'lucide-react';
 import { GitHubIcon } from '../../lib/constants';
 import { Button } from '../../components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Alert, AlertDescription } from '../../components/ui/alert';
 import { Badge } from '../../components/ui/badge';
 import { PRPickerDialog } from '../../components/PRPickerDialog';
 import { FilePickerDialog } from '../../components/FilePickerDialog';
 import { SettingsDialog } from '../../components/SettingsDialog';
+import { FirstRunWelcome } from '../../components/FirstRunWelcome';
+import { ShortcutOverlay } from '../../components/ShortcutOverlay';
+import { CommandPalette, type Command } from '../../components/CommandPalette';
+import { useKeyboardShortcuts, type ShortcutMap } from '../../lib/use-keyboard-shortcuts';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
-import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
 import { Avatar, AvatarFallback, AvatarImage } from '../../components/ui/avatar';
 import { riskConfig } from '../../lib/constants';
 import type { ModelId, Preferences, Provider, PrSearchResult, ReviewGuide, ReviewHistoryEntry } from '../../lib/types';
@@ -84,20 +81,20 @@ interface ToggleSwitchProps {
 
 function ToggleSwitch({ id, label, description, checked, onToggle, badge }: ToggleSwitchProps) {
   return (
-    <div className="flex items-center justify-between">
-      <div className="flex flex-col gap-0.5">
-        <label htmlFor={id} className="text-sm font-medium">
+    <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-col gap-0.5 min-w-0">
+        <label htmlFor={id} className="text-sm font-medium text-foreground">
           {label}
           {badge && (
             <>
               {' '}
-              <span className="ml-1 inline-block rounded bg-teal-900/60 px-1.5 py-0.5 text-[10px] font-medium text-teal-300 leading-none align-middle">
+              <span className="statusPill-amber ml-1 inline-block px-1.5 py-0.5 text-[10px] font-medium leading-none align-middle">
                 {badge}
               </span>
             </>
           )}
         </label>
-        <p className="text-xs text-muted-foreground">{description}</p>
+        <p className="slide-meta">{description}</p>
       </div>
       <button
         id={id}
@@ -105,13 +102,13 @@ function ToggleSwitch({ id, label, description, checked, onToggle, badge }: Togg
         role="switch"
         aria-checked={checked}
         onClick={onToggle}
-        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-          checked ? 'bg-primary' : 'bg-input'
+        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+          checked ? 'bg-[var(--ring)] border-[var(--ring)]' : 'bg-transparent border-border'
         }`}
       >
         <span
-          className={`pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-transform ${
-            checked ? 'translate-x-4' : 'translate-x-0'
+          className={`pointer-events-none block h-3.5 w-3.5 rounded-full transition-transform translate-y-px ${
+            checked ? 'bg-background translate-x-[1.125rem]' : 'bg-muted-foreground translate-x-[2px]'
           }`}
         />
       </button>
@@ -164,6 +161,9 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   const [patToken, setPatToken] = useState('');
   const [patError, setPatError] = useState<string | null>(null);
   const [patConnecting, setPatConnecting] = useState(false);
+  const [firstRunOpen, setFirstRunOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   const prGroups = useMemo(() => groupReviewsByPR(history), [history]);
 
@@ -192,8 +192,85 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
       setWebResearch(prefs.enableWebResearch);
       setIncludeAllFiles(prefs.includeAllFiles);
       setPrefsLoaded(true);
+      // Show the first-run welcome once, on the very first launch.
+      // The flag persists in preferences so it never reappears for
+      // returning users.
+      if (!prefs.firstRunSeen) {
+        setFirstRunOpen(true);
+      }
     });
   }, []);
+
+  // Keyboard shortcuts on the home screen. The hook handles input
+  // suppression and modifier signatures, so the manual `?` listener
+  // we used before is no longer needed.
+  const shortcutMap = useMemo<ShortcutMap>(
+    () => ({
+      '?': () => setShortcutsOpen((v) => !v),
+      'cmd+k': () => setPaletteOpen(true),
+      'ctrl+k': () => setPaletteOpen(true),
+    }),
+    []
+  );
+  useKeyboardShortcuts(shortcutMap);
+
+  function dismissFirstRun() {
+    setFirstRunOpen(false);
+    void window.electronAPI.loadPreferences().then((current) => {
+      void window.electronAPI.savePreferences({ ...current, firstRunSeen: true });
+    });
+  }
+
+  // Command palette commands for the home screen. Recently-used
+  // PRs from history are exposed so the user can re-open a review
+  // by typing a few characters of the title.
+  const paletteCommands = useMemo<Command[]>(() => {
+    const commands: Command[] = [
+      {
+        id: 'browse-prs',
+        label: 'Browse pull requests',
+        group: 'Actions',
+        keywords: 'pr search find',
+        perform: () => setPrPickerOpen(true),
+      },
+      {
+        id: 'settings',
+        label: 'Open settings',
+        group: 'Actions',
+        keywords: 'preferences config theme',
+        perform: () => setSettingsOpen(true),
+      },
+      {
+        id: 'shortcuts',
+        label: 'Show keyboard shortcuts',
+        hint: '?',
+        group: 'Actions',
+        keywords: 'help cheatsheet keys',
+        perform: () => setShortcutsOpen(true),
+      },
+      {
+        id: 'sign-out',
+        label: 'Sign out',
+        group: 'Actions',
+        keywords: 'logout exit',
+        perform: () => void handleSignOut(),
+      },
+    ];
+
+    // Recent reviews — first 8 by group order (most recent first).
+    prGroups.slice(0, 8).forEach((group) => {
+      commands.push({
+        id: `recent-${group.prUrl}`,
+        label: group.prTitle,
+        hint: group.repoRef,
+        group: 'Recent reviews',
+        keywords: `${group.prTitle} ${group.repoRef} ${group.author}`,
+        perform: () => void handleLoadFromHistory(group.latestReview.id),
+      });
+    });
+
+    return commands;
+  }, [prGroups]);
 
   // Listen for background review phase changes, completion, failure, and stats
   useEffect(() => {
@@ -490,91 +567,111 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   const isAuthenticated = typeof authStatus === 'object';
 
   return (
-    <main className="h-screen overflow-y-auto p-8">
-      <div className="w-full max-w-6xl mx-auto flex flex-col gap-6">
+    <main className="h-screen overflow-y-auto px-8 py-10">
+      {firstRunOpen && (
+        <FirstRunWelcome
+          onDismiss={dismissFirstRun}
+          onShowShortcuts={() => {
+            dismissFirstRun();
+            setShortcutsOpen(true);
+          }}
+        />
+      )}
+      <ShortcutOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        commands={paletteCommands}
+        placeholder="Jump to a review or run a command…"
+      />
+      <div className="w-full max-w-6xl mx-auto flex flex-col gap-10">
         {/* Auth section */}
         {authStatus === 'checking' && (
-          <div className="flex justify-center">
-            <span className="text-sm text-muted-foreground animate-pulse">Loading…</span>
+          <div className="flex justify-center pt-[20vh]">
+            <span className="slide-meta animate-pulse">Loading…</span>
           </div>
         )}
 
         {authStatus === 'unauthenticated' && (
-          <>
+          <div className="max-w-md mx-auto w-full pt-[12vh] flex flex-col gap-8">
             {authError && (
               <Alert variant="destructive">
                 <AlertDescription>{authError}</AlertDescription>
               </Alert>
             )}
-            <Card className="max-w-md mx-auto w-full">
-              <CardContent className="flex flex-col gap-3 items-center text-center">
-                <p className="text-sm text-muted-foreground">Sign into your GitHub account</p>
-                <Button onClick={handleSignIn} className="w-full gap-2">
-                  <GitHubIcon className="h-4 w-4" />
-                  Sign in with GitHub
-                </Button>
-                <div className="w-full border-t" />
-                <button
-                  type="button"
-                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                  onClick={() => {
-                    setPatExpanded((v) => !v);
-                    setPatError(null);
+            <div className="flex flex-col gap-4">
+              <div className="slide-chapter">
+                <span>Welcome to Gnosis</span>
+              </div>
+              <h1 className="slide-title">Sign in with your GitHub account.</h1>
+              <p className="slide-prose">
+                Gnosis uses your GitHub account to fetch pull request diffs, post review comments, and remember which
+                reviews are yours. Nothing leaves your machine besides the requests to GitHub.
+              </p>
+            </div>
+            <Button onClick={handleSignIn} className="w-full gap-2">
+              <GitHubIcon className="h-4 w-4" />
+              Sign in with GitHub
+            </Button>
+            <button
+              type="button"
+              className="slide-meta hover:text-foreground transition-colors flex items-center gap-1.5 self-start"
+              onClick={() => {
+                setPatExpanded((v) => !v);
+                setPatError(null);
+              }}
+            >
+              {patExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              Use a Personal Access Token instead
+            </button>
+            {patExpanded && (
+              <div className="border-l border-border pl-4 flex flex-col gap-3">
+                <p className="slide-meta">
+                  Create a token with <code className="font-mono">repo</code> scope at{' '}
+                  <button
+                    type="button"
+                    className="underline hover:text-foreground"
+                    onClick={() =>
+                      void window.electronAPI.openExternal(
+                        'https://github.com/settings/tokens/new?scopes=repo&description=Gnosis'
+                      )
+                    }
+                  >
+                    github.com/settings/tokens
+                  </button>
+                  , then paste it below.
+                </p>
+                <input
+                  type="password"
+                  placeholder="ghp_…"
+                  value={patToken}
+                  onChange={(e) => setPatToken(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void handleConnectPat();
                   }}
-                >
-                  {patExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                  Use a Personal Access Token
-                </button>
-                {patExpanded && (
-                  <div className="w-full flex flex-col gap-2 text-left">
-                    <p className="text-xs text-muted-foreground">
-                      Create a token with <code className="font-mono">repo</code> scope at{' '}
-                      <button
-                        type="button"
-                        className="underline hover:text-foreground"
-                        onClick={() =>
-                          void window.electronAPI.openExternal(
-                            'https://github.com/settings/tokens/new?scopes=repo&description=Gnosis'
-                          )
-                        }
-                      >
-                        github.com/settings/tokens
-                      </button>
-                      , then paste it below.
-                    </p>
-                    <input
-                      type="password"
-                      placeholder="ghp_…"
-                      value={patToken}
-                      onChange={(e) => setPatToken(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') void handleConnectPat();
-                      }}
-                      className="w-full rounded-md border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                    />
-                    {patError && (
-                      <Alert variant="destructive">
-                        <AlertDescription>{patError}</AlertDescription>
-                      </Alert>
-                    )}
-                    <Button
-                      onClick={() => void handleConnectPat()}
-                      disabled={!patToken.trim() || patConnecting}
-                      className="w-full"
-                      size="sm"
-                    >
-                      {patConnecting ? 'Connecting…' : 'Connect'}
-                    </Button>
-                  </div>
+                  className="w-full bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:border-[var(--ring)] transition-colors"
+                />
+                {patError && (
+                  <Alert variant="destructive">
+                    <AlertDescription>{patError}</AlertDescription>
+                  </Alert>
                 )}
-              </CardContent>
-            </Card>
-          </>
+                <Button
+                  onClick={() => void handleConnectPat()}
+                  disabled={!patToken.trim() || patConnecting}
+                  className="w-full"
+                  size="sm"
+                >
+                  {patConnecting ? 'Connecting…' : 'Connect'}
+                </Button>
+              </div>
+            )}
+          </div>
         )}
 
         {authStatus === 'signing-in' && (
-          <div className="flex flex-col items-center gap-2 text-center">
-            <span className="text-sm text-muted-foreground animate-pulse">
+          <div className="flex flex-col items-center gap-2 text-center pt-[20vh]">
+            <span className="slide-meta animate-pulse">
               Waiting for GitHub… complete sign-in in your browser.
             </span>
           </div>
@@ -583,76 +680,73 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
         {/* Two-column layout: form + history */}
         {isAuthenticated && (
           <div
-            className={`grid gap-6 items-start ${prGroups.length > 0 ? 'grid-cols-[420px_1fr]' : 'max-w-lg mx-auto w-full'}`}
+            className={`grid gap-12 items-start ${prGroups.length > 0 ? 'grid-cols-[440px_1fr]' : 'max-w-xl mx-auto w-full'}`}
           >
-            {/* Left column: account card + form card */}
-            <div className="flex flex-col gap-4">
-              {/* Account card */}
-              <Card>
-                <CardContent className="py-2 px-3 flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground flex items-center gap-2">
-                    <Avatar className="h-5 w-5">
-                      <AvatarImage
-                        src={`https://github.com/${(authStatus as { login: string }).login}.png`}
-                        alt={(authStatus as { login: string }).login}
-                      />
-                      <AvatarFallback className="text-[10px]">
-                        {(authStatus as { login: string }).login.slice(0, 2).toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
-                    @{(authStatus as { login: string }).login}
-                  </span>
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={() => setSettingsOpen(true)}
-                      className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
-                      aria-label="Settings"
-                    >
-                      <Settings className="h-3 w-3" />
-                      Settings
-                    </button>
-                    <button
-                      onClick={handleSignOut}
-                      className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
-                    >
-                      <LogOut className="h-3 w-3" />
-                      Sign out
-                    </button>
-                  </div>
-                </CardContent>
-              </Card>
+            {/* Left column: account row + form */}
+            <div className="flex flex-col gap-8">
+              {/* Account row — thin strip of type, no card */}
+              <div className="flex items-center justify-between py-2 border-b border-border">
+                <span className="slide-meta flex items-center gap-2">
+                  <Avatar className="h-5 w-5">
+                    <AvatarImage
+                      src={`https://github.com/${(authStatus as { login: string }).login}.png`}
+                      alt={(authStatus as { login: string }).login}
+                    />
+                    <AvatarFallback className="text-[10px]">
+                      {(authStatus as { login: string }).login.slice(0, 2).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  @{(authStatus as { login: string }).login}
+                </span>
+                <div className="flex items-center gap-5 slide-meta">
+                  <button
+                    onClick={() => setShortcutsOpen(true)}
+                    className="hover:text-foreground transition-colors"
+                    title="Keyboard shortcuts (?)"
+                  >
+                    Shortcuts
+                  </button>
+                  <button
+                    onClick={() => setSettingsOpen(true)}
+                    className="hover:text-foreground transition-colors"
+                  >
+                    Settings
+                  </button>
+                  <button
+                    onClick={handleSignOut}
+                    className="hover:text-foreground transition-colors"
+                  >
+                    Sign out
+                  </button>
+                </div>
+              </div>
 
-              {/* PR form */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-sm font-medium">New Review</CardTitle>
-                </CardHeader>
-                <CardContent className="pt-0">
-                  <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-                    <div className="flex flex-col gap-1.5">
-                      <label htmlFor="pr-url" className="text-sm font-medium flex items-center gap-1.5">
-                        <GitHubIcon className="h-3.5 w-3.5" />
-                        Pull Request URL
+              {/* New review — no card, no card header. Editorial heading
+                  followed by the form. */}
+              <div className="flex flex-col gap-6">
+                <h2 className="editorial-heading">New review</h2>
+                <form onSubmit={handleSubmit} className="flex flex-col gap-6">
+                    <div className="flex flex-col gap-2">
+                      <label htmlFor="pr-url" className="text-sm font-medium text-foreground">
+                        Pull request URL
                       </label>
-                      <div className="flex gap-2">
+                      <div className="flex gap-3 items-end">
                         <input
                           id="pr-url"
                           type="url"
                           placeholder="https://github.com/owner/repo/pull/123"
                           value={prUrl}
                           onChange={(e) => setPrUrl(e.target.value)}
-                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          className="flex-1 bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:border-[var(--ring)] transition-colors"
                           required
                         />
-                        <Button
+                        <button
                           type="button"
-                          variant="outline"
                           onClick={() => setPrPickerOpen(true)}
-                          className="gap-1.5"
+                          className="slide-meta hover:text-foreground transition-colors pb-2"
                         >
-                          <Search className="h-3.5 w-3.5" />
                           Browse
-                        </Button>
+                        </button>
                       </div>
                     </div>
                     <PRPickerDialog open={prPickerOpen} onOpenChange={setPrPickerOpen} onSelect={setPrUrl} />
@@ -705,11 +799,9 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                     </Dialog>
 
                     {/* Pending review requests */}
-                    <div className="flex flex-col gap-0.5">
-                      <div className="flex items-center gap-1.5">
-                        <label className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                          Pending reviews
-                        </label>
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-medium text-foreground">Pending reviews</label>
                         <button
                           type="button"
                           onClick={fetchPendingReviews}
@@ -721,28 +813,30 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                         </button>
                       </div>
                       {pendingLoading ? (
-                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground py-1">
+                        <div className="slide-meta flex items-center gap-1.5 py-1">
                           <Loader2 className="h-3 w-3 animate-spin" />
                           Loading…
                         </div>
                       ) : visiblePendingReviews.length === 0 ? (
-                        <p className="text-xs text-muted-foreground py-1">No pending reviews</p>
+                        <p className="slide-meta py-1">No pending reviews.</p>
                       ) : (
-                        <>
+                        <ul className="flex flex-col">
                           {visiblePendingReviews.slice(0, 10).map((pr) => (
-                            <div
+                            <li
                               key={pr.url}
-                              className="group flex items-center gap-1 rounded-md hover:bg-muted/50 transition-colors min-w-0 pr-1"
+                              className="group flex items-center gap-2 hover:bg-muted/30 transition-colors min-w-0 -mx-2 px-2"
                             >
                               <button
                                 type="button"
                                 onClick={() => setPrUrl(pr.url)}
-                                className="flex items-center gap-2 text-left flex-1 px-2 py-1.5 min-w-0"
+                                className="flex items-baseline gap-2 text-left flex-1 py-2 min-w-0"
                               >
-                                <span className="text-xs text-muted-foreground shrink-0">
-                                  {pr.repoName} #{pr.number}
+                                <span className="slide-meta shrink-0">
+                                  {pr.repoName}#{pr.number}
                                 </span>
-                                <span className="text-sm truncate">{pr.title}</span>
+                                <span className="font-serif text-sm truncate text-foreground/85 group-hover:text-foreground transition-colors">
+                                  {pr.title}
+                                </span>
                               </button>
                               <button
                                 type="button"
@@ -752,25 +846,24 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                               >
                                 <X className="h-3 w-3" />
                               </button>
-                            </div>
+                            </li>
                           ))}
                           {visiblePendingReviews.length > 10 && (
                             <button
                               type="button"
                               onClick={() => setPrPickerOpen(true)}
-                              className="text-xs text-muted-foreground hover:text-foreground px-2 py-1 text-left"
+                              className="slide-meta hover:text-foreground py-1 text-left"
                             >
                               Show {visiblePendingReviews.length - 10} more…
                             </button>
                           )}
-                        </>
+                        </ul>
                       )}
                     </div>
 
-                    <div className="flex flex-col gap-1.5">
-                      <label htmlFor="instructions" className="text-sm font-medium flex items-center gap-1.5">
-                        <SlidersHorizontal className="h-3.5 w-3.5" />
-                        Instructions <span className="text-muted-foreground font-normal">(optional)</span>
+                    <div className="flex flex-col gap-2">
+                      <label htmlFor="instructions" className="text-sm font-medium text-foreground">
+                        Instructions <span className="slide-meta inline">(optional)</span>
                       </label>
                       <textarea
                         id="instructions"
@@ -779,22 +872,23 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                         value={instructions}
                         onChange={(e) => setInstructions(e.target.value)}
                         onBlur={() => savePrefs()}
-                        className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none"
+                        className="w-full bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:border-[var(--ring)] transition-colors resize-none"
                       />
                     </div>
 
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-sm font-medium">Provider</label>
-                      <div className="flex gap-2">
+                    {/* Provider — quiet text-only chips, brand-amber underline on active */}
+                    <div className="flex flex-col gap-2">
+                      <label className="text-sm font-medium text-foreground">Provider</label>
+                      <div className="flex items-center gap-5 slide-meta">
                         {(['claude', 'gemini'] as const).map((p) => (
                           <button
                             key={p}
                             type="button"
                             onClick={() => handleProviderChange(p)}
-                            className={`flex-1 rounded-md border px-3 py-1.5 text-sm transition-colors ${
+                            className={`pb-0.5 border-b transition-colors ${
                               provider === p
-                                ? 'border-primary bg-primary text-primary-foreground'
-                                : 'border-input bg-transparent text-muted-foreground hover:text-foreground hover:border-foreground/30'
+                                ? 'text-foreground border-[var(--ring)]'
+                                : 'border-transparent hover:text-foreground'
                             }`}
                           >
                             {PROVIDERS[p].label}
@@ -803,18 +897,18 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                       </div>
                     </div>
 
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-sm font-medium">Model</label>
-                      <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-col gap-2">
+                      <label className="text-sm font-medium text-foreground">Model</label>
+                      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 slide-meta">
                         {PROVIDERS[provider].models.map((m) => (
                           <button
                             key={m.id}
                             type="button"
                             onClick={() => setModel(m.id)}
-                            className={`rounded-md border px-3 py-1.5 text-sm transition-colors ${
+                            className={`pb-0.5 border-b transition-colors ${
                               model === m.id
-                                ? 'border-primary bg-primary text-primary-foreground'
-                                : 'border-input bg-transparent text-muted-foreground hover:text-foreground hover:border-foreground/30'
+                                ? 'text-foreground border-[var(--ring)]'
+                                : 'border-transparent hover:text-foreground'
                             }`}
                           >
                             {m.label}
@@ -901,50 +995,54 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                       )}
                     </Button>
                   </form>
-                </CardContent>
-              </Card>
+
+                  {/* Empty-state teaching note — only shown when the
+                      user has no review history yet. Tells them what
+                      this screen will become once they generate
+                      their first review, in editorial register. */}
+                  {prGroups.length === 0 && (
+                    <div className="border-t border-border pt-6 flex flex-col gap-2">
+                      <p className="editorial-label text-sm">No reviews yet.</p>
+                      <p className="slide-prose">
+                        Once you generate a review it'll be saved here, grouped by pull request, so you can return to
+                        it later without re-running the model. Reviews never leave your machine.
+                      </p>
+                    </div>
+                  )}
+              </div>
             </div>
 
             {/* History */}
             {prGroups.length > 0 && (
-              <Card className="min-h-0 max-h-[calc(100vh-6rem)] sticky top-8 overflow-hidden flex flex-col bg-card/50">
-                <div className="px-4 pt-4 pb-2 flex items-center justify-between">
-                  <p className="text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                    <History className="h-3 w-3" />
-                    Review history
-                  </p>
+              <div className="min-h-0 max-h-[calc(100vh-6rem)] sticky top-10 overflow-hidden flex flex-col">
+                <div className="pb-3 flex items-center justify-between border-b border-border">
+                  <h2 className="editorial-heading text-base">Review history</h2>
                   <div className="flex items-center gap-2">
                     {prGroups.some((g) => {
                       const state = livePrStates.get(g.prUrl)?.prState ?? g.latestReview.prState;
                       return state === 'merged' || state === 'closed';
                     }) && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            onClick={() => void handleDeleteClosedPRs()}
-                            className="text-muted-foreground hover:text-destructive transition-colors"
-                          >
-                            <Eraser className="h-3.5 w-3.5" />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>Remove merged &amp; closed PRs</TooltipContent>
-                      </Tooltip>
+                      <button
+                        onClick={() => void handleDeleteClosedPRs()}
+                        className="text-muted-foreground hover:text-destructive transition-colors"
+                        title="Remove merged & closed PRs"
+                        aria-label="Remove merged and closed PRs"
+                      >
+                        <Eraser className="h-3.5 w-3.5" />
+                      </button>
                     )}
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          onClick={handleDeleteAllHistory}
-                          className="text-muted-foreground hover:text-destructive transition-colors"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent>Delete all history</TooltipContent>
-                    </Tooltip>
+                    <button
+                      onClick={handleDeleteAllHistory}
+                      className="text-muted-foreground hover:text-destructive transition-colors"
+                      title="Delete all history"
+                      aria-label="Delete all history"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
                   </div>
                 </div>
-                <CardContent className="p-0 flex-1 overflow-y-auto min-h-0">
-                  <ul className="divide-y">
+                <div className="flex-1 overflow-y-auto min-h-0">
+                  <ul>
                     {prGroups.map((group) => {
                       const latestStatus = getEntryStatus(group.latestReview);
                       const risk = riskConfig[group.latestReview.riskLevel];
@@ -962,7 +1060,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                       return (
                         <li key={group.prUrl}>
                           <div
-                            className={`flex items-center gap-1 px-4 py-3 hover:bg-muted/50 transition-colors group ${isClickable ? 'cursor-pointer' : ''}`}
+                            className={`flex items-center gap-1 px-1 py-3 border-b border-border/60 hover:bg-muted/30 transition-colors group ${isClickable ? 'cursor-pointer' : ''}`}
                           >
                             <div className="shrink-0 w-5 flex items-center justify-center">
                               {hasMultiple && (
@@ -988,22 +1086,32 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                             </div>
                             <button
                               onClick={() => isClickable && handleLoadFromHistory(latestId)}
-                              className={`flex-1 min-w-0 flex items-center gap-3 text-left ${!isClickable ? 'cursor-default' : ''}`}
+                              className={`group/btn flex-1 min-w-0 flex items-center gap-3 text-left ${!isClickable ? 'cursor-default' : ''}`}
                               disabled={!isClickable}
                             >
                               <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-                                <span className="text-sm font-medium truncate flex items-center gap-2">
+                                <span
+                                  className={`font-serif text-base leading-snug truncate group-hover/btn:text-foreground transition-colors flex items-center gap-2 ${
+                                    group.latestReview.unread
+                                      ? 'text-foreground font-medium'
+                                      : 'text-foreground/85'
+                                  }`}
+                                >
                                   {group.latestReview.unread && (
-                                    <span className="shrink-0 h-2 w-2 rounded-full bg-blue-500" title="Unread" />
+                                    <span
+                                      className="shrink-0 h-1.5 w-1.5 rounded-full bg-[var(--ring)]"
+                                      title="Unread"
+                                      aria-label="Unread"
+                                    />
                                   )}
                                   {group.prTitle}
                                 </span>
-                                <span className="text-xs text-muted-foreground truncate">
+                                <span className="slide-meta truncate">
                                   {group.repoRef} · {group.author} · {timeAgo(group.latestReview.savedAt)}
                                   {hasMultiple && ` · ${group.reviews.length} reviews`}
                                 </span>
                                 {latestStatus === 'generating' && bytes && bytes.inputBytes > 0 && (
-                                  <span className="text-xs text-muted-foreground/60 truncate">
+                                  <span className="slide-meta opacity-60">
                                     ↑{formatBytes(bytes.inputBytes)} ↓{formatBytes(bytes.outputBytes)}
                                   </span>
                                 )}
@@ -1014,7 +1122,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                                 {prState === 'open' && !isOutdated && (
                                   <Badge
                                     variant="outline"
-                                    className="shrink-0 text-xs border-green-500/30 text-green-400"
+                                    className="shrink-0 text-xs border-[oklch(0.55_0.08_145/35%)] text-[oklch(0.62_0.1_145)]"
                                   >
                                     <GitPullRequest className="h-3 w-3 mr-1" />
                                     Open
@@ -1023,7 +1131,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                                 {prState === 'open' && isOutdated && (
                                   <Badge
                                     variant="outline"
-                                    className="shrink-0 text-xs border-yellow-500/30 text-yellow-400"
+                                    className="shrink-0 text-xs border-[oklch(0.65_0.12_55/35%)] text-[oklch(0.7_0.12_55)]"
                                   >
                                     <AlertTriangle className="h-3 w-3 mr-1" />
                                     Outdated
@@ -1032,14 +1140,14 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                                 {prState === 'merged' && (
                                   <Badge
                                     variant="outline"
-                                    className="shrink-0 text-xs border-purple-500/30 text-purple-400"
+                                    className="shrink-0 text-xs border-[oklch(0.55_0.1_300/35%)] text-[oklch(0.65_0.1_300)]"
                                   >
                                     <GitMerge className="h-3 w-3 mr-1" />
                                     Merged
                                   </Badge>
                                 )}
                                 {prState === 'closed' && (
-                                  <Badge variant="outline" className="shrink-0 text-xs border-red-500/30 text-red-400">
+                                  <Badge variant="outline" className="shrink-0 text-xs border-[oklch(0.6_0.13_22/35%)] text-[oklch(0.65_0.14_22)]">
                                     <GitPullRequestClosed className="h-3 w-3 mr-1" />
                                     Closed
                                   </Badge>
@@ -1047,7 +1155,10 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                               </>
                             )}
                             {latestStatus === 'generating' && (
-                              <Badge variant="outline" className="shrink-0 text-xs border-blue-500/30 text-blue-400">
+                              <Badge
+                                variant="outline"
+                                className="shrink-0 text-xs border-[var(--ring)]/40 text-[var(--ring)]"
+                              >
                                 <Loader2 className="h-3 w-3 animate-spin mr-1" />
                                 {reviewPhases.get(latestId) ?? 'Starting'}
                                 {elapsed > 0 && ` · ${formatDuration(elapsed * 1000)}`}
@@ -1056,7 +1167,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                             {latestStatus === 'failed' && (
                               <Badge
                                 variant="outline"
-                                className="shrink-0 text-xs border-red-500/30 text-red-400 max-w-[200px]"
+                                className="shrink-0 text-xs border-[oklch(0.6_0.13_22/35%)] text-[oklch(0.65_0.14_22)] max-w-[200px]"
                                 title={group.latestReview.error ?? 'Failed'}
                               >
                                 <CircleX className="h-3 w-3 mr-1 shrink-0" />
@@ -1142,7 +1253,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                                       {reviewStatus === 'generating' && (
                                         <Badge
                                           variant="outline"
-                                          className="shrink-0 text-xs border-blue-500/30 text-blue-400"
+                                          className="shrink-0 text-xs border-[var(--ring)]/40 text-[var(--ring)]"
                                         >
                                           <Loader2 className="h-3 w-3 animate-spin mr-1" />
                                           {reviewPhases.get(review.id) ?? 'Starting'}
@@ -1152,7 +1263,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                                       {reviewStatus === 'failed' && (
                                         <Badge
                                           variant="outline"
-                                          className="shrink-0 text-xs border-red-500/30 text-red-400 max-w-[200px]"
+                                          className="shrink-0 text-xs border-[oklch(0.6_0.13_22/35%)] text-[oklch(0.65_0.14_22)] max-w-[200px]"
                                           title={review.error ?? 'Failed'}
                                         >
                                           <CircleX className="h-3 w-3 mr-1 shrink-0" />
@@ -1212,8 +1323,8 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                       );
                     })}
                   </ul>
-                </CardContent>
-              </Card>
+                </div>
+              </div>
             )}
           </div>
         )}

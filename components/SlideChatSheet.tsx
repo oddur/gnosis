@@ -1,12 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, MessageSquare, Globe } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Send, Loader2, MessageSquare } from 'lucide-react';
 import { Markdown } from '@/components/Markdown';
 import type { ChatMessage } from '@/lib/use-slide-chat';
 
 const MIN_WIDTH = 300;
 const MAX_WIDTH = 700;
-const DEFAULT_WIDTH = 420;
+const DEFAULT_WIDTH = 460;
 
 interface Props {
   open: boolean;
@@ -18,24 +17,28 @@ interface Props {
   onSend: (text: string) => void;
 }
 
+// Suggested questions on first open. No bordered cards, no bg fills —
+// just a quiet list of italic prompts under a small label, like the
+// "you might also like" footer of a printed essay.
 function SuggestedQuestions({ reviewFocus, onSelect }: { reviewFocus: string | null; onSelect: (q: string) => void }) {
   const suggestions = buildSuggestions(reviewFocus);
   if (suggestions.length === 0) return null;
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center gap-4 px-4">
-      <p className="text-sm text-muted-foreground">Suggested questions:</p>
-      <div className="flex flex-col gap-2 w-full max-w-sm">
+    <div className="flex-1 flex flex-col items-start justify-center gap-4 px-2 max-w-md">
+      <p className="slide-meta">Try asking</p>
+      <ul className="flex flex-col gap-3 w-full">
         {suggestions.map((q, i) => (
-          <button
-            key={i}
-            onClick={() => onSelect(q)}
-            className="text-left text-sm px-3 py-2 rounded-md border border-border hover:bg-muted/50 transition-colors text-muted-foreground hover:text-foreground"
-          >
-            {q}
-          </button>
+          <li key={i}>
+            <button
+              onClick={() => onSelect(q)}
+              className="text-left font-serif text-base leading-snug text-foreground/75 hover:text-foreground italic transition-colors"
+            >
+              &ldquo;{q}&rdquo;
+            </button>
+          </li>
         ))}
-      </div>
+      </ul>
     </div>
   );
 }
@@ -62,42 +65,40 @@ function buildSuggestions(reviewFocus: string | null): string[] {
   return suggestions.slice(0, 3);
 }
 
-function MessageBubble({ message }: { message: ChatMessage }) {
+// Message — no bubble, no bg fill. User questions are a small mono
+// "You · " label followed by the question as quoted serif italic.
+// Assistant replies are plain prose. Tool calls are quiet inline
+// margin notes, not glowing pills.
+function Message({ message }: { message: ChatMessage }) {
   if (message.role === 'user') {
     return (
-      <div className="flex justify-end">
-        <div className="bg-primary text-primary-foreground rounded-lg px-3 py-2 max-w-[85%] text-sm">
-          {message.content}
-        </div>
+      <div className="flex flex-col gap-1.5">
+        <span className="slide-meta">You</span>
+        <p className="font-serif text-base leading-snug text-foreground italic">&ldquo;{message.content}&rdquo;</p>
       </div>
     );
   }
 
   return (
-    <div className="flex justify-start">
-      <div className="bg-muted rounded-lg px-3 py-2 max-w-[85%] text-sm">
-        {message.toolCalls && message.toolCalls.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mb-2">
-            {message.toolCalls.map((tool) => (
-              <span
-                key={tool}
-                className={`inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 text-primary px-2 py-0.5 text-xs ${message.isStreaming ? 'animate-pulse' : ''}`}
-              >
-                <Globe className="h-3 w-3" />
-                {tool}
-              </span>
-            ))}
-          </div>
-        )}
-        {message.content ? (
-          <Markdown className="chat-response">{message.content}</Markdown>
-        ) : message.isStreaming ? (
-          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-        ) : null}
-        {message.isStreaming && message.content && (
-          <span className="inline-block w-1.5 h-4 bg-foreground/50 animate-pulse ml-0.5 align-text-bottom" />
-        )}
-      </div>
+    <div className="flex flex-col gap-2">
+      <span className="slide-meta">Gnosis</span>
+      {message.toolCalls && message.toolCalls.length > 0 && (
+        <ul className="flex flex-col gap-0.5">
+          {message.toolCalls.map((tool) => (
+            <li key={tool} className="slide-meta opacity-70">
+              · {tool}
+            </li>
+          ))}
+        </ul>
+      )}
+      {message.content ? (
+        <Markdown className="text-sm text-foreground/85 leading-relaxed">{message.content}</Markdown>
+      ) : message.isStreaming ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+      ) : null}
+      {message.isStreaming && message.content && (
+        <span className="inline-block w-px h-4 bg-foreground/40 align-text-bottom" />
+      )}
     </div>
   );
 }
@@ -158,7 +159,6 @@ export function SlideChatSheet({ open, onOpenChange, slideTitle, reviewFocus, me
   }
 
   function handleHandleClick() {
-    // If we just finished a drag, don't toggle
     if (didDrag.current) {
       didDrag.current = false;
       return;
@@ -182,20 +182,19 @@ export function SlideChatSheet({ open, onOpenChange, slideTitle, reviewFocus, me
 
   return (
     <div className="shrink-0 flex flex-row h-full">
-      {/* Handle / toggle bar */}
+      {/* Handle / toggle bar — hairline divider, no fill. */}
       <button
         type="button"
         onMouseDown={handleHandleMouseDown}
         onClick={handleHandleClick}
-        className={`group relative flex items-center justify-center w-5 border-l border-border bg-muted/30 hover:bg-muted/60 transition-colors ${open ? 'cursor-col-resize' : 'cursor-pointer'}`}
+        className={`group relative flex items-center justify-center w-4 border-l border-border hover:bg-muted/30 transition-colors ${open ? 'cursor-col-resize' : 'cursor-pointer'}`}
         aria-label={open ? 'Collapse chat panel' : 'Expand chat panel'}
       >
-        {/* Grip dots when open, chat icon when collapsed */}
         {open ? (
-          <div className="flex flex-col gap-1 opacity-40 group-hover:opacity-70 transition-opacity">
-            <div className="w-1 h-1 rounded-full bg-foreground" />
-            <div className="w-1 h-1 rounded-full bg-foreground" />
-            <div className="w-1 h-1 rounded-full bg-foreground" />
+          <div className="flex flex-col gap-1 opacity-30 group-hover:opacity-60 transition-opacity">
+            <div className="w-px h-1 bg-foreground" />
+            <div className="w-px h-1 bg-foreground" />
+            <div className="w-px h-1 bg-foreground" />
           </div>
         ) : (
           <MessageSquare className="h-3.5 w-3.5 text-muted-foreground group-hover:text-foreground transition-colors" />
@@ -203,49 +202,52 @@ export function SlideChatSheet({ open, onOpenChange, slideTitle, reviewFocus, me
       </button>
 
       {/* Panel content */}
-      <div className="overflow-hidden transition-[width] duration-300 ease-in-out" style={{ width: open ? width : 0 }}>
+      <div
+        className="overflow-hidden transition-[width] duration-300 ease-out"
+        style={{ width: open ? width : 0 }}
+      >
         <div className="h-full flex flex-col bg-background" style={{ minWidth: width }}>
-          {/* Header */}
-          <div className="flex items-center justify-between border-b px-4 py-3">
-            <div className="min-w-0 flex-1">
-              <h3 className="text-sm font-semibold">Ask about this slide</h3>
-              <p className="text-xs text-muted-foreground truncate">{slideTitle}</p>
-            </div>
+          {/* Header — editorial heading + slide context as
+              meta. Reads like the running header of an essay. */}
+          <div className="border-b border-border px-6 py-4">
+            <h3 className="editorial-heading text-base">Ask about this slide</h3>
+            <p className="slide-meta truncate mt-0.5">{slideTitle}</p>
           </div>
 
           {/* Message list */}
-          <div className="flex-1 overflow-y-auto min-h-0 px-4 py-3 flex flex-col gap-3">
+          <div className="flex-1 overflow-y-auto min-h-0 px-6 py-6 flex flex-col gap-7">
             {messages.length === 0 ? (
-              <SuggestedQuestions
-                reviewFocus={reviewFocus}
-                onSelect={(q) => {
-                  onSend(q);
-                }}
-              />
+              <SuggestedQuestions reviewFocus={reviewFocus} onSelect={(q) => onSend(q)} />
             ) : (
               <>
                 {messages.map((msg) => (
-                  <MessageBubble key={msg.id} message={msg} />
+                  <Message key={msg.id} message={msg} />
                 ))}
                 <div ref={messagesEndRef} />
               </>
             )}
           </div>
 
-          {/* Input area */}
-          <div className="border-t p-4 flex gap-2 items-end">
+          {/* Input area — bottom-bordered textarea, no rounded
+              fill. Send button is a quiet icon, not a primary CTA. */}
+          <div className="border-t border-border px-6 py-4 flex gap-3 items-end">
             <textarea
               ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Ask a question about this slide..."
+              placeholder="Ask a question about this slide…"
               rows={2}
-              className="flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              className="flex-1 resize-none bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:border-[var(--ring)] transition-colors"
             />
-            <Button size="sm" onClick={handleSend} disabled={isStreaming || !input.trim()} className="shrink-0">
+            <button
+              onClick={handleSend}
+              disabled={isStreaming || !input.trim()}
+              className="shrink-0 p-2 text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-default transition-colors"
+              aria-label="Send"
+            >
               {isStreaming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            </Button>
+            </button>
           </div>
         </div>
       </div>

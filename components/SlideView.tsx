@@ -1,8 +1,6 @@
 import { useRef, useCallback } from 'react';
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from 'react-resizable-panels';
-import { Eye, MessageCircle } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent } from '@/components/ui/card';
+import { MessageCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DiffHunkGroup } from '@/components/DiffHunk';
 import { InteractiveDiffHunkGroup } from '@/components/InteractiveDiffHunk';
@@ -48,19 +46,26 @@ function DiffLayoutToggle({
   value: Preferences['diffLayout'];
   onChange: (v: Preferences['diffLayout']) => void;
 }) {
+  // Quiet text-only toggle — no fills, no borders. The active option
+  // gets a hairline underline in the brand amber so the choice is
+  // visible without becoming chrome.
   return (
-    <div className="inline-flex rounded-md border border-border bg-muted/30 p-0.5 text-xs">
+    <div className="inline-flex items-center gap-4 slide-meta">
       <button
-        className={`px-2.5 py-1 rounded-sm transition-colors ${
-          value === 'unified' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
+        className={`transition-colors ${
+          value === 'unified'
+            ? 'text-foreground border-b border-[var(--ring)] pb-0.5'
+            : 'hover:text-foreground border-b border-transparent pb-0.5'
         }`}
         onClick={() => onChange('unified')}
       >
         Unified
       </button>
       <button
-        className={`px-2.5 py-1 rounded-sm transition-colors ${
-          value === 'split' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
+        className={`transition-colors ${
+          value === 'split'
+            ? 'text-foreground border-b border-[var(--ring)] pb-0.5'
+            : 'hover:text-foreground border-b border-transparent pb-0.5'
         }`}
         onClick={() => onChange('split')}
       >
@@ -86,6 +91,10 @@ export function SlideView({
   const groupedHunks = groupHunksByFile(slide.diffHunks);
   const rightPanelRef = useRef<HTMLDivElement>(null);
 
+  const chapterNumber = slideNumber.toString().padStart(2, '0');
+  const fileCount = slide.affectedFiles.length;
+  const fileCountLabel = fileCount === 0 ? 'no files' : `${fileCount} ${fileCount === 1 ? 'file' : 'files'}`;
+
   const handleCheckClick = useCallback((check: ReviewCheck) => {
     if (!check.filePath || !check.startLine) return;
     const container = rightPanelRef.current;
@@ -106,76 +115,96 @@ export function SlideView({
     <PanelGroup orientation="horizontal" className="flex flex-1 overflow-hidden">
       {/* Left panel — narrative */}
       <Panel defaultSize={40} minSize={25} className="overflow-y-auto min-h-0">
-        <div className="p-6 flex flex-col gap-5">
-          <div className="flex items-center gap-2 flex-wrap">
-            <Badge variant="outline" className={`gap-1 ${typeConfig.className}`}>
-              <Icon className="h-3 w-3" />
+        <div className="px-8 py-10 flex flex-col gap-6">
+          {/* Chapter chip — quiet mono label above the title, like a
+              section number in a printed monograph. */}
+          <div className="slide-chapter select-text">
+            <span>Section {chapterNumber}</span>
+            <span aria-hidden="true">·</span>
+            <span>{fileCountLabel}</span>
+            <span aria-hidden="true">·</span>
+            <span className={typeConfig.className}>
+              <Icon className="inline h-3 w-3 -translate-y-px mr-1" aria-hidden="true" />
               {typeConfig.label}
-            </Badge>
+            </span>
           </div>
 
-          <h2 className="text-lg font-semibold leading-tight font-display select-text">{slide.title}</h2>
+          <h2 className="slide-title select-text">{slide.title}</h2>
 
-          <Markdown className="text-sm text-muted-foreground leading-relaxed">{slide.narrative}</Markdown>
+          <Markdown className="slide-prose select-text">{slide.narrative}</Markdown>
 
-          {/* Review focus */}
-          <div className="review-focus-callout rounded-lg border-l-2 border-l-primary bg-primary/[0.06] px-4 py-3">
-            <p className="text-xs uppercase tracking-wider text-primary/70 flex items-center gap-1.5 mb-2">
-              <Eye className="h-3 w-3" />
-              What to check
-            </p>
+          {/* Affected files — quiet mono margin-note, no label.
+              The file paths speak for themselves; an "AFFECTED FILES"
+              banner above them was redundant. */}
+          {slide.affectedFiles.length > 0 && (
+            <ul className="slide-meta flex flex-col gap-1 select-text">
+              {slide.affectedFiles.map((f) => (
+                <li key={f} className="truncate">
+                  {excludedFiles?.has(f) ? (
+                    <span className="italic opacity-70">{f} (excluded)</span>
+                  ) : (
+                    <FilePathLink filePath={f} gitFileUrlBase={gitFileUrlBase} />
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {/* Review focus — demoted from a tinted "tip card" to an
+              editorial sidebar block: bold inline label followed by
+              prose, like a margin note in a printed essay. Lives
+              BELOW the prose now so it doesn't compete with the
+              slide title. */}
+          <div className="border-l-2 border-l-[var(--ring)]/60 pl-4 select-text">
             {slide.reviewChecks && slide.reviewChecks.length > 0 ? (
-              <ul className="text-sm review-focus-content" style={{ listStyle: 'none', paddingLeft: 0 }}>
-                {slide.reviewChecks.map((check, i) => {
-                  const isClickable = !!(check.filePath && check.startLine != null && check.startLine > 0);
-                  return (
-                    <li
-                      key={i}
-                      className={isClickable ? 'cursor-pointer hover:bg-muted/50 rounded-sm transition-colors' : ''}
-                      onClick={isClickable ? () => handleCheckClick(check) : undefined}
-                    >
-                      {check.text}
-                    </li>
-                  );
-                })}
-              </ul>
+              (() => {
+                const checks = slide.reviewChecks;
+                return (
+                  <p className="slide-prose">
+                    <span className="editorial-label">What to check.</span>{' '}
+                    <span className="review-focus-content">
+                      {checks.map((check, i) => {
+                        const isClickable = !!(check.filePath && check.startLine != null && check.startLine > 0);
+                        return (
+                          <span
+                            key={i}
+                            className={
+                              isClickable
+                                ? 'cursor-pointer underline decoration-dotted decoration-[var(--ring)]/50 underline-offset-4 hover:decoration-[var(--ring)]'
+                                : ''
+                            }
+                            onClick={isClickable ? () => handleCheckClick(check) : undefined}
+                          >
+                            {check.text}
+                            {i < checks.length - 1 && ' '}
+                          </span>
+                        );
+                      })}
+                    </span>
+                  </p>
+                );
+              })()
             ) : (
-              <Markdown className="text-sm review-focus-content">{slide.reviewFocus ?? ''}</Markdown>
+              <p className="slide-prose">
+                <span className="editorial-label">What to check.</span>{' '}
+                <span className="review-focus-content">{slide.reviewFocus ?? ''}</span>
+              </p>
             )}
           </div>
 
-          {/* Affected files */}
-          {slide.affectedFiles.length > 0 && (
-            <div>
-              <p className="text-xs uppercase tracking-wider text-muted-foreground mb-2">Affected files</p>
-              <ul className="space-y-1">
-                {slide.affectedFiles.map((f) => (
-                  <li key={f} className="font-mono text-xs text-muted-foreground truncate">
-                    {excludedFiles?.has(f) ? (
-                      <span className="italic">{f} (excluded)</span>
-                    ) : (
-                      <FilePathLink filePath={f} gitFileUrlBase={gitFileUrlBase} />
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* Context snippets */}
+          {/* Context snippets — collapsible inline disclosure, no
+              cards. Just a small toggle and indented prose. */}
           {slide.contextSnippets.length > 0 && (
-            <details className="group">
-              <summary className="cursor-pointer text-xs uppercase tracking-wider text-muted-foreground hover:text-foreground select-none list-none flex items-center gap-1">
-                <span className="group-open:rotate-90 inline-block transition-transform">&#x25B6;</span>
+            <details className="group select-text">
+              <summary className="cursor-pointer slide-meta hover:text-foreground transition-colors select-none list-none flex items-center gap-1.5">
+                <span className="group-open:rotate-90 inline-block transition-transform">▸</span>
                 Codebase context
               </summary>
-              <div className="mt-3 space-y-3">
+              <div className="mt-3 ml-4 flex flex-col gap-3 border-l border-border pl-4">
                 {slide.contextSnippets.map((snippet, i) => (
-                  <Card key={i} className="bg-muted/30">
-                    <CardContent className="p-3">
-                      <Markdown className="text-xs text-muted-foreground">{snippet}</Markdown>
-                    </CardContent>
-                  </Card>
+                  <Markdown key={i} className="text-xs text-muted-foreground leading-relaxed">
+                    {snippet}
+                  </Markdown>
                 ))}
               </div>
             </details>
@@ -190,22 +219,26 @@ export function SlideView({
         </div>
       </Panel>
 
-      <PanelResizeHandle className="w-1 bg-border hover:bg-primary/50 transition-colors cursor-col-resize" />
+      <PanelResizeHandle className="w-px bg-border hover:bg-[var(--ring)]/40 transition-colors cursor-col-resize" />
 
       {/* Right panel — diagram + diffs */}
       <Panel defaultSize={60} minSize={30} className="overflow-y-auto min-h-0">
-        <div ref={rightPanelRef} className="p-6 flex flex-col gap-4">
-          <div className="flex items-center justify-between">
-            {slide.mermaidDiagram && <p className="text-xs uppercase tracking-wider text-muted-foreground">Diagram</p>}
-            <div className="ml-auto">
-              <DiffLayoutToggle value={diffLayout} onChange={onDiffLayoutChange} />
-            </div>
+        <div ref={rightPanelRef} className="px-6 py-10 flex flex-col gap-5">
+          {/* Diff layout toggle floats to the right with no label —
+              the toggle itself is self-explanatory. */}
+          <div className="flex items-center justify-end">
+            <DiffLayoutToggle value={diffLayout} onChange={onDiffLayoutChange} />
           </div>
 
           {slide.mermaidDiagram && <MermaidDiagram chart={slide.mermaidDiagram} />}
 
           {groupedHunks.length === 0 && (
-            <p className="text-sm text-muted-foreground italic">No diff hunks for this slide.</p>
+            <div className="border-l-2 border-l-border pl-4 py-2 flex flex-col gap-1.5">
+              <p className="editorial-label text-sm">A narrative-only slide.</p>
+              <p className="slide-meta">
+                This chapter has no diff to show — the author wrote it as context for the slides that follow.
+              </p>
+            </div>
           )}
           {groupedHunks.map(({ filePath, hunks }) => {
             if (diffLayout === 'split') {

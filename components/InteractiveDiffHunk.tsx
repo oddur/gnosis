@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { MessageSquarePlus } from 'lucide-react';
 import { parseDiffLines, type DiffLineInfo } from '@/lib/diff-lines';
-import type { DiffHunk, PendingReviewComment } from '@/lib/types';
+import type { DiffHunk, DiffSide, PendingReviewComment } from '@/lib/types';
 import { FilePathLink } from '@/components/FilePathLink';
 import {
   type CommentCallbacks,
@@ -38,7 +38,7 @@ function InteractiveHunk({
   pendingComments: PendingReviewComment[];
   slideIndex: number;
 } & CommentCallbacks) {
-  const [activeFormLine, setActiveFormLine] = useState<number | null>(null);
+  const [activeFormLine, setActiveFormLine] = useState<{ line: number; side: DiffSide } | null>(null);
 
   const lineInfos = useMemo(() => parseDiffLines(hunk.hunkHeader, hunk.content), [hunk.hunkHeader, hunk.content]);
 
@@ -63,7 +63,7 @@ function InteractiveHunk({
   }));
 
   function handleAddComment(lineInfo: DiffLineInfo) {
-    setActiveFormLine(lineInfo.lineNumber);
+    setActiveFormLine({ line: lineInfo.lineNumber, side: lineInfo.side });
   }
 
   function handleSubmitComment(body: string, lineInfo: DiffLineInfo) {
@@ -86,9 +86,10 @@ function InteractiveHunk({
       <code style={{ display: 'block', fontSize: 0, minWidth: '100%', width: 'max-content' }}>
         {lines.map((line, idx) => {
           const lineComments = pendingComments.filter(
-            (c) => c.line === line.info.lineNumber && c.filePath === filePath
+            (c) => c.line === line.info.lineNumber && c.filePath === filePath && c.side === line.info.side
           );
-          const isFormActive = activeFormLine === line.info.lineNumber;
+          const isFormActive =
+            activeFormLine?.line === line.info.lineNumber && activeFormLine.side === line.info.side;
 
           const diffClass = line.info.type === 'add' ? 'diff add' : line.info.type === 'remove' ? 'diff remove' : '';
 
@@ -114,7 +115,7 @@ function InteractiveHunk({
                     width: '3.5ch',
                     textAlign: 'right',
                     paddingRight: '0.5ch',
-                    color: 'rgba(255,255,255,0.3)',
+                    color: 'var(--muted-foreground)',
                     userSelect: 'none',
                     flexShrink: 0,
                     cursor: 'pointer',
@@ -139,7 +140,7 @@ function InteractiveHunk({
                   }}
                   onClick={() => handleAddComment(line.info)}
                 >
-                  <MessageSquarePlus style={{ width: '0.75rem', height: '0.75rem', color: '#58a6ff' }} />
+                  <MessageSquarePlus style={{ width: '0.75rem', height: '0.75rem', color: 'var(--ring)' }} />
                 </span>
 
                 {/* Diff gutter character */}
@@ -201,7 +202,7 @@ export function InteractiveDiffHunkGroup({
       <div className="bg-muted/50 px-3 py-2 font-mono text-xs text-muted-foreground border-b truncate flex items-center justify-between">
         <FilePathLink filePath={filePath} gitFileUrlBase={gitFileUrlBase} />
         {fileCommentCount > 0 && (
-          <span className="ml-2 inline-flex items-center gap-1 text-blue-400">
+          <span className="ml-2 inline-flex items-center gap-1 text-[var(--ring)]">
             <MessageSquarePlus className="h-3 w-3" />
             {fileCommentCount}
           </span>

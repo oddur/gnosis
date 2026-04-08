@@ -187,6 +187,8 @@ export interface Preferences {
   diffLayout: 'unified' | 'split';
   includeAllFiles: boolean;
   reviewSignature: boolean;
+  firstRunSeen: boolean;
+  theme: 'light' | 'dark' | 'system';
 }
 
 export interface SendSlideChatRequest {

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ArrowUpCircle, X, Download } from 'lucide-react';
+import { X } from 'lucide-react';
 import type { UpdateInfo } from '../lib/types';
 
 const supportsAutoUpdate = window.electronAPI.platform !== 'linux' && window.electronAPI.isPackaged;
@@ -20,24 +20,12 @@ export function UpdateBanner() {
   // macOS/Windows: show banner when update has been downloaded and is ready to install
   if (supportsAutoUpdate && readyVersion !== null) {
     return (
-      <div className="flex items-center justify-between gap-3 px-4 py-2 text-sm updateBanner">
-        <div className="flex items-center gap-2">
-          <ArrowUpCircle className="h-4 w-4 shrink-0" />
-          <span>
-            Gnosis
-            {readyVersion ? (
-              <>
-                {' '}
-                <strong>v{readyVersion}</strong>
-              </>
-            ) : (
-              ''
-            )}{' '}
-            will install on next restart
-          </span>
-        </div>
-        <button onClick={() => setReadyVersion(null)} className="shrink-0 transition-opacity hover:opacity-80">
-          <X className="h-3.5 w-3.5" />
+      <div className="updateBanner flex items-center justify-between gap-3 px-6 py-1.5 text-xs">
+        <span>
+          Gnosis <strong className="font-semibold">v{readyVersion}</strong> will install on next restart
+        </span>
+        <button onClick={() => setReadyVersion(null)} className="shrink-0 transition-opacity hover:opacity-80" aria-label="Dismiss">
+          <X className="h-3 w-3" />
         </button>
       </div>
     );
@@ -54,22 +42,20 @@ export function UpdateBanner() {
   }
 
   return (
-    <div className="flex items-center justify-between gap-3 px-4 py-2 text-sm updateBanner">
-      <div className="flex items-center gap-2">
-        <ArrowUpCircle className="h-4 w-4 shrink-0" />
+    <div className="updateBanner flex items-center justify-between gap-3 px-6 py-1.5 text-xs">
+      <div className="flex items-center gap-3">
         <span>
-          Gnosis <strong>v{version}</strong> is available
+          Gnosis <strong className="font-semibold">v{version}</strong> is available
         </span>
         <button
           onClick={() => void window.electronAPI.openExternal(releaseUrl)}
-          className="ml-1 inline-flex items-center gap-1.5 rounded-md px-2.5 py-0.5 text-xs font-medium transition-colors updateBanner-btn"
+          className="updateBanner-btn px-2 py-0.5 rounded-sm text-xs transition-colors"
         >
-          <Download className="h-3 w-3" />
           Download
         </button>
       </div>
-      <button onClick={handleDismiss} className="shrink-0 transition-opacity hover:opacity-80">
-        <X className="h-3.5 w-3.5" />
+      <button onClick={handleDismiss} className="shrink-0 transition-opacity hover:opacity-80" aria-label="Dismiss">
+        <X className="h-3 w-3" />
       </button>
     </div>
   );

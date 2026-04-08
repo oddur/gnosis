@@ -697,6 +697,8 @@ const DEFAULT_PREFERENCES: Preferences = {
   diffLayout: 'unified',
   includeAllFiles: true,
   reviewSignature: true,
+  firstRunSeen: false,
+  theme: 'system',
 };
 
 function applyBinaryOverrides(prefs: Preferences): void {

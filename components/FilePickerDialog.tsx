@@ -46,7 +46,7 @@ function Checkbox({ checked, indeterminate, onChange, className }: CheckboxProps
       type="checkbox"
       checked={checked}
       onChange={onChange}
-      className={`h-4 w-4 shrink-0 cursor-pointer accent-primary ${className ?? ''}`}
+      className={`h-4 w-4 shrink-0 cursor-pointer accent-[var(--ring)] ${className ?? ''}`}
     />
   );
 }
@@ -121,16 +121,16 @@ export function FilePickerDialog({ open, onOpenChange, prUrl, onConfirm }: Props
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-card sm:max-w-2xl max-h-[80vh] flex flex-col gap-4">
+      <DialogContent className="bg-card sm:max-w-2xl max-h-[80vh] flex flex-col gap-5">
         <DialogHeader>
-          <DialogTitle>Select files to include</DialogTitle>
-          <DialogDescription>Choose which files to include in the review</DialogDescription>
+          <DialogTitle className="editorial-heading">Files to include</DialogTitle>
+          <DialogDescription className="slide-meta">Choose which files to include in the review</DialogDescription>
         </DialogHeader>
 
         {loading && (
-          <div className="flex items-center justify-center gap-2 py-8 text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            <span className="text-sm">Loading files…</span>
+          <div className="flex items-center justify-center gap-2 py-8 slide-meta">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <span>Loading files…</span>
           </div>
         )}
 
@@ -138,19 +138,18 @@ export function FilePickerDialog({ open, onOpenChange, prUrl, onConfirm }: Props
 
         {!loading && !error && files.length > 0 && (
           <>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-5 slide-meta">
               <button
                 type="button"
                 onClick={() => setExcluded(new Set())}
-                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                className="hover:text-foreground transition-colors"
               >
                 Select all
               </button>
-              <span className="text-xs text-muted-foreground">·</span>
               <button
                 type="button"
                 onClick={() => setExcluded(new Set(files.map((f) => f.filename)))}
-                className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                className="hover:text-foreground transition-colors"
               >
                 Deselect all
               </button>
@@ -180,8 +179,8 @@ export function FilePickerDialog({ open, onOpenChange, prUrl, onConfirm }: Props
                           </span>
                         </span>
                         <span className="text-xs text-muted-foreground shrink-0">
-                          <span className="text-green-400">+{group.totalAdditions}</span>{' '}
-                          <span className="text-red-400">−{group.totalDeletions}</span>
+                          <span className="text-[oklch(0.62_0.1_145)]">+{group.totalAdditions}</span>{' '}
+                          <span className="text-[oklch(0.65_0.14_22)]">−{group.totalDeletions}</span>
                         </span>
                       </div>
 
@@ -199,8 +198,8 @@ export function FilePickerDialog({ open, onOpenChange, prUrl, onConfirm }: Props
                                   {f.filename}
                                 </span>
                                 <span className="text-xs text-muted-foreground shrink-0">
-                                  <span className="text-green-400">+{f.additions}</span>{' '}
-                                  <span className="text-red-400">−{f.deletions}</span>
+                                  <span className="text-[oklch(0.62_0.1_145)]">+{f.additions}</span>{' '}
+                                  <span className="text-[oklch(0.65_0.14_22)]">−{f.deletions}</span>
                                 </span>
                               </div>
                             </li>

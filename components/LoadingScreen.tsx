@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { Brain, GitPullRequest, FileCode, Loader, Globe } from 'lucide-react';
 
 interface Props {
   message: string;
@@ -7,11 +6,14 @@ interface Props {
   activeToolCall?: string | null;
 }
 
+// Phase copy reads as natural prose, not log messages. The wait is
+// the first page of the monograph — these are chapter titles, not
+// status updates.
 const phases = [
-  { icon: GitPullRequest, text: 'Fetching PR data…' },
-  { icon: FileCode, text: 'Building context…' },
-  { icon: Brain, text: 'Analyzing code…' },
-  { icon: Loader, text: 'Generating review…' },
+  'Reading the pull request',
+  'Building the context around it',
+  'Looking at the changes one by one',
+  'Composing the walkthrough',
 ];
 
 export function LoadingScreen({ message, streamingText, activeToolCall }: Props) {
@@ -27,71 +29,65 @@ export function LoadingScreen({ message, streamingText, activeToolCall }: Props)
   useEffect(() => {
     const interval = setInterval(() => {
       setPhaseIndex((i) => (i < phases.length - 1 ? i + 1 : i));
-    }, 3000);
+    }, 4500);
     return () => clearInterval(interval);
   }, []);
 
-  // Once we have streaming text, jump to last phase
+  // Once streaming text starts arriving we know we're in the final
+  // phase — don't pretend otherwise.
   useEffect(() => {
     if (streamingText) setPhaseIndex(phases.length - 1);
   }, [streamingText]);
 
-  const phase = phases[phaseIndex];
-  const PhaseIcon = phase.icon;
+  const progress = ((phaseIndex + 1) / phases.length) * 100;
 
   return (
-    <div className="flex min-h-screen items-center justify-center p-8 relative">
-      {/* Radial gradient background */}
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          background: 'radial-gradient(ellipse at center, var(--accent-glow) 0%, transparent 60%)',
-        }}
-      />
-
-      <div className="flex flex-col items-center gap-6 text-center w-full max-w-2xl relative z-10">
-        {/* Concentric rings with brain icon */}
-        <div className="relative flex items-center justify-center w-28 h-28">
-          {/* Rings */}
-          <div className="loading-ring absolute inset-0 rounded-full border-2 border-primary/40" />
-          <div className="loading-ring-delayed absolute inset-2 rounded-full border-2 border-primary/30" />
-          <div className="loading-ring-delayed-2 absolute inset-4 rounded-full border-2 border-primary/20" />
-          {/* Center icon */}
-          <Brain className="h-10 w-10 text-primary" />
+    <div className="flex min-h-screen items-start justify-center px-8 pt-[18vh] pb-12">
+      <div className="w-full max-w-2xl flex flex-col gap-10">
+        {/* Chapter chip — same vocabulary as the rest of the
+            monograph. Tells the reader what stage of the wait
+            they're in without dramatizing it. */}
+        <div className="slide-chapter">
+          <span>Section 00</span>
+          <span aria-hidden="true">·</span>
+          <span>{phaseIndex + 1} of {phases.length}</span>
         </div>
 
-        {/* Phase indicator */}
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <PhaseIcon className="h-4 w-4 animate-pulse" />
-          <span className="text-sm">{phase.text}</span>
+        {/* Serif phase title — the dominant element on the page,
+            same treatment as a real slide title. The wait IS a
+            slide; it just happens to be the first one. */}
+        <h1 className="slide-title">{phases[phaseIndex]}</h1>
+
+        {/* Hairline progress rule. A single 1px line that fills
+            from left to right as phases advance. No glow, no
+            shimmer, no animated stripes — just a quiet rule that
+            tells you where you are. */}
+        <div className="relative h-px w-full bg-border" role="progressbar" aria-valuenow={progress}>
+          <div
+            className="absolute left-0 top-0 h-px bg-[var(--ring)] loading-progress-fill"
+            style={{ width: `${progress}%` }}
+          />
         </div>
 
-        {/* Phase dots */}
-        <div className="flex gap-2">
-          {phases.map((_, i) => (
-            <div
-              key={i}
-              className={`h-1.5 rounded-full transition-all duration-500 ${
-                i <= phaseIndex ? 'w-6 bg-primary' : 'w-1.5 bg-muted-foreground/30'
-              }`}
-            />
-          ))}
-        </div>
-
+        {/* Active tool call — small inline mono line, no pill, no
+            border, no glow. Reads like a margin note. */}
         {activeToolCall && (
-          <div className="flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary animate-pulse">
-            <Globe className="h-3 w-3" />
-            <span>{activeToolCall}</span>
-          </div>
+          <p className="slide-meta">
+            <span className="text-muted-foreground/60">·</span> {activeToolCall}
+          </p>
         )}
 
-        <p className="text-xs text-muted-foreground/60">{message}</p>
+        {/* Free-text status message from the caller. Quiet meta
+            register, not a headline. */}
+        {message && <p className="slide-meta opacity-70">{message}</p>}
 
+        {/* Streaming text from the model. A calm mono panel
+            on a faint warm-paper tint, no glow, no cyan border.
+            Reads like the AI's marginalia. */}
         {streamingText && (
           <pre
             ref={preRef}
-            className="w-full text-left text-xs text-muted-foreground/70 font-mono rounded-lg p-4 overflow-y-auto max-h-48 whitespace-pre-wrap break-all border border-primary/20 bg-primary/5"
-            style={{ boxShadow: '0 0 20px var(--accent-glow)' }}
+            className="loading-stream w-full text-left text-xs font-mono text-muted-foreground rounded-md px-4 py-3 max-h-56 overflow-y-auto whitespace-pre-wrap"
           >
             {streamingText}
           </pre>

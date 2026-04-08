@@ -133,8 +133,10 @@ export function CommentBubble({
   }
 
   return (
-    <div className="mx-2 my-1 border rounded-md bg-blue-950/30 border-blue-800/30 p-2 flex gap-2 group">
-      <pre className="flex-1 text-xs font-mono whitespace-pre-wrap break-words text-blue-200">{comment.body}</pre>
+    <div className="pending-comment-block mx-2 my-1 border rounded-md p-2 flex gap-2 group">
+      <pre className="pending-comment-block-text flex-1 text-xs font-mono whitespace-pre-wrap break-words">
+        {comment.body}
+      </pre>
       <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
         <button
           onClick={() => setEditing(true)}

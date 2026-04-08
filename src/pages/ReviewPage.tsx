@@ -8,8 +8,11 @@ import { SlideNav } from '../../components/SlideNav';
 import { SlideChatSheet } from '../../components/SlideChatSheet';
 import { SubmitReviewDialog } from '../../components/SubmitReviewDialog';
 import { SettingsDialog } from '../../components/SettingsDialog';
+import { ShortcutOverlay } from '../../components/ShortcutOverlay';
+import { CommandPalette, type Command } from '../../components/CommandPalette';
 import { useReviewComments } from '../../lib/use-review-comments';
 import { useSlideChat } from '../../lib/use-slide-chat';
+import { useKeyboardShortcuts, type ShortcutMap } from '../../lib/use-keyboard-shortcuts';
 import { buildFileUrlBase } from '../../lib/github-url';
 import type {
   ReviewGuide,
@@ -40,6 +43,8 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
   const [chatModel, setChatModel] = useState<ModelId>('claude-sonnet-4-6');
   const [diffLayout, setDiffLayout] = useState<Preferences['diffLayout']>('unified');
   const [prefs, setPrefs] = useState<Preferences | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const { comments, addComment, removeComment, editComment, clearAll } = useReviewComments();
   const slideChat = useSlideChat(review, chatProvider, chatModel);
   const gitFileUrlBase = useMemo(() => buildFileUrlBase(review.prUrl, review.headSha), [review.prUrl, review.headSha]);
@@ -84,18 +89,14 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
     setCurrentSlide((n) => Math.min(review.slides.length, n + 1));
   }, [review.slides.length]);
 
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      // Don't navigate when typing in a textarea or input
-      const tag = (e.target as HTMLElement).tagName;
-      if (tag === 'TEXTAREA' || tag === 'INPUT') return;
-
-      if (e.key === 'ArrowLeft') handlePrev();
-      if (e.key === 'ArrowRight') handleNext();
-    }
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handlePrev, handleNext]);
+  // Jump directly to a specific slide number, clamped to range.
+  // Slide 0 is the overview, slides 1..N are the real chapters.
+  const handleJumpTo = useCallback(
+    (n: number) => {
+      setCurrentSlide(Math.max(0, Math.min(review.slides.length, n)));
+    },
+    [review.slides.length]
+  );
 
   const commentCallbacks = useMemo(
     () => ({ onAddComment: addComment, onRemoveComment: removeComment, onEditComment: editComment }),
@@ -113,6 +114,142 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
     },
     [prefs]
   );
+
+  // Build the keyboard shortcut map. The hook handles input
+  // suppression, modifier signatures, and two-key sequences.
+  // Declared after handleDiffLayoutChange so the closures land
+  // on a defined function rather than the temporal dead zone.
+  const shortcutMap = useMemo<ShortcutMap>(() => {
+    const map: ShortcutMap = {
+      // Navigation — both arrows and vim
+      ArrowLeft: () => handlePrev(),
+      ArrowRight: () => handleNext(),
+      j: () => handleNext(),
+      k: () => handlePrev(),
+      // Sequences and bookends
+      'g g': () => handleJumpTo(0),
+      G: () => handleJumpTo(review.slides.length),
+      // Diff layout — only valid on a real slide, not the overview
+      u: () => {
+        if (currentSlide > 0) handleDiffLayoutChange('unified');
+      },
+      s: () => {
+        if (currentSlide > 0) handleDiffLayoutChange('split');
+      },
+      // Open chat for the current slide
+      c: () => {
+        if (currentSlide > 0) setChatOpen(true);
+      },
+      // Global
+      'cmd+k': () => setPaletteOpen(true),
+      'ctrl+k': () => setPaletteOpen(true),
+      '?': () => setShortcutsOpen((v) => !v),
+    };
+    // Numeric jump 1–9 → slide N (chapter, not overview)
+    for (let n = 1; n <= 9; n++) {
+      map[String(n)] = () => handleJumpTo(n);
+    }
+    return map;
+  }, [handlePrev, handleNext, handleJumpTo, handleDiffLayoutChange, currentSlide, review.slides.length]);
+
+  useKeyboardShortcuts(shortcutMap);
+
+  // Build the command palette commands. The slide jump entries
+  // are generated dynamically from the review so they read like a
+  // table of contents inside the palette.
+  const paletteCommands = useMemo<Command[]>(() => {
+    const commands: Command[] = [];
+
+    commands.push({
+      id: 'overview',
+      label: 'Jump to overview',
+      hint: 'g g',
+      group: 'Reading',
+      keywords: 'home start beginning',
+      perform: () => handleJumpTo(0),
+    });
+
+    review.slides.forEach((slide, idx) => {
+      const num = (idx + 1).toString().padStart(2, '0');
+      commands.push({
+        id: `slide-${slide.id}`,
+        label: `${num}  ${slide.title}`,
+        group: 'Reading',
+        keywords: slide.title,
+        perform: () => handleJumpTo(idx + 1),
+      });
+    });
+
+    if (currentSlide > 0) {
+      commands.push(
+        {
+          id: 'unified',
+          label: 'Switch to unified diff',
+          hint: 'u',
+          group: 'Reviewing',
+          keywords: 'diff layout combine',
+          perform: () => handleDiffLayoutChange('unified'),
+        },
+        {
+          id: 'split',
+          label: 'Switch to split diff',
+          hint: 's',
+          group: 'Reviewing',
+          keywords: 'diff layout side by side',
+          perform: () => handleDiffLayoutChange('split'),
+        },
+        {
+          id: 'chat',
+          label: 'Ask about this slide',
+          hint: 'c',
+          group: 'Reviewing',
+          keywords: 'chat question follow up',
+          perform: () => setChatOpen(true),
+        }
+      );
+    }
+
+    commands.push(
+      {
+        id: 'submit',
+        label: comments.length > 0 ? `Submit review (${comments.length} comments)` : 'Submit review',
+        group: 'Reviewing',
+        keywords: 'send post approve',
+        perform: () => setShowSubmitDialog(true),
+      },
+      {
+        id: 'shortcuts',
+        label: 'Show keyboard shortcuts',
+        hint: '?',
+        group: 'Anywhere',
+        keywords: 'help cheatsheet keys',
+        perform: () => setShortcutsOpen(true),
+      },
+      {
+        id: 'settings',
+        label: 'Open settings',
+        group: 'Anywhere',
+        keywords: 'preferences config theme font',
+        perform: () => setSettingsOpen(true),
+      },
+      {
+        id: 'back',
+        label: 'Back to home',
+        group: 'Anywhere',
+        keywords: 'exit close leave',
+        perform: () => onBack(),
+      }
+    );
+
+    return commands;
+  }, [
+    review.slides,
+    currentSlide,
+    comments.length,
+    handleJumpTo,
+    handleDiffLayoutChange,
+    onBack,
+  ]);
 
   async function handleSubmitReview(event: ReviewEvent, body: string) {
     const result = await window.electronAPI.submitReview({
@@ -133,15 +270,22 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
 
   if (review.slides.length === 0) {
     return (
-      <main className="flex min-h-screen items-center justify-center p-8">
-        <div className="flex flex-col items-center gap-4">
-          <p className="text-muted-foreground">No slides were generated for this PR.</p>
+      <main className="flex min-h-screen items-start justify-center px-8 pt-[18vh]">
+        <div className="w-full max-w-2xl flex flex-col gap-6">
+          <div className="slide-chapter">
+            <span>Empty review</span>
+          </div>
+          <h1 className="slide-title">No slides were generated for this PR.</h1>
+          <p className="slide-prose">
+            This usually happens when the diff is empty, when every file was filtered out as boilerplate, or when the
+            model could not produce a structured response. You can re-run the review or pick a different PR.
+          </p>
           <button
             onClick={onBack}
-            className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1"
+            className="slide-meta hover:text-foreground flex items-center gap-1.5 self-start"
           >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            Back
+            <ArrowLeft className="h-3 w-3" />
+            Back to home
           </button>
         </div>
       </main>
@@ -214,6 +358,9 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
           setReview(updated);
         }}
       />
+
+      <ShortcutOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={paletteCommands} />
     </div>
   );
 }
