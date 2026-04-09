@@ -291,7 +291,7 @@
 .slide-title {
   font-family: var(--font-serif);
   font-size: clamp(1.75rem, 0.9rem + 2.4vw, 2.625rem); /* 28→42px */
-  font-weight: 420;
+  font-weight: 440;
   line-height: 1.12;
   letter-spacing: -0.014em;
   font-feature-settings:
@@ -299,18 +299,23 @@
     'liga' 1,
     'calt' 1,
     'ss01' 1;
-  /* Lean on Fraunces' optical-size axis for display-size punch */
-  font-variation-settings: 'opsz' 96;
+  /* Fraunces opsz=72 keeps the display character at 28-42px without
+     getting as thin and elegant as opsz=96 (which is designed for
+     billboard sizes and reads as fragile in product UI). */
+  font-variation-settings: 'opsz' 72;
   color: var(--foreground);
   text-wrap: balance;
 }
 
 /* Smaller serif heading used inside narrative blocks (callouts,
-   sub-sections, dialog titles that should still feel editorial). */
+   sub-sections, dialog titles that should still feel editorial).
+   Weight 540 — clearly heavier than slide-title's 440 so the
+   hierarchy reads at a glance. The previous 460 was only 40 units
+   off the display title and barely registered as different. */
 .editorial-heading {
   font-family: var(--font-serif);
   font-size: 1.375rem; /* 22px */
-  font-weight: 460;
+  font-weight: 540;
   line-height: 1.25;
   letter-spacing: -0.008em;
   font-variation-settings: 'opsz' 36;
@@ -335,27 +340,47 @@
 }
 
 /* Prose column for slide narrative.
-   Comfortable measure, generous leading, real paragraph spacing. */
+   Comfortable measure, generous leading, real paragraph spacing.
+   Body color is `--foreground` (NOT muted) — the reading column
+   is the user's primary content, not a footnote. Setting it to
+   muted made every long passage feel like a caption.
+   `text-wrap: pretty` is the modern CSS feature that optimizes
+   the last few lines of every paragraph to avoid orphans and
+   ragged shapes — the one thing justification was reaching for,
+   without any of justification's drawbacks. Falls back silently
+   in browsers that don't support it. */
 .slide-prose {
   max-width: var(--measure-prose);
   font-family: var(--font-sans);
   font-size: 1rem; /* 16px — never below */
   line-height: 1.65;
-  color: var(--muted-foreground);
+  color: var(--foreground);
+  text-wrap: pretty;
 }
 
 .slide-prose p + p {
   margin-top: 0.85em;
 }
 
+/* Strong was already at foreground 600; once the surrounding text
+   moved to foreground too, the contrast comes from weight alone
+   instead of weight + color. That's the more honest move and reads
+   as cleaner emphasis. */
 .slide-prose strong {
-  color: var(--foreground);
   font-weight: 600;
 }
 
 .slide-prose em {
   font-style: italic;
 }
+
+/* Per-element styles for code, links, lists, blockquote, and
+   headings inside slide-prose all live in the Markdown component
+   (components/Markdown.tsx) so the editorial register applies
+   consistently in both .slide-prose contexts (narrative, summary)
+   AND non-slide-prose contexts (chat messages, PR description,
+   context snippets). Putting them here would shadow the Markdown
+   per-element classes via lower specificity. */
 
 /* Quiet typographic meta line — used for the status row in the
    reference screenshot ("8/8 files narrated · all files covered"),
@@ -376,6 +401,24 @@
   font-family: var(--font-sans);
   font-weight: 600;
   color: var(--foreground);
+}
+
+/* Editorial callout block — the "What to check" / "Note." pattern
+   from the brief: a soft tinted block with a bold inline label
+   followed by prose on the same line. NO side-stripe border, NO
+   icon, NO titled card chrome. The tint is the warm-paper variant
+   of the brand claret at very low alpha so it reads as a margin
+   note, not as an alert. Both modes tested for AA contrast. */
+.editorial-callout {
+  background: oklch(0.4 0.12 15 / 5%);
+  border: 1px solid oklch(0.4 0.12 15 / 16%);
+  border-radius: 4px;
+  padding: 0.85rem 1.1rem;
+}
+
+.dark .editorial-callout {
+  background: oklch(0.65 0.13 15 / 8%);
+  border-color: oklch(0.65 0.13 15 / 22%);
 }
 
 /* Pending review comment block — the user's draft comment as it

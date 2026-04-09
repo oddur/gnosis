@@ -150,12 +150,11 @@ export function SlideView({
             </ul>
           )}
 
-          {/* Review focus — demoted from a tinted "tip card" to an
-              editorial sidebar block: bold inline label followed by
-              prose, like a margin note in a printed essay. Lives
-              BELOW the prose now so it doesn't compete with the
-              slide title. */}
-          <div className="border-l-2 border-l-[var(--ring)]/60 pl-4 select-text">
+          {/* Review focus — the canonical editorial callout pattern
+              from the brief: soft tinted block with a bold inline
+              label followed by prose on the same line. NOT a card,
+              NOT a side-stripe border, NOT a titled tip box. */}
+          <div className="editorial-callout select-text">
             {slide.reviewChecks && slide.reviewChecks.length > 0 ? (
               (() => {
                 const checks = slide.reviewChecks;
@@ -202,7 +201,7 @@ export function SlideView({
               </summary>
               <div className="mt-3 ml-4 flex flex-col gap-3 border-l border-border pl-4">
                 {slide.contextSnippets.map((snippet, i) => (
-                  <Markdown key={i} className="text-xs text-muted-foreground leading-relaxed">
+                  <Markdown key={i} className="text-sm text-muted-foreground leading-relaxed">
                     {snippet}
                   </Markdown>
                 ))}
@@ -233,7 +232,7 @@ export function SlideView({
           {slide.mermaidDiagram && <MermaidDiagram chart={slide.mermaidDiagram} />}
 
           {groupedHunks.length === 0 && (
-            <div className="border-l-2 border-l-border pl-4 py-2 flex flex-col gap-1.5">
+            <div className="flex flex-col gap-1.5">
               <p className="editorial-label text-sm">A narrative-only slide.</p>
               <p className="slide-meta">
                 This chapter has no diff to show — the author wrote it as context for the slides that follow.
