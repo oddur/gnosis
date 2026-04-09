@@ -74,9 +74,9 @@ export function StaleBanner({ freshness, onReReview }: Props) {
       {expanded && (
         <ul className="staleBanner-warn-list px-6 py-2 flex flex-col gap-1">
           {displayed.map((c) => (
-            <li key={c.sha} className="flex items-baseline gap-2">
+            <li key={c.sha} className="flex items-baseline gap-2 min-w-0">
               <code className="staleBanner-warn-sha shrink-0">{c.sha.slice(0, 7)}</code>
-              <span className="truncate">{c.message}</span>
+              <span className="truncate min-w-0">{c.message}</span>
               <span className="staleBanner-warn-meta shrink-0">
                 {c.authorLogin}
                 {c.authorDate ? ` · ${timeAgo(c.authorDate)}` : ''}

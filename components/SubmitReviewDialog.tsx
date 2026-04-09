@@ -64,6 +64,10 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
   }
 
   function handleClose() {
+    // Don't allow closing while a submit is in flight — the user
+    // might think the review wasn't posted and retry, creating a
+    // duplicate. The dialog stays open until the operation finishes.
+    if (submitting) return;
     if (successUrl) {
       setSuccessUrl(null);
       setBody('');
@@ -192,6 +196,9 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
         {error && <p className="text-sm text-destructive">{error}</p>}
 
         <DialogFooter className="flex-col gap-2 sm:flex-col sm:gap-2">
+          {submitting && (
+            <p className="slide-meta text-center animate-pulse">Posting to GitHub…</p>
+          )}
           {isOwnPr && (
             <p className="slide-meta text-center">You can't approve or request changes on your own PR.</p>
           )}

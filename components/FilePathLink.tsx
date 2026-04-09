@@ -6,13 +6,13 @@ interface Props {
 
 export function FilePathLink({ filePath, gitFileUrlBase, className }: Props) {
   if (!gitFileUrlBase) {
-    return <span className={className}>{filePath}</span>;
+    return <span className={`truncate ${className ?? ''}`}>{filePath}</span>;
   }
 
   return (
     <button
       type="button"
-      className={`hover:underline hover:text-foreground transition-colors text-left ${className ?? ''}`}
+      className={`hover:underline hover:text-foreground transition-colors text-left truncate ${className ?? ''}`}
       onClick={() => void window.electronAPI.openExternal(gitFileUrlBase + filePath)}
       title={`Open on GitHub`}
     >

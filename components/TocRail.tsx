@@ -126,8 +126,8 @@ export function TocRail({
                     <span className="slide-meta tabular-nums">{num}</span>
                   )}
                 </span>
-                <span className="font-serif text-base leading-snug text-balance flex items-center gap-1.5">
-                  {slide.title}
+                <span className="font-serif text-base leading-snug flex items-center gap-1.5 min-w-0">
+                  <span className="line-clamp-2">{slide.title}</span>
                   {dotClass && <span className={`shrink-0 h-1.5 w-1.5 rounded-full ${dotClass}`} title="Critical" />}
                 </span>
               </button>

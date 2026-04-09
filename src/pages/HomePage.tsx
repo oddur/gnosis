@@ -226,11 +226,15 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     void window.electronAPI.getAuthState().then(({ authenticated, login }) => {
-      setAuthStatus(authenticated && login ? { login } : 'unauthenticated');
+      if (!cancelled) setAuthStatus(authenticated && login ? { login } : 'unauthenticated');
     });
-    void window.electronAPI.listReviews().then(setHistory);
+    void window.electronAPI.listReviews().then((reviews) => {
+      if (!cancelled) setHistory(reviews);
+    });
     void window.electronAPI.loadPreferences().then((prefs) => {
+      if (cancelled) return;
       if (prefs.instructions) setInstructions(prefs.instructions);
       setProvider(prefs.provider);
       setModel(prefs.model);
@@ -241,13 +245,11 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
       setWebResearch(prefs.enableWebResearch);
       setIncludeAllFiles(prefs.includeAllFiles);
       setPrefsLoaded(true);
-      // Show the first-run welcome once, on the very first launch.
-      // The flag persists in preferences so it never reappears for
-      // returning users.
       if (!prefs.firstRunSeen) {
         setFirstRunOpen(true);
       }
     });
+    return () => { cancelled = true; };
   }, []);
 
   // Keyboard shortcuts on the home screen. The hook handles input
