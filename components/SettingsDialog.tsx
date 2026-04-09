@@ -8,6 +8,12 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onThemeChange?: (theme: string) => void;
+  // Resets the first-run welcome, the keyboard hint, and any
+  // localStorage onboarding flags so the user can re-experience the
+  // first-time path. Owned by HomePage because HomePage holds the
+  // firstRunOpen / hasEverHadPendingReviews / keyboardHintDismissed
+  // state slots that need to be reset together.
+  onReplayOnboarding?: () => void;
 }
 
 export function applyCodeFont(fontId: string) {
@@ -97,7 +103,7 @@ function SettingRow({
   );
 }
 
-export function SettingsDialog({ open, onOpenChange, onThemeChange }: Props) {
+export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnboarding }: Props) {
   const [appTheme, setAppTheme] = useState<ThemeChoice>('system');
   const [codeTheme, setCodeTheme] = useState<CodeTheme>('aurora-x');
   const [codeFont, setCodeFont] = useState<CodeFont>('jetbrains-mono');
@@ -268,7 +274,19 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange }: Props) {
             </div>
           </section>
 
-          <section className="border-t border-border pt-5">
+          <section className="border-t border-border pt-5 flex flex-col gap-2 items-start">
+            {onReplayOnboarding && (
+              <button
+                type="button"
+                onClick={() => {
+                  onReplayOnboarding();
+                  onOpenChange(false);
+                }}
+                className="slide-meta hover:text-foreground transition-colors"
+              >
+                Replay first-time welcome →
+              </button>
+            )}
             <button
               type="button"
               onClick={() => void window.electronAPI.openLogsDirectory()}

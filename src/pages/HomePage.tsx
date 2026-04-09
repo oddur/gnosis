@@ -22,7 +22,6 @@ import { Badge } from '../../components/ui/badge';
 import { PRPickerDialog } from '../../components/PRPickerDialog';
 import { FilePickerDialog } from '../../components/FilePickerDialog';
 import { SettingsDialog } from '../../components/SettingsDialog';
-import { FirstRunWelcome } from '../../components/FirstRunWelcome';
 import { ShortcutOverlay } from '../../components/ShortcutOverlay';
 import { CommandPalette, type Command } from '../../components/CommandPalette';
 import { useKeyboardShortcuts, type ShortcutMap } from '../../lib/use-keyboard-shortcuts';
@@ -164,6 +163,35 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   const [firstRunOpen, setFirstRunOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // The "About Gnosis" panel is the on-demand way to re-read the
+  // welcome content after the first-run flag has been flipped. Same
+  // copy as the inline welcome hero, just reachable from the top bar.
+  const [aboutOpen, setAboutOpen] = useState(false);
+
+  // Has the user EVER had a pending PR from GitHub? Persisted in
+  // localStorage so we know whether the empty Suggested-for-you
+  // section should render its teaching placeholder (first-time
+  // users) or hide entirely (returning users who already understand
+  // what the section is for).
+  const [hasEverHadPendingReviews, setHasEverHadPendingReviews] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('gnosis-has-ever-had-pending') === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  // Quiet keyboard discoverability hint shown under the compose row.
+  // Auto-dismisses the first time the user opens the shortcuts cheat
+  // sheet — that's signal that they've found the keyboard layer and
+  // no longer need the hint.
+  const [keyboardHintDismissed, setKeyboardHintDismissed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('gnosis-keyboard-hint-dismissed') === '1';
+    } catch {
+      return false;
+    }
+  });
 
   // Compose-row progressive disclosure. Each section starts collapsed
   // so the default state of the page is one-line-of-intent. Instructions
@@ -244,6 +272,30 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
     void window.electronAPI.loadPreferences().then((current) => {
       void window.electronAPI.savePreferences({ ...current, firstRunSeen: true });
     });
+  }
+
+  // Resets every onboarding flag — the firstRunSeen pref, the
+  // hasEverHadPendingReviews localStorage key, the keyboardHint flag,
+  // and the dismissed-pending-prs list. Reopens the inline welcome
+  // hero immediately so the user can walk through it again. Used by
+  // the "Replay first-time welcome" link in the Settings dialog.
+  function replayOnboarding() {
+    void window.electronAPI.loadPreferences().then((current) => {
+      void window.electronAPI.savePreferences({ ...current, firstRunSeen: false });
+    });
+    setHasEverHadPendingReviews(false);
+    setKeyboardHintDismissed(false);
+    setDismissedPendingPrs(new Set());
+    try {
+      localStorage.removeItem('gnosis-has-ever-had-pending');
+      localStorage.removeItem('gnosis-keyboard-hint-dismissed');
+      localStorage.removeItem('dismissed-pending-prs');
+    } catch {
+      /* non-fatal */
+    }
+    setAboutOpen(false);
+    setFirstRunOpen(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   // Command palette commands for the home screen. Recently-used
@@ -383,6 +435,33 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
     () => pendingReviews.filter((pr) => !dismissedPendingPrs.has(pr.url)),
     [pendingReviews, dismissedPendingPrs]
   );
+
+  // The first time GitHub returns a non-empty pending list, flip the
+  // localStorage flag so we stop showing the teaching placeholder
+  // for this user forever after.
+  useEffect(() => {
+    if (pendingReviews.length > 0 && !hasEverHadPendingReviews) {
+      setHasEverHadPendingReviews(true);
+      try {
+        localStorage.setItem('gnosis-has-ever-had-pending', '1');
+      } catch {
+        /* localStorage unavailable — non-fatal */
+      }
+    }
+  }, [pendingReviews, hasEverHadPendingReviews]);
+
+  // Auto-dismiss the keyboard hint the first time the user opens the
+  // shortcuts cheatsheet — they've discovered the keyboard layer.
+  useEffect(() => {
+    if (shortcutsOpen && !keyboardHintDismissed) {
+      setKeyboardHintDismissed(true);
+      try {
+        localStorage.setItem('gnosis-keyboard-hint-dismissed', '1');
+      } catch {
+        /* non-fatal */
+      }
+    }
+  }, [shortcutsOpen, keyboardHintDismissed]);
 
   // Tick elapsed seconds for active generations
   useEffect(() => {
@@ -616,15 +695,6 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
 
   return (
     <main className="min-h-screen overflow-y-auto px-10 lg:px-12 py-8">
-      {firstRunOpen && (
-        <FirstRunWelcome
-          onDismiss={dismissFirstRun}
-          onShowShortcuts={() => {
-            dismissFirstRun();
-            setShortcutsOpen(true);
-          }}
-        />
-      )}
       <ShortcutOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <CommandPalette
         open={paletteOpen}
@@ -747,6 +817,17 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                   @{(authStatus as { login: string }).login}
                 </span>
                 <button
+                  onClick={() => {
+                    setAboutOpen(true);
+                    // Scroll to top so the panel is visible if the
+                    // user clicked About from deep in the history.
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className="hover:text-foreground transition-colors"
+                >
+                  About
+                </button>
+                <button
                   onClick={() => setShortcutsOpen(true)}
                   className="hover:text-foreground transition-colors"
                   title="Keyboard shortcuts (?)"
@@ -765,11 +846,66 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
               </div>
             </div>
 
+            {/* ── Welcome / About hero ── Replaces the Pick-up hero
+                slot on the first ever visit (firstRunOpen) and any
+                time the user reopens the panel from the top bar
+                (aboutOpen). Inlined onto the page, not modal — the
+                user learns the layout and the welcome at the same
+                time. Pickup hero is suppressed while this is open. */}
+            {(firstRunOpen || aboutOpen) && (
+              <section className="flex flex-col gap-5 pt-4 pb-2 max-w-[68ch]">
+                <p className="editorial-label">
+                  {firstRunOpen ? 'Welcome to Gnosis' : 'About Gnosis'}
+                </p>
+                <h1 className="slide-title">A pull request is a story. Read it like one.</h1>
+                <div className="slide-prose flex flex-col gap-3">
+                  <p>
+                    Gnosis turns a GitHub pull request into an ordered walkthrough you can read like a chapter.
+                    Foundation changes first, then the features built on top, then the tests and config — each on
+                    its own slide, each with a short narrative explaining <em>why</em> the change is there.
+                  </p>
+                  <p>
+                    You'll still see every diff. The walkthrough just gives you the order, the grouping, and the
+                    context that the file list never could. Reviews run locally against the Claude or Gemini CLI
+                    you already have installed; nothing leaves your machine besides the requests to GitHub.
+                  </p>
+                </div>
+                <div className="flex items-center gap-6 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (firstRunOpen) {
+                        dismissFirstRun();
+                      } else {
+                        setAboutOpen(false);
+                      }
+                    }}
+                    className="text-sm text-foreground underline underline-offset-4 hover:opacity-80 transition-opacity"
+                  >
+                    {firstRunOpen ? 'Got it — let’s go →' : 'Close'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (firstRunOpen) dismissFirstRun();
+                      setAboutOpen(false);
+                      setShortcutsOpen(true);
+                    }}
+                    className="slide-meta hover:text-foreground transition-colors"
+                  >
+                    See keyboard shortcuts
+                  </button>
+                </div>
+              </section>
+            )}
+
             {/* ── Zone 2: Pick up where you left off ── The visual
                 anchor of the page when there's an unread review.
                 Disappears entirely when nothing is unread, yielding
-                the real estate to the composer and history. */}
-            {latestUnreadGroup && (
+                the real estate to the composer and history. While
+                the welcome / about panel is open it takes priority
+                so the user isn't pulled in two directions. */}
+            {latestUnreadGroup && !firstRunOpen && !aboutOpen && (
               <section className="flex flex-col gap-3 pt-4">
                 <p className="editorial-label">Pick up where you left off</p>
                 <button
@@ -886,6 +1022,35 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                     Preferences
                   </button>
                 </div>
+
+                {/* Quiet keyboard discoverability hint — only renders
+                    until the user opens the cheatsheet for the first
+                    time, then disappears forever (persisted via
+                    localStorage). Dismissable manually too. */}
+                {!keyboardHintDismissed && (
+                  <p className="slide-meta flex items-center gap-2 -mt-1">
+                    <span>
+                      Press <kbd className="kbd">n</kbd> to focus this input,{' '}
+                      <kbd className="kbd">⌘ K</kbd> for the command palette, or{' '}
+                      <kbd className="kbd">?</kbd> for the full cheatsheet.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setKeyboardHintDismissed(true);
+                        try {
+                          localStorage.setItem('gnosis-keyboard-hint-dismissed', '1');
+                        } catch {
+                          /* non-fatal */
+                        }
+                      }}
+                      className="hover:text-foreground transition-colors"
+                      aria-label="Dismiss keyboard hint"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </p>
+                )}
 
                 {/* Disclosure: model menu */}
                 <div
@@ -1024,7 +1189,11 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
               </form>
 
               <PRPickerDialog open={prPickerOpen} onOpenChange={setPrPickerOpen} onSelect={setPrUrl} />
-              <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+              <SettingsDialog
+                open={settingsOpen}
+                onOpenChange={setSettingsOpen}
+                onReplayOnboarding={replayOnboarding}
+              />
               <FilePickerDialog
                 open={filePickerOpen}
                 onOpenChange={setFilePickerOpen}
@@ -1075,10 +1244,13 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
 
             {/* ── Suggested for you ── PRs GitHub asked the user to
                 review. Each row is one click to fill the URL field
-                AND has an explicit "Generate review →" link that
-                starts the review immediately. Only renders when
-                non-empty. */}
-            {visiblePendingReviews.length > 0 && (
+                AND has an explicit "Generate review →" link. When the
+                list is empty AND the user has never had a pending PR
+                here yet, we render a quiet teaching placeholder so
+                first-timers learn what the section is for. Once they
+                ever have a pending PR, the empty state hides forever
+                so we don't keep teaching returning users. */}
+            {(visiblePendingReviews.length > 0 || !hasEverHadPendingReviews) && (
               <section className="flex flex-col gap-3">
                 <div className="flex items-baseline justify-between">
                   <p className="editorial-label">Suggested for you</p>
@@ -1095,8 +1267,14 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                     </button>
                   </div>
                 </div>
-                <ul className="flex flex-col">
-                  {visiblePendingReviews.slice(0, 10).map((pr) => (
+                {visiblePendingReviews.length === 0 ? (
+                  <p className="slide-prose text-sm text-muted-foreground max-w-[68ch]">
+                    Nothing here yet. When someone adds you as a reviewer on a GitHub pull request — or when you
+                    open one yourself — Gnosis will list it here so you can generate a review with one click.
+                  </p>
+                ) : (
+                  <ul className="flex flex-col">
+                    {visiblePendingReviews.slice(0, 10).map((pr) => (
                     <li
                       key={pr.url}
                       className="group flex items-center gap-4 py-3 border-b border-border/60 hover:bg-muted/30 transition-colors -mx-3 px-3"
@@ -1131,16 +1309,37 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                       </button>
                     </li>
                   ))}
-                  {visiblePendingReviews.length > 10 && (
-                    <button
-                      type="button"
-                      onClick={() => setPrPickerOpen(true)}
-                      className="slide-meta hover:text-foreground py-2 text-left"
-                    >
-                      Show {visiblePendingReviews.length - 10} more…
-                    </button>
-                  )}
-                </ul>
+                    {visiblePendingReviews.length > 10 && (
+                      <button
+                        type="button"
+                        onClick={() => setPrPickerOpen(true)}
+                        className="slide-meta hover:text-foreground py-2 text-left"
+                      >
+                        Show {visiblePendingReviews.length - 10} more…
+                      </button>
+                    )}
+                  </ul>
+                )}
+              </section>
+            )}
+
+            {/* ── Empty state ── Actionable teaching note shown when
+                the user has no review history yet. Sits directly
+                under the Suggested-for-you section so it reads as
+                "what to do next" rather than as a footer note. */}
+            {prGroups.length === 0 && (
+              <section className="flex flex-col gap-3 max-w-[68ch]">
+                <p className="editorial-label">No reviews yet.</p>
+                <p className="slide-prose">
+                  Paste a PR URL above and press <span className="editorial-label">Generate review</span>. Your
+                  review takes 2–4 minutes to generate locally — Gnosis spawns the Claude or Gemini CLI you
+                  already have installed and turns the diff into a slide-by-slide walkthrough you can read at
+                  your own pace.
+                </p>
+                <p className="slide-prose">
+                  Once you've generated one, it lives here grouped by pull request, so you can return without
+                  re-running the model. Reviews never leave your machine.
+                </p>
               </section>
             )}
 
@@ -1468,17 +1667,6 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
               </section>
             )}
 
-            {/* ── Empty state ── Editorial teaching note shown only
-                when the user has no review history yet. */}
-            {prGroups.length === 0 && (
-              <section className="flex flex-col gap-2 max-w-[60ch] pt-4">
-                <p className="editorial-label">No reviews yet.</p>
-                <p className="slide-prose">
-                  Once you generate a review it'll be saved here, grouped by pull request, so you can return to it
-                  later without re-running the model. Reviews never leave your machine.
-                </p>
-              </section>
-            )}
           </>
         )}
       </div>
