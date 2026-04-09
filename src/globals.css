@@ -73,6 +73,17 @@
   --measure-prose: 68ch;
   --measure-prose-narrow: 56ch;
 
+  /* ─── Semantic status colors ──────────────────────────────────
+     These tokens are used by Badge components, diff stats, and
+     status indicators. They provide a single source of truth so
+     components don't hardcode oklch values inline. The full-opacity
+     versions are for text; the /35% border and /10% bg variants
+     are computed at usage site via Tailwind arbitrary values. */
+  --color-success: oklch(0.42 0.11 145);       /* green — additions, approved, open */
+  --color-danger: oklch(0.45 0.18 22);          /* red — deletions, closed, critical */
+  --color-warning: oklch(0.45 0.14 55);         /* amber — outdated, churn */
+  --color-info: oklch(0.45 0.1 300);            /* purple — merged */
+
   --radius: 0.625rem;
 
   /* ─── Editorial palette — light mode (printed paper) ─────────
@@ -167,6 +178,11 @@
   --sidebar-accent-foreground: oklch(0.965 0.005 75);
   --sidebar-border: oklch(0.965 0.005 75 / 9%);
   --sidebar-ring: oklch(0.65 0.13 15);
+
+  --color-success: oklch(0.72 0.1 145);
+  --color-danger: oklch(0.68 0.16 22);
+  --color-warning: oklch(0.72 0.12 55);
+  --color-info: oklch(0.65 0.1 300);
 }
 
 @layer base {

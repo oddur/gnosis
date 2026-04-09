@@ -280,7 +280,7 @@ export function SlideChatSheet({
               onKeyDown={handleKeyDown}
               placeholder="Ask a question about this slide…"
               rows={2}
-              className="flex-1 resize-none bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:border-[var(--ring)] transition-colors"
+              className="flex-1 resize-none bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground/60 transition-colors"
             />
             <button
               onClick={handleSend}

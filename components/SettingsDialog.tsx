@@ -255,7 +255,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                 placeholder={claudeDetected || 'auto-detect'}
                 onChange={(e) => setClaudePath(e.target.value)}
                 onBlur={() => saveField({ claudePath })}
-                className="bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-[var(--ring)] transition-colors"
+                className="bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground/60 transition-colors"
               />
               <p className="slide-meta">Leave empty to auto-detect.</p>
             </div>
@@ -268,7 +268,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                 placeholder={geminiDetected || 'auto-detect'}
                 onChange={(e) => setGeminiPath(e.target.value)}
                 onBlur={() => saveField({ geminiPath })}
-                className="bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-[var(--ring)] transition-colors"
+                className="bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground/60 transition-colors"
               />
               <p className="slide-meta">Leave empty to auto-detect.</p>
             </div>

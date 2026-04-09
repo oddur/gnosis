@@ -20,7 +20,7 @@ export function StaleBanner({ freshness, onReReview }: Props) {
 
   if (freshness.status === 'current') {
     return (
-      <div className="staleBanner-current border-b border-[oklch(0.55_0.08_145/24%)] px-6 py-1.5 text-xs">
+      <div className="staleBanner-current border-b border-[var(--color-success)]/24 px-6 py-1.5 text-xs">
         Up to date
       </div>
     );
@@ -28,7 +28,7 @@ export function StaleBanner({ freshness, onReReview }: Props) {
 
   if (freshness.status === 'unknown') {
     return (
-      <div className="staleBanner-unknown border-b border-[oklch(0.5_0.01_65/24%)] px-6 py-1.5 text-xs">
+      <div className="staleBanner-unknown border-b border-border px-6 py-1.5 text-xs">
         Couldn't check freshness: {freshness.reason}
       </div>
     );
@@ -36,7 +36,7 @@ export function StaleBanner({ freshness, onReReview }: Props) {
 
   if (freshness.status === 'force-pushed') {
     return (
-      <div className="staleBanner-warn border-b border-[oklch(0.6_0.12_55/28%)] px-6 py-1.5 text-xs flex items-center justify-between gap-2">
+      <div className="staleBanner-warn border-b border-[var(--color-warning)]/28 px-6 py-1.5 text-xs flex items-center justify-between gap-2">
         <span>PR was force-pushed since this review was generated.</span>
         <button
           onClick={onReReview}
@@ -54,7 +54,7 @@ export function StaleBanner({ freshness, onReReview }: Props) {
   const overflow = aheadBy - displayed.length;
 
   return (
-    <div className="staleBanner-warn border-b border-[oklch(0.6_0.12_55/28%)] text-xs">
+    <div className="staleBanner-warn border-b border-[var(--color-warning)]/28 text-xs">
       <div className="flex items-center justify-between gap-2 px-6 py-1.5">
         <button
           onClick={() => setExpanded((v) => !v)}

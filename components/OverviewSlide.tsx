@@ -98,9 +98,9 @@ function StatusLine({ status }: { status: PrStatus | null }) {
 
   const toneClass = (tone?: 'warn' | 'error') =>
     tone === 'error'
-      ? 'text-[oklch(0.65_0.14_22)]'
+      ? 'text-[var(--color-danger)]'
       : tone === 'warn'
-        ? 'text-[oklch(0.7_0.12_55)]'
+        ? 'text-[var(--color-warning)]'
         : 'text-muted-foreground';
 
   return (
@@ -134,9 +134,9 @@ export function OverviewSlide({ review, prStatus, onNavigate }: Props) {
 
   const riskToneClass =
     review.riskLevel === 'high'
-      ? 'text-[oklch(0.65_0.14_22)]'
+      ? 'text-[var(--color-danger)]'
       : review.riskLevel === 'medium'
-        ? 'text-[oklch(0.7_0.12_55)]'
+        ? 'text-[var(--color-warning)]'
         : 'text-muted-foreground';
 
   // The first real chapter — used to render the prominent

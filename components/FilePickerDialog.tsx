@@ -179,8 +179,8 @@ export function FilePickerDialog({ open, onOpenChange, prUrl, onConfirm }: Props
                           </span>
                         </span>
                         <span className="text-xs text-muted-foreground shrink-0">
-                          <span className="text-[oklch(0.62_0.1_145)]">+{group.totalAdditions}</span>{' '}
-                          <span className="text-[oklch(0.65_0.14_22)]">−{group.totalDeletions}</span>
+                          <span className="text-[var(--color-success)]">+{group.totalAdditions}</span>{' '}
+                          <span className="text-[var(--color-danger)]">−{group.totalDeletions}</span>
                         </span>
                       </div>
 
@@ -198,8 +198,8 @@ export function FilePickerDialog({ open, onOpenChange, prUrl, onConfirm }: Props
                                   {f.filename}
                                 </span>
                                 <span className="text-xs text-muted-foreground shrink-0">
-                                  <span className="text-[oklch(0.62_0.1_145)]">+{f.additions}</span>{' '}
-                                  <span className="text-[oklch(0.65_0.14_22)]">−{f.deletions}</span>
+                                  <span className="text-[var(--color-success)]">+{f.additions}</span>{' '}
+                                  <span className="text-[var(--color-danger)]">−{f.deletions}</span>
                                 </span>
                               </div>
                             </li>
@@ -214,7 +214,7 @@ export function FilePickerDialog({ open, onOpenChange, prUrl, onConfirm }: Props
           </>
         )}
 
-        <div className="flex gap-2 justify-end pt-2 border-t border-border/50">
+        <div className="flex gap-2 justify-end pt-2 border-t border-border/60">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>

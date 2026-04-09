@@ -139,7 +139,7 @@ export function CommandPalette({ open, onClose, commands, placeholder = 'Run a c
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
-          className="bg-transparent border-0 border-b border-border px-5 py-4 text-base placeholder:text-muted-foreground/60 focus:outline-none focus:border-[var(--ring)] transition-colors"
+          className="bg-transparent border-0 border-b border-border px-5 py-4 text-base placeholder:text-muted-foreground/60 transition-colors"
         />
 
         <ul ref={listRef} className="max-h-[50vh] overflow-y-auto py-2">

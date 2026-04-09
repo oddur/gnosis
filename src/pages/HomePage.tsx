@@ -767,7 +767,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') void handleConnectPat();
                   }}
-                  className="w-full bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:border-[var(--ring)] transition-colors"
+                  className="w-full bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground/60 transition-colors"
                 />
                 {patError && (
                   <Alert variant="destructive">
@@ -959,7 +959,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                       placeholder="https://github.com/owner/repo/pull/123"
                       value={prUrl}
                       onChange={(e) => setPrUrl(e.target.value)}
-                      className="flex-1 bg-transparent border-0 border-b border-border px-0 py-3 text-base placeholder:text-muted-foreground/60 focus:outline-none focus:border-[var(--ring)] transition-colors"
+                      className="flex-1 bg-transparent border-0 border-b border-border px-0 py-3 text-base placeholder:text-muted-foreground/60 transition-colors"
                       required
                     />
                     <button
@@ -1112,7 +1112,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                       value={instructions}
                       onChange={(e) => setInstructions(e.target.value)}
                       onBlur={() => savePrefs()}
-                      className="w-full bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:border-[var(--ring)] transition-colors resize-none mt-1"
+                      className="w-full bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground/60 transition-colors resize-none mt-1"
                     />
                   </div>
                 </div>
@@ -1457,7 +1457,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                               {prState === 'open' && !isOutdated && (
                                 <Badge
                                   variant="outline"
-                                  className="shrink-0 text-xs border-[oklch(0.55_0.08_145/35%)] text-[oklch(0.62_0.1_145)]"
+                                  className="shrink-0 text-xs border-[var(--color-success)]/35 text-[var(--color-success)]"
                                 >
                                   <GitPullRequest className="h-3 w-3 mr-1" />
                                   Open
@@ -1466,7 +1466,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                               {prState === 'open' && isOutdated && (
                                 <Badge
                                   variant="outline"
-                                  className="shrink-0 text-xs border-[oklch(0.65_0.12_55/35%)] text-[oklch(0.7_0.12_55)]"
+                                  className="shrink-0 text-xs border-[var(--color-warning)]/35 text-[var(--color-warning)]"
                                 >
                                   <AlertTriangle className="h-3 w-3 mr-1" />
                                   Outdated
@@ -1475,7 +1475,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                               {prState === 'merged' && (
                                 <Badge
                                   variant="outline"
-                                  className="shrink-0 text-xs border-[oklch(0.55_0.1_300/35%)] text-[oklch(0.65_0.1_300)]"
+                                  className="shrink-0 text-xs border-[var(--color-info)]/35 text-[var(--color-info)]"
                                 >
                                   <GitMerge className="h-3 w-3 mr-1" />
                                   Merged
@@ -1484,7 +1484,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                               {prState === 'closed' && (
                                 <Badge
                                   variant="outline"
-                                  className="shrink-0 text-xs border-[oklch(0.6_0.13_22/35%)] text-[oklch(0.65_0.14_22)]"
+                                  className="shrink-0 text-xs border-[var(--color-danger)]/35 text-[var(--color-danger)]"
                                 >
                                   <GitPullRequestClosed className="h-3 w-3 mr-1" />
                                   Closed
@@ -1505,7 +1505,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                           {latestStatus === 'failed' && (
                             <Badge
                               variant="outline"
-                              className="shrink-0 text-xs border-[oklch(0.6_0.13_22/35%)] text-[oklch(0.65_0.14_22)] max-w-[200px]"
+                              className="shrink-0 text-xs border-[var(--color-danger)]/35 text-[var(--color-danger)] max-w-[200px]"
                               title={group.latestReview.error ?? 'Failed'}
                             >
                               <CircleX className="h-3 w-3 mr-1 shrink-0" />
@@ -1603,7 +1603,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                                     {reviewStatus === 'failed' && (
                                       <Badge
                                         variant="outline"
-                                        className="shrink-0 text-xs border-[oklch(0.6_0.13_22/35%)] text-[oklch(0.65_0.14_22)] max-w-[200px]"
+                                        className="shrink-0 text-xs border-[var(--color-danger)]/35 text-[var(--color-danger)] max-w-[200px]"
                                         title={review.error ?? 'Failed'}
                                       >
                                         <CircleX className="h-3 w-3 mr-1 shrink-0" />

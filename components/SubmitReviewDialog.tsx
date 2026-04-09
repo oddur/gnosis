@@ -78,7 +78,7 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="editorial-heading flex items-center gap-2">
-              <Check className="h-4 w-4 text-[oklch(0.62_0.1_145)]" />
+              <Check className="h-4 w-4 text-[var(--color-success)]" />
               Review submitted
             </DialogTitle>
             <DialogDescription className="slide-meta">
@@ -170,7 +170,7 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
               value={body}
               onChange={(e) => setBody(e.target.value)}
               placeholder="Overall feedback…"
-              className="w-full min-h-[80px] bg-transparent text-sm resize-y border-0 border-b border-border px-0 py-2 placeholder:text-muted-foreground/60 focus:outline-none focus:border-[var(--ring)] transition-colors"
+              className="w-full min-h-[80px] bg-transparent text-sm resize-y border-0 border-b border-border px-0 py-2 placeholder:text-muted-foreground/60 transition-colors"
             />
           </div>
           <label className="flex items-center gap-2 cursor-pointer select-none slide-meta hover:text-foreground transition-colors">
@@ -208,7 +208,7 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
             <Button
               variant="outline"
               size="sm"
-              className="border-[oklch(0.55_0.08_145/35%)] text-[oklch(0.62_0.1_145)] hover:bg-[oklch(0.55_0.08_145/10%)]"
+              className="border-[var(--color-success)]/35 text-[var(--color-success)] hover:bg-[var(--color-success)]/10"
               onClick={() => handleSubmit('APPROVE')}
               disabled={submitting || isOwnPr}
             >
@@ -218,7 +218,7 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
             <Button
               variant="outline"
               size="sm"
-              className="border-[oklch(0.6_0.13_22/35%)] text-[oklch(0.62_0.14_22)] hover:bg-[oklch(0.6_0.13_22/10%)]"
+              className="border-[var(--color-danger)]/35 text-[var(--color-danger)] hover:bg-[var(--color-danger)]/10"
               onClick={() => handleSubmit('REQUEST_CHANGES')}
               disabled={submitting || isOwnPr || (comments.length === 0 && !body.trim())}
             >

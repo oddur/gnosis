@@ -3,7 +3,7 @@ import { Check } from 'lucide-react';
 import type { Slide, SlideImportance } from '@/lib/types';
 
 const importanceDot: Record<SlideImportance, string> = {
-  critical: 'bg-[oklch(0.55_0.16_25)]',
+  critical: 'bg-[var(--color-danger)]',
   important: '',
   minor: '',
 };

@@ -55,7 +55,7 @@ const components: Components = {
       );
     }
     return (
-      <code className="font-mono text-[0.9em] font-medium bg-[oklch(0.55_0.012_65/8%)] dark:bg-[oklch(0.7_0.012_65/12%)] border border-[oklch(0.55_0.012_65/18%)] dark:border-[oklch(0.7_0.012_65/24%)] rounded-[3px] px-[0.35em] py-[0.05em] text-foreground">
+      <code className="font-mono text-[0.9em] font-medium bg-muted/50 border border-border/60 rounded-[3px] px-[0.35em] py-[0.05em] text-foreground">
         {children}
       </code>
     );
