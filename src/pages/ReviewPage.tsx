@@ -5,6 +5,7 @@ import { StaleBanner } from '../../components/StaleBanner';
 import { OverviewSlide } from '../../components/OverviewSlide';
 import { SlideView } from '../../components/SlideView';
 import { SlideNav } from '../../components/SlideNav';
+import { TocRail } from '../../components/TocRail';
 import { SlideChatSheet } from '../../components/SlideChatSheet';
 import { SubmitReviewDialog } from '../../components/SubmitReviewDialog';
 import { SettingsDialog } from '../../components/SettingsDialog';
@@ -292,14 +293,66 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
     );
   }
 
+  // Reading progress fills a 1px hairline at the very top of the page
+  // as the user advances through the deck. The previous version of
+  // this lived above the bottom nav, but pulling it to the top is a
+  // more honest "you are here in the book" cue and frees the bottom
+  // bar to carry more visual weight.
+  //
+  // Formula is `currentSlide / total` rather than `(current - 1) /
+  // (total - 1)` so the very first slide already shows a visible
+  // sliver of progress — a small but meaningful "you've started"
+  // signal. Slide 1 of 10 = 10%, slide 5 = 50%, slide 10 = 100%.
+  const progress =
+    currentSlide === 0
+      ? 0
+      : (currentSlide / review.slides.length) * 100;
+
+  // Surface the previous and next slide titles to the bottom nav so
+  // it can render them as labels — much more informative than
+  // generic "Previous" / "Next" copy.
+  const prevTitle =
+    currentSlide === 0
+      ? null
+      : currentSlide === 1
+        ? 'Overview'
+        : (review.slides[currentSlide - 2]?.title ?? null);
+  const nextTitle =
+    currentSlide >= review.slides.length
+      ? null
+      : (review.slides[currentSlide]?.title ?? null);
+
   return (
     <div className="flex flex-col h-screen overflow-hidden">
+      {/* Top-of-page reading progress hairline. 1px tall, fills in
+          the brand claret as the reader moves through the deck.
+          Honors prefers-reduced-motion via .loading-progress-fill. */}
+      <div
+        className="relative h-px w-full bg-transparent shrink-0"
+        role="progressbar"
+        aria-valuenow={progress}
+      >
+        <div
+          className="absolute left-0 top-0 h-px bg-[var(--ring)] loading-progress-fill"
+          style={{ width: `${progress}%` }}
+        />
+      </div>
+
       <PRSummaryBanner review={review} onBack={onBack} onOpenSettings={() => setSettingsOpen(true)} />
 
       {freshness && <StaleBanner freshness={freshness} onReReview={() => onReReview(review.prUrl)} />}
 
-      <div key={currentSlide} className="slide-enter flex-1 overflow-hidden flex flex-row">
-        <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
+      {/* Content area is a flex row: persistent TOC rail on the left,
+          the active slide (overview or chapter) in the center, and
+          the optional chat sheet on the right. */}
+      <div className="flex-1 overflow-hidden flex flex-row min-h-0">
+        <TocRail
+          slides={review.slides}
+          currentSlide={currentSlide}
+          onNavigate={(n) => setCurrentSlide(n)}
+        />
+
+        <div key={currentSlide} className="slide-enter flex-1 min-w-0 overflow-hidden flex flex-col">
           {currentSlide === 0 ? (
             <OverviewSlide review={review} prStatus={prStatus} onNavigate={(n) => setCurrentSlide(n)} />
           ) : (
@@ -334,6 +387,8 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
       <SlideNav
         current={currentSlide}
         total={review.slides.length}
+        prevTitle={prevTitle}
+        nextTitle={nextTitle}
         onPrev={handlePrev}
         onNext={handleNext}
         commentCount={comments.length}

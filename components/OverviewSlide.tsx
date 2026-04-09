@@ -129,114 +129,106 @@ export function OverviewSlide({ review, prStatus, onNavigate }: Props) {
         ? 'text-[oklch(0.7_0.12_55)]'
         : 'text-muted-foreground';
 
+  // The first real chapter — used to render the prominent
+  // "Start reading" call-to-action at the bottom of the prose.
+  // .at() returns T | undefined regardless of noUncheckedIndexedAccess.
+  const firstSlide = review.slides.at(0);
+
   return (
-    <div className="flex-1 overflow-y-auto px-8 py-10">
+    <div className="flex-1 overflow-y-auto px-10 py-10">
       <StatusLine status={prStatus} />
 
-      <div className="max-w-6xl mx-auto w-full grid grid-cols-[2fr_3fr] gap-12 items-start">
-        {/* Left column — context */}
-        <div className="flex flex-col gap-8 sticky top-0">
-          {/* Summary — no label, the prose stands on its own.
-              The slide-prose class gives it the right measure and
-              line-height; nothing else needed. */}
-          <section className="animate-fade-in-up">
-            <Markdown className="slide-prose text-foreground">{review.summary}</Markdown>
-            {(review.neighborFileCount ?? 0) > 0 && (
-              <p className="slide-meta mt-3">
-                {review.neighborFileCount} additional {review.neighborFileCount === 1 ? 'file' : 'files'} included for
-                context
-              </p>
+      {/* Single-column prose layout. The persistent TocRail in the
+          parent ReviewPage replaces the previous right-column TOC,
+          which frees the overview to be a comfortable reading
+          column at editorial measure. */}
+      <div className="max-w-3xl mx-auto w-full flex flex-col gap-8">
+        {/* Summary — no label, the prose stands on its own. */}
+        <section className="animate-fade-in-up">
+          <Markdown className="slide-prose">{review.summary}</Markdown>
+          {(review.neighborFileCount ?? 0) > 0 && (
+            <p className="slide-meta mt-3">
+              {review.neighborFileCount} additional {review.neighborFileCount === 1 ? 'file' : 'files'} included for
+              context
+            </p>
+          )}
+        </section>
+
+        {/* Risk — a single inline editorial line. */}
+        <section className="animate-fade-in-up" style={{ animationDelay: '60ms' }}>
+          <p className="slide-prose">
+            <span className={`editorial-label ${riskToneClass}`}>{risk.label}.</span>{' '}
+            <span className="text-muted-foreground">{review.riskRationale}</span>
+          </p>
+        </section>
+
+        {/* PR Description — collapsible inline disclosure. */}
+        {review.prDescription && (
+          <section className="animate-fade-in-up" style={{ animationDelay: '120ms' }}>
+            <button
+              onClick={() => setDescOpen((v) => !v)}
+              className="slide-meta hover:text-foreground transition-colors flex items-center gap-1.5"
+            >
+              {descOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              PR description
+            </button>
+            {descOpen && (
+              <div className="mt-3 ml-4 max-h-64 overflow-y-auto border-l border-border pl-4">
+                <Markdown className="text-sm text-muted-foreground leading-relaxed">{review.prDescription}</Markdown>
+              </div>
             )}
           </section>
+        )}
 
-          {/* Risk — a single inline editorial line. No box, no
-              badge, no border. The risk level is bolded in tone
-              color and the rationale follows as plain prose. */}
-          <section className="animate-fade-in-up" style={{ animationDelay: '60ms' }}>
-            <p className="slide-prose">
-              <span className={`editorial-label ${riskToneClass}`}>{risk.label}.</span>{' '}
-              <span className="text-muted-foreground">{review.riskRationale}</span>
-            </p>
+        {/* Web Sources — same pattern as PR description. */}
+        {review.webSources && review.webSources.length > 0 && (
+          <section className="animate-fade-in-up" style={{ animationDelay: '180ms' }}>
+            <button
+              onClick={() => setSourcesOpen((v) => !v)}
+              className="slide-meta hover:text-foreground transition-colors flex items-center gap-1.5"
+            >
+              {sourcesOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              Web sources ({review.webSources.length})
+            </button>
+            {sourcesOpen && (
+              <ul className="mt-3 ml-4 flex flex-col gap-1.5 border-l border-border pl-4">
+                {review.webSources.map((source, i) => (
+                  <li key={i}>
+                    <button
+                      onClick={() => window.electronAPI.openExternal(source.url)}
+                      className="text-sm text-[var(--ring)] hover:underline truncate max-w-full text-left"
+                      title={source.url}
+                    >
+                      {source.title || source.url}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </section>
+        )}
 
-          {/* PR Description — collapsible inline disclosure. No
-              box around the expanded content; just a chevron
-              toggle and indented prose. */}
-          {review.prDescription && (
-            <section className="animate-fade-in-up" style={{ animationDelay: '120ms' }}>
-              <button
-                onClick={() => setDescOpen((v) => !v)}
-                className="slide-meta hover:text-foreground transition-colors flex items-center gap-1.5"
-              >
-                {descOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                PR description
-              </button>
-              {descOpen && (
-                <div className="mt-3 ml-4 max-h-64 overflow-y-auto border-l border-border pl-4">
-                  <Markdown className="text-sm text-muted-foreground leading-relaxed">{review.prDescription}</Markdown>
-                </div>
-              )}
-            </section>
-          )}
-
-          {/* Web Sources — same pattern as PR description. */}
-          {review.webSources && review.webSources.length > 0 && (
-            <section className="animate-fade-in-up" style={{ animationDelay: '180ms' }}>
-              <button
-                onClick={() => setSourcesOpen((v) => !v)}
-                className="slide-meta hover:text-foreground transition-colors flex items-center gap-1.5"
-              >
-                {sourcesOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                Web sources ({review.webSources.length})
-              </button>
-              {sourcesOpen && (
-                <ul className="mt-3 ml-4 flex flex-col gap-1.5 border-l border-border pl-4">
-                  {review.webSources.map((source, i) => (
-                    <li key={i}>
-                      <button
-                        onClick={() => window.electronAPI.openExternal(source.url)}
-                        className="text-sm text-[var(--ring)] hover:underline truncate max-w-full text-left"
-                        title={source.url}
-                      >
-                        {source.title || source.url}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-          )}
-        </div>
-
-        {/* Right column — slides as a numbered table of contents.
-            No card, no border, no fills. Each entry is a row with
-            a mono chapter number, a serif title, and a quiet
-            file-count meta. Hairline rules between rows are the
-            only chrome. */}
-        <section>
-          <ol className="flex flex-col">
-            {review.slides.map((slide, index) => {
-              const num = slide.slideNumber.toString().padStart(2, '0');
-              const fileCount = slide.affectedFiles.length;
-              const fileLabel = `${fileCount} ${fileCount === 1 ? 'file' : 'files'}`;
-              return (
-                <li key={slide.id}>
-                  <button
-                    onClick={() => onNavigate(slide.slideNumber)}
-                    className="animate-fade-in-up group w-full grid grid-cols-[2.5rem_1fr_auto] gap-4 items-baseline py-4 text-left border-b border-border/60 last:border-b-0"
-                    style={{ animationDelay: `${120 + index * 50}ms` }}
-                  >
-                    <span className="slide-meta text-muted-foreground/70 text-right">{num}</span>
-                    <span className="font-serif text-base leading-snug text-foreground/85 group-hover:text-foreground transition-colors text-balance">
-                      {slide.title}
-                    </span>
-                    <span className="slide-meta">{fileLabel}</span>
-                  </button>
-                </li>
-              );
-            })}
-          </ol>
-        </section>
+        {/* Start reading — the explicit "click here to begin"
+            affordance. The bottom nav also surfaces this as
+            "Begin reading: NN — title", but having the same call
+            on the page itself catches users who scroll the prose
+            without noticing the bottom bar. */}
+        {firstSlide && (
+          <section
+            className="animate-fade-in-up pt-6 mt-2 border-t border-border"
+            style={{ animationDelay: '240ms' }}
+          >
+            <button
+              onClick={() => onNavigate(firstSlide.slideNumber)}
+              className="group flex items-baseline gap-3 text-left"
+            >
+              <span className="slide-meta">Start reading</span>
+              <span className="font-serif text-lg text-foreground group-hover:opacity-80 transition-opacity">
+                {firstSlide.slideNumber.toString().padStart(2, '0')} — {firstSlide.title} →
+              </span>
+            </button>
+          </section>
+        )}
       </div>
     </div>
   );
