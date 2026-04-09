@@ -901,7 +901,7 @@ ul.review-focus-content > li::before {
 }
 
 .slide-enter {
-  animation: slide-enter 0.25s ease-out;
+  animation: slide-enter 0.25s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* ─── Entrance animations (Priority 5) ────────────────────────── */
@@ -918,7 +918,20 @@ ul.review-focus-content > li::before {
 }
 
 .animate-fade-in-up {
-  animation: fade-in-up 0.35s ease-out both;
+  animation: fade-in-up 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Brief fade-in for elements that appear in response to a user
+   action (review checkmark, quoted-code preview, status changes).
+   150ms is fast enough to feel responsive, slow enough to register
+   as "something appeared" rather than "it was always there." */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-fade-in {
+  animation: fade-in 150ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 /* ─── Loading screen ─────────────────────────────────────────

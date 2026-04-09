@@ -107,7 +107,7 @@ export function TocRail({
             <li key={slide.id} ref={isCurrent ? currentRef : null}>
               <button
                 onClick={() => onNavigate(slide.slideNumber)}
-                className={`group w-full text-left py-2 flex gap-3 transition-colors ${
+                className={`group w-full text-left py-2 flex gap-3 transition-[color,opacity] duration-200 ${
                   isCurrent
                     ? 'text-foreground'
                     : isReviewed
@@ -121,7 +121,7 @@ export function TocRail({
                   }`}
                 >
                   {isReviewed && !isCurrent ? (
-                    <Check className="h-3 w-3 text-[var(--ring)]/60" />
+                    <Check className="h-3 w-3 text-[var(--ring)]/60 animate-fade-in" />
                   ) : (
                     <span className="slide-meta tabular-nums">{num}</span>
                   )}

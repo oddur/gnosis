@@ -291,7 +291,7 @@ export function SlideView({
     >
       {selectionPopover && (
         <button
-          className="absolute z-10 slide-meta bg-background border border-border rounded px-2 py-1 shadow-sm hover:text-foreground transition-colors flex items-center gap-1.5 -translate-x-1/2"
+          className="absolute z-10 slide-meta bg-background border border-border rounded px-2 py-1 shadow-sm hover:text-foreground transition-colors flex items-center gap-1.5 -translate-x-1/2 animate-fade-in"
           style={{ top: selectionPopover.top, left: selectionPopover.left }}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={() => {

@@ -259,7 +259,7 @@ export function SlideChatSheet({
               going to be sent. */}
           <div className="border-t border-border px-6 py-4 flex flex-col gap-2">
             {quotedCode && (
-              <div className="flex items-start gap-2 text-xs">
+              <div className="flex items-start gap-2 text-xs animate-fade-in">
                 <pre className="flex-1 font-mono text-muted-foreground bg-muted/50 rounded px-2 py-1.5 max-h-20 overflow-y-auto whitespace-pre-wrap break-all">
                   {quotedCode.length > 200 ? quotedCode.slice(0, 200) + '…' : quotedCode}
                 </pre>
