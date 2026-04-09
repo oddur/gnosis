@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Play,
   Trash2,
@@ -165,7 +165,28 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
+  // Compose-row progressive disclosure. Each section starts collapsed
+  // so the default state of the page is one-line-of-intent. Instructions
+  // automatically expand if the user already has saved instructions
+  // (so they can see and edit them on return visits).
+  const prInputRef = useRef<HTMLInputElement>(null);
+  const [instructionsExpanded, setInstructionsExpanded] = useState(false);
+  const [prefsExpanded, setPrefsExpanded] = useState(false);
+  const [modelMenuExpanded, setModelMenuExpanded] = useState(false);
+
   const prGroups = useMemo(() => groupReviewsByPR(history), [history]);
+
+  // Unread reviews drive the "Pick up where you left off" hero. The
+  // most recent unread is featured; the count of remaining unread
+  // becomes a "+ N more unread" link that scrolls down to the second
+  // unread row in the history list.
+  const unreadGroups = useMemo(
+    () => prGroups.filter((g) => g.latestReview.unread),
+    [prGroups]
+  );
+  // .at() returns T | undefined regardless of noUncheckedIndexedAccess,
+  // so the conditional renders below get the correct narrowing.
+  const latestUnreadGroup = unreadGroups.at(0);
 
   useEffect(() => {
     window.electronAPI.onNewReviewInHistory(() => {
@@ -203,12 +224,16 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
 
   // Keyboard shortcuts on the home screen. The hook handles input
   // suppression and modifier signatures, so the manual `?` listener
-  // we used before is no longer needed.
+  // we used before is no longer needed. The `n` shortcut focuses the
+  // PR URL input — this is the single most common intent on this
+  // screen so it earns a one-keystroke entry point, consistent with
+  // the vim-style single-key navigation already on ReviewPage.
   const shortcutMap = useMemo<ShortcutMap>(
     () => ({
       '?': () => setShortcutsOpen((v) => !v),
       'cmd+k': () => setPaletteOpen(true),
       'ctrl+k': () => setPaletteOpen(true),
+      n: () => prInputRef.current?.focus(),
     }),
     []
   );
@@ -469,11 +494,13 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
     setAuthStatus('unauthenticated');
   }
 
-  async function doStartReview(excludedFiles: string[]) {
+  async function doStartReview(excludedFiles: string[], urlOverride?: string) {
+    const targetUrl = (urlOverride ?? prUrl).trim();
+    if (!targetUrl) return;
     setSubmitting(true);
     try {
       const result = await window.electronAPI.startReview({
-        prUrl: prUrl.trim(),
+        prUrl: targetUrl,
         provider,
         model,
         instructions: instructions.trim() || undefined,
@@ -495,10 +522,12 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
     }
   }
 
-  async function handleSubmit(e: React.SyntheticEvent) {
-    e.preventDefault();
-    if (!prUrl.trim() || submitting) return;
-
+  // Shared "validate and start" path used by both the compose form
+  // submit AND the inline "Generate review →" link in the suggested
+  // section. The latter passes a URL directly so the review starts
+  // without first writing to the input field.
+  async function startReviewForUrl(targetUrl: string) {
+    if (!targetUrl.trim() || submitting) return;
     savePrefs();
     setError(null);
 
@@ -509,11 +538,18 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
     }
 
     if (!includeAllFiles) {
+      // FilePickerDialog reads from prUrl, so populate it before opening.
+      setPrUrl(targetUrl);
       setFilePickerOpen(true);
       return;
     }
 
-    void doStartReview([]);
+    void doStartReview([], targetUrl);
+  }
+
+  async function handleSubmit(e: React.SyntheticEvent) {
+    e.preventDefault();
+    await startReviewForUrl(prUrl);
   }
 
   async function handleLoadFromHistory(id: string) {
@@ -564,10 +600,22 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
     if (p === 'gemini') setThinking(false);
   }
 
+  // Scroll the second unread row in the history list into view. The
+  // first unread is shown in the pickup hero above, so the "+ N more
+  // unread" link should jump to the next one. Honors reduced motion.
+  function scrollToNextUnread() {
+    const target = unreadGroups.at(1);
+    if (!target) return;
+    const el = document.querySelector<HTMLElement>(`[data-pr-url="${CSS.escape(target.prUrl)}"]`);
+    if (!el) return;
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
+  }
+
   const isAuthenticated = typeof authStatus === 'object';
 
   return (
-    <main className="h-screen overflow-y-auto px-8 py-10">
+    <main className="min-h-screen overflow-y-auto px-10 lg:px-12 py-8">
       {firstRunOpen && (
         <FirstRunWelcome
           onDismiss={dismissFirstRun}
@@ -584,7 +632,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
         commands={paletteCommands}
         placeholder="Jump to a review or run a command…"
       />
-      <div className="w-full max-w-6xl mx-auto flex flex-col gap-10">
+      <div className="w-full flex flex-col gap-12">
         {/* Auth section */}
         {authStatus === 'checking' && (
           <div className="flex justify-center pt-[20vh]">
@@ -677,16 +725,16 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
           </div>
         )}
 
-        {/* Two-column layout: form + history */}
+        {/* Authenticated layout — four full-width zones stacked top to
+            bottom. The page is intentionally edge-to-edge (no max-w
+            cap) so wide monitors get a true reading desk. */}
         {isAuthenticated && (
-          <div
-            className={`grid gap-12 items-start ${prGroups.length > 0 ? 'grid-cols-[440px_1fr]' : 'max-w-xl mx-auto w-full'}`}
-          >
-            {/* Left column: account row + form */}
-            <div className="flex flex-col gap-8">
-              {/* Account row — thin strip of type, no card */}
-              <div className="flex items-center justify-between py-2 border-b border-border">
-                <span className="slide-meta flex items-center gap-2">
+          <>
+            {/* ── Zone 1: Top bar ── Wordmark + account row, no border. */}
+            <div className="flex items-center justify-between">
+              <span className="font-serif text-lg leading-none tracking-tight text-foreground">Gnosis</span>
+              <div className="flex items-center gap-5 slide-meta">
+                <span className="flex items-center gap-2">
                   <Avatar className="h-5 w-5">
                     <AvatarImage
                       src={`https://github.com/${(authStatus as { login: string }).login}.png`}
@@ -698,188 +746,157 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                   </Avatar>
                   @{(authStatus as { login: string }).login}
                 </span>
-                <div className="flex items-center gap-5 slide-meta">
+                <button
+                  onClick={() => setShortcutsOpen(true)}
+                  className="hover:text-foreground transition-colors"
+                  title="Keyboard shortcuts (?)"
+                >
+                  Shortcuts
+                </button>
+                <button
+                  onClick={() => setSettingsOpen(true)}
+                  className="hover:text-foreground transition-colors"
+                >
+                  Settings
+                </button>
+                <button onClick={handleSignOut} className="hover:text-foreground transition-colors">
+                  Sign out
+                </button>
+              </div>
+            </div>
+
+            {/* ── Zone 2: Pick up where you left off ── The visual
+                anchor of the page when there's an unread review.
+                Disappears entirely when nothing is unread, yielding
+                the real estate to the composer and history. */}
+            {latestUnreadGroup && (
+              <section className="flex flex-col gap-3 pt-4">
+                <p className="editorial-label">Pick up where you left off</p>
+                <button
+                  type="button"
+                  onClick={() => void handleLoadFromHistory(latestUnreadGroup.latestReview.id)}
+                  className="slide-title text-left hover:opacity-90 transition-opacity max-w-[60ch]"
+                >
+                  {latestUnreadGroup.prTitle}
+                </button>
+                <div className="flex items-center gap-5">
+                  <span className="slide-meta">
+                    {latestUnreadGroup.repoRef} · {latestUnreadGroup.author} ·{' '}
+                    finished {timeAgo(latestUnreadGroup.latestReview.savedAt)}
+                  </span>
                   <button
-                    onClick={() => setShortcutsOpen(true)}
-                    className="hover:text-foreground transition-colors"
-                    title="Keyboard shortcuts (?)"
+                    type="button"
+                    onClick={() => void handleLoadFromHistory(latestUnreadGroup.latestReview.id)}
+                    className="text-sm text-foreground underline underline-offset-4 hover:opacity-80 transition-opacity"
                   >
-                    Shortcuts
+                    Open review →
+                  </button>
+                  {unreadGroups.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={scrollToNextUnread}
+                      className="slide-meta hover:text-foreground transition-colors"
+                    >
+                      + {unreadGroups.length - 1} more unread
+                    </button>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {/* ── Zone 3: Compose ── One line of intent + one line of
+                options. Instructions, model selection, and preferences
+                are progressive disclosures so the default visual state
+                stays calm. */}
+            <section className="flex flex-col gap-4">
+              {!latestUnreadGroup && (
+                <p className="editorial-label">Start a new review</p>
+              )}
+              <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+                {/* Line 1 — the input row */}
+                <div className="flex items-end gap-4 flex-wrap">
+                  <div className="flex-1 min-w-[320px] flex items-end gap-3">
+                    <input
+                      ref={prInputRef}
+                      id="pr-url"
+                      type="url"
+                      placeholder="https://github.com/owner/repo/pull/123"
+                      value={prUrl}
+                      onChange={(e) => setPrUrl(e.target.value)}
+                      className="flex-1 bg-transparent border-0 border-b border-border px-0 py-3 text-base placeholder:text-muted-foreground/60 focus:outline-none focus:border-[var(--ring)] transition-colors"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setPrPickerOpen(true)}
+                      className="slide-meta hover:text-foreground transition-colors pb-3"
+                    >
+                      Browse
+                    </button>
+                  </div>
+                  <Button type="submit" className="gap-2 px-6 py-3 h-auto" disabled={submitting}>
+                    {submitting ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Starting…
+                      </>
+                    ) : (
+                      <>
+                        <Play className="h-4 w-4" />
+                        Generate review
+                      </>
+                    )}
+                  </Button>
+                </div>
+
+                {/* Line 2 — quiet options row */}
+                <div className="flex items-center gap-6 slide-meta">
+                  <button
+                    type="button"
+                    onClick={() => setModelMenuExpanded((v) => !v)}
+                    className={`pb-0.5 border-b transition-colors ${
+                      modelMenuExpanded
+                        ? 'text-foreground border-[var(--ring)]'
+                        : 'border-transparent hover:text-foreground'
+                    }`}
+                  >
+                    {PROVIDERS[provider].label} ·{' '}
+                    {PROVIDERS[provider].models.find((m) => m.id === model)?.label ?? model}
                   </button>
                   <button
-                    onClick={() => setSettingsOpen(true)}
-                    className="hover:text-foreground transition-colors"
+                    type="button"
+                    onClick={() => setInstructionsExpanded((v) => !v)}
+                    className={`pb-0.5 border-b transition-colors ${
+                      instructionsExpanded || instructions
+                        ? 'text-foreground border-[var(--ring)]'
+                        : 'border-transparent hover:text-foreground'
+                    }`}
                   >
-                    Settings
+                    {instructions ? 'Instructions' : 'Add instructions'}
                   </button>
                   <button
-                    onClick={handleSignOut}
-                    className="hover:text-foreground transition-colors"
+                    type="button"
+                    onClick={() => setPrefsExpanded((v) => !v)}
+                    className={`pb-0.5 border-b transition-colors ${
+                      prefsExpanded
+                        ? 'text-foreground border-[var(--ring)]'
+                        : 'border-transparent hover:text-foreground'
+                    }`}
                   >
-                    Sign out
+                    Preferences
                   </button>
                 </div>
-              </div>
 
-              {/* New review — no card, no card header. Editorial heading
-                  followed by the form. */}
-              <div className="flex flex-col gap-6">
-                <h2 className="editorial-heading">New review</h2>
-                <form onSubmit={handleSubmit} className="flex flex-col gap-6">
-                    <div className="flex flex-col gap-2">
-                      <label htmlFor="pr-url" className="text-sm font-medium text-foreground">
-                        Pull request URL
-                      </label>
-                      <div className="flex gap-3 items-end">
-                        <input
-                          id="pr-url"
-                          type="url"
-                          placeholder="https://github.com/owner/repo/pull/123"
-                          value={prUrl}
-                          onChange={(e) => setPrUrl(e.target.value)}
-                          className="flex-1 bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:border-[var(--ring)] transition-colors"
-                          required
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setPrPickerOpen(true)}
-                          className="slide-meta hover:text-foreground transition-colors pb-2"
-                        >
-                          Browse
-                        </button>
-                      </div>
-                    </div>
-                    <PRPickerDialog open={prPickerOpen} onOpenChange={setPrPickerOpen} onSelect={setPrUrl} />
-                    <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
-                    <FilePickerDialog
-                      open={filePickerOpen}
-                      onOpenChange={setFilePickerOpen}
-                      prUrl={prUrl.trim()}
-                      onConfirm={(excluded) => {
-                        setFilePickerOpen(false);
-                        void doStartReview(excluded);
-                      }}
-                    />
-
-                    <Dialog open={cliNotFound !== null} onOpenChange={() => setCliNotFound(null)}>
-                      <DialogContent className="bg-card sm:max-w-md">
-                        <DialogHeader>
-                          <DialogTitle>
-                            {cliNotFound?.provider === 'claude' ? 'Claude' : 'Gemini'} CLI not found
-                          </DialogTitle>
-                        </DialogHeader>
-                        <div className="flex flex-col gap-3 text-sm text-muted-foreground">
-                          <p>
-                            The {cliNotFound?.provider === 'claude' ? 'Claude' : 'Gemini'} CLI could not be found on
-                            your system. Gnosis uses the CLI to generate reviews.
-                          </p>
-                          <p>
-                            {cliNotFound?.provider === 'claude'
-                              ? 'Install it from claude.ai/code and authenticate with `claude auth`.'
-                              : 'Install it from github.com/google-gemini/gemini-cli and authenticate.'}
-                          </p>
-                          <p>
-                            If the CLI is already installed but not detected, you can set the path manually in Settings.
-                          </p>
-                        </div>
-                        <div className="flex gap-2 justify-end pt-2">
-                          <Button variant="outline" onClick={() => setCliNotFound(null)}>
-                            Dismiss
-                          </Button>
-                          <Button
-                            onClick={() => {
-                              setCliNotFound(null);
-                              setSettingsOpen(true);
-                            }}
-                          >
-                            Open Settings
-                          </Button>
-                        </div>
-                      </DialogContent>
-                    </Dialog>
-
-                    {/* Pending review requests */}
-                    <div className="flex flex-col gap-2">
-                      <div className="flex items-center justify-between">
-                        <label className="text-sm font-medium text-foreground">Pending reviews</label>
-                        <button
-                          type="button"
-                          onClick={fetchPendingReviews}
-                          disabled={pendingLoading}
-                          className="text-muted-foreground hover:text-foreground disabled:opacity-40 transition-colors"
-                          aria-label="Reload pending reviews"
-                        >
-                          <RefreshCw className={`h-3 w-3 ${pendingLoading ? 'animate-spin' : ''}`} />
-                        </button>
-                      </div>
-                      {pendingLoading ? (
-                        <div className="slide-meta flex items-center gap-1.5 py-1">
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                          Loading…
-                        </div>
-                      ) : visiblePendingReviews.length === 0 ? (
-                        <p className="slide-meta py-1">No pending reviews.</p>
-                      ) : (
-                        <ul className="flex flex-col">
-                          {visiblePendingReviews.slice(0, 10).map((pr) => (
-                            <li
-                              key={pr.url}
-                              className="group flex items-center gap-2 hover:bg-muted/30 transition-colors min-w-0 -mx-2 px-2"
-                            >
-                              <button
-                                type="button"
-                                onClick={() => setPrUrl(pr.url)}
-                                className="flex items-baseline gap-2 text-left flex-1 py-2 min-w-0"
-                              >
-                                <span className="slide-meta shrink-0">
-                                  {pr.repoName}#{pr.number}
-                                </span>
-                                <span className="font-serif text-sm truncate text-foreground/85 group-hover:text-foreground transition-colors">
-                                  {pr.title}
-                                </span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => dismissPendingPr(pr.url)}
-                                className="shrink-0 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-                                aria-label="Dismiss"
-                              >
-                                <X className="h-3 w-3" />
-                              </button>
-                            </li>
-                          ))}
-                          {visiblePendingReviews.length > 10 && (
-                            <button
-                              type="button"
-                              onClick={() => setPrPickerOpen(true)}
-                              className="slide-meta hover:text-foreground py-1 text-left"
-                            >
-                              Show {visiblePendingReviews.length - 10} more…
-                            </button>
-                          )}
-                        </ul>
-                      )}
-                    </div>
-
-                    <div className="flex flex-col gap-2">
-                      <label htmlFor="instructions" className="text-sm font-medium text-foreground">
-                        Instructions <span className="slide-meta inline">(optional)</span>
-                      </label>
-                      <textarea
-                        id="instructions"
-                        rows={5}
-                        placeholder="e.g. focus on performance, flag any security concerns, explain the auth flow"
-                        value={instructions}
-                        onChange={(e) => setInstructions(e.target.value)}
-                        onBlur={() => savePrefs()}
-                        className="w-full bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:border-[var(--ring)] transition-colors resize-none"
-                      />
-                    </div>
-
-                    {/* Provider — quiet text-only chips, brand-amber underline on active */}
-                    <div className="flex flex-col gap-2">
-                      <label className="text-sm font-medium text-foreground">Provider</label>
+                {/* Disclosure: model menu */}
+                <div
+                  className={`grid transition-[grid-template-rows] duration-200 ease-out ${
+                    modelMenuExpanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+                  }`}
+                >
+                  <div className="overflow-hidden">
+                    <div className="flex flex-col gap-3 pt-1 pb-2">
                       <div className="flex items-center gap-5 slide-meta">
+                        <span className="text-foreground/60">Provider</span>
                         {(['claude', 'gemini'] as const).map((p) => (
                           <button
                             key={p}
@@ -895,11 +912,8 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                           </button>
                         ))}
                       </div>
-                    </div>
-
-                    <div className="flex flex-col gap-2">
-                      <label className="text-sm font-medium text-foreground">Model</label>
                       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 slide-meta">
+                        <span className="text-foreground/60">Model</span>
                         {PROVIDERS[provider].models.map((m) => (
                           <button
                             key={m.id}
@@ -916,115 +930,241 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                         ))}
                       </div>
                     </div>
+                  </div>
+                </div>
 
-                    <ToggleSwitch
-                      id="include-all-files"
-                      label="Include all files"
-                      description={
-                        includeAllFiles
-                          ? 'All changed files included in the review'
-                          : 'You will choose which files to include'
-                      }
-                      checked={includeAllFiles}
-                      onToggle={() => setIncludeAllFiles((v) => !v)}
+                {/* Disclosure: instructions textarea */}
+                <div
+                  className={`grid transition-[grid-template-rows] duration-200 ease-out ${
+                    instructionsExpanded || instructions ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+                  }`}
+                >
+                  <div className="overflow-hidden">
+                    <textarea
+                      id="instructions"
+                      rows={4}
+                      placeholder="e.g. focus on performance, flag any security concerns, explain the auth flow"
+                      value={instructions}
+                      onChange={(e) => setInstructions(e.target.value)}
+                      onBlur={() => savePrefs()}
+                      className="w-full bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:border-[var(--ring)] transition-colors resize-none mt-1"
                     />
+                  </div>
+                </div>
 
-                    {provider === 'claude' && (
+                {/* Disclosure: preferences (the 6 toggles in a horizontal grid) */}
+                <div
+                  className={`grid transition-[grid-template-rows] duration-200 ease-out ${
+                    prefsExpanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'
+                  }`}
+                >
+                  <div className="overflow-hidden">
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-x-10 gap-y-5 pt-2">
                       <ToggleSwitch
-                        id="thinking"
-                        label="Extended thinking"
-                        description="Claude reasons through the code before writing. Catches subtle bugs and design issues standard mode misses, but takes longer."
-                        checked={thinking}
-                        onToggle={() => setThinking((t) => !t)}
+                        id="include-all-files"
+                        label="Include all files"
+                        description={
+                          includeAllFiles
+                            ? 'All changed files included in the review'
+                            : 'You will choose which files to include'
+                        }
+                        checked={includeAllFiles}
+                        onToggle={() => setIncludeAllFiles((v) => !v)}
                       />
-                    )}
-
-                    <ToggleSwitch
-                      id="signal-boost"
-                      label="Signal boost"
-                      description="Skip trivial changes, focus on design and complexity"
-                      checked={signalBoost}
-                      onToggle={() => setSignalBoost((s) => !s)}
-                      badge="Experimental"
-                    />
-
-                    <ToggleSwitch
-                      id="smart-imports"
-                      label="Smart imports"
-                      description="Use AI to find related files across all languages"
-                      checked={smartImports}
-                      onToggle={() => setSmartImports((s) => !s)}
-                      badge="Experimental"
-                    />
-
-                    <ToggleSwitch
-                      id="review-suggestions"
-                      label="Review suggestions"
-                      description="Generate 'What to check' for each slide"
-                      checked={reviewSuggestions}
-                      onToggle={() => setReviewSuggestions((r) => !r)}
-                    />
-
-                    {provider === 'claude' && (
-                      <ToggleSwitch
-                        id="web-research"
-                        label="Web research"
-                        description="Search for framework docs and best practices (slower)"
-                        checked={webResearch}
-                        onToggle={() => setWebResearch((w) => !w)}
-                      />
-                    )}
-
-                    {error && (
-                      <Alert variant="destructive">
-                        <AlertDescription>{error}</AlertDescription>
-                      </Alert>
-                    )}
-
-                    <Button type="submit" className="w-full gap-2" disabled={submitting}>
-                      {submitting ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          Starting…
-                        </>
-                      ) : (
-                        <>
-                          <Play className="h-4 w-4" />
-                          Generate Review
-                        </>
+                      {provider === 'claude' && (
+                        <ToggleSwitch
+                          id="thinking"
+                          label="Extended thinking"
+                          description="Claude reasons through the code before writing. Catches subtle bugs and design issues standard mode misses, but takes longer."
+                          checked={thinking}
+                          onToggle={() => setThinking((t) => !t)}
+                        />
                       )}
-                    </Button>
-                  </form>
-
-                  {/* Empty-state teaching note — only shown when the
-                      user has no review history yet. Tells them what
-                      this screen will become once they generate
-                      their first review, in editorial register. */}
-                  {prGroups.length === 0 && (
-                    <div className="border-t border-border pt-6 flex flex-col gap-2">
-                      <p className="editorial-label text-sm">No reviews yet.</p>
-                      <p className="slide-prose">
-                        Once you generate a review it'll be saved here, grouped by pull request, so you can return to
-                        it later without re-running the model. Reviews never leave your machine.
-                      </p>
+                      <ToggleSwitch
+                        id="signal-boost"
+                        label="Signal boost"
+                        description="Skip trivial changes, focus on design and complexity"
+                        checked={signalBoost}
+                        onToggle={() => setSignalBoost((s) => !s)}
+                        badge="Experimental"
+                      />
+                      <ToggleSwitch
+                        id="smart-imports"
+                        label="Smart imports"
+                        description="Use AI to find related files across all languages"
+                        checked={smartImports}
+                        onToggle={() => setSmartImports((s) => !s)}
+                        badge="Experimental"
+                      />
+                      <ToggleSwitch
+                        id="review-suggestions"
+                        label="Review suggestions"
+                        description="Generate 'What to check' for each slide"
+                        checked={reviewSuggestions}
+                        onToggle={() => setReviewSuggestions((r) => !r)}
+                      />
+                      {provider === 'claude' && (
+                        <ToggleSwitch
+                          id="web-research"
+                          label="Web research"
+                          description="Search for framework docs and best practices (slower)"
+                          checked={webResearch}
+                          onToggle={() => setWebResearch((w) => !w)}
+                        />
+                      )}
                     </div>
-                  )}
-              </div>
-            </div>
+                  </div>
+                </div>
 
-            {/* History */}
+                {error && (
+                  <Alert variant="destructive">
+                    <AlertDescription>{error}</AlertDescription>
+                  </Alert>
+                )}
+              </form>
+
+              <PRPickerDialog open={prPickerOpen} onOpenChange={setPrPickerOpen} onSelect={setPrUrl} />
+              <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+              <FilePickerDialog
+                open={filePickerOpen}
+                onOpenChange={setFilePickerOpen}
+                prUrl={prUrl.trim()}
+                onConfirm={(excluded) => {
+                  setFilePickerOpen(false);
+                  void doStartReview(excluded);
+                }}
+              />
+
+              <Dialog open={cliNotFound !== null} onOpenChange={() => setCliNotFound(null)}>
+                <DialogContent className="bg-card sm:max-w-md">
+                  <DialogHeader>
+                    <DialogTitle>
+                      {cliNotFound?.provider === 'claude' ? 'Claude' : 'Gemini'} CLI not found
+                    </DialogTitle>
+                  </DialogHeader>
+                  <div className="flex flex-col gap-3 text-sm text-muted-foreground">
+                    <p>
+                      The {cliNotFound?.provider === 'claude' ? 'Claude' : 'Gemini'} CLI could not be found on your
+                      system. Gnosis uses the CLI to generate reviews.
+                    </p>
+                    <p>
+                      {cliNotFound?.provider === 'claude'
+                        ? 'Install it from claude.ai/code and authenticate with `claude auth`.'
+                        : 'Install it from github.com/google-gemini/gemini-cli and authenticate.'}
+                    </p>
+                    <p>
+                      If the CLI is already installed but not detected, you can set the path manually in Settings.
+                    </p>
+                  </div>
+                  <div className="flex gap-2 justify-end pt-2">
+                    <Button variant="outline" onClick={() => setCliNotFound(null)}>
+                      Dismiss
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        setCliNotFound(null);
+                        setSettingsOpen(true);
+                      }}
+                    >
+                      Open Settings
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            </section>
+
+            {/* ── Suggested for you ── PRs GitHub asked the user to
+                review. Each row is one click to fill the URL field
+                AND has an explicit "Generate review →" link that
+                starts the review immediately. Only renders when
+                non-empty. */}
+            {visiblePendingReviews.length > 0 && (
+              <section className="flex flex-col gap-3">
+                <div className="flex items-baseline justify-between">
+                  <p className="editorial-label">Suggested for you</p>
+                  <div className="flex items-center gap-3 slide-meta">
+                    <span>GitHub asked you to review these</span>
+                    <button
+                      type="button"
+                      onClick={fetchPendingReviews}
+                      disabled={pendingLoading}
+                      className="hover:text-foreground disabled:opacity-40 transition-colors"
+                      aria-label="Reload pending reviews"
+                    >
+                      <RefreshCw className={`h-3 w-3 ${pendingLoading ? 'animate-spin' : ''}`} />
+                    </button>
+                  </div>
+                </div>
+                <ul className="flex flex-col">
+                  {visiblePendingReviews.slice(0, 10).map((pr) => (
+                    <li
+                      key={pr.url}
+                      className="group flex items-center gap-4 py-3 border-b border-border/60 hover:bg-muted/30 transition-colors -mx-3 px-3"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setPrUrl(pr.url)}
+                        className="flex items-baseline gap-3 text-left flex-1 min-w-0"
+                      >
+                        <span className="slide-meta shrink-0">
+                          {pr.repoName}#{pr.number}
+                        </span>
+                        <span className="font-serif text-base truncate text-foreground/85 group-hover:text-foreground transition-colors">
+                          {pr.title}
+                        </span>
+                        <span className="slide-meta truncate hidden md:inline">· {pr.author}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void startReviewForUrl(pr.url)}
+                        className="slide-meta opacity-0 group-hover:opacity-100 hover:text-foreground transition-opacity shrink-0"
+                      >
+                        Generate review →
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => dismissPendingPr(pr.url)}
+                        className="shrink-0 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                        aria-label="Dismiss"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </li>
+                  ))}
+                  {visiblePendingReviews.length > 10 && (
+                    <button
+                      type="button"
+                      onClick={() => setPrPickerOpen(true)}
+                      className="slide-meta hover:text-foreground py-2 text-left"
+                    >
+                      Show {visiblePendingReviews.length - 10} more…
+                    </button>
+                  )}
+                </ul>
+              </section>
+            )}
+
+            {/* ── Zone 4: Your reviews ── Full-width history list.
+                Unread rows get bold serif titles at a larger size
+                instead of the previous tiny dot. Reviews stay in
+                chronological order; the hero zone above pulls the
+                latest unread out for emphasis. */}
             {prGroups.length > 0 && (
-              <div className="min-h-0 max-h-[calc(100vh-6rem)] sticky top-10 overflow-hidden flex flex-col">
-                <div className="pb-3 flex items-center justify-between border-b border-border">
-                  <h2 className="editorial-heading text-base">Review history</h2>
-                  <div className="flex items-center gap-2">
+              <section className="flex flex-col gap-3">
+                <div className="flex items-baseline justify-between">
+                  <p className="editorial-label">Your reviews</p>
+                  <div className="flex items-center gap-3 slide-meta">
+                    <span>
+                      {prGroups.length} {prGroups.length === 1 ? 'pull request' : 'pull requests'}
+                      {unreadGroups.length > 0 && ` · ${unreadGroups.length} unread`}
+                    </span>
                     {prGroups.some((g) => {
                       const state = livePrStates.get(g.prUrl)?.prState ?? g.latestReview.prState;
                       return state === 'merged' || state === 'closed';
                     }) && (
                       <button
                         onClick={() => void handleDeleteClosedPRs()}
-                        className="text-muted-foreground hover:text-destructive transition-colors"
+                        className="hover:text-foreground transition-colors"
                         title="Remove merged & closed PRs"
                         aria-label="Remove merged and closed PRs"
                       >
@@ -1033,7 +1173,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                     )}
                     <button
                       onClick={handleDeleteAllHistory}
-                      className="text-muted-foreground hover:text-destructive transition-colors"
+                      className="hover:text-foreground transition-colors"
                       title="Delete all history"
                       aria-label="Delete all history"
                     >
@@ -1041,292 +1181,305 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                     </button>
                   </div>
                 </div>
-                <div className="flex-1 overflow-y-auto min-h-0">
-                  <ul>
-                    {prGroups.map((group) => {
-                      const latestStatus = getEntryStatus(group.latestReview);
-                      const risk = riskConfig[group.latestReview.riskLevel];
-                      const hasMultiple = group.reviews.length > 1;
-                      const isExpanded = expandedPRs.has(group.prUrl);
-                      const isClickable = latestStatus === 'completed';
-                      const latestId = group.latestReview.id;
-                      const elapsed = elapsedSeconds.get(latestId) ?? 0;
-                      const bytes = reviewBytes.get(latestId);
-                      const liveState = livePrStates.get(group.prUrl);
-                      const prState = liveState?.prState ?? group.latestReview.prState;
-                      const isOutdated =
-                        liveState?.prState === 'open' && liveState.headSha !== group.latestReview.prHeadSha;
+                <ul>
+                  {prGroups.map((group) => {
+                    const latestStatus = getEntryStatus(group.latestReview);
+                    const risk = riskConfig[group.latestReview.riskLevel];
+                    const hasMultiple = group.reviews.length > 1;
+                    const isExpanded = expandedPRs.has(group.prUrl);
+                    const isClickable = latestStatus === 'completed';
+                    const latestId = group.latestReview.id;
+                    const elapsed = elapsedSeconds.get(latestId) ?? 0;
+                    const bytes = reviewBytes.get(latestId);
+                    const liveState = livePrStates.get(group.prUrl);
+                    const prState = liveState?.prState ?? group.latestReview.prState;
+                    const isOutdated =
+                      liveState?.prState === 'open' && liveState.headSha !== group.latestReview.prHeadSha;
+                    const isUnread = group.latestReview.unread;
 
-                      return (
-                        <li key={group.prUrl}>
-                          <div
-                            className={`flex items-center gap-1 px-1 py-3 border-b border-border/60 hover:bg-muted/30 transition-colors group ${isClickable ? 'cursor-pointer' : ''}`}
-                          >
-                            <div className="shrink-0 w-5 flex items-center justify-center">
-                              {hasMultiple && (
-                                <button
-                                  onClick={() =>
-                                    setExpandedPRs((prev) => {
-                                      const next = new Set(prev);
-                                      if (next.has(group.prUrl)) next.delete(group.prUrl);
-                                      else next.add(group.prUrl);
-                                      return next;
-                                    })
-                                  }
-                                  className="p-0.5 text-muted-foreground hover:text-foreground transition-colors"
-                                  aria-label={isExpanded ? 'Collapse' : 'Expand'}
-                                >
-                                  {isExpanded ? (
-                                    <ChevronDown className="h-3.5 w-3.5" />
-                                  ) : (
-                                    <ChevronRight className="h-3.5 w-3.5" />
-                                  )}
-                                </button>
-                              )}
-                            </div>
-                            <button
-                              onClick={() => isClickable && handleLoadFromHistory(latestId)}
-                              className={`group/btn flex-1 min-w-0 flex items-center gap-3 text-left ${!isClickable ? 'cursor-default' : ''}`}
-                              disabled={!isClickable}
-                            >
-                              <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-                                <span
-                                  className={`font-serif text-base leading-snug truncate group-hover/btn:text-foreground transition-colors flex items-center gap-2 ${
-                                    group.latestReview.unread
-                                      ? 'text-foreground font-medium'
-                                      : 'text-foreground/85'
-                                  }`}
-                                >
-                                  {group.latestReview.unread && (
-                                    <span
-                                      className="shrink-0 h-1.5 w-1.5 rounded-full bg-[var(--ring)]"
-                                      title="Unread"
-                                      aria-label="Unread"
-                                    />
-                                  )}
-                                  {group.prTitle}
-                                </span>
-                                <span className="slide-meta truncate">
-                                  {group.repoRef} · {group.author} · {timeAgo(group.latestReview.savedAt)}
-                                  {hasMultiple && ` · ${group.reviews.length} reviews`}
-                                </span>
-                                {latestStatus === 'generating' && bytes && bytes.inputBytes > 0 && (
-                                  <span className="slide-meta opacity-60">
-                                    ↑{formatBytes(bytes.inputBytes)} ↓{formatBytes(bytes.outputBytes)}
-                                  </span>
-                                )}
-                              </div>
-                            </button>
-                            {prState && (
-                              <>
-                                {prState === 'open' && !isOutdated && (
-                                  <Badge
-                                    variant="outline"
-                                    className="shrink-0 text-xs border-[oklch(0.55_0.08_145/35%)] text-[oklch(0.62_0.1_145)]"
-                                  >
-                                    <GitPullRequest className="h-3 w-3 mr-1" />
-                                    Open
-                                  </Badge>
-                                )}
-                                {prState === 'open' && isOutdated && (
-                                  <Badge
-                                    variant="outline"
-                                    className="shrink-0 text-xs border-[oklch(0.65_0.12_55/35%)] text-[oklch(0.7_0.12_55)]"
-                                  >
-                                    <AlertTriangle className="h-3 w-3 mr-1" />
-                                    Outdated
-                                  </Badge>
-                                )}
-                                {prState === 'merged' && (
-                                  <Badge
-                                    variant="outline"
-                                    className="shrink-0 text-xs border-[oklch(0.55_0.1_300/35%)] text-[oklch(0.65_0.1_300)]"
-                                  >
-                                    <GitMerge className="h-3 w-3 mr-1" />
-                                    Merged
-                                  </Badge>
-                                )}
-                                {prState === 'closed' && (
-                                  <Badge variant="outline" className="shrink-0 text-xs border-[oklch(0.6_0.13_22/35%)] text-[oklch(0.65_0.14_22)]">
-                                    <GitPullRequestClosed className="h-3 w-3 mr-1" />
-                                    Closed
-                                  </Badge>
-                                )}
-                              </>
-                            )}
-                            {latestStatus === 'generating' && (
-                              <Badge
-                                variant="outline"
-                                className="shrink-0 text-xs border-[var(--ring)]/40 text-[var(--ring)]"
+                    return (
+                      <li key={group.prUrl} data-pr-url={group.prUrl}>
+                        <div
+                          className={`flex items-center gap-3 px-1 py-4 border-b border-border/60 hover:bg-muted/30 transition-colors group ${
+                            isClickable ? 'cursor-pointer' : ''
+                          }`}
+                        >
+                          <div className="shrink-0 w-5 flex items-center justify-center">
+                            {hasMultiple && (
+                              <button
+                                onClick={() =>
+                                  setExpandedPRs((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(group.prUrl)) next.delete(group.prUrl);
+                                    else next.add(group.prUrl);
+                                    return next;
+                                  })
+                                }
+                                className="p-0.5 text-muted-foreground hover:text-foreground transition-colors"
+                                aria-label={isExpanded ? 'Collapse' : 'Expand'}
                               >
-                                <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                                {reviewPhases.get(latestId) ?? 'Starting'}
-                                {elapsed > 0 && ` · ${formatDuration(elapsed * 1000)}`}
-                              </Badge>
+                                {isExpanded ? (
+                                  <ChevronDown className="h-3.5 w-3.5" />
+                                ) : (
+                                  <ChevronRight className="h-3.5 w-3.5" />
+                                )}
+                              </button>
                             )}
-                            {latestStatus === 'failed' && (
-                              <Badge
-                                variant="outline"
-                                className="shrink-0 text-xs border-[oklch(0.6_0.13_22/35%)] text-[oklch(0.65_0.14_22)] max-w-[200px]"
-                                title={group.latestReview.error ?? 'Failed'}
-                              >
-                                <CircleX className="h-3 w-3 mr-1 shrink-0" />
-                                <span className="truncate">{group.latestReview.error ?? 'Failed'}</span>
-                              </Badge>
-                            )}
-                            {latestStatus === 'completed' && (
-                              <Badge variant="outline" className={`shrink-0 text-xs ${risk.badgeClassName}`}>
-                                {risk.label}
-                              </Badge>
-                            )}
-                            <div className="shrink-0 flex items-center gap-0.5">
-                              {!hasMultiple && latestStatus === 'generating' && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    void window.electronAPI.cancelReview(latestId);
-                                  }}
-                                  className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity px-1"
-                                  aria-label="Cancel review"
-                                  title="Cancel this review"
-                                >
-                                  <X className="h-3.5 w-3.5" />
-                                </button>
-                              )}
-                              {!hasMultiple && latestStatus !== 'generating' && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    void window.electronAPI.openReviewPrompt(latestId);
-                                  }}
-                                  className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity px-1"
-                                  aria-label="View prompt"
-                                  title="Open the prompt sent to the AI"
-                                >
-                                  <FileText className="h-3.5 w-3.5" />
-                                </button>
-                              )}
-                              {!hasMultiple && latestStatus !== 'generating' && (
-                                <button
-                                  onClick={(e) => handleDeleteFromHistory(e, latestId)}
-                                  className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity px-1"
-                                  aria-label="Delete"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
-                              )}
-                            </div>
                           </div>
-
-                          {hasMultiple && isExpanded && (
-                            <ul className="border-t border-border/50">
-                              {group.reviews.map((review) => {
-                                const reviewStatus = getEntryStatus(review);
-                                const reviewRisk = riskConfig[review.riskLevel];
-                                const reviewClickable = reviewStatus === 'completed';
-                                const reviewElapsed = elapsedSeconds.get(review.id) ?? 0;
-                                const reviewBytesEntry = reviewBytes.get(review.id);
-                                return (
-                                  <li key={review.id}>
-                                    <button
-                                      onClick={() => reviewClickable && handleLoadFromHistory(review.id)}
-                                      className={`w-full flex items-center gap-3 pl-10 pr-4 py-2 text-left hover:bg-muted/30 transition-colors group/review ${!reviewClickable ? 'cursor-default' : ''}`}
-                                      disabled={!reviewClickable}
-                                    >
-                                      <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-                                        <span className="text-xs text-muted-foreground truncate">
-                                          {review.model ? (MODEL_LABELS[review.model] ?? review.model) : 'Unknown'}
-                                          {review.generationDurationMs != null &&
-                                            ` · ${formatDuration(review.generationDurationMs)}`}
-                                          {' · '}
-                                          {timeAgo(review.savedAt)}
-                                        </span>
-                                        {reviewStatus === 'generating' &&
-                                          reviewBytesEntry &&
-                                          reviewBytesEntry.inputBytes > 0 && (
-                                            <span className="text-xs text-muted-foreground/60 truncate">
-                                              ↑{formatBytes(reviewBytesEntry.inputBytes)} ↓
-                                              {formatBytes(reviewBytesEntry.outputBytes)}
-                                            </span>
-                                          )}
-                                      </div>
-                                      {reviewStatus === 'generating' && (
-                                        <Badge
-                                          variant="outline"
-                                          className="shrink-0 text-xs border-[var(--ring)]/40 text-[var(--ring)]"
-                                        >
-                                          <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                                          {reviewPhases.get(review.id) ?? 'Starting'}
-                                          {reviewElapsed > 0 && ` · ${formatDuration(reviewElapsed * 1000)}`}
-                                        </Badge>
-                                      )}
-                                      {reviewStatus === 'failed' && (
-                                        <Badge
-                                          variant="outline"
-                                          className="shrink-0 text-xs border-[oklch(0.6_0.13_22/35%)] text-[oklch(0.65_0.14_22)] max-w-[200px]"
-                                          title={review.error ?? 'Failed'}
-                                        >
-                                          <CircleX className="h-3 w-3 mr-1 shrink-0" />
-                                          <span className="truncate">{review.error ?? 'Failed'}</span>
-                                        </Badge>
-                                      )}
-                                      {reviewStatus === 'completed' && (
-                                        <Badge
-                                          variant="outline"
-                                          className={`shrink-0 text-xs ${reviewRisk.badgeClassName}`}
-                                        >
-                                          {reviewRisk.label}
-                                        </Badge>
-                                      )}
-                                      {reviewStatus === 'generating' && (
-                                        <button
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            void window.electronAPI.cancelReview(review.id);
-                                          }}
-                                          className="shrink-0 opacity-0 group-hover/review:opacity-100 text-muted-foreground hover:text-destructive transition-opacity px-1"
-                                          aria-label="Cancel review"
-                                          title="Cancel this review"
-                                        >
-                                          <X className="h-3.5 w-3.5" />
-                                        </button>
-                                      )}
-                                      {reviewStatus !== 'generating' && (
-                                        <button
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            void window.electronAPI.openReviewPrompt(review.id);
-                                          }}
-                                          className="shrink-0 opacity-0 group-hover/review:opacity-100 text-muted-foreground hover:text-foreground transition-opacity px-1"
-                                          aria-label="View prompt"
-                                          title="Open the prompt sent to the AI"
-                                        >
-                                          <FileText className="h-3.5 w-3.5" />
-                                        </button>
-                                      )}
-                                      {reviewStatus !== 'generating' && (
-                                        <button
-                                          onClick={(e) => handleDeleteFromHistory(e, review.id)}
-                                          className="shrink-0 opacity-0 group-hover/review:opacity-100 text-muted-foreground hover:text-destructive transition-opacity px-1"
-                                          aria-label="Delete"
-                                        >
-                                          <Trash2 className="h-3.5 w-3.5" />
-                                        </button>
-                                      )}
-                                    </button>
-                                  </li>
-                                );
-                              })}
-                            </ul>
+                          <button
+                            onClick={() => isClickable && handleLoadFromHistory(latestId)}
+                            className={`group/btn flex-1 min-w-0 flex items-center gap-4 text-left ${
+                              !isClickable ? 'cursor-default' : ''
+                            }`}
+                            disabled={!isClickable}
+                          >
+                            <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+                              <span
+                                className={`font-serif truncate group-hover/btn:text-foreground transition-colors ${
+                                  isUnread
+                                    ? 'text-lg font-medium text-foreground leading-snug'
+                                    : 'text-base font-normal text-foreground/75 leading-snug'
+                                }`}
+                              >
+                                {group.prTitle}
+                              </span>
+                              <span className="slide-meta truncate">
+                                {group.repoRef} · {group.author} · {timeAgo(group.latestReview.savedAt)}
+                                {hasMultiple && ` · ${group.reviews.length} reviews`}
+                              </span>
+                              {latestStatus === 'generating' && bytes && bytes.inputBytes > 0 && (
+                                <span className="slide-meta opacity-60">
+                                  ↑{formatBytes(bytes.inputBytes)} ↓{formatBytes(bytes.outputBytes)}
+                                </span>
+                              )}
+                            </div>
+                          </button>
+                          {prState && (
+                            <>
+                              {prState === 'open' && !isOutdated && (
+                                <Badge
+                                  variant="outline"
+                                  className="shrink-0 text-xs border-[oklch(0.55_0.08_145/35%)] text-[oklch(0.62_0.1_145)]"
+                                >
+                                  <GitPullRequest className="h-3 w-3 mr-1" />
+                                  Open
+                                </Badge>
+                              )}
+                              {prState === 'open' && isOutdated && (
+                                <Badge
+                                  variant="outline"
+                                  className="shrink-0 text-xs border-[oklch(0.65_0.12_55/35%)] text-[oklch(0.7_0.12_55)]"
+                                >
+                                  <AlertTriangle className="h-3 w-3 mr-1" />
+                                  Outdated
+                                </Badge>
+                              )}
+                              {prState === 'merged' && (
+                                <Badge
+                                  variant="outline"
+                                  className="shrink-0 text-xs border-[oklch(0.55_0.1_300/35%)] text-[oklch(0.65_0.1_300)]"
+                                >
+                                  <GitMerge className="h-3 w-3 mr-1" />
+                                  Merged
+                                </Badge>
+                              )}
+                              {prState === 'closed' && (
+                                <Badge
+                                  variant="outline"
+                                  className="shrink-0 text-xs border-[oklch(0.6_0.13_22/35%)] text-[oklch(0.65_0.14_22)]"
+                                >
+                                  <GitPullRequestClosed className="h-3 w-3 mr-1" />
+                                  Closed
+                                </Badge>
+                              )}
+                            </>
                           )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              </div>
+                          {latestStatus === 'generating' && (
+                            <Badge
+                              variant="outline"
+                              className="shrink-0 text-xs border-[var(--ring)]/40 text-[var(--ring)]"
+                            >
+                              <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                              {reviewPhases.get(latestId) ?? 'Starting'}
+                              {elapsed > 0 && ` · ${formatDuration(elapsed * 1000)}`}
+                            </Badge>
+                          )}
+                          {latestStatus === 'failed' && (
+                            <Badge
+                              variant="outline"
+                              className="shrink-0 text-xs border-[oklch(0.6_0.13_22/35%)] text-[oklch(0.65_0.14_22)] max-w-[200px]"
+                              title={group.latestReview.error ?? 'Failed'}
+                            >
+                              <CircleX className="h-3 w-3 mr-1 shrink-0" />
+                              <span className="truncate">{group.latestReview.error ?? 'Failed'}</span>
+                            </Badge>
+                          )}
+                          {latestStatus === 'completed' && (
+                            <Badge variant="outline" className={`shrink-0 text-xs ${risk.badgeClassName}`}>
+                              {risk.label}
+                            </Badge>
+                          )}
+                          <div className="shrink-0 flex items-center gap-0.5">
+                            {!hasMultiple && latestStatus === 'generating' && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void window.electronAPI.cancelReview(latestId);
+                                }}
+                                className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity px-1"
+                                aria-label="Cancel review"
+                                title="Cancel this review"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                            {!hasMultiple && latestStatus !== 'generating' && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void window.electronAPI.openReviewPrompt(latestId);
+                                }}
+                                className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity px-1"
+                                aria-label="View prompt"
+                                title="Open the prompt sent to the AI"
+                              >
+                                <FileText className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                            {!hasMultiple && latestStatus !== 'generating' && (
+                              <button
+                                onClick={(e) => handleDeleteFromHistory(e, latestId)}
+                                className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity px-1"
+                                aria-label="Delete"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {hasMultiple && isExpanded && (
+                          <ul className="border-b border-border/60">
+                            {group.reviews.map((review) => {
+                              const reviewStatus = getEntryStatus(review);
+                              const reviewRisk = riskConfig[review.riskLevel];
+                              const reviewClickable = reviewStatus === 'completed';
+                              const reviewElapsed = elapsedSeconds.get(review.id) ?? 0;
+                              const reviewBytesEntry = reviewBytes.get(review.id);
+                              return (
+                                <li key={review.id}>
+                                  <button
+                                    onClick={() => reviewClickable && handleLoadFromHistory(review.id)}
+                                    className={`w-full flex items-center gap-3 pl-10 pr-4 py-2 text-left hover:bg-muted/30 transition-colors group/review ${
+                                      !reviewClickable ? 'cursor-default' : ''
+                                    }`}
+                                    disabled={!reviewClickable}
+                                  >
+                                    <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+                                      <span className="text-xs text-muted-foreground truncate">
+                                        {review.model ? (MODEL_LABELS[review.model] ?? review.model) : 'Unknown'}
+                                        {review.generationDurationMs != null &&
+                                          ` · ${formatDuration(review.generationDurationMs)}`}
+                                        {' · '}
+                                        {timeAgo(review.savedAt)}
+                                      </span>
+                                      {reviewStatus === 'generating' &&
+                                        reviewBytesEntry &&
+                                        reviewBytesEntry.inputBytes > 0 && (
+                                          <span className="text-xs text-muted-foreground/60 truncate">
+                                            ↑{formatBytes(reviewBytesEntry.inputBytes)} ↓
+                                            {formatBytes(reviewBytesEntry.outputBytes)}
+                                          </span>
+                                        )}
+                                    </div>
+                                    {reviewStatus === 'generating' && (
+                                      <Badge
+                                        variant="outline"
+                                        className="shrink-0 text-xs border-[var(--ring)]/40 text-[var(--ring)]"
+                                      >
+                                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                                        {reviewPhases.get(review.id) ?? 'Starting'}
+                                        {reviewElapsed > 0 && ` · ${formatDuration(reviewElapsed * 1000)}`}
+                                      </Badge>
+                                    )}
+                                    {reviewStatus === 'failed' && (
+                                      <Badge
+                                        variant="outline"
+                                        className="shrink-0 text-xs border-[oklch(0.6_0.13_22/35%)] text-[oklch(0.65_0.14_22)] max-w-[200px]"
+                                        title={review.error ?? 'Failed'}
+                                      >
+                                        <CircleX className="h-3 w-3 mr-1 shrink-0" />
+                                        <span className="truncate">{review.error ?? 'Failed'}</span>
+                                      </Badge>
+                                    )}
+                                    {reviewStatus === 'completed' && (
+                                      <Badge
+                                        variant="outline"
+                                        className={`shrink-0 text-xs ${reviewRisk.badgeClassName}`}
+                                      >
+                                        {reviewRisk.label}
+                                      </Badge>
+                                    )}
+                                    {reviewStatus === 'generating' && (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          void window.electronAPI.cancelReview(review.id);
+                                        }}
+                                        className="shrink-0 opacity-0 group-hover/review:opacity-100 text-muted-foreground hover:text-destructive transition-opacity px-1"
+                                        aria-label="Cancel review"
+                                        title="Cancel this review"
+                                      >
+                                        <X className="h-3.5 w-3.5" />
+                                      </button>
+                                    )}
+                                    {reviewStatus !== 'generating' && (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          void window.electronAPI.openReviewPrompt(review.id);
+                                        }}
+                                        className="shrink-0 opacity-0 group-hover/review:opacity-100 text-muted-foreground hover:text-foreground transition-opacity px-1"
+                                        aria-label="View prompt"
+                                        title="Open the prompt sent to the AI"
+                                      >
+                                        <FileText className="h-3.5 w-3.5" />
+                                      </button>
+                                    )}
+                                    {reviewStatus !== 'generating' && (
+                                      <button
+                                        onClick={(e) => handleDeleteFromHistory(e, review.id)}
+                                        className="shrink-0 opacity-0 group-hover/review:opacity-100 text-muted-foreground hover:text-destructive transition-opacity px-1"
+                                        aria-label="Delete"
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </button>
+                                    )}
+                                  </button>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
             )}
-          </div>
+
+            {/* ── Empty state ── Editorial teaching note shown only
+                when the user has no review history yet. */}
+            {prGroups.length === 0 && (
+              <section className="flex flex-col gap-2 max-w-[60ch] pt-4">
+                <p className="editorial-label">No reviews yet.</p>
+                <p className="slide-prose">
+                  Once you generate a review it'll be saved here, grouped by pull request, so you can return to it
+                  later without re-running the model. Reviews never leave your machine.
+                </p>
+              </section>
+            )}
+          </>
         )}
       </div>
     </main>

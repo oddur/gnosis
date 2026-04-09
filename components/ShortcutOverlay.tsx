@@ -46,6 +46,12 @@ const groups: ShortcutGroup[] = [
     ],
   },
   {
+    heading: 'Home',
+    shortcuts: [
+      { keys: 'n', label: 'Focus the new-review input' },
+    ],
+  },
+  {
     heading: 'Anywhere',
     shortcuts: [
       { keys: '⌘ K', label: 'Open command palette' },
@@ -103,7 +109,7 @@ export function ShortcutOverlay({ open, onClose }: Props) {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-10 gap-y-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-10 gap-y-8">
           {groups.map((group) => (
             <section key={group.heading} className="flex flex-col gap-3">
               <h3 className="slide-meta">{group.heading}</h3>
