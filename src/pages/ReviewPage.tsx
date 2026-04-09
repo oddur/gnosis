@@ -408,7 +408,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
 
   if (review.slides.length === 0) {
     return (
-      <main className="flex min-h-screen items-start justify-center px-8 pt-[18vh]">
+      <main className="flex min-h-screen items-start justify-center px-10 lg:px-12 pt-[18vh]">
         <div className="w-full max-w-2xl flex flex-col gap-6">
           <div className="slide-chapter">
             <span>Empty review</span>

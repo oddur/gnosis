@@ -142,6 +142,7 @@ export function CommentBubble({
           onClick={() => setEditing(true)}
           className="p-0.5 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground"
           title="Edit"
+          aria-label="Edit comment"
         >
           <Pencil className="h-3 w-3" />
         </button>
@@ -149,6 +150,7 @@ export function CommentBubble({
           onClick={() => onRemove(comment.id)}
           className="p-0.5 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive"
           title="Delete"
+          aria-label="Delete comment"
         >
           <Trash2 className="h-3 w-3" />
         </button>
