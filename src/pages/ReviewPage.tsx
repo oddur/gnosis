@@ -67,6 +67,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
   const [chatProvider, setChatProvider] = useState<Provider>('claude');
   const [chatModel, setChatModel] = useState<ModelId>('claude-sonnet-4-6');
   const [diffLayout, setDiffLayout] = useState<Preferences['diffLayout']>('unified');
+  const [slideViewMode, setSlideViewMode] = useState<'split' | 'focus'>('split');
   const [prefs, setPrefs] = useState<Preferences | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -251,6 +252,11 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
       },
       s: () => {
         if (currentSlide > 0) handleDiffLayoutChange('split');
+      },
+      // View mode toggle — split (narrative + diff side by side)
+      // vs focus (narrative stacked above diff, full-width)
+      f: () => {
+        if (currentSlide > 0) setSlideViewMode((v) => (v === 'split' ? 'focus' : 'split'));
       },
       // Open chat for the current slide
       c: () => {
@@ -492,6 +498,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
                 setChatQuotedCode(code);
                 setChatOpen(true);
               }}
+              viewMode={slideViewMode}
               gitFileUrlBase={gitFileUrlBase}
               excludedFiles={excludedFilesSet}
               isReviewed={reviewed.has(currentSlide)}

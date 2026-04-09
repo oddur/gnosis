@@ -42,6 +42,7 @@ const groups: ShortcutGroup[] = [
       { keys: 'r', label: 'Mark reviewed and advance' },
       { keys: 'n', label: 'Jump to next unreviewed' },
       { keys: 'c', label: 'Open chat for current slide' },
+      { keys: 'f', label: 'Toggle focus / split view' },
       { keys: 'u', label: 'Switch to unified diff' },
       { keys: 's', label: 'Switch to split diff' },
       { keys: '[  ]', label: 'Resize narrative panel', soon: true },

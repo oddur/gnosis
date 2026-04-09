@@ -22,6 +22,7 @@ interface Props {
   onDiffLayoutChange: (layout: Preferences['diffLayout']) => void;
   onAskQuestion?: () => void;
   onAskAboutSelection?: (quotedCode: string) => void;
+  viewMode?: 'split' | 'focus';
   gitFileUrlBase?: string | null;
   excludedFiles?: Set<string>;
   isReviewed?: boolean;
@@ -88,6 +89,7 @@ export function SlideView({
   onDiffLayoutChange,
   onAskQuestion,
   onAskAboutSelection,
+  viewMode = 'split',
   gitFileUrlBase,
   excludedFiles,
   isReviewed,
@@ -152,204 +154,211 @@ export function SlideView({
     target.classList.add('check-highlight');
   }, []);
 
-  return (
-    <PanelGroup orientation="horizontal" className="flex flex-1 overflow-hidden">
-      {/* Left panel — narrative */}
-      <Panel defaultSize={40} minSize={25} className="overflow-y-auto min-h-0">
-        <div className="px-8 py-10 flex flex-col gap-6">
-          {/* Chapter chip — quiet mono label above the title, like a
-              section number in a printed monograph. */}
-          <div className="slide-chapter select-text">
-            <span>Section {chapterNumber}</span>
-            <span aria-hidden="true">·</span>
-            <span>{fileCountLabel}</span>
-            <span aria-hidden="true">·</span>
-            <span className={typeConfig.className}>
-              <Icon className="inline h-3 w-3 -translate-y-px mr-1" aria-hidden="true" />
-              {typeConfig.label}
-            </span>
-          </div>
+  // ── Shared content blocks ── Extracted so both split and focus
+  // modes can render the same narrative and diff content without
+  // duplicating JSX. The layout wrapper changes; the content doesn't.
 
-          <h2 className="slide-title select-text">{slide.title}</h2>
+  const narrativeContent = (
+    <div className="px-8 py-10 flex flex-col gap-6">
+      <div className="slide-chapter select-text">
+        <span>Section {chapterNumber}</span>
+        <span aria-hidden="true">·</span>
+        <span>{fileCountLabel}</span>
+        <span aria-hidden="true">·</span>
+        <span className={typeConfig.className}>
+          <Icon className="inline h-3 w-3 -translate-y-px mr-1" aria-hidden="true" />
+          {typeConfig.label}
+        </span>
+      </div>
 
-          <Markdown className="slide-prose select-text">{slide.narrative}</Markdown>
+      <h2 className="slide-title select-text">{slide.title}</h2>
 
-          {/* Affected files — quiet mono margin-note, no label.
-              The file paths speak for themselves; an "AFFECTED FILES"
-              banner above them was redundant. */}
-          {slide.affectedFiles.length > 0 && (
-            <ul className="slide-meta flex flex-col gap-1 select-text">
-              {slide.affectedFiles.map((f) => (
-                <li key={f} className="truncate">
-                  {excludedFiles?.has(f) ? (
-                    <span className="italic opacity-70">{f} (excluded)</span>
-                  ) : (
-                    <FilePathLink filePath={f} gitFileUrlBase={gitFileUrlBase} />
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
+      <Markdown className="slide-prose select-text">{slide.narrative}</Markdown>
 
-          {/* Review focus — the canonical editorial callout pattern
-              from the brief: soft tinted block with a bold inline
-              label followed by prose on the same line. NOT a card,
-              NOT a side-stripe border, NOT a titled tip box. */}
-          <div className="editorial-callout select-text">
-            {slide.reviewChecks && slide.reviewChecks.length > 0 ? (
-              (() => {
-                const checks = slide.reviewChecks;
-                return (
-                  <p className="slide-prose">
-                    <span className="editorial-label">What to check.</span>{' '}
-                    <span className="review-focus-content">
-                      {checks.map((check, i) => {
-                        const isClickable = !!(check.filePath && check.startLine != null && check.startLine > 0);
-                        return (
-                          <span
-                            key={i}
-                            className={
-                              isClickable
-                                ? 'cursor-pointer underline decoration-dotted decoration-[var(--ring)]/50 underline-offset-4 hover:decoration-[var(--ring)]'
-                                : ''
-                            }
-                            onClick={isClickable ? () => handleCheckClick(check) : undefined}
-                          >
-                            {check.text}
-                            {i < checks.length - 1 && ' '}
-                          </span>
-                        );
-                      })}
-                    </span>
-                  </p>
-                );
-              })()
-            ) : (
+      {slide.affectedFiles.length > 0 && (
+        <ul className="slide-meta flex flex-col gap-1 select-text">
+          {slide.affectedFiles.map((f) => (
+            <li key={f} className="truncate">
+              {excludedFiles?.has(f) ? (
+                <span className="italic opacity-70">{f} (excluded)</span>
+              ) : (
+                <FilePathLink filePath={f} gitFileUrlBase={gitFileUrlBase} />
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="editorial-callout select-text">
+        {slide.reviewChecks && slide.reviewChecks.length > 0 ? (
+          (() => {
+            const checks = slide.reviewChecks;
+            return (
               <p className="slide-prose">
                 <span className="editorial-label">What to check.</span>{' '}
-                <span className="review-focus-content">{slide.reviewFocus ?? ''}</span>
+                <span className="review-focus-content">
+                  {checks.map((check, i) => {
+                    const isClickable = !!(check.filePath && check.startLine != null && check.startLine > 0);
+                    return (
+                      <span
+                        key={i}
+                        className={
+                          isClickable
+                            ? 'cursor-pointer underline decoration-dotted decoration-[var(--ring)]/50 underline-offset-4 hover:decoration-[var(--ring)]'
+                            : ''
+                        }
+                        onClick={isClickable ? () => handleCheckClick(check) : undefined}
+                      >
+                        {check.text}
+                        {i < checks.length - 1 && ' '}
+                      </span>
+                    );
+                  })}
+                </span>
               </p>
-            )}
-          </div>
-
-          {/* Context snippets — collapsible inline disclosure, no
-              cards. Just a small toggle and indented prose. */}
-          {slide.contextSnippets.length > 0 && (
-            <details className="group select-text">
-              <summary className="cursor-pointer slide-meta hover:text-foreground transition-colors select-none list-none flex items-center gap-1.5">
-                <span className="group-open:rotate-90 inline-block transition-transform">▸</span>
-                Codebase context
-              </summary>
-              <div className="mt-3 ml-4 flex flex-col gap-3 border-l border-border pl-4">
-                {slide.contextSnippets.map((snippet, i) => (
-                  <Markdown key={i} className="text-sm text-muted-foreground leading-relaxed">
-                    {snippet}
-                  </Markdown>
-                ))}
-              </div>
-            </details>
-          )}
-
-          <div className="flex flex-col gap-2 mt-2">
-            {onMarkReviewed && (
-              <button
-                onClick={isReviewed ? onToggleReviewed : onMarkReviewed}
-                className={`slide-meta flex items-center gap-1.5 hover:text-foreground transition-colors self-start ${
-                  isReviewed ? 'text-[var(--ring)]' : ''
-                }`}
-              >
-                {isReviewed ? (
-                  <>✓ Reviewed · press r to undo</>
-                ) : (
-                  <>Mark reviewed and continue · r</>
-                )}
-              </button>
-            )}
-            {onAskQuestion && (
-              <Button variant="outline" size="sm" onClick={onAskQuestion} className="gap-1.5 w-full">
-                <MessageCircle className="h-3.5 w-3.5" />
-                Ask a question
-              </Button>
-            )}
-          </div>
-        </div>
-      </Panel>
-
-      <PanelResizeHandle className="w-px bg-border hover:bg-[var(--ring)]/40 transition-colors cursor-col-resize" />
-
-      {/* Right panel — diagram + diffs */}
-      <Panel defaultSize={60} minSize={30} className="overflow-y-auto min-h-0">
-        <div
-          ref={rightPanelRef}
-          className="relative px-6 py-10 flex flex-col gap-5"
-          onMouseUp={handleDiffMouseUp}
-          onMouseDown={handleDiffMouseDown}
-        >
-          {/* Selection-to-chat popover — appears when the user selects
-              code in the diff. A single quiet button that opens the
-              chat with the selected code pre-quoted as a fenced block. */}
-          {selectionPopover && (
-            <button
-              className="absolute z-10 slide-meta bg-background border border-border rounded px-2 py-1 shadow-sm hover:text-foreground transition-colors flex items-center gap-1.5 -translate-x-1/2"
-              style={{ top: selectionPopover.top, left: selectionPopover.left }}
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={() => {
-                onAskAboutSelection?.(selectionPopover.text);
-                setSelectionPopover(null);
-              }}
-            >
-              <MessageSquarePlus className="h-3 w-3" />
-              Ask about this
-            </button>
-          )}
-          {/* Diff layout toggle floats to the right with no label —
-              the toggle itself is self-explanatory. */}
-          <div className="flex items-center justify-end">
-            <DiffLayoutToggle value={diffLayout} onChange={onDiffLayoutChange} />
-          </div>
-
-          {slide.mermaidDiagram && <MermaidDiagram chart={slide.mermaidDiagram} />}
-
-          {groupedHunks.length === 0 && (
-            <div className="flex flex-col gap-1.5">
-              <p className="editorial-label text-sm">A narrative-only slide.</p>
-              <p className="slide-meta">
-                This chapter has no diff to show — the author wrote it as context for the slides that follow.
-              </p>
-            </div>
-          )}
-          {groupedHunks.map(({ filePath, hunks }) => {
-            if (diffLayout === 'split') {
-              return (
-                <SplitDiffHunkGroup
-                  key={filePath}
-                  filePath={filePath}
-                  hunks={hunks}
-                  pendingComments={pendingComments}
-                  slideIndex={slideNumber}
-                  commentCallbacks={commentCallbacks}
-                  gitFileUrlBase={gitFileUrlBase}
-                />
-              );
-            }
-            return commentCallbacks ? (
-              <InteractiveDiffHunkGroup
-                key={filePath}
-                filePath={filePath}
-                hunks={hunks}
-                pendingComments={pendingComments ?? []}
-                slideIndex={slideNumber}
-                onAddComment={commentCallbacks.onAddComment}
-                onRemoveComment={commentCallbacks.onRemoveComment}
-                onEditComment={commentCallbacks.onEditComment}
-                gitFileUrlBase={gitFileUrlBase}
-              />
-            ) : (
-              <DiffHunkGroup key={filePath} filePath={filePath} hunks={hunks} gitFileUrlBase={gitFileUrlBase} />
             );
-          })}
+          })()
+        ) : (
+          <p className="slide-prose">
+            <span className="editorial-label">What to check.</span>{' '}
+            <span className="review-focus-content">{slide.reviewFocus ?? ''}</span>
+          </p>
+        )}
+      </div>
+
+      {slide.contextSnippets.length > 0 && (
+        <details className="group select-text">
+          <summary className="cursor-pointer slide-meta hover:text-foreground transition-colors select-none list-none flex items-center gap-1.5">
+            <span className="group-open:rotate-90 inline-block transition-transform">▸</span>
+            Codebase context
+          </summary>
+          <div className="mt-3 ml-4 flex flex-col gap-3 border-l border-border pl-4">
+            {slide.contextSnippets.map((snippet, i) => (
+              <Markdown key={i} className="text-sm text-muted-foreground leading-relaxed">
+                {snippet}
+              </Markdown>
+            ))}
+          </div>
+        </details>
+      )}
+
+      <div className="flex flex-col gap-2 mt-2">
+        {onMarkReviewed && (
+          <button
+            onClick={isReviewed ? onToggleReviewed : onMarkReviewed}
+            className={`slide-meta flex items-center gap-1.5 hover:text-foreground transition-colors self-start ${
+              isReviewed ? 'text-[var(--ring)]' : ''
+            }`}
+          >
+            {isReviewed ? (
+              <>✓ Reviewed · press r to undo</>
+            ) : (
+              <>Mark reviewed and continue · r</>
+            )}
+          </button>
+        )}
+        {onAskQuestion && (
+          <Button variant="outline" size="sm" onClick={onAskQuestion} className="gap-1.5 w-full">
+            <MessageCircle className="h-3.5 w-3.5" />
+            Ask a question
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+
+  const diffContent = (
+    <div
+      ref={rightPanelRef}
+      className="relative px-6 py-10 flex flex-col gap-5"
+      onMouseUp={handleDiffMouseUp}
+      onMouseDown={handleDiffMouseDown}
+    >
+      {selectionPopover && (
+        <button
+          className="absolute z-10 slide-meta bg-background border border-border rounded px-2 py-1 shadow-sm hover:text-foreground transition-colors flex items-center gap-1.5 -translate-x-1/2"
+          style={{ top: selectionPopover.top, left: selectionPopover.left }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={() => {
+            onAskAboutSelection?.(selectionPopover.text);
+            setSelectionPopover(null);
+          }}
+        >
+          <MessageSquarePlus className="h-3 w-3" />
+          Ask about this
+        </button>
+      )}
+      <div className="flex items-center justify-end">
+        <DiffLayoutToggle value={diffLayout} onChange={onDiffLayoutChange} />
+      </div>
+
+      {slide.mermaidDiagram && <MermaidDiagram chart={slide.mermaidDiagram} />}
+
+      {groupedHunks.length === 0 && (
+        <div className="flex flex-col gap-1.5">
+          <p className="editorial-label text-sm">A narrative-only slide.</p>
+          <p className="slide-meta">
+            This chapter has no diff to show — the author wrote it as context for the slides that follow.
+          </p>
         </div>
-      </Panel>
-    </PanelGroup>
+      )}
+      {groupedHunks.map(({ filePath, hunks }) => {
+        if (diffLayout === 'split') {
+          return (
+            <SplitDiffHunkGroup
+              key={filePath}
+              filePath={filePath}
+              hunks={hunks}
+              pendingComments={pendingComments}
+              slideIndex={slideNumber}
+              commentCallbacks={commentCallbacks}
+              gitFileUrlBase={gitFileUrlBase}
+            />
+          );
+        }
+        return commentCallbacks ? (
+          <InteractiveDiffHunkGroup
+            key={filePath}
+            filePath={filePath}
+            hunks={hunks}
+            pendingComments={pendingComments ?? []}
+            slideIndex={slideNumber}
+            onAddComment={commentCallbacks.onAddComment}
+            onRemoveComment={commentCallbacks.onRemoveComment}
+            onEditComment={commentCallbacks.onEditComment}
+            gitFileUrlBase={gitFileUrlBase}
+          />
+        ) : (
+          <DiffHunkGroup key={filePath} filePath={filePath} hunks={hunks} gitFileUrlBase={gitFileUrlBase} />
+        );
+      })}
+    </div>
+  );
+
+  // ── Split mode ── resizable narrative (left) + diff (right) panels
+  if (viewMode === 'split') {
+    return (
+      <PanelGroup orientation="horizontal" className="flex flex-1 overflow-hidden">
+        <Panel defaultSize={40} minSize={25} className="overflow-y-auto min-h-0">
+          {narrativeContent}
+        </Panel>
+        <PanelResizeHandle className="w-px bg-border hover:bg-[var(--ring)]/40 transition-colors cursor-col-resize" />
+        <Panel defaultSize={60} minSize={30} className="overflow-y-auto min-h-0">
+          {diffContent}
+        </Panel>
+      </PanelGroup>
+    );
+  }
+
+  // ── Focus mode ── narrative stacked above diff, both full-width,
+  // single scrollable column. Ideal for complex sections where both
+  // the narrative and the diff need horizontal space.
+  return (
+    <div className="flex-1 overflow-y-auto">
+      {narrativeContent}
+      <div className="border-t border-border">
+        {diffContent}
+      </div>
+    </div>
   );
 }
