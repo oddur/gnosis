@@ -121,6 +121,16 @@ export function OverviewSlide({ review, prStatus, onNavigate }: Props) {
   const risk = riskConfig[review.riskLevel];
   const [descOpen, setDescOpen] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [remainingOpen, setRemainingOpen] = useState(false);
+
+  // Files that appear in changedFiles but not in any slide's
+  // affectedFiles. These are the "remaining changes" — files in the
+  // PR that the AI didn't feature in the walkthrough.
+  const remainingFiles = (() => {
+    if (!review.changedFiles || review.changedFiles.length === 0) return [];
+    const narrated = new Set(review.slides.flatMap((s) => s.affectedFiles));
+    return review.changedFiles.filter((f) => !narrated.has(f.filename));
+  })();
 
   const riskToneClass =
     review.riskLevel === 'high'
@@ -227,6 +237,37 @@ export function OverviewSlide({ review, prStatus, onNavigate }: Props) {
                 {firstSlide.slideNumber.toString().padStart(2, '0')} — {firstSlide.title} →
               </span>
             </button>
+          </section>
+        )}
+
+        {/* Remaining changes — files in the PR that the AI didn't
+            feature in any slide. Collapsed by default so they don't
+            distract, but visible enough that the reviewer knows
+            they exist and can inspect them. Ensures 100% coverage. */}
+        {remainingFiles.length > 0 && (
+          <section
+            className="animate-fade-in-up pt-6 mt-2 border-t border-border"
+            style={{ animationDelay: '300ms' }}
+          >
+            <button
+              onClick={() => setRemainingOpen((v) => !v)}
+              className="slide-meta hover:text-foreground transition-colors flex items-center gap-1.5"
+            >
+              {remainingOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              {remainingFiles.length} other changed {remainingFiles.length === 1 ? 'file' : 'files'} not in the walkthrough
+            </button>
+            {remainingOpen && (
+              <ul className="mt-3 ml-4 flex flex-col gap-1 border-l border-border pl-4">
+                {remainingFiles.map((f) => (
+                  <li key={f.filename} className="slide-meta flex items-center gap-3">
+                    <span className="truncate">{f.filename}</span>
+                    <span className="shrink-0 opacity-60">
+                      +{f.additions} −{f.deletions}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </section>
         )}
       </div>

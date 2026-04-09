@@ -26,6 +26,8 @@ export interface ReviewCheck {
   startLine?: number;
 }
 
+export type SlideImportance = 'critical' | 'important' | 'minor';
+
 export interface Slide {
   id: string;
   slideNumber: number;
@@ -39,6 +41,10 @@ export interface Slide {
   dependsOn: string[];
   mermaidDiagram?: string | null;
   reviewChecks?: ReviewCheck[];
+  // AI-assigned importance. "critical" = auth, data integrity, API
+  // contract changes. "important" = core logic, new features.
+  // "minor" = config, docs, test boilerplate, import reordering.
+  importance?: SlideImportance;
 }
 
 // Intermediate types for raw AI response (before hunk resolution)
@@ -55,6 +61,7 @@ export interface AISlide {
   dependsOn: string[];
   mermaidDiagram?: string | null;
   reviewChecks?: ReviewCheck[];
+  importance?: SlideImportance;
 }
 
 export interface WebSource {
@@ -76,6 +83,18 @@ export interface AIReviewGuide {
   webSources?: WebSource[];
 }
 
+export interface FileMetadata {
+  filename: string;
+  status: 'added' | 'modified' | 'deleted' | 'renamed';
+  additions: number;
+  deletions: number;
+  // Last commit date for this file BEFORE the PR (ISO string).
+  // null if the file is new (added in this PR).
+  lastModified?: string | null;
+  // How many commits in this PR touch this file. >1 = churn.
+  prCommitCount?: number;
+}
+
 export interface ReviewGuide {
   prTitle: string;
   prDescription: string;
@@ -92,6 +111,10 @@ export interface ReviewGuide {
   slides: Slide[];
   headSha?: string;
   webSources?: WebSource[];
+  // Full list of changed files with metadata (age, churn). Used by
+  // the Remaining Changes section (files not in any slide) and by
+  // file age/churn badges on diff headers.
+  changedFiles?: FileMetadata[];
 }
 
 export interface PrStatus {
@@ -267,6 +290,7 @@ export interface PrMetadata {
   author: string;
   baseBranch: string;
   headBranch: string;
+  baseSha: string;
   headSha: string;
   merged: boolean;
   state: 'open' | 'closed';

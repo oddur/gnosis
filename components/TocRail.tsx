@@ -1,6 +1,12 @@
 import { useEffect, useRef } from 'react';
 import { Check } from 'lucide-react';
-import type { Slide } from '@/lib/types';
+import type { Slide, SlideImportance } from '@/lib/types';
+
+const importanceDot: Record<SlideImportance, string> = {
+  critical: 'bg-[oklch(0.55_0.16_25)]',
+  important: '',
+  minor: '',
+};
 
 interface Props {
   slides: Slide[];
@@ -90,6 +96,8 @@ export function TocRail({
           const isCurrent = slide.slideNumber === currentSlide;
           const isReviewed = reviewed.has(slide.slideNumber);
           const num = slide.slideNumber.toString().padStart(2, '0');
+          const importance = slide.importance ?? 'important';
+          const dotClass = importanceDot[importance];
 
           // When hide-reviewed is active, collapse reviewed entries
           // (but always show the current slide even if reviewed).
@@ -118,8 +126,9 @@ export function TocRail({
                     <span className="slide-meta tabular-nums">{num}</span>
                   )}
                 </span>
-                <span className="font-serif text-base leading-snug text-balance">
+                <span className="font-serif text-base leading-snug text-balance flex items-center gap-1.5">
                   {slide.title}
+                  {dotClass && <span className={`shrink-0 h-1.5 w-1.5 rounded-full ${dotClass}`} title="Critical" />}
                 </span>
               </button>
             </li>

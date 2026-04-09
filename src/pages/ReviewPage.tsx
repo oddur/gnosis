@@ -167,6 +167,17 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
   const gitFileUrlBase = useMemo(() => buildFileUrlBase(review.prUrl, review.headSha), [review.prUrl, review.headSha]);
   const excludedFilesSet = useMemo(() => new Set(review.excludedFiles ?? []), [review.excludedFiles]);
 
+  // Build a filename → FileMetadata lookup for diff file headers.
+  // Only populated for reviews generated after the metadata feature
+  // was added; older reviews from disk won't have changedFiles.
+  const fileMetadataMap = useMemo(() => {
+    const map = new Map<string, import('../../lib/types').FileMetadata>();
+    for (const fm of review.changedFiles ?? []) {
+      map.set(fm.filename, fm);
+    }
+    return map;
+  }, [review.changedFiles]);
+
   useEffect(() => {
     void window.electronAPI.loadPreferences().then((p) => {
       setPrefs(p);
@@ -499,6 +510,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
                 setChatOpen(true);
               }}
               viewMode={slideViewMode}
+              fileMetadataMap={fileMetadataMap}
               gitFileUrlBase={gitFileUrlBase}
               excludedFiles={excludedFilesSet}
               isReviewed={reviewed.has(currentSlide)}

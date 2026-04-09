@@ -58,6 +58,11 @@ RISK: Assess overall risk based on:
 - Refactoring with test coverage = low risk
 - Docs and config = low risk
 
+SLIDE IMPORTANCE: Classify each slide's importance for the reviewer:
+- "critical" = changes to auth, security, data integrity, public API contracts, payment/billing logic, or anything where a bug would cause data loss or a security vulnerability
+- "important" = core business logic, new features, significant refactors, changes to error handling or validation
+- "minor" = config files, documentation, test boilerplate, import reordering, whitespace cleanup, dependency bumps, generated code. These slides may start collapsed so the reviewer can focus on what matters first.
+
 You are given:
 - <full_diff>: the complete unified diff with expanded context (up to 15 lines around each change)
 - <hunk_index>: a list of all diff hunks with unique IDs, file paths, and change counts
@@ -105,6 +110,7 @@ The JSON must match this schema exactly:
       "affectedFiles": string[],
       "dependsOn": string[],
       "mermaidDiagram": string | null,
+      "importance": "critical" | "important" | "minor",
       "reviewChecks": [
         {
           "text": string,

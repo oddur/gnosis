@@ -10,7 +10,7 @@ import { Markdown } from '@/components/Markdown';
 import { MermaidDiagram } from '@/components/MermaidDiagram';
 import { slideTypeConfig } from '@/lib/constants';
 import type { CommentCallbacks } from '@/components/shared-diff-utils';
-import type { Slide, DiffHunk, PendingReviewComment, Preferences, ReviewCheck } from '@/lib/types';
+import type { Slide, DiffHunk, FileMetadata, PendingReviewComment, Preferences, ReviewCheck } from '@/lib/types';
 
 interface Props {
   slide: Slide;
@@ -23,11 +23,25 @@ interface Props {
   onAskQuestion?: () => void;
   onAskAboutSelection?: (quotedCode: string) => void;
   viewMode?: 'split' | 'focus';
+  fileMetadataMap?: Map<string, FileMetadata>;
   gitFileUrlBase?: string | null;
   excludedFiles?: Set<string>;
   isReviewed?: boolean;
   onMarkReviewed?: () => void;
   onToggleReviewed?: () => void;
+}
+
+// Format a file's last-modified date as a human-readable age badge.
+// Returns strings like "2y old", "5mo old", "14d old", or null for
+// new files or missing data.
+function formatFileAge(lastModified: string | null | undefined): string | null {
+  if (!lastModified) return null;
+  const ms = Date.now() - new Date(lastModified).getTime();
+  const days = Math.floor(ms / 86400000);
+  if (days >= 365) return `${Math.floor(days / 365)}y old`;
+  if (days >= 30) return `${Math.floor(days / 30)}mo old`;
+  if (days >= 1) return `${days}d old`;
+  return null; // modified today — not worth showing
 }
 
 // Group hunks by filePath so we can render them under a single file header
@@ -90,6 +104,7 @@ export function SlideView({
   onAskQuestion,
   onAskAboutSelection,
   viewMode = 'split',
+  fileMetadataMap,
   gitFileUrlBase,
   excludedFiles,
   isReviewed,
@@ -303,33 +318,49 @@ export function SlideView({
         </div>
       )}
       {groupedHunks.map(({ filePath, hunks }) => {
-        if (diffLayout === 'split') {
-          return (
-            <SplitDiffHunkGroup
-              key={filePath}
-              filePath={filePath}
-              hunks={hunks}
-              pendingComments={pendingComments}
-              slideIndex={slideNumber}
-              commentCallbacks={commentCallbacks}
-              gitFileUrlBase={gitFileUrlBase}
-            />
-          );
-        }
-        return commentCallbacks ? (
-          <InteractiveDiffHunkGroup
-            key={filePath}
-            filePath={filePath}
-            hunks={hunks}
-            pendingComments={pendingComments ?? []}
-            slideIndex={slideNumber}
-            onAddComment={commentCallbacks.onAddComment}
-            onRemoveComment={commentCallbacks.onRemoveComment}
-            onEditComment={commentCallbacks.onEditComment}
-            gitFileUrlBase={gitFileUrlBase}
-          />
-        ) : (
-          <DiffHunkGroup key={filePath} filePath={filePath} hunks={hunks} gitFileUrlBase={gitFileUrlBase} />
+        const fm = fileMetadataMap?.get(filePath);
+        const ageBadge = fm ? formatFileAge(fm.lastModified) : null;
+        const churnBadge = fm && (fm.prCommitCount ?? 1) > 1 ? `${fm.prCommitCount}× in this PR` : null;
+
+        return (
+          <div key={filePath} className="flex flex-col gap-0">
+            {/* File metadata badges — age + churn. Render as quiet
+                mono text above the file's diff header, only when
+                data is available. */}
+            {(ageBadge || churnBadge) && (
+              <div className="flex items-center gap-3 px-3 py-1 slide-meta">
+                {ageBadge && (
+                  <span className="statusPill-amber">{ageBadge}</span>
+                )}
+                {churnBadge && (
+                  <span className="statusPill-neutral">{churnBadge}</span>
+                )}
+              </div>
+            )}
+            {diffLayout === 'split' ? (
+              <SplitDiffHunkGroup
+                filePath={filePath}
+                hunks={hunks}
+                pendingComments={pendingComments}
+                slideIndex={slideNumber}
+                commentCallbacks={commentCallbacks}
+                gitFileUrlBase={gitFileUrlBase}
+              />
+            ) : commentCallbacks ? (
+              <InteractiveDiffHunkGroup
+                filePath={filePath}
+                hunks={hunks}
+                pendingComments={pendingComments ?? []}
+                slideIndex={slideNumber}
+                onAddComment={commentCallbacks.onAddComment}
+                onRemoveComment={commentCallbacks.onRemoveComment}
+                onEditComment={commentCallbacks.onEditComment}
+                gitFileUrlBase={gitFileUrlBase}
+              />
+            ) : (
+              <DiffHunkGroup filePath={filePath} hunks={hunks} gitFileUrlBase={gitFileUrlBase} />
+            )}
+          </div>
         );
       })}
     </div>

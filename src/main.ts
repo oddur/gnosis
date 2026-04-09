@@ -11,12 +11,13 @@ import {
   getPrDiff,
   getChangedFiles,
   getFileContent,
+  getFileMetadata,
   getNeighborFiles,
   searchPullRequests,
   getCiStatus,
   getReviewStatus,
 } from '../lib/github';
-import type { CiCheck, PrStatus } from '../lib/types';
+import type { CiCheck, FileMetadata, PrStatus } from '../lib/types';
 import { buildContextPackage } from '../lib/context-builder';
 import { generateReviewGuide } from '../lib/agent';
 import { checkForUpdate } from '../lib/updater';
@@ -1013,6 +1014,22 @@ async function runBackgroundGeneration(
       getChangedFiles(octokit, owner, repo, pullNumber),
     ]);
 
+    // Fetch file metadata (age + churn) in the background while the
+    // rest of the pipeline proceeds. We don't await it here — it
+    // joins later when we assemble the ReviewGuide. This avoids
+    // blocking the critical path (diff fetching, AI generation).
+    const fileMetadataPromise: Promise<FileMetadata[]> = getFileMetadata(
+      octokit, owner, repo, pullNumber, prData.baseSha, allChangedFiles
+    ).catch((err: unknown) => {
+      console.warn('[main] File metadata fetch failed, proceeding without:', err);
+      return allChangedFiles.map((f) => ({
+        filename: f.filename,
+        status: f.status,
+        additions: f.additions,
+        deletions: f.deletions,
+      }));
+    });
+
     // Apply user exclusions before any other processing
     const userExcludedSet = new Set(request.excludedFiles ?? []);
     const changedFiles =
@@ -1211,6 +1228,7 @@ async function runBackgroundGeneration(
         dependsOn: aiSlide.dependsOn ?? [],
         mermaidDiagram: aiSlide.mermaidDiagram,
         reviewChecks: aiSlide.reviewChecks,
+        importance: aiSlide.importance ?? 'important',
       };
     });
 
@@ -1269,6 +1287,9 @@ async function runBackgroundGeneration(
       });
     }
 
+    // Await the file metadata that was kicked off in parallel earlier.
+    const fileMetadata = await fileMetadataPromise;
+
     const reviewGuide: ReviewGuide = {
       prTitle: aiResult.prTitle || prData.title,
       prDescription: aiResult.prDescription || prData.description,
@@ -1285,6 +1306,7 @@ async function runBackgroundGeneration(
       slides: resolvedSlides,
       headSha: prData.headSha,
       webSources: aiResult.webSources,
+      changedFiles: fileMetadata,
     };
 
     broadcastToAllWindows('review-phase', { reviewId, phase: 'Rendering' });

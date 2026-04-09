@@ -1,6 +1,6 @@
 import { Octokit } from '@octokit/rest';
 import { getProvider } from './provider';
-import type { ChangedFile, CiCheck, PrMetadata, PrSearchResult, Provider, ReviewSummary } from './types';
+import type { ChangedFile, CiCheck, FileMetadata, PrMetadata, PrSearchResult, Provider, ReviewSummary } from './types';
 
 export function parsePrUrl(url: string): { owner: string; repo: string; pullNumber: number } {
   const match = url.match(/github\.com\/([^/]+)\/([^/]+)\/pulls?\/(\d+)/);
@@ -28,6 +28,7 @@ export async function getPrMetadata(
     author: data.user?.login ?? 'unknown',
     baseBranch: data.base.ref,
     headBranch: data.head.ref,
+    baseSha: data.base.sha,
     headSha: data.head.sha,
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- GitHub API can return null
     merged: data.merged ?? false,
@@ -382,4 +383,112 @@ export async function getNeighborFiles(
   }
 
   return results;
+}
+
+// ── File metadata (age + churn) ───────────────────────────────
+
+// Fetch the last commit date for a file BEFORE the PR's base ref.
+// Returns an ISO date string or null if the file is new.
+async function getFileLastModified(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  filePath: string,
+  baseSha: string
+): Promise<string | null> {
+  try {
+    const { data } = await octokit.repos.listCommits({
+      owner,
+      repo,
+      path: filePath,
+      sha: baseSha,
+      per_page: 1,
+    });
+    return data[0]?.commit?.committer?.date ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Count how many commits in the PR touch each file. >1 = churn
+// (the file was revised across multiple commits, indicating
+// iteration or complexity).
+async function getPrFileChurn(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  pullNumber: number
+): Promise<Map<string, number>> {
+  const churn = new Map<string, number>();
+  try {
+    const commits = await octokit.paginate(octokit.pulls.listCommits, {
+      owner,
+      repo,
+      pull_number: pullNumber,
+      per_page: 100,
+    });
+    // For each commit, fetch its files and increment the counter.
+    // Limit to first 30 commits to avoid API rate limit issues on
+    // very large PRs.
+    const toFetch = commits.slice(0, 30);
+    for (const commit of toFetch) {
+      try {
+        const { data } = await octokit.repos.getCommit({
+          owner,
+          repo,
+          ref: commit.sha,
+        });
+        for (const f of data.files ?? []) {
+          churn.set(f.filename, (churn.get(f.filename) ?? 0) + 1);
+        }
+      } catch {
+        // Individual commit fetch failed — skip silently
+      }
+    }
+  } catch {
+    // Commit listing failed — return empty map
+  }
+  return churn;
+}
+
+// Build FileMetadata[] for all changed files in a PR. Fetches file
+// age (last modified before the PR) and churn (commit count within
+// the PR) in parallel. Designed to be called during review
+// generation and stored in ReviewGuide.changedFiles.
+export async function getFileMetadata(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  pullNumber: number,
+  baseSha: string,
+  changedFiles: ChangedFile[]
+): Promise<FileMetadata[]> {
+  // Fetch churn data once for the whole PR
+  const churnMap = await getPrFileChurn(octokit, owner, repo, pullNumber);
+
+  // Fetch last-modified dates in parallel, batched 10 at a time to
+  // stay well under GitHub's rate limit.
+  const metadata: FileMetadata[] = changedFiles.map((f) => ({
+    filename: f.filename,
+    status: f.status,
+    additions: f.additions,
+    deletions: f.deletions,
+    prCommitCount: churnMap.get(f.filename) ?? 1,
+  }));
+
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < metadata.length; i += BATCH_SIZE) {
+    const batch = metadata.slice(i, i + BATCH_SIZE);
+    await Promise.all(
+      batch.map(async (fm) => {
+        if (fm.status === 'added') {
+          fm.lastModified = null;
+        } else {
+          fm.lastModified = await getFileLastModified(octokit, owner, repo, fm.filename, baseSha);
+        }
+      })
+    );
+  }
+
+  return metadata;
 }
