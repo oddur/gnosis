@@ -254,7 +254,7 @@ export function OverviewSlide({ review, prStatus, onNavigate }: Props) {
               className="slide-meta hover:text-foreground transition-colors flex items-center gap-1.5"
             >
               {remainingOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-              {remainingFiles.length} other changed {remainingFiles.length === 1 ? 'file' : 'files'} not in the walkthrough
+              {remainingFiles.length} {remainingFiles.length === 1 ? 'file' : 'files'} not featured in the walkthrough
             </button>
             {remainingOpen && (
               <ul className="mt-3 ml-4 flex flex-col gap-1 border-l border-border pl-4">

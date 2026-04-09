@@ -72,7 +72,7 @@ export function PRPickerDialog({ open, onOpenChange, onSelect }: Props) {
       <DialogContent className="bg-card sm:max-w-2xl max-h-[80vh] flex flex-col gap-5">
         <DialogHeader>
           <DialogTitle className="editorial-heading">Pull requests</DialogTitle>
-          <DialogDescription className="slide-meta">Your open PRs and review requests</DialogDescription>
+          <DialogDescription className="slide-meta">Pick a pull request to review</DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-4">

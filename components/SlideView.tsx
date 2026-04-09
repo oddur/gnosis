@@ -311,9 +311,9 @@ export function SlideView({
 
       {groupedHunks.length === 0 && (
         <div className="flex flex-col gap-1.5">
-          <p className="editorial-label text-sm">A narrative-only slide.</p>
+          <p className="editorial-label text-sm">Context section.</p>
           <p className="slide-meta">
-            This chapter has no diff to show — the author wrote it as context for the slides that follow.
+            No code changes here — this section provides context for what follows.
           </p>
         </div>
       )}

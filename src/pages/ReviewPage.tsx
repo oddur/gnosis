@@ -415,8 +415,8 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
           </div>
           <h1 className="slide-title">No slides were generated for this PR.</h1>
           <p className="slide-prose">
-            This usually happens when the diff is empty, when every file was filtered out as boilerplate, or when the
-            model could not produce a structured response. You can re-run the review or pick a different PR.
+            This happens when the diff is empty, every file was filtered as boilerplate, or the model couldn't
+            parse the change structure. Try re-running with different settings or a different model.
           </p>
           <button
             onClick={onBack}

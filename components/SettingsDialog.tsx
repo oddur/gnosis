@@ -204,8 +204,8 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
 
           <section className="flex flex-col gap-3 border-t border-border pt-5">
             <SettingRow
-              label="Enable AI tools"
-              description="Allow the AI to search the web and fetch GitHub context (slower but more thorough)"
+              label="Web search and context"
+              description="Let the model search the web and fetch GitHub context during generation. More thorough, but slower."
             >
               <Toggle
                 checked={enableTools}

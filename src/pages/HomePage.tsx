@@ -867,9 +867,8 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                     its own slide, each with a short narrative explaining <em>why</em> the change is there.
                   </p>
                   <p>
-                    You'll still see every diff. The walkthrough just gives you the order, the grouping, and the
-                    context that the file list never could. Reviews run locally against the Claude or Gemini CLI
-                    you already have installed; nothing leaves your machine besides the requests to GitHub.
+                    You'll still see every diff. Everything runs locally on your machine — nothing leaves except
+                    requests to GitHub.
                   </p>
                 </div>
                 <div className="flex items-center gap-6 pt-1">
@@ -958,7 +957,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                       ref={prInputRef}
                       id="pr-url"
                       type="url"
-                      placeholder="https://github.com/owner/repo/pull/123"
+                      placeholder="Paste a pull request URL"
                       value={prUrl}
                       onChange={(e) => setPrUrl(e.target.value)}
                       className="flex-1 bg-transparent border-0 border-b border-border px-0 py-3 text-base placeholder:text-muted-foreground/60 transition-colors"
@@ -976,7 +975,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                     {submitting ? (
                       <>
                         <Loader2 className="h-4 w-4 animate-spin" />
-                        Starting…
+                        Starting review…
                       </>
                     ) : (
                       <>
@@ -1110,7 +1109,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                     <textarea
                       id="instructions"
                       rows={4}
-                      placeholder="e.g. focus on performance, flag any security concerns, explain the auth flow"
+                      placeholder="What should the reviewer pay special attention to?"
                       value={instructions}
                       onChange={(e) => setInstructions(e.target.value)}
                       onBlur={() => savePrefs()}
@@ -1142,7 +1141,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                         <ToggleSwitch
                           id="thinking"
                           label="Extended thinking"
-                          description="Claude reasons through the code before writing. Catches subtle bugs and design issues standard mode misses, but takes longer."
+                          description="Deeper reasoning before writing. Catches subtle bugs that standard mode misses. Takes longer."
                           checked={thinking}
                           onToggle={() => setThinking((t) => !t)}
                         />
@@ -1150,7 +1149,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                       <ToggleSwitch
                         id="signal-boost"
                         label="Signal boost"
-                        description="Skip trivial changes, focus on design and complexity"
+                        description="Deprioritize formatting and import-only changes. Emphasize design decisions."
                         checked={signalBoost}
                         onToggle={() => setSignalBoost((s) => !s)}
                         badge="Experimental"
