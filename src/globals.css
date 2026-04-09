@@ -12,6 +12,7 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
+  --font-serif: var(--font-serif);
   --font-display: var(--font-display);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -52,83 +53,142 @@
 }
 
 :root {
-  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-display: 'Sora', ui-sans-serif, system-ui, sans-serif;
+  /* ─── Type system ────────────────────────────────────────────
+     Editorial monograph stack:
+     - Plus Jakarta Sans for UI and prose (refined, slightly warmer than Inter)
+     - Fraunces variable for slide titles, chapter labels, display roles
+       (opsz axis tuned per role; carries the brand)
+     - JetBrains Mono for code and quiet metadata
+     The legacy --font-display token is preserved but now points at the
+     editorial serif so existing `font-display` Tailwind utilities resolve
+     to the serif rather than the old Sora sans. */
+  --font-sans:
+    'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-serif: 'Fraunces', 'Source Serif 4', 'Iowan Old Style', 'Charter', Georgia, 'Times New Roman', serif;
+  --font-display: var(--font-serif);
   --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
 
+  /* Reading column width — 65–75ch is the editorial sweet spot.
+     Used by .slide-prose and .editorial-measure helper classes. */
+  --measure-prose: 68ch;
+  --measure-prose-narrow: 56ch;
+
+  /* ─── Semantic status colors ──────────────────────────────────
+     These tokens are used by Badge components, diff stats, and
+     status indicators. They provide a single source of truth so
+     components don't hardcode oklch values inline. The full-opacity
+     versions are for text; the /35% border and /10% bg variants
+     are computed at usage site via Tailwind arbitrary values. */
+  --color-success: oklch(0.42 0.11 145);       /* green — additions, approved, open */
+  --color-danger: oklch(0.45 0.18 22);          /* red — deletions, closed, critical */
+  --color-warning: oklch(0.45 0.14 55);         /* amber — outdated, churn */
+  --color-info: oklch(0.45 0.1 300);            /* purple — merged */
+
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+
+  /* ─── Editorial palette — light mode (printed paper) ─────────
+     Neutrals are tinted toward hue 65 (warm gray) at very low
+     chroma so they read as warm, never cool. The brand accent
+     (--ring) is now a deep CLARET — the color of academic press
+     spines, fountain-pen ink, and leather-bound book covers.
+     It's the only chromatic moment in the UI; buttons and primary
+     surfaces are near-black ink on warm paper. */
+  --background: oklch(0.985 0.005 75);
+  --foreground: oklch(0.2 0.008 65);
+  /* Cards barely exist — same color as the page. */
+  --card: oklch(0.985 0.005 75);
+  --card-foreground: oklch(0.2 0.008 65);
+  --popover: oklch(0.99 0.005 75);
+  --popover-foreground: oklch(0.2 0.008 65);
+  /* --primary is ink, not the brand accent. Filled buttons are
+     near-black on paper, like a printed page. */
+  --primary: oklch(0.2 0.008 65);
+  --primary-foreground: oklch(0.985 0.005 75);
+  --secondary: oklch(0.95 0.006 70);
+  --secondary-foreground: oklch(0.2 0.008 65);
+  --muted: oklch(0.95 0.006 70);
+  --muted-foreground: oklch(0.45 0.012 65);
+  --accent: oklch(0.95 0.006 70);
+  --accent-foreground: oklch(0.2 0.008 65);
+  --destructive: oklch(0.55 0.16 25);
+  --border: oklch(0.9 0.006 65);
+  --input: oklch(0.9 0.006 65);
+  /* --ring IS the brand accent — deep claret / oxblood. Used as
+     the focus indicator AND as the single recurring chromatic
+     punctuation across the app (active slide marker, link color,
+     comment affordance, brand bullet). Hue 15, deeper value, much
+     lower chroma than the old warm-amber accent. */
+  --ring: oklch(0.4 0.12 15);
+  /* Chart-1 mirrors the brand for diagrams; the rest of the chart
+     palette stays distinct so multi-series Mermaid still reads. */
+  --chart-1: oklch(0.4 0.12 15);
+  --chart-2: oklch(0.5 0.1 145);
+  --chart-3: oklch(0.45 0.1 240);
+  --chart-4: oklch(0.55 0.12 80);
+  --chart-5: oklch(0.5 0.1 280);
+  --sidebar: oklch(0.985 0.005 75);
+  --sidebar-foreground: oklch(0.2 0.008 65);
+  --sidebar-primary: oklch(0.2 0.008 65);
+  --sidebar-primary-foreground: oklch(0.985 0.005 75);
+  --sidebar-accent: oklch(0.95 0.006 70);
+  --sidebar-accent-foreground: oklch(0.2 0.008 65);
+  --sidebar-border: oklch(0.9 0.006 65);
+  --sidebar-ring: oklch(0.4 0.12 15);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.65 0.15 195);
-  --primary-foreground: oklch(0.13 0.02 195);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.55 0.12 195);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.65 0.15 195);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
-  --accent-glow: oklch(0.65 0.15 195 / 30%);
+  /* ─── Editorial palette — dark mode (well-lit study at night) ─
+     Warm charcoal background (NOT near-black), warm off-white
+     foreground. Cards are barely lighter than the page. The
+     brand claret lifts in dark mode so it stays visible against
+     the deeper background without becoming a glow. */
+  --background: oklch(0.155 0.006 65);
+  --foreground: oklch(0.965 0.005 75);
+  --card: oklch(0.165 0.006 65);
+  --card-foreground: oklch(0.965 0.005 75);
+  --popover: oklch(0.18 0.006 65);
+  --popover-foreground: oklch(0.965 0.005 75);
+  /* In dark mode --primary inverts to paper, so filled buttons
+     are off-white on warm charcoal — same editorial logic as
+     light mode, just inverted. */
+  --primary: oklch(0.965 0.005 75);
+  --primary-foreground: oklch(0.18 0.008 65);
+  --secondary: oklch(0.24 0.008 65);
+  --secondary-foreground: oklch(0.965 0.005 75);
+  --muted: oklch(0.24 0.008 65);
+  --muted-foreground: oklch(0.68 0.012 65);
+  --accent: oklch(0.24 0.008 65);
+  --accent-foreground: oklch(0.965 0.005 75);
+  --destructive: oklch(0.66 0.16 25);
+  --border: oklch(0.965 0.005 75 / 9%);
+  --input: oklch(0.965 0.005 75 / 13%);
+  /* Brand claret, lifted for dark-mode legibility. Stays low
+     enough chroma that it doesn't read as "glow." */
+  --ring: oklch(0.65 0.13 15);
+  --chart-1: oklch(0.65 0.13 15);
+  --chart-2: oklch(0.62 0.1 145);
+  --chart-3: oklch(0.6 0.11 240);
+  --chart-4: oklch(0.7 0.12 80);
+  --chart-5: oklch(0.62 0.1 280);
+  --sidebar: oklch(0.165 0.006 65);
+  --sidebar-foreground: oklch(0.965 0.005 75);
+  --sidebar-primary: oklch(0.965 0.005 75);
+  --sidebar-primary-foreground: oklch(0.18 0.008 65);
+  --sidebar-accent: oklch(0.24 0.008 65);
+  --sidebar-accent-foreground: oklch(0.965 0.005 75);
+  --sidebar-border: oklch(0.965 0.005 75 / 9%);
+  --sidebar-ring: oklch(0.65 0.13 15);
+
+  --color-success: oklch(0.72 0.1 145);
+  --color-danger: oklch(0.68 0.16 22);
+  --color-warning: oklch(0.72 0.12 55);
+  --color-info: oklch(0.65 0.1 300);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
-    scrollbar-color: oklch(0.35 0 0) transparent;
+    scrollbar-color: oklch(0.45 0.01 65) transparent;
     -webkit-tap-highlight-color: transparent;
     -webkit-touch-callout: none;
   }
@@ -142,12 +202,28 @@
   body {
     @apply bg-background text-foreground;
     font-family: var(--font-sans);
+    font-size: 1rem;
+    line-height: 1.55;
+    font-kerning: normal;
+    font-feature-settings:
+      'kern' 1,
+      'liga' 1,
+      'calt' 1,
+      'ss01' 1;
     -webkit-user-select: none;
     user-select: none;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
     -webkit-text-size-adjust: 100%;
+  }
+
+  /* Tabular numerals for any element that should align numerically
+     (commit counts, line counts, time durations, sizes). */
+  .tabular,
+  time,
+  [data-tabular] {
+    font-variant-numeric: tabular-nums;
   }
 
   input,
@@ -198,11 +274,217 @@
     outline: none;
   }
 
+  /* Unified focus ring across every focusable element. The warm
+     amber `--ring` is the brand accent and contrasts cleanly
+     against both the paper and warm-charcoal backgrounds. */
   button:focus-visible,
-  [role='button']:focus-visible {
+  [role='button']:focus-visible,
+  a:focus-visible,
+  [tabindex]:focus-visible,
+  summary:focus-visible {
     outline: 2px solid var(--ring);
     outline-offset: 2px;
+    border-radius: 2px;
   }
+
+  /* Inputs use a border-color shift instead of an outline so the
+     bottom-bordered editorial input style doesn't get a doubled
+     ring on focus. */
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline: none;
+    border-color: var(--ring);
+  }
+}
+
+/* ─── Editorial typography ───────────────────────────────────── */
+
+/* Slide title — the single highest-leverage typographic element.
+   Editorial serif (Fraunces), display optical size, modest weight,
+   tight line-height. Fluid clamp() because slide titles are display
+   content on a content-dominated layout. */
+.slide-title {
+  font-family: var(--font-serif);
+  font-size: clamp(1.75rem, 0.9rem + 2.4vw, 2.625rem); /* 28→42px */
+  font-weight: 440;
+  line-height: 1.12;
+  letter-spacing: -0.014em;
+  font-feature-settings:
+    'kern' 1,
+    'liga' 1,
+    'calt' 1,
+    'ss01' 1;
+  /* Fraunces opsz=72 keeps the display character at 28-42px without
+     getting as thin and elegant as opsz=96 (which is designed for
+     billboard sizes and reads as fragile in product UI). */
+  font-variation-settings: 'opsz' 72;
+  color: var(--foreground);
+  text-wrap: balance;
+}
+
+/* Smaller serif heading used inside narrative blocks (callouts,
+   sub-sections, dialog titles that should still feel editorial).
+   Weight 540 — clearly heavier than slide-title's 440 so the
+   hierarchy reads at a glance. The previous 460 was only 40 units
+   off the display title and barely registered as different. */
+.editorial-heading {
+  font-family: var(--font-serif);
+  font-size: 1.375rem; /* 22px */
+  font-weight: 540;
+  line-height: 1.25;
+  letter-spacing: -0.008em;
+  font-variation-settings: 'opsz' 36;
+  color: var(--foreground);
+  text-wrap: balance;
+}
+
+/* Chapter chip that sits ABOVE the slide title.
+   Quiet mono in the warm-gray register, exactly like the
+   "Section 01 · 1 file" label in the reference screenshot. */
+.slide-chapter {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.5ch;
+  font-family: var(--font-mono);
+  font-size: 0.75rem; /* 12px */
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Prose column for slide narrative.
+   Comfortable measure, generous leading, real paragraph spacing.
+   Body color is `--foreground` (NOT muted) — the reading column
+   is the user's primary content, not a footnote. Setting it to
+   muted made every long passage feel like a caption.
+   `text-wrap: pretty` is the modern CSS feature that optimizes
+   the last few lines of every paragraph to avoid orphans and
+   ragged shapes — the one thing justification was reaching for,
+   without any of justification's drawbacks. Falls back silently
+   in browsers that don't support it. */
+.slide-prose {
+  max-width: var(--measure-prose);
+  font-family: var(--font-sans);
+  font-size: 1rem; /* 16px — never below */
+  line-height: 1.65;
+  color: var(--foreground);
+  text-wrap: pretty;
+}
+
+.slide-prose p + p {
+  margin-top: 0.85em;
+}
+
+/* Strong was already at foreground 600; once the surrounding text
+   moved to foreground too, the contrast comes from weight alone
+   instead of weight + color. That's the more honest move and reads
+   as cleaner emphasis. */
+.slide-prose strong {
+  font-weight: 600;
+}
+
+.slide-prose em {
+  font-style: italic;
+}
+
+/* Per-element styles for code, links, lists, blockquote, and
+   headings inside slide-prose all live in the Markdown component
+   (components/Markdown.tsx) so the editorial register applies
+   consistently in both .slide-prose contexts (narrative, summary)
+   AND non-slide-prose contexts (chat messages, PR description,
+   context snippets). Putting them here would shadow the Markdown
+   per-element classes via lower specificity. */
+
+/* Quiet typographic meta line — used for the status row in the
+   reference screenshot ("8/8 files narrated · all files covered"),
+   for affected-files lists, and any other margin-note copy. */
+.slide-meta {
+  font-family: var(--font-mono);
+  font-size: 0.75rem; /* 12px */
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Inline editorial label — bold sentence-case run-in heading.
+   Used for callouts that should read like a sidebar in a printed
+   essay rather than a "tip card". */
+.editorial-label {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+/* Editorial callout block — the "What to check" / "Note." pattern
+   from the brief: a soft tinted block with a bold inline label
+   followed by prose on the same line. NO side-stripe border, NO
+   icon, NO titled card chrome. The tint is the warm-paper variant
+   of the brand claret at very low alpha so it reads as a margin
+   note, not as an alert. Both modes tested for AA contrast. */
+.editorial-callout {
+  background: oklch(0.4 0.12 15 / 5%);
+  border: 1px solid oklch(0.4 0.12 15 / 16%);
+  border-radius: 4px;
+  padding: 0.85rem 1.1rem;
+}
+
+.dark .editorial-callout {
+  background: oklch(0.65 0.13 15 / 8%);
+  border-color: oklch(0.65 0.13 15 / 22%);
+}
+
+/* Pending review comment block — the user's draft comment as it
+   appears under a diff line. Tinted in the brand claret so it
+   reads as "this is your work, not the diff itself." Both modes
+   tested for AA contrast on the text. */
+.pending-comment-block {
+  background: oklch(0.4 0.12 15 / 7%);
+  border-color: oklch(0.4 0.12 15 / 30%);
+}
+
+.pending-comment-block-text {
+  color: oklch(0.42 0.13 15);
+}
+
+.dark .pending-comment-block {
+  background: oklch(0.65 0.13 15 / 10%);
+  border-color: oklch(0.65 0.13 15 / 36%);
+}
+
+.dark .pending-comment-block-text {
+  color: oklch(0.78 0.13 15);
+}
+
+/* Keyboard key — small mono caps on a hairline-bordered chip.
+   Used in the shortcut cheatsheet and inline help text. The
+   light-mode fill stays subtle (6% on warm gray); dark mode
+   lifts to 12% so the chip has visible weight against the
+   warm-charcoal background. */
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5rem;
+  padding: 0.125rem 0.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  line-height: 1.2;
+  font-weight: 500;
+  color: var(--foreground);
+  background: oklch(0.55 0.012 65 / 6%);
+  border: 1px solid oklch(0.55 0.012 65 / 32%);
+  border-radius: 3px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.dark .kbd {
+  background: oklch(0.7 0.012 65 / 12%);
+  border-color: oklch(0.7 0.012 65 / 32%);
 }
 
 /* ─── Dark scrollbars (WebKit) ───────────────────────────────── */
@@ -216,12 +498,12 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: oklch(0.35 0 0);
+  background: oklch(0.45 0.01 65 / 60%);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: oklch(0.45 0 0);
+  background: oklch(0.55 0.012 65 / 80%);
 }
 
 ::-webkit-scrollbar-corner {
@@ -305,7 +587,7 @@
 }
 
 .line.interactive-line:hover .line-number-gutter {
-  color: rgba(255, 255, 255, 0.7) !important;
+  color: var(--foreground) !important;
 }
 
 .line.interactive-line {
@@ -323,15 +605,15 @@
 }
 
 .split-diff-cell-empty {
-  background: oklch(0.2 0 0 / 30%);
+  background: oklch(0.5 0.012 65 / 8%);
 }
 
 .split-diff-separator {
-  background-color: rgba(255, 255, 255, 0.06);
+  background-color: oklch(0.5 0.012 65 / 12%);
 }
 
 .split-diff-grid > span.split-diff-line-num:hover {
-  color: rgba(255, 255, 255, 0.7) !important;
+  color: var(--foreground) !important;
 }
 
 .split-diff-grid > span.split-diff-comment-icon:hover .split-icon-hover {
@@ -348,7 +630,9 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background-color: oklch(0.65 0.15 195 / 30%);
+  /* Claret flash — same hue as the brand --ring, just briefly
+     visible to show the user where the check landed. */
+  background-color: oklch(0.55 0.14 15 / 22%);
   animation: check-highlight-fade 1.5s ease-out forwards;
 }
 @keyframes check-highlight-fade {
@@ -360,68 +644,118 @@
   }
 }
 
-/* ─── Freshness banner ────────────────────────────────────────── */
+/* ─── Freshness banner ────────────────────────────────────────
+   Quieted to fit the editorial register. Warmer hues, lower
+   chroma, and very subtle backgrounds — these banners are
+   informational, not attention-grabbing. Light-mode text drops
+   to L≈0.42 to hit WCAG AA against the paper background; dark
+   mode lifts back to L≈0.7. */
 
 .staleBanner-current {
-  border: 1px solid oklch(0.55 0.12 155 / 30%);
-  background: oklch(0.25 0.04 155 / 40%);
-  color: oklch(0.78 0.1 155);
+  border: 1px solid oklch(0.5 0.1 145 / 38%);
+  background: oklch(0.5 0.1 145 / 8%);
+  color: oklch(0.42 0.1 145);
 }
 
 .staleBanner-unknown {
-  border: 1px solid oklch(0.45 0 0 / 40%);
-  background: oklch(0.22 0 0 / 50%);
-  color: oklch(0.65 0 0);
+  border: 1px solid oklch(0.45 0.012 65 / 32%);
+  background: oklch(0.45 0.012 65 / 6%);
+  color: var(--muted-foreground);
 }
 
 .staleBanner-warn {
-  border: 1px solid oklch(0.55 0.12 75 / 40%);
-  background: oklch(0.25 0.05 75 / 40%);
-  color: oklch(0.82 0.1 80);
+  border: 1px solid oklch(0.55 0.13 55 / 38%);
+  background: oklch(0.55 0.13 55 / 8%);
+  color: oklch(0.42 0.14 55);
 }
 
 .staleBanner-warn-toggle:hover {
-  color: oklch(0.9 0.1 80);
+  color: oklch(0.32 0.14 55);
 }
 
 .staleBanner-warn-btn {
-  border: 1px solid oklch(0.5 0.1 75 / 40%);
-  background: oklch(0.3 0.06 75 / 50%);
-  color: oklch(0.82 0.1 80);
+  border: 1px solid oklch(0.55 0.13 55 / 38%);
+  background: oklch(0.55 0.13 55 / 10%);
+  color: oklch(0.42 0.14 55);
 }
 
 .staleBanner-warn-btn:hover {
-  background: oklch(0.35 0.08 75 / 55%);
+  background: oklch(0.55 0.13 55 / 16%);
+}
+
+.dark .staleBanner-current {
+  border-color: oklch(0.65 0.1 145 / 36%);
+  background: oklch(0.65 0.1 145 / 10%);
+  color: oklch(0.72 0.1 145);
+}
+
+.dark .staleBanner-warn {
+  border-color: oklch(0.7 0.13 55 / 36%);
+  background: oklch(0.7 0.13 55 / 10%);
+  color: oklch(0.78 0.13 55);
+}
+
+.dark .staleBanner-warn-toggle:hover {
+  color: oklch(0.85 0.13 55);
+}
+
+.dark .staleBanner-warn-btn {
+  border-color: oklch(0.7 0.13 55 / 36%);
+  background: oklch(0.7 0.13 55 / 10%);
+  color: oklch(0.82 0.13 55);
+}
+
+.dark .staleBanner-warn-btn:hover {
+  background: oklch(0.7 0.13 55 / 18%);
 }
 
 .staleBanner-warn-list {
-  border-top: 1px solid oklch(0.5 0.1 75 / 20%);
+  border-top: 1px solid oklch(0.6 0.1 55 / 16%);
 }
 
 .staleBanner-warn-sha {
-  color: oklch(0.72 0.08 80 / 70%);
+  color: oklch(0.65 0.08 55 / 75%);
+  font-family: var(--font-mono);
 }
 
 .staleBanner-warn-meta {
-  color: oklch(0.72 0.08 80 / 50%);
+  color: oklch(0.65 0.08 55 / 55%);
 }
 
-/* ─── Update banner ──────────────────────────────────────────── */
+/* ─── Update banner ──────────────────────────────────────────
+   Warm umber instead of cool blue, to match the editorial
+   palette. Used for "a new version is available". */
 
 .updateBanner {
-  border-bottom: 1px solid oklch(0.55 0.12 230 / 30%);
-  background: oklch(0.25 0.04 230 / 40%);
-  color: oklch(0.78 0.1 230);
+  border-bottom: 1px solid oklch(0.55 0.11 80 / 38%);
+  background: oklch(0.55 0.11 80 / 8%);
+  color: oklch(0.42 0.12 80);
 }
 
 .updateBanner-btn {
-  border: 1px solid oklch(0.5 0.1 230 / 40%);
-  background: oklch(0.3 0.06 230 / 50%);
-  color: oklch(0.85 0.08 230);
+  border: 1px solid oklch(0.55 0.11 80 / 38%);
+  background: oklch(0.55 0.11 80 / 10%);
+  color: oklch(0.42 0.12 80);
 }
 
 .updateBanner-btn:hover {
-  background: oklch(0.35 0.08 230 / 55%);
+  background: oklch(0.55 0.11 80 / 18%);
+}
+
+.dark .updateBanner {
+  border-color: oklch(0.7 0.12 80 / 36%);
+  background: oklch(0.7 0.12 80 / 10%);
+  color: oklch(0.78 0.12 80);
+}
+
+.dark .updateBanner-btn {
+  border-color: oklch(0.7 0.12 80 / 36%);
+  background: oklch(0.7 0.12 80 / 10%);
+  color: oklch(0.82 0.12 80);
+}
+
+.dark .updateBanner-btn:hover {
+  background: oklch(0.7 0.12 80 / 18%);
 }
 
 /* ─── PR status pills ─────────────────────────────────────────── */
@@ -442,39 +776,79 @@
   white-space: nowrap;
 }
 
+/* All status pills are quieted: lower chroma, very subtle fills,
+   warmer hues. They're informational — they should NEVER be the
+   loudest thing on a screen. /distill collapsed most of them into
+   a single mono line; remaining usages (PR state badges, the
+   slide chat counter, the experimental tag) sit calmly.
+
+   Light-mode text colors are dropped to L≈0.42 so they hit WCAG
+   AA contrast (≥4.5:1) against the paper background. Dark mode
+   overrides lift them back to L≈0.62–0.7 so they stay readable
+   on the warm-charcoal background. */
+
 .statusPill-green {
-  border: 1px solid oklch(0.55 0.12 155 / 40%);
-  background: oklch(0.25 0.04 155 / 40%);
-  color: oklch(0.78 0.1 155);
+  border: 1px solid oklch(0.5 0.1 145 / 38%);
+  background: oklch(0.5 0.1 145 / 8%);
+  color: oklch(0.42 0.11 145);
 }
 
 .statusPill-red {
-  border: 1px solid oklch(0.55 0.15 25 / 40%);
-  background: oklch(0.25 0.05 25 / 40%);
-  color: oklch(0.78 0.12 25);
+  border: 1px solid oklch(0.55 0.16 22 / 38%);
+  background: oklch(0.55 0.16 22 / 8%);
+  color: oklch(0.45 0.18 22);
 }
 
 .statusPill-amber {
-  border: 1px solid oklch(0.55 0.12 75 / 40%);
-  background: oklch(0.25 0.05 75 / 40%);
-  color: oklch(0.82 0.1 80);
+  border: 1px solid oklch(0.6 0.13 55 / 38%);
+  background: oklch(0.6 0.13 55 / 8%);
+  color: oklch(0.45 0.14 55);
 }
 
 .statusPill-neutral {
-  border: 1px solid oklch(0.45 0 0 / 30%);
-  background: oklch(0.22 0 0 / 40%);
-  color: oklch(0.65 0 0);
+  border: 1px solid oklch(0.45 0.012 65 / 32%);
+  background: oklch(0.45 0.012 65 / 6%);
+  color: var(--muted-foreground);
 }
 
 .statusPill-label {
-  border: 1px solid oklch(0.5 0.08 260 / 35%);
-  background: oklch(0.25 0.03 260 / 40%);
-  color: oklch(0.75 0.06 260);
+  /* Was cool blue; now matches the warm neutral so it sits
+     quietly with the rest of the chrome. */
+  border: 1px solid oklch(0.45 0.012 65 / 32%);
+  background: oklch(0.45 0.012 65 / 6%);
+  color: var(--muted-foreground);
 }
 
 .statusPill-skeleton {
-  border: 1px solid oklch(0.35 0 0 / 20%);
-  background: oklch(0.22 0 0 / 50%);
+  border: 1px solid oklch(0.45 0.012 65 / 22%);
+  background: oklch(0.45 0.012 65 / 8%);
+}
+
+/* Dark-mode overrides — lift the text back up so it reads against
+   the warm-charcoal background. Borders also need slightly more
+   alpha to remain visible. */
+.dark .statusPill-green {
+  border-color: oklch(0.65 0.1 145 / 36%);
+  background: oklch(0.65 0.1 145 / 10%);
+  color: oklch(0.72 0.1 145);
+}
+
+.dark .statusPill-red {
+  border-color: oklch(0.7 0.16 22 / 38%);
+  background: oklch(0.7 0.16 22 / 10%);
+  color: oklch(0.75 0.16 22);
+}
+
+.dark .statusPill-amber {
+  border-color: oklch(0.72 0.13 55 / 38%);
+  background: oklch(0.72 0.13 55 / 10%);
+  color: oklch(0.78 0.13 55);
+}
+
+.dark .statusPill-neutral,
+.dark .statusPill-label {
+  border-color: oklch(0.65 0.012 65 / 32%);
+  background: oklch(0.65 0.012 65 / 8%);
 }
 
 /* ─── Review focus callout ────────────────────────────────────── */
@@ -496,8 +870,10 @@ ul.review-focus-content > li::before {
   content: '▸';
   position: absolute;
   left: 0;
-  color: var(--primary);
-  opacity: 0.7;
+  /* Warm amber brand accent — the bullet IS the chromatic
+     punctuation. Used sparingly so it actually means something. */
+  color: var(--ring);
+  opacity: 0.85;
   font-size: 0.875rem;
   line-height: inherit;
 }
@@ -525,7 +901,7 @@ ul.review-focus-content > li::before {
 }
 
 .slide-enter {
-  animation: slide-enter 0.25s ease-out;
+  animation: slide-enter 0.25s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* ─── Entrance animations (Priority 5) ────────────────────────── */
@@ -542,49 +918,58 @@ ul.review-focus-content > li::before {
 }
 
 .animate-fade-in-up {
-  animation: fade-in-up 0.35s ease-out both;
+  animation: fade-in-up 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* ─── Hero glow (Priority 7) ──────────────────────────────────── */
-
-.hero-glow {
-  position: relative;
+/* Brief fade-in for elements that appear in response to a user
+   action (review checkmark, quoted-code preview, status changes).
+   150ms is fast enough to feel responsive, slow enough to register
+   as "something appeared" rather than "it was always there." */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
-.hero-glow::before {
-  content: '';
-  position: absolute;
-  top: -200px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 800px;
-  height: 600px;
-  background: radial-gradient(ellipse, oklch(0.65 0.15 195 / 15%) 0%, transparent 70%);
-  pointer-events: none;
-  z-index: 0;
+.animate-fade-in {
+  animation: fade-in 150ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* ─── Loading screen rings (Priority 4) ──────────────────────── */
+/* ─── Loading screen ─────────────────────────────────────────
+   Replaces the old pulsing-ring + cyan-glow loader with a quiet
+   type-led page. The wait is the first chapter of the monograph,
+   not a separate "loading state". */
 
-@keyframes pulse-ring {
-  0% {
-    opacity: 0.4;
-    transform: scale(1);
+/* Streaming text panel — calm mono on a faint warm tint.
+   No box-shadow, no glow, no colored border. `overflow-wrap`
+   handles long URLs gracefully (the old `break-all` mangled
+   them character-by-character). */
+.loading-stream {
+  background: oklch(0.65 0.012 65 / 5%);
+  border: 1px solid oklch(0.55 0.012 65 / 18%);
+  overflow-wrap: anywhere;
+  word-break: normal;
+  line-height: 1.55;
+}
+
+/* Progress fill transitions smoothly between phases. The
+   transition is the only motion on the loading screen apart
+   from the optional fade-in on the title. */
+.loading-progress-fill {
+  transition: width 600ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ─── Reduced motion ─────────────────────────────────────────
+   Honor the OS preference. Every transition and animation in
+   the app collapses to instantaneous changes for users who
+   asked for it. The progress bar still updates — it just
+   snaps instead of sliding. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
   }
-  100% {
-    opacity: 0;
-    transform: scale(1.6);
-  }
-}
-
-.loading-ring {
-  animation: pulse-ring 2s ease-out infinite;
-}
-
-.loading-ring-delayed {
-  animation: pulse-ring 2s ease-out 0.5s infinite;
-}
-
-.loading-ring-delayed-2 {
-  animation: pulse-ring 2s ease-out 1s infinite;
 }

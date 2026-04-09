@@ -51,7 +51,7 @@ function SplitDiffCell({
         >
           {info && (
             <MessageSquarePlus
-              style={{ width: '0.75rem', height: '0.75rem', color: '#58a6ff', opacity: 0 }}
+              style={{ width: '0.75rem', height: '0.75rem', color: 'var(--ring)', opacity: 0 }}
               className="split-icon-hover"
             />
           )}
@@ -62,7 +62,7 @@ function SplitDiffCell({
         style={{
           textAlign: 'right',
           paddingRight: '0.5ch',
-          color: 'rgba(255,255,255,0.3)',
+          color: 'var(--muted-foreground)',
           userSelect: 'none',
           fontSize: '0.75rem',
           cursor: isInteractive && info ? 'pointer' : 'default',
@@ -303,7 +303,7 @@ export function SplitDiffHunkGroup({
       <div className="bg-muted/50 px-3 py-2 font-mono text-xs text-muted-foreground border-b truncate flex items-center justify-between">
         <FilePathLink filePath={filePath} gitFileUrlBase={gitFileUrlBase} />
         {commentCallbacks && fileCommentCount > 0 && (
-          <span className="ml-2 inline-flex items-center gap-1 text-blue-400">
+          <span className="ml-2 inline-flex items-center gap-1 text-[var(--ring)]">
             <MessageSquarePlus className="h-3 w-3" />
             {fileCommentCount}
           </span>

@@ -38,33 +38,40 @@ export function GitHubIcon(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+// Slide types are presented as quiet text in the chapter chip — the
+// label and icon do the differentiation, not a colored fill. This
+// matches the editorial brief: color is punctuation, not category
+// shorthand. /distill may remove the icons entirely later.
 export const slideTypeConfig: Record<
   SlideType,
   { label: string; className: string; icon: ComponentType<{ className?: string }> }
 > = {
-  foundation: { label: 'Foundation', className: 'bg-purple-900 text-purple-200 border-purple-700', icon: Blocks },
-  feature: { label: 'Feature', className: 'bg-blue-900 text-blue-200 border-blue-700', icon: Sparkles },
-  refactor: { label: 'Refactor', className: 'bg-orange-900 text-orange-200 border-orange-700', icon: RefreshCw },
-  bugfix: { label: 'Bug Fix', className: 'bg-red-900 text-red-200 border-red-700', icon: Bug },
-  test: { label: 'Test', className: 'bg-green-900 text-green-200 border-green-700', icon: TestTube2 },
-  config: { label: 'Config', className: 'bg-zinc-700 text-zinc-200 border-zinc-600', icon: Settings },
-  docs: { label: 'Docs', className: 'bg-zinc-700 text-zinc-200 border-zinc-600', icon: FileText },
+  foundation: { label: 'Foundation', className: 'text-foreground/85', icon: Blocks },
+  feature: { label: 'Feature', className: 'text-foreground/85', icon: Sparkles },
+  refactor: { label: 'Refactor', className: 'text-foreground/85', icon: RefreshCw },
+  bugfix: { label: 'Bug Fix', className: 'text-foreground/85', icon: Bug },
+  test: { label: 'Test', className: 'text-foreground/85', icon: TestTube2 },
+  config: { label: 'Config', className: 'text-foreground/85', icon: Settings },
+  docs: { label: 'Docs', className: 'text-foreground/85', icon: FileText },
 };
 
+// Risk uses the warm editorial pill classes — same vocabulary as the
+// status pills, just routed to the three semantic levels. /distill may
+// later replace this with a text-only treatment.
 export const riskConfig = {
   low: {
     label: 'Low Risk',
-    badgeClassName: 'bg-zinc-800 text-zinc-300 border-zinc-600',
+    badgeClassName: 'statusPill-neutral',
     variant: 'secondary' as const,
   },
   medium: {
     label: 'Medium Risk',
-    badgeClassName: 'bg-teal-950 text-teal-300 border-teal-700',
+    badgeClassName: 'statusPill-amber',
     variant: 'default' as const,
   },
   high: {
     label: 'High Risk',
-    badgeClassName: 'bg-red-950 text-red-300 border-red-700',
+    badgeClassName: 'statusPill-red',
     variant: 'destructive' as const,
   },
 };

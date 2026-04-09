@@ -57,13 +57,17 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
       setSuccessUrl(result.reviewUrl);
       setDroppedCount(result.droppedCommentCount);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to submit review');
+      setError(err instanceof Error ? err.message : "Couldn't submit the review.");
     } finally {
       setSubmitting(false);
     }
   }
 
   function handleClose() {
+    // Don't allow closing while a submit is in flight — the user
+    // might think the review wasn't posted and retry, creating a
+    // duplicate. The dialog stays open until the operation finishes.
+    if (submitting) return;
     if (successUrl) {
       setSuccessUrl(null);
       setBody('');
@@ -77,17 +81,17 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
       <Dialog open={open} onOpenChange={handleClose}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Check className="h-5 w-5 text-green-500" />
+            <DialogTitle className="editorial-heading flex items-center gap-2">
+              <Check className="h-4 w-4 text-[var(--color-success)]" />
               Review submitted
             </DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="slide-meta">
               Your review with {submittedCount} comment{submittedCount !== 1 ? 's' : ''} has been posted.
             </DialogDescription>
           </DialogHeader>
           {droppedCount > 0 && (
-            <div className="flex items-start gap-2 rounded-md border border-yellow-800/50 bg-yellow-950/30 p-3 text-sm text-yellow-200">
-              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-yellow-500" />
+            <div className="staleBanner-warn flex items-start gap-2 rounded-md p-3 text-sm">
+              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
               <span>
                 {droppedCount} comment{droppedCount !== 1 ? 's were' : ' was'} on lines outside the diff range and{' '}
                 {droppedCount !== 1 ? 'were' : 'was'} included in the review body instead.
@@ -99,7 +103,7 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
               href={successUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-sm text-blue-400 hover:text-blue-300 underline underline-offset-2"
+              className="inline-flex items-center gap-1.5 text-sm text-[var(--ring)] hover:opacity-80 underline underline-offset-2"
             >
               View on GitHub <ExternalLink className="h-3 w-3" />
             </a>
@@ -114,18 +118,18 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-xl max-h-[80vh] flex flex-col">
+      <DialogContent className="sm:max-w-xl max-h-[80vh] flex flex-col gap-5">
         <DialogHeader>
-          <DialogTitle>Submit review</DialogTitle>
-          <DialogDescription>
+          <DialogTitle className="editorial-heading">Submit review</DialogTitle>
+          <DialogDescription className="slide-meta">
             {comments.length} comment{comments.length !== 1 ? 's' : ''} across {fileGroups.size} file
             {fileGroups.size !== 1 ? 's' : ''}
           </DialogDescription>
         </DialogHeader>
 
         {!headSha && (
-          <div className="flex items-start gap-2 rounded-md border border-yellow-800/50 bg-yellow-950/30 p-3 text-sm text-yellow-200">
-            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-yellow-500" />
+          <div className="staleBanner-warn flex items-start gap-2 rounded-md p-3 text-sm">
+            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
             <span>
               This review was loaded from history without a commit reference. Line comments may land on wrong lines if
               the PR has been updated.
@@ -133,26 +137,27 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
           </div>
         )}
 
-        {/* Comment list */}
+        {/* Comment list — files as collapsible details, comments
+            as quiet rows. No card-on-card. */}
         {comments.length > 0 && (
-          <div className="flex-1 overflow-y-auto space-y-3 min-h-0">
+          <div className="flex-1 overflow-y-auto min-h-0 flex flex-col gap-4">
             {Array.from(fileGroups.entries()).map(([filePath, fileComments]) => (
               <details key={filePath} className="group" open>
-                <summary className="cursor-pointer text-xs font-mono text-muted-foreground hover:text-foreground select-none flex items-center gap-1">
-                  <span className="group-open:rotate-90 inline-block transition-transform">▶</span>
+                <summary className="slide-meta cursor-pointer hover:text-foreground select-none flex items-center gap-1.5">
+                  <span className="group-open:rotate-90 inline-block transition-transform">▸</span>
                   {filePath}
-                  <span className="text-blue-400 ml-1">({fileComments.length})</span>
+                  <span className="text-[var(--ring)]">({fileComments.length})</span>
                 </summary>
-                <div className="mt-1 ml-3 space-y-1">
+                <div className="mt-2 ml-4 border-l border-border pl-4 flex flex-col gap-3">
                   {fileComments.map((c) => (
-                    <div key={c.id} className="text-xs border rounded p-2 bg-muted/20">
-                      <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                    <div key={c.id} className="flex flex-col gap-1">
+                      <div className="flex items-center gap-2 slide-meta">
                         <span>Line {c.line}</span>
-                        <code className="text-[10px] bg-muted/50 px-1 rounded truncate max-w-[200px]">
-                          {c.codeSnippet}
-                        </code>
+                        <code className="text-[10px] truncate max-w-[200px] opacity-70">{c.codeSnippet}</code>
                       </div>
-                      <pre className="text-xs whitespace-pre-wrap break-words font-mono">{c.body}</pre>
+                      <pre className="text-xs whitespace-pre-wrap break-words font-mono text-foreground/80">
+                        {c.body}
+                      </pre>
                     </div>
                   ))}
                 </div>
@@ -162,17 +167,17 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
         )}
 
         {/* Review body */}
-        <div className="flex flex-col gap-2">
-          <div>
-            <label className="text-xs text-muted-foreground mb-1 block">Review summary (optional)</label>
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-foreground">Review summary <span className="slide-meta">(optional)</span></label>
             <textarea
               value={body}
               onChange={(e) => setBody(e.target.value)}
-              placeholder="Overall feedback..."
-              className="w-full min-h-[80px] bg-transparent text-sm resize-y border rounded p-2 focus:outline-none focus:ring-1 focus:ring-ring"
+              placeholder="Overall feedback…"
+              className="w-full min-h-[80px] bg-transparent text-sm resize-y border-0 border-b border-border px-0 py-2 placeholder:text-muted-foreground/60 transition-colors"
             />
           </div>
-          <label className="flex items-center gap-2 cursor-pointer select-none">
+          <label className="flex items-center gap-2 cursor-pointer select-none slide-meta hover:text-foreground transition-colors">
             <input
               type="checkbox"
               checked={reviewSignature}
@@ -182,19 +187,20 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
                   .loadPreferences()
                   .then((prefs) => window.electronAPI.savePreferences({ ...prefs, reviewSignature: e.target.checked }));
               }}
-              className="rounded border"
+              className="accent-[var(--ring)]"
             />
-            <span className="text-xs text-muted-foreground">Add &ldquo;Reviewed using gnosis.to&rdquo; signature</span>
+            <span>Add &ldquo;Reviewed using gnosis.to&rdquo; signature</span>
           </label>
         </div>
 
         {error && <p className="text-sm text-destructive">{error}</p>}
 
         <DialogFooter className="flex-col gap-2 sm:flex-col sm:gap-2">
+          {submitting && (
+            <p className="slide-meta text-center animate-pulse">Posting to GitHub…</p>
+          )}
           {isOwnPr && (
-            <p className="text-xs text-muted-foreground text-center">
-              You can't approve or request changes on your own PR.
-            </p>
+            <p className="slide-meta text-center">You can't approve or request changes on your own PR.</p>
           )}
           <div className="flex flex-row justify-end gap-2">
             <Button
@@ -209,7 +215,7 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
             <Button
               variant="outline"
               size="sm"
-              className="border-green-800 text-green-400 hover:bg-green-950/50"
+              className="border-[var(--color-success)]/35 text-[var(--color-success)] hover:bg-[var(--color-success)]/10"
               onClick={() => handleSubmit('APPROVE')}
               disabled={submitting || isOwnPr}
             >
@@ -219,7 +225,7 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
             <Button
               variant="outline"
               size="sm"
-              className="border-red-800 text-red-400 hover:bg-red-950/50"
+              className="border-[var(--color-danger)]/35 text-[var(--color-danger)] hover:bg-[var(--color-danger)]/10"
               onClick={() => handleSubmit('REQUEST_CHANGES')}
               disabled={submitting || isOwnPr || (comments.length === 0 && !body.trim())}
             >
