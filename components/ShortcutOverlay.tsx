@@ -39,6 +39,8 @@ const groups: ShortcutGroup[] = [
   {
     heading: 'Reviewing',
     shortcuts: [
+      { keys: 'r', label: 'Mark reviewed and advance' },
+      { keys: 'n', label: 'Jump to next unreviewed' },
       { keys: 'c', label: 'Open chat for current slide' },
       { keys: 'u', label: 'Switch to unified diff' },
       { keys: 's', label: 'Switch to split diff' },

@@ -15,6 +15,13 @@ interface Props {
   messages: ChatMessage[];
   isStreaming: boolean;
   onSend: (text: string) => void;
+  // When the user selects code in the diff and clicks "Ask about
+  // this", the selected code is passed here as a fenced code block.
+  // The chat sheet renders it as a quoted block above the input and
+  // includes it in the message when the user sends. Cleared after
+  // first send via onQuotedCodeConsumed.
+  quotedCode?: string | null;
+  onQuotedCodeConsumed?: () => void;
 }
 
 // Suggested questions on first open. No bordered cards, no bg fills —
@@ -103,7 +110,17 @@ function Message({ message }: { message: ChatMessage }) {
   );
 }
 
-export function SlideChatSheet({ open, onOpenChange, slideTitle, reviewFocus, messages, isStreaming, onSend }: Props) {
+export function SlideChatSheet({
+  open,
+  onOpenChange,
+  slideTitle,
+  reviewFocus,
+  messages,
+  isStreaming,
+  onSend,
+  quotedCode,
+  onQuotedCodeConsumed,
+}: Props) {
   const [input, setInput] = useState('');
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -169,8 +186,15 @@ export function SlideChatSheet({ open, onOpenChange, slideTitle, reviewFocus, me
   function handleSend() {
     const trimmed = input.trim();
     if (!trimmed || isStreaming) return;
+    // If there's quoted code from a selection, prepend it as a fenced
+    // code block so the AI knows exactly which code the user is asking
+    // about. Clear the quote after sending so it doesn't persist.
+    const message = quotedCode
+      ? `Regarding this code:\n\`\`\`\n${quotedCode}\n\`\`\`\n\n${trimmed}`
+      : trimmed;
     setInput('');
-    onSend(trimmed);
+    onQuotedCodeConsumed?.();
+    onSend(message);
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -229,8 +253,26 @@ export function SlideChatSheet({ open, onOpenChange, slideTitle, reviewFocus, me
           </div>
 
           {/* Input area — bottom-bordered textarea, no rounded
-              fill. Send button is a quiet icon, not a primary CTA. */}
-          <div className="border-t border-border px-6 py-4 flex gap-3 items-end">
+              fill. Send button is a quiet icon, not a primary CTA.
+              When quoted code is attached from a selection, a quiet
+              preview sits above the input so the user sees what's
+              going to be sent. */}
+          <div className="border-t border-border px-6 py-4 flex flex-col gap-2">
+            {quotedCode && (
+              <div className="flex items-start gap-2 text-xs">
+                <pre className="flex-1 font-mono text-muted-foreground bg-muted/50 rounded px-2 py-1.5 max-h-20 overflow-y-auto whitespace-pre-wrap break-all">
+                  {quotedCode.length > 200 ? quotedCode.slice(0, 200) + '…' : quotedCode}
+                </pre>
+                <button
+                  onClick={() => onQuotedCodeConsumed?.()}
+                  className="shrink-0 text-muted-foreground hover:text-foreground transition-colors mt-1"
+                  aria-label="Remove quoted code"
+                >
+                  ×
+                </button>
+              </div>
+            )}
+            <div className="flex gap-3 items-end">
             <textarea
               ref={textareaRef}
               value={input}
@@ -248,6 +290,7 @@ export function SlideChatSheet({ open, onOpenChange, slideTitle, reviewFocus, me
             >
               {isStreaming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
             </button>
+            </div>
           </div>
         </div>
       </div>

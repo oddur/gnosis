@@ -1,6 +1,6 @@
-import { useRef, useCallback } from 'react';
+import { useRef, useState, useCallback } from 'react';
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from 'react-resizable-panels';
-import { MessageCircle } from 'lucide-react';
+import { MessageCircle, MessageSquarePlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DiffHunkGroup } from '@/components/DiffHunk';
 import { InteractiveDiffHunkGroup } from '@/components/InteractiveDiffHunk';
@@ -21,8 +21,12 @@ interface Props {
   diffLayout: Preferences['diffLayout'];
   onDiffLayoutChange: (layout: Preferences['diffLayout']) => void;
   onAskQuestion?: () => void;
+  onAskAboutSelection?: (quotedCode: string) => void;
   gitFileUrlBase?: string | null;
   excludedFiles?: Set<string>;
+  isReviewed?: boolean;
+  onMarkReviewed?: () => void;
+  onToggleReviewed?: () => void;
 }
 
 // Group hunks by filePath so we can render them under a single file header
@@ -83,13 +87,50 @@ export function SlideView({
   diffLayout,
   onDiffLayoutChange,
   onAskQuestion,
+  onAskAboutSelection,
   gitFileUrlBase,
   excludedFiles,
+  isReviewed,
+  onMarkReviewed,
+  onToggleReviewed,
 }: Props) {
   const typeConfig = slideTypeConfig[slide.slideType];
   const Icon = typeConfig.icon;
   const groupedHunks = groupHunksByFile(slide.diffHunks);
   const rightPanelRef = useRef<HTMLDivElement>(null);
+
+  // Selection-to-chat: when the user selects code in the diff panel,
+  // show a small floating "Ask about this" button near the selection.
+  const [selectionPopover, setSelectionPopover] = useState<{
+    text: string;
+    top: number;
+    left: number;
+  } | null>(null);
+
+  const handleDiffMouseUp = useCallback(() => {
+    if (!onAskAboutSelection) return;
+    const sel = window.getSelection();
+    const text = sel?.toString().trim();
+    if (!text || text.length < 3) {
+      setSelectionPopover(null);
+      return;
+    }
+    const range = sel?.getRangeAt(0);
+    if (!range) return;
+    const rect = range.getBoundingClientRect();
+    const container = rightPanelRef.current;
+    if (!container) return;
+    const containerRect = container.getBoundingClientRect();
+    setSelectionPopover({
+      text,
+      top: rect.bottom - containerRect.top + container.scrollTop + 4,
+      left: rect.left - containerRect.left + rect.width / 2,
+    });
+  }, [onAskAboutSelection]);
+
+  const handleDiffMouseDown = useCallback(() => {
+    setSelectionPopover(null);
+  }, []);
 
   const chapterNumber = slideNumber.toString().padStart(2, '0');
   const fileCount = slide.affectedFiles.length;
@@ -209,12 +250,28 @@ export function SlideView({
             </details>
           )}
 
-          {onAskQuestion && (
-            <Button variant="outline" size="sm" onClick={onAskQuestion} className="gap-1.5 w-full mt-2">
-              <MessageCircle className="h-3.5 w-3.5" />
-              Ask a question
-            </Button>
-          )}
+          <div className="flex flex-col gap-2 mt-2">
+            {onMarkReviewed && (
+              <button
+                onClick={isReviewed ? onToggleReviewed : onMarkReviewed}
+                className={`slide-meta flex items-center gap-1.5 hover:text-foreground transition-colors self-start ${
+                  isReviewed ? 'text-[var(--ring)]' : ''
+                }`}
+              >
+                {isReviewed ? (
+                  <>✓ Reviewed · press r to undo</>
+                ) : (
+                  <>Mark reviewed and continue · r</>
+                )}
+              </button>
+            )}
+            {onAskQuestion && (
+              <Button variant="outline" size="sm" onClick={onAskQuestion} className="gap-1.5 w-full">
+                <MessageCircle className="h-3.5 w-3.5" />
+                Ask a question
+              </Button>
+            )}
+          </div>
         </div>
       </Panel>
 
@@ -222,7 +279,29 @@ export function SlideView({
 
       {/* Right panel — diagram + diffs */}
       <Panel defaultSize={60} minSize={30} className="overflow-y-auto min-h-0">
-        <div ref={rightPanelRef} className="px-6 py-10 flex flex-col gap-5">
+        <div
+          ref={rightPanelRef}
+          className="relative px-6 py-10 flex flex-col gap-5"
+          onMouseUp={handleDiffMouseUp}
+          onMouseDown={handleDiffMouseDown}
+        >
+          {/* Selection-to-chat popover — appears when the user selects
+              code in the diff. A single quiet button that opens the
+              chat with the selected code pre-quoted as a fenced block. */}
+          {selectionPopover && (
+            <button
+              className="absolute z-10 slide-meta bg-background border border-border rounded px-2 py-1 shadow-sm hover:text-foreground transition-colors flex items-center gap-1.5 -translate-x-1/2"
+              style={{ top: selectionPopover.top, left: selectionPopover.left }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={() => {
+                onAskAboutSelection?.(selectionPopover.text);
+                setSelectionPopover(null);
+              }}
+            >
+              <MessageSquarePlus className="h-3 w-3" />
+              Ask about this
+            </button>
+          )}
           {/* Diff layout toggle floats to the right with no label —
               the toggle itself is self-explanatory. */}
           <div className="flex items-center justify-end">

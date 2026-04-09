@@ -31,6 +31,29 @@ interface Props {
   onReReview: (prUrl: string) => void;
 }
 
+// localStorage key for review progress. Keyed by prUrl + headSha so
+// each review generation gets its own progress state.
+function progressKey(review: ReviewGuide): string {
+  return `gnosis-progress:${review.prUrl}:${review.headSha ?? 'unknown'}`;
+}
+
+function loadProgress(review: ReviewGuide): Set<number> {
+  try {
+    const stored = localStorage.getItem(progressKey(review));
+    return stored ? new Set(JSON.parse(stored) as number[]) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function saveProgress(review: ReviewGuide, reviewed: Set<number>) {
+  try {
+    localStorage.setItem(progressKey(review), JSON.stringify([...reviewed]));
+  } catch {
+    /* non-fatal */
+  }
+}
+
 export function ReviewPage({ review: initialReview, onBack, onReReview }: Props) {
   const [review, setReview] = useState(initialReview);
   const [currentSlide, setCurrentSlide] = useState(0);
@@ -40,12 +63,104 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
   const [freshness, setFreshness] = useState<FreshnessResult | null>(null);
   const [prStatus, setPrStatus] = useState<PrStatus | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
+  const [chatQuotedCode, setChatQuotedCode] = useState<string | null>(null);
   const [chatProvider, setChatProvider] = useState<Provider>('claude');
   const [chatModel, setChatModel] = useState<ModelId>('claude-sonnet-4-6');
   const [diffLayout, setDiffLayout] = useState<Preferences['diffLayout']>('unified');
   const [prefs, setPrefs] = useState<Preferences | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+
+  // Per-section "mark reviewed" progress. Persisted to localStorage
+  // keyed by prUrl + headSha so each review generation is tracked
+  // independently. Restored on mount so interrupted reviews resume
+  // exactly where the user left off.
+  const [reviewed, setReviewed] = useState<Set<number>>(() => loadProgress(initialReview));
+
+  // "Hide reviewed" toggle — when active, the TocRail collapses
+  // reviewed entries and slide navigation skips them.
+  const [hideReviewed, setHideReviewed] = useState(false);
+
+  const reviewedCount = reviewed.size;
+
+  const toggleReviewed = useCallback(
+    (slideNumber: number) => {
+      setReviewed((prev) => {
+        const next = new Set(prev);
+        if (next.has(slideNumber)) {
+          next.delete(slideNumber);
+        } else {
+          next.add(slideNumber);
+        }
+        saveProgress(review, next);
+        return next;
+      });
+    },
+    [review]
+  );
+
+  // Mark the current section as reviewed and auto-advance to the
+  // next unreviewed section (or to submit if everything is reviewed).
+  const markReviewedAndAdvance = useCallback(
+    (slideNumber: number) => {
+      setReviewed((prev) => {
+        const next = new Set(prev);
+        next.add(slideNumber);
+        saveProgress(review, next);
+
+        // Find the next unreviewed section after the current one.
+        // Wraps to the beginning if needed; opens submit dialog if all done.
+        let target: number | null = null;
+        for (let i = slideNumber + 1; i <= review.slides.length; i++) {
+          if (!next.has(i)) {
+            target = i;
+            break;
+          }
+        }
+        if (target === null) {
+          // Wrap from the start
+          for (let i = 1; i < slideNumber; i++) {
+            if (!next.has(i)) {
+              target = i;
+              break;
+            }
+          }
+        }
+
+        if (target !== null) {
+          setCurrentSlide(target);
+        } else if (next.size >= review.slides.length) {
+          // All sections reviewed — open submit dialog
+          setShowSubmitDialog(true);
+        }
+
+        return next;
+      });
+    },
+    [review]
+  );
+
+  // Jump to the next unreviewed section from wherever the user is.
+  // Used by the `n` keyboard shortcut.
+  const jumpToNextUnreviewed = useCallback(() => {
+    const start = currentSlide + 1;
+    // Forward from current
+    for (let i = start; i <= review.slides.length; i++) {
+      if (!reviewed.has(i)) {
+        setCurrentSlide(i);
+        return;
+      }
+    }
+    // Wrap from the beginning
+    for (let i = 1; i < start; i++) {
+      if (!reviewed.has(i)) {
+        setCurrentSlide(i);
+        return;
+      }
+    }
+    // Everything is reviewed — go to overview
+    setCurrentSlide(0);
+  }, [currentSlide, review.slides.length, reviewed]);
   const { comments, addComment, removeComment, editComment, clearAll } = useReviewComments();
   const slideChat = useSlideChat(review, chatProvider, chatModel);
   const gitFileUrlBase = useMemo(() => buildFileUrlBase(review.prUrl, review.headSha), [review.prUrl, review.headSha]);
@@ -141,6 +256,11 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
       c: () => {
         if (currentSlide > 0) setChatOpen(true);
       },
+      // Review progress
+      r: () => {
+        if (currentSlide > 0) markReviewedAndAdvance(currentSlide);
+      },
+      n: () => jumpToNextUnreviewed(),
       // Global
       'cmd+k': () => setPaletteOpen(true),
       'ctrl+k': () => setPaletteOpen(true),
@@ -151,7 +271,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
       map[String(n)] = () => handleJumpTo(n);
     }
     return map;
-  }, [handlePrev, handleNext, handleJumpTo, handleDiffLayoutChange, currentSlide, review.slides.length]);
+  }, [handlePrev, handleNext, handleJumpTo, handleDiffLayoutChange, markReviewedAndAdvance, jumpToNextUnreviewed, currentSlide, review.slides.length]);
 
   useKeyboardShortcuts(shortcutMap);
 
@@ -349,6 +469,9 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
         <TocRail
           slides={review.slides}
           currentSlide={currentSlide}
+          reviewed={reviewed}
+          hideReviewed={hideReviewed}
+          onToggleHideReviewed={() => setHideReviewed((v) => !v)}
           onNavigate={(n) => setCurrentSlide(n)}
         />
 
@@ -365,8 +488,15 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
               diffLayout={diffLayout}
               onDiffLayoutChange={handleDiffLayoutChange}
               onAskQuestion={() => setChatOpen(true)}
+              onAskAboutSelection={(code) => {
+                setChatQuotedCode(code);
+                setChatOpen(true);
+              }}
               gitFileUrlBase={gitFileUrlBase}
               excludedFiles={excludedFilesSet}
+              isReviewed={reviewed.has(currentSlide)}
+              onMarkReviewed={() => markReviewedAndAdvance(currentSlide)}
+              onToggleReviewed={() => toggleReviewed(currentSlide)}
             />
           )}
         </div>
@@ -374,12 +504,17 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
         {currentSlide > 0 && (
           <SlideChatSheet
             open={chatOpen}
-            onOpenChange={setChatOpen}
+            onOpenChange={(open) => {
+              setChatOpen(open);
+              if (!open) setChatQuotedCode(null);
+            }}
             slideTitle={review.slides[currentSlide - 1].title}
             reviewFocus={review.slides[currentSlide - 1].reviewFocus}
             messages={slideChat.getMessages(currentSlide)}
             isStreaming={slideChat.isStreaming}
             onSend={(text) => void slideChat.send(currentSlide, text)}
+            quotedCode={chatQuotedCode}
+            onQuotedCodeConsumed={() => setChatQuotedCode(null)}
           />
         )}
       </div>
@@ -387,6 +522,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
       <SlideNav
         current={currentSlide}
         total={review.slides.length}
+        reviewedCount={reviewedCount}
         prevTitle={prevTitle}
         nextTitle={nextTitle}
         onPrev={handlePrev}

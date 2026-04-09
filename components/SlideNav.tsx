@@ -3,6 +3,7 @@ import { MessageSquarePlus } from 'lucide-react';
 interface Props {
   current: number;
   total: number;
+  reviewedCount?: number;
   prevTitle: string | null;
   nextTitle: string | null;
   onPrev: () => void;
@@ -23,6 +24,7 @@ interface Props {
 export function SlideNav({
   current,
   total,
+  reviewedCount = 0,
   prevTitle,
   nextTitle,
   onPrev,
@@ -77,6 +79,7 @@ export function SlideNav({
               : `Section ${current.toString().padStart(2, '0')} of ${total
                   .toString()
                   .padStart(2, '0')}`}
+            {reviewedCount > 0 && ` · ${reviewedCount} reviewed`}
           </span>
           {showSubmitInCenter && (
             <button
