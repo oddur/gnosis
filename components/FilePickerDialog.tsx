@@ -66,7 +66,7 @@ export function FilePickerDialog({ open, onOpenChange, prUrl, onConfirm }: Props
       .getPrFiles(prUrl)
       .then(setFiles)
       .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : 'Failed to load files');
+        setError(err instanceof Error ? err.message : "Couldn't load the changed files.");
       })
       .finally(() => setLoading(false));
   }, [open, prUrl]);

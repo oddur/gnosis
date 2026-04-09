@@ -29,7 +29,7 @@ export function StaleBanner({ freshness, onReReview }: Props) {
   if (freshness.status === 'unknown') {
     return (
       <div className="staleBanner-unknown border-b border-[oklch(0.5_0.01_65/24%)] px-6 py-1.5 text-xs">
-        Could not check freshness: {freshness.reason}
+        Couldn't check freshness: {freshness.reason}
       </div>
     );
   }

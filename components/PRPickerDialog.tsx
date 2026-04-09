@@ -30,7 +30,7 @@ export function PRPickerDialog({ open, onOpenChange, onSelect }: Props) {
       .searchPullRequests()
       .then(setPrs)
       .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : 'Failed to load pull requests');
+        setError(err instanceof Error ? err.message : "Couldn't load pull requests.");
       })
       .finally(() => setLoading(false));
   }, [open]);

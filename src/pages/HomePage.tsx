@@ -562,7 +562,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
       setPatToken('');
       setPatExpanded(false);
     } catch (err) {
-      setPatError(err instanceof Error ? err.message : 'Failed to connect token.');
+      setPatError(err instanceof Error ? err.message : "Couldn't connect that token.");
     } finally {
       setPatConnecting(false);
     }
@@ -595,7 +595,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
       setHistory(updated);
       setPrUrl('');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to start review.');
+      setError(err instanceof Error ? err.message : "Couldn't start the review.");
     } finally {
       setSubmitting(false);
     }
@@ -640,7 +640,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
       setHistory((prev) => prev.map((e) => (e.id === id ? { ...e, unread: false } : e)));
       onReviewReady(review);
     } catch {
-      setError('Failed to load saved review.');
+      setError("Couldn't load that review.");
     }
   }
 
@@ -882,7 +882,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                     }}
                     className="text-sm text-foreground underline underline-offset-4 hover:opacity-80 transition-opacity"
                   >
-                    {firstRunOpen ? 'Got it — let’s go →' : 'Close'}
+                    {firstRunOpen ? 'Continue →' : 'Close'}
                   </button>
                   <button
                     type="button"
@@ -918,7 +918,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                 <div className="flex items-center gap-5">
                   <span className="slide-meta">
                     {latestUnreadGroup.repoRef} · {latestUnreadGroup.author} ·{' '}
-                    finished {timeAgo(latestUnreadGroup.latestReview.savedAt)}
+                    generated {timeAgo(latestUnreadGroup.latestReview.savedAt)}
                   </span>
                   <button
                     type="button"
@@ -1030,9 +1030,9 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                 {!keyboardHintDismissed && (
                   <p className="slide-meta flex items-center gap-2 -mt-1">
                     <span>
-                      Press <kbd className="kbd">n</kbd> to focus this input,{' '}
-                      <kbd className="kbd">⌘ K</kbd> for the command palette, or{' '}
-                      <kbd className="kbd">?</kbd> for the full cheatsheet.
+                      <kbd className="kbd">n</kbd> to focus ·{' '}
+                      <kbd className="kbd">⌘ K</kbd> to search ·{' '}
+                      <kbd className="kbd">?</kbd> for shortcuts
                     </span>
                     <button
                       type="button"
@@ -1156,7 +1156,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                       <ToggleSwitch
                         id="smart-imports"
                         label="Smart imports"
-                        description="Use AI to find related files across all languages"
+                        description="Pull in related files across all languages, not just imports the parser sees"
                         checked={smartImports}
                         onToggle={() => setSmartImports((s) => !s)}
                         badge="Experimental"
@@ -1213,17 +1213,16 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                   </DialogHeader>
                   <div className="flex flex-col gap-3 text-sm text-muted-foreground">
                     <p>
-                      The {cliNotFound?.provider === 'claude' ? 'Claude' : 'Gemini'} CLI could not be found on your
-                      system. Gnosis uses the CLI to generate reviews.
+                      Gnosis runs reviews against your local{' '}
+                      {cliNotFound?.provider === 'claude' ? 'Claude' : 'Gemini'} CLI, but couldn't find it on
+                      your machine.
                     </p>
                     <p>
                       {cliNotFound?.provider === 'claude'
                         ? 'Install it from claude.ai/code and authenticate with `claude auth`.'
                         : 'Install it from github.com/google-gemini/gemini-cli and authenticate.'}
                     </p>
-                    <p>
-                      If the CLI is already installed but not detected, you can set the path manually in Settings.
-                    </p>
+                    <p>Already installed? Set the path manually in Settings.</p>
                   </div>
                   <div className="flex gap-2 justify-end pt-2">
                     <Button variant="outline" onClick={() => setCliNotFound(null)}>
@@ -1269,8 +1268,8 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                 </div>
                 {visiblePendingReviews.length === 0 ? (
                   <p className="slide-prose text-sm text-muted-foreground max-w-[68ch]">
-                    Nothing here yet. When someone adds you as a reviewer on a GitHub pull request — or when you
-                    open one yourself — Gnosis will list it here so you can generate a review with one click.
+                    Nothing here yet. PRs you're asked to review — or that you open yourself — will appear in
+                    this list.
                   </p>
                 ) : (
                   <ul className="flex flex-col">

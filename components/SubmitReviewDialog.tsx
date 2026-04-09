@@ -57,7 +57,7 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
       setSuccessUrl(result.reviewUrl);
       setDroppedCount(result.droppedCommentCount);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to submit review');
+      setError(err instanceof Error ? err.message : "Couldn't submit the review.");
     } finally {
       setSubmitting(false);
     }

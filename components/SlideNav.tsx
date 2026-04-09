@@ -42,7 +42,7 @@ export function SlideNav({
   const showSubmitAsRight = atEnd && !!onSubmitReview;
   const showSubmitInCenter = !showSubmitAsRight && !!onSubmitReview;
 
-  const nextLeadIn = isOverview ? 'Begin reading' : 'Next';
+  const nextLeadIn = isOverview ? 'Start reading' : 'Next';
 
   return (
     <div className="border-t border-border bg-muted/30 shrink-0">
@@ -104,7 +104,7 @@ export function SlideNav({
             title="Submit review"
           >
             <span className="flex flex-col gap-0.5 min-w-0 items-end">
-              <span className="slide-meta">You've reached the end</span>
+              <span className="slide-meta">End of review</span>
               <span className="font-serif text-base text-foreground group-hover:opacity-80 transition-opacity truncate">
                 Submit review
                 {commentCount > 0 && (
@@ -126,7 +126,7 @@ export function SlideNav({
             <span className="flex flex-col gap-0.5 min-w-0 items-end">
               <span className="slide-meta">{nextLeadIn}</span>
               <span className="font-serif text-base text-foreground group-hover:opacity-80 transition-opacity truncate">
-                {nextTitle ?? 'End of review'}
+                {nextTitle ?? '—'}
               </span>
             </span>
             <span className="slide-meta shrink-0 text-foreground group-hover:opacity-80 transition-opacity">
