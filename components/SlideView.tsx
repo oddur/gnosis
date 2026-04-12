@@ -111,7 +111,12 @@ export function SlideView({
   onMarkReviewed,
   onToggleReviewed,
 }: Props) {
-  const typeConfig = slideTypeConfig[slide.slideType];
+  // The AI can return slideType values not in the config (e.g. "other",
+  // "cleanup"). Cast to string to bypass the exhaustive Record<SlideType>
+  // type, which TypeScript considers infallible at compile time.
+  const typeConfig =
+    (slideTypeConfig as Record<string, (typeof slideTypeConfig)[keyof typeof slideTypeConfig]>)[slide.slideType]
+    ?? slideTypeConfig.foundation;
   const Icon = typeConfig.icon;
   const groupedHunks = groupHunksByFile(slide.diffHunks);
   const rightPanelRef = useRef<HTMLDivElement>(null);
