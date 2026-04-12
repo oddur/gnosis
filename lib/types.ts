@@ -196,7 +196,6 @@ export interface Preferences {
   provider: Provider;
   model: ModelId;
   thinking: boolean;
-  signalBoost: boolean;
   smartImports: boolean;
   reviewSuggestions: boolean;
   enableTools: boolean;
@@ -235,7 +234,6 @@ export interface GenerateReviewRequest {
   model: ModelId;
   instructions?: string;
   thinking?: boolean;
-  signalBoost?: boolean;
   smartImports?: boolean;
   reviewSuggestions?: boolean;
   webResearch?: boolean;

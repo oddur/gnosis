@@ -420,7 +420,6 @@ async function triggerBackgroundReview(prUrl: string, prefs: Preferences): Promi
       model: prefs.model,
       instructions: prefs.instructions,
       thinking: prefs.thinking,
-      signalBoost: prefs.signalBoost,
       smartImports: prefs.smartImports,
       reviewSuggestions: prefs.reviewSuggestions,
     };
@@ -684,7 +683,6 @@ const DEFAULT_PREFERENCES: Preferences = {
   provider: 'claude',
   model: 'claude-opus-4-6',
   thinking: true,
-  signalBoost: true,
   smartImports: true,
   reviewSuggestions: true,
   enableTools: false,
@@ -999,7 +997,7 @@ async function runBackgroundGeneration(
   prData: Awaited<ReturnType<typeof getPrMetadata>>,
   signal: AbortSignal
 ): Promise<void> {
-  const { prUrl, provider, model, instructions, thinking, signalBoost, smartImports, reviewSuggestions, webResearch } =
+  const { prUrl, provider, model, instructions, thinking, smartImports, reviewSuggestions, webResearch } =
     request;
 
   try {
@@ -1148,7 +1146,6 @@ async function runBackgroundGeneration(
           broadcastToAllWindows('review-progress', { reviewId, chunk, isThinking });
         },
         thinking ?? false,
-        signalBoost ?? false,
         mcpConfigPath,
         allowedTools,
         reviewSuggestions ?? true,

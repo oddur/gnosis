@@ -123,7 +123,6 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   const [provider, setProvider] = useState<Provider>('claude');
   const [model, setModel] = useState<ModelId>('claude-opus-4-6');
   const [thinking, setThinking] = useState(true);
-  const [signalBoost, setSignalBoost] = useState(true);
   const [smartImports, setSmartImports] = useState(true);
   const [reviewSuggestions, setReviewSuggestions] = useState(true);
   const [webResearch, setWebResearch] = useState(false);
@@ -239,7 +238,6 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
       setProvider(prefs.provider);
       setModel(prefs.model);
       setThinking(prefs.thinking);
-      setSignalBoost(prefs.signalBoost);
       setSmartImports(prefs.smartImports);
       setReviewSuggestions(prefs.reviewSuggestions);
       setWebResearch(prefs.enableWebResearch);
@@ -502,7 +500,6 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
           provider,
           model,
           thinking,
-          signalBoost,
           smartImports,
           reviewSuggestions,
           enableWebResearch: webResearch,
@@ -516,7 +513,6 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
       provider,
       model,
       thinking,
-      signalBoost,
       smartImports,
       reviewSuggestions,
       webResearch,
@@ -532,7 +528,6 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
     provider,
     model,
     thinking,
-    signalBoost,
     smartImports,
     reviewSuggestions,
     webResearch,
@@ -586,7 +581,6 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
         model,
         instructions: instructions.trim() || undefined,
         thinking,
-        signalBoost,
         smartImports,
         reviewSuggestions,
         webResearch,
@@ -1146,14 +1140,6 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                           onToggle={() => setThinking((t) => !t)}
                         />
                       )}
-                      <ToggleSwitch
-                        id="signal-boost"
-                        label="Signal boost"
-                        description="Deprioritize formatting and import-only changes. Emphasize design decisions."
-                        checked={signalBoost}
-                        onToggle={() => setSignalBoost((s) => !s)}
-                        badge="Experimental"
-                      />
                       <ToggleSwitch
                         id="smart-imports"
                         label="Smart imports"

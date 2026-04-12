@@ -178,7 +178,6 @@ export async function generateReviewGuide(
   instructions?: string,
   onChunk?: (chunk: string, isThinking: boolean) => void,
   thinking: boolean = false,
-  signalBoost: boolean = false,
   mcpConfigPath?: string,
   allowedTools?: string[],
   reviewSuggestions: boolean = true,
@@ -205,9 +204,9 @@ export async function generateReviewGuide(
 
     const webResearchDirective = webResearch ? WEB_RESEARCH_DIRECTIVE : '';
 
-    const baseSystem = signalBoost
-      ? `${SIGNAL_BOOST_DIRECTIVE}\n${webResearchDirective}${SYSTEM_PROMPT}${reviewSuggestionsDirective}`
-      : `${webResearchDirective}${SYSTEM_PROMPT}${reviewSuggestionsDirective}`;
+    // Signal boost is always on — deprioritize formatting and
+    // import-only changes, emphasize design decisions.
+    const baseSystem = `${SIGNAL_BOOST_DIRECTIVE}\n${webResearchDirective}${SYSTEM_PROMPT}${reviewSuggestionsDirective}`;
 
     const system = customInstructions
       ? `${baseSystem}\n\nIMPORTANT — CUSTOM REVIEWER INSTRUCTIONS:\nThe reviewer has provided the following instructions. These take precedence over the default writing style and tone guidelines above. Adapt your narrative, reviewFocus, summary, and all prose fields accordingly.\n\n<instructions>\n${customInstructions}\n</instructions>`
