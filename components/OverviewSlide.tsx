@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Markdown } from '@/components/Markdown';
-import { riskConfig } from '@/lib/constants';
+import { riskConfig, safeConfigLookup } from '@/lib/constants';
 import type { PrStatus, ReviewGuide } from '@/lib/types';
 
 interface Props {
@@ -118,7 +118,7 @@ function StatusLine({ status }: { status: PrStatus | null }) {
 // ─── OverviewSlide ─────────────────────────────────────────────
 
 export function OverviewSlide({ review, prStatus, onNavigate }: Props) {
-  const risk = riskConfig[review.riskLevel];
+  const risk = safeConfigLookup(riskConfig, review.riskLevel, riskConfig.low);
   const [descOpen, setDescOpen] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [remainingOpen, setRemainingOpen] = useState(false);

@@ -1,6 +1,6 @@
 import { createElement, type ComponentType, type SVGProps } from 'react';
 import { Blocks, Sparkles, RefreshCw, Bug, TestTube2, Settings, FileText } from 'lucide-react';
-import type { SlideType } from '@/lib/types';
+
 
 export const CODE_THEMES = [
   { id: 'aurora-x', label: 'Aurora X' },
@@ -43,7 +43,7 @@ export function GitHubIcon(props: SVGProps<SVGSVGElement>) {
 // matches the editorial brief: color is punctuation, not category
 // shorthand. /distill may remove the icons entirely later.
 export const slideTypeConfig: Record<
-  SlideType,
+  string,
   { label: string; className: string; icon: ComponentType<{ className?: string }> }
 > = {
   foundation: { label: 'Foundation', className: 'text-foreground/85', icon: Blocks },
@@ -55,10 +55,18 @@ export const slideTypeConfig: Record<
   docs: { label: 'Docs', className: 'text-foreground/85', icon: FileText },
 };
 
+// Safe lookup for config objects keyed by AI-generated string values.
+// The AI can return values outside the typed union (e.g. slideType
+// "other", riskLevel "critical"), so every config lookup needs a
+// fallback. This helper avoids repeating the cast-and-coalesce
+// pattern at every call site.
+export function safeConfigLookup<T>(config: Record<string, T>, key: string, fallback: T): T {
+  return config[key] ?? fallback;
+}
+
 // Risk uses the warm editorial pill classes — same vocabulary as the
-// status pills, just routed to the three semantic levels. /distill may
-// later replace this with a text-only treatment.
-export const riskConfig = {
+// status pills, just routed to the three semantic levels.
+export const riskConfig: Record<string, { label: string; badgeClassName: string; variant: 'secondary' | 'default' | 'destructive' }> = {
   low: {
     label: 'Low Risk',
     badgeClassName: 'statusPill-neutral',

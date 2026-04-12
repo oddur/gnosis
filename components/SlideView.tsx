@@ -8,7 +8,7 @@ import { SplitDiffHunkGroup } from '@/components/SplitDiffHunk';
 import { FilePathLink } from '@/components/FilePathLink';
 import { Markdown } from '@/components/Markdown';
 import { MermaidDiagram } from '@/components/MermaidDiagram';
-import { slideTypeConfig } from '@/lib/constants';
+import { slideTypeConfig, safeConfigLookup } from '@/lib/constants';
 import type { CommentCallbacks } from '@/components/shared-diff-utils';
 import type { Slide, DiffHunk, FileMetadata, PendingReviewComment, Preferences, ReviewCheck } from '@/lib/types';
 
@@ -111,12 +111,7 @@ export function SlideView({
   onMarkReviewed,
   onToggleReviewed,
 }: Props) {
-  // The AI can return slideType values not in the config (e.g. "other",
-  // "cleanup"). Cast to string to bypass the exhaustive Record<SlideType>
-  // type, which TypeScript considers infallible at compile time.
-  const typeConfig =
-    (slideTypeConfig as Record<string, (typeof slideTypeConfig)[keyof typeof slideTypeConfig]>)[slide.slideType]
-    ?? slideTypeConfig.foundation;
+  const typeConfig = safeConfigLookup(slideTypeConfig, slide.slideType, slideTypeConfig.foundation);
   const Icon = typeConfig.icon;
   const groupedHunks = groupHunksByFile(slide.diffHunks);
   const rightPanelRef = useRef<HTMLDivElement>(null);

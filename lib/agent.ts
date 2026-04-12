@@ -137,9 +137,9 @@ You have access to web search and fetch tools. Before producing the review guide
 Include every URL you consulted in the "webSources" array. Each entry needs "url" and "title".
 `;
 
-const SIGNAL_BOOST_DIRECTIVE = `
-SIGNAL BOOST MODE — ACTIVE
-You must apply these rules on top of all other guidelines:
+const FOCUS_DIRECTIVE = `
+REVIEW FOCUS RULES
+Apply these rules on top of all other guidelines:
 
 1. SKIP slides for trivial changes: whitespace-only edits, import reordering, rename-only refactors, boilerplate ceremony (license headers, generated code, auto-formatted files).
 2. If there are minor changes worth noting, merge them into a single "Minor changes" slide at the END of the slides array. Otherwise omit them entirely.
@@ -206,7 +206,7 @@ export async function generateReviewGuide(
 
     // Signal boost is always on — deprioritize formatting and
     // import-only changes, emphasize design decisions.
-    const baseSystem = `${SIGNAL_BOOST_DIRECTIVE}\n${webResearchDirective}${SYSTEM_PROMPT}${reviewSuggestionsDirective}`;
+    const baseSystem = `${FOCUS_DIRECTIVE}\n${webResearchDirective}${SYSTEM_PROMPT}${reviewSuggestionsDirective}`;
 
     const system = customInstructions
       ? `${baseSystem}\n\nIMPORTANT — CUSTOM REVIEWER INSTRUCTIONS:\nThe reviewer has provided the following instructions. These take precedence over the default writing style and tone guidelines above. Adapt your narrative, reviewFocus, summary, and all prose fields accordingly.\n\n<instructions>\n${customInstructions}\n</instructions>`

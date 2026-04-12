@@ -27,7 +27,7 @@ import { CommandPalette, type Command } from '../../components/CommandPalette';
 import { useKeyboardShortcuts, type ShortcutMap } from '../../lib/use-keyboard-shortcuts';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { Avatar, AvatarFallback, AvatarImage } from '../../components/ui/avatar';
-import { riskConfig } from '../../lib/constants';
+import { riskConfig, safeConfigLookup } from '../../lib/constants';
 import type { ModelId, Preferences, Provider, PrSearchResult, ReviewGuide, ReviewHistoryEntry } from '../../lib/types';
 import { timeAgo, formatDuration, formatBytes, groupReviewsByPR } from '../../lib/utils';
 
@@ -1369,7 +1369,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                 <ul>
                   {prGroups.map((group) => {
                     const latestStatus = getEntryStatus(group.latestReview);
-                    const risk = riskConfig[group.latestReview.riskLevel];
+                    const risk = safeConfigLookup(riskConfig, group.latestReview.riskLevel, riskConfig.low);
                     const hasMultiple = group.reviews.length > 1;
                     const isExpanded = expandedPRs.has(group.prUrl);
                     const isClickable = latestStatus === 'completed';
@@ -1547,7 +1547,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                           <ul className="border-b border-border/60">
                             {group.reviews.map((review) => {
                               const reviewStatus = getEntryStatus(review);
-                              const reviewRisk = riskConfig[review.riskLevel];
+                              const reviewRisk = safeConfigLookup(riskConfig, review.riskLevel, riskConfig.low);
                               const reviewClickable = reviewStatus === 'completed';
                               const reviewElapsed = elapsedSeconds.get(review.id) ?? 0;
                               const reviewBytesEntry = reviewBytes.get(review.id);

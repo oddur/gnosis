@@ -1,6 +1,5 @@
 import { ExternalLink, ArrowLeft, Settings } from 'lucide-react';
-import { GitHubIcon } from '@/lib/constants';
-import { riskConfig } from '@/lib/constants';
+import { GitHubIcon, riskConfig, safeConfigLookup } from '@/lib/constants';
 import type { ReviewGuide } from '@/lib/types';
 import { formatDuration } from '@/lib/utils';
 
@@ -15,7 +14,7 @@ interface Props {
 // on a hairline rule. Reads like the running header of a printed
 // monograph: title on the left, metadata on the right, no fills.
 export function PRSummaryBanner({ review, onBack, onOpenSettings }: Props) {
-  const risk = riskConfig[review.riskLevel];
+  const risk = safeConfigLookup(riskConfig, review.riskLevel, riskConfig.low);
 
   return (
     <header className="border-b border-border px-6 py-3">
