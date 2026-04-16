@@ -1438,14 +1438,10 @@ async function runBackgroundGeneration(
       const sortedTopics = [...plan.topics].sort((a, b) => a.order - b.order);
 
       // Run writers in parallel with concurrency limit
-      const WRITER_CONCURRENCY = 3;
-      const slideResults: Slide[] = [];
-
-      for (let i = 0; i < sortedTopics.length; i += WRITER_CONCURRENCY) {
-        const batch = sortedTopics.slice(i, i + WRITER_CONCURRENCY);
-        const batchResults = await Promise.all(
-          batch.map(async (topic, batchIdx) => {
-            const slideNum = i + batchIdx + 1;
+      // Fire all writers in parallel — the CLI/API handles its own rate limiting
+      const slideResults: Slide[] = await Promise.all(
+        sortedTopics.map(async (topic, idx) => {
+            const slideNum = idx + 1;
             broadcastToAllWindows('review-phase', {
               reviewId,
               phase: `Writing slide ${slideNum}/${sortedTopics.length}: ${topic.title}`,
@@ -1498,10 +1494,8 @@ async function runBackgroundGeneration(
               reviewChecks: writerOutput.reviewChecks,
               importance: topic.importance,
             } satisfies Slide;
-          })
-        );
-        slideResults.push(...batchResults);
-      }
+        })
+      );
 
       resolvedSlides = slideResults;
     } else {
