@@ -120,6 +120,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
   const [trayEnabled, setTrayEnabled] = useState(true);
   const [maxPrsPerRepo, setMaxPrsPerRepo] = useState(10);
   const [parallelReview, setParallelReview] = useState(false);
+  const [analytics, setAnalytics] = useState(true);
   const [claudePath, setClaudePath] = useState('');
   const [geminiPath, setGeminiPath] = useState('');
   const [claudeDetected, setClaudeDetected] = useState('');
@@ -141,6 +142,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
       setTrayEnabled(prefs.trayEnabled);
       setMaxPrsPerRepo(prefs.maxPrsPerRepo);
       setParallelReview(prefs.parallelReview);
+      setAnalytics(prefs.analytics);
       setClaudePath(prefs.claudePath || '');
       setGeminiPath(prefs.geminiPath || '');
     });
@@ -397,6 +399,21 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                   const next = !trayEnabled;
                   setTrayEnabled(next);
                   saveField({ trayEnabled: next });
+                }}
+              />
+            </SettingRow>
+
+            <SettingRow
+              label="Anonymous usage analytics"
+              description="Sends anonymous app-usage events (e.g. launches, feature usage) to Aptabase, an open-source, privacy-first analytics service. No personal data, no IP addresses, no PRs, no source code — just anonymous event counts that help us decide what to build next."
+            >
+              <Toggle
+                checked={analytics}
+                ariaLabel="Anonymous usage analytics"
+                onChange={() => {
+                  const next = !analytics;
+                  setAnalytics(next);
+                  saveField({ analytics: next });
                 }}
               />
             </SettingRow>
