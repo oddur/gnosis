@@ -877,22 +877,12 @@ function initTrayIfEnabled(): void {
   } catch { /* first run, no prefs file */ }
 
   if (!('trayEnabled' in storedPrefs)) {
-    // First time — ask the user
+    // First time — ask via in-app modal once the renderer is ready
     const win = BrowserWindow.getAllWindows()[0];
-    const response = dialog.showMessageBoxSync(win, {
-      type: 'question',
-      buttons: ['Enable', 'Not Now'],
-      defaultId: 0,
-      cancelId: 1,
-      message: 'Enable menu bar icon?',
-      detail: 'Gnosis can show a menu bar icon for quick access to your reviews, CI status, and more. You can change this later in Settings.',
-    });
-    const enabled = response === 0;
-    const prefs = loadPreferences();
-    savePreferences({ ...prefs, trayEnabled: enabled });
-    if (enabled) {
-      createTray();
-      rebuildTrayMenu();
+    if (win) {
+      win.webContents.once('did-finish-load', () => {
+        win.webContents.send('show-tray-prompt');
+      });
     }
   } else if (loadPreferences().trayEnabled) {
     createTray();
