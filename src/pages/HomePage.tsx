@@ -43,6 +43,7 @@ const PROVIDERS = {
   claude: {
     label: 'Claude',
     models: [
+      { id: 'claude-opus-4-7', label: 'Opus 4.7' },
       { id: 'claude-opus-4-6', label: 'Opus 4.6' },
       { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
       { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
@@ -122,7 +123,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   const [authStatus, setAuthStatus] = useState<AuthStatus>('checking');
   const [prUrl, setPrUrl] = useState(prefillPrUrl ?? '');
   const [provider, setProvider] = useState<Provider>('claude');
-  const [model, setModel] = useState<ModelId>('claude-opus-4-6');
+  const [model, setModel] = useState<ModelId>('claude-opus-4-7');
   const [thinking, setThinking] = useState(true);
   const [smartImports, setSmartImports] = useState(true);
   const [reviewSuggestions, setReviewSuggestions] = useState(true);

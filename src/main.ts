@@ -928,7 +928,7 @@ function getPreferencesPath() {
 const DEFAULT_PREFERENCES: Preferences = {
   instructions: '',
   provider: 'claude',
-  model: 'claude-opus-4-6',
+  model: 'claude-opus-4-7',
   thinking: true,
   smartImports: true,
   reviewSuggestions: true,
