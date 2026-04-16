@@ -285,6 +285,7 @@ export interface ChangedFile {
   additions: number;
   deletions: number;
   previous_filename?: string;
+  patch?: string;
 }
 
 export interface FreshnessCommit {

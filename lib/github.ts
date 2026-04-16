@@ -50,16 +50,55 @@ export async function getPrMetadata(
   };
 }
 
-export async function getPrDiff(octokit: Octokit, owner: string, repo: string, pullNumber: number): Promise<string> {
-  const response = await octokit.request('GET /repos/{owner}/{repo}/pulls/{pull_number}', {
-    owner,
-    repo,
-    pull_number: pullNumber,
-    headers: {
-      accept: 'application/vnd.github.v3.diff',
-    },
-  });
-  return response.data as unknown as string;
+export async function getPrDiff(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  pullNumber: number,
+  changedFiles?: ChangedFile[],
+): Promise<string> {
+  try {
+    const response = await octokit.request('GET /repos/{owner}/{repo}/pulls/{pull_number}', {
+      owner,
+      repo,
+      pull_number: pullNumber,
+      headers: {
+        accept: 'application/vnd.github.v3.diff',
+      },
+    });
+    return response.data as unknown as string;
+  } catch (err) {
+    // GitHub returns 'too_large' for diffs over 20k lines.
+    // Fall back to assembling from individual file patches.
+    const isTooLarge =
+      err instanceof Error && (err.message.includes('too_large') || err.message.includes('diff is too large'));
+    if (!isTooLarge) throw err;
+
+    console.warn('[github] Full diff too large, assembling from file patches');
+    if (!changedFiles) {
+      changedFiles = await getChangedFiles(octokit, owner, repo, pullNumber);
+    }
+    return assembleUnifiedDiff(changedFiles);
+  }
+}
+
+/** Reconstruct a unified diff from individual file patches returned by listFiles. */
+function assembleUnifiedDiff(files: ChangedFile[]): string {
+  const parts: string[] = [];
+  for (const f of files) {
+    if (!f.patch) continue;
+    const a = f.status === 'added' ? '/dev/null' : `a/${f.previous_filename ?? f.filename}`;
+    const b = f.status === 'deleted' ? '/dev/null' : `b/${f.filename}`;
+    parts.push(`diff --git ${a} ${b}`);
+    if (f.status === 'renamed' && f.previous_filename) {
+      parts.push(`rename from ${f.previous_filename}`);
+      parts.push(`rename to ${f.filename}`);
+    }
+    parts.push(`--- ${a}`);
+    parts.push(`+++ ${b}`);
+    parts.push(f.patch);
+  }
+  return parts.join('\n') + '\n';
 }
 
 export async function getChangedFiles(
@@ -86,6 +125,7 @@ export async function getChangedFiles(
         additions: f.additions,
         deletions: f.deletions,
         previous_filename: f.previous_filename,
+        patch: f.patch,
       });
     }
     if (data.length < 100) break;

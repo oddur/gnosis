@@ -1286,10 +1286,9 @@ async function runBackgroundGeneration(
 
     broadcastToAllWindows('review-phase', { reviewId, phase: 'Fetching PR data' });
 
-    const [diff, allChangedFiles] = await Promise.all([
-      getPrDiff(octokit, owner, repo, pullNumber),
-      getChangedFiles(octokit, owner, repo, pullNumber),
-    ]);
+    // Fetch changed files first so we can pass them to getPrDiff as fallback
+    const allChangedFiles = await getChangedFiles(octokit, owner, repo, pullNumber);
+    const diff = await getPrDiff(octokit, owner, repo, pullNumber, allChangedFiles);
 
     // Fetch file metadata (age + churn) in the background while the
     // rest of the pipeline proceeds. We don't await it here — it
