@@ -932,7 +932,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   theme: 'system',
   trayEnabled: true,
   maxPrsPerRepo: 10,
-  parallelReview: false,
+  parallelReview: true,
 };
 
 function applyBinaryOverrides(prefs: Preferences): void {
