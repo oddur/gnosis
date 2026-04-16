@@ -881,11 +881,10 @@ function rebuildTrayMenu(): void {
   updateTrayMenu(readReviewsIndex(), {
     onShowWindow: showOrCreateWindow,
     onNavigateToReview: navigateToReview,
-    onOpenExternal: (url: string) => shell.openExternal(url),
-    onQuit: () => {
-      quitConfirmed = true;
-      app.quit();
+    onOpenExternal: (url: string) => {
+      try { if (new URL(url).protocol === 'https:') void shell.openExternal(url); } catch {}
     },
+    onQuit: () => app.quit(),
   });
 }
 

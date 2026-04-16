@@ -292,18 +292,21 @@ export function updateTrayMenu(
     );
     if (openReviews.length > 0) {
       let resolved = 0;
+      let didUpdate = false;
       for (const review of openReviews) {
         pendingFetches.add(review.prUrl);
         statusFetcher(review.prUrl)
           .then((status) => {
-            if (status) prStatusCache.set(review.prUrl, { status, fetchedAt: Date.now() });
+            if (status) {
+              prStatusCache.set(review.prUrl, { status, fetchedAt: Date.now() });
+              didUpdate = true;
+            }
           })
           .catch(() => {})
           .finally(() => {
             pendingFetches.delete(review.prUrl);
             resolved++;
-            // Rebuild menu once all fetches complete
-            if (resolved === openReviews.length && lastCallbacks) {
+            if (resolved === openReviews.length && didUpdate && lastCallbacks) {
               updateTrayMenu(lastReviews, lastCallbacks);
             }
           });

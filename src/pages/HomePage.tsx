@@ -1369,7 +1369,12 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
 
           {/* ── Tray prompt dialog ── */}
           <Dialog open={trayPromptOpen} onOpenChange={setTrayPromptOpen}>
-            <DialogContent className="bg-card sm:max-w-sm" showCloseButton={false}>
+            <DialogContent
+              className="bg-card sm:max-w-sm"
+              showCloseButton={false}
+              onPointerDownOutside={(e) => e.preventDefault()}
+              onEscapeKeyDown={(e) => e.preventDefault()}
+            >
               <DialogHeader>
                 <DialogTitle>Enable menu bar icon?</DialogTitle>
               </DialogHeader>
