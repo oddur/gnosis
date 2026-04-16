@@ -437,6 +437,7 @@ export async function generateSlide(
   }
 
   const userMessage = topicContext + WRITER_USER_SUFFIX;
+  console.log(`[writer] Starting ${providerName} (${model}) with ${userMessage.length} chars`);
 
   async function attempt(extra: string = ''): Promise<WriterSlideOutput> {
     const fullText = await provider.generate({
