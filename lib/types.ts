@@ -4,6 +4,7 @@ export interface CiCheck {
   name: string;
   status: 'queued' | 'in_progress' | 'completed';
   conclusion: string | null;
+  url: string | null;
 }
 
 export interface ReviewSummary {
@@ -216,6 +217,7 @@ export interface Preferences {
   reviewSignature: boolean;
   firstRunSeen: boolean;
   theme: 'light' | 'dark' | 'system';
+  trayEnabled: boolean;
 }
 
 export interface SendSlideChatRequest {

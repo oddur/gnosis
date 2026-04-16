@@ -222,6 +222,7 @@ export async function getCiStatus(
     name: run.name,
     status: run.status as CiCheck['status'],
     conclusion: run.conclusion ?? null,
+    url: run.html_url ?? run.details_url ?? null,
   }));
 
   let conclusion: 'success' | 'failure' | 'pending' | 'neutral' = 'success';

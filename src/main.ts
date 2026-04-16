@@ -31,6 +31,7 @@ import { buildSlideChatSystemPrompt, buildSlideChatUserMessage } from '../lib/ch
 import { buildIndexedHunks, expandFullDiff, formatHunkIndexForPrompt, sortDiffHunks } from '../lib/diff-parse';
 import { classifyFiles, filterDiff, buildExcludedFilesSummary } from '../lib/file-filter';
 import { writeMcpConfig, cleanupMcpConfig } from '../lib/mcp-config';
+import { createTray, updateTrayMenu, destroyTray, setStatusFetcher } from './tray';
 import type {
   ChangedFile,
   DiffHunk,
@@ -468,12 +469,15 @@ async function triggerProactiveReview(
       prData = await getPrMetadata(octokit, owner, repo, pullNumber);
     }
 
+    // Cancel any in-flight generation for this PR
+    cancelExistingGenerationForPr(prUrl);
+
     const abortController = new AbortController();
     createPendingHistoryEntry(reviewId, prData.title, prUrl, prData.author, prefs.model, 'open', prData.headSha, true);
     if (opts.autoUpdated) {
       updateHistoryEntry(reviewId, { autoUpdated: true });
     }
-    activeGenerations.set(reviewId, { abortController });
+    activeGenerations.set(reviewId, { abortController, prUrl });
 
     const request: GenerateReviewRequest = {
       prUrl,
@@ -669,6 +673,9 @@ void app.whenReady().then(() => {
   backfillSummaries();
   applyBinaryOverrides(loadPreferences());
   createWindow();
+  initTrayIfEnabled();
+  setStatusFetcher(fetchPrStatus);
+  rebuildTrayMenu();
   setupAutoUpdater();
 
   // GitHub release polling only needed on Linux (no native auto-update)
@@ -709,6 +716,7 @@ app.on('before-quit', (event) => {
     updateHistoryEntry(id, { status: 'failed', error: 'App quit during generation' });
   }
   activeGenerations.clear();
+  destroyTray();
 });
 
 app.on('window-all-closed', () => {
@@ -772,7 +780,19 @@ function backfillSummaries(): void {
 
 // ── Background generation tracking ──────────────────────────────
 
-const activeGenerations = new Map<string, { abortController?: AbortController }>();
+const activeGenerations = new Map<string, { abortController?: AbortController; prUrl?: string }>();
+
+/** Cancel any in-flight generation for the same PR URL. */
+function cancelExistingGenerationForPr(prUrl: string): void {
+  for (const [id, gen] of activeGenerations) {
+    if (gen.prUrl === prUrl) {
+      console.log(`[main] Cancelling stale generation ${id} for ${prUrl}`);
+      gen.abortController?.abort('Superseded by new review');
+      updateHistoryEntry(id, { status: 'failed', error: 'Superseded by newer review' });
+      activeGenerations.delete(id);
+    }
+  }
+}
 
 function createPendingHistoryEntry(
   id: string,
@@ -801,6 +821,7 @@ function createPendingHistoryEntry(
   const index = readReviewsIndex();
   index.unshift(entry);
   fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+  rebuildTrayMenu();
 }
 
 function updateHistoryEntry(id: string, updates: Partial<ReviewHistoryEntry>): void {
@@ -809,12 +830,62 @@ function updateHistoryEntry(id: string, updates: Partial<ReviewHistoryEntry>): v
   if (idx === -1) return;
   index[idx] = { ...index[idx], ...updates };
   fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+  rebuildTrayMenu();
 }
 
 function broadcastToAllWindows(channel: string, ...args: unknown[]): void {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send(channel, ...args);
   }
+}
+
+function showOrCreateWindow(): void {
+  const windows = BrowserWindow.getAllWindows();
+  if (windows.length > 0) {
+    const win = windows[0];
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+  } else {
+    createWindow();
+  }
+}
+
+function navigateToReview(reviewId: string): void {
+  showOrCreateWindow();
+  setTimeout(() => broadcastToAllWindows('review-navigate', { reviewId }), 100);
+}
+
+function initTrayIfEnabled(): void {
+  // Read raw prefs once to check if trayEnabled has ever been set
+  let raw: Record<string, unknown> | null = null;
+  try {
+    raw = JSON.parse(fs.readFileSync(getPreferencesPath(), 'utf-8')) as Record<string, unknown>;
+  } catch { /* first run, no prefs file */ }
+
+  if (!raw || !('trayEnabled' in raw)) {
+    // First time — ask via in-app modal once the renderer is ready
+    const win = BrowserWindow.getAllWindows()[0];
+    if (win) {
+      win.webContents.once('did-finish-load', () => {
+        win.webContents.send('show-tray-prompt');
+      });
+    }
+  } else if (raw.trayEnabled) {
+    createTray();
+    rebuildTrayMenu();
+  }
+}
+
+function rebuildTrayMenu(): void {
+  updateTrayMenu(readReviewsIndex(), {
+    onShowWindow: showOrCreateWindow,
+    onNavigateToReview: navigateToReview,
+    onOpenExternal: (url: string) => {
+      try { if (new URL(url).protocol === 'https:') void shell.openExternal(url); } catch {}
+    },
+    onQuit: () => app.quit(),
+  });
 }
 
 function cleanupStaleGeneratingEntries(): void {
@@ -859,6 +930,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   reviewSignature: true,
   firstRunSeen: false,
   theme: 'system',
+  trayEnabled: true,
 };
 
 function applyBinaryOverrides(prefs: Preferences): void {
@@ -1007,6 +1079,13 @@ ipcMain.handle('save-preferences', (_event, prefs: Preferences) => {
   // Restart polling so the new proactiveMode value takes effect immediately
   stopProactivePolling();
   if (prefs.proactiveMode) startProactivePolling();
+  // Toggle tray on/off
+  if (prefs.trayEnabled) {
+    createTray();
+    rebuildTrayMenu();
+  } else {
+    destroyTray();
+  }
 });
 
 ipcMain.handle('detect-binary-path', (_event, name: string) => {
@@ -1044,6 +1123,7 @@ ipcMain.handle('mark-review-read', (_event, id: string) => {
     e.id === id ? { ...e, unread: false, autoUpdated: false } : e
   );
   fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+  rebuildTrayMenu();
 });
 
 ipcMain.handle('delete-review', (_event, id: string) => {
@@ -1053,6 +1133,7 @@ ipcMain.handle('delete-review', (_event, id: string) => {
   if (fs.existsSync(promptPath)) fs.unlinkSync(promptPath);
   const index = readReviewsIndex().filter((e) => e.id !== id);
   fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+  rebuildTrayMenu();
 });
 
 ipcMain.handle('delete-all-reviews', () => {
@@ -1063,6 +1144,7 @@ ipcMain.handle('delete-all-reviews', () => {
     }
   }
   fs.writeFileSync(getReviewsIndexPath(), JSON.stringify([], null, 2));
+  rebuildTrayMenu();
 });
 
 ipcMain.handle(
@@ -1122,9 +1204,10 @@ ipcMain.handle(
   }
 );
 
-ipcMain.handle('get-pr-status', async (_event, prUrl: string): Promise<PrStatus> => {
+async function fetchPrStatus(prUrl: string): Promise<PrStatus | null> {
   const token = getResolvedToken();
-  const octokit = new Octokit({ auth: token ?? undefined });
+  if (!token) return null;
+  const octokit = new Octokit({ auth: token });
   const { owner, repo, pullNumber } = parsePrUrl(prUrl);
 
   const [prData, reviewSummary] = await Promise.all([
@@ -1152,6 +1235,12 @@ ipcMain.handle('get-pr-status', async (_event, prUrl: string): Promise<PrStatus>
     autoMerge: prData.autoMerge,
     milestone: prData.milestone,
   };
+}
+
+ipcMain.handle('get-pr-status', async (_event, prUrl: string): Promise<PrStatus> => {
+  const status = await fetchPrStatus(prUrl);
+  if (!status) throw new Error('Not authenticated');
+  return status;
 });
 
 ipcMain.handle(
@@ -1527,15 +1616,7 @@ async function runBackgroundGeneration(
         body: prData.title,
         silent: true,
       });
-      notif.on('click', () => {
-        broadcastToAllWindows('review-navigate', { reviewId });
-        const windows = BrowserWindow.getAllWindows();
-        if (windows.length > 0) {
-          const win = windows[0];
-          if (win.isMinimized()) win.restore();
-          win.focus();
-        }
-      });
+      notif.on('click', () => navigateToReview(reviewId));
       notif.show();
     }
 
@@ -1583,9 +1664,12 @@ ipcMain.handle('start-review', async (_event, request: GenerateReviewRequest): P
     prData.headSha
   );
 
+  // Cancel any in-flight generation for this PR
+  cancelExistingGenerationForPr(request.prUrl);
+
   // Track and fire off background generation (no await)
   const abortController = new AbortController();
-  activeGenerations.set(reviewId, { abortController });
+  activeGenerations.set(reviewId, { abortController, prUrl: request.prUrl });
   void runBackgroundGeneration(reviewId, request, prData, abortController.signal);
 
   return {

@@ -167,6 +167,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   // copy as the inline welcome hero, just reachable from the top bar.
   const [aboutOpen, setAboutOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<'all' | 'closed' | null>(null);
+  const [trayPromptOpen, setTrayPromptOpen] = useState(false);
 
   // Update availability — rendered as a newspaper "Extra" notice
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
@@ -230,6 +231,11 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
     return () => {
       window.electronAPI.offNewReviewInHistory();
     };
+  }, []);
+
+  useEffect(() => {
+    window.electronAPI.onShowTrayPrompt(() => setTrayPromptOpen(true));
+    return () => { window.electronAPI.offShowTrayPrompt(); };
   }, []);
 
   // Listen for app update events
@@ -1357,6 +1363,38 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                 >
                   {confirmDelete === 'all' ? 'Delete all' : 'Delete closed'}
                 </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          {/* ── Tray prompt dialog ── */}
+          <Dialog open={trayPromptOpen} onOpenChange={setTrayPromptOpen}>
+            <DialogContent
+              className="bg-card sm:max-w-sm"
+              showCloseButton={false}
+              onPointerDownOutside={(e) => e.preventDefault()}
+              onEscapeKeyDown={(e) => e.preventDefault()}
+            >
+              <DialogHeader>
+                <DialogTitle>Enable menu bar icon?</DialogTitle>
+              </DialogHeader>
+              <p className="text-sm text-muted-foreground">
+                Gnosis can show a menu bar icon for quick access to your reviews, CI status, and more.
+              </p>
+              <p className="text-xs text-muted-foreground">You can change this anytime in Settings.</p>
+              <div className="flex gap-2 justify-end pt-2">
+                <Button variant="outline" onClick={() => {
+                  setTrayPromptOpen(false);
+                  void window.electronAPI.loadPreferences().then((current) => {
+                    void window.electronAPI.savePreferences({ ...current, trayEnabled: false });
+                  });
+                }}>Not now</Button>
+                <Button onClick={() => {
+                  setTrayPromptOpen(false);
+                  void window.electronAPI.loadPreferences().then((current) => {
+                    void window.electronAPI.savePreferences({ ...current, trayEnabled: true });
+                  });
+                }}>Enable</Button>
               </div>
             </DialogContent>
           </Dialog>
