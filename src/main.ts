@@ -604,7 +604,29 @@ function readReviewsIndex(): ReviewHistoryEntry[] {
   try {
     const entries = JSON.parse(fs.readFileSync(getReviewsIndexPath(), 'utf-8')) as ReviewHistoryEntry[];
     // Backward compat: entries without status are completed
-    return entries.map((e) => ({ ...e, status: e.status ?? 'completed' }));
+    let dirty = false;
+    const result = entries.map((e) => {
+      const patched = { ...e, status: e.status ?? ('completed' as const) };
+      // Backfill summary from the full review JSON if missing
+      if (!patched.summary && patched.status === 'completed') {
+        try {
+          const reviewPath = path.join(getReviewsDir(), `${patched.id}.json`);
+          const review = JSON.parse(fs.readFileSync(reviewPath, 'utf-8')) as ReviewGuide;
+          if (review.summary) {
+            patched.summary = review.summary;
+            dirty = true;
+          }
+        } catch {
+          // Review file missing or unreadable — skip
+        }
+      }
+      return patched;
+    });
+    // Persist backfilled summaries so we only do this once
+    if (dirty) {
+      fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(result, null, 2));
+    }
+    return result;
   } catch {
     return [];
   }
@@ -1327,6 +1349,7 @@ async function runBackgroundGeneration(
       status: 'completed',
       riskLevel: reviewGuide.riskLevel,
       generationDurationMs,
+      summary: reviewGuide.summary,
     });
 
     broadcastToAllWindows('review-completed', { reviewId });

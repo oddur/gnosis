@@ -958,6 +958,438 @@ ul.review-focus-content > li::before {
   transition: width 600ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* ─── Newspaper layout ───────────────────────────────────────
+   Broadsheet-inspired layout for the homepage. Classic newspaper
+   typography: centered masthead, Oxford rules, column dividers,
+   headline hierarchy, and multi-column archives grid. Built on
+   the existing editorial palette (warm paper, Fraunces serif,
+   claret accent). */
+
+/* Vertical rhythm scale for the newspaper page:
+   Sections are separated by generous space (2-3rem).
+   Sub-sections within a zone get tighter space (1-1.5rem).
+   Content inside an article gets the tightest (0.375-0.75rem). */
+.newspaper {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 2rem 2.5rem 4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ─ Masthead ─ */
+.newspaper-masthead {
+  text-align: center;
+  padding: 1.5rem 0 0;
+  margin-bottom: 2rem;
+}
+
+.newspaper-masthead h1 {
+  font-family: var(--font-serif);
+  font-size: clamp(2.25rem, 1.5rem + 3.5vw, 3.75rem);
+  font-weight: 300;
+  letter-spacing: 0.22em;
+  line-height: 1;
+  font-variation-settings: 'opsz' 96;
+  color: var(--foreground);
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.newspaper-tagline {
+  font-family: var(--font-serif);
+  font-size: 0.9375rem;
+  font-weight: 300;
+  font-style: italic;
+  letter-spacing: 0.04em;
+  color: var(--muted-foreground);
+  font-variation-settings: 'opsz' 12;
+  margin-top: 0.25rem;
+}
+
+.newspaper-dateline {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  margin-top: 0.5rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.newspaper-dateline a,
+.newspaper-dateline button {
+  color: var(--muted-foreground);
+  text-decoration: none;
+  transition: color 150ms;
+}
+
+.newspaper-dateline a:hover,
+.newspaper-dateline button:hover {
+  color: var(--foreground);
+}
+
+/* ─ Oxford rules ─ Thin-thick-thin lines used in broadsheet headers */
+.newspaper-rule {
+  border: none;
+  height: 1px;
+  background: var(--border);
+  margin: 0;
+}
+
+.newspaper-rule--double {
+  height: 0;
+  border-top: 2px solid var(--foreground);
+  border-bottom: 1px solid var(--foreground);
+  padding-top: 3px;
+  background: none;
+}
+
+.newspaper-rule--thin {
+  height: 0;
+  border-top: 1px solid var(--border);
+  background: none;
+}
+
+/* ─ Section headers ─ Small-caps section labels like in broadsheets */
+.newspaper-section {
+  font-family: var(--font-sans);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1.5;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--foreground);
+  display: block;
+  margin-bottom: 0.75rem;
+}
+
+/* ─ Above the fold ─ Lead story + dispatches sidebar */
+.newspaper-above-fold {
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  gap: 0;
+}
+
+@media (max-width: 768px) {
+  .newspaper-above-fold {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ─ Lead story ─ */
+.newspaper-lead {
+  padding-right: 2rem;
+  border-right: 1px solid var(--border);
+}
+
+@media (max-width: 768px) {
+  .newspaper-lead {
+    padding-right: 0;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 1.5rem;
+  }
+}
+
+.newspaper-headline--lead {
+  font-family: var(--font-serif);
+  font-size: clamp(1.75rem, 1rem + 3vw, 3rem);
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  font-variation-settings: 'opsz' 72;
+  color: var(--foreground);
+  text-wrap: balance;
+  margin: 0.25rem 0 0.75rem;
+}
+
+.newspaper-headline--lead:hover {
+  color: var(--ring);
+}
+
+/* Secondary headline — used for the "All caught up" state and
+   other moments that need a headline but not the full lead weight. */
+.newspaper-headline--secondary {
+  font-family: var(--font-serif);
+  font-size: clamp(1.25rem, 0.8rem + 1.5vw, 1.75rem);
+  font-weight: 440;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  font-variation-settings: 'opsz' 36;
+  color: var(--foreground);
+  text-wrap: balance;
+  margin: 0.25rem 0 0.75rem;
+}
+
+.newspaper-byline {
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  color: var(--muted-foreground);
+  line-height: 1.4;
+}
+
+.newspaper-lede {
+  font-family: var(--font-serif);
+  font-size: 1.0625rem;
+  font-weight: 340;
+  line-height: 1.55;
+  color: var(--foreground);
+  font-variation-settings: 'opsz' 14;
+  margin-top: 0.75rem;
+  max-width: 56ch;
+}
+
+/* ─ Sidebar (dispatches) ─ */
+.newspaper-sidebar {
+  padding-left: 1.5rem;
+}
+
+@media (max-width: 768px) {
+  .newspaper-sidebar {
+    padding-left: 0;
+    padding-top: 1.5rem;
+  }
+}
+
+.newspaper-sidebar-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding: 0.625rem 0.5rem;
+  margin: 0 -0.5rem;
+  border-bottom: 1px solid oklch(0.5 0.012 65 / 12%);
+  border-radius: 2px;
+  transition: background 150ms;
+}
+
+.newspaper-sidebar-item:last-child {
+  border-bottom: none;
+}
+
+.newspaper-sidebar-item:hover {
+  background: oklch(0.5 0.012 65 / 4%);
+}
+
+.newspaper-sidebar-headline {
+  font-family: var(--font-serif);
+  font-size: 0.9375rem;
+  font-weight: 460;
+  line-height: 1.25;
+  letter-spacing: -0.005em;
+  font-variation-settings: 'opsz' 14;
+  color: var(--foreground);
+}
+
+/* ─ Archives grid ─ Multi-column newspaper layout */
+.newspaper-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
+}
+
+@media (max-width: 1024px) {
+  .newspaper-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .newspaper-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Column rules — vertical dividers between newspaper columns.
+   Uses the right border on non-last-column items. The CSS calc
+   accounts for the gap (none here) so they butt up. */
+.newspaper-article {
+  padding: 1rem 1.5rem;
+  border-right: 1px solid oklch(0.5 0.012 65 / 14%);
+  border-bottom: 1px solid oklch(0.5 0.012 65 / 14%);
+  transition: background 150ms;
+}
+
+.newspaper-article:hover,
+.newspaper-article--featured:hover {
+  background: oklch(0.5 0.012 65 / 4%);
+}
+
+.newspaper-article,
+.newspaper-article--featured {
+  cursor: pointer;
+}
+
+.newspaper-article *,
+.newspaper-article--featured * {
+  cursor: pointer;
+}
+
+/* Remove right border on last column items */
+.newspaper-grid > .newspaper-article:nth-child(3n) {
+  border-right: none;
+}
+
+@media (max-width: 1024px) {
+  .newspaper-grid > .newspaper-article:nth-child(3n) {
+    border-right: 1px solid oklch(0.5 0.012 65 / 14%);
+  }
+  .newspaper-grid > .newspaper-article:nth-child(2n) {
+    border-right: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .newspaper-grid > .newspaper-article {
+    border-right: none;
+  }
+}
+
+/* First article spans full width as a secondary lead.
+   Uses a two-column layout where the headline spans both columns
+   and the lede + meta sit side by side beneath it. */
+.newspaper-article--featured {
+  grid-column: 1 / -1;
+  border-right: none;
+  border-bottom: 1px solid oklch(0.5 0.012 65 / 14%);
+  padding: 1.5rem 1.5rem;
+}
+
+.newspaper-article--featured > * {
+  max-width: 50ch;
+}
+
+@media (max-width: 640px) {
+  .newspaper-article--featured > * {
+    max-width: none;
+  }
+}
+
+/* Headline scale: featured 1.375rem (22px) > unread 1.25rem (20px)
+   > regular 1.125rem (18px) > lede 0.9375rem (15px).
+   Each step is ~1.12-1.2x, enough to read as different at a glance. */
+.newspaper-article-headline {
+  font-family: var(--font-serif);
+  font-size: 1.125rem;
+  font-weight: 460;
+  line-height: 1.22;
+  letter-spacing: -0.005em;
+  font-variation-settings: 'opsz' 20;
+  color: var(--foreground);
+  text-wrap: balance;
+  transition: color 150ms;
+}
+
+.newspaper-article-headline:hover {
+  color: var(--ring);
+}
+
+.newspaper-article-headline--unread {
+  font-weight: 540;
+  font-size: 1.25rem;
+  font-variation-settings: 'opsz' 24;
+}
+
+/* Featured article headline — intermediate tier between the lead
+   and regular article headlines. Used on the first archive item. */
+.newspaper-article-headline--featured {
+  font-family: var(--font-serif);
+  font-size: 1.375rem;
+  font-weight: 500;
+  line-height: 1.18;
+  letter-spacing: -0.01em;
+  font-variation-settings: 'opsz' 28;
+  color: var(--foreground);
+  text-wrap: balance;
+  transition: color 150ms;
+}
+
+.newspaper-article-headline--featured:hover {
+  color: var(--ring);
+}
+
+.newspaper-article-meta {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  color: var(--muted-foreground);
+  margin-top: 0.375rem;
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+}
+
+/* Article lede — the AI summary excerpt. Full text in featured
+   articles, clamped to 3 lines in the regular grid to keep
+   column heights even. */
+.newspaper-article-lede {
+  font-family: var(--font-serif);
+  font-size: 0.9375rem;
+  font-weight: 340;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+  font-variation-settings: 'opsz' 14;
+  margin-top: 0.5rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Featured articles show the full summary */
+.newspaper-article--featured .newspaper-article-lede {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+
+/* ─ Newsroom section (compose) ─ Rule-above separates it from
+   the above-the-fold zone. The generous top padding creates a
+   clear "new section" beat. */
+.newspaper-newsroom {
+  margin: 0;
+  padding: 1.5rem 0 2rem;
+}
+
+/* ─ Footer strip ─ */
+.newspaper-footer {
+  display: flex;
+  justify-content: center;
+  gap: 2rem;
+  padding: 1.5rem 0 0;
+}
+
+.newspaper-footer button {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+  transition: color 150ms;
+}
+
+.newspaper-footer button:hover {
+  color: var(--foreground);
+}
+
+/* ─ Dark mode overrides ─ */
+.dark .newspaper-article {
+  border-right-color: oklch(0.65 0.012 65 / 10%);
+  border-bottom-color: oklch(0.65 0.012 65 / 10%);
+}
+
+.dark .newspaper-article:hover {
+  background: oklch(0.65 0.012 65 / 5%);
+}
+
+.dark .newspaper-sidebar-item {
+  border-bottom-color: oklch(0.65 0.012 65 / 10%);
+}
+
+.dark .newspaper-sidebar-item:hover {
+  background: oklch(0.65 0.012 65 / 5%);
+}
+
 /* ─── Reduced motion ─────────────────────────────────────────
    Honor the OS preference. Every transition and animation in
    the app collapses to instantaneous changes for users who

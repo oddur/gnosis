@@ -169,6 +169,8 @@ export interface ReviewHistoryEntry {
   unread?: boolean;
   prState?: 'open' | 'merged' | 'closed';
   prHeadSha?: string;
+  /** First ~200 chars of the AI summary, used as article lede on the homepage. */
+  summary?: string;
 }
 
 export interface StartReviewResult {
