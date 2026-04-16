@@ -179,7 +179,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-card sm:max-w-md">
+      <DialogContent className="bg-card sm:max-w-md max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="editorial-heading">Settings</DialogTitle>
           <DialogDescription className="slide-meta">Configure your preferences</DialogDescription>
