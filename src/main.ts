@@ -31,6 +31,7 @@ import { buildSlideChatSystemPrompt, buildSlideChatUserMessage } from '../lib/ch
 import { buildIndexedHunks, expandFullDiff, formatHunkIndexForPrompt, sortDiffHunks } from '../lib/diff-parse';
 import { classifyFiles, filterDiff, buildExcludedFilesSummary } from '../lib/file-filter';
 import { writeMcpConfig, cleanupMcpConfig } from '../lib/mcp-config';
+import { initialize as initAptabase, trackEvent } from '@aptabase/electron/main';
 import { createTray, updateTrayMenu, destroyTray, setStatusFetcher } from './tray';
 import type {
   ChangedFile,
@@ -56,6 +57,8 @@ declare const __GH_CLIENT_SECRET__: string;
 
 const GITHUB_CLIENT_ID = 'Ov23lifGr1yrXtcZD5Og';
 const GITHUB_CLIENT_SECRET: string = typeof __GH_CLIENT_SECRET__ !== 'undefined' ? __GH_CLIENT_SECRET__ : '';
+
+void initAptabase('A-EU-7599830434');
 
 // ── In-memory cache ─────────────────────────────────────────────
 
@@ -668,6 +671,8 @@ void app.whenReady().then(() => {
 
   // Expose packaged state to preload via env var (before creating windows)
   process.env.APP_IS_PACKAGED = app.isPackaged ? '1' : '0';
+
+  void trackEvent('app_started');
 
   // Mark any stale "generating" entries from a previous crash as failed
   cleanupStaleGeneratingEntries();
