@@ -1439,33 +1439,49 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                       className={`${idx === 0 ? 'newspaper-article--featured' : 'newspaper-article'} group`}
                       onClick={() => isClickable && handleLoadFromHistory(latestId)}
                     >
-                      {/* Headline — the article-level onClick handles navigation,
-                          so this is just a presentational heading, not a button. */}
-                      <h3
-                        className={
-                          idx === 0
-                            ? 'newspaper-article-headline--featured'
-                            : `newspaper-article-headline ${isUnread ? 'newspaper-article-headline--unread' : ''}`
-                        }
-                      >
-                        {group.prTitle}
-                      </h3>
-
-                      {/* Byline & meta */}
-                      <p className="newspaper-article-meta">
-                        {group.repoRef} · {group.author} · {timeAgo(group.latestReview.savedAt)}
-                        {hasMultiple && ` · ${group.reviews.length} reviews`}
-                      </p>
-
-                      {/* Article lede — the AI summary, truncated */}
-                      {group.latestReview.summary && (
-                        <p className="newspaper-article-lede">
-                          {group.latestReview.summary}
-                        </p>
+                      {/* Featured articles use a two-column layout:
+                          left = headline + meta + badges, right = lede.
+                          Regular articles keep the flat stack. */}
+                      {idx === 0 ? (
+                        <>
+                          <div className="newspaper-featured-left">
+                            <h3 className="newspaper-article-headline--featured">
+                              {group.prTitle}
+                            </h3>
+                            <p className="newspaper-article-meta">
+                              {group.repoRef} · {group.author} · {timeAgo(group.latestReview.savedAt)}
+                              {hasMultiple && ` · ${group.reviews.length} reviews`}
+                            </p>
+                          </div>
+                          {group.latestReview.summary ? (
+                            <div className="newspaper-featured-right">
+                              <p className="newspaper-article-lede !mt-0">
+                                {group.latestReview.summary}
+                              </p>
+                            </div>
+                          ) : <div />}
+                        </>
+                      ) : (
+                        <>
+                          <h3
+                            className={`newspaper-article-headline ${isUnread ? 'newspaper-article-headline--unread' : ''}`}
+                          >
+                            {group.prTitle}
+                          </h3>
+                          <p className="newspaper-article-meta">
+                            {group.repoRef} · {group.author} · {timeAgo(group.latestReview.savedAt)}
+                            {hasMultiple && ` · ${group.reviews.length} reviews`}
+                          </p>
+                          {group.latestReview.summary && (
+                            <p className="newspaper-article-lede">
+                              {group.latestReview.summary}
+                            </p>
+                          )}
+                        </>
                       )}
 
-                      {/* Status badges */}
-                      <div className="flex items-center gap-2 mt-2 flex-wrap">
+                      {/* Status badges — spans full width in featured layout */}
+                      <div className={`flex items-center gap-2 mt-2 flex-wrap ${idx === 0 ? 'newspaper-featured-footer' : ''}`}>
                         {prState === 'open' && !isOutdated && (
                           <Badge variant="outline" className="text-[10px] border-[var(--color-success)]/35 text-[var(--color-success)]">
                             <GitPullRequest className="h-2.5 w-2.5 mr-0.5" /> Open
@@ -1508,13 +1524,13 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
 
                       {/* Byte stats for generating reviews */}
                       {latestStatus === 'generating' && bytes && bytes.inputBytes > 0 && (
-                        <p className="slide-meta opacity-60 mt-1">
+                        <p className={`slide-meta opacity-60 mt-1 ${idx === 0 ? 'newspaper-featured-footer' : ''}`}>
                           ↑{formatBytes(bytes.inputBytes)} ↓{formatBytes(bytes.outputBytes)}
                         </p>
                       )}
 
                       {/* Action row — visible on hover */}
-                      <div className="flex items-center gap-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className={`flex items-center gap-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity ${idx === 0 ? 'newspaper-featured-footer' : ''}`}>
                         {latestStatus === 'generating' && (
                           <button
                             onClick={(e) => { e.stopPropagation(); void window.electronAPI.cancelReview(latestId); }}
@@ -1562,7 +1578,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
 
                       {/* Expanded sub-reviews */}
                       {hasMultiple && isExpanded && (
-                        <div className="mt-2 pt-2 border-t border-border/40 flex flex-col gap-1">
+                        <div className={`mt-2 pt-2 border-t border-border/40 flex flex-col gap-1 ${idx === 0 ? 'newspaper-featured-footer' : ''}`}>
                           {group.reviews.map((review) => {
                             const reviewStatus = getEntryStatus(review);
                             const reviewRisk = safeConfigLookup(riskConfig, review.riskLevel, riskConfig.low);

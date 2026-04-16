@@ -1290,22 +1290,33 @@ ul.review-focus-content > li::before {
 }
 
 /* First article spans full width as a secondary lead.
-   Uses a two-column layout where the headline spans both columns
-   and the lede + meta sit side by side beneath it. */
+   Two-column layout: headline + meta on the left, lede on the right.
+   The grid creates a proper broadsheet feature-story feel. */
 .newspaper-article--featured {
   grid-column: 1 / -1;
   border-right: none;
   border-bottom: 1px solid oklch(0.5 0.012 65 / 14%);
   padding: 1.5rem 1.5rem;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem 2.5rem;
 }
 
-.newspaper-article--featured > * {
-  max-width: 50ch;
+/* Headline column spans left; lede column sits right */
+.newspaper-article--featured .newspaper-featured-left,
+.newspaper-article--featured .newspaper-featured-right {
+  min-width: 0;
 }
 
-@media (max-width: 640px) {
-  .newspaper-article--featured > * {
-    max-width: none;
+/* Anything not in the two columns spans full width below */
+.newspaper-article--featured .newspaper-featured-footer {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 768px) {
+  .newspaper-article--featured {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
   }
 }
 
@@ -1361,9 +1372,8 @@ ul.review-focus-content > li::before {
   letter-spacing: 0.01em;
 }
 
-/* Article lede — the AI summary excerpt. Full text in featured
-   articles, clamped to 3 lines in the regular grid to keep
-   column heights even. */
+/* Article lede — the AI summary excerpt. No truncation — like a
+   real newspaper, show the full summary text. */
 .newspaper-article-lede {
   font-family: var(--font-serif);
   font-size: 0.9375rem;
@@ -1372,17 +1382,6 @@ ul.review-focus-content > li::before {
   color: var(--muted-foreground);
   font-variation-settings: 'opsz' 14;
   margin-top: 0.5rem;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-/* Featured articles show the full summary */
-.newspaper-article--featured .newspaper-article-lede {
-  display: block;
-  -webkit-line-clamp: unset;
-  overflow: visible;
 }
 
 /* ─ Newsroom section (compose) ─ Rule-above separates it from
