@@ -117,6 +117,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
   const showSuggestions = repoSuggestions.length > 0 && !suggestionsDismissed;
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [notifications, setNotifications] = useState(true);
+  const [trayEnabled, setTrayEnabled] = useState(true);
   const [claudePath, setClaudePath] = useState('');
   const [geminiPath, setGeminiPath] = useState('');
   const [claudeDetected, setClaudeDetected] = useState('');
@@ -135,6 +136,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
       setProactiveMode(prefs.proactiveMode);
       setWatchedRepos(prefs.watchedRepos ?? []);
       setNotifications(prefs.notifications);
+      setTrayEnabled(prefs.trayEnabled);
       setClaudePath(prefs.claudePath || '');
       setGeminiPath(prefs.geminiPath || '');
     });
@@ -343,6 +345,18 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                   const next = !notifications;
                   setNotifications(next);
                   saveField({ notifications: next });
+                }}
+              />
+            </SettingRow>
+
+            <SettingRow label="Menu bar icon" description="Show review status and quick actions in the menu bar">
+              <Toggle
+                checked={trayEnabled}
+                ariaLabel="Menu bar icon"
+                onChange={() => {
+                  const next = !trayEnabled;
+                  setTrayEnabled(next);
+                  saveField({ trayEnabled: next });
                 }}
               />
             </SettingRow>

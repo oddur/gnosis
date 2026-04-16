@@ -217,6 +217,7 @@ export interface Preferences {
   reviewSignature: boolean;
   firstRunSeen: boolean;
   theme: 'light' | 'dark' | 'system';
+  trayEnabled: boolean;
 }
 
 export interface SendSlideChatRequest {

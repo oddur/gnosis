@@ -670,7 +670,7 @@ void app.whenReady().then(() => {
   backfillSummaries();
   applyBinaryOverrides(loadPreferences());
   createWindow();
-  createTray();
+  initTrayIfEnabled();
   setStatusFetcher(async (prUrl: string) => {
     const token = getResolvedToken();
     if (!token) return null;
@@ -869,6 +869,37 @@ function navigateToReview(reviewId: string): void {
   setTimeout(() => broadcastToAllWindows('review-navigate', { reviewId }), 100);
 }
 
+function initTrayIfEnabled(): void {
+  // Check if trayEnabled has ever been set in stored prefs
+  let storedPrefs: Record<string, unknown> = {};
+  try {
+    storedPrefs = JSON.parse(fs.readFileSync(getPreferencesPath(), 'utf-8')) as Record<string, unknown>;
+  } catch { /* first run, no prefs file */ }
+
+  if (!('trayEnabled' in storedPrefs)) {
+    // First time — ask the user
+    const win = BrowserWindow.getAllWindows()[0];
+    const response = dialog.showMessageBoxSync(win, {
+      type: 'question',
+      buttons: ['Enable', 'Not Now'],
+      defaultId: 0,
+      cancelId: 1,
+      message: 'Enable menu bar icon?',
+      detail: 'Gnosis can show a menu bar icon for quick access to your reviews, CI status, and more. You can change this later in Settings.',
+    });
+    const enabled = response === 0;
+    const prefs = loadPreferences();
+    savePreferences({ ...prefs, trayEnabled: enabled });
+    if (enabled) {
+      createTray();
+      rebuildTrayMenu();
+    }
+  } else if (loadPreferences().trayEnabled) {
+    createTray();
+    rebuildTrayMenu();
+  }
+}
+
 function rebuildTrayMenu(): void {
   updateTrayMenu(readReviewsIndex(), {
     onShowWindow: showOrCreateWindow,
@@ -923,6 +954,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   reviewSignature: true,
   firstRunSeen: false,
   theme: 'system',
+  trayEnabled: true,
 };
 
 function applyBinaryOverrides(prefs: Preferences): void {
@@ -1071,6 +1103,13 @@ ipcMain.handle('save-preferences', (_event, prefs: Preferences) => {
   // Restart polling so the new proactiveMode value takes effect immediately
   stopProactivePolling();
   if (prefs.proactiveMode) startProactivePolling();
+  // Toggle tray on/off
+  if (prefs.trayEnabled) {
+    createTray();
+    rebuildTrayMenu();
+  } else {
+    destroyTray();
+  }
 });
 
 ipcMain.handle('detect-binary-path', (_event, name: string) => {
