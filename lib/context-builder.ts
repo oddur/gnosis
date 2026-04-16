@@ -214,7 +214,7 @@ Files changed: ${changedFiles.length} | Lines added: ${totalAdditions} | Lines d
  */
 export function buildTopicContext(
   topic: TopicPlan,
-  allHunks: IndexedHunk[],
+  hunkMap: Map<string, IndexedHunk>,
   fileContents: Record<string, string>,
   headFileContents: Record<string, string>,
   neighborFiles: Record<string, string>,
@@ -223,8 +223,9 @@ export function buildTopicContext(
   storyArc: string,
   allTopics: TopicPlan[],
 ): string {
-  const hunkSet = new Set(topic.hunkIds);
-  const relevantHunks = allHunks.filter((h) => hunkSet.has(h.id));
+  const relevantHunks = topic.hunkIds
+    .map((id) => hunkMap.get(id))
+    .filter((h): h is IndexedHunk => h !== undefined);
 
   // Collect affected file paths
   const affectedFiles = new Set(relevantHunks.map((h) => h.filePath));

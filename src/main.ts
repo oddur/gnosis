@@ -1272,6 +1272,27 @@ ipcMain.handle('get-pr-files', async (_event, prUrl: string): Promise<ChangedFil
 
 // ── Background review generation ────────────────────────────────
 
+/** Resolve hunk IDs to DiffHunk objects, skipping already-assigned ones. */
+function resolveDiffHunks(
+  ids: string[],
+  hunkMap: Map<string, import('../lib/diff-parse').IndexedHunk>,
+  assignedIds: Set<string>,
+): DiffHunk[] {
+  return ids
+    .filter((id) => hunkMap.has(id) && !assignedIds.has(id))
+    .map((id) => {
+      assignedIds.add(id);
+      const h = hunkMap.get(id)!;
+      return {
+        filePath: h.filePath,
+        hunkHeader: h.expandedHunkHeader,
+        content: h.expandedContent,
+        language: h.language,
+        renderedHtml: '',
+      };
+    });
+}
+
 async function runBackgroundGeneration(
   reviewId: string,
   request: GenerateReviewRequest,
@@ -1372,45 +1393,34 @@ async function runBackgroundGeneration(
 
     broadcastToAllWindows('review-phase', { reviewId, phase: 'Building context' });
 
-    // Parse diff into indexed hunks and build expanded diff (using filtered diff)
+    const prefs = loadPreferences();
+
+    // Parse diff into indexed hunks — always needed
     const indexedHunks = buildIndexedHunks(filteredDiff, fileContents, headFileContents);
-    const expandedDiff = expandFullDiff(filteredDiff, fileContents, headFileContents);
     const hunkIndex = formatHunkIndexForPrompt(indexedHunks);
 
-    const contextPackage = buildContextPackage(
-      prData,
-      expandedDiff,
-      changedFiles,
-      fileContents,
-      headFileContents,
-      neighborFiles,
-      hunkIndex,
-      excludedFilesSummary
-    );
+    // Full context package only needed for single-shot mode
+    let contextPackage = '';
+    if (!prefs.parallelReview) {
+      const expandedDiff = expandFullDiff(filteredDiff, fileContents, headFileContents);
+      contextPackage = buildContextPackage(
+        prData,
+        expandedDiff,
+        changedFiles,
+        fileContents,
+        headFileContents,
+        neighborFiles,
+        hunkIndex,
+        excludedFilesSummary
+      );
+    }
 
     console.log(`[main] Generating review guide (${reviewId})...`);
     const generationStart = Date.now();
 
-    const prefs = loadPreferences();
-    let mcpConfigPath: string | undefined;
-    let allowedTools: string[] | undefined;
-
-    if (prefs.enableTools && provider === 'claude') {
-      if (token) {
-        mcpConfigPath = writeMcpConfig(token);
-        allowedTools = ALLOWED_TOOLS;
-      } else {
-        allowedTools = WEB_ONLY_TOOLS;
-      }
-    } else if (webResearch && provider === 'claude') {
-      allowedTools = WEB_ONLY_TOOLS;
-    }
-
     let resolvedSlides: Slide[];
     let aiResult: Awaited<ReturnType<typeof generateReviewGuide>> | null = null;
-    let plannerSummary: string | undefined;
-    let plannerRiskLevel: 'low' | 'medium' | 'high' | undefined;
-    let plannerRiskRationale: string | undefined;
+    let plan: Awaited<ReturnType<typeof planReview>> | null = null;
 
     const hunkMap = new Map(indexedHunks.map((h) => [h.id, h]));
     const assignedIds = new Set<string>();
@@ -1420,7 +1430,7 @@ async function runBackgroundGeneration(
       broadcastToAllWindows('review-phase', { reviewId, phase: 'Planning review structure' });
 
       const plannerContext = buildPlannerContext(prData, changedFiles, hunkIndex, excludedFilesSummary);
-      const plan = await planReview(
+      plan = await planReview(
         hunkIndex,
         plannerContext,
         provider,
@@ -1430,16 +1440,12 @@ async function runBackgroundGeneration(
         signal,
       );
 
-      plannerSummary = plan.summary;
-      plannerRiskLevel = plan.riskLevel;
-      plannerRiskRationale = plan.riskRationale;
-
       console.log(`[main] Planner produced ${plan.topics.length} topics`);
 
       // Sort topics by planner's order
       const sortedTopics = [...plan.topics].sort((a, b) => a.order - b.order);
+      const storyArc = plan.storyArc;
 
-      // Run writers in parallel with concurrency limit
       // Fire all writers in parallel — the CLI/API handles its own rate limiting
       const slideResults: Slide[] = await Promise.all(
         sortedTopics.map(async (topic, idx) => {
@@ -1450,8 +1456,8 @@ async function runBackgroundGeneration(
             });
 
             const topicCtx = buildTopicContext(
-              topic, indexedHunks, fileContents, headFileContents, neighborFiles,
-              prData.title, prData.description, plan.storyArc, sortedTopics,
+              topic, hunkMap, fileContents, headFileContents, neighborFiles,
+              prData.title, prData.description, storyArc, sortedTopics,
             );
 
             const writerOutput = await generateSlide(
@@ -1465,21 +1471,7 @@ async function runBackgroundGeneration(
               signal,
             );
 
-            // Resolve hunks for this topic
-            const hunkIds = topic.hunkIds ?? [];
-            const diffHunks: DiffHunk[] = hunkIds
-              .filter((id) => hunkMap.has(id) && !assignedIds.has(id))
-              .map((id) => {
-                assignedIds.add(id);
-                const h = hunkMap.get(id)!;
-                return {
-                  filePath: h.filePath,
-                  hunkHeader: h.expandedHunkHeader,
-                  content: h.expandedContent,
-                  language: h.language,
-                  renderedHtml: '',
-                };
-              });
+            const diffHunks = resolveDiffHunks(topic.hunkIds ?? [], hunkMap, assignedIds);
 
             return {
               id: `slide-${slideNum}`,
@@ -1503,6 +1495,19 @@ async function runBackgroundGeneration(
     } else {
       // ── Single-shot: existing approach ──
       broadcastToAllWindows('review-phase', { reviewId, phase: 'Generating review' });
+
+      let mcpConfigPath: string | undefined;
+      let allowedTools: string[] | undefined;
+      if (prefs.enableTools && provider === 'claude') {
+        if (token) {
+          mcpConfigPath = writeMcpConfig(token);
+          allowedTools = ALLOWED_TOOLS;
+        } else {
+          allowedTools = WEB_ONLY_TOOLS;
+        }
+      } else if (webResearch && provider === 'claude') {
+        allowedTools = WEB_ONLY_TOOLS;
+      }
 
       let lastStreamPhase: string | null = null;
       try {
@@ -1549,20 +1554,8 @@ async function runBackgroundGeneration(
 
       resolvedSlides = aiResult.slides.map((aiSlide) => {
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
-        const ids = aiSlide.diffHunkIds ?? [];
-        const diffHunks: DiffHunk[] = ids
-          .filter((id: string) => hunkMap.has(id) && !assignedIds.has(id))
-          .map((id: string) => {
-            assignedIds.add(id);
-            const h = hunkMap.get(id)!;
-            return {
-              filePath: h.filePath,
-              hunkHeader: h.expandedHunkHeader,
-              content: h.expandedContent,
-              language: h.language,
-              renderedHtml: '',
-            };
-          });
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
+        const diffHunks = resolveDiffHunks(aiSlide.diffHunkIds ?? [], hunkMap, assignedIds);
 
         return {
           id: aiSlide.id,
@@ -1619,13 +1612,7 @@ async function runBackgroundGeneration(
     // Catch-all slide for unassigned hunks
     const unassigned = indexedHunks.filter((h) => !assignedIds.has(h.id));
     if (unassigned.length > 0) {
-      const otherHunks: DiffHunk[] = unassigned.map((h) => ({
-        filePath: h.filePath,
-        hunkHeader: h.expandedHunkHeader,
-        content: h.expandedContent,
-        language: h.language,
-        renderedHtml: '',
-      }));
+      const otherHunks = resolveDiffHunks(unassigned.map((h) => h.id), hunkMap, assignedIds);
 
       resolvedSlides.push({
         id: 'other-changes',
@@ -1650,9 +1637,9 @@ async function runBackgroundGeneration(
       prDescription: aiResult?.prDescription || prData.description,
       prUrl,
       author: aiResult?.author || prData.author,
-      summary: aiResult?.summary || plannerSummary || '',
-      riskLevel: aiResult?.riskLevel || plannerRiskLevel || 'low',
-      riskRationale: aiResult?.riskRationale || plannerRiskRationale || '',
+      summary: aiResult?.summary || plan?.summary || '',
+      riskLevel: aiResult?.riskLevel || plan?.riskLevel || 'low',
+      riskRationale: aiResult?.riskRationale || plan?.riskRationale || '',
       totalFilesChanged: changedFiles.length,
       totalLinesChanged: changedFiles.reduce((sum, f) => sum + f.additions + f.deletions, 0),
       neighborFileCount: Object.keys(neighborFiles).length,
