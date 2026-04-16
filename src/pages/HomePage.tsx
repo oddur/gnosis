@@ -28,7 +28,7 @@ import { useKeyboardShortcuts, type ShortcutMap } from '../../lib/use-keyboard-s
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { Avatar, AvatarFallback, AvatarImage } from '../../components/ui/avatar';
 import { riskConfig, safeConfigLookup } from '../../lib/constants';
-import type { ModelId, Preferences, Provider, PrSearchResult, ReviewGuide, ReviewHistoryEntry } from '../../lib/types';
+import type { ModelId, Preferences, Provider, PrSearchResult, ReviewGuide, ReviewHistoryEntry, UpdateInfo } from '../../lib/types';
 import { timeAgo, formatDuration, formatBytes, groupReviewsByPR } from '../../lib/utils';
 
 interface Props {
@@ -168,6 +168,10 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<'all' | 'closed' | null>(null);
 
+  // Update availability — rendered as a newspaper "Extra" notice
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [readyVersion, setReadyVersion] = useState<string | null>(null);
+
   // Has the user EVER had a pending PR from GitHub? Persisted in
   // localStorage so we know whether the empty Suggested-for-you
   // section should render its teaching placeholder (first-time
@@ -222,6 +226,16 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
     });
     return () => {
       window.electronAPI.offNewReviewInHistory();
+    };
+  }, []);
+
+  // Listen for app update events
+  useEffect(() => {
+    window.electronAPI.onUpdateAvailable((info) => setUpdateInfo(info));
+    window.electronAPI.onUpdateReady((version) => setReadyVersion(version));
+    return () => {
+      window.electronAPI.offUpdateAvailable();
+      window.electronAPI.offUpdateReady();
     };
   }, []);
 
@@ -844,6 +858,58 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
             </p>
             <hr className="newspaper-rule--double" />
           </header>
+
+          {/* ── EXTRA: Update available ── Rendered as a newspaper
+              "Extra" notice strip between the masthead and content.
+              Auto-update platforms show "will install on restart";
+              manual platforms show a download link. */}
+          {(() => {
+            const supportsAutoUpdate = window.electronAPI.platform !== 'linux' && window.electronAPI.isPackaged;
+            if (supportsAutoUpdate && readyVersion) {
+              return (
+                <div className="newspaper-extra">
+                  <span className="newspaper-extra-label">Extra</span>
+                  <span className="newspaper-extra-text">
+                    Gnosis <strong>v{readyVersion}</strong> will install on next restart
+                  </span>
+                  <button
+                    onClick={() => setReadyVersion(null)}
+                    className="newspaper-extra-dismiss"
+                    aria-label="Dismiss"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              );
+            }
+            if (updateInfo && !supportsAutoUpdate) {
+              return (
+                <div className="newspaper-extra">
+                  <span className="newspaper-extra-label">Extra</span>
+                  <span className="newspaper-extra-text">
+                    Gnosis <strong>v{updateInfo.version}</strong> is available
+                  </span>
+                  <button
+                    onClick={() => void window.electronAPI.openExternal(updateInfo.releaseUrl)}
+                    className="text-xs text-[var(--ring)] hover:underline transition-colors"
+                  >
+                    Download →
+                  </button>
+                  <button
+                    onClick={() => {
+                      void window.electronAPI.dismissUpdate(updateInfo.version);
+                      setUpdateInfo(null);
+                    }}
+                    className="newspaper-extra-dismiss"
+                    aria-label="Dismiss"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              );
+            }
+            return null;
+          })()}
 
           {/* ── Welcome / About ── Inline hero, newspaper style */}
           {(firstRunOpen || aboutOpen) && (

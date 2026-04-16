@@ -63,7 +63,9 @@ export function App() {
       >
         Skip to content
       </a>
-      <UpdateBanner />
+      {/* Update banner shows on the review page. On the home page,
+          the newspaper "Extra" notice handles it instead. */}
+      {page !== 'home' && <UpdateBanner />}
       <div id="main-content">
         {page === 'home' && <HomePage onReviewReady={handleReviewReady} prefillPrUrl={prefillPrUrl} />}
         {page === 'review' && review && (

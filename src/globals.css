@@ -1031,6 +1031,53 @@ ul.review-focus-content > li::before {
   color: var(--foreground);
 }
 
+/* ─ Extra notice ─ Newspaper "Extra" strip for update announcements.
+   Sits between the masthead and content, styled like the strip a
+   newsboy would shout about on the street corner. Centered, compact,
+   with the "EXTRA" label in the brand's section-header voice. */
+.newspaper-extra {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.625rem 1rem;
+  margin: -0.75rem 0 1.25rem;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+}
+
+.newspaper-extra-label {
+  font-family: var(--font-sans);
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ring);
+  line-height: 1;
+}
+
+.newspaper-extra-text {
+  font-family: var(--font-serif);
+  font-size: 0.875rem;
+  font-weight: 340;
+  font-variation-settings: 'opsz' 12;
+  color: var(--foreground);
+}
+
+.newspaper-extra-text strong {
+  font-weight: 600;
+}
+
+.newspaper-extra-dismiss {
+  color: var(--muted-foreground);
+  transition: color 150ms;
+}
+
+.newspaper-extra-dismiss:hover {
+  color: var(--foreground);
+}
+
 /* ─ Oxford rules ─ Thin-thick-thin lines used in broadsheet headers */
 .newspaper-rule {
   border: none;
