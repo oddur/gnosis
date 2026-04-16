@@ -438,26 +438,37 @@ export async function generateSlide(
 
   const userMessage = topicContext + WRITER_USER_SUFFIX;
 
-  const fullText = await provider.generate({
-    content: userMessage,
-    systemPrompt: system,
-    model,
-    thinking,
-    onChunk,
-    signal,
-  });
+  async function attempt(extra: string = ''): Promise<WriterSlideOutput> {
+    const fullText = await provider.generate({
+      content: userMessage + extra,
+      systemPrompt: system,
+      model,
+      thinking,
+      onChunk,
+      signal,
+    });
 
-  const jsonText = extractJson(fullText);
-  let parsed: unknown;
+    const jsonText = extractJson(fullText);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch (err) {
+      throw new Error(`Writer JSON parse failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    if (!validateWriterOutput(parsed)) {
+      throw new Error('Writer response missing required fields (narrative)');
+    }
+
+    return parsed;
+  }
+
   try {
-    parsed = JSON.parse(jsonText);
+    return await attempt();
   } catch (err) {
-    throw new Error(`Writer JSON parse failed: ${err instanceof Error ? err.message : String(err)}`);
+    const msg = err instanceof Error ? err.message : '';
+    if (msg.includes('rate limit') || msg.includes('prompt is too long')) throw err;
+    console.warn(`[writer] First attempt failed (${msg}), retrying concisely`);
+    return await attempt('\n\nIMPORTANT: Return only raw JSON starting with { and ending with }. Keep narrative under 3 sentences. No markdown fences.');
   }
-
-  if (!validateWriterOutput(parsed)) {
-    throw new Error('Writer response missing required fields (narrative)');
-  }
-
-  return parsed;
 }
