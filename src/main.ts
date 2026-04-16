@@ -469,12 +469,15 @@ async function triggerProactiveReview(
       prData = await getPrMetadata(octokit, owner, repo, pullNumber);
     }
 
+    // Cancel any in-flight generation for this PR
+    cancelExistingGenerationForPr(prUrl);
+
     const abortController = new AbortController();
     createPendingHistoryEntry(reviewId, prData.title, prUrl, prData.author, prefs.model, 'open', prData.headSha, true);
     if (opts.autoUpdated) {
       updateHistoryEntry(reviewId, { autoUpdated: true });
     }
-    activeGenerations.set(reviewId, { abortController });
+    activeGenerations.set(reviewId, { abortController, prUrl });
 
     const request: GenerateReviewRequest = {
       prUrl,
@@ -805,7 +808,19 @@ function backfillSummaries(): void {
 
 // ── Background generation tracking ──────────────────────────────
 
-const activeGenerations = new Map<string, { abortController?: AbortController }>();
+const activeGenerations = new Map<string, { abortController?: AbortController; prUrl?: string }>();
+
+/** Cancel any in-flight generation for the same PR URL. */
+function cancelExistingGenerationForPr(prUrl: string): void {
+  for (const [id, gen] of activeGenerations) {
+    if (gen.prUrl === prUrl) {
+      console.log(`[main] Cancelling stale generation ${id} for ${prUrl}`);
+      gen.abortController?.abort('Superseded by new review');
+      updateHistoryEntry(id, { status: 'failed', error: 'Superseded by newer review' });
+      activeGenerations.delete(id);
+    }
+  }
+}
 
 function createPendingHistoryEntry(
   id: string,
@@ -1671,9 +1686,12 @@ ipcMain.handle('start-review', async (_event, request: GenerateReviewRequest): P
     prData.headSha
   );
 
+  // Cancel any in-flight generation for this PR
+  cancelExistingGenerationForPr(request.prUrl);
+
   // Track and fire off background generation (no await)
   const abortController = new AbortController();
-  activeGenerations.set(reviewId, { abortController });
+  activeGenerations.set(reviewId, { abortController, prUrl: request.prUrl });
   void runBackgroundGeneration(reviewId, request, prData, abortController.signal);
 
   return {
