@@ -320,7 +320,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
       /* non-fatal */
     }
     setAboutOpen(false);
-    setFirstRunOpen(true);
+    setRepoSetupOpen(true);
     scrollToTop();
   }
 

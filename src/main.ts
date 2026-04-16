@@ -516,11 +516,13 @@ async function runProactiveCheck() {
     const myPrs = await searchPullRequests(octokit, cachedLogin);
 
     // Source 3: watched repo PRs (fetched in parallel)
+    // Clamp maxPrsPerRepo to GitHub's supported range (1-100) and default to 10 if invalid
+    const maxPerRepo = Math.min(100, Math.max(1, Number.isFinite(prefs.maxPrsPerRepo) ? prefs.maxPrsPerRepo : 10));
     const watchedResults = await Promise.allSettled(
       prefs.watchedRepos.map(async (repoRef) => {
         const [owner, repo] = repoRef.split('/');
         if (!owner || !repo) return [];
-        return listRepoPullRequests(octokit, owner, repo, prefs.maxPrsPerRepo);
+        return listRepoPullRequests(octokit, owner, repo, maxPerRepo);
       })
     );
     const watchedPrs: PrSearchResult[] = [];

@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { X, Search, Eye } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,8 @@ interface Props {
   onSkip: () => void;
 }
 
+const REPO_REF_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
 export function OnboardingRepoSetup({ open, onComplete, onSkip }: Props) {
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState<RepoSearchResult[]>([]);
@@ -17,23 +19,49 @@ export function OnboardingRepoSetup({ open, onComplete, onSkip }: Props) {
   const [loading, setLoading] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const requestIdRef = useRef(0);
+
+  // Reset state when the dialog is reopened
+  useEffect(() => {
+    if (open) {
+      setQuery('');
+      setSuggestions([]);
+      setSelectedRepos([]);
+      setLoading(false);
+    }
+  }, [open]);
+
+  // Cleanup debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
 
   const search = useCallback((q: string) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (q.trim().length < 2) {
       setSuggestions([]);
+      setLoading(false);
       return;
     }
     setLoading(true);
-    debounceRef.current = setTimeout(() => {
-      void window.electronAPI.searchRepos(q.trim()).then((results) => {
+    const reqId = ++requestIdRef.current;
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const results = await window.electronAPI.searchRepos(q.trim());
+        if (reqId !== requestIdRef.current) return; // stale
         setSuggestions(results.filter((r) => !selectedRepos.includes(r.fullName)));
-        setLoading(false);
-      });
+      } catch {
+        if (reqId === requestIdRef.current) setSuggestions([]);
+      } finally {
+        if (reqId === requestIdRef.current) setLoading(false);
+      }
     }, 300);
   }, [selectedRepos]);
 
   function addRepo(fullName: string) {
+    if (!REPO_REF_RE.test(fullName)) return;
     setSelectedRepos((prev) => prev.includes(fullName) ? prev : [...prev, fullName]);
     setQuery('');
     setSuggestions([]);
@@ -58,7 +86,7 @@ export function OnboardingRepoSetup({ open, onComplete, onSkip }: Props) {
 
         <div className="flex flex-col gap-2 text-sm text-muted-foreground">
           <p>
-            Pick repos to watch and Gnosis will automatically review every open PR — no URL pasting needed.
+            Pick repos to watch and Gnosis will automatically review recently updated open PRs — no URL pasting needed.
           </p>
           <p>
             Each review becomes a guided walkthrough: diffs grouped by theme, ordered by dependency, with a short narrative on every slide explaining <em>why</em> the change is there.
@@ -82,7 +110,7 @@ export function OnboardingRepoSetup({ open, onComplete, onSkip }: Props) {
                 search(e.target.value);
               }}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && query.includes('/')) {
+                if (e.key === 'Enter' && REPO_REF_RE.test(query.trim())) {
                   e.preventDefault();
                   addRepo(query.trim());
                 }

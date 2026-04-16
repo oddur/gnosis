@@ -357,7 +357,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                 <div className="flex flex-col gap-0.5">
                   <label className="text-sm font-medium text-foreground">Max PRs per repo</label>
                   <p className="text-xs text-muted-foreground">
-                    How many of the latest open PRs to review per watched repo.
+                    How many recently updated open PRs to review per watched repo.
                   </p>
                 </div>
                 <select
