@@ -235,6 +235,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
 
   useEffect(() => {
     window.electronAPI.onShowTrayPrompt(() => setTrayPromptOpen(true));
+    return () => { window.electronAPI.offShowTrayPrompt(); };
   }, []);
 
   // Listen for app update events

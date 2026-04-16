@@ -132,6 +132,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onShowTrayPrompt: (callback: () => void): void => {
     ipcRenderer.on('show-tray-prompt', () => callback());
   },
+  offShowTrayPrompt: (): void => {
+    ipcRenderer.removeAllListeners('show-tray-prompt');
+  },
   markReviewRead: (id: string): Promise<void> => ipcRenderer.invoke('mark-review-read', id),
   getPrState: (prUrl: string): Promise<{ prState: 'open' | 'merged' | 'closed'; headSha: string }> =>
     ipcRenderer.invoke('get-pr-state', prUrl),

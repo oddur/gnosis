@@ -8,7 +8,7 @@ const MAX_MENU_REVIEWS = 8;
 
 const RISK_LABEL: Record<string, string> = { low: 'Low', medium: 'Medium', high: 'High' };
 const PR_STATE_LABEL: Record<string, string> = { open: 'Open', merged: 'Merged', closed: 'Closed' };
-const CI_ICON: Record<string, string> = { success: '✓', failure: '✗', pending: '◎', neutral: '–' };
+const CI_ICON: Record<string, string> = { success: '✓', failure: '✗', pending: '◎', neutral: '–', in_progress: '◎', queued: '–' };
 
 function truncate(text: string, max: number): string {
   return text.length > max ? text.slice(0, max - 1) + '…' : text;
@@ -94,7 +94,7 @@ function buildReviewSubmenu(
       items.push({
         label: `${ciIcon} ${ciLabel}${checksDetail}`,
         submenu: total > 0 ? prStatus.ciChecks.slice(0, 15).map((c) => {
-          const icon = c.conclusion === 'success' ? '✓' : c.conclusion === 'failure' ? '✗' : c.status === 'in_progress' ? '◎' : '–';
+          const icon = CI_ICON[c.conclusion ?? c.status] ?? '–';
           return {
             label: `${icon} ${c.name}`,
             click: c.url ? () => onOpenUrl(c.url!) : undefined,
@@ -185,8 +185,9 @@ export interface TrayCallbacks {
   onQuit: () => void;
 }
 
-// Cache of PR status per prUrl, refreshed on each updateTrayMenu call
-const prStatusCache = new Map<string, PrStatus>();
+// PR status cache — entries expire after 5 minutes
+const PR_STATUS_TTL_MS = 5 * 60_000;
+const prStatusCache = new Map<string, { status: PrStatus; fetchedAt: number }>();
 const pendingFetches = new Set<string>();
 let statusFetcher: ((prUrl: string) => Promise<PrStatus | null>) | null = null;
 let lastReviews: ReviewHistoryEntry[] = [];
@@ -241,7 +242,8 @@ export function updateTrayMenu(
         continue;
       }
 
-      const cachedStatus = prStatusCache.get(review.prUrl) ?? null;
+      const cached = prStatusCache.get(review.prUrl);
+      const cachedStatus = cached && (Date.now() - cached.fetchedAt < PR_STATUS_TTL_MS) ? cached.status : null;
       const unreadDot = review.unread ? '● ' : '';
       template.push({
         label: `${unreadDot}${truncate(review.prTitle, 45)}`,
@@ -282,7 +284,11 @@ export function updateTrayMenu(
   // Fetch live PR status in background for open PRs
   if (statusFetcher) {
     const openReviews = recent.filter(
-      (r) => r.status === 'completed' && r.prState === 'open' && !prStatusCache.has(r.prUrl) && !pendingFetches.has(r.prUrl),
+      (r) => {
+        if (r.status !== 'completed' || r.prState !== 'open' || pendingFetches.has(r.prUrl)) return false;
+        const cached = prStatusCache.get(r.prUrl);
+        return !cached || Date.now() - cached.fetchedAt >= PR_STATUS_TTL_MS;
+      },
     );
     if (openReviews.length > 0) {
       let resolved = 0;
@@ -290,7 +296,7 @@ export function updateTrayMenu(
         pendingFetches.add(review.prUrl);
         statusFetcher(review.prUrl)
           .then((status) => {
-            if (status) prStatusCache.set(review.prUrl, status);
+            if (status) prStatusCache.set(review.prUrl, { status, fetchedAt: Date.now() });
           })
           .catch(() => {})
           .finally(() => {

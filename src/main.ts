@@ -674,35 +674,7 @@ void app.whenReady().then(() => {
   applyBinaryOverrides(loadPreferences());
   createWindow();
   initTrayIfEnabled();
-  setStatusFetcher(async (prUrl: string) => {
-    const token = getResolvedToken();
-    if (!token) return null;
-    const octokit = new Octokit({ auth: token });
-    const { owner, repo, pullNumber } = parsePrUrl(prUrl);
-    const [prData, reviewSummary] = await Promise.all([
-      getPrMetadata(octokit, owner, repo, pullNumber),
-      getReviewStatus(octokit, owner, repo, pullNumber),
-    ]);
-    const ciStatus = await getCiStatus(octokit, owner, repo, prData.headSha).catch(() => ({
-      checks: [] as CiCheck[],
-      conclusion: 'neutral' as const,
-    }));
-    return {
-      labels: prData.labels,
-      mergeable: prData.mergeable,
-      isDraft: prData.isDraft,
-      ciChecks: ciStatus.checks,
-      ciConclusion: ciStatus.conclusion,
-      reviewSummary,
-      baseBranch: prData.baseBranch,
-      commitCount: prData.commitCount,
-      requestedReviewers: prData.requestedReviewers,
-      requestedTeams: prData.requestedTeams,
-      mergeableState: prData.mergeableState,
-      autoMerge: prData.autoMerge,
-      milestone: prData.milestone,
-    };
-  });
+  setStatusFetcher(fetchPrStatus);
   rebuildTrayMenu();
   setupAutoUpdater();
 
@@ -885,13 +857,13 @@ function navigateToReview(reviewId: string): void {
 }
 
 function initTrayIfEnabled(): void {
-  // Check if trayEnabled has ever been set in stored prefs
-  let storedPrefs: Record<string, unknown> = {};
+  // Read raw prefs once to check if trayEnabled has ever been set
+  let raw: Record<string, unknown> | null = null;
   try {
-    storedPrefs = JSON.parse(fs.readFileSync(getPreferencesPath(), 'utf-8')) as Record<string, unknown>;
+    raw = JSON.parse(fs.readFileSync(getPreferencesPath(), 'utf-8')) as Record<string, unknown>;
   } catch { /* first run, no prefs file */ }
 
-  if (!('trayEnabled' in storedPrefs)) {
+  if (!raw || !('trayEnabled' in raw)) {
     // First time — ask via in-app modal once the renderer is ready
     const win = BrowserWindow.getAllWindows()[0];
     if (win) {
@@ -899,7 +871,7 @@ function initTrayIfEnabled(): void {
         win.webContents.send('show-tray-prompt');
       });
     }
-  } else if (loadPreferences().trayEnabled) {
+  } else if (raw.trayEnabled) {
     createTray();
     rebuildTrayMenu();
   }
@@ -1233,9 +1205,10 @@ ipcMain.handle(
   }
 );
 
-ipcMain.handle('get-pr-status', async (_event, prUrl: string): Promise<PrStatus> => {
+async function fetchPrStatus(prUrl: string): Promise<PrStatus | null> {
   const token = getResolvedToken();
-  const octokit = new Octokit({ auth: token ?? undefined });
+  if (!token) return null;
+  const octokit = new Octokit({ auth: token });
   const { owner, repo, pullNumber } = parsePrUrl(prUrl);
 
   const [prData, reviewSummary] = await Promise.all([
@@ -1263,6 +1236,12 @@ ipcMain.handle('get-pr-status', async (_event, prUrl: string): Promise<PrStatus>
     autoMerge: prData.autoMerge,
     milestone: prData.milestone,
   };
+}
+
+ipcMain.handle('get-pr-status', async (_event, prUrl: string): Promise<PrStatus> => {
+  const status = await fetchPrStatus(prUrl);
+  if (!status) throw new Error('Not authenticated');
+  return status;
 });
 
 ipcMain.handle(

@@ -66,6 +66,7 @@ declare global {
       detectBinaryPath: (name: string) => Promise<string>;
       checkCliInstalled: (provider: string) => Promise<{ installed: boolean; resolvedPath: string }>;
       onShowTrayPrompt: (callback: () => void) => void;
+      offShowTrayPrompt: () => void;
       onNewReviewInHistory: (callback: () => void) => void;
       offNewReviewInHistory: () => void;
       markReviewRead: (id: string) => Promise<void>;
