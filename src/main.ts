@@ -928,7 +928,7 @@ function getPreferencesPath() {
 const DEFAULT_PREFERENCES: Preferences = {
   instructions: '',
   provider: 'claude',
-  model: 'claude-opus-4-6',
+  model: 'claude-opus-4-7',
   thinking: true,
   smartImports: true,
   reviewSuggestions: true,
@@ -965,6 +965,7 @@ function loadPreferences(): Preferences {
       stored.proactiveMode = stored.autoReviewOnRequest;
       delete stored.autoReviewOnRequest;
     }
+    if (stored.model === 'claude-opus-4-6') stored.model = 'claude-opus-4-7';
     return { ...DEFAULT_PREFERENCES, ...(stored as Partial<Preferences>) };
   } catch {
     return { ...DEFAULT_PREFERENCES };
