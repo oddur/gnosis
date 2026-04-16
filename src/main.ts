@@ -58,7 +58,14 @@ declare const __GH_CLIENT_SECRET__: string;
 const GITHUB_CLIENT_ID = 'Ov23lifGr1yrXtcZD5Og';
 const GITHUB_CLIENT_SECRET: string = typeof __GH_CLIENT_SECRET__ !== 'undefined' ? __GH_CLIENT_SECRET__ : '';
 
-void initAptabase('A-EU-7599830434');
+const APTABASE_APP_KEY = 'A-EU-7599830434';
+let aptabaseInitialized = false;
+
+function enableAnalyticsIfAllowed(prefs: Preferences): void {
+  if (!prefs.analytics || aptabaseInitialized) return;
+  void initAptabase(APTABASE_APP_KEY);
+  aptabaseInitialized = true;
+}
 
 // ── In-memory cache ─────────────────────────────────────────────
 
@@ -672,7 +679,9 @@ void app.whenReady().then(() => {
   // Expose packaged state to preload via env var (before creating windows)
   process.env.APP_IS_PACKAGED = app.isPackaged ? '1' : '0';
 
-  void trackEvent('app_started');
+  const prefs = loadPreferences();
+  enableAnalyticsIfAllowed(prefs);
+  if (prefs.analytics) void trackEvent('app_started');
 
   // Mark any stale "generating" entries from a previous crash as failed
   cleanupStaleGeneratingEntries();
@@ -940,6 +949,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   trayEnabled: true,
   maxPrsPerRepo: 10,
   parallelReview: true,
+  analytics: true,
 };
 
 function applyBinaryOverrides(prefs: Preferences): void {
@@ -1095,6 +1105,9 @@ ipcMain.handle('save-preferences', (_event, prefs: Preferences) => {
   } else {
     destroyTray();
   }
+  // Pick up analytics opt-in turned on mid-session. Opt-out takes effect on
+  // next launch — the SDK has no deinit, so we just stop sending events.
+  enableAnalyticsIfAllowed(prefs);
 });
 
 ipcMain.handle('detect-binary-path', (_event, name: string) => {

@@ -248,6 +248,7 @@ export interface Preferences {
   trayEnabled: boolean;
   maxPrsPerRepo: number;
   parallelReview: boolean;
+  analytics: boolean;
 }
 
 export interface SendSlideChatRequest {
