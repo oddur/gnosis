@@ -1,4 +1,5 @@
-import type { PrMetadata, ChangedFile } from './types';
+import type { PrMetadata, ChangedFile, TopicPlan } from './types';
+import type { IndexedHunk } from './diff-parse';
 
 const CHARS_PER_TOKEN = 4;
 const MAX_TOKENS = 150_000;
@@ -179,4 +180,109 @@ ${expandedDiff}
   );
 
   return finalPackage;
+}
+
+/**
+ * Build a lightweight context string for the planner phase — only PR metadata and hunk index.
+ */
+export function buildPlannerContext(
+  prData: PrMetadata,
+  changedFiles: ChangedFile[],
+  hunkIndex: string,
+  excludedFilesSummary?: string,
+): string {
+  const totalAdditions = changedFiles.reduce((s, f) => s + f.additions, 0);
+  const totalDeletions = changedFiles.reduce((s, f) => s + f.deletions, 0);
+
+  let ctx = `<pr_metadata>
+Title: ${prData.title}
+Author: ${prData.author}
+Description: ${prData.description || '(no description)'}
+Base branch: ${prData.baseBranch}
+Files changed: ${changedFiles.length} | Lines added: ${totalAdditions} | Lines deleted: ${totalDeletions}
+</pr_metadata>`;
+
+  if (excludedFilesSummary) ctx += '\n\n' + excludedFilesSummary;
+  ctx += '\n\n' + hunkIndex;
+
+  return ctx;
+}
+
+/**
+ * Build scoped context for a single topic's writer call — only the hunks and file contents
+ * relevant to that topic.
+ */
+export function buildTopicContext(
+  topic: TopicPlan,
+  allHunks: IndexedHunk[],
+  fileContents: Record<string, string>,
+  headFileContents: Record<string, string>,
+  neighborFiles: Record<string, string>,
+  prTitle: string,
+  prDescription: string,
+): string {
+  const hunkSet = new Set(topic.hunkIds);
+  const relevantHunks = allHunks.filter((h) => hunkSet.has(h.id));
+
+  // Collect affected file paths
+  const affectedFiles = new Set(relevantHunks.map((h) => h.filePath));
+
+  let ctx = `<topic>
+Title: ${topic.title}
+Type: ${topic.slideType}
+Importance: ${topic.importance}
+PR: ${prTitle}
+PR Description: ${prDescription || '(none)'}
+</topic>
+
+<diff_hunks>
+`;
+  for (const hunk of relevantHunks) {
+    ctx += `--- ${hunk.filePath} (${hunk.fileStatus}) [${hunk.id}]\n`;
+    ctx += `${hunk.expandedHunkHeader}\n`;
+    ctx += `${hunk.expandedContent}\n\n`;
+  }
+  ctx += '</diff_hunks>';
+
+  // Scoped file contents — only for affected files
+  let hasBeforeContent = false;
+  let beforeSection = '\n\n<file_contents_before>\n';
+  for (const filePath of affectedFiles) {
+    if (fileContents[filePath]) {
+      beforeSection += `  <file path="${filePath}">\n${truncateFileContent(fileContents[filePath], MAX_FILE_LINES)}\n  </file>\n`;
+      hasBeforeContent = true;
+    }
+  }
+  beforeSection += '</file_contents_before>';
+  if (hasBeforeContent) ctx += beforeSection;
+
+  let hasAfterContent = false;
+  let afterSection = '\n\n<file_contents_after>\n';
+  for (const filePath of affectedFiles) {
+    if (headFileContents[filePath]) {
+      afterSection += `  <file path="${filePath}">\n${truncateFileContent(headFileContents[filePath], MAX_FILE_LINES)}\n  </file>\n`;
+      hasAfterContent = true;
+    }
+  }
+  afterSection += '</file_contents_after>';
+  if (hasAfterContent) ctx += afterSection;
+
+  // Scoped neighbor files — only imports relevant to affected files
+  let hasNeighbors = false;
+  let neighborSection = '\n\n<neighbor_files>\n';
+  for (const [path, content] of Object.entries(neighborFiles)) {
+    // Include neighbor if any affected file likely imports it
+    const base = path.replace(/\.[^.]+$/, '');
+    const isRelevant = [...affectedFiles].some(
+      (f) => fileContents[f]?.includes(base) || headFileContents[f]?.includes(base),
+    );
+    if (isRelevant) {
+      neighborSection += `  <file path="${path}">\n${truncateFileContent(content, MAX_FILE_LINES)}\n  </file>\n`;
+      hasNeighbors = true;
+    }
+  }
+  neighborSection += '</neighbor_files>';
+  if (hasNeighbors) ctx += neighborSection;
+
+  return ctx;
 }

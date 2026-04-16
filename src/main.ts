@@ -20,8 +20,8 @@ import {
   getReviewStatus,
 } from '../lib/github';
 import type { CiCheck, FileMetadata, PrMetadata, PrSearchResult, PrStatus } from '../lib/types';
-import { buildContextPackage } from '../lib/context-builder';
-import { generateReviewGuide } from '../lib/agent';
+import { buildContextPackage, buildPlannerContext, buildTopicContext } from '../lib/context-builder';
+import { generateReviewGuide, planReview, generateSlide } from '../lib/agent';
 import { checkForUpdate } from '../lib/updater';
 import { renderDiffHunk, reRenderAllHunks } from '../lib/highlight';
 import { parseDiffLines, parsePatchValidLines } from '../lib/diff-lines';
@@ -932,6 +932,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   theme: 'system',
   trayEnabled: true,
   maxPrsPerRepo: 10,
+  parallelReview: false,
 };
 
 function applyBinaryOverrides(prefs: Preferences): void {
@@ -1386,8 +1387,6 @@ async function runBackgroundGeneration(
       excludedFilesSummary
     );
 
-    broadcastToAllWindows('review-phase', { reviewId, phase: 'Generating review' });
-
     console.log(`[main] Generating review guide (${reviewId})...`);
     const generationStart = Date.now();
 
@@ -1406,106 +1405,192 @@ async function runBackgroundGeneration(
       allowedTools = WEB_ONLY_TOOLS;
     }
 
-    let aiResult;
-    let lastStreamPhase: string | null = null;
-    try {
-      aiResult = await generateReviewGuide(
-        contextPackage,
-        prUrl,
-        provider,
-        model,
-        instructions,
-        (chunk, isThinking) => {
-          const phase = isThinking ? 'Thinking' : 'Generating review';
-          if (phase !== lastStreamPhase) {
-            lastStreamPhase = phase;
-            broadcastToAllWindows('review-phase', { reviewId, phase });
-          }
-          broadcastToAllWindows('review-progress', { reviewId, chunk, isThinking });
-        },
-        thinking ?? false,
-        mcpConfigPath,
-        allowedTools,
-        reviewSuggestions ?? true,
-        webResearch ?? false,
-        (toolName) => broadcastToAllWindows('review-tool-use', { reviewId, toolName }),
-        (system, userMessage) => {
-          broadcastToAllWindows('review-stats', {
-            reviewId,
-            inputBytes: system.length + userMessage.length,
-          });
-          try {
-            ensureReviewsDir();
-            fs.writeFileSync(
-              path.join(getReviewsDir(), `${reviewId}-prompt.md`),
-              `# System Prompt\n\n${system}\n\n# User Message\n\n${userMessage}\n`
-            );
-          } catch {
-            // Best-effort — don't fail the review if prompt save fails
-          }
-        },
-        signal
-      );
-    } finally {
-      if (mcpConfigPath) cleanupMcpConfig(mcpConfigPath);
-    }
+    let resolvedSlides: Slide[];
+    let aiResult: Awaited<ReturnType<typeof generateReviewGuide>> | null = null;
+    let plannerSummary: string | undefined;
+    let plannerRiskLevel: 'low' | 'medium' | 'high' | undefined;
+    let plannerRiskRationale: string | undefined;
 
-    const generationDurationMs = Date.now() - generationStart;
-
-    // Append raw model response to prompt file (best-effort)
-    try {
-      const promptPath = path.join(getReviewsDir(), `${reviewId}-prompt.md`);
-      if (fs.existsSync(promptPath)) {
-        fs.appendFileSync(
-          promptPath,
-          `\n---\n\n# Model Response\n\n\`\`\`json\n${JSON.stringify(aiResult, null, 2)}\n\`\`\`\n`
-        );
-      }
-    } catch {
-      // Best-effort
-    }
-
-    // Resolve hunk IDs → real DiffHunk objects
     const hunkMap = new Map(indexedHunks.map((h) => [h.id, h]));
     const assignedIds = new Set<string>();
 
-    const resolvedSlides: Slide[] = aiResult.slides.map((aiSlide) => {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
-      const ids = aiSlide.diffHunkIds ?? [];
-      const diffHunks: DiffHunk[] = ids
-        .filter((id: string) => hunkMap.has(id) && !assignedIds.has(id))
-        .map((id: string) => {
-          assignedIds.add(id);
-          const h = hunkMap.get(id);
-          if (!h) throw new Error(`Hunk ${id} not found in index`);
-          return {
-            filePath: h.filePath,
-            hunkHeader: h.expandedHunkHeader,
-            content: h.expandedContent,
-            language: h.language,
-            renderedHtml: '',
-          };
-        });
+    if (prefs.parallelReview) {
+      // ── Two-phase: planner → parallel writers ──
+      broadcastToAllWindows('review-phase', { reviewId, phase: 'Planning review structure' });
 
-      return {
-        id: aiSlide.id,
-        slideNumber: aiSlide.slideNumber,
-        title: aiSlide.title,
-        slideType: aiSlide.slideType,
-        narrative: aiSlide.narrative,
-        reviewFocus: aiSlide.reviewFocus,
-        diffHunks: sortDiffHunks(diffHunks),
+      const plannerContext = buildPlannerContext(prData, changedFiles, hunkIndex, excludedFilesSummary);
+      const plan = await planReview(
+        hunkIndex,
+        plannerContext,
+        provider,
+        model,
+        (chunk, isThinking) => broadcastToAllWindows('review-progress', { reviewId, chunk, isThinking }),
+        thinking ?? false,
+        signal,
+      );
+
+      plannerSummary = plan.summary;
+      plannerRiskLevel = plan.riskLevel;
+      plannerRiskRationale = plan.riskRationale;
+
+      console.log(`[main] Planner produced ${plan.topics.length} topics`);
+
+      // Sort topics by planner's order
+      const sortedTopics = [...plan.topics].sort((a, b) => a.order - b.order);
+
+      // Run writers in parallel with concurrency limit
+      const WRITER_CONCURRENCY = 3;
+      const slideResults: Slide[] = [];
+
+      for (let i = 0; i < sortedTopics.length; i += WRITER_CONCURRENCY) {
+        const batch = sortedTopics.slice(i, i + WRITER_CONCURRENCY);
+        const batchResults = await Promise.all(
+          batch.map(async (topic, batchIdx) => {
+            const slideNum = i + batchIdx + 1;
+            broadcastToAllWindows('review-phase', {
+              reviewId,
+              phase: `Writing slide ${slideNum}/${sortedTopics.length}: ${topic.title}`,
+            });
+
+            const topicCtx = buildTopicContext(
+              topic, indexedHunks, fileContents, headFileContents, neighborFiles,
+              prData.title, prData.description,
+            );
+
+            const writerOutput = await generateSlide(
+              topicCtx,
+              provider,
+              model,
+              instructions,
+              reviewSuggestions ?? true,
+              (chunk, isThinking) => broadcastToAllWindows('review-progress', { reviewId, chunk, isThinking }),
+              thinking ?? false,
+              signal,
+            );
+
+            // Resolve hunks for this topic
+            const hunkIds = topic.hunkIds ?? [];
+            const diffHunks: DiffHunk[] = hunkIds
+              .filter((id) => hunkMap.has(id) && !assignedIds.has(id))
+              .map((id) => {
+                assignedIds.add(id);
+                const h = hunkMap.get(id)!;
+                return {
+                  filePath: h.filePath,
+                  hunkHeader: h.expandedHunkHeader,
+                  content: h.expandedContent,
+                  language: h.language,
+                  renderedHtml: '',
+                };
+              });
+
+            return {
+              id: `slide-${slideNum}`,
+              slideNumber: slideNum,
+              title: topic.title,
+              slideType: topic.slideType,
+              narrative: writerOutput.narrative,
+              reviewFocus: writerOutput.reviewFocus,
+              diffHunks: sortDiffHunks(diffHunks),
+              contextSnippets: writerOutput.contextSnippets ?? [],
+              affectedFiles: [...new Set(diffHunks.map((h) => h.filePath))],
+              dependsOn: topic.dependsOn,
+              mermaidDiagram: writerOutput.mermaidDiagram,
+              reviewChecks: writerOutput.reviewChecks,
+              importance: topic.importance,
+            } satisfies Slide;
+          })
+        );
+        slideResults.push(...batchResults);
+      }
+
+      resolvedSlides = slideResults;
+    } else {
+      // ── Single-shot: existing approach ──
+      broadcastToAllWindows('review-phase', { reviewId, phase: 'Generating review' });
+
+      let lastStreamPhase: string | null = null;
+      try {
+        aiResult = await generateReviewGuide(
+          contextPackage,
+          prUrl,
+          provider,
+          model,
+          instructions,
+          (chunk, isThinking) => {
+            const phase = isThinking ? 'Thinking' : 'Generating review';
+            if (phase !== lastStreamPhase) {
+              lastStreamPhase = phase;
+              broadcastToAllWindows('review-phase', { reviewId, phase });
+            }
+            broadcastToAllWindows('review-progress', { reviewId, chunk, isThinking });
+          },
+          thinking ?? false,
+          mcpConfigPath,
+          allowedTools,
+          reviewSuggestions ?? true,
+          webResearch ?? false,
+          (toolName) => broadcastToAllWindows('review-tool-use', { reviewId, toolName }),
+          (system, userMessage) => {
+            broadcastToAllWindows('review-stats', {
+              reviewId,
+              inputBytes: system.length + userMessage.length,
+            });
+            try {
+              ensureReviewsDir();
+              fs.writeFileSync(
+                path.join(getReviewsDir(), `${reviewId}-prompt.md`),
+                `# System Prompt\n\n${system}\n\n# User Message\n\n${userMessage}\n`
+              );
+            } catch {
+              // Best-effort
+            }
+          },
+          signal
+        );
+      } finally {
+        if (mcpConfigPath) cleanupMcpConfig(mcpConfigPath);
+      }
+
+      resolvedSlides = aiResult.slides.map((aiSlide) => {
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
-        contextSnippets: aiSlide.contextSnippets ?? [],
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
-        affectedFiles: aiSlide.affectedFiles ?? [],
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
-        dependsOn: aiSlide.dependsOn ?? [],
-        mermaidDiagram: aiSlide.mermaidDiagram,
-        reviewChecks: aiSlide.reviewChecks,
-        importance: aiSlide.importance ?? 'important',
-      };
-    });
+        const ids = aiSlide.diffHunkIds ?? [];
+        const diffHunks: DiffHunk[] = ids
+          .filter((id: string) => hunkMap.has(id) && !assignedIds.has(id))
+          .map((id: string) => {
+            assignedIds.add(id);
+            const h = hunkMap.get(id)!;
+            return {
+              filePath: h.filePath,
+              hunkHeader: h.expandedHunkHeader,
+              content: h.expandedContent,
+              language: h.language,
+              renderedHtml: '',
+            };
+          });
+
+        return {
+          id: aiSlide.id,
+          slideNumber: aiSlide.slideNumber,
+          title: aiSlide.title,
+          slideType: aiSlide.slideType,
+          narrative: aiSlide.narrative,
+          reviewFocus: aiSlide.reviewFocus,
+          diffHunks: sortDiffHunks(diffHunks),
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
+          contextSnippets: aiSlide.contextSnippets ?? [],
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
+          affectedFiles: aiSlide.affectedFiles ?? [],
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
+          dependsOn: aiSlide.dependsOn ?? [],
+          mermaidDiagram: aiSlide.mermaidDiagram,
+          reviewChecks: aiSlide.reviewChecks,
+          importance: aiSlide.importance ?? 'important',
+        };
+      });
+    }
+
+    const generationDurationMs = Date.now() - generationStart;
 
     // Sanitize reviewChecks — clear invalid file/line refs so they render as non-clickable
     for (const slide of resolvedSlides) {
@@ -1566,13 +1651,13 @@ async function runBackgroundGeneration(
     const fileMetadata = await fileMetadataPromise;
 
     const reviewGuide: ReviewGuide = {
-      prTitle: aiResult.prTitle || prData.title,
-      prDescription: aiResult.prDescription || prData.description,
+      prTitle: aiResult?.prTitle || prData.title,
+      prDescription: aiResult?.prDescription || prData.description,
       prUrl,
-      author: aiResult.author || prData.author,
-      summary: aiResult.summary,
-      riskLevel: aiResult.riskLevel,
-      riskRationale: aiResult.riskRationale,
+      author: aiResult?.author || prData.author,
+      summary: aiResult?.summary || plannerSummary || '',
+      riskLevel: aiResult?.riskLevel || plannerRiskLevel || 'low',
+      riskRationale: aiResult?.riskRationale || plannerRiskRationale || '',
       totalFilesChanged: changedFiles.length,
       totalLinesChanged: changedFiles.reduce((sum, f) => sum + f.additions + f.deletions, 0),
       neighborFileCount: Object.keys(neighborFiles).length,
@@ -1580,7 +1665,7 @@ async function runBackgroundGeneration(
       generationDurationMs,
       slides: resolvedSlides,
       headSha: prData.headSha,
-      webSources: aiResult.webSources,
+      webSources: aiResult?.webSources,
       changedFiles: fileMetadata,
     };
 

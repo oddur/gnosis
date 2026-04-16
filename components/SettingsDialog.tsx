@@ -119,6 +119,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
   const [notifications, setNotifications] = useState(true);
   const [trayEnabled, setTrayEnabled] = useState(true);
   const [maxPrsPerRepo, setMaxPrsPerRepo] = useState(10);
+  const [parallelReview, setParallelReview] = useState(false);
   const [claudePath, setClaudePath] = useState('');
   const [geminiPath, setGeminiPath] = useState('');
   const [claudeDetected, setClaudeDetected] = useState('');
@@ -139,6 +140,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
       setNotifications(prefs.notifications);
       setTrayEnabled(prefs.trayEnabled);
       setMaxPrsPerRepo(prefs.maxPrsPerRepo);
+      setParallelReview(prefs.parallelReview);
       setClaudePath(prefs.claudePath || '');
       setGeminiPath(prefs.geminiPath || '');
     });
@@ -238,6 +240,21 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                   const next = !enableTools;
                   setEnableTools(next);
                   saveField({ enableTools: next });
+                }}
+              />
+            </SettingRow>
+
+            <SettingRow
+              label="Parallel review"
+              description="Split generation into a planner step then parallel writers per topic. Faster for large PRs."
+            >
+              <Toggle
+                checked={parallelReview}
+                ariaLabel="Parallel review"
+                onChange={() => {
+                  const next = !parallelReview;
+                  setParallelReview(next);
+                  saveField({ parallelReview: next });
                 }}
               />
             </SettingRow>
