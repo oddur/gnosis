@@ -965,6 +965,7 @@ function loadPreferences(): Preferences {
       stored.proactiveMode = stored.autoReviewOnRequest;
       delete stored.autoReviewOnRequest;
     }
+    if (stored.model === 'claude-opus-4-6') stored.model = 'claude-opus-4-7';
     return { ...DEFAULT_PREFERENCES, ...(stored as Partial<Preferences>) };
   } catch {
     return { ...DEFAULT_PREFERENCES };
