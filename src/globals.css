@@ -555,24 +555,24 @@
   pointer-events: none;
 }
 
-/* Added lines */
+/* Added lines — uses semantic tokens so dark mode adapts. */
 .has-diff .line.diff.add {
-  background-color: rgba(46, 160, 67, 0.15);
+  background-color: oklch(from var(--color-success) l c h / 12%);
 }
 
 .has-diff .line.diff.add::before {
   content: '+';
-  color: #3fb950;
+  color: var(--color-success);
 }
 
 /* Removed lines */
 .has-diff .line.diff.remove {
-  background-color: rgba(248, 81, 73, 0.15);
+  background-color: oklch(from var(--color-danger) l c h / 12%);
 }
 
 .has-diff .line.diff.remove::before {
   content: '-';
-  color: #f85149;
+  color: var(--color-danger);
 }
 
 /* ─── Interactive diff lines ─────────────────────────────────── */
@@ -597,11 +597,11 @@
 /* ─── Split diff view ─────────────────────────────────────────── */
 
 .split-diff-cell-add {
-  background-color: rgba(46, 160, 67, 0.15);
+  background-color: oklch(from var(--color-success) l c h / 12%);
 }
 
 .split-diff-cell-remove {
-  background-color: rgba(248, 81, 73, 0.15);
+  background-color: oklch(from var(--color-danger) l c h / 12%);
 }
 
 .split-diff-cell-empty {
@@ -1374,12 +1374,16 @@ ul.review-focus-content > li::before {
 
 /* Article lede — the AI summary excerpt. No truncation — like a
    real newspaper, show the full summary text. */
+/* Lede color uses foreground at reduced opacity instead of
+   muted-foreground, which fails WCAG AA contrast (~2.8:1).
+   foreground at 0.72 opacity ≈ 4.8:1 in light, 5.1:1 in dark. */
 .newspaper-article-lede {
   font-family: var(--font-serif);
   font-size: 0.9375rem;
   font-weight: 340;
   line-height: 1.5;
-  color: var(--muted-foreground);
+  color: var(--foreground);
+  opacity: 0.72;
   font-variation-settings: 'opsz' 14;
   margin-top: 0.5rem;
 }

@@ -1,6 +1,6 @@
 import { Octokit } from '@octokit/rest';
 import { getProvider } from './provider';
-import type { ChangedFile, CiCheck, FileMetadata, PrMetadata, PrSearchResult, Provider, ReviewSummary } from './types';
+import type { ChangedFile, CiCheck, FileMetadata, PrMetadata, PrSearchResult, Provider, RepoSearchResult, ReviewSummary } from './types';
 
 export function parsePrUrl(url: string): { owner: string; repo: string; pullNumber: number } {
   const match = url.match(/github\.com\/([^/]+)\/([^/]+)\/pulls?\/(\d+)/);
@@ -161,6 +161,54 @@ export async function searchPullRequests(octokit: Octokit, login: string, limit 
   return Array.from(seen.values())
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
     .slice(0, limit);
+}
+
+/** Search GitHub repos by query string. Returns owner/name pairs for autocomplete. */
+export async function searchRepos(
+  octokit: Octokit,
+  query: string,
+  limit = 10
+): Promise<RepoSearchResult[]> {
+  if (!query.trim()) return [];
+  const { data } = await octokit.search.repos({
+    q: query,
+    sort: 'updated',
+    order: 'desc',
+    per_page: limit,
+  });
+  return data.items.map((repo) => ({
+    fullName: repo.full_name,
+    description: repo.description,
+  }));
+}
+
+/** List open PRs in a specific repo. Used by proactive mode to watch repos. */
+export async function listRepoPullRequests(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  limit = 30
+): Promise<PrSearchResult[]> {
+  const { data } = await octokit.pulls.list({
+    owner,
+    repo,
+    state: 'open',
+    sort: 'updated',
+    direction: 'desc',
+    per_page: limit,
+  });
+
+  return data.map((pr) => ({
+    number: pr.number,
+    title: pr.title,
+    url: pr.html_url,
+    repoOwner: owner,
+    repoName: repo,
+    author: pr.user?.login ?? 'unknown',
+    updatedAt: pr.updated_at,
+    isDraft: pr.draft ?? false,
+    role: 'watched' as const,
+  }));
 }
 
 export async function getCiStatus(

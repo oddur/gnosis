@@ -11,6 +11,7 @@ import type {
   StartReviewResult,
   SubmitReviewRequest,
   FreshnessResult,
+  RepoSearchResult,
   UpdateInfo,
 } from '../lib/types';
 
@@ -100,6 +101,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadPreferences: (): Promise<Preferences> => ipcRenderer.invoke('load-preferences'),
   savePreferences: (prefs: Preferences): Promise<void> => ipcRenderer.invoke('save-preferences', prefs),
   searchPullRequests: (): Promise<PrSearchResult[]> => ipcRenderer.invoke('search-pull-requests'),
+  searchRepos: (query: string): Promise<RepoSearchResult[]> => ipcRenderer.invoke('search-repos', query),
   reRenderHunks: (review: ReviewGuide): Promise<ReviewGuide> => ipcRenderer.invoke('re-render-hunks', review),
   getPrStatus: (prUrl: string): Promise<PrStatus> => ipcRenderer.invoke('get-pr-status', prUrl),
   onUpdateAvailable: (callback: (info: UpdateInfo) => void): void => {

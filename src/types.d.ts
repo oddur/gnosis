@@ -10,6 +10,7 @@ import type {
   StartReviewResult,
   SubmitReviewRequest,
   FreshnessResult,
+  RepoSearchResult,
   UpdateInfo,
 } from '../lib/types';
 
@@ -51,6 +52,7 @@ declare global {
       loadPreferences: () => Promise<Preferences>;
       savePreferences: (prefs: Preferences) => Promise<void>;
       searchPullRequests: () => Promise<PrSearchResult[]>;
+      searchRepos: (query: string) => Promise<RepoSearchResult[]>;
       reRenderHunks: (review: ReviewGuide) => Promise<ReviewGuide>;
       getPrStatus: (prUrl: string) => Promise<PrStatus>;
       onUpdateAvailable: (callback: (info: UpdateInfo) => void) => void;

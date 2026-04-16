@@ -14,10 +14,12 @@ import {
   getFileMetadata,
   getNeighborFiles,
   searchPullRequests,
+  searchRepos,
+  listRepoPullRequests,
   getCiStatus,
   getReviewStatus,
 } from '../lib/github';
-import type { CiCheck, FileMetadata, PrStatus } from '../lib/types';
+import type { CiCheck, FileMetadata, PrMetadata, PrSearchResult, PrStatus } from '../lib/types';
 import { buildContextPackage } from '../lib/context-builder';
 import { generateReviewGuide } from '../lib/agent';
 import { checkForUpdate } from '../lib/updater';
@@ -375,43 +377,102 @@ function startUpdateChecks() {
   updateInterval = setInterval(() => void runUpdateCheck(), 4 * 60 * 60 * 1_000);
 }
 
-// ── Auto-review on reviewer assignment ──────────────────────────
+// ── GitHub rate-limit handling ──────────────────────────────────
 
-const AUTO_REVIEW_POLL_INTERVAL_MS = 5 * 60 * 1_000; // 5 minutes
-const AUTO_REVIEW_MAX_AGE_MS = 24 * 60 * 60 * 1_000; // ignore PRs not updated within 24 h
-
-function getSeenReviewRequestsPath() {
-  return path.join(app.getPath('userData'), 'seen-review-requests.json');
+function isRateLimitError(err: unknown): boolean {
+  if (err instanceof Error) {
+    const msg = err.message.toLowerCase();
+    return msg.includes('rate limit') || msg.includes('api rate limit');
+  }
+  return false;
 }
 
-function loadSeenReviewRequests(): Set<string> {
+/** Extract the reset time from a GitHub rate-limit error, or return a default backoff. */
+function getRateLimitResetMs(err: unknown): number {
+  // Octokit errors sometimes carry response headers
+  const response = (err as Record<string, unknown>)?.response as Record<string, unknown> | undefined;
+  const headers = response?.headers as Record<string, string> | undefined;
+  const reset = headers?.['x-ratelimit-reset'];
+  if (reset) {
+    const resetMs = parseInt(reset, 10) * 1000 - Date.now();
+    if (resetMs > 0) return Math.min(resetMs, 60 * 60 * 1000); // cap at 1 hour
+  }
+  return 5 * 60 * 1000; // default: 5 min backoff
+}
+
+/** Rethrow with a friendly message if the error is a rate limit. */
+function friendlyRateLimitError(err: unknown): never {
+  if (isRateLimitError(err)) {
+    const waitMin = Math.ceil(getRateLimitResetMs(err) / 60_000);
+    throw new Error(`GitHub API rate limit reached. Try again in ~${waitMin} minutes.`);
+  }
+  throw err;
+}
+
+// Timestamp when rate-limit backoff expires. Proactive polling skips work until this passes.
+let rateLimitBackoffUntil = 0;
+
+// ── Proactive mode ─────────────────────────────────────────────
+//
+// Periodically polls GitHub for PRs from three sources:
+// 1. PRs authored by the user
+// 2. PRs where the user is requested as reviewer
+// 3. All open PRs in user-selected "watched repos"
+//
+// New PRs get a background review. Existing reviews whose PR head
+// has changed get an automatic re-review (marked autoUpdated).
+
+const PROACTIVE_POLL_INTERVAL_MS = 5 * 60 * 1_000; // 5 minutes
+const PROACTIVE_MAX_AGE_MS = 24 * 60 * 60 * 1_000; // ignore PRs not updated within 24 h
+const PROACTIVE_MAX_CONCURRENT_UPDATES = 2;
+
+function getProactiveSeenPath() {
+  return path.join(app.getPath('userData'), 'proactive-seen.json');
+}
+
+function loadProactiveSeen(): Set<string> {
   try {
-    const data = JSON.parse(fs.readFileSync(getSeenReviewRequestsPath(), 'utf-8')) as string[];
+    const data = JSON.parse(fs.readFileSync(getProactiveSeenPath(), 'utf-8')) as string[];
     return new Set(data);
   } catch {
-    return new Set();
+    // Migrate from old file name if it exists
+    try {
+      const oldPath = path.join(app.getPath('userData'), 'seen-review-requests.json');
+      const data = JSON.parse(fs.readFileSync(oldPath, 'utf-8')) as string[];
+      return new Set(data);
+    } catch {
+      return new Set();
+    }
   }
 }
 
-function saveSeenReviewRequests(seen: Set<string>) {
-  fs.writeFileSync(getSeenReviewRequestsPath(), JSON.stringify([...seen], null, 2));
+function saveProactiveSeen(seen: Set<string>) {
+  fs.writeFileSync(getProactiveSeenPath(), JSON.stringify([...seen], null, 2));
 }
 
-// Loaded once into memory; updated as reviews are triggered
-let seenReviewRequests = new Set<string>();
+let proactiveSeen = new Set<string>();
 
-async function triggerBackgroundReview(prUrl: string, prefs: Preferences): Promise<void> {
-  // cachedToken is guaranteed non-null by the caller (runAutoReviewCheck).
-  console.log(`[auto-review] Starting background review for ${prUrl}`);
+async function triggerProactiveReview(
+  prUrl: string,
+  prefs: Preferences,
+  opts: { autoUpdated?: boolean; prData?: PrMetadata } = {}
+): Promise<void> {
+  console.log(`[proactive] Starting ${opts.autoUpdated ? 'update' : 'new'} review for ${prUrl}`);
   const reviewId = crypto.randomUUID();
 
   try {
-    const octokit = new Octokit({ auth: cachedToken ?? undefined });
-    const { owner, repo, pullNumber } = parsePrUrl(prUrl);
-    const prData = await getPrMetadata(octokit, owner, repo, pullNumber);
+    let prData = opts.prData;
+    if (!prData) {
+      const octokit = new Octokit({ auth: cachedToken ?? undefined });
+      const { owner, repo, pullNumber } = parsePrUrl(prUrl);
+      prData = await getPrMetadata(octokit, owner, repo, pullNumber);
+    }
 
     const abortController = new AbortController();
     createPendingHistoryEntry(reviewId, prData.title, prUrl, prData.author, prefs.model, 'open', prData.headSha, true);
+    if (opts.autoUpdated) {
+      updateHistoryEntry(reviewId, { autoUpdated: true });
+    }
     activeGenerations.set(reviewId, { abortController });
 
     const request: GenerateReviewRequest = {
@@ -426,62 +487,134 @@ async function triggerBackgroundReview(prUrl: string, prefs: Preferences): Promi
 
     await runBackgroundGeneration(reviewId, request, prData, abortController.signal);
 
-    // Refresh the history list in all open windows
     broadcastToAllWindows('new-review-in-history');
-    console.log(`[auto-review] Completed review for ${prUrl}`);
+    console.log(`[proactive] Completed ${opts.autoUpdated ? 'update' : 'review'} for ${prUrl}`);
   } catch (err) {
-    console.error(`[auto-review] Failed to start background review for ${prUrl}:`, err);
+    console.error(`[proactive] Failed for ${prUrl}:`, err);
   }
 }
 
-async function runAutoReviewCheck() {
-  // Use only in-memory state — never touch the keychain from a background timer.
-  // cachedToken and cachedLogin are populated when the user authenticates via IPC.
+async function runProactiveCheck() {
   if (!cachedToken || !cachedLogin) return;
+  if (Date.now() < rateLimitBackoffUntil) {
+    console.log(`[proactive] Skipping — rate-limit backoff until ${new Date(rateLimitBackoffUntil).toLocaleTimeString()}`);
+    return;
+  }
   const prefs = loadPreferences();
-  if (!prefs.autoReviewOnRequest) return;
+  if (!prefs.proactiveMode) return;
 
   try {
     const octokit = new Octokit({ auth: cachedToken });
-    const prs = await searchPullRequests(octokit, cachedLogin);
-    // searchPullRequests already queries `is:open`, so merged/closed PRs are excluded
-    const reviewRequested = prs.filter((pr) => pr.role === 'review-requested');
+
+    // ── Phase 1: Discover PRs from all three sources ──
+
+    // Source 1 & 2: my PRs + assigned PRs (already combined by searchPullRequests)
+    const myPrs = await searchPullRequests(octokit, cachedLogin);
+
+    // Source 3: watched repo PRs (fetched in parallel)
+    const watchedResults = await Promise.allSettled(
+      prefs.watchedRepos.map(async (repoRef) => {
+        const [owner, repo] = repoRef.split('/');
+        if (!owner || !repo) return [];
+        return listRepoPullRequests(octokit, owner, repo);
+      })
+    );
+    const watchedPrs: PrSearchResult[] = [];
+    for (const result of watchedResults) {
+      if (result.status === 'fulfilled') watchedPrs.push(...result.value);
+    }
+
+    // Deduplicate: my PRs take priority over watched (more specific role)
+    const allPrs = new Map<string, PrSearchResult>();
+    for (const pr of watchedPrs) allPrs.set(pr.url, pr);
+    for (const pr of myPrs) allPrs.set(pr.url, pr);
+
+    // ── Phase 2: Review unseen PRs (capped to avoid flooding) ──
+
     const now = Date.now();
+    let newCount = 0;
+    for (const pr of allPrs.values()) {
+      if (newCount >= PROACTIVE_MAX_CONCURRENT_UPDATES) break;
+      if (pr.isDraft) continue;
+      if (!proactiveSeen.has(pr.url)) {
+        proactiveSeen.add(pr.url);
 
-    for (const pr of reviewRequested) {
-      if (!seenReviewRequests.has(pr.url)) {
-        // Always mark as seen so we never trigger the same PR twice
-        seenReviewRequests.add(pr.url);
-        saveSeenReviewRequests(seenReviewRequests);
-
-        // Only review PRs updated in the last 24 h — avoids flooding on first enable
         const updatedAt = new Date(pr.updatedAt).getTime();
-        if (now - updatedAt <= AUTO_REVIEW_MAX_AGE_MS) {
-          void triggerBackgroundReview(pr.url, prefs);
+        if (now - updatedAt <= PROACTIVE_MAX_AGE_MS) {
+          void triggerProactiveReview(pr.url, prefs);
+          newCount++;
         } else {
-          console.log(`[auto-review] Skipping stale PR (${Math.round((now - updatedAt) / 3_600_000)}h old): ${pr.url}`);
+          console.log(`[proactive] Skipping stale PR (${Math.round((now - updatedAt) / 3_600_000)}h old): ${pr.url}`);
         }
       }
     }
+    // Prune: keep only URLs still in the current open-PR set
+    for (const url of proactiveSeen) {
+      if (!allPrs.has(url)) proactiveSeen.delete(url);
+    }
+    saveProactiveSeen(proactiveSeen);
+
+    // ── Phase 3: Auto-update outdated existing reviews ──
+
+    const index = readReviewsIndex();
+    const openCompletedByPr = new Map<string, ReviewHistoryEntry>();
+    for (const entry of index) {
+      if (entry.status === 'completed' && entry.prState === 'open' && entry.prHeadSha) {
+        // Keep only the latest review per PR URL
+        const existing = openCompletedByPr.get(entry.prUrl);
+        if (!existing || new Date(entry.savedAt) > new Date(existing.savedAt)) {
+          openCompletedByPr.set(entry.prUrl, entry);
+        }
+      }
+    }
+
+    // Check if any currently-generating reviews exist for a PR to avoid double-generation
+    const generatingPrUrls = new Set(
+      index.filter((e) => e.status === 'generating').map((e) => e.prUrl)
+    );
+
+    let updateCount = 0;
+    for (const [prUrl, entry] of openCompletedByPr) {
+      if (updateCount >= PROACTIVE_MAX_CONCURRENT_UPDATES) break;
+      if (generatingPrUrls.has(prUrl)) continue;
+
+      try {
+        const { owner, repo, pullNumber } = parsePrUrl(prUrl);
+        const prData = await getPrMetadata(octokit, owner, repo, pullNumber);
+
+        if (prData.headSha !== entry.prHeadSha) {
+          console.log(`[proactive] PR head changed for ${prUrl} (${entry.prHeadSha?.slice(0, 7)} → ${prData.headSha.slice(0, 7)}), re-reviewing`);
+          void triggerProactiveReview(prUrl, prefs, { autoUpdated: true, prData });
+          updateCount++;
+        }
+      } catch (err) {
+        console.warn(`[proactive] Failed to check freshness for ${prUrl}:`, err);
+      }
+    }
   } catch (err) {
-    console.error('[auto-review] Poll check failed:', err);
+    if (isRateLimitError(err)) {
+      const backoffMs = getRateLimitResetMs(err);
+      rateLimitBackoffUntil = Date.now() + backoffMs;
+      console.warn(`[proactive] Rate-limited — backing off for ${Math.ceil(backoffMs / 60_000)} minutes`);
+    } else {
+      console.error('[proactive] Poll check failed:', err);
+    }
   }
 }
 
-let autoReviewInterval: ReturnType<typeof setInterval> | null = null;
+let proactiveInterval: ReturnType<typeof setInterval> | null = null;
 
-function startAutoReviewPolling() {
-  if (autoReviewInterval) return;
-  seenReviewRequests = loadSeenReviewRequests();
-  // Initial check after 10 seconds to let the app fully initialize
-  setTimeout(() => void runAutoReviewCheck(), 10_000);
-  autoReviewInterval = setInterval(() => void runAutoReviewCheck(), AUTO_REVIEW_POLL_INTERVAL_MS);
+function startProactivePolling() {
+  if (proactiveInterval) return;
+  proactiveSeen = loadProactiveSeen();
+  setTimeout(() => void runProactiveCheck(), 10_000);
+  proactiveInterval = setInterval(() => void runProactiveCheck(), PROACTIVE_POLL_INTERVAL_MS);
 }
 
-function stopAutoReviewPolling() {
-  if (autoReviewInterval) {
-    clearInterval(autoReviewInterval);
-    autoReviewInterval = null;
+function stopProactivePolling() {
+  if (proactiveInterval) {
+    clearInterval(proactiveInterval);
+    proactiveInterval = null;
   }
 }
 
@@ -543,12 +676,12 @@ void app.whenReady().then(() => {
     startUpdateChecks();
   }
 
-  startAutoReviewPolling();
+  if (loadPreferences().proactiveMode) startProactivePolling();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
     if (!updateInterval && process.platform === 'linux') startUpdateChecks();
-    if (!autoReviewInterval) startAutoReviewPolling();
+    if (!proactiveInterval && loadPreferences().proactiveMode) startProactivePolling();
   });
 });
 
@@ -583,7 +716,7 @@ app.on('window-all-closed', () => {
     clearInterval(updateInterval);
     updateInterval = null;
   }
-  stopAutoReviewPolling();
+  stopProactivePolling();
   if (process.platform !== 'darwin') app.quit();
 });
 
@@ -714,7 +847,8 @@ const DEFAULT_PREFERENCES: Preferences = {
   reviewSuggestions: true,
   enableTools: false,
   enableWebResearch: false,
-  autoReviewOnRequest: false,
+  proactiveMode: false,
+  watchedRepos: [],
   codeTheme: 'aurora-x',
   codeFont: 'jetbrains-mono',
   claudePath: '',
@@ -734,8 +868,13 @@ function applyBinaryOverrides(prefs: Preferences): void {
 
 function loadPreferences(): Preferences {
   try {
-    const stored = JSON.parse(fs.readFileSync(getPreferencesPath(), 'utf-8')) as Partial<Preferences>;
-    return { ...DEFAULT_PREFERENCES, ...stored };
+    const stored = JSON.parse(fs.readFileSync(getPreferencesPath(), 'utf-8')) as Record<string, unknown>;
+    // Backward compat: rename autoReviewOnRequest → proactiveMode
+    if ('autoReviewOnRequest' in stored && !('proactiveMode' in stored)) {
+      stored.proactiveMode = stored.autoReviewOnRequest;
+      delete stored.autoReviewOnRequest;
+    }
+    return { ...DEFAULT_PREFERENCES, ...(stored as Partial<Preferences>) };
   } catch {
     return { ...DEFAULT_PREFERENCES };
   }
@@ -838,8 +977,24 @@ ipcMain.handle('sign-out', () => {
 ipcMain.handle('search-pull-requests', async () => {
   const token = getResolvedToken();
   if (!token || !cachedLogin) throw new Error('Not authenticated');
-  const octokit = new Octokit({ auth: token });
-  return searchPullRequests(octokit, cachedLogin);
+  try {
+    const octokit = new Octokit({ auth: token });
+    return await searchPullRequests(octokit, cachedLogin);
+  } catch (err) {
+    friendlyRateLimitError(err);
+  }
+});
+
+ipcMain.handle('search-repos', async (_event, query: string) => {
+  const token = getResolvedToken();
+  if (!token) throw new Error('Not authenticated');
+  try {
+    const octokit = new Octokit({ auth: token });
+    return await searchRepos(octokit, query);
+  } catch (err) {
+    if (isRateLimitError(err)) return []; // silently return empty for autocomplete
+    throw err;
+  }
 });
 
 ipcMain.handle('load-preferences', () => {
@@ -849,9 +1004,9 @@ ipcMain.handle('load-preferences', () => {
 ipcMain.handle('save-preferences', (_event, prefs: Preferences) => {
   savePreferences(prefs);
   applyBinaryOverrides(prefs);
-  // Restart polling so the new autoReviewOnRequest value takes effect immediately
-  stopAutoReviewPolling();
-  if (prefs.autoReviewOnRequest) startAutoReviewPolling();
+  // Restart polling so the new proactiveMode value takes effect immediately
+  stopProactivePolling();
+  if (prefs.proactiveMode) startProactivePolling();
 });
 
 ipcMain.handle('detect-binary-path', (_event, name: string) => {
@@ -885,7 +1040,9 @@ ipcMain.handle('re-render-hunks', async (_event, review: ReviewGuide) => {
 });
 
 ipcMain.handle('mark-review-read', (_event, id: string) => {
-  const index = readReviewsIndex().map((e) => (e.id === id ? { ...e, unread: false } : e));
+  const index = readReviewsIndex().map((e) =>
+    e.id === id ? { ...e, unread: false, autoUpdated: false } : e
+  );
   fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
 });
 
@@ -1000,12 +1157,16 @@ ipcMain.handle('get-pr-status', async (_event, prUrl: string): Promise<PrStatus>
 ipcMain.handle(
   'get-pr-state',
   async (_event, prUrl: string): Promise<{ prState: 'open' | 'merged' | 'closed'; headSha: string }> => {
-    const token = getResolvedToken();
-    const octokit = new Octokit({ auth: token ?? undefined });
-    const { owner, repo, pullNumber } = parsePrUrl(prUrl);
-    const prData = await getPrMetadata(octokit, owner, repo, pullNumber);
-    const prState = prData.merged ? 'merged' : prData.state === 'open' ? 'open' : 'closed';
-    return { prState, headSha: prData.headSha };
+    try {
+      const token = getResolvedToken();
+      const octokit = new Octokit({ auth: token ?? undefined });
+      const { owner, repo, pullNumber } = parsePrUrl(prUrl);
+      const prData = await getPrMetadata(octokit, owner, repo, pullNumber);
+      const prState = prData.merged ? 'merged' : prData.state === 'open' ? 'open' : 'closed';
+      return { prState, headSha: prData.headSha };
+    } catch (err) {
+      friendlyRateLimitError(err);
+    }
   }
 );
 

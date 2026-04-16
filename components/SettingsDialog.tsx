@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { CODE_THEMES, CODE_FONTS } from '@/lib/constants';
 import type { CodeTheme, CodeFont } from '@/lib/constants';
 import { applyTheme, type ThemeChoice } from '@/lib/theme';
+import type { Preferences, RepoSearchResult } from '@/lib/types';
 
 interface Props {
   open: boolean;
@@ -108,12 +109,21 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
   const [codeTheme, setCodeTheme] = useState<CodeTheme>('aurora-x');
   const [codeFont, setCodeFont] = useState<CodeFont>('jetbrains-mono');
   const [enableTools, setEnableTools] = useState(false);
-  const [autoReviewOnRequest, setAutoReviewOnRequest] = useState(false);
+  const [proactiveMode, setProactiveMode] = useState(false);
+  const [watchedRepos, setWatchedRepos] = useState<string[]>([]);
+  const [watchedRepoInput, setWatchedRepoInput] = useState('');
+  const [repoSuggestions, setRepoSuggestions] = useState<RepoSearchResult[]>([]);
+  const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
+  const showSuggestions = repoSuggestions.length > 0 && !suggestionsDismissed;
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [notifications, setNotifications] = useState(true);
   const [claudePath, setClaudePath] = useState('');
   const [geminiPath, setGeminiPath] = useState('');
   const [claudeDetected, setClaudeDetected] = useState('');
   const [geminiDetected, setGeminiDetected] = useState('');
+
+  // Clean up debounce timer on unmount
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -122,7 +132,8 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
       if (prefs.codeTheme) setCodeTheme(prefs.codeTheme as CodeTheme);
       if (prefs.codeFont) setCodeFont(prefs.codeFont as CodeFont);
       setEnableTools(prefs.enableTools);
-      setAutoReviewOnRequest(prefs.autoReviewOnRequest);
+      setProactiveMode(prefs.proactiveMode);
+      setWatchedRepos(prefs.watchedRepos ?? []);
       setNotifications(prefs.notifications);
       setClaudePath(prefs.claudePath || '');
       setGeminiPath(prefs.geminiPath || '');
@@ -137,10 +148,19 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
     applyTheme(theme);
   }
 
-  function saveField(overrides: Partial<Record<string, string | boolean>>) {
+  function saveField(overrides: Partial<Preferences>) {
     void window.electronAPI.loadPreferences().then((prefs) => {
       void window.electronAPI.savePreferences({ ...prefs, ...overrides });
     });
+  }
+
+  function addWatchedRepo(name: string) {
+    if (!name || watchedRepos.includes(name)) return;
+    const next = [...watchedRepos, name];
+    setWatchedRepos(next);
+    setWatchedRepoInput('');
+    setRepoSuggestions([]);
+    saveField({ watchedRepos: next });
   }
 
   function handleSelectTheme(theme: CodeTheme) {
@@ -219,19 +239,101 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
             </SettingRow>
 
             <SettingRow
-              label="Auto-review when assigned"
-              description="Automatically run a review when you're added as a reviewer; you'll be notified when it's ready."
+              label="Proactive mode"
+              description="Automatically review your PRs, assigned reviews, and watched repos. Re-generates when the PR updates."
             >
               <Toggle
-                checked={autoReviewOnRequest}
-                ariaLabel="Auto-review when assigned"
+                checked={proactiveMode}
+                ariaLabel="Proactive mode"
                 onChange={() => {
-                  const next = !autoReviewOnRequest;
-                  setAutoReviewOnRequest(next);
-                  saveField({ autoReviewOnRequest: next });
+                  const next = !proactiveMode;
+                  setProactiveMode(next);
+                  saveField({ proactiveMode: next });
                 }}
               />
             </SettingRow>
+
+            {proactiveMode && (
+              <div className="flex flex-col gap-2 ml-0.5">
+                <label className="text-sm font-medium text-foreground">Watched repos</label>
+                <p className="text-xs text-muted-foreground">
+                  All open PRs in these repos will be reviewed automatically.
+                </p>
+                <div className="relative">
+                  <div className="flex items-end gap-2">
+                    <input
+                      type="text"
+                      value={watchedRepoInput}
+                      placeholder="Search for a repo…"
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setWatchedRepoInput(val);
+                        setSuggestionsDismissed(false);
+                        if (debounceRef.current) clearTimeout(debounceRef.current);
+                        if (val.trim().length >= 2) {
+                          debounceRef.current = setTimeout(() => {
+                            void window.electronAPI.searchRepos(val.trim()).then((results) => {
+                              setRepoSuggestions(results.filter((r) => !watchedRepos.includes(r.fullName)));
+                            });
+                          }, 300);
+                        } else {
+                          setRepoSuggestions([]);
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const trimmed = watchedRepoInput.trim();
+                          if (trimmed.includes('/')) addWatchedRepo(trimmed);
+                        }
+                        if (e.key === 'Escape') setSuggestionsDismissed(true);
+                      }}
+                      onFocus={() => setSuggestionsDismissed(false)}
+                      onBlur={() => setTimeout(() => setSuggestionsDismissed(true), 200)}
+                      className="flex-1 bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground/60 transition-colors"
+                    />
+                  </div>
+                  {showSuggestions && (
+                    <ul className="absolute z-50 top-full left-0 right-0 mt-1 bg-popover border border-border rounded-md shadow-md max-h-48 overflow-y-auto">
+                      {repoSuggestions.map((repo) => (
+                        <li key={repo.fullName}>
+                          <button
+                            type="button"
+                            className="w-full text-left px-3 py-2 text-sm hover:bg-accent transition-colors flex flex-col gap-0.5"
+                            onMouseDown={(e) => { e.preventDefault(); addWatchedRepo(repo.fullName); }}
+                          >
+                            <span className="font-mono text-xs text-foreground">{repo.fullName}</span>
+                            {repo.description && (
+                              <span className="text-xs text-muted-foreground truncate">{repo.description}</span>
+                            )}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                {watchedRepos.length > 0 && (
+                  <ul className="flex flex-col gap-1 mt-1">
+                    {watchedRepos.map((repo) => (
+                      <li key={repo} className="flex items-center justify-between gap-2 text-sm text-foreground">
+                        <span className="font-mono text-xs">{repo}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = watchedRepos.filter((r) => r !== repo);
+                            setWatchedRepos(next);
+                            saveField({ watchedRepos: next });
+                          }}
+                          className="text-xs text-muted-foreground hover:text-destructive transition-colors"
+                        >
+                          Remove
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
 
             <SettingRow label="Desktop notifications" description="Notify when a review completes">
               <Toggle

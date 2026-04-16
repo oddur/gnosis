@@ -651,7 +651,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
         window.electronAPI.loadReview(id),
         window.electronAPI.markReviewRead(id),
       ]);
-      setHistory((prev) => prev.map((e) => (e.id === id ? { ...e, unread: false } : e)));
+      setHistory((prev) => prev.map((e) => (e.id === id ? { ...e, unread: false, autoUpdated: false } : e)));
       onReviewReady(review);
     } catch {
       setError("Couldn't load that review. The file may have been deleted.");
@@ -1382,13 +1382,13 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
           {prGroups.length > 0 && (
             <section>
               <div className="flex items-baseline justify-between mb-3">
-                <span className="newspaper-section !mb-0">
+                <h2 className="newspaper-section !mb-0">
                   The Archives
                   <span className="font-normal text-muted-foreground ml-2">
                     {prGroups.length} {prGroups.length === 1 ? 'review' : 'reviews'}
                     {unreadGroups.length > 0 && ` · ${unreadGroups.length} unread`}
                   </span>
-                </span>
+                </h2>
                 <div className="flex items-center gap-3 slide-meta">
                   {prGroups.some((g) => {
                     const state = livePrStates.get(g.prUrl)?.prState ?? g.latestReview.prState;
@@ -1437,7 +1437,16 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                       key={group.prUrl}
                       data-pr-url={group.prUrl}
                       className={`${idx === 0 ? 'newspaper-article--featured' : 'newspaper-article'} group`}
+                      role={isClickable ? 'button' : undefined}
+                      tabIndex={isClickable ? 0 : undefined}
                       onClick={() => isClickable && handleLoadFromHistory(latestId)}
+                      onKeyDown={(e) => {
+                        if (isClickable && (e.key === 'Enter' || e.key === ' ')) {
+                          e.preventDefault();
+                          handleLoadFromHistory(latestId);
+                        }
+                      }}
+                      aria-label={isClickable ? `Open review: ${group.prTitle}` : undefined}
                     >
                       {/* Featured articles use a two-column layout:
                           left = headline + meta + badges, right = lede.
@@ -1449,8 +1458,8 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                               {group.prTitle}
                             </h3>
                             <p className="newspaper-article-meta">
-                              {group.repoRef} · {group.author} · {timeAgo(group.latestReview.savedAt)}
-                              {hasMultiple && ` · ${group.reviews.length} reviews`}
+                              {group.repoRef} · {group.author}&nbsp;· <span className="whitespace-nowrap">{timeAgo(group.latestReview.savedAt)}</span>
+                              {hasMultiple && <>&nbsp;· <span className="whitespace-nowrap">{group.reviews.length} reviews</span></>}
                             </p>
                           </div>
                           {group.latestReview.summary ? (
@@ -1469,8 +1478,8 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                             {group.prTitle}
                           </h3>
                           <p className="newspaper-article-meta">
-                            {group.repoRef} · {group.author} · {timeAgo(group.latestReview.savedAt)}
-                            {hasMultiple && ` · ${group.reviews.length} reviews`}
+                            {group.repoRef} · {group.author}&nbsp;· <span className="whitespace-nowrap">{timeAgo(group.latestReview.savedAt)}</span>
+                            {hasMultiple && <>&nbsp;· <span className="whitespace-nowrap">{group.reviews.length} reviews</span></>}
                           </p>
                           {group.latestReview.summary && (
                             <p className="newspaper-article-lede">
@@ -1520,6 +1529,11 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                             {risk.label}
                           </Badge>
                         )}
+                        {group.latestReview.autoUpdated && (
+                          <Badge variant="outline" className="text-[10px] border-[var(--color-warning)]/35 text-[var(--color-warning)]">
+                            Updated
+                          </Badge>
+                        )}
                       </div>
 
                       {/* Byte stats for generating reviews */}
@@ -1544,17 +1558,19 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                           <>
                             <button
                               onClick={(e) => { e.stopPropagation(); void window.electronAPI.openReviewPrompt(latestId); }}
-                              className="text-muted-foreground hover:text-foreground transition-colors"
+                              className="text-muted-foreground hover:text-foreground transition-colors p-1.5 -m-1.5"
                               title="View prompt"
+                              aria-label="View prompt"
                             >
-                              <FileText className="h-3 w-3" />
+                              <FileText className="h-3.5 w-3.5" />
                             </button>
                             <button
                               onClick={(e) => handleDeleteFromHistory(e, latestId)}
-                              className="text-muted-foreground hover:text-destructive transition-colors"
+                              className="text-muted-foreground hover:text-destructive transition-colors p-1.5 -m-1.5"
                               title="Delete"
+                              aria-label="Delete review"
                             >
-                              <Trash2 className="h-3 w-3" />
+                              <Trash2 className="h-3.5 w-3.5" />
                             </button>
                           </>
                         )}
@@ -1570,6 +1586,8 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                               });
                             }}
                             className="slide-meta hover:text-foreground transition-colors ml-auto"
+                            aria-expanded={isExpanded}
+                            aria-label={`${group.reviews.length} previous reviews`}
                           >
                             {isExpanded ? 'Hide' : `${group.reviews.length} reviews`}
                           </button>
@@ -1616,10 +1634,10 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                                   )}
                                   <button
                                     onClick={(e) => handleDeleteFromHistory(e, review.id)}
-                                    className="shrink-0 opacity-0 group-hover/review:opacity-100 text-muted-foreground hover:text-destructive transition-opacity"
-                                    aria-label="Delete"
+                                    className="shrink-0 opacity-0 group-hover/review:opacity-100 text-muted-foreground hover:text-destructive transition-opacity p-1.5 -m-1.5"
+                                    aria-label="Delete review"
                                   >
-                                    <Trash2 className="h-3 w-3" />
+                                    <Trash2 className="h-3.5 w-3.5" />
                                   </button>
                                 </div>
                               </button>
