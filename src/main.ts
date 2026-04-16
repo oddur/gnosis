@@ -532,6 +532,8 @@ void app.whenReady().then(() => {
 
   // Mark any stale "generating" entries from a previous crash as failed
   cleanupStaleGeneratingEntries();
+  // Backfill summaries for reviews that predate the summary field
+  backfillSummaries();
   applyBinaryOverrides(loadPreferences());
   createWindow();
   setupAutoUpdater();
@@ -607,6 +609,31 @@ function readReviewsIndex(): ReviewHistoryEntry[] {
     return entries.map((e) => ({ ...e, status: e.status ?? 'completed' }));
   } catch {
     return [];
+  }
+}
+
+/** One-time migration: backfill summary from full review JSON into
+ *  the index for entries that predate the summary field. Runs once
+ *  at startup and persists results so subsequent reads are fast. */
+function backfillSummaries(): void {
+  const index = readReviewsIndex();
+  let dirty = false;
+  for (const entry of index) {
+    if (!entry.summary && entry.status === 'completed') {
+      try {
+        const reviewPath = path.join(getReviewsDir(), `${entry.id}.json`);
+        const review = JSON.parse(fs.readFileSync(reviewPath, 'utf-8')) as ReviewGuide;
+        if (review.summary) {
+          entry.summary = review.summary;
+          dirty = true;
+        }
+      } catch {
+        // Review file missing or unreadable — skip
+      }
+    }
+  }
+  if (dirty) {
+    fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
   }
 }
 
@@ -1327,6 +1354,7 @@ async function runBackgroundGeneration(
       status: 'completed',
       riskLevel: reviewGuide.riskLevel,
       generationDurationMs,
+      summary: reviewGuide.summary,
     });
 
     broadcastToAllWindows('review-completed', { reviewId });
