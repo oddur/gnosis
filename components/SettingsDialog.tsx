@@ -118,6 +118,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [notifications, setNotifications] = useState(true);
   const [trayEnabled, setTrayEnabled] = useState(true);
+  const [maxPrsPerRepo, setMaxPrsPerRepo] = useState(10);
   const [claudePath, setClaudePath] = useState('');
   const [geminiPath, setGeminiPath] = useState('');
   const [claudeDetected, setClaudeDetected] = useState('');
@@ -137,6 +138,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
       setWatchedRepos(prefs.watchedRepos ?? []);
       setNotifications(prefs.notifications);
       setTrayEnabled(prefs.trayEnabled);
+      setMaxPrsPerRepo(prefs.maxPrsPerRepo);
       setClaudePath(prefs.claudePath || '');
       setGeminiPath(prefs.geminiPath || '');
     });
@@ -334,6 +336,27 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                     ))}
                   </ul>
                 )}
+              <div className="flex items-center justify-between gap-4 mt-2">
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-sm font-medium text-foreground">Max PRs per repo</label>
+                  <p className="text-xs text-muted-foreground">
+                    How many of the latest open PRs to review per watched repo.
+                  </p>
+                </div>
+                <select
+                  value={maxPrsPerRepo}
+                  onChange={(e) => {
+                    const next = Number(e.target.value);
+                    setMaxPrsPerRepo(next);
+                    saveField({ maxPrsPerRepo: next });
+                  }}
+                  className="bg-transparent border border-border rounded-md px-2 py-1 text-sm text-foreground"
+                >
+                  {[5, 10, 15, 20, 30, 50].map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+              </div>
               </div>
             )}
 

@@ -520,7 +520,7 @@ async function runProactiveCheck() {
       prefs.watchedRepos.map(async (repoRef) => {
         const [owner, repo] = repoRef.split('/');
         if (!owner || !repo) return [];
-        return listRepoPullRequests(octokit, owner, repo);
+        return listRepoPullRequests(octokit, owner, repo, prefs.maxPrsPerRepo);
       })
     );
     const watchedPrs: PrSearchResult[] = [];
@@ -931,6 +931,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   firstRunSeen: false,
   theme: 'system',
   trayEnabled: true,
+  maxPrsPerRepo: 10,
 };
 
 function applyBinaryOverrides(prefs: Preferences): void {

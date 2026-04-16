@@ -218,6 +218,7 @@ export interface Preferences {
   firstRunSeen: boolean;
   theme: 'light' | 'dark' | 'system';
   trayEnabled: boolean;
+  maxPrsPerRepo: number;
 }
 
 export interface SendSlideChatRequest {

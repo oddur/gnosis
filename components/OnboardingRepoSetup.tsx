@@ -53,12 +53,20 @@ export function OnboardingRepoSetup({ open, onComplete, onSkip }: Props) {
         onEscapeKeyDown={(e) => e.preventDefault()}
       >
         <DialogHeader>
-          <DialogTitle>Watch repos for automatic reviews</DialogTitle>
+          <DialogTitle>Welcome to Gnosis</DialogTitle>
         </DialogHeader>
 
-        <p className="text-sm text-muted-foreground">
-          Gnosis can automatically review every open PR in repos you pick. You'll get reviews without pasting a single URL.
-        </p>
+        <div className="flex flex-col gap-2 text-sm text-muted-foreground">
+          <p>
+            Pick repos to watch and Gnosis will automatically review every open PR — no URL pasting needed.
+          </p>
+          <p>
+            Each review becomes a guided walkthrough: diffs grouped by theme, ordered by dependency, with a short narrative on every slide explaining <em>why</em> the change is there.
+          </p>
+          <p>
+            Reviews refresh when PRs update and you'll get a notification when they're ready.
+          </p>
+        </div>
 
         {/* Search input */}
         <div className="relative">

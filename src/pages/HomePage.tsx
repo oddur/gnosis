@@ -270,7 +270,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
       setIncludeAllFiles(prefs.includeAllFiles);
       setPrefsLoaded(true);
       if (!prefs.firstRunSeen) {
-        setFirstRunOpen(true);
+        setRepoSetupOpen(true);
       }
     });
     return () => { cancelled = true; };
@@ -298,8 +298,6 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
     void window.electronAPI.loadPreferences().then((current) => {
       void window.electronAPI.savePreferences({ ...current, firstRunSeen: true });
     });
-    // Show repo setup step after welcome hero
-    setRepoSetupOpen(true);
   }
 
   // Resets every onboarding flag — the firstRunSeen pref, the
@@ -1411,6 +1409,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
               void window.electronAPI.loadPreferences().then((current) => {
                 void window.electronAPI.savePreferences({
                   ...current,
+                  firstRunSeen: true,
                   proactiveMode: true,
                   watchedRepos: repos,
                 });
@@ -1419,6 +1418,9 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
             }}
             onSkip={() => {
               setRepoSetupOpen(false);
+              void window.electronAPI.loadPreferences().then((current) => {
+                void window.electronAPI.savePreferences({ ...current, firstRunSeen: true });
+              });
               setTimeout(() => prInputRef.current?.focus(), 100);
             }}
           />
