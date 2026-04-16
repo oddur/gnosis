@@ -197,6 +197,9 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
     }
   });
 
+  const mainRef = useRef<HTMLElement>(null);
+  const scrollToTop = () => mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+
   // Compose-row progressive disclosure. Each section starts collapsed
   // so the default state of the page is one-line-of-intent. Instructions
   // automatically expand if the user already has saved instructions
@@ -310,7 +313,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
     }
     setAboutOpen(false);
     setFirstRunOpen(true);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    scrollToTop();
   }
 
   // Command palette commands for the home screen. Recently-used
@@ -714,13 +717,16 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
     day: 'numeric',
   });
 
-  // Newspaper edition number — days since an arbitrary epoch
+  // Newspaper edition number — days since an arbitrary epoch,
+  // normalized to local midnight so it doesn't drift with UTC.
+  const todayLocal = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const editionEpoch = new Date(2024, 0, 1);
   const editionNumber = Math.floor(
-    (today.getTime() - new Date('2024-01-01').getTime()) / 86_400_000
+    (todayLocal.getTime() - editionEpoch.getTime()) / 86_400_000
   );
 
   return (
-    <main className="h-screen overflow-y-auto">
+    <main ref={mainRef} className="h-screen overflow-y-auto">
       <ShortcutOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <CommandPalette
         open={paletteOpen}
@@ -1433,22 +1439,17 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                       className={`${idx === 0 ? 'newspaper-article--featured' : 'newspaper-article'} group`}
                       onClick={() => isClickable && handleLoadFromHistory(latestId)}
                     >
-                      {/* Headline */}
-                      <button
-                        onClick={() => isClickable && handleLoadFromHistory(latestId)}
-                        className="text-left w-full"
-                        disabled={!isClickable}
+                      {/* Headline — the article-level onClick handles navigation,
+                          so this is just a presentational heading, not a button. */}
+                      <h3
+                        className={
+                          idx === 0
+                            ? 'newspaper-article-headline--featured'
+                            : `newspaper-article-headline ${isUnread ? 'newspaper-article-headline--unread' : ''}`
+                        }
                       >
-                        <h3
-                          className={
-                            idx === 0
-                              ? 'newspaper-article-headline--featured'
-                              : `newspaper-article-headline ${isUnread ? 'newspaper-article-headline--unread' : ''}`
-                          }
-                        >
-                          {group.prTitle}
-                        </h3>
-                      </button>
+                        {group.prTitle}
+                      </h3>
 
                       {/* Byline & meta */}
                       <p className="newspaper-article-meta">
@@ -1543,14 +1544,15 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                         )}
                         {hasMultiple && (
                           <button
-                            onClick={() =>
+                            onClick={(e) => {
+                              e.stopPropagation();
                               setExpandedPRs((prev) => {
                                 const next = new Set(prev);
                                 if (next.has(group.prUrl)) next.delete(group.prUrl);
                                 else next.add(group.prUrl);
                                 return next;
-                              })
-                            }
+                              });
+                            }}
                             className="slide-meta hover:text-foreground transition-colors ml-auto"
                           >
                             {isExpanded ? 'Hide' : `${group.reviews.length} reviews`}
@@ -1619,7 +1621,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
           {/* ── Newspaper footer ── */}
           <hr className="newspaper-rule--double mt-8" />
           <div className="newspaper-footer">
-            <button onClick={() => { setAboutOpen(true); window.scrollTo({ top: 0, behavior: 'smooth' }); }}>
+            <button onClick={() => { setAboutOpen(true); scrollToTop(); }}>
               About
             </button>
             <button onClick={() => setShortcutsOpen(true)}>Shortcuts</button>

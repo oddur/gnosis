@@ -1269,11 +1269,6 @@ ul.review-focus-content > li::before {
   cursor: pointer;
 }
 
-.newspaper-article *,
-.newspaper-article--featured * {
-  cursor: pointer;
-}
-
 /* Remove right border on last column items */
 .newspaper-grid > .newspaper-article:nth-child(3n) {
   border-right: none;

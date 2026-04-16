@@ -532,6 +532,8 @@ void app.whenReady().then(() => {
 
   // Mark any stale "generating" entries from a previous crash as failed
   cleanupStaleGeneratingEntries();
+  // Backfill summaries for reviews that predate the summary field
+  backfillSummaries();
   applyBinaryOverrides(loadPreferences());
   createWindow();
   setupAutoUpdater();
@@ -604,31 +606,34 @@ function readReviewsIndex(): ReviewHistoryEntry[] {
   try {
     const entries = JSON.parse(fs.readFileSync(getReviewsIndexPath(), 'utf-8')) as ReviewHistoryEntry[];
     // Backward compat: entries without status are completed
-    let dirty = false;
-    const result = entries.map((e) => {
-      const patched = { ...e, status: e.status ?? ('completed' as const) };
-      // Backfill summary from the full review JSON if missing
-      if (!patched.summary && patched.status === 'completed') {
-        try {
-          const reviewPath = path.join(getReviewsDir(), `${patched.id}.json`);
-          const review = JSON.parse(fs.readFileSync(reviewPath, 'utf-8')) as ReviewGuide;
-          if (review.summary) {
-            patched.summary = review.summary;
-            dirty = true;
-          }
-        } catch {
-          // Review file missing or unreadable — skip
-        }
-      }
-      return patched;
-    });
-    // Persist backfilled summaries so we only do this once
-    if (dirty) {
-      fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(result, null, 2));
-    }
-    return result;
+    return entries.map((e) => ({ ...e, status: e.status ?? 'completed' }));
   } catch {
     return [];
+  }
+}
+
+/** One-time migration: backfill summary from full review JSON into
+ *  the index for entries that predate the summary field. Runs once
+ *  at startup and persists results so subsequent reads are fast. */
+function backfillSummaries(): void {
+  const index = readReviewsIndex();
+  let dirty = false;
+  for (const entry of index) {
+    if (!entry.summary && entry.status === 'completed') {
+      try {
+        const reviewPath = path.join(getReviewsDir(), `${entry.id}.json`);
+        const review = JSON.parse(fs.readFileSync(reviewPath, 'utf-8')) as ReviewGuide;
+        if (review.summary) {
+          entry.summary = review.summary;
+          dirty = true;
+        }
+      } catch {
+        // Review file missing or unreadable — skip
+      }
+    }
+  }
+  if (dirty) {
+    fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
   }
 }
 
