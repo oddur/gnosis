@@ -118,6 +118,8 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [notifications, setNotifications] = useState(true);
   const [trayEnabled, setTrayEnabled] = useState(true);
+  const [maxPrsPerRepo, setMaxPrsPerRepo] = useState(10);
+  const [parallelReview, setParallelReview] = useState(false);
   const [claudePath, setClaudePath] = useState('');
   const [geminiPath, setGeminiPath] = useState('');
   const [claudeDetected, setClaudeDetected] = useState('');
@@ -137,6 +139,8 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
       setWatchedRepos(prefs.watchedRepos ?? []);
       setNotifications(prefs.notifications);
       setTrayEnabled(prefs.trayEnabled);
+      setMaxPrsPerRepo(prefs.maxPrsPerRepo);
+      setParallelReview(prefs.parallelReview);
       setClaudePath(prefs.claudePath || '');
       setGeminiPath(prefs.geminiPath || '');
     });
@@ -241,6 +245,21 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
             </SettingRow>
 
             <SettingRow
+              label="Parallel review"
+              description="Split generation into a planner step then parallel writers per topic. Faster for large PRs."
+            >
+              <Toggle
+                checked={parallelReview}
+                ariaLabel="Parallel review"
+                onChange={() => {
+                  const next = !parallelReview;
+                  setParallelReview(next);
+                  saveField({ parallelReview: next });
+                }}
+              />
+            </SettingRow>
+
+            <SettingRow
               label="Proactive mode"
               description="Automatically review your PRs, assigned reviews, and watched repos. Re-generates when the PR updates."
             >
@@ -334,6 +353,27 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                     ))}
                   </ul>
                 )}
+              <div className="flex items-center justify-between gap-4 mt-2">
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-sm font-medium text-foreground">Max PRs per repo</label>
+                  <p className="text-xs text-muted-foreground">
+                    How many recently updated open PRs to review per watched repo.
+                  </p>
+                </div>
+                <select
+                  value={maxPrsPerRepo}
+                  onChange={(e) => {
+                    const next = Number(e.target.value);
+                    setMaxPrsPerRepo(next);
+                    saveField({ maxPrsPerRepo: next });
+                  }}
+                  className="bg-transparent border border-border rounded-md px-2 py-1 text-sm text-foreground"
+                >
+                  {[5, 10, 15, 20, 30, 50].map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+              </div>
               </div>
             )}
 

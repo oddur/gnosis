@@ -1,5 +1,5 @@
 import { getProvider } from './provider';
-import type { AIReviewGuide, ModelId, Provider } from './types';
+import type { AIReviewGuide, ModelId, PlannerOutput, Provider, WriterSlideOutput } from './types';
 
 // ── System prompt & schema constants ─────────────────────────────
 
@@ -268,5 +268,208 @@ export async function generateReviewGuide(
         `AI review generation failed after retry: ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`
       );
     }
+  }
+}
+
+// ── Two-phase generation: Planner + Writers ──────────────────────
+
+const PLANNER_SYSTEM = `You are a code review architect. Given a pull request's metadata and its diff hunk index, your job is to plan the review structure — grouping related hunks into logical topics and ordering them for optimal understanding.
+
+ORDERING: Foundations first (types, interfaces, schemas) → implementations → consumers → tests → config/docs.
+
+GROUPING: Group hunks that are logically related and should be understood together.
+- A change to an interface and its implementation belong in the same topic
+- Unrelated changes to the same file should be in different topics
+- Refactoring and its tests are separate topics
+- Trivial changes (whitespace, imports, formatting) should be merged into a single "Minor changes" topic at the end, or omitted entirely
+
+STORY ARC: Write a 2-3 sentence narrative thread that connects all topics into a coherent story. This tells each slide writer how their topic fits into the bigger picture. Example: "This PR migrates the auth layer from session cookies to JWT tokens. The foundation is a new Token type and validation middleware, which the route handlers then adopt, followed by test updates."
+
+NARRATIVE BRIEF per topic: Write a 1-2 sentence direction for each topic's slide writer. Explain what angle to take, what to emphasize, and how this topic relates to others. Example: "This introduces the core Token type that all subsequent auth changes depend on. Emphasize the design choices in the token structure and expiry handling."
+
+RISK: Assess based on: auth/payment/data model changes = high; new features with tests = medium; refactoring with coverage = low; docs/config = low.
+
+IMPORTANCE per topic:
+- "critical" = auth, security, data integrity, public API contracts, payment/billing
+- "important" = core logic, new features, significant refactors, error handling
+- "minor" = config, docs, test boilerplate, import reordering, whitespace
+
+Respond with valid JSON only. No explanation outside the JSON.`;
+
+const PLANNER_USER_SUFFIX = `
+
+Plan the review structure for this pull request. Group the hunks into logical topics and order them for optimal review flow.
+
+Respond with JSON matching this schema exactly:
+{
+  "summary": string,
+  "riskLevel": "low" | "medium" | "high",
+  "riskRationale": string,
+  "storyArc": string,
+  "topics": [
+    {
+      "title": string,
+      "slideType": "foundation" | "feature" | "refactor" | "bugfix" | "test" | "config" | "docs",
+      "importance": "critical" | "important" | "minor",
+      "hunkIds": ["hunk-0", "hunk-3", ...],
+      "dependsOn": [],
+      "order": 1,
+      "narrativeBrief": string
+    }
+  ]
+}`;
+
+function validatePlannerOutput(obj: unknown): obj is PlannerOutput {
+  if (typeof obj !== 'object' || obj === null) return false;
+  const o = obj as Record<string, unknown>;
+  return (
+    typeof o.summary === 'string' &&
+    typeof o.riskLevel === 'string' &&
+    Array.isArray(o.topics) &&
+    o.topics.length > 0
+  );
+}
+
+export async function planReview(
+  hunkIndex: string,
+  prMetadata: string,
+  providerName: Provider,
+  model: ModelId,
+  onChunk?: (chunk: string, isThinking: boolean) => void,
+  thinking: boolean = false,
+  signal?: AbortSignal
+): Promise<PlannerOutput> {
+  const provider = getProvider(providerName);
+  const userMessage = prMetadata + '\n' + hunkIndex + PLANNER_USER_SUFFIX;
+
+  console.log(`[planner] Calling ${providerName} (${model}) with ${userMessage.length} chars...`);
+  const fullText = await provider.generate({
+    content: userMessage,
+    systemPrompt: PLANNER_SYSTEM,
+    model,
+    thinking,
+    onChunk,
+    signal,
+  });
+
+  const jsonText = extractJson(fullText);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch (err) {
+    throw new Error(`Planner JSON parse failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  if (!validatePlannerOutput(parsed)) {
+    throw new Error('Planner response missing required fields (summary, riskLevel, topics)');
+  }
+
+  return parsed;
+}
+
+// ── Writer: generates a single slide for one topic ──────────────
+
+const WRITER_SYSTEM = `You are an expert code reviewer writing one slide of a guided code review. You are given a specific topic with its relevant diff hunks, file contents, and narrative direction from the review planner.
+
+CONTEXT: You are writing ONE slide in a multi-slide review. The <story_arc> tells you the overall PR narrative. The <narrative_brief> tells you what angle to take for THIS slide. Follow these directions to maintain consistency across slides.
+
+NARRATIVE: 2–4 short paragraphs. Lead with motivation, explain what changed, note anything non-obvious.
+- Short sentences. Plain words. One idea per sentence.
+- Use **bold** for emphasis, \`backticks\` for code symbols, markdown lists where helpful
+- No headings — just bold, lists, inline code
+- Reference how this topic connects to the broader PR story when relevant
+- If this topic depends on earlier topics, briefly acknowledge what was established (e.g., "Building on the Token type introduced earlier...")
+
+REVIEW FOCUS: 2–4 actionable checks as a markdown bullet list. Focus on what could go wrong.
+
+REVIEW CHECKS: Same items as reviewFocus in structured form.
+- "text" = the check sentence
+- "filePath" must exactly match a file in the provided hunks
+- "startLine" is the new-file line number within a hunk range
+- Set filePath and startLine to null for general checks
+
+MERMAID DIAGRAM: Include only when it genuinely helps understanding (sequence diagrams for flows, flowcharts for branching, class diagrams for data models). Keep small: 5–8 nodes max. Omit (null) when not useful.
+
+Respond with valid JSON only. No explanation outside the JSON.`;
+
+const WRITER_USER_SUFFIX = `
+
+Write the slide content for this topic. Respond with JSON matching this schema exactly:
+{
+  "narrative": string,
+  "reviewFocus": string | null,
+  "contextSnippets": string[],
+  "mermaidDiagram": string | null,
+  "reviewChecks": [
+    {
+      "text": string,
+      "filePath": string | null,
+      "startLine": number | null
+    }
+  ]
+}`;
+
+function validateWriterOutput(obj: unknown): obj is WriterSlideOutput {
+  if (typeof obj !== 'object' || obj === null) return false;
+  const o = obj as Record<string, unknown>;
+  return typeof o.narrative === 'string';
+}
+
+export async function generateSlide(
+  topicContext: string,
+  providerName: Provider,
+  model: ModelId,
+  instructions?: string,
+  reviewSuggestions: boolean = true,
+  onChunk?: (chunk: string, isThinking: boolean) => void,
+  thinking: boolean = false,
+  signal?: AbortSignal
+): Promise<WriterSlideOutput> {
+  const provider = getProvider(providerName);
+
+  const reviewSuggestionsDirective = reviewSuggestions
+    ? ''
+    : '\nSet "reviewFocus" to null. Do not generate review focus content.\n';
+
+  let system = WRITER_SYSTEM + reviewSuggestionsDirective;
+  if (instructions?.trim()) {
+    system += `\n\nCUSTOM REVIEWER INSTRUCTIONS (take precedence over style guidelines):\n${instructions.trim()}`;
+  }
+
+  const userMessage = topicContext + WRITER_USER_SUFFIX;
+  console.log(`[writer] Starting ${providerName} (${model}) with ${userMessage.length} chars`);
+
+  async function attempt(extra: string = ''): Promise<WriterSlideOutput> {
+    const fullText = await provider.generate({
+      content: userMessage + extra,
+      systemPrompt: system,
+      model,
+      thinking,
+      onChunk,
+      signal,
+    });
+
+    const jsonText = extractJson(fullText);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch (err) {
+      throw new Error(`Writer JSON parse failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    if (!validateWriterOutput(parsed)) {
+      throw new Error('Writer response missing required fields (narrative)');
+    }
+
+    return parsed;
+  }
+
+  try {
+    return await attempt();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : '';
+    if (msg.includes('rate limit') || msg.includes('prompt is too long')) throw err;
+    console.warn(`[writer] First attempt failed (${msg}), retrying concisely`);
+    return await attempt('\n\nIMPORTANT: Return only raw JSON starting with { and ending with }. Keep narrative under 3 sentences. No markdown fences.');
   }
 }

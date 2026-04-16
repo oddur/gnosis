@@ -26,6 +26,7 @@ import { ShortcutOverlay } from '../../components/ShortcutOverlay';
 import { CommandPalette, type Command } from '../../components/CommandPalette';
 import { useKeyboardShortcuts, type ShortcutMap } from '../../lib/use-keyboard-shortcuts';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
+import { OnboardingRepoSetup } from '../../components/OnboardingRepoSetup';
 import { Avatar, AvatarFallback, AvatarImage } from '../../components/ui/avatar';
 import { riskConfig, safeConfigLookup } from '../../lib/constants';
 import type { ModelId, Preferences, Provider, PrSearchResult, ReviewGuide, ReviewHistoryEntry, UpdateInfo } from '../../lib/types';
@@ -160,6 +161,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   const [patError, setPatError] = useState<string | null>(null);
   const [patConnecting, setPatConnecting] = useState(false);
   const [firstRunOpen, setFirstRunOpen] = useState(false);
+  const [repoSetupOpen, setRepoSetupOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   // The "About Gnosis" panel is the on-demand way to re-read the
@@ -268,7 +270,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
       setIncludeAllFiles(prefs.includeAllFiles);
       setPrefsLoaded(true);
       if (!prefs.firstRunSeen) {
-        setFirstRunOpen(true);
+        setRepoSetupOpen(true);
       }
     });
     return () => { cancelled = true; };
@@ -318,7 +320,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
       /* non-fatal */
     }
     setAboutOpen(false);
-    setFirstRunOpen(true);
+    setRepoSetupOpen(true);
     scrollToTop();
   }
 
@@ -1398,6 +1400,30 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
               </div>
             </DialogContent>
           </Dialog>
+
+          {/* ── Onboarding repo setup ── */}
+          <OnboardingRepoSetup
+            open={repoSetupOpen}
+            onComplete={(repos) => {
+              setRepoSetupOpen(false);
+              void window.electronAPI.loadPreferences().then((current) => {
+                void window.electronAPI.savePreferences({
+                  ...current,
+                  firstRunSeen: true,
+                  proactiveMode: true,
+                  watchedRepos: repos,
+                });
+              });
+              setTimeout(() => prInputRef.current?.focus(), 100);
+            }}
+            onSkip={() => {
+              setRepoSetupOpen(false);
+              void window.electronAPI.loadPreferences().then((current) => {
+                void window.electronAPI.savePreferences({ ...current, firstRunSeen: true });
+              });
+              setTimeout(() => prInputRef.current?.focus(), 100);
+            }}
+          />
 
           {/* ── Empty state ── Only shown for first-time users.
               Explains what will appear here and sets expectations. */}

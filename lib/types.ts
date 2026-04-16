@@ -84,6 +84,34 @@ export interface AIReviewGuide {
   webSources?: WebSource[];
 }
 
+// Planner output for two-phase review generation
+export interface TopicPlan {
+  title: string;
+  slideType: SlideType;
+  importance: SlideImportance;
+  hunkIds: string[];
+  dependsOn: string[];
+  order: number;
+  narrativeBrief: string; // 1-2 sentence direction for the writer
+}
+
+export interface PlannerOutput {
+  summary: string;
+  riskLevel: 'low' | 'medium' | 'high';
+  riskRationale: string;
+  storyArc: string; // Overall narrative thread connecting all topics
+  topics: TopicPlan[];
+}
+
+// Writer output for a single slide in two-phase generation
+export interface WriterSlideOutput {
+  narrative: string;
+  reviewFocus: string | null;
+  contextSnippets: string[];
+  mermaidDiagram?: string | null;
+  reviewChecks?: ReviewCheck[];
+}
+
 export interface FileMetadata {
   filename: string;
   status: 'added' | 'modified' | 'deleted' | 'renamed';
@@ -218,6 +246,8 @@ export interface Preferences {
   firstRunSeen: boolean;
   theme: 'light' | 'dark' | 'system';
   trayEnabled: boolean;
+  maxPrsPerRepo: number;
+  parallelReview: boolean;
 }
 
 export interface SendSlideChatRequest {
@@ -257,6 +287,7 @@ export interface ChangedFile {
   additions: number;
   deletions: number;
   previous_filename?: string;
+  patch?: string;
 }
 
 export interface FreshnessCommit {
