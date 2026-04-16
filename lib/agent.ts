@@ -283,6 +283,10 @@ GROUPING: Group hunks that are logically related and should be understood togeth
 - Refactoring and its tests are separate topics
 - Trivial changes (whitespace, imports, formatting) should be merged into a single "Minor changes" topic at the end, or omitted entirely
 
+STORY ARC: Write a 2-3 sentence narrative thread that connects all topics into a coherent story. This tells each slide writer how their topic fits into the bigger picture. Example: "This PR migrates the auth layer from session cookies to JWT tokens. The foundation is a new Token type and validation middleware, which the route handlers then adopt, followed by test updates."
+
+NARRATIVE BRIEF per topic: Write a 1-2 sentence direction for each topic's slide writer. Explain what angle to take, what to emphasize, and how this topic relates to others. Example: "This introduces the core Token type that all subsequent auth changes depend on. Emphasize the design choices in the token structure and expiry handling."
+
 RISK: Assess based on: auth/payment/data model changes = high; new features with tests = medium; refactoring with coverage = low; docs/config = low.
 
 IMPORTANCE per topic:
@@ -301,6 +305,7 @@ Respond with JSON matching this schema exactly:
   "summary": string,
   "riskLevel": "low" | "medium" | "high",
   "riskRationale": string,
+  "storyArc": string,
   "topics": [
     {
       "title": string,
@@ -308,7 +313,8 @@ Respond with JSON matching this schema exactly:
       "importance": "critical" | "important" | "minor",
       "hunkIds": ["hunk-0", "hunk-3", ...],
       "dependsOn": [],
-      "order": 1
+      "order": 1,
+      "narrativeBrief": string
     }
   ]
 }`;
@@ -363,12 +369,16 @@ export async function planReview(
 
 // ── Writer: generates a single slide for one topic ──────────────
 
-const WRITER_SYSTEM = `You are an expert code reviewer writing one slide of a guided code review. You are given a specific topic with its relevant diff hunks and file contents. Write a clear, focused narrative explaining WHY this changed and what the reviewer should pay attention to.
+const WRITER_SYSTEM = `You are an expert code reviewer writing one slide of a guided code review. You are given a specific topic with its relevant diff hunks, file contents, and narrative direction from the review planner.
+
+CONTEXT: You are writing ONE slide in a multi-slide review. The <story_arc> tells you the overall PR narrative. The <narrative_brief> tells you what angle to take for THIS slide. Follow these directions to maintain consistency across slides.
 
 NARRATIVE: 2–4 short paragraphs. Lead with motivation, explain what changed, note anything non-obvious.
 - Short sentences. Plain words. One idea per sentence.
 - Use **bold** for emphasis, \`backticks\` for code symbols, markdown lists where helpful
 - No headings — just bold, lists, inline code
+- Reference how this topic connects to the broader PR story when relevant
+- If this topic depends on earlier topics, briefly acknowledge what was established (e.g., "Building on the Token type introduced earlier...")
 
 REVIEW FOCUS: 2–4 actionable checks as a markdown bullet list. Focus on what could go wrong.
 

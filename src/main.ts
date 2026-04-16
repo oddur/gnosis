@@ -1453,7 +1453,7 @@ async function runBackgroundGeneration(
 
             const topicCtx = buildTopicContext(
               topic, indexedHunks, fileContents, headFileContents, neighborFiles,
-              prData.title, prData.description,
+              prData.title, prData.description, plan.storyArc, sortedTopics,
             );
 
             const writerOutput = await generateSlide(

@@ -90,14 +90,16 @@ export interface TopicPlan {
   slideType: SlideType;
   importance: SlideImportance;
   hunkIds: string[];
-  dependsOn: string[]; // IDs of other topics this depends on
+  dependsOn: string[];
   order: number;
+  narrativeBrief: string; // 1-2 sentence direction for the writer
 }
 
 export interface PlannerOutput {
   summary: string;
   riskLevel: 'low' | 'medium' | 'high';
   riskRationale: string;
+  storyArc: string; // Overall narrative thread connecting all topics
   topics: TopicPlan[];
 }
 

@@ -220,6 +220,8 @@ export function buildTopicContext(
   neighborFiles: Record<string, string>,
   prTitle: string,
   prDescription: string,
+  storyArc: string,
+  allTopics: TopicPlan[],
 ): string {
   const hunkSet = new Set(topic.hunkIds);
   const relevantHunks = allHunks.filter((h) => hunkSet.has(h.id));
@@ -227,7 +229,18 @@ export function buildTopicContext(
   // Collect affected file paths
   const affectedFiles = new Set(relevantHunks.map((h) => h.filePath));
 
-  let ctx = `<topic>
+  // Build dependency context — briefs of topics this one depends on
+  const depSet = new Set(topic.dependsOn);
+  const depBriefs = allTopics
+    .filter((t) => depSet.has(t.title))
+    .map((t) => `- "${t.title}" (${t.slideType}): ${t.narrativeBrief}`)
+    .join('\n');
+
+  let ctx = `<story_arc>${storyArc}</story_arc>
+
+<narrative_brief>${topic.narrativeBrief}</narrative_brief>
+
+${depBriefs ? `<prior_topics>\nThis slide builds on:\n${depBriefs}\n</prior_topics>\n\n` : ''}<topic>
 Title: ${topic.title}
 Type: ${topic.slideType}
 Importance: ${topic.importance}
