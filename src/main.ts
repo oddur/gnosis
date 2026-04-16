@@ -31,6 +31,7 @@ import { buildSlideChatSystemPrompt, buildSlideChatUserMessage } from '../lib/ch
 import { buildIndexedHunks, expandFullDiff, formatHunkIndexForPrompt, sortDiffHunks } from '../lib/diff-parse';
 import { classifyFiles, filterDiff, buildExcludedFilesSummary } from '../lib/file-filter';
 import { writeMcpConfig, cleanupMcpConfig } from '../lib/mcp-config';
+import { createTray, updateTrayMenu, destroyTray, setStatusFetcher } from './tray';
 import type {
   ChangedFile,
   DiffHunk,
@@ -669,6 +670,37 @@ void app.whenReady().then(() => {
   backfillSummaries();
   applyBinaryOverrides(loadPreferences());
   createWindow();
+  createTray();
+  setStatusFetcher(async (prUrl: string) => {
+    const token = getResolvedToken();
+    if (!token) return null;
+    const octokit = new Octokit({ auth: token });
+    const { owner, repo, pullNumber } = parsePrUrl(prUrl);
+    const [prData, reviewSummary] = await Promise.all([
+      getPrMetadata(octokit, owner, repo, pullNumber),
+      getReviewStatus(octokit, owner, repo, pullNumber),
+    ]);
+    const ciStatus = await getCiStatus(octokit, owner, repo, prData.headSha).catch(() => ({
+      checks: [] as CiCheck[],
+      conclusion: 'neutral' as const,
+    }));
+    return {
+      labels: prData.labels,
+      mergeable: prData.mergeable,
+      isDraft: prData.isDraft,
+      ciChecks: ciStatus.checks,
+      ciConclusion: ciStatus.conclusion,
+      reviewSummary,
+      baseBranch: prData.baseBranch,
+      commitCount: prData.commitCount,
+      requestedReviewers: prData.requestedReviewers,
+      requestedTeams: prData.requestedTeams,
+      mergeableState: prData.mergeableState,
+      autoMerge: prData.autoMerge,
+      milestone: prData.milestone,
+    };
+  });
+  rebuildTrayMenu();
   setupAutoUpdater();
 
   // GitHub release polling only needed on Linux (no native auto-update)
@@ -709,6 +741,7 @@ app.on('before-quit', (event) => {
     updateHistoryEntry(id, { status: 'failed', error: 'App quit during generation' });
   }
   activeGenerations.clear();
+  destroyTray();
 });
 
 app.on('window-all-closed', () => {
@@ -801,6 +834,7 @@ function createPendingHistoryEntry(
   const index = readReviewsIndex();
   index.unshift(entry);
   fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+  rebuildTrayMenu();
 }
 
 function updateHistoryEntry(id: string, updates: Partial<ReviewHistoryEntry>): void {
@@ -809,12 +843,42 @@ function updateHistoryEntry(id: string, updates: Partial<ReviewHistoryEntry>): v
   if (idx === -1) return;
   index[idx] = { ...index[idx], ...updates };
   fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+  rebuildTrayMenu();
 }
 
 function broadcastToAllWindows(channel: string, ...args: unknown[]): void {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send(channel, ...args);
   }
+}
+
+function showOrCreateWindow(): void {
+  const windows = BrowserWindow.getAllWindows();
+  if (windows.length > 0) {
+    const win = windows[0];
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+  } else {
+    createWindow();
+  }
+}
+
+function navigateToReview(reviewId: string): void {
+  showOrCreateWindow();
+  setTimeout(() => broadcastToAllWindows('review-navigate', { reviewId }), 100);
+}
+
+function rebuildTrayMenu(): void {
+  updateTrayMenu(readReviewsIndex(), {
+    onShowWindow: showOrCreateWindow,
+    onNavigateToReview: navigateToReview,
+    onOpenExternal: (url: string) => shell.openExternal(url),
+    onQuit: () => {
+      quitConfirmed = true;
+      app.quit();
+    },
+  });
 }
 
 function cleanupStaleGeneratingEntries(): void {
@@ -1044,6 +1108,7 @@ ipcMain.handle('mark-review-read', (_event, id: string) => {
     e.id === id ? { ...e, unread: false, autoUpdated: false } : e
   );
   fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+  rebuildTrayMenu();
 });
 
 ipcMain.handle('delete-review', (_event, id: string) => {
@@ -1053,6 +1118,7 @@ ipcMain.handle('delete-review', (_event, id: string) => {
   if (fs.existsSync(promptPath)) fs.unlinkSync(promptPath);
   const index = readReviewsIndex().filter((e) => e.id !== id);
   fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+  rebuildTrayMenu();
 });
 
 ipcMain.handle('delete-all-reviews', () => {
@@ -1063,6 +1129,7 @@ ipcMain.handle('delete-all-reviews', () => {
     }
   }
   fs.writeFileSync(getReviewsIndexPath(), JSON.stringify([], null, 2));
+  rebuildTrayMenu();
 });
 
 ipcMain.handle(
@@ -1527,15 +1594,7 @@ async function runBackgroundGeneration(
         body: prData.title,
         silent: true,
       });
-      notif.on('click', () => {
-        broadcastToAllWindows('review-navigate', { reviewId });
-        const windows = BrowserWindow.getAllWindows();
-        if (windows.length > 0) {
-          const win = windows[0];
-          if (win.isMinimized()) win.restore();
-          win.focus();
-        }
-      });
+      notif.on('click', () => navigateToReview(reviewId));
       notif.show();
     }
 

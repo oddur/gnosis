@@ -15,6 +15,7 @@ const config: ForgeConfig = {
     asar: true,
     executableName: 'gnosis',
     icon: path.resolve(__dirname, 'Icon/macos/AppIcon'),
+    extraResource: [path.resolve(__dirname, 'Icon/tray')],
     ...(process.env.APPLE_TEAM_ID
       ? {
           osxSign: {

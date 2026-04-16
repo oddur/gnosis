@@ -50,7 +50,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^4",
-    "electron": "^34.0.0",
+    "electron": "^41.2.1",
     "eslint": "^9",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.8.1",

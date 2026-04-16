@@ -4,6 +4,7 @@ export interface CiCheck {
   name: string;
   status: 'queued' | 'in_progress' | 'completed';
   conclusion: string | null;
+  url: string | null;
 }
 
 export interface ReviewSummary {
