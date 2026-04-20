@@ -205,30 +205,49 @@ export function SlideView({
       )}
 
       <div className="editorial-callout select-text">
-        {slide.reviewChecks && slide.reviewChecks.length > 0 ? (
+        {slide.reviewChecks && slide.reviewChecks.length > 1 ? (
+          <>
+            <p className="slide-prose">
+              <span className="editorial-label">What to check.</span>
+            </p>
+            <ul className="slide-prose review-checks-list mt-1.5">
+              {slide.reviewChecks.map((check, i) => {
+                const isClickable = !!(check.filePath && check.startLine != null && check.startLine > 0);
+                return (
+                  <li key={i} className="review-checks-item">
+                    <span
+                      className={
+                        isClickable
+                          ? 'cursor-pointer underline decoration-dotted decoration-[var(--ring)]/50 underline-offset-4 hover:decoration-[var(--ring)]'
+                          : ''
+                      }
+                      onClick={isClickable ? () => handleCheckClick(check) : undefined}
+                    >
+                      {check.text}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        ) : slide.reviewChecks && slide.reviewChecks.length === 1 ? (
           (() => {
-            const checks = slide.reviewChecks;
+            const check = slide.reviewChecks[0];
+            const isClickable = !!(check.filePath && check.startLine != null && check.startLine > 0);
             return (
               <p className="slide-prose">
                 <span className="editorial-label">What to check.</span>{' '}
                 <span className="review-focus-content">
-                  {checks.map((check, i) => {
-                    const isClickable = !!(check.filePath && check.startLine != null && check.startLine > 0);
-                    return (
-                      <span
-                        key={i}
-                        className={
-                          isClickable
-                            ? 'cursor-pointer underline decoration-dotted decoration-[var(--ring)]/50 underline-offset-4 hover:decoration-[var(--ring)]'
-                            : ''
-                        }
-                        onClick={isClickable ? () => handleCheckClick(check) : undefined}
-                      >
-                        {check.text}
-                        {i < checks.length - 1 && ' '}
-                      </span>
-                    );
-                  })}
+                  <span
+                    className={
+                      isClickable
+                        ? 'cursor-pointer underline decoration-dotted decoration-[var(--ring)]/50 underline-offset-4 hover:decoration-[var(--ring)]'
+                        : ''
+                    }
+                    onClick={isClickable ? () => handleCheckClick(check) : undefined}
+                  >
+                    {check.text}
+                  </span>
                 </span>
               </p>
             );

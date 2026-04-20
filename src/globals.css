@@ -447,6 +447,41 @@
   background: oklch(0.65 0.13 15 / 70%);
 }
 
+/* Multi-check list inside .editorial-callout. Each check is its own
+   discrete item with a small brand-claret bullet so the reader can
+   take them one at a time instead of parsing a run-on paragraph.
+   The bullet uses the accent at low alpha so it reads as
+   punctuation, not highlight. */
+.review-checks-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.review-checks-item {
+  position: relative;
+  padding-left: 1.1rem;
+  line-height: 1.55;
+}
+
+.review-checks-item::before {
+  content: '';
+  position: absolute;
+  left: 0.05rem;
+  top: 0.7em;
+  width: 0.3rem;
+  height: 0.3rem;
+  border-radius: 9999px;
+  background: oklch(0.4 0.12 15 / 55%);
+}
+
+.dark .review-checks-item::before {
+  background: oklch(0.65 0.13 15 / 70%);
+}
+
 /* Pending review comment block — the user's draft comment as it
    appears under a diff line. Tinted in the brand claret so it
    reads as "this is your work, not the diff itself." Both modes
