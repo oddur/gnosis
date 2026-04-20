@@ -141,6 +141,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
   const [trayEnabled, setTrayEnabled] = useState(true);
   const [maxPrsPerRepo, setMaxPrsPerRepo] = useState(10);
   const [parallelReview, setParallelReview] = useState(false);
+  const [educationMode, setEducationMode] = useState(true);
   const [analytics, setAnalytics] = useState(true);
   const [proactiveReviewOverrides, setProactiveReviewOverrides] = useState(false);
   const [proactiveProvider, setProactiveProvider] = useState<Provider>('claude');
@@ -167,6 +168,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
       setTrayEnabled(prefs.trayEnabled);
       setMaxPrsPerRepo(prefs.maxPrsPerRepo);
       setParallelReview(prefs.parallelReview);
+      setEducationMode(prefs.educationMode);
       setAnalytics(prefs.analytics);
       setProactiveReviewOverrides(prefs.proactiveReviewOverrides);
       setProactiveProvider(prefs.proactiveProvider);
@@ -286,6 +288,21 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                   const next = !parallelReview;
                   setParallelReview(next);
                   saveField({ parallelReview: next });
+                }}
+              />
+            </SettingRow>
+
+            <SettingRow
+              label="Education mode"
+              description="Add short explainer notes inside slides for concepts the code assumes knowledge of (e.g. Unit of Work). Helpful for reviewers less familiar with the area."
+            >
+              <Toggle
+                checked={educationMode}
+                ariaLabel="Education mode"
+                onChange={() => {
+                  const next = !educationMode;
+                  setEducationMode(next);
+                  saveField({ educationMode: next });
                 }}
               />
             </SettingRow>

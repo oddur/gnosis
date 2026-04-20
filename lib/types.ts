@@ -27,6 +27,11 @@ export interface ReviewCheck {
   startLine?: number;
 }
 
+export interface EducationNote {
+  concept: string;
+  explanation: string;
+}
+
 export type SlideImportance = 'critical' | 'important' | 'minor';
 
 export interface Slide {
@@ -42,6 +47,7 @@ export interface Slide {
   dependsOn: string[];
   mermaidDiagram?: string | null;
   reviewChecks?: ReviewCheck[];
+  educationNotes?: EducationNote[];
   // AI-assigned importance. "critical" = auth, data integrity, API
   // contract changes. "important" = core logic, new features.
   // "minor" = config, docs, test boilerplate, import reordering.
@@ -62,6 +68,7 @@ export interface AISlide {
   dependsOn: string[];
   mermaidDiagram?: string | null;
   reviewChecks?: ReviewCheck[];
+  educationNotes?: EducationNote[];
   importance?: SlideImportance;
 }
 
@@ -110,6 +117,7 @@ export interface WriterSlideOutput {
   contextSnippets: string[];
   mermaidDiagram?: string | null;
   reviewChecks?: ReviewCheck[];
+  educationNotes?: EducationNote[];
 }
 
 export interface FileMetadata {
@@ -257,6 +265,7 @@ export interface Preferences {
   proactiveProvider: Provider;
   proactiveModel: ModelId;
   proactiveThinking: boolean;
+  educationMode: boolean;
 }
 
 export interface SendSlideChatRequest {
@@ -283,6 +292,7 @@ export interface GenerateReviewRequest {
   smartImports?: boolean;
   reviewSuggestions?: boolean;
   webResearch?: boolean;
+  educationMode?: boolean;
   excludedFiles?: string[];
 }
 

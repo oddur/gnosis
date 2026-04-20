@@ -127,6 +127,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   const [smartImports, setSmartImports] = useState(true);
   const [reviewSuggestions, setReviewSuggestions] = useState(true);
   const [webResearch, setWebResearch] = useState(false);
+  const [educationMode, setEducationMode] = useState(true);
   const [instructions, setInstructions] = useState('');
   const [prefsLoaded, setPrefsLoaded] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -267,6 +268,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
       setSmartImports(prefs.smartImports);
       setReviewSuggestions(prefs.reviewSuggestions);
       setWebResearch(prefs.enableWebResearch);
+      setEducationMode(prefs.educationMode);
       setIncludeAllFiles(prefs.includeAllFiles);
       setPrefsLoaded(true);
       if (!prefs.firstRunSeen) {
@@ -529,6 +531,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
           smartImports,
           reviewSuggestions,
           enableWebResearch: webResearch,
+          educationMode,
           includeAllFiles,
           ...overrides,
         });
@@ -542,6 +545,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
       smartImports,
       reviewSuggestions,
       webResearch,
+      educationMode,
       includeAllFiles,
     ]
   );
@@ -557,6 +561,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
     smartImports,
     reviewSuggestions,
     webResearch,
+    educationMode,
     includeAllFiles,
     savePrefs,
   ]);
@@ -610,6 +615,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
         smartImports,
         reviewSuggestions,
         webResearch,
+        educationMode,
         excludedFiles: excludedFiles.length > 0 ? excludedFiles : undefined,
       });
       setGenerationStartTimes((prev) => new Map(prev).set(result.reviewId, Date.now()));
@@ -1292,6 +1298,13 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                       description="Generate 'What to check' for each slide"
                       checked={reviewSuggestions}
                       onToggle={() => setReviewSuggestions((r) => !r)}
+                    />
+                    <ToggleSwitch
+                      id="education-mode"
+                      label="Education mode"
+                      description="Small explainer notes for concepts the code assumes knowledge of (e.g. Unit of Work)"
+                      checked={educationMode}
+                      onToggle={() => setEducationMode((e) => !e)}
                     />
                     {provider === 'claude' && (
                       <ToggleSwitch

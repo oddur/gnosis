@@ -447,6 +447,22 @@
   background: oklch(0.65 0.13 15 / 70%);
 }
 
+/* Education Mode notes: hairline muted-gray left rail so the aside
+   reads as a margin note, not a call-to-action (claret is reserved
+   for active affordances). Inner structure reuses .slide-meta and
+   .slide-prose / .editorial-label for the heading + body. */
+.education-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 0.25rem 0 0.25rem 1rem;
+  border-left: 1px solid oklch(0.55 0.02 65 / 30%);
+}
+
+.dark .education-notes {
+  border-left-color: oklch(0.7 0.02 65 / 24%);
+}
+
 /* Multi-check list inside .editorial-callout. Each check is its own
    discrete item with a small brand-claret bullet so the reader can
    take them one at a time instead of parsing a run-on paragraph.

@@ -140,6 +140,18 @@ const CONCISE_SUFFIX = `
 
 IMPORTANT: Be concise. Keep narrative and reviewFocus under 2 sentences each. Omit contextSnippets entirely (use empty arrays). Limit diffHunkIds to the 5 most important hunk IDs per slide. Return only raw JSON starting with { and ending with }.`;
 
+const EDUCATION_DIRECTIVE = `
+EDUCATION MODE — ACTIVE
+The reviewer may not be familiar with every concept the code assumes knowledge of. Where a slide's narrative references a named pattern, domain concept, or non-obvious library primitive, include a short entry in "educationNotes" for that slide explaining it.
+
+Rules for educationNotes:
+- Include a note ONLY when a concept is genuinely referenced AND would not be obvious to a competent developer new to this area (e.g. "Unit of Work", "CORS preflight", "idempotency key", "backpressure", "tombstone row"). Skip the obvious (variable, for-loop, HTTP 404).
+- "concept" is the term itself, as it would appear in a glossary. 1–4 words. Sentence case.
+- "explanation" is 1–2 plain-English sentences. No prerequisites, no code, no jargon. Tell the reviewer WHAT it is and WHY it matters in this context.
+- At most 3 notes per slide. Prefer 0–1 unless the slide genuinely leans on multiple concepts.
+- Do NOT pad: if nothing in the slide assumes outside knowledge, omit the field (or return an empty array).
+`;
+
 const WEB_RESEARCH_DIRECTIVE = `
 WEB RESEARCH MODE — ACTIVE
 You have access to web search and fetch tools. Before producing the review guide:
@@ -184,43 +196,70 @@ function validateAIReviewGuide(obj: unknown): obj is AIReviewGuide {
 
 // ── Main entry point ─────────────────────────────────────────────
 
-export async function generateReviewGuide(
-  contextPackage: string,
-  prUrl: string,
-  providerName: Provider,
-  model: ModelId,
-  instructions?: string,
-  onChunk?: (chunk: string, isThinking: boolean) => void,
-  thinking: boolean = false,
-  mcpConfigPath?: string,
-  allowedTools?: string[],
-  reviewSuggestions: boolean = true,
-  webResearch: boolean = false,
-  onToolUse?: (toolName: string) => void,
-  onPromptReady?: (system: string, userMessage: string) => void,
-  signal?: AbortSignal
-): Promise<AIReviewGuide> {
+export interface GenerateReviewGuideOptions {
+  contextPackage: string;
+  prUrl: string;
+  providerName: Provider;
+  model: ModelId;
+  instructions?: string;
+  thinking?: boolean;
+  reviewSuggestions?: boolean;
+  webResearch?: boolean;
+  educationMode?: boolean;
+  mcpConfigPath?: string;
+  allowedTools?: string[];
+  onChunk?: (chunk: string, isThinking: boolean) => void;
+  onToolUse?: (toolName: string) => void;
+  onPromptReady?: (system: string, userMessage: string) => void;
+  signal?: AbortSignal;
+}
+
+export async function generateReviewGuide(opts: GenerateReviewGuideOptions): Promise<AIReviewGuide> {
+  const {
+    contextPackage,
+    prUrl,
+    providerName,
+    model,
+    instructions,
+    thinking = false,
+    reviewSuggestions = true,
+    webResearch = false,
+    educationMode = false,
+    mcpConfigPath,
+    allowedTools,
+    onChunk,
+    onToolUse,
+    onPromptReady,
+    signal,
+  } = opts;
   const provider = getProvider(providerName);
 
   async function attempt(extraInstruction: string = ''): Promise<AIReviewGuide> {
     const customInstructions = instructions?.trim();
     const webSourcesSchema = webResearch ? `,\n  "webSources": [{ "url": string, "title": string }, ...]` : '';
+    const educationNotesSchema = educationMode
+      ? `,\n      "educationNotes": [{ "concept": string, "explanation": string }]`
+      : '';
+    const slideSchema = USER_SUFFIX
+      .replace(/\n {4}}\n/, `${educationNotesSchema}\n    }\n`)
+      .replace('\n}', `${webSourcesSchema}\n}`);
     const userMessage = customInstructions
       ? contextPackage +
-        USER_SUFFIX.replace('\n}', `${webSourcesSchema}\n}`) +
+        slideSchema +
         extraInstruction +
         `\n\n<reviewer_instructions>\nThe reviewer has provided custom instructions that MUST take priority over default style guidelines.\n${customInstructions}\n</reviewer_instructions>`
-      : contextPackage + USER_SUFFIX.replace('\n}', `${webSourcesSchema}\n}`) + extraInstruction;
+      : contextPackage + slideSchema + extraInstruction;
 
     const reviewSuggestionsDirective = reviewSuggestions
       ? ''
       : `\nREVIEW SUGGESTIONS DISABLED: The reviewer has turned off review suggestions. Set "reviewFocus" to null for every slide. Do not generate any review focus content.\n`;
 
     const webResearchDirective = webResearch ? WEB_RESEARCH_DIRECTIVE : '';
+    const educationDirective = educationMode ? EDUCATION_DIRECTIVE : '';
 
     // Signal boost is always on — deprioritize formatting and
     // import-only changes, emphasize design decisions.
-    const baseSystem = `${FOCUS_DIRECTIVE}\n${webResearchDirective}${SYSTEM_PROMPT}${reviewSuggestionsDirective}`;
+    const baseSystem = `${FOCUS_DIRECTIVE}\n${webResearchDirective}${educationDirective}${SYSTEM_PROMPT}${reviewSuggestionsDirective}`;
 
     const system = customInstructions
       ? `${baseSystem}\n\nIMPORTANT — CUSTOM REVIEWER INSTRUCTIONS:\nThe reviewer has provided the following instructions. These take precedence over the default writing style and tone guidelines above. Adapt your narrative, reviewFocus, summary, and all prose fields accordingly.\n\n<instructions>\n${customInstructions}\n</instructions>`
@@ -438,28 +477,46 @@ function validateWriterOutput(obj: unknown): obj is WriterSlideOutput {
   return typeof o.narrative === 'string';
 }
 
-export async function generateSlide(
-  topicContext: string,
-  providerName: Provider,
-  model: ModelId,
-  instructions?: string,
-  reviewSuggestions: boolean = true,
-  onChunk?: (chunk: string, isThinking: boolean) => void,
-  thinking: boolean = false,
-  signal?: AbortSignal
-): Promise<WriterSlideOutput> {
+export interface GenerateSlideOptions {
+  topicContext: string;
+  providerName: Provider;
+  model: ModelId;
+  instructions?: string;
+  reviewSuggestions?: boolean;
+  thinking?: boolean;
+  educationMode?: boolean;
+  onChunk?: (chunk: string, isThinking: boolean) => void;
+  signal?: AbortSignal;
+}
+
+export async function generateSlide(opts: GenerateSlideOptions): Promise<WriterSlideOutput> {
+  const {
+    topicContext,
+    providerName,
+    model,
+    instructions,
+    reviewSuggestions = true,
+    thinking = false,
+    educationMode = false,
+    onChunk,
+    signal,
+  } = opts;
   const provider = getProvider(providerName);
 
   const reviewSuggestionsDirective = reviewSuggestions
     ? ''
     : '\nSet "reviewFocus" to null. Do not generate review focus content.\n';
+  const educationDirective = educationMode ? EDUCATION_DIRECTIVE : '';
 
-  let system = WRITER_SYSTEM + reviewSuggestionsDirective;
+  let system = WRITER_SYSTEM + reviewSuggestionsDirective + educationDirective;
   if (instructions?.trim()) {
     system += `\n\nCUSTOM REVIEWER INSTRUCTIONS (take precedence over style guidelines):\n${instructions.trim()}`;
   }
 
-  const userMessage = topicContext + WRITER_USER_SUFFIX;
+  const educationNotesSchema = educationMode
+    ? `,\n  "educationNotes": [{ "concept": string, "explanation": string }]`
+    : '';
+  const userMessage = topicContext + WRITER_USER_SUFFIX.replace('\n}', `${educationNotesSchema}\n}`);
   console.log(`[writer] Starting ${providerName} (${model}) with ${userMessage.length} chars`);
 
   async function attempt(extra: string = ''): Promise<WriterSlideOutput> {

@@ -502,6 +502,7 @@ async function triggerProactiveReview(
       thinking,
       smartImports: prefs.smartImports,
       reviewSuggestions: prefs.reviewSuggestions,
+      educationMode: prefs.educationMode,
     };
 
     await runBackgroundGeneration(reviewId, request, prData, abortController.signal);
@@ -959,6 +960,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   proactiveProvider: 'claude',
   proactiveModel: 'claude-sonnet-4-6',
   proactiveThinking: false,
+  educationMode: true,
 };
 
 function applyBinaryOverrides(prefs: Preferences): void {
@@ -1327,7 +1329,7 @@ async function runBackgroundGeneration(
   prData: Awaited<ReturnType<typeof getPrMetadata>>,
   signal: AbortSignal
 ): Promise<void> {
-  const { prUrl, provider, model, instructions, thinking, smartImports, reviewSuggestions, webResearch } =
+  const { prUrl, provider, model, instructions, thinking, smartImports, reviewSuggestions, webResearch, educationMode } =
     request;
 
   try {
@@ -1488,16 +1490,18 @@ async function runBackgroundGeneration(
               prData.title, prData.description, storyArc, sortedTopics,
             );
 
-            const writerOutput = await generateSlide(
-              topicCtx,
-              provider,
+            const writerOutput = await generateSlide({
+              topicContext: topicCtx,
+              providerName: provider,
               model,
               instructions,
-              reviewSuggestions ?? true,
-              (chunk, isThinking) => broadcastToAllWindows('review-progress', { reviewId, chunk, isThinking }),
-              thinking ?? false,
+              reviewSuggestions,
+              thinking,
+              educationMode,
+              onChunk: (chunk, isThinking) =>
+                broadcastToAllWindows('review-progress', { reviewId, chunk, isThinking }),
               signal,
-            );
+            });
 
             const diffHunks = resolveDiffHunks(topic.hunkIds ?? [], hunkMap, assignedIds);
 
@@ -1514,6 +1518,7 @@ async function runBackgroundGeneration(
               dependsOn: topic.dependsOn,
               mermaidDiagram: writerOutput.mermaidDiagram,
               reviewChecks: writerOutput.reviewChecks,
+              educationNotes: writerOutput.educationNotes,
               importance: topic.importance,
             } satisfies Slide;
         })
@@ -1539,13 +1544,19 @@ async function runBackgroundGeneration(
 
       let lastStreamPhase: string | null = null;
       try {
-        aiResult = await generateReviewGuide(
+        aiResult = await generateReviewGuide({
           contextPackage,
           prUrl,
-          provider,
+          providerName: provider,
           model,
           instructions,
-          (chunk, isThinking) => {
+          thinking,
+          reviewSuggestions,
+          webResearch,
+          educationMode,
+          mcpConfigPath,
+          allowedTools,
+          onChunk: (chunk, isThinking) => {
             const phase = isThinking ? 'Thinking' : 'Generating review';
             if (phase !== lastStreamPhase) {
               lastStreamPhase = phase;
@@ -1553,13 +1564,8 @@ async function runBackgroundGeneration(
             }
             broadcastToAllWindows('review-progress', { reviewId, chunk, isThinking });
           },
-          thinking ?? false,
-          mcpConfigPath,
-          allowedTools,
-          reviewSuggestions ?? true,
-          webResearch ?? false,
-          (toolName) => broadcastToAllWindows('review-tool-use', { reviewId, toolName }),
-          (system, userMessage) => {
+          onToolUse: (toolName) => broadcastToAllWindows('review-tool-use', { reviewId, toolName }),
+          onPromptReady: (system, userMessage) => {
             broadcastToAllWindows('review-stats', {
               reviewId,
               inputBytes: system.length + userMessage.length,
@@ -1574,8 +1580,8 @@ async function runBackgroundGeneration(
               // Best-effort
             }
           },
-          signal
-        );
+          signal,
+        });
       } finally {
         if (mcpConfigPath) cleanupMcpConfig(mcpConfigPath);
       }
@@ -1601,6 +1607,7 @@ async function runBackgroundGeneration(
           dependsOn: aiSlide.dependsOn ?? [],
           mermaidDiagram: aiSlide.mermaidDiagram,
           reviewChecks: aiSlide.reviewChecks,
+          educationNotes: aiSlide.educationNotes,
           importance: aiSlide.importance ?? 'important',
         };
       });
