@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import type { DiffLineInfo } from '@/lib/diff-lines';
 import type { PendingReviewComment, DiffSide } from '@/lib/types';
 
 export interface CommentCallbacks {
@@ -37,6 +38,53 @@ export function parseShikiLines(renderedHtml: string): string[] | null {
  * Extract the Shiki theme styles from the rendered <pre> element so we can
  * re-apply them when rendering individual lines outside the original tree.
  */
+/**
+ * Data attributes used by review-check anchoring ("What to check" click
+ * jumps to a diff line). Emitted on every visible diff-line wrapper across
+ * all three renderers so click resolution works regardless of layout.
+ *
+ * Contract:
+ * - `data-file-path`: exact filePath string (matches what the AI emits).
+ * - `data-line-number`: NEW-FILE line number when the line exists in the
+ *   new file (adds and context). This is the primary attribute the click
+ *   handler looks for — the AI is instructed to emit new-file line numbers.
+ * - `data-base-line`: OLD-FILE line number when the line exists in the old
+ *   file (removes and context). Fallback attribute for when the AI
+ *   accidentally anchors to a removed line.
+ *
+ * `side` is the side this wrapper is RENDERED ON (LEFT/RIGHT in split
+ * layout, always RIGHT for unified). For split-layout cells, a context
+ * line's two halves each emit only the side-appropriate attribute, so the
+ * click targets the right visual cell.
+ */
+export interface LineAnchorAttrs {
+  'data-file-path': string;
+  'data-line-number'?: number;
+  'data-base-line'?: number;
+}
+
+export function lineAnchorAttrs(
+  filePath: string,
+  info: DiffLineInfo,
+  // undefined = unified row; defined = split-layout cell on that side
+  side?: DiffSide
+): LineAnchorAttrs {
+  const attrs: LineAnchorAttrs = { 'data-file-path': filePath };
+  if (side === undefined) {
+    // Unified — a single row represents the line from whichever file(s)
+    // it exists in, so expose both line numbers when available.
+    if (info.headLineNumber != null) attrs['data-line-number'] = info.headLineNumber;
+    if (info.baseLineNumber != null) attrs['data-base-line'] = info.baseLineNumber;
+  } else if (side === 'RIGHT') {
+    // Right-side (new-file) cell in split — only the head line applies.
+    if (info.headLineNumber != null) attrs['data-line-number'] = info.headLineNumber;
+  } else {
+    // Left-side (old-file) cell in split — only the base line applies.
+    if (info.baseLineNumber != null) attrs['data-base-line'] = info.baseLineNumber;
+  }
+  return attrs;
+}
+
 export function extractShikiStyles(renderedHtml: string): { preStyle: Record<string, string>; preClass: string } {
   try {
     const parser = new DOMParser();

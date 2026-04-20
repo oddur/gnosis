@@ -632,18 +632,28 @@
 
 /* ─── Check suggestion jump highlight ────────────────────────── */
 
+/* When a reviewer clicks a "What to check" hint, the target diff
+   line gets this class briefly. The ::after overlays the line with a
+   claret wash that fades to zero — a page-turning blink rather than
+   a pulsing highlight. isolation:isolate keeps the overlay contained
+   if the target happens to be inside another stacking context. */
 .check-highlight {
   position: relative;
+  isolation: isolate;
 }
 .check-highlight::after {
   content: '';
   position: absolute;
   inset: 0;
   pointer-events: none;
-  /* Claret flash — same hue as the brand --ring, just briefly
-     visible to show the user where the check landed. */
+  z-index: 0;
   background-color: oklch(0.55 0.14 15 / 22%);
   animation: check-highlight-fade 1.5s ease-out forwards;
+  will-change: opacity;
+}
+.check-highlight > * {
+  position: relative;
+  z-index: 1;
 }
 @keyframes check-highlight-fade {
   from {
