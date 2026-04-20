@@ -1490,17 +1490,18 @@ async function runBackgroundGeneration(
               prData.title, prData.description, storyArc, sortedTopics,
             );
 
-            const writerOutput = await generateSlide(
-              topicCtx,
-              provider,
+            const writerOutput = await generateSlide({
+              topicContext: topicCtx,
+              providerName: provider,
               model,
               instructions,
-              reviewSuggestions ?? true,
-              (chunk, isThinking) => broadcastToAllWindows('review-progress', { reviewId, chunk, isThinking }),
-              thinking ?? false,
+              reviewSuggestions,
+              thinking,
+              educationMode,
+              onChunk: (chunk, isThinking) =>
+                broadcastToAllWindows('review-progress', { reviewId, chunk, isThinking }),
               signal,
-              educationMode ?? false,
-            );
+            });
 
             const diffHunks = resolveDiffHunks(topic.hunkIds ?? [], hunkMap, assignedIds);
 
@@ -1543,13 +1544,19 @@ async function runBackgroundGeneration(
 
       let lastStreamPhase: string | null = null;
       try {
-        aiResult = await generateReviewGuide(
+        aiResult = await generateReviewGuide({
           contextPackage,
           prUrl,
-          provider,
+          providerName: provider,
           model,
           instructions,
-          (chunk, isThinking) => {
+          thinking,
+          reviewSuggestions,
+          webResearch,
+          educationMode,
+          mcpConfigPath,
+          allowedTools,
+          onChunk: (chunk, isThinking) => {
             const phase = isThinking ? 'Thinking' : 'Generating review';
             if (phase !== lastStreamPhase) {
               lastStreamPhase = phase;
@@ -1557,13 +1564,8 @@ async function runBackgroundGeneration(
             }
             broadcastToAllWindows('review-progress', { reviewId, chunk, isThinking });
           },
-          thinking ?? false,
-          mcpConfigPath,
-          allowedTools,
-          reviewSuggestions ?? true,
-          webResearch ?? false,
-          (toolName) => broadcastToAllWindows('review-tool-use', { reviewId, toolName }),
-          (system, userMessage) => {
+          onToolUse: (toolName) => broadcastToAllWindows('review-tool-use', { reviewId, toolName }),
+          onPromptReady: (system, userMessage) => {
             broadcastToAllWindows('review-stats', {
               reviewId,
               inputBytes: system.length + userMessage.length,
@@ -1579,8 +1581,7 @@ async function runBackgroundGeneration(
             }
           },
           signal,
-          educationMode ?? false
-        );
+        });
       } finally {
         if (mcpConfigPath) cleanupMcpConfig(mcpConfigPath);
       }

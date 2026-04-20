@@ -27,14 +27,8 @@ export interface ReviewCheck {
   startLine?: number;
 }
 
-// A short "here's what this term means" callout rendered inline in a
-// slide when Education Mode is on. Populated by the AI when the slide
-// references a concept the reviewer might not already know — e.g.
-// "Unit of Work", "CORS preflight", "idempotency key".
 export interface EducationNote {
-  /** The concept or pattern (short, headline-style). */
   concept: string;
-  /** 1-2 sentences, plain English, no prerequisites. */
   explanation: string;
 }
 
@@ -271,9 +265,6 @@ export interface Preferences {
   proactiveProvider: Provider;
   proactiveModel: ModelId;
   proactiveThinking: boolean;
-  /** Education Mode — when on, each slide can include short explanatory
-   *  callouts ("educationNotes") for concepts the code assumes knowledge
-   *  of, so reviewers less familiar with the area still have context. */
   educationMode: boolean;
 }
 

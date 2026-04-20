@@ -131,9 +131,6 @@ The JSON must match this schema exactly:
           "filePath": string | null,
           "startLine": number | null
         }
-      ],
-      "educationNotes": [
-        { "concept": string, "explanation": string }
       ]
     }
   ]
@@ -199,34 +196,59 @@ function validateAIReviewGuide(obj: unknown): obj is AIReviewGuide {
 
 // ── Main entry point ─────────────────────────────────────────────
 
-export async function generateReviewGuide(
-  contextPackage: string,
-  prUrl: string,
-  providerName: Provider,
-  model: ModelId,
-  instructions?: string,
-  onChunk?: (chunk: string, isThinking: boolean) => void,
-  thinking: boolean = false,
-  mcpConfigPath?: string,
-  allowedTools?: string[],
-  reviewSuggestions: boolean = true,
-  webResearch: boolean = false,
-  onToolUse?: (toolName: string) => void,
-  onPromptReady?: (system: string, userMessage: string) => void,
-  signal?: AbortSignal,
-  educationMode: boolean = false
-): Promise<AIReviewGuide> {
+export interface GenerateReviewGuideOptions {
+  contextPackage: string;
+  prUrl: string;
+  providerName: Provider;
+  model: ModelId;
+  instructions?: string;
+  thinking?: boolean;
+  reviewSuggestions?: boolean;
+  webResearch?: boolean;
+  educationMode?: boolean;
+  mcpConfigPath?: string;
+  allowedTools?: string[];
+  onChunk?: (chunk: string, isThinking: boolean) => void;
+  onToolUse?: (toolName: string) => void;
+  onPromptReady?: (system: string, userMessage: string) => void;
+  signal?: AbortSignal;
+}
+
+export async function generateReviewGuide(opts: GenerateReviewGuideOptions): Promise<AIReviewGuide> {
+  const {
+    contextPackage,
+    prUrl,
+    providerName,
+    model,
+    instructions,
+    thinking = false,
+    reviewSuggestions = true,
+    webResearch = false,
+    educationMode = false,
+    mcpConfigPath,
+    allowedTools,
+    onChunk,
+    onToolUse,
+    onPromptReady,
+    signal,
+  } = opts;
   const provider = getProvider(providerName);
 
   async function attempt(extraInstruction: string = ''): Promise<AIReviewGuide> {
     const customInstructions = instructions?.trim();
     const webSourcesSchema = webResearch ? `,\n  "webSources": [{ "url": string, "title": string }, ...]` : '';
+    const educationNotesSchema = educationMode
+      ? `,\n      "educationNotes": [{ "concept": string, "explanation": string }]`
+      : '';
+    const slideSchema = USER_SUFFIX
+      .replace(/\n {4}}\n/, `${educationNotesSchema}\n    }\n`)
+      .replace('\n}', `${webSourcesSchema}\n}`);
     const userMessage = customInstructions
       ? contextPackage +
-        USER_SUFFIX.replace('\n}', `${webSourcesSchema}\n}`) +
+        slideSchema +
         extraInstruction +
         `\n\n<reviewer_instructions>\nThe reviewer has provided custom instructions that MUST take priority over default style guidelines.\n${customInstructions}\n</reviewer_instructions>`
-      : contextPackage + USER_SUFFIX.replace('\n}', `${webSourcesSchema}\n}`) + extraInstruction;
+      : contextPackage + slideSchema + extraInstruction;
 
     const reviewSuggestionsDirective = reviewSuggestions
       ? ''
@@ -446,9 +468,6 @@ Write the slide content for this topic. Respond with JSON matching this schema e
       "filePath": string | null,
       "startLine": number | null
     }
-  ],
-  "educationNotes": [
-    { "concept": string, "explanation": string }
   ]
 }`;
 
@@ -458,17 +477,30 @@ function validateWriterOutput(obj: unknown): obj is WriterSlideOutput {
   return typeof o.narrative === 'string';
 }
 
-export async function generateSlide(
-  topicContext: string,
-  providerName: Provider,
-  model: ModelId,
-  instructions?: string,
-  reviewSuggestions: boolean = true,
-  onChunk?: (chunk: string, isThinking: boolean) => void,
-  thinking: boolean = false,
-  signal?: AbortSignal,
-  educationMode: boolean = false
-): Promise<WriterSlideOutput> {
+export interface GenerateSlideOptions {
+  topicContext: string;
+  providerName: Provider;
+  model: ModelId;
+  instructions?: string;
+  reviewSuggestions?: boolean;
+  thinking?: boolean;
+  educationMode?: boolean;
+  onChunk?: (chunk: string, isThinking: boolean) => void;
+  signal?: AbortSignal;
+}
+
+export async function generateSlide(opts: GenerateSlideOptions): Promise<WriterSlideOutput> {
+  const {
+    topicContext,
+    providerName,
+    model,
+    instructions,
+    reviewSuggestions = true,
+    thinking = false,
+    educationMode = false,
+    onChunk,
+    signal,
+  } = opts;
   const provider = getProvider(providerName);
 
   const reviewSuggestionsDirective = reviewSuggestions
@@ -481,7 +513,10 @@ export async function generateSlide(
     system += `\n\nCUSTOM REVIEWER INSTRUCTIONS (take precedence over style guidelines):\n${instructions.trim()}`;
   }
 
-  const userMessage = topicContext + WRITER_USER_SUFFIX;
+  const educationNotesSchema = educationMode
+    ? `,\n  "educationNotes": [{ "concept": string, "explanation": string }]`
+    : '';
+  const userMessage = topicContext + WRITER_USER_SUFFIX.replace('\n}', `${educationNotesSchema}\n}`);
   console.log(`[writer] Starting ${providerName} (${model}) with ${userMessage.length} chars`);
 
   async function attempt(extra: string = ''): Promise<WriterSlideOutput> {

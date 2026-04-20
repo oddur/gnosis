@@ -440,10 +440,12 @@ export function SlideView({
       {slide.educationNotes && slide.educationNotes.length > 0 && (
         <aside className="education-notes select-text" aria-label="Background concepts">
           {slide.educationNotes.map((note, i) => (
-            <div key={i} className="education-note">
-              <span className="education-note-label">Background</span>
-              <span className="education-note-concept">{note.concept}</span>
-              <Markdown className="education-note-explanation">{note.explanation}</Markdown>
+            <div key={i} className="flex flex-col gap-1">
+              <span className="slide-meta">Background</span>
+              <p className="slide-prose">
+                <span className="editorial-label">{note.concept}.</span>{' '}
+                {note.explanation}
+              </p>
             </div>
           ))}
         </aside>
