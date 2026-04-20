@@ -28,15 +28,29 @@ NARRATIVE: For each slide, explain WHY this changed, not just WHAT changed.
 - Use **bold** for emphasis, \`backticks\` for code symbols, and markdown lists where helpful
 - No headings in narrative — just bold, lists, inline code
 
-REVIEW FOCUS: Write 2–4 actionable checks as a markdown bullet list.
-- Each bullet should be a single clear sentence
-- Focus on what could actually go wrong, not just what to look at
+REVIEW CHECKS: The reviewer has read your narrative. Now give them 2–4 things they STILL need to check to approve with confidence. This is the highest-leverage field in the review — spend real effort on it.
 
-REVIEW CHECKS (structured): Also produce a reviewChecks array with the same items as reviewFocus but in structured form.
-- Each entry has "text" (the check sentence), plus optional "filePath" and "startLine" to pinpoint where the reviewer should look.
-- filePath must exactly match one of the diffHunks[].filePath values on the same slide.
-- startLine is the new-file line number (right side) within one of that file's hunk ranges.
-- If a check is general and doesn't reference a specific line, set filePath and startLine to null.
+What makes a good check:
+- Names a SPECIFIC risk in THIS diff — a possible bug, missed edge case, broken invariant, unsafe assumption, race, boundary condition, stale cache, or contract violation. Not a generic review platitude.
+- Is phrased as a directive or yes/no question the reviewer can answer by reading the code: "Confirm X handles null Y", "Does Z still work when W is empty?", "What happens if the request aborts mid-flight at line N?"
+- Is grounded in the actual code — reference the specific function, file, or line. If you cannot point at something concrete, the check is probably not worth including.
+- Is short — one sentence. If you need two, you have two checks.
+- Is verifiable — a careful senior reviewer can say "yes, that's handled" or "no, that's broken" by looking at the diff.
+
+Do NOT produce:
+- Vague prompts ("review this", "verify correctness", "check for bugs")
+- Restatements of what the narrative or code already says
+- Style or lint commentary (formatting, naming, const vs. let, import order) — that's the linter's job, not the reviewer's
+- Generic security/performance checklist items not grounded in the diff
+- Filler checks to hit the 4-item count. Prefer 2 great checks over 4 mediocre ones.
+
+Anchor each check to a location when you honestly can:
+- "filePath" must exactly match one of the diffHunks[].filePath values on the same slide.
+- "startLine" is the new-file line number (right side) within one of that file's hunk ranges. Prefer the most specific line — the exact branch, call, or assignment the reviewer should look at, NOT the top of the function.
+- Use filePath: null, startLine: null only when the check is genuinely cross-cutting (e.g. "across these files, confirm every exception path still releases the lock").
+- Do NOT invent line numbers to look thorough. An un-anchored but concrete check is far better than a fabricated anchor.
+
+REVIEW FOCUS: The markdown-prose rendering of the same 2–4 checks as a bullet list. Same items, same standard — just formatted for reading.
 
 MERMAID DIAGRAM (optional): Include a Mermaid diagram when it genuinely helps the reviewer understand the flow or structure. Omit it (null) when the change is simple or the diagram would add clutter.
 - Use sequenceDiagram for request/response flows, async calls, event handling, or service interactions
@@ -380,13 +394,22 @@ NARRATIVE: 2–4 short paragraphs. Lead with motivation, explain what changed, n
 - Reference how this topic connects to the broader PR story when relevant
 - If this topic depends on earlier topics, briefly acknowledge what was established (e.g., "Building on the Token type introduced earlier...")
 
-REVIEW FOCUS: 2–4 actionable checks as a markdown bullet list. Focus on what could go wrong.
+REVIEW CHECKS: The reviewer has read your narrative — give them 2–4 things they STILL need to check to approve with confidence. This is the highest-leverage field; spend real effort on it.
 
-REVIEW CHECKS: Same items as reviewFocus in structured form.
-- "text" = the check sentence
-- "filePath" must exactly match a file in the provided hunks
-- "startLine" is the new-file line number within a hunk range
-- Set filePath and startLine to null for general checks
+Each check must:
+- Name a SPECIFIC risk in THIS diff (possible bug, missed edge case, broken invariant, unsafe assumption, race, boundary, stale cache, contract violation) — not a generic review platitude.
+- Be phrased as a directive or yes/no question answerable from the diff: "Confirm X handles null Y", "Does Z still work when W is empty?", "What happens if the request aborts mid-flight at line N?"
+- Be grounded in the actual code. If you cannot point at something concrete, skip the check.
+- Be one sentence. Two sentences means two checks.
+
+Avoid: vague prompts, restatements of the narrative, style/lint nits, generic checklist items, filler to hit 4 items. Prefer 2 great checks over 4 mediocre ones.
+
+Anchor when you can:
+- "filePath" exactly matches a file in the provided hunks.
+- "startLine" is a new-file line inside a hunk range — pick the most specific line (the branch, call, or assignment the reviewer should look at), not the top of the function.
+- filePath: null, startLine: null only for genuinely cross-cutting checks. Never invent anchors.
+
+REVIEW FOCUS: Markdown-bullet-list rendering of the same checks. Same items, same standard.
 
 MERMAID DIAGRAM: Include only when it genuinely helps understanding (sequence diagrams for flows, flowcharts for branching, class diagrams for data models). Keep small: 5–8 nodes max. Omit (null) when not useful.
 
