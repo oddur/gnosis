@@ -58,6 +58,23 @@ function looksLikePackedList(text: string): boolean {
   return false;
 }
 
+// Try to split a prose check into its constituent sentences so a
+// model-emitted "one giant check with three topics" renders as
+// bullets instead of a paragraph. Splits on sentence terminators
+// (`.`, `?`, `!`) followed by whitespace then a capital letter or
+// a backtick (next sentence starts with an identifier). Only returns
+// multiple segments when each is a reasonable bullet length — under
+// 20 chars is probably noise, over 500 is a tell the split picked
+// the wrong boundary.
+function splitIntoProseChecks(text: string): string[] {
+  if (!text) return [];
+  const trimmed = text.trim();
+  const parts = trimmed.split(/(?<=[.?!])\s+(?=[A-Z`])/).map((s) => s.trim()).filter(Boolean);
+  if (parts.length < 2) return [trimmed];
+  if (parts.some((p) => p.length < 20 || p.length > 500)) return [trimmed];
+  return parts;
+}
+
 // Inline click affordance for a single anchored check — dotted
 // underline in brand claret so it reads as a quiet link.
 const clickableCheckClass =
@@ -95,14 +112,40 @@ function renderReviewChecks(
     );
   }
 
-  // Single structured check. Short enough for a run-in label → inline.
-  // Long or self-contains a list → promote to a block so it doesn't
-  // render as a wall of text.
+  // Single structured check. If its text is actually several
+  // sentences crammed together, split into bullets. If just long,
+  // promote to a block through Markdown. Otherwise keep the inline
+  // run-in label + sentence.
   if (checks && checks.length === 1) {
     const check = checks[0];
     const isClickable = !!(check.filePath && check.startLine != null && check.startLine > 0);
     const packed = looksLikePackedList(check.text);
     const longText = check.text.length > 180;
+    const split = longText || packed ? splitIntoProseChecks(check.text) : [check.text];
+    if (split.length > 1) {
+      // Prose-split into multiple sentences → render as bulleted
+      // list. The anchor click (when present) applies to every
+      // bullet; the whole check points at one line.
+      return (
+        <>
+          <p className="slide-prose">
+            <span className="editorial-label">What to check.</span>
+          </p>
+          <ul className="slide-prose review-checks-list mt-1.5">
+            {split.map((sentence, i) => (
+              <li key={i} className="review-checks-item">
+                <span
+                  className={isClickable ? clickableCheckClass : ''}
+                  onClick={isClickable ? () => onCheckClick(check) : undefined}
+                >
+                  <Markdown className="review-focus-markdown">{sentence}</Markdown>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      );
+    }
     if (packed || longText) {
       return (
         <>
@@ -148,6 +191,23 @@ function renderReviewChecks(
     );
   }
   if (looksLikePackedList(focus) || focus.length > 180) {
+    const split = splitIntoProseChecks(focus);
+    if (split.length > 1) {
+      return (
+        <>
+          <p className="slide-prose">
+            <span className="editorial-label">What to check.</span>
+          </p>
+          <ul className="slide-prose review-checks-list mt-1.5">
+            {split.map((sentence, i) => (
+              <li key={i} className="review-checks-item">
+                <Markdown className="review-focus-markdown">{sentence}</Markdown>
+              </li>
+            ))}
+          </ul>
+        </>
+      );
+    }
     return (
       <>
         <p className="slide-prose">
