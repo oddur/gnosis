@@ -447,6 +447,56 @@
   background: oklch(0.65 0.13 15 / 70%);
 }
 
+/* Multi-check list inside .editorial-callout. Each check is its own
+   discrete item with a small brand-claret bullet so the reader can
+   take them one at a time instead of parsing a run-on paragraph.
+   The bullet uses the accent at low alpha so it reads as
+   punctuation, not highlight. */
+.review-checks-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.review-checks-item {
+  position: relative;
+  padding-left: 1.1rem;
+  line-height: 1.55;
+}
+
+.review-checks-item::before {
+  content: '';
+  position: absolute;
+  left: 0.05rem;
+  top: 0.7em;
+  width: 0.3rem;
+  height: 0.3rem;
+  border-radius: 9999px;
+  background: oklch(0.4 0.12 15 / 55%);
+}
+
+.dark .review-checks-item::before {
+  background: oklch(0.65 0.13 15 / 70%);
+}
+
+/* Reused when a single packed check or a markdown-formatted
+   reviewFocus is rendered as a block inside the callout. Tightens
+   the default Markdown spacing so the block doesn't feel like an
+   article inside a margin note. */
+.review-focus-markdown p:first-child {
+  margin-top: 0;
+}
+.review-focus-markdown p:last-child {
+  margin-bottom: 0;
+}
+.review-focus-markdown ul {
+  margin-top: 0.25rem;
+  margin-bottom: 0;
+}
+
 /* Pending review comment block — the user's draft comment as it
    appears under a diff line. Tinted in the brand claret so it
    reads as "this is your work, not the diff itself." Both modes
