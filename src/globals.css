@@ -482,6 +482,21 @@
   background: oklch(0.65 0.13 15 / 70%);
 }
 
+/* Reused when a single packed check or a markdown-formatted
+   reviewFocus is rendered as a block inside the callout. Tightens
+   the default Markdown spacing so the block doesn't feel like an
+   article inside a margin note. */
+.review-focus-markdown p:first-child {
+  margin-top: 0;
+}
+.review-focus-markdown p:last-child {
+  margin-bottom: 0;
+}
+.review-focus-markdown ul {
+  margin-top: 0.25rem;
+  margin-bottom: 0;
+}
+
 /* Pending review comment block — the user's draft comment as it
    appears under a diff line. Tinted in the brand claret so it
    reads as "this is your work, not the diff itself." Both modes

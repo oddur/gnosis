@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { useRef, useState, useCallback } from 'react';
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from 'react-resizable-panels';
 import { MessageCircle, MessageSquarePlus } from 'lucide-react';
@@ -42,6 +43,128 @@ function formatFileAge(lastModified: string | null | undefined): string | null {
   if (days >= 30) return `${Math.floor(days / 30)}mo old`;
   if (days >= 1) return `${days}d old`;
   return null; // modified today — not worth showing
+}
+
+// A loose heuristic for "this single string is actually multiple
+// bullets jammed together". The model sometimes returns one long
+// reviewFocus or one single reviewCheck that contains its own
+// markdown list. If that happens, we want to render it as a list
+// instead of a wall of text.
+function looksLikePackedList(text: string): boolean {
+  // Markdown bullets on their own line.
+  if (/\n\s*[-*]\s+/.test(text)) return true;
+  // Numbered list items on their own line.
+  if (/\n\s*\d+[.)]\s+/.test(text)) return true;
+  return false;
+}
+
+// Inline click affordance for a single anchored check — dotted
+// underline in brand claret so it reads as a quiet link.
+const clickableCheckClass =
+  'cursor-pointer underline decoration-dotted decoration-[var(--ring)]/50 underline-offset-4 hover:decoration-[var(--ring)]';
+
+function renderReviewChecks(
+  checks: ReviewCheck[] | undefined,
+  reviewFocus: string | null,
+  onCheckClick: (check: ReviewCheck) => void
+): ReactNode {
+  // Multi-item structured: custom bulleted list, per-item click
+  // affordance for anchored checks.
+  if (checks && checks.length > 1) {
+    return (
+      <>
+        <p className="slide-prose">
+          <span className="editorial-label">What to check.</span>
+        </p>
+        <ul className="slide-prose review-checks-list mt-1.5">
+          {checks.map((check, i) => {
+            const isClickable = !!(check.filePath && check.startLine != null && check.startLine > 0);
+            return (
+              <li key={i} className="review-checks-item">
+                <span
+                  className={isClickable ? clickableCheckClass : ''}
+                  onClick={isClickable ? () => onCheckClick(check) : undefined}
+                >
+                  {check.text}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      </>
+    );
+  }
+
+  // Single structured check. Short enough for a run-in label → inline.
+  // Long or self-contains a list → promote to a block so it doesn't
+  // render as a wall of text.
+  if (checks && checks.length === 1) {
+    const check = checks[0];
+    const isClickable = !!(check.filePath && check.startLine != null && check.startLine > 0);
+    const packed = looksLikePackedList(check.text);
+    const longText = check.text.length > 180;
+    if (packed || longText) {
+      return (
+        <>
+          <p className="slide-prose">
+            <span className="editorial-label">What to check.</span>
+          </p>
+          <div className="slide-prose mt-1.5">
+            <span
+              className={isClickable ? clickableCheckClass : ''}
+              onClick={isClickable ? () => onCheckClick(check) : undefined}
+            >
+              <Markdown className="review-focus-markdown">{check.text}</Markdown>
+            </span>
+          </div>
+        </>
+      );
+    }
+    return (
+      <p className="slide-prose">
+        <span className="editorial-label">What to check.</span>{' '}
+        <span className="review-focus-content">
+          <span
+            className={isClickable ? clickableCheckClass : ''}
+            onClick={isClickable ? () => onCheckClick(check) : undefined}
+          >
+            {check.text}
+          </span>
+        </span>
+      </p>
+    );
+  }
+
+  // Fallback: render reviewFocus. The model is told to format it as
+  // a markdown bullet list, so route it through <Markdown> — that way
+  // "- item1\n- item2" actually renders as a list, and a paragraph
+  // still renders as a paragraph.
+  const focus = reviewFocus ?? '';
+  if (!focus.trim()) {
+    return (
+      <p className="slide-prose">
+        <span className="editorial-label">What to check.</span>
+      </p>
+    );
+  }
+  if (looksLikePackedList(focus) || focus.length > 180) {
+    return (
+      <>
+        <p className="slide-prose">
+          <span className="editorial-label">What to check.</span>
+        </p>
+        <div className="slide-prose mt-1.5">
+          <Markdown className="review-focus-markdown">{focus}</Markdown>
+        </div>
+      </>
+    );
+  }
+  return (
+    <p className="slide-prose">
+      <span className="editorial-label">What to check.</span>{' '}
+      <span className="review-focus-content">{focus}</span>
+    </p>
+  );
 }
 
 // Group hunks by filePath so we can render them under a single file header
@@ -205,59 +328,7 @@ export function SlideView({
       )}
 
       <div className="editorial-callout select-text">
-        {slide.reviewChecks && slide.reviewChecks.length > 1 ? (
-          <>
-            <p className="slide-prose">
-              <span className="editorial-label">What to check.</span>
-            </p>
-            <ul className="slide-prose review-checks-list mt-1.5">
-              {slide.reviewChecks.map((check, i) => {
-                const isClickable = !!(check.filePath && check.startLine != null && check.startLine > 0);
-                return (
-                  <li key={i} className="review-checks-item">
-                    <span
-                      className={
-                        isClickable
-                          ? 'cursor-pointer underline decoration-dotted decoration-[var(--ring)]/50 underline-offset-4 hover:decoration-[var(--ring)]'
-                          : ''
-                      }
-                      onClick={isClickable ? () => handleCheckClick(check) : undefined}
-                    >
-                      {check.text}
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          </>
-        ) : slide.reviewChecks && slide.reviewChecks.length === 1 ? (
-          (() => {
-            const check = slide.reviewChecks[0];
-            const isClickable = !!(check.filePath && check.startLine != null && check.startLine > 0);
-            return (
-              <p className="slide-prose">
-                <span className="editorial-label">What to check.</span>{' '}
-                <span className="review-focus-content">
-                  <span
-                    className={
-                      isClickable
-                        ? 'cursor-pointer underline decoration-dotted decoration-[var(--ring)]/50 underline-offset-4 hover:decoration-[var(--ring)]'
-                        : ''
-                    }
-                    onClick={isClickable ? () => handleCheckClick(check) : undefined}
-                  >
-                    {check.text}
-                  </span>
-                </span>
-              </p>
-            );
-          })()
-        ) : (
-          <p className="slide-prose">
-            <span className="editorial-label">What to check.</span>{' '}
-            <span className="review-focus-content">{slide.reviewFocus ?? ''}</span>
-          </p>
-        )}
+        {renderReviewChecks(slide.reviewChecks, slide.reviewFocus, handleCheckClick)}
       </div>
 
       {slide.contextSnippets.length > 0 && (
