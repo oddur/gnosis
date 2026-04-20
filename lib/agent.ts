@@ -131,6 +131,9 @@ The JSON must match this schema exactly:
           "filePath": string | null,
           "startLine": number | null
         }
+      ],
+      "educationNotes": [
+        { "concept": string, "explanation": string }
       ]
     }
   ]
@@ -139,6 +142,18 @@ The JSON must match this schema exactly:
 const CONCISE_SUFFIX = `
 
 IMPORTANT: Be concise. Keep narrative and reviewFocus under 2 sentences each. Omit contextSnippets entirely (use empty arrays). Limit diffHunkIds to the 5 most important hunk IDs per slide. Return only raw JSON starting with { and ending with }.`;
+
+const EDUCATION_DIRECTIVE = `
+EDUCATION MODE — ACTIVE
+The reviewer may not be familiar with every concept the code assumes knowledge of. Where a slide's narrative references a named pattern, domain concept, or non-obvious library primitive, include a short entry in "educationNotes" for that slide explaining it.
+
+Rules for educationNotes:
+- Include a note ONLY when a concept is genuinely referenced AND would not be obvious to a competent developer new to this area (e.g. "Unit of Work", "CORS preflight", "idempotency key", "backpressure", "tombstone row"). Skip the obvious (variable, for-loop, HTTP 404).
+- "concept" is the term itself, as it would appear in a glossary. 1–4 words. Sentence case.
+- "explanation" is 1–2 plain-English sentences. No prerequisites, no code, no jargon. Tell the reviewer WHAT it is and WHY it matters in this context.
+- At most 3 notes per slide. Prefer 0–1 unless the slide genuinely leans on multiple concepts.
+- Do NOT pad: if nothing in the slide assumes outside knowledge, omit the field (or return an empty array).
+`;
 
 const WEB_RESEARCH_DIRECTIVE = `
 WEB RESEARCH MODE — ACTIVE
@@ -198,7 +213,8 @@ export async function generateReviewGuide(
   webResearch: boolean = false,
   onToolUse?: (toolName: string) => void,
   onPromptReady?: (system: string, userMessage: string) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  educationMode: boolean = false
 ): Promise<AIReviewGuide> {
   const provider = getProvider(providerName);
 
@@ -217,10 +233,11 @@ export async function generateReviewGuide(
       : `\nREVIEW SUGGESTIONS DISABLED: The reviewer has turned off review suggestions. Set "reviewFocus" to null for every slide. Do not generate any review focus content.\n`;
 
     const webResearchDirective = webResearch ? WEB_RESEARCH_DIRECTIVE : '';
+    const educationDirective = educationMode ? EDUCATION_DIRECTIVE : '';
 
     // Signal boost is always on — deprioritize formatting and
     // import-only changes, emphasize design decisions.
-    const baseSystem = `${FOCUS_DIRECTIVE}\n${webResearchDirective}${SYSTEM_PROMPT}${reviewSuggestionsDirective}`;
+    const baseSystem = `${FOCUS_DIRECTIVE}\n${webResearchDirective}${educationDirective}${SYSTEM_PROMPT}${reviewSuggestionsDirective}`;
 
     const system = customInstructions
       ? `${baseSystem}\n\nIMPORTANT — CUSTOM REVIEWER INSTRUCTIONS:\nThe reviewer has provided the following instructions. These take precedence over the default writing style and tone guidelines above. Adapt your narrative, reviewFocus, summary, and all prose fields accordingly.\n\n<instructions>\n${customInstructions}\n</instructions>`
@@ -429,6 +446,9 @@ Write the slide content for this topic. Respond with JSON matching this schema e
       "filePath": string | null,
       "startLine": number | null
     }
+  ],
+  "educationNotes": [
+    { "concept": string, "explanation": string }
   ]
 }`;
 
@@ -446,15 +466,17 @@ export async function generateSlide(
   reviewSuggestions: boolean = true,
   onChunk?: (chunk: string, isThinking: boolean) => void,
   thinking: boolean = false,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  educationMode: boolean = false
 ): Promise<WriterSlideOutput> {
   const provider = getProvider(providerName);
 
   const reviewSuggestionsDirective = reviewSuggestions
     ? ''
     : '\nSet "reviewFocus" to null. Do not generate review focus content.\n';
+  const educationDirective = educationMode ? EDUCATION_DIRECTIVE : '';
 
-  let system = WRITER_SYSTEM + reviewSuggestionsDirective;
+  let system = WRITER_SYSTEM + reviewSuggestionsDirective + educationDirective;
   if (instructions?.trim()) {
     system += `\n\nCUSTOM REVIEWER INSTRUCTIONS (take precedence over style guidelines):\n${instructions.trim()}`;
   }

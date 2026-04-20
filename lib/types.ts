@@ -27,6 +27,17 @@ export interface ReviewCheck {
   startLine?: number;
 }
 
+// A short "here's what this term means" callout rendered inline in a
+// slide when Education Mode is on. Populated by the AI when the slide
+// references a concept the reviewer might not already know — e.g.
+// "Unit of Work", "CORS preflight", "idempotency key".
+export interface EducationNote {
+  /** The concept or pattern (short, headline-style). */
+  concept: string;
+  /** 1-2 sentences, plain English, no prerequisites. */
+  explanation: string;
+}
+
 export type SlideImportance = 'critical' | 'important' | 'minor';
 
 export interface Slide {
@@ -42,6 +53,7 @@ export interface Slide {
   dependsOn: string[];
   mermaidDiagram?: string | null;
   reviewChecks?: ReviewCheck[];
+  educationNotes?: EducationNote[];
   // AI-assigned importance. "critical" = auth, data integrity, API
   // contract changes. "important" = core logic, new features.
   // "minor" = config, docs, test boilerplate, import reordering.
@@ -62,6 +74,7 @@ export interface AISlide {
   dependsOn: string[];
   mermaidDiagram?: string | null;
   reviewChecks?: ReviewCheck[];
+  educationNotes?: EducationNote[];
   importance?: SlideImportance;
 }
 
@@ -110,6 +123,7 @@ export interface WriterSlideOutput {
   contextSnippets: string[];
   mermaidDiagram?: string | null;
   reviewChecks?: ReviewCheck[];
+  educationNotes?: EducationNote[];
 }
 
 export interface FileMetadata {
@@ -257,6 +271,10 @@ export interface Preferences {
   proactiveProvider: Provider;
   proactiveModel: ModelId;
   proactiveThinking: boolean;
+  /** Education Mode — when on, each slide can include short explanatory
+   *  callouts ("educationNotes") for concepts the code assumes knowledge
+   *  of, so reviewers less familiar with the area still have context. */
+  educationMode: boolean;
 }
 
 export interface SendSlideChatRequest {
@@ -283,6 +301,7 @@ export interface GenerateReviewRequest {
   smartImports?: boolean;
   reviewSuggestions?: boolean;
   webResearch?: boolean;
+  educationMode?: boolean;
   excludedFiles?: string[];
 }
 

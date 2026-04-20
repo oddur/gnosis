@@ -447,6 +447,53 @@
   background: oklch(0.65 0.13 15 / 70%);
 }
 
+/* Education Mode notes — short "here's what this term means" blocks
+   rendered inline with the slide narrative so the reader doesn't
+   break flow to look something up. Quieter than editorial-callout:
+   hairline left rule in muted gray, not claret, so it reads as an
+   aside rather than a call-to-action. */
+.education-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 0.65rem 0 0.65rem 1rem;
+  border-left: 1px solid oklch(0.55 0.02 65 / 30%);
+}
+
+.dark .education-notes {
+  border-left-color: oklch(0.7 0.02 65 / 24%);
+}
+
+.education-note {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.education-note-label {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.education-note-concept {
+  font-family: var(--font-serif);
+  font-feature-settings: 'opsz' 14;
+  font-size: 0.98rem;
+  font-weight: 540;
+  color: var(--foreground);
+  letter-spacing: -0.005em;
+}
+
+.education-note-explanation {
+  font-size: 0.875rem;
+  line-height: 1.55;
+  color: var(--foreground);
+  max-width: var(--measure-prose);
+}
+
 /* Multi-check list inside .editorial-callout. Each check is its own
    discrete item with a small brand-claret bullet so the reader can
    take them one at a time instead of parsing a run-on paragraph.

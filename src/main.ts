@@ -502,6 +502,7 @@ async function triggerProactiveReview(
       thinking,
       smartImports: prefs.smartImports,
       reviewSuggestions: prefs.reviewSuggestions,
+      educationMode: prefs.educationMode,
     };
 
     await runBackgroundGeneration(reviewId, request, prData, abortController.signal);
@@ -959,6 +960,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   proactiveProvider: 'claude',
   proactiveModel: 'claude-sonnet-4-6',
   proactiveThinking: false,
+  educationMode: true,
 };
 
 function applyBinaryOverrides(prefs: Preferences): void {
@@ -1327,7 +1329,7 @@ async function runBackgroundGeneration(
   prData: Awaited<ReturnType<typeof getPrMetadata>>,
   signal: AbortSignal
 ): Promise<void> {
-  const { prUrl, provider, model, instructions, thinking, smartImports, reviewSuggestions, webResearch } =
+  const { prUrl, provider, model, instructions, thinking, smartImports, reviewSuggestions, webResearch, educationMode } =
     request;
 
   try {
@@ -1497,6 +1499,7 @@ async function runBackgroundGeneration(
               (chunk, isThinking) => broadcastToAllWindows('review-progress', { reviewId, chunk, isThinking }),
               thinking ?? false,
               signal,
+              educationMode ?? false,
             );
 
             const diffHunks = resolveDiffHunks(topic.hunkIds ?? [], hunkMap, assignedIds);
@@ -1514,6 +1517,7 @@ async function runBackgroundGeneration(
               dependsOn: topic.dependsOn,
               mermaidDiagram: writerOutput.mermaidDiagram,
               reviewChecks: writerOutput.reviewChecks,
+              educationNotes: writerOutput.educationNotes,
               importance: topic.importance,
             } satisfies Slide;
         })
@@ -1574,7 +1578,8 @@ async function runBackgroundGeneration(
               // Best-effort
             }
           },
-          signal
+          signal,
+          educationMode ?? false
         );
       } finally {
         if (mcpConfigPath) cleanupMcpConfig(mcpConfigPath);
@@ -1601,6 +1606,7 @@ async function runBackgroundGeneration(
           dependsOn: aiSlide.dependsOn ?? [],
           mermaidDiagram: aiSlide.mermaidDiagram,
           reviewChecks: aiSlide.reviewChecks,
+          educationNotes: aiSlide.educationNotes,
           importance: aiSlide.importance ?? 'important',
         };
       });

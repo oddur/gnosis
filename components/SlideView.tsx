@@ -437,6 +437,18 @@ export function SlideView({
 
       <Markdown className="slide-prose select-text">{slide.narrative}</Markdown>
 
+      {slide.educationNotes && slide.educationNotes.length > 0 && (
+        <aside className="education-notes select-text" aria-label="Background concepts">
+          {slide.educationNotes.map((note, i) => (
+            <div key={i} className="education-note">
+              <span className="education-note-label">Background</span>
+              <span className="education-note-concept">{note.concept}</span>
+              <Markdown className="education-note-explanation">{note.explanation}</Markdown>
+            </div>
+          ))}
+        </aside>
+      )}
+
       {slide.affectedFiles.length > 0 && (
         <ul className="slide-meta flex flex-col gap-1 select-text">
           {slide.affectedFiles.map((f) => (
