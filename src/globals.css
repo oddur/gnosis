@@ -1440,6 +1440,20 @@ ul.review-focus-content > li::before {
    the app collapses to instantaneous changes for users who
    asked for it. The progress bar still updates — it just
    snaps instead of sliding. */
+/* Used by the Settings dialog's save acknowledgement. A short, quiet
+   fade-in/out that lets the user know their toggle was persisted
+   without announcing it as a success. Kept under 1.2s so rapid
+   changes don't queue up visually. */
+.saved-flash {
+  animation: saved-flash 1100ms ease-out forwards;
+}
+@keyframes saved-flash {
+  0% { opacity: 0; transform: translateY(1px); }
+  18% { opacity: 0.85; transform: translateY(0); }
+  70% { opacity: 0.85; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(0); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
