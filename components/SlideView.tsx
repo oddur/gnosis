@@ -1,4 +1,5 @@
-import { useRef, useState, useCallback } from 'react';
+import type { ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from 'react-resizable-panels';
 import { MessageCircle, MessageSquarePlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -42,6 +43,222 @@ function formatFileAge(lastModified: string | null | undefined): string | null {
   if (days >= 30) return `${Math.floor(days / 30)}mo old`;
   if (days >= 1) return `${days}d old`;
   return null; // modified today — not worth showing
+}
+
+// Build the set of `{filePath}:{newFileLine}` + `{filePath}:{oldFileLine}`
+// keys that any review check could resolve to inside this slide's
+// hunks. Used to pre-filter clickable anchors at render time so the
+// callout never shows a link that would silently do nothing. Parses
+// hunk headers directly (`@@ -baseStart,baseCount +headStart,headCount @@`)
+// rather than walking rendered lines — much cheaper.
+function buildAnchorableSet(hunks: DiffHunk[]): Set<string> {
+  const keys = new Set<string>();
+  for (const hunk of hunks) {
+    const m = hunk.hunkHeader.match(/@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
+    if (!m) continue;
+    const baseStart = parseInt(m[1], 10);
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- regex optional groups can be undefined at runtime
+    const baseCount = m[2] !== undefined ? parseInt(m[2], 10) : 1;
+    const headStart = parseInt(m[3], 10);
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- regex optional groups can be undefined at runtime
+    const headCount = m[4] !== undefined ? parseInt(m[4], 10) : 1;
+    for (let i = 0; i < headCount; i++) keys.add(`${hunk.filePath}:${headStart + i}`);
+    for (let i = 0; i < baseCount; i++) keys.add(`${hunk.filePath}:${baseStart + i}`);
+  }
+  return keys;
+}
+
+// A loose heuristic for "this single string is actually multiple
+// bullets jammed together". The model sometimes returns one long
+// reviewFocus or one single reviewCheck that contains its own
+// markdown list. If that happens, we want to render it as a list
+// instead of a wall of text.
+function looksLikePackedList(text: string): boolean {
+  // Markdown bullets on their own line.
+  if (/\n\s*[-*]\s+/.test(text)) return true;
+  // Numbered list items on their own line.
+  if (/\n\s*\d+[.)]\s+/.test(text)) return true;
+  return false;
+}
+
+// Try to split a prose check into its constituent sentences so a
+// model-emitted "one giant check with three topics" renders as
+// bullets instead of a paragraph. Splits on sentence terminators
+// (`.`, `?`, `!`) followed by whitespace then a capital letter or
+// a backtick (next sentence starts with an identifier). Only returns
+// multiple segments when each is a reasonable bullet length — under
+// 20 chars is probably noise, over 500 is a tell the split picked
+// the wrong boundary.
+function splitIntoProseChecks(text: string): string[] {
+  if (!text) return [];
+  const trimmed = text.trim();
+  const parts = trimmed.split(/(?<=[.?!])\s+(?=[A-Z`])/).map((s) => s.trim()).filter(Boolean);
+  if (parts.length < 2) return [trimmed];
+  if (parts.some((p) => p.length < 20 || p.length > 500)) return [trimmed];
+  return parts;
+}
+
+// Inline click affordance for a single anchored check — dotted
+// underline in brand claret so it reads as a quiet link.
+const clickableCheckClass =
+  'cursor-pointer underline decoration-dotted decoration-[var(--ring)]/50 underline-offset-4 hover:decoration-[var(--ring)]';
+
+// A check is only rendered as a clickable anchor when the
+// `{filePath, line}` actually resolves to a line inside this slide's
+// hunks. Prevents silent no-op clicks on hallucinated or out-of-slide
+// anchors. `anchorable` is the pre-built set from buildAnchorableSet.
+function isAnchorable(check: ReviewCheck, anchorable: Set<string>): boolean {
+  if (!check.filePath || check.startLine == null || check.startLine <= 0) return false;
+  return anchorable.has(`${check.filePath}:${check.startLine}`);
+}
+
+function renderReviewChecks(
+  checks: ReviewCheck[] | undefined,
+  reviewFocus: string | null,
+  anchorable: Set<string>,
+  onCheckClick: (check: ReviewCheck) => void
+): ReactNode {
+  // Multi-item structured: custom bulleted list, per-item click
+  // affordance for anchored checks.
+  if (checks && checks.length > 1) {
+    return (
+      <>
+        <p className="slide-prose">
+          <span className="editorial-label">What to check.</span>
+        </p>
+        <ul className="slide-prose review-checks-list mt-1.5">
+          {checks.map((check, i) => {
+            const isClickable = isAnchorable(check, anchorable);
+            return (
+              <li key={i} className="review-checks-item">
+                <span
+                  className={isClickable ? clickableCheckClass : ''}
+                  onClick={isClickable ? () => onCheckClick(check) : undefined}
+                >
+                  {check.text}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      </>
+    );
+  }
+
+  // Single structured check. If its text is actually several
+  // sentences crammed together, split into bullets. If just long,
+  // promote to a block through Markdown. Otherwise keep the inline
+  // run-in label + sentence.
+  if (checks && checks.length === 1) {
+    const check = checks[0];
+    const isClickable = isAnchorable(check, anchorable);
+    const packed = looksLikePackedList(check.text);
+    const longText = check.text.length > 180;
+    const split = longText || packed ? splitIntoProseChecks(check.text) : [check.text];
+    if (split.length > 1) {
+      // Prose-split into multiple sentences → render as bulleted
+      // list. The anchor click (when present) applies to every
+      // bullet; the whole check points at one line.
+      return (
+        <>
+          <p className="slide-prose">
+            <span className="editorial-label">What to check.</span>
+          </p>
+          <ul className="slide-prose review-checks-list mt-1.5">
+            {split.map((sentence, i) => (
+              <li key={i} className="review-checks-item">
+                <span
+                  className={isClickable ? clickableCheckClass : ''}
+                  onClick={isClickable ? () => onCheckClick(check) : undefined}
+                >
+                  <Markdown className="review-focus-markdown">{sentence}</Markdown>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      );
+    }
+    if (packed || longText) {
+      return (
+        <>
+          <p className="slide-prose">
+            <span className="editorial-label">What to check.</span>
+          </p>
+          <div className="slide-prose mt-1.5">
+            <span
+              className={isClickable ? clickableCheckClass : ''}
+              onClick={isClickable ? () => onCheckClick(check) : undefined}
+            >
+              <Markdown className="review-focus-markdown">{check.text}</Markdown>
+            </span>
+          </div>
+        </>
+      );
+    }
+    return (
+      <p className="slide-prose">
+        <span className="editorial-label">What to check.</span>{' '}
+        <span className="review-focus-content">
+          <span
+            className={isClickable ? clickableCheckClass : ''}
+            onClick={isClickable ? () => onCheckClick(check) : undefined}
+          >
+            {check.text}
+          </span>
+        </span>
+      </p>
+    );
+  }
+
+  // Fallback: render reviewFocus. The model is told to format it as
+  // a markdown bullet list, so route it through <Markdown> — that way
+  // "- item1\n- item2" actually renders as a list, and a paragraph
+  // still renders as a paragraph. Try prose-splitting first to catch
+  // packed-in-prose fallbacks.
+  const focus = reviewFocus ?? '';
+  if (!focus.trim()) {
+    return (
+      <p className="slide-prose">
+        <span className="editorial-label">What to check.</span>
+      </p>
+    );
+  }
+  if (looksLikePackedList(focus) || focus.length > 180) {
+    const split = splitIntoProseChecks(focus);
+    if (split.length > 1) {
+      return (
+        <>
+          <p className="slide-prose">
+            <span className="editorial-label">What to check.</span>
+          </p>
+          <ul className="slide-prose review-checks-list mt-1.5">
+            {split.map((sentence, i) => (
+              <li key={i} className="review-checks-item">
+                <Markdown className="review-focus-markdown">{sentence}</Markdown>
+              </li>
+            ))}
+          </ul>
+        </>
+      );
+    }
+    return (
+      <>
+        <p className="slide-prose">
+          <span className="editorial-label">What to check.</span>
+        </p>
+        <div className="slide-prose mt-1.5">
+          <Markdown className="review-focus-markdown">{focus}</Markdown>
+        </div>
+      </>
+    );
+  }
+  return (
+    <p className="slide-prose">
+      <span className="editorial-label">What to check.</span>{' '}
+      <span className="review-focus-content">{focus}</span>
+    </p>
+  );
 }
 
 // Group hunks by filePath so we can render them under a single file header
@@ -153,14 +370,44 @@ export function SlideView({
   const fileCount = slide.affectedFiles.length;
   const fileCountLabel = fileCount === 0 ? 'no files' : `${fileCount} ${fileCount === 1 ? 'file' : 'files'}`;
 
+  // When a review-check click can't be resolved to a visible diff line
+  // (rare, because we also pre-filter at render time), surface a brief
+  // muted note below the callout so the user isn't left guessing why
+  // the click did nothing. Cleared after ~3s.
+  const [anchorMiss, setAnchorMiss] = useState<{ filePath: string; line: number; at: number } | null>(null);
+
+  // Auto-clear the miss notice so it doesn't linger past the moment
+  // the user expects feedback.
+  useEffect(() => {
+    if (!anchorMiss) return;
+    const t = setTimeout(() => {
+      setAnchorMiss((current) => (current && current.at === anchorMiss.at ? null : current));
+    }, 3000);
+    return () => clearTimeout(t);
+  }, [anchorMiss]);
+
+  // Which `{filePath, line}` anchors can actually resolve inside THIS
+  // slide's diff hunks. Used to pre-filter click affordances so we
+  // never render a clickable-looking check that will silently fail.
+  const anchorable = useMemo(() => buildAnchorableSet(slide.diffHunks), [slide.diffHunks]);
+
   const handleCheckClick = useCallback((check: ReviewCheck) => {
     if (!check.filePath || !check.startLine) return;
     const container = rightPanelRef.current;
     if (!container) return;
 
-    const selector = `[data-file-path="${CSS.escape(check.filePath)}"][data-line-number="${check.startLine}"]`;
-    const target = container.querySelector(selector);
-    if (!target) return;
+    const escapedPath = CSS.escape(check.filePath);
+    // Primary: new-file line number (matches what the AI is told to emit).
+    // Fallback: old-file line number, in case the AI anchored at a
+    // removed line.
+    const target =
+      container.querySelector(`[data-file-path="${escapedPath}"][data-line-number="${check.startLine}"]`) ??
+      container.querySelector(`[data-file-path="${escapedPath}"][data-base-line="${check.startLine}"]`);
+
+    if (!target) {
+      setAnchorMiss({ filePath: check.filePath, line: check.startLine, at: Date.now() });
+      return;
+    }
 
     target.scrollIntoView({ behavior: 'smooth', block: 'center' });
     target.classList.remove('check-highlight');
@@ -205,38 +452,11 @@ export function SlideView({
       )}
 
       <div className="editorial-callout select-text">
-        {slide.reviewChecks && slide.reviewChecks.length > 0 ? (
-          (() => {
-            const checks = slide.reviewChecks;
-            return (
-              <p className="slide-prose">
-                <span className="editorial-label">What to check.</span>{' '}
-                <span className="review-focus-content">
-                  {checks.map((check, i) => {
-                    const isClickable = !!(check.filePath && check.startLine != null && check.startLine > 0);
-                    return (
-                      <span
-                        key={i}
-                        className={
-                          isClickable
-                            ? 'cursor-pointer underline decoration-dotted decoration-[var(--ring)]/50 underline-offset-4 hover:decoration-[var(--ring)]'
-                            : ''
-                        }
-                        onClick={isClickable ? () => handleCheckClick(check) : undefined}
-                      >
-                        {check.text}
-                        {i < checks.length - 1 && ' '}
-                      </span>
-                    );
-                  })}
-                </span>
-              </p>
-            );
-          })()
-        ) : (
-          <p className="slide-prose">
-            <span className="editorial-label">What to check.</span>{' '}
-            <span className="review-focus-content">{slide.reviewFocus ?? ''}</span>
+        {renderReviewChecks(slide.reviewChecks, slide.reviewFocus, anchorable, handleCheckClick)}
+        {anchorMiss && (
+          <p className="slide-meta mt-2" role="status" aria-live="polite">
+            Line {anchorMiss.line} in <span className="font-mono">{anchorMiss.filePath}</span> isn't in this slide's
+            visible diff.
           </p>
         )}
       </div>

@@ -1,12 +1,13 @@
 import { useState, useMemo } from 'react';
 import { MessageSquarePlus } from 'lucide-react';
 import { parseDiffLines, buildSplitRows, type DiffLineInfo, type SplitRow } from '@/lib/diff-lines';
-import type { DiffHunk, PendingReviewComment } from '@/lib/types';
+import type { DiffHunk, DiffSide, PendingReviewComment } from '@/lib/types';
 import { FilePathLink } from '@/components/FilePathLink';
 import {
   type CommentCallbacks,
   parseShikiLines,
   extractShikiStyles,
+  lineAnchorAttrs,
   InlineCommentForm,
   CommentBubble,
 } from '@/components/shared-diff-utils';
@@ -21,20 +22,27 @@ interface SplitDiffHunkGroupProps {
 }
 
 function SplitDiffCell({
+  filePath,
   info,
   html,
   cellClass,
+  side,
   isInteractive,
   onClickLine,
 }: {
+  filePath: string;
   info: DiffLineInfo | null;
   html: string | null;
   cellClass: string;
+  side: DiffSide;
   isInteractive: boolean;
   onClickLine: (info: DiffLineInfo) => void;
 }) {
   const lineNum =
     info?.type === 'context' ? info.lineNumber : info?.type === 'remove' ? info.baseLineNumber : info?.headLineNumber;
+  // Anchor attrs on the code cell — that's the widest hit area and the
+  // natural visual target for "where does this check point to."
+  const anchorAttrs = info ? lineAnchorAttrs(filePath, info, side) : undefined;
 
   return (
     <>
@@ -73,6 +81,7 @@ function SplitDiffCell({
       </span>
       <span
         className={`split-diff-code select-text ${cellClass}`}
+        {...anchorAttrs}
         style={{ paddingLeft: '0.5ch', paddingRight: '1ch', whiteSpace: 'pre' }}
       >
         {html ? <span dangerouslySetInnerHTML={{ __html: html }} /> : null}
@@ -178,6 +187,7 @@ function SplitHunk({
           return (
             <SplitDiffRowFragment
               key={rowIdx}
+              filePath={filePath}
               row={row}
               leftCellClass={leftCellClass}
               rightCellClass={rightCellClass}
@@ -202,6 +212,7 @@ function SplitHunk({
 }
 
 function SplitDiffRowFragment({
+  filePath,
   row,
   leftCellClass,
   rightCellClass,
@@ -218,6 +229,7 @@ function SplitDiffRowFragment({
   onCancelForm,
   commentCallbacks,
 }: {
+  filePath: string;
   row: SplitRow;
   leftCellClass: string;
   rightCellClass: string;
@@ -237,9 +249,11 @@ function SplitDiffRowFragment({
   return (
     <>
       <SplitDiffCell
+        filePath={filePath}
         info={row.left?.info ?? null}
         html={row.left?.html ?? null}
         cellClass={leftCellClass}
+        side="LEFT"
         isInteractive={isInteractive}
         onClickLine={onClickLine}
       />
@@ -247,9 +261,11 @@ function SplitDiffRowFragment({
       <span className="split-diff-separator" />
 
       <SplitDiffCell
+        filePath={filePath}
         info={row.right?.info ?? null}
         html={row.right?.html ?? null}
         cellClass={rightCellClass}
+        side="RIGHT"
         isInteractive={isInteractive}
         onClickLine={onClickLine}
       />
