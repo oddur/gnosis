@@ -62,8 +62,9 @@ export function applyCodeFont(fontId: string) {
   }
 }
 
-// Quiet toggle switch — warm-amber active state, flat thumb, no shadcn
-// defaults. Used across all the on/off settings.
+// Quiet toggle switch — ink-on-paper active state, flat thumb. Keeps
+// brand claret reserved as punctuation (focus, active TOC marker, the
+// override rail) rather than coating every "on" control.
 function Toggle({
   checked,
   onChange,
@@ -80,8 +81,8 @@ function Toggle({
       aria-checked={checked}
       aria-label={ariaLabel}
       onClick={onChange}
-      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border transition-colors ${
-        checked ? 'bg-[var(--ring)] border-[var(--ring)]' : 'bg-transparent border-border'
+      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]/50 focus-visible:ring-offset-2 focus-visible:ring-offset-card ${
+        checked ? 'bg-foreground border-foreground' : 'bg-transparent border-border'
       }`}
     >
       <span
@@ -95,8 +96,8 @@ function Toggle({
 
 // Quiet text-only chip. Active option gets a hairline brand-claret
 // underline. Used inside radiogroups — the group provides the label,
-// each chip reports aria-checked so screen readers announce the
-// current selection in context.
+// arrow-key traversal, and roving tabindex; each chip just reports
+// aria-checked so screen readers announce the current selection.
 function Chip({
   active,
   onClick,
@@ -116,6 +117,7 @@ function Chip({
       role="radio"
       aria-checked={active}
       aria-label={ariaLabel}
+      tabIndex={active ? 0 : -1}
       onClick={onClick}
       style={style}
       className={`text-sm pb-0.5 border-b transition-colors focus-visible:outline-none focus-visible:text-foreground ${
@@ -129,6 +131,11 @@ function Chip({
   );
 }
 
+// Radiogroup with W3C keyboard nav: ←/→/↑/↓ moves focus AND activates
+// the next/prev chip (wrapping at ends); Home/End jump to first/last.
+// Matches the roving-tabindex pattern — only the selected chip is in
+// the tab order, and arrow keys move BOTH focus and selection, which
+// is what screen readers announce as "radio group, Paper, 1 of 3."
 function ChipGroup({
   label,
   children,
@@ -136,8 +143,55 @@ function ChipGroup({
   label: string;
   children: React.ReactNode;
 }) {
+  const groupRef = useRef<HTMLDivElement | null>(null);
+
+  function move(delta: number | 'home' | 'end') {
+    const root = groupRef.current;
+    if (!root) return;
+    const chips = Array.from(root.querySelectorAll<HTMLButtonElement>('[role="radio"]'));
+    if (chips.length === 0) return;
+    const active = document.activeElement;
+    const currentIdx = chips.findIndex((c) => c === active);
+    const anchor = currentIdx === -1 ? chips.findIndex((c) => c.getAttribute('aria-checked') === 'true') : currentIdx;
+    const from = anchor === -1 ? 0 : anchor;
+    let next: number;
+    if (delta === 'home') next = 0;
+    else if (delta === 'end') next = chips.length - 1;
+    else next = (from + delta + chips.length) % chips.length;
+    const target = chips[next];
+    target.focus();
+    target.click();
+  }
+
   return (
-    <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-x-4 gap-y-2">
+    <div
+      ref={groupRef}
+      role="radiogroup"
+      aria-label={label}
+      className="flex flex-wrap gap-x-4 gap-y-2"
+      onKeyDown={(e) => {
+        switch (e.key) {
+          case 'ArrowLeft':
+          case 'ArrowUp':
+            e.preventDefault();
+            move(-1);
+            break;
+          case 'ArrowRight':
+          case 'ArrowDown':
+            e.preventDefault();
+            move(1);
+            break;
+          case 'Home':
+            e.preventDefault();
+            move('home');
+            break;
+          case 'End':
+            e.preventDefault();
+            move('end');
+            break;
+        }
+      }}
+    >
       {children}
     </div>
   );
@@ -206,8 +260,16 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
   const [claudeDetected, setClaudeDetected] = useState('');
   const [geminiDetected, setGeminiDetected] = useState('');
 
-  const [activeSection, setActiveSection] = useState<SectionId>('appearance');
-  const [savedTick, setSavedTick] = useState(0);
+  const [activeSection, setActiveSection] = useState<SectionId>(() => {
+    // Remember which section the user last visited. Power users
+    // returning to tweak the same setting shouldn't have to scroll.
+    try {
+      const stored = localStorage.getItem('gnosis-settings-last-section');
+      if (stored && SECTIONS.some((s) => s.id === stored)) return stored as SectionId;
+    } catch { /* localStorage unavailable — fine, default */ }
+    return 'appearance';
+  });
+  const [saveStatus, setSaveStatus] = useState<{ tick: number; state: 'saved' | 'error' }>({ tick: 0, state: 'saved' });
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const sectionRefs = useRef<Record<SectionId, HTMLElement | null>>({
     appearance: null,
@@ -222,30 +284,15 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
 
   useEffect(() => {
     if (!open) return;
-    void window.electronAPI.loadPreferences().then((prefs) => {
-      setAppTheme(prefs.theme);
-      if (prefs.codeTheme) setCodeTheme(prefs.codeTheme as CodeTheme);
-      if (prefs.codeFont) setCodeFont(prefs.codeFont as CodeFont);
-      setEnableTools(prefs.enableTools);
-      setProactiveMode(prefs.proactiveMode);
-      setWatchedRepos(prefs.watchedRepos);
-      setNotifications(prefs.notifications);
-      setTrayEnabled(prefs.trayEnabled);
-      setMaxPrsPerRepo(prefs.maxPrsPerRepo);
-      setParallelReview(prefs.parallelReview);
-      setAnalytics(prefs.analytics);
-      setManualProvider(prefs.provider);
-      setManualModel(prefs.model);
-      setProactiveReviewOverrides(prefs.proactiveReviewOverrides);
-      setProactiveProvider(prefs.proactiveProvider);
-      setProactiveModel(prefs.proactiveModel);
-      setProactiveThinking(prefs.proactiveThinking);
-      setClaudePath(prefs.claudePath || '');
-      setGeminiPath(prefs.geminiPath || '');
-    });
+    void window.electronAPI.loadPreferences().then(applyLoadedPrefs);
     void window.electronAPI.detectBinaryPath('claude').then(setClaudeDetected);
     void window.electronAPI.detectBinaryPath('gemini').then(setGeminiDetected);
   }, [open]);
+
+  // Remember the last-visited section across opens.
+  useEffect(() => {
+    try { localStorage.setItem('gnosis-settings-last-section', activeSection); } catch { /* non-fatal */ }
+  }, [activeSection]);
 
   // Intersection-based TOC highlight. Picks the section whose top edge is
   // closest to (but not past) the scroll container's top. Only runs while
@@ -281,11 +328,40 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
   }
 
   function saveField(overrides: Partial<Preferences>) {
-    void window.electronAPI.loadPreferences().then((prefs) => {
-      void window.electronAPI.savePreferences({ ...prefs, ...overrides }).then(() => {
-        setSavedTick((n) => n + 1);
+    void window.electronAPI
+      .loadPreferences()
+      .then((prefs) => window.electronAPI.savePreferences({ ...prefs, ...overrides }))
+      .then(() => {
+        setSaveStatus((s) => ({ tick: s.tick + 1, state: 'saved' }));
+      })
+      .catch(() => {
+        setSaveStatus((s) => ({ tick: s.tick + 1, state: 'error' }));
+        // Reconcile optimistic UI with actually-persisted prefs so the
+        // user doesn't see a setting "stick" that never saved.
+        void window.electronAPI.loadPreferences().then(applyLoadedPrefs);
       });
-    });
+  }
+
+  function applyLoadedPrefs(prefs: Preferences) {
+    setAppTheme(prefs.theme);
+    if (prefs.codeTheme) setCodeTheme(prefs.codeTheme as CodeTheme);
+    if (prefs.codeFont) setCodeFont(prefs.codeFont as CodeFont);
+    setEnableTools(prefs.enableTools);
+    setProactiveMode(prefs.proactiveMode);
+    setWatchedRepos(prefs.watchedRepos);
+    setNotifications(prefs.notifications);
+    setTrayEnabled(prefs.trayEnabled);
+    setMaxPrsPerRepo(prefs.maxPrsPerRepo);
+    setParallelReview(prefs.parallelReview);
+    setAnalytics(prefs.analytics);
+    setManualProvider(prefs.provider);
+    setManualModel(prefs.model);
+    setProactiveReviewOverrides(prefs.proactiveReviewOverrides);
+    setProactiveProvider(prefs.proactiveProvider);
+    setProactiveModel(prefs.proactiveModel);
+    setProactiveThinking(prefs.proactiveThinking);
+    setClaudePath(prefs.claudePath || '');
+    setGeminiPath(prefs.geminiPath || '');
   }
 
   function addWatchedRepo(name: string) {
@@ -309,36 +385,81 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
     applyCodeFont(font);
   }
 
-  function scrollTo(id: SectionId) {
+  function scrollTo(id: SectionId, behavior: ScrollBehavior = 'smooth') {
     const el = sectionRefs.current[id];
-    if (el && scrollRef.current) {
-      scrollRef.current.scrollTo({ top: el.offsetTop - 8, behavior: 'smooth' });
-    }
+    const root = scrollRef.current;
+    if (!el || !root) return;
+    // rect math is robust to positioned-ancestor quirks that offsetTop
+    // doesn't handle.
+    const top = el.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop;
+    root.scrollTo({ top: top - 4, behavior });
   }
+
+  // Restore scroll to the remembered section when the dialog opens.
+  useEffect(() => {
+    if (!open) return;
+    // Defer one tick so the section refs are mounted.
+    const t = setTimeout(() => scrollTo(activeSection, 'auto'), 0);
+    return () => clearTimeout(t);
+    // Intentionally only re-runs on `open`. Reading `activeSection`
+    // here captures the value at open-time, which is what we want —
+    // we don't want to re-scroll every time the user navigates.
+  }, [open]);
+
+  // Keyboard shortcuts: digits 1-5 jump to the matching section when
+  // focus isn't inside a text input. Typed digits inside the repo
+  // search or CLI path inputs still work normally.
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
+      const n = Number(e.key);
+      if (!Number.isNaN(n) && n >= 1 && n <= SECTIONS.length) {
+        e.preventDefault();
+        const id = SECTIONS[n - 1].id;
+        setActiveSection(id);
+        scrollTo(id);
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-card p-0 sm:max-w-3xl overflow-hidden">
-        <div className="grid grid-cols-[160px_1fr] max-h-[min(85vh,720px)]">
+      {/* `zoom-in-100` + `zoom-out-100` cancel the default pop-zoom
+          entrance from the shadcn dialog primitive so the dialog just
+          fades in. Editorial motion — page-turn register, not SaaS. */}
+      <DialogContent className="bg-card p-0 sm:max-w-3xl overflow-hidden data-[state=open]:zoom-in-100 data-[state=closed]:zoom-out-100">
+        <div className="grid grid-cols-[168px_1fr] max-h-[min(85vh,720px)]">
           {/* Left rail — editorial TOC */}
           <nav
             aria-label="Settings sections"
-            className="flex flex-col gap-4 pl-6 pr-3 py-8 border-r border-border/60"
+            className="flex flex-col gap-5 pl-6 pr-3 py-8 border-r border-border/60"
           >
-            <DialogHeader className="mb-2">
-              <DialogTitle className="editorial-heading text-foreground">Settings</DialogTitle>
+            <DialogHeader className="mb-2 space-y-0.5">
+              <DialogTitle
+                asChild
+                className="slide-title !text-[1.65rem] !leading-none text-foreground"
+              >
+                <h1>Settings</h1>
+              </DialogTitle>
               <DialogDescription className="sr-only">
-                Appearance, review behaviour, proactive mode, system, and advanced options.
+                Appearance, review behaviour, proactive mode, system, and advanced options. Press 1 through 5 to jump sections.
               </DialogDescription>
             </DialogHeader>
             <ul className="flex flex-col gap-2">
-              {SECTIONS.map((s) => {
+              {SECTIONS.map((s, i) => {
                 const active = activeSection === s.id;
                 return (
                   <li key={s.id}>
                     <button
                       type="button"
-                      onClick={() => scrollTo(s.id)}
+                      onClick={() => { setActiveSection(s.id); scrollTo(s.id); }}
+                      aria-current={active ? 'location' : undefined}
+                      title={`Jump to ${s.label} (${i + 1})`}
                       className={`w-full text-left flex items-baseline gap-2 text-sm transition-colors ${
                         active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
                       }`}
@@ -362,6 +483,9 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                 );
               })}
             </ul>
+            <p className="slide-meta mt-auto pr-1 leading-relaxed">
+              Press <kbd className="kbd">1</kbd>–<kbd className="kbd">5</kbd> to jump.
+            </p>
           </nav>
 
           {/* Right pane — scrollable content */}
@@ -482,7 +606,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
 
                   <SettingRow
                     label="Proactive mode"
-                    description="Review your PRs, assigned reviews, and watched repos automatically. Re-generates when a PR updates."
+                    description="Review your PRs, assigned reviews, and watched repos automatically. Checks every 5 minutes; re-generates when a PR updates."
                   >
                     <Toggle
                       checked={proactiveMode}
@@ -500,57 +624,16 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                       <div className="flex flex-col gap-2">
                         <span className="text-sm font-medium text-foreground">Watched repos</span>
                         <span className="slide-meta">All open PRs in these repos are reviewed automatically.</span>
-                        <div className="relative mt-1">
-                          <input
-                            type="text"
-                            value={watchedRepoInput}
-                            placeholder="Search for a repo…"
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setWatchedRepoInput(val);
-                              setSuggestionsDismissed(false);
-                              if (debounceRef.current) clearTimeout(debounceRef.current);
-                              if (val.trim().length >= 2) {
-                                debounceRef.current = setTimeout(() => {
-                                  void window.electronAPI.searchRepos(val.trim()).then((results) => {
-                                    setRepoSuggestions(results.filter((r) => !watchedRepos.includes(r.fullName)));
-                                  });
-                                }, 300);
-                              } else {
-                                setRepoSuggestions([]);
-                              }
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                e.preventDefault();
-                                const trimmed = watchedRepoInput.trim();
-                                if (trimmed.includes('/')) addWatchedRepo(trimmed);
-                              }
-                              if (e.key === 'Escape') setSuggestionsDismissed(true);
-                            }}
-                            onFocus={() => setSuggestionsDismissed(false)}
-                            onBlur={() => setTimeout(() => setSuggestionsDismissed(true), 200)}
-                            className="w-full bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground/60 transition-colors focus:outline-none focus:border-[var(--ring)]"
-                          />
-                          {showSuggestions && (
-                            <ul className="absolute z-50 top-full left-0 right-0 mt-1 bg-popover border border-border rounded-md shadow-md max-h-48 overflow-y-auto">
-                              {repoSuggestions.map((repo) => (
-                                <li key={repo.fullName}>
-                                  <button
-                                    type="button"
-                                    className="w-full text-left px-3 py-2 text-sm hover:bg-accent transition-colors flex flex-col gap-0.5"
-                                    onMouseDown={(e) => { e.preventDefault(); addWatchedRepo(repo.fullName); }}
-                                  >
-                                    <span className="font-mono text-xs text-foreground">{repo.fullName}</span>
-                                    {repo.description && (
-                                      <span className="text-xs text-muted-foreground truncate">{repo.description}</span>
-                                    )}
-                                  </button>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
+                        <WatchedRepoInput
+                          value={watchedRepoInput}
+                          setValue={setWatchedRepoInput}
+                          suggestions={showSuggestions ? repoSuggestions : []}
+                          setSuggestions={setRepoSuggestions}
+                          setSuggestionsDismissed={setSuggestionsDismissed}
+                          debounceRef={debounceRef}
+                          watchedRepos={watchedRepos}
+                          addWatchedRepo={addWatchedRepo}
+                        />
                         {watchedRepos.length > 0 && (
                           <ul className="flex flex-col gap-1 mt-2">
                             {watchedRepos.map((repo) => (
@@ -815,9 +898,10 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
               </div>
             </div>
 
-            {/* Unobtrusive save acknowledgement — fades in for ~1s after each save.
-               Re-keyed on savedTick so rapid saves reset the animation. */}
-            <SavedIndicator tick={savedTick} />
+            {/* Unobtrusive save acknowledgement — fades in for ~1s after each write.
+               Re-keyed on tick so rapid saves reset the animation. Reports
+               failures in the same slot so the user isn't left guessing. */}
+            <SaveIndicator status={saveStatus} />
           </div>
         </div>
       </DialogContent>
@@ -825,18 +909,148 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
   );
 }
 
-// Small "Saved" acknowledgement bottom-right of the content pane. Fades in
+// Small save acknowledgement bottom-right of the content pane. Fades in
 // for ~1.1s after each save, then fades out. Uses a keyed remount so
-// rapid consecutive saves reliably restart the animation.
-function SavedIndicator({ tick }: { tick: number }) {
-  if (tick === 0) return null;
+// rapid consecutive saves reliably restart the animation. Error state
+// uses --destructive so failures read as failures, not brand accent.
+function SaveIndicator({ status }: { status: { tick: number; state: 'saved' | 'error' } }) {
+  if (status.tick === 0) return null;
   return (
     <span
-      key={tick}
+      key={status.tick}
+      role="status"
       aria-live="polite"
-      className="pointer-events-none absolute bottom-3 right-5 slide-meta text-[var(--ring)] opacity-0 saved-flash"
+      className={`pointer-events-none absolute bottom-3 right-5 slide-meta opacity-0 saved-flash ${
+        status.state === 'saved' ? 'text-muted-foreground' : 'text-destructive'
+      }`}
     >
-      Saved.
+      {status.state === 'saved' ? 'Saved.' : "Couldn't save."}
     </span>
+  );
+}
+
+// Repo search with a proper combobox/listbox a11y contract. Typing
+// debounces to the backend; ArrowDown from the input moves focus into
+// the suggestion list; ArrowUp/Down cycle within the list; Enter
+// activates; Escape dismisses. Keyboard-only users can reach a
+// suggestion without ever touching the mouse.
+function WatchedRepoInput({
+  value,
+  setValue,
+  suggestions,
+  setSuggestions,
+  setSuggestionsDismissed,
+  debounceRef,
+  watchedRepos,
+  addWatchedRepo,
+}: {
+  value: string;
+  setValue: (v: string) => void;
+  suggestions: RepoSearchResult[];
+  setSuggestions: (s: RepoSearchResult[]) => void;
+  setSuggestionsDismissed: (b: boolean) => void;
+  debounceRef: React.RefObject<ReturnType<typeof setTimeout> | null>;
+  watchedRepos: string[];
+  addWatchedRepo: (name: string) => void;
+}) {
+  const listRef = useRef<HTMLUListElement | null>(null);
+  const trimmed = value.trim();
+  const hasSlash = trimmed.includes('/');
+  const hasError = trimmed.length > 0 && !hasSlash && suggestions.length === 0;
+
+  function focusOption(index: number) {
+    const list = listRef.current;
+    if (!list) return;
+    const options = Array.from(list.querySelectorAll<HTMLButtonElement>('[role="option"]'));
+    if (options.length === 0) return;
+    const clamped = (index + options.length) % options.length;
+    options[clamped]?.focus();
+  }
+
+  return (
+    <>
+      <div className="relative mt-1">
+        <input
+          type="text"
+          value={value}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={suggestions.length > 0}
+          aria-controls="watched-repo-suggestions"
+          placeholder="owner/repo — or search by name"
+          onChange={(e) => {
+            const val = e.target.value;
+            setValue(val);
+            setSuggestionsDismissed(false);
+            if (debounceRef.current) clearTimeout(debounceRef.current);
+            if (val.trim().length >= 2) {
+              debounceRef.current = setTimeout(() => {
+                void window.electronAPI.searchRepos(val.trim()).then((results) => {
+                  setSuggestions(results.filter((r) => !watchedRepos.includes(r.fullName)));
+                });
+              }, 300);
+            } else {
+              setSuggestions([]);
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              if (hasSlash) addWatchedRepo(trimmed);
+            } else if (e.key === 'ArrowDown' && suggestions.length > 0) {
+              e.preventDefault();
+              focusOption(0);
+            } else if (e.key === 'Escape') {
+              setSuggestionsDismissed(true);
+            }
+          }}
+          onFocus={() => setSuggestionsDismissed(false)}
+          onBlur={(e) => {
+            // Don't dismiss when focus moves into the suggestion list.
+            const next = e.relatedTarget as HTMLElement | null;
+            if (next && listRef.current?.contains(next)) return;
+            setSuggestionsDismissed(true);
+          }}
+          className="w-full bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground/60 transition-colors focus:outline-none focus:border-[var(--ring)]"
+        />
+        {suggestions.length > 0 && (
+          <ul
+            ref={listRef}
+            id="watched-repo-suggestions"
+            role="listbox"
+            className="absolute z-50 top-full left-0 right-0 mt-1 bg-popover border border-border rounded-md shadow-md max-h-48 overflow-y-auto"
+          >
+            {suggestions.map((repo, i) => (
+              <li key={repo.fullName}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={false}
+                  tabIndex={-1}
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-accent focus:bg-accent focus:outline-none transition-colors flex flex-col gap-0.5"
+                  onMouseDown={(e) => { e.preventDefault(); addWatchedRepo(repo.fullName); }}
+                  onClick={() => addWatchedRepo(repo.fullName)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'ArrowDown') { e.preventDefault(); focusOption(i + 1); }
+                    else if (e.key === 'ArrowUp') { e.preventDefault(); focusOption(i - 1); }
+                    else if (e.key === 'Escape') { setSuggestionsDismissed(true); }
+                  }}
+                >
+                  <span className="font-mono text-xs text-foreground">{repo.fullName}</span>
+                  {repo.description && (
+                    <span className="text-xs text-muted-foreground truncate">{repo.description}</span>
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <span className={`slide-meta ${hasError ? 'text-destructive' : ''}`}>
+        {hasError
+          ? 'Needs `owner/repo` format, or pick from suggestions.'
+          : 'Tip: ↓ into suggestions · Enter to add · `owner/repo` format.'}
+      </span>
+    </>
   );
 }
