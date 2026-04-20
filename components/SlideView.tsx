@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from 'react-resizable-panels';
 import { MessageCircle, MessageSquarePlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -42,6 +42,29 @@ function formatFileAge(lastModified: string | null | undefined): string | null {
   if (days >= 30) return `${Math.floor(days / 30)}mo old`;
   if (days >= 1) return `${days}d old`;
   return null; // modified today — not worth showing
+}
+
+// Build the set of `{filePath}:{newFileLine}` + `{filePath}:{oldFileLine}`
+// keys that any review check could resolve to inside this slide's
+// hunks. Used to pre-filter clickable anchors at render time so the
+// callout never shows a link that would silently do nothing. Parses
+// hunk headers directly (`@@ -baseStart,baseCount +headStart,headCount @@`)
+// rather than walking rendered lines — much cheaper.
+function buildAnchorableSet(hunks: DiffHunk[]): Set<string> {
+  const keys = new Set<string>();
+  for (const hunk of hunks) {
+    const m = hunk.hunkHeader.match(/@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
+    if (!m) continue;
+    const baseStart = parseInt(m[1], 10);
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- regex optional groups can be undefined at runtime
+    const baseCount = m[2] !== undefined ? parseInt(m[2], 10) : 1;
+    const headStart = parseInt(m[3], 10);
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- regex optional groups can be undefined at runtime
+    const headCount = m[4] !== undefined ? parseInt(m[4], 10) : 1;
+    for (let i = 0; i < headCount; i++) keys.add(`${hunk.filePath}:${headStart + i}`);
+    for (let i = 0; i < baseCount; i++) keys.add(`${hunk.filePath}:${baseStart + i}`);
+  }
+  return keys;
 }
 
 // Group hunks by filePath so we can render them under a single file header
@@ -153,14 +176,44 @@ export function SlideView({
   const fileCount = slide.affectedFiles.length;
   const fileCountLabel = fileCount === 0 ? 'no files' : `${fileCount} ${fileCount === 1 ? 'file' : 'files'}`;
 
+  // When a review-check click can't be resolved to a visible diff line
+  // (rare, because we also pre-filter at render time), surface a brief
+  // muted note below the callout so the user isn't left guessing why
+  // the click did nothing. Cleared after ~3s.
+  const [anchorMiss, setAnchorMiss] = useState<{ filePath: string; line: number; at: number } | null>(null);
+
+  // Auto-clear the miss notice so it doesn't linger past the moment
+  // the user expects feedback.
+  useEffect(() => {
+    if (!anchorMiss) return;
+    const t = setTimeout(() => {
+      setAnchorMiss((current) => (current && current.at === anchorMiss.at ? null : current));
+    }, 3000);
+    return () => clearTimeout(t);
+  }, [anchorMiss]);
+
+  // Which `{filePath, line}` anchors can actually resolve inside THIS
+  // slide's diff hunks. Used to pre-filter click affordances so we
+  // never render a clickable-looking check that will silently fail.
+  const anchorable = useMemo(() => buildAnchorableSet(slide.diffHunks), [slide.diffHunks]);
+
   const handleCheckClick = useCallback((check: ReviewCheck) => {
     if (!check.filePath || !check.startLine) return;
     const container = rightPanelRef.current;
     if (!container) return;
 
-    const selector = `[data-file-path="${CSS.escape(check.filePath)}"][data-line-number="${check.startLine}"]`;
-    const target = container.querySelector(selector);
-    if (!target) return;
+    const escapedPath = CSS.escape(check.filePath);
+    // Primary: new-file line number (matches what the AI is told to emit).
+    // Fallback: old-file line number, in case the AI anchored at a
+    // removed line.
+    const target =
+      container.querySelector(`[data-file-path="${escapedPath}"][data-line-number="${check.startLine}"]`) ??
+      container.querySelector(`[data-file-path="${escapedPath}"][data-base-line="${check.startLine}"]`);
+
+    if (!target) {
+      setAnchorMiss({ filePath: check.filePath, line: check.startLine, at: Date.now() });
+      return;
+    }
 
     target.scrollIntoView({ behavior: 'smooth', block: 'center' });
     target.classList.remove('check-highlight');
@@ -213,7 +266,14 @@ export function SlideView({
                 <span className="editorial-label">What to check.</span>{' '}
                 <span className="review-focus-content">
                   {checks.map((check, i) => {
-                    const isClickable = !!(check.filePath && check.startLine != null && check.startLine > 0);
+                    // Only render as a clickable anchor when the
+                    // `{filePath, line}` actually resolves to a line
+                    // inside this slide's hunks. Prevents silent
+                    // no-op clicks on hallucinated or out-of-context
+                    // anchors.
+                    const isClickable =
+                      !!(check.filePath && check.startLine != null && check.startLine > 0) &&
+                      anchorable.has(`${check.filePath}:${check.startLine}`);
                     return (
                       <span
                         key={i}
@@ -237,6 +297,12 @@ export function SlideView({
           <p className="slide-prose">
             <span className="editorial-label">What to check.</span>{' '}
             <span className="review-focus-content">{slide.reviewFocus ?? ''}</span>
+          </p>
+        )}
+        {anchorMiss && (
+          <p className="slide-meta mt-2" role="status" aria-live="polite">
+            Line {anchorMiss.line} in <span className="font-mono">{anchorMiss.filePath}</span> isn't in this slide's
+            visible diff.
           </p>
         )}
       </div>

@@ -7,6 +7,7 @@ import {
   type CommentCallbacks,
   parseShikiLines,
   extractShikiStyles,
+  lineAnchorAttrs,
   InlineCommentForm,
   CommentBubble,
 } from '@/components/shared-diff-utils';
@@ -97,8 +98,7 @@ function InteractiveHunk({
             <span key={idx}>
               <span
                 className={`line ${diffClass} interactive-line`}
-                data-file-path={filePath}
-                data-line-number={line.info.lineNumber}
+                {...lineAnchorAttrs(filePath, line.info)}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
