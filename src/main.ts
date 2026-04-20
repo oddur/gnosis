@@ -482,8 +482,13 @@ async function triggerProactiveReview(
     // Cancel any in-flight generation for this PR
     cancelExistingGenerationForPr(prUrl);
 
+    const useOverrides = prefs.proactiveReviewOverrides;
+    const provider = useOverrides ? prefs.proactiveProvider : prefs.provider;
+    const model = useOverrides ? prefs.proactiveModel : prefs.model;
+    const thinking = useOverrides ? prefs.proactiveThinking : prefs.thinking;
+
     const abortController = new AbortController();
-    createPendingHistoryEntry(reviewId, prData.title, prUrl, prData.author, prefs.model, 'open', prData.headSha, true);
+    createPendingHistoryEntry(reviewId, prData.title, prUrl, prData.author, model, 'open', prData.headSha, true);
     if (opts.autoUpdated) {
       updateHistoryEntry(reviewId, { autoUpdated: true });
     }
@@ -491,10 +496,10 @@ async function triggerProactiveReview(
 
     const request: GenerateReviewRequest = {
       prUrl,
-      provider: prefs.provider,
-      model: prefs.model,
+      provider,
+      model,
       instructions: prefs.instructions,
-      thinking: prefs.thinking,
+      thinking,
       smartImports: prefs.smartImports,
       reviewSuggestions: prefs.reviewSuggestions,
     };
@@ -950,6 +955,10 @@ const DEFAULT_PREFERENCES: Preferences = {
   maxPrsPerRepo: 10,
   parallelReview: true,
   analytics: true,
+  proactiveReviewOverrides: false,
+  proactiveProvider: 'claude',
+  proactiveModel: 'claude-sonnet-4-6',
+  proactiveThinking: false,
 };
 
 function applyBinaryOverrides(prefs: Preferences): void {

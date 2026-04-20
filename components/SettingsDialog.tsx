@@ -3,7 +3,28 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { CODE_THEMES, CODE_FONTS } from '@/lib/constants';
 import type { CodeTheme, CodeFont } from '@/lib/constants';
 import { applyTheme, type ThemeChoice } from '@/lib/theme';
-import type { Preferences, RepoSearchResult } from '@/lib/types';
+import type { ModelId, Preferences, Provider, RepoSearchResult } from '@/lib/types';
+
+const PROVIDER_MODELS: Record<Provider, { label: string; models: { id: ModelId; label: string }[] }> = {
+  claude: {
+    label: 'Claude',
+    models: [
+      { id: 'claude-opus-4-7', label: 'Opus 4.7' },
+      { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+      { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
+    ],
+  },
+  gemini: {
+    label: 'Gemini',
+    models: [
+      { id: 'gemini-3.1-pro-preview', label: '3.1 Pro' },
+      { id: 'gemini-3-pro-preview', label: '3 Pro' },
+      { id: 'gemini-3-flash-preview', label: '3 Flash' },
+      { id: 'gemini-2.5-pro', label: '2.5 Pro' },
+      { id: 'gemini-2.5-flash', label: '2.5 Flash' },
+    ],
+  },
+};
 
 interface Props {
   open: boolean;
@@ -121,6 +142,10 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
   const [maxPrsPerRepo, setMaxPrsPerRepo] = useState(10);
   const [parallelReview, setParallelReview] = useState(false);
   const [analytics, setAnalytics] = useState(true);
+  const [proactiveReviewOverrides, setProactiveReviewOverrides] = useState(false);
+  const [proactiveProvider, setProactiveProvider] = useState<Provider>('claude');
+  const [proactiveModel, setProactiveModel] = useState<ModelId>('claude-sonnet-4-6');
+  const [proactiveThinking, setProactiveThinking] = useState(false);
   const [claudePath, setClaudePath] = useState('');
   const [geminiPath, setGeminiPath] = useState('');
   const [claudeDetected, setClaudeDetected] = useState('');
@@ -143,6 +168,10 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
       setMaxPrsPerRepo(prefs.maxPrsPerRepo);
       setParallelReview(prefs.parallelReview);
       setAnalytics(prefs.analytics);
+      setProactiveReviewOverrides(prefs.proactiveReviewOverrides);
+      setProactiveProvider(prefs.proactiveProvider);
+      setProactiveModel(prefs.proactiveModel);
+      setProactiveThinking(prefs.proactiveThinking);
       setClaudePath(prefs.claudePath || '');
       setGeminiPath(prefs.geminiPath || '');
     });
@@ -376,6 +405,90 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                   ))}
                 </select>
               </div>
+
+              <div className="mt-2 pt-3 border-t border-border flex items-center justify-between gap-4">
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <span className="text-sm font-medium text-foreground">Use different model for proactive reviews</span>
+                  <span className="slide-meta">
+                    Run background reviews on a faster/cheaper model (e.g. Sonnet) while keeping your manual default for hand-picked PRs.
+                  </span>
+                </div>
+                <div className="shrink-0">
+                  <Toggle
+                    checked={proactiveReviewOverrides}
+                    ariaLabel="Use different model for proactive reviews"
+                    onChange={() => {
+                      const next = !proactiveReviewOverrides;
+                      setProactiveReviewOverrides(next);
+                      saveField({ proactiveReviewOverrides: next });
+                    }}
+                  />
+                </div>
+              </div>
+
+              {proactiveReviewOverrides && (
+                <div className="flex flex-col gap-3 mt-1">
+                  <div className="flex items-center gap-5 slide-meta">
+                    <span className="text-foreground/60">Provider</span>
+                    {(['claude', 'gemini'] as const).map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => {
+                          const firstModel = PROVIDER_MODELS[p].models[0].id;
+                          setProactiveProvider(p);
+                          setProactiveModel(firstModel);
+                          saveField({ proactiveProvider: p, proactiveModel: firstModel });
+                        }}
+                        className={`pb-0.5 border-b transition-colors ${
+                          proactiveProvider === p
+                            ? 'text-foreground border-[var(--ring)]'
+                            : 'border-transparent hover:text-foreground'
+                        }`}
+                      >
+                        {PROVIDER_MODELS[p].label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-5 gap-y-2 slide-meta">
+                    <span className="text-foreground/60">Model</span>
+                    {PROVIDER_MODELS[proactiveProvider].models.map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => {
+                          setProactiveModel(m.id);
+                          saveField({ proactiveModel: m.id });
+                        }}
+                        className={`pb-0.5 border-b transition-colors ${
+                          proactiveModel === m.id
+                            ? 'text-foreground border-[var(--ring)]'
+                            : 'border-transparent hover:text-foreground'
+                        }`}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex flex-col gap-0.5 min-w-0">
+                      <span className="text-sm font-medium text-foreground">Extended thinking</span>
+                      <span className="slide-meta">Off is usually faster and cheaper for background runs.</span>
+                    </div>
+                    <div className="shrink-0">
+                      <Toggle
+                        checked={proactiveThinking}
+                        ariaLabel="Proactive extended thinking"
+                        onChange={() => {
+                          const next = !proactiveThinking;
+                          setProactiveThinking(next);
+                          saveField({ proactiveThinking: next });
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
               </div>
             )}
 

@@ -249,6 +249,14 @@ export interface Preferences {
   maxPrsPerRepo: number;
   parallelReview: boolean;
   analytics: boolean;
+  /** When true, proactive reviews use the proactiveProvider/Model/Thinking fields
+   *  below instead of the regular provider/model/thinking. Lets users run a fast
+   *  cheap model (e.g. Sonnet) for background reviews while keeping Opus for
+   *  manual, hand-picked ones. */
+  proactiveReviewOverrides: boolean;
+  proactiveProvider: Provider;
+  proactiveModel: ModelId;
+  proactiveThinking: boolean;
 }
 
 export interface SendSlideChatRequest {
