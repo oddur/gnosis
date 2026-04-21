@@ -293,6 +293,62 @@ body {
   letter-spacing: 0.02em;
 }
 
+/* ── Motion ──
+   The brief asks for page-turn motion, not SaaS pop-zoom. Two
+   primitives only: a brief opacity + tiny Y-translate, used as a
+   staggered settle on page load (the masthead and hero) and as a
+   scroll-triggered reveal for the long tail of chapter sections.
+   Nothing scales, nothing rotates, nothing pulses. */
+:root {
+  --ease-page: cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+@keyframes settle-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.settle {
+  opacity: 0;
+  animation: settle-in 520ms var(--ease-page) forwards;
+}
+.settle-1 { animation-delay: 40ms; }
+.settle-2 { animation-delay: 110ms; }
+.settle-3 { animation-delay: 180ms; }
+.settle-4 { animation-delay: 250ms; }
+.settle-5 { animation-delay: 320ms; }
+
+/* Hero image arrives last in the masthead sequence — slightly
+   longer duration so it lands as the punctuating image, not just
+   another paragraph. */
+.settle-hero {
+  opacity: 0;
+  animation: settle-in 700ms var(--ease-page) forwards;
+  animation-delay: 380ms;
+}
+
+/* Sections below the fold start hidden and fade in as the reader
+   scrolls to them. .in-view is toggled by an IntersectionObserver
+   (inline script in index.astro). Once toggled, the observer stops
+   watching — no idle work after the page settles. */
+.reveal {
+  opacity: 0;
+  transform: translateY(8px);
+  transition:
+    opacity 480ms var(--ease-page),
+    transform 480ms var(--ease-page);
+}
+.reveal.in-view {
+  opacity: 1;
+  transform: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -300,5 +356,15 @@ body {
     animation-duration: 0.001ms !important;
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
+  }
+  /* The reduced-motion override above kills the transition that
+     would have brought .reveal in — so force the final state on
+     load and skip the entrance entirely. */
+  .settle,
+  .settle-hero,
+  .reveal {
+    opacity: 1 !important;
+    transform: none !important;
+    animation: none !important;
   }
 }

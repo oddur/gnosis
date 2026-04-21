@@ -159,22 +159,22 @@ const sections: Section[] = [
 
 <Base title="Gnosis — AI-guided code review">
   <main class="mx-auto max-w-3xl px-6 py-16 sm:py-24 flex flex-col gap-16">
-    <!-- Masthead -->
+    <!-- Masthead — staggered settle on load -->
     <header class="flex flex-col gap-5">
-      <p class="slide-chapter">
+      <p class="slide-chapter settle settle-1">
         <span>local desktop app</span>
         <span aria-hidden="true">·</span>
         <span>macOS · Windows · Linux</span>
         <span aria-hidden="true">·</span>
         <span>v0.19</span>
       </p>
-      <h1 class="slide-title">
+      <h1 class="slide-title settle settle-2">
         Understand the pull request before you read the diff.
       </h1>
-      <p class="slide-prose">
+      <p class="slide-prose settle settle-3">
         <em>Gnosis</em> is an ancient Greek word for knowledge — not the surface kind, but the deep, direct understanding of a thing. The Gnostics used it for insight that comes from within, from truly comprehending something rather than just observing it from the outside. That's what's missing from most code reviews: you see the diff, but you don't get the understanding. Gnosis tries to close that gap.
       </p>
-      <div class="flex flex-wrap items-center gap-3 mt-2">
+      <div class="flex flex-wrap items-center gap-3 mt-2 settle settle-4">
         <a
           class="btn-ink"
           href="https://github.com/oddur/gnosis/releases/latest"
@@ -192,7 +192,7 @@ const sections: Section[] = [
           View on GitHub
         </a>
       </div>
-      <p class="slide-meta">
+      <p class="slide-meta settle settle-5">
         Code never leaves your machine. Reviews run against the
         <a class="link-claret" href="https://claude.ai/code" target="_blank" rel="noopener noreferrer">Claude Code</a>
         or
@@ -201,8 +201,8 @@ const sections: Section[] = [
       </p>
     </header>
 
-    <!-- Hero screenshot -->
-    <figure class="figure-frame">
+    <!-- Hero screenshot — arrives last in the masthead sequence -->
+    <figure class="figure-frame settle-hero">
       <img
         src="/screenshots/overview.png"
         alt="Gnosis review overview — slide-numbered chapters, risk badges, and a serif title in a paper-coloured monograph layout."
@@ -213,7 +213,7 @@ const sections: Section[] = [
     </figure>
 
     <!-- The premise -->
-    <section class="hairline pt-12 flex flex-col gap-4">
+    <section class="hairline pt-12 flex flex-col gap-4 reveal">
       <p class="slide-chapter">The premise</p>
       <p class="slide-prose">
         We've gotten fast at writing code. Reviewing it hasn't kept up. Pull requests are still reviewed the same way they always have been — scrolling through file diffs in whatever order GitHub decides to show them, with no grouping, no context, and no sense of which changes depend on which. It works, but it's slow, and it's easy to miss things.
@@ -224,12 +224,12 @@ const sections: Section[] = [
     </section>
 
     <!-- Pull-quote — the page's one moment of breath between premise and chapters -->
-    <blockquote class="pull-quote">
+    <blockquote class="pull-quote reveal">
       You read context before consequences.
     </blockquote>
 
     <!-- TOC -->
-    <nav aria-label="Sections" class="hairline pt-12 flex flex-col gap-4">
+    <nav aria-label="Sections" class="hairline pt-12 flex flex-col gap-4 reveal">
       <p class="slide-chapter">Contents</p>
       <ul class="toc">
         {sections.map((s) => (
@@ -245,7 +245,7 @@ const sections: Section[] = [
 
     <!-- Themed feature sections -->
     {sections.map((s) => (
-      <section id={s.id} class="hairline pt-12 flex flex-col gap-6 scroll-mt-8">
+      <section id={s.id} class="hairline pt-12 flex flex-col gap-6 scroll-mt-8 reveal">
         <header class="flex flex-col gap-3">
           <div class="flex items-baseline gap-3">
             <span class="slide-chapter">{s.num}</span>
@@ -264,7 +264,7 @@ const sections: Section[] = [
     ))}
 
     <!-- Repeated CTA — for readers sold mid-page -->
-    <section class="hairline pt-12 flex flex-col gap-4">
+    <section class="hairline pt-12 flex flex-col gap-4 reveal">
       <p class="slide-chapter">Get it</p>
       <div class="flex flex-wrap items-center gap-3">
         <a
@@ -300,7 +300,7 @@ const sections: Section[] = [
     </section>
 
     <!-- Requirements -->
-    <section class="hairline pt-12 flex flex-col gap-4">
+    <section class="hairline pt-12 flex flex-col gap-4 reveal">
       <p class="slide-chapter">Requirements</p>
       <p class="slide-prose">
         At least one of the following CLIs installed and authenticated:
@@ -322,7 +322,7 @@ const sections: Section[] = [
     </section>
 
     <!-- Footer -->
-    <footer class="hairline pt-8 flex flex-col gap-2 slide-meta">
+    <footer class="hairline pt-8 flex flex-col gap-2 slide-meta reveal">
       <p>
         <a class="link-claret" href="https://github.com/oddur/gnosis" target="_blank" rel="noopener noreferrer">github.com/oddur/gnosis</a>
         · MIT licence
@@ -330,18 +330,47 @@ const sections: Section[] = [
       <p>An experiment in changing how code review feels.</p>
     </footer>
 
-    <!-- Tiny copy-to-clipboard handler. Kept inline so there's no
-         build step to track for one button. Works even if JS fails:
-         users can still triple-click + ⌘C the visible text. -->
+    <!-- Tiny inline page script. No bundler, no framework — one
+         IntersectionObserver to fade-in scrolled-to sections, one
+         click handler for the install-line copy button. Works even
+         if JS fails: the reduced-motion CSS rule makes .reveal
+         visible by default, and the brew incantation is selectable
+         text users can ⌘C themselves. -->
     <script is:inline>
+      // Reveal sections as they scroll into view. Once-only — the
+      // observer stops watching after the first reveal so there's no
+      // idle work after the page settles.
+      const io = new IntersectionObserver(
+        (entries) => {
+          for (const e of entries) {
+            if (e.isIntersecting) {
+              e.target.classList.add('in-view');
+              io.unobserve(e.target);
+            }
+          }
+        },
+        { threshold: 0.15, rootMargin: '0px 0px -10% 0px' }
+      );
+      document.querySelectorAll('.reveal').forEach((el) => io.observe(el));
+
+      // Install-line copy. Brief opacity fade between "copy" and
+      // "copied" — the editorial register doesn't want a hard swap.
       document.querySelectorAll('button[data-copy]').forEach((btn) => {
         btn.addEventListener('click', () => {
           const text = btn.getAttribute('data-copy') || '';
           navigator.clipboard.writeText(text).then(() => {
             const original = btn.textContent;
-            btn.textContent = 'copied';
+            btn.style.opacity = '0';
             setTimeout(() => {
-              btn.textContent = original;
+              btn.textContent = 'copied';
+              btn.style.opacity = '1';
+            }, 120);
+            setTimeout(() => {
+              btn.style.opacity = '0';
+              setTimeout(() => {
+                btn.textContent = original;
+                btn.style.opacity = '1';
+              }, 120);
             }, 1400);
           });
         });
