@@ -163,11 +163,6 @@ const sections: Section[] = [
           'Enable deeper reasoning for Claude models when the diff warrants it. Off by default for proactive mode to keep cost predictable.',
       },
       {
-        label: 'Parallel writers',
-        body:
-          'Large PRs split into a planner pass plus parallel writers per topic. Faster than one long sequential generation, with consistent narrative across slides.',
-      },
-      {
         label: 'Signal boost',
         body:
           'Filters out trivial changes — whitespace, import reordering, boilerplate — and focuses the review on design decisions, complexity, and API surface.',
@@ -176,11 +171,6 @@ const sections: Section[] = [
         label: 'Large file filtering',
         body:
           'Generated artefacts (lockfiles, bundles, minified output) are detected and excluded automatically so the model spends its context on changes that matter.',
-      },
-      {
-        label: 'Privacy-first analytics (opt-out)',
-        body:
-          'Anonymous app-usage events go to Aptabase, an open-source privacy-first service. No personal data, no IP addresses, no PR contents, no source code. Switch off in Settings.',
       },
     ],
   },
