@@ -299,25 +299,45 @@ const sections: Section[] = [
       </p>
     </section>
 
-    <!-- Requirements -->
-    <section class="hairline pt-12 flex flex-col gap-4 reveal">
-      <p class="slide-chapter">Requirements</p>
-      <p class="slide-prose">
-        At least one of the following CLIs installed and authenticated:
-      </p>
-      <ul class="slide-prose flex flex-col gap-1 list-none p-0">
-        <li>
-          •&nbsp;
-          <a class="link-claret" href="https://claude.ai/code" target="_blank" rel="noopener noreferrer">Claude Code CLI</a>
-          — authenticate with <code class="font-mono text-foreground">claude auth</code>.
+    <!-- Getting started — the post-CTA "now what?" moment. Three
+         concrete steps, sequenced numerically using the same chapter
+         vocabulary as the rest of the page. Sets the expectation that
+         the path is short and well-marked. -->
+    <section class="hairline pt-12 flex flex-col gap-6 reveal">
+      <header class="flex flex-col gap-3">
+        <p class="slide-chapter">Getting started</p>
+        <p class="slide-prose">
+          From clean install to first review in about five minutes.
+        </p>
+      </header>
+      <ol class="flex flex-col gap-5 list-none p-0 m-0">
+        <li class="slide-prose flex gap-4">
+          <span class="slide-chapter shrink-0 pt-1">01</span>
+          <span>
+            <span class="editorial-label">Install a CLI.</span> Gnosis uses one you already have, or one you install once.
+            <a class="link-claret" href="https://claude.ai/code" target="_blank" rel="noopener noreferrer">Claude Code</a>
+            (then <code class="font-mono text-foreground">claude auth</code>) or
+            <a class="link-claret" href="https://github.com/google-gemini/gemini-cli" target="_blank" rel="noopener noreferrer">Gemini CLI</a>.
+          </span>
         </li>
-        <li>
-          •&nbsp;
-          <a class="link-claret" href="https://github.com/google-gemini/gemini-cli" target="_blank" rel="noopener noreferrer">Gemini CLI</a>
+        <li class="slide-prose flex gap-4">
+          <span class="slide-chapter shrink-0 pt-1">02</span>
+          <span>
+            <span class="editorial-label">Install Gnosis.</span> Download from the releases page above, or
+            <span class="code-pill">
+              <span>brew tap oddur/gnosis &amp;&amp; brew install --cask gnosis</span>
+            </span>
+          </span>
         </li>
-      </ul>
+        <li class="slide-prose flex gap-4">
+          <span class="slide-chapter shrink-0 pt-1">03</span>
+          <span>
+            <span class="editorial-label">Sign in and paste a PR URL.</span> First launch opens a GitHub OAuth flow — or paste a PAT if your org blocks it. Drop in a PR URL and your first review starts in seconds.
+          </span>
+        </li>
+      </ol>
       <p class="slide-prose">
-        On first launch, sign in with GitHub via OAuth — or paste a PAT if your org blocks the OAuth flow.
+        Reviews take 2–4 minutes the first time. After that, turn on Proactive mode and your team's PRs will be waiting when you open the app.
       </p>
     </section>
 
