@@ -8,6 +8,7 @@ interface Feature {
 
 interface Section {
   num: string;
+  id: string;
   title: string;
   intro?: string;
   features: Feature[];
@@ -16,6 +17,7 @@ interface Section {
 const sections: Section[] = [
   {
     num: '01',
+    id: 'read',
     title: 'Read it like a paper.',
     intro:
       'Reviews open as a guided slideshow — narrated, ordered, and grounded in the diff. Each slide explains why something changed before it shows you what changed.',
@@ -39,6 +41,7 @@ const sections: Section[] = [
   },
   {
     num: '02',
+    id: 'check',
     title: 'Targeted things to check.',
     intro:
       'Every slide ends with two to four "What to check" prompts grounded in the actual code. Each one is a specific question — not a generic checklist item — anchored to a file and line.',
@@ -51,7 +54,7 @@ const sections: Section[] = [
       {
         label: 'Copy as agent prompt',
         body:
-          "A small icon next to each check copies a ready-to-paste prompt for Claude Code, Cursor, or any other agent — including the slide title, PR URL, and file:line so the agent can investigate without further setup.",
+          'A small icon next to each check copies a ready-to-paste prompt for Claude Code, Cursor, or any other agent — including the slide title, PR URL, and file:line so the agent can investigate without further setup.',
       },
       {
         label: 'Inline GitHub comments',
@@ -62,6 +65,7 @@ const sections: Section[] = [
   },
   {
     num: '03',
+    id: 'aware',
     title: 'Aware of your project.',
     intro:
       "Gnosis reads more than the diff. It picks up the conventions the team has already written down — and lets you pull in extra context when the diff alone isn't enough.",
@@ -79,25 +83,21 @@ const sections: Section[] = [
       {
         label: 'External context',
         body:
-          "Optionally let the model search framework docs on the web and query related GitHub state (issues, sibling PRs, file contents at other refs) through MCP. Useful when a PR references discussions or earlier work. Sources are cited on the overview.",
+          'Optionally let the model search framework docs on the web and query related GitHub state — issues, sibling PRs, file contents at other refs — through MCP. Sources are cited on the overview.',
       },
       {
-        label: 'Smart imports',
+        label: 'Steering',
         body:
-          "A fast model detects local file imports across languages — C#, Rust, Python, Go — so reviewers get import context beyond what regex catches in the JS/TS world.",
-      },
-      {
-        label: 'Custom instructions',
-        body:
-          'Steer any review with free-text prompts. "Focus on security." "Explain the auth flow." "Assume I don\u2019t know this domain." The model treats these as authoritative.',
+          'A fast model detects local file imports across languages — C#, Rust, Python, Go — beyond what regex catches in the JS/TS world. And every review accepts free-text instructions: "focus on security", "explain the auth flow", "assume I don\u2019t know this domain". The model treats them as authoritative.',
       },
     ],
   },
   {
     num: '04',
+    id: 'workflow',
     title: 'Workflow that fits the day.',
     intro:
-      "You shouldn\u2019t have to babysit a review. Gnosis runs in the background, wakes you when reviews are ready, and remembers everything you\u2019ve already worked through.",
+      'You shouldn\u2019t have to babysit a review. Gnosis runs in the background, wakes you when reviews are ready, and remembers everything you\u2019ve already worked through.',
     features: [
       {
         label: 'Proactive mode',
@@ -118,6 +118,7 @@ const sections: Section[] = [
   },
   {
     num: '05',
+    id: 'local',
     title: 'Local-first by design.',
     intro:
       "Your code stays on your machine. Reviews run against the Claude or Gemini CLI you already have installed. There is no Gnosis server in the loop.",
@@ -136,6 +137,7 @@ const sections: Section[] = [
   },
   {
     num: '06',
+    id: 'share',
     title: 'Pass it along.',
     intro:
       "Reviews shouldn\u2019t live in one head. Browse what you\u2019ve already done, hand a finished review to a teammate, or pick up where you left off.",
@@ -160,67 +162,100 @@ const sections: Section[] = [
     <!-- Masthead -->
     <header class="flex flex-col gap-5">
       <p class="slide-chapter">
-        <span>Gnosis</span>
-        <span aria-hidden="true">·</span>
         <span>local desktop app</span>
+        <span aria-hidden="true">·</span>
+        <span>macOS · Windows · Linux</span>
         <span aria-hidden="true">·</span>
         <span>v0.19</span>
       </p>
       <h1 class="slide-title">
         Understand the pull request before you read the diff.
       </h1>
-      <p class="slide-prose text-[color:var(--muted-foreground)]">
+      <p class="slide-prose">
         <em>Gnosis</em> is an ancient Greek word for knowledge — not the surface kind, but the deep, direct understanding of a thing. The Gnostics used it for insight that comes from within, from truly comprehending something rather than just observing it from the outside. That's what's missing from most code reviews: you see the diff, but you don't get the understanding. Gnosis tries to close that gap.
       </p>
       <div class="flex flex-wrap items-center gap-3 mt-2">
-        <a class="btn-ink" href="https://github.com/oddur/gnosis/releases/latest" rel="noopener">
+        <a
+          class="btn-ink"
+          href="https://github.com/oddur/gnosis/releases/latest"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
           Download for macOS
         </a>
-        <a class="btn-quiet" href="https://github.com/oddur/gnosis" rel="noopener">
+        <a
+          class="btn-quiet"
+          href="https://github.com/oddur/gnosis"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
           View on GitHub
         </a>
       </div>
       <p class="slide-meta">
-        Also for Windows and Linux on the
-        <a class="link-claret" href="https://github.com/oddur/gnosis/releases/latest" rel="noopener">releases page</a>.
-        Or:
-        <code class="font-mono text-foreground">brew tap oddur/gnosis && brew install --cask gnosis</code>
+        Code never leaves your machine. Reviews run against the
+        <a class="link-claret" href="https://claude.ai/code" target="_blank" rel="noopener noreferrer">Claude Code</a>
+        or
+        <a class="link-claret" href="https://github.com/google-gemini/gemini-cli" target="_blank" rel="noopener noreferrer">Gemini</a>
+        CLI you already have installed. No servers. MIT licensed.
       </p>
     </header>
+
+    <!-- Hero screenshot -->
+    <figure class="figure-frame">
+      <img
+        src="/screenshots/overview.png"
+        alt="Gnosis review overview — slide-numbered chapters, risk badges, and a serif title in a paper-coloured monograph layout."
+        width="1512"
+        height="1012"
+        loading="eager"
+      />
+    </figure>
 
     <!-- The premise -->
     <section class="hairline pt-12 flex flex-col gap-4">
       <p class="slide-chapter">The premise</p>
-      <p class="slide-prose text-[color:var(--muted-foreground)]">
+      <p class="slide-prose">
         We've gotten fast at writing code. Reviewing it hasn't kept up. Pull requests are still reviewed the same way they always have been — scrolling through file diffs in whatever order GitHub decides to show them, with no grouping, no context, and no sense of which changes depend on which. It works, but it's slow, and it's easy to miss things.
       </p>
-      <p class="slide-prose text-[color:var(--muted-foreground)]">
-        Gnosis paste-a-PR-URL, then reads the diff, groups related changes, and presents them as an ordered slideshow. Foundation changes first, then the features built on top, then tests and config. Each slide has a short explanation of <em>why</em> the change exists, the relevant diff, and optionally a diagram. The goal is to walk you through the change the way the author understands it, not the way the filesystem happens to order it.
-      </p>
-      <p class="slide-prose text-[color:var(--muted-foreground)]">
-        It runs locally and uses the
-        <a class="link-claret" href="https://claude.ai/code" rel="noopener">Claude Code CLI</a>
-        or the
-        <a class="link-claret" href="https://github.com/google-gemini/gemini-cli" rel="noopener">Gemini CLI</a>
-        you already have installed.
+      <p class="slide-prose">
+        You paste a PR URL; Gnosis reads the diff, groups related changes, and presents them as an ordered slideshow. Foundation changes first, then the features built on top, then tests and config. Each slide has a short explanation of <em>why</em> the change exists, the relevant diff, and optionally a diagram. The goal is to walk you through the change the way the author understands it, not the way the filesystem happens to order it.
       </p>
     </section>
 
+    <!-- Pull-quote — the page's one moment of breath between premise and chapters -->
+    <blockquote class="pull-quote">
+      You read context before consequences.
+    </blockquote>
+
+    <!-- TOC -->
+    <nav aria-label="Sections" class="hairline pt-12 flex flex-col gap-4">
+      <p class="slide-chapter">Contents</p>
+      <ul class="toc">
+        {sections.map((s) => (
+          <li>
+            <a href={`#${s.id}`}>
+              <span>{s.num}</span>
+              <span>{s.title}</span>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+
     <!-- Themed feature sections -->
     {sections.map((s) => (
-      <section class="hairline pt-12 flex flex-col gap-6">
+      <section id={s.id} class="hairline pt-12 flex flex-col gap-6 scroll-mt-8">
         <header class="flex flex-col gap-3">
           <div class="flex items-baseline gap-3">
             <span class="slide-chapter">{s.num}</span>
             <h2 class="editorial-heading">{s.title}</h2>
           </div>
-          {s.intro && (
-            <p class="slide-prose text-[color:var(--muted-foreground)]">{s.intro}</p>
-          )}
+          {s.intro && <p class="slide-prose">{s.intro}</p>}
         </header>
         <ul class="flex flex-col gap-4 list-none p-0 m-0">
           {s.features.map((f) => (
-            <li class="slide-prose text-[color:var(--muted-foreground)]">
+            <li class="slide-prose">
               <span class="editorial-label">{f.label}.</span> {f.body}
             </li>
           ))}
@@ -228,17 +263,60 @@ const sections: Section[] = [
       </section>
     ))}
 
+    <!-- Repeated CTA — for readers sold mid-page -->
+    <section class="hairline pt-12 flex flex-col gap-4">
+      <p class="slide-chapter">Get it</p>
+      <div class="flex flex-wrap items-center gap-3">
+        <a
+          class="btn-ink"
+          href="https://github.com/oddur/gnosis/releases/latest"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Download for macOS
+        </a>
+        <a
+          class="btn-quiet"
+          href="https://github.com/oddur/gnosis"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          View on GitHub
+        </a>
+      </div>
+      <p class="slide-meta">
+        Or via Homebrew:
+        <span class="code-pill">
+          <span>brew tap oddur/gnosis &amp;&amp; brew install --cask gnosis</span>
+          <button
+            type="button"
+            data-copy="brew tap oddur/gnosis && brew install --cask gnosis"
+            aria-label="Copy install command"
+          >
+            copy
+          </button>
+        </span>
+      </p>
+    </section>
+
     <!-- Requirements -->
     <section class="hairline pt-12 flex flex-col gap-4">
       <p class="slide-chapter">Requirements</p>
-      <p class="slide-prose text-[color:var(--muted-foreground)]">
+      <p class="slide-prose">
         At least one of the following CLIs installed and authenticated:
       </p>
-      <ul class="slide-prose text-[color:var(--muted-foreground)] flex flex-col gap-1 list-none p-0">
-        <li>•&nbsp; <a class="link-claret" href="https://claude.ai/code" rel="noopener">Claude Code CLI</a> — authenticate with <code class="font-mono text-foreground">claude auth</code>.</li>
-        <li>•&nbsp; <a class="link-claret" href="https://github.com/google-gemini/gemini-cli" rel="noopener">Gemini CLI</a></li>
+      <ul class="slide-prose flex flex-col gap-1 list-none p-0">
+        <li>
+          •&nbsp;
+          <a class="link-claret" href="https://claude.ai/code" target="_blank" rel="noopener noreferrer">Claude Code CLI</a>
+          — authenticate with <code class="font-mono text-foreground">claude auth</code>.
+        </li>
+        <li>
+          •&nbsp;
+          <a class="link-claret" href="https://github.com/google-gemini/gemini-cli" target="_blank" rel="noopener noreferrer">Gemini CLI</a>
+        </li>
       </ul>
-      <p class="slide-prose text-[color:var(--muted-foreground)]">
+      <p class="slide-prose">
         On first launch, sign in with GitHub via OAuth — or paste a PAT if your org blocks the OAuth flow.
       </p>
     </section>
@@ -246,10 +324,28 @@ const sections: Section[] = [
     <!-- Footer -->
     <footer class="hairline pt-8 flex flex-col gap-2 slide-meta">
       <p>
-        <a class="link-claret" href="https://github.com/oddur/gnosis" rel="noopener">github.com/oddur/gnosis</a>
+        <a class="link-claret" href="https://github.com/oddur/gnosis" target="_blank" rel="noopener noreferrer">github.com/oddur/gnosis</a>
         · MIT licence
       </p>
       <p>An experiment in changing how code review feels.</p>
     </footer>
+
+    <!-- Tiny copy-to-clipboard handler. Kept inline so there's no
+         build step to track for one button. Works even if JS fails:
+         users can still triple-click + ⌘C the visible text. -->
+    <script is:inline>
+      document.querySelectorAll('button[data-copy]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const text = btn.getAttribute('data-copy') || '';
+          navigator.clipboard.writeText(text).then(() => {
+            const original = btn.textContent;
+            btn.textContent = 'copied';
+            setTimeout(() => {
+              btn.textContent = original;
+            }, 1400);
+          });
+        });
+      });
+    </script>
   </main>
 </Base>
