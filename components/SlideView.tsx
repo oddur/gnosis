@@ -18,6 +18,8 @@ interface Props {
   slideNumber: number;
   totalSlides: number;
   prUrl: string;
+  checkedChecks: Set<string>;
+  onToggleCheck: (key: string) => void;
   pendingComments?: PendingReviewComment[];
   commentCallbacks?: CommentCallbacks;
   diffLayout: Preferences['diffLayout'];
@@ -163,14 +165,72 @@ function isAnchorable(check: ReviewCheck, anchorable: Set<string>): boolean {
   return anchorable.has(`${check.filePath}:${check.startLine}`);
 }
 
+// djb2 — a tiny, stable string hash. Used as the trailing segment of
+// each checkbox's localStorage key so a reviewer's ticks survive
+// layout/renderer changes (bullet vs inline, prose-split reshape).
+function hashText(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
+function checkKey(slideId: string, text: string): string {
+  return `${slideId}:${hashText(text.trim())}`;
+}
+
+// Persistent "I've verified this" checkbox for a single item in the
+// "What to check" callout. Renders a native input (for real keyboard
+// semantics) styled to match the brand accent, plus a line-through
+// strike when checked so skimming back over the list the eye knows
+// what's already been done.
+function CheckTodo({
+  storageKey,
+  checked,
+  onToggle,
+  children,
+}: {
+  storageKey: string;
+  checked: boolean;
+  onToggle: (key: string) => void;
+  children: ReactNode;
+}) {
+  return (
+    <label className="check-todo">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => {
+          e.stopPropagation();
+          onToggle(storageKey);
+        }}
+        onClick={(e) => e.stopPropagation()}
+        className="check-todo-input"
+        aria-label={checked ? 'Mark check not done' : 'Mark check done'}
+      />
+      <span className={checked ? 'check-todo-done' : ''}>{children}</span>
+    </label>
+  );
+}
+
 function renderReviewChecks(
   checks: ReviewCheck[] | undefined,
   reviewFocus: string | null,
   anchorable: Set<string>,
   onCheckClick: (check: ReviewCheck) => void,
+  slideId: string,
   slideTitle: string,
-  prUrl: string
+  prUrl: string,
+  checkedChecks: Set<string>,
+  onToggleCheck: (key: string) => void
 ): ReactNode {
+  const todoFor = (text: string, children: ReactNode): ReactNode => {
+    const key = checkKey(slideId, text);
+    return (
+      <CheckTodo storageKey={key} checked={checkedChecks.has(key)} onToggle={onToggleCheck}>
+        {children}
+      </CheckTodo>
+    );
+  };
   const copyFor = (text: string, filePath?: string | null, startLine?: number | null) => (
     <CopyPromptButton
       prompt={buildAgentPrompt(text, slideTitle, prUrl, filePath, startLine)}
@@ -190,12 +250,15 @@ function renderReviewChecks(
             const isClickable = isAnchorable(check, anchorable);
             return (
               <li key={i} className="review-checks-item">
-                <span
-                  className={isClickable ? clickableCheckClass : ''}
-                  onClick={isClickable ? () => onCheckClick(check) : undefined}
-                >
-                  {check.text}
-                </span>
+                {todoFor(
+                  check.text,
+                  <span
+                    className={isClickable ? clickableCheckClass : ''}
+                    onClick={isClickable ? () => onCheckClick(check) : undefined}
+                  >
+                    {check.text}
+                  </span>
+                )}
                 {copyFor(check.text, check.filePath, check.startLine)}
               </li>
             );
@@ -227,12 +290,15 @@ function renderReviewChecks(
           <ul className="slide-prose review-checks-list mt-1.5">
             {split.map((sentence, i) => (
               <li key={i} className="review-checks-item">
-                <span
-                  className={isClickable ? clickableCheckClass : ''}
-                  onClick={isClickable ? () => onCheckClick(check) : undefined}
-                >
-                  <Markdown className="review-focus-markdown">{sentence}</Markdown>
-                </span>
+                {todoFor(
+                  sentence,
+                  <span
+                    className={isClickable ? clickableCheckClass : ''}
+                    onClick={isClickable ? () => onCheckClick(check) : undefined}
+                  >
+                    <Markdown className="review-focus-markdown">{sentence}</Markdown>
+                  </span>
+                )}
                 {copyFor(sentence, check.filePath, check.startLine)}
               </li>
             ))}
@@ -247,12 +313,15 @@ function renderReviewChecks(
             <span className="editorial-label">What to check.</span>
           </p>
           <div className="slide-prose mt-1.5 flex items-start gap-2">
-            <span
-              className={isClickable ? clickableCheckClass : ''}
-              onClick={isClickable ? () => onCheckClick(check) : undefined}
-            >
-              <Markdown className="review-focus-markdown">{check.text}</Markdown>
-            </span>
+            {todoFor(
+              check.text,
+              <span
+                className={isClickable ? clickableCheckClass : ''}
+                onClick={isClickable ? () => onCheckClick(check) : undefined}
+              >
+                <Markdown className="review-focus-markdown">{check.text}</Markdown>
+              </span>
+            )}
             {copyFor(check.text, check.filePath, check.startLine)}
           </div>
         </>
@@ -262,12 +331,15 @@ function renderReviewChecks(
       <p className="slide-prose">
         <span className="editorial-label">What to check.</span>{' '}
         <span className="review-focus-content">
-          <span
-            className={isClickable ? clickableCheckClass : ''}
-            onClick={isClickable ? () => onCheckClick(check) : undefined}
-          >
-            {check.text}
-          </span>
+          {todoFor(
+            check.text,
+            <span
+              className={isClickable ? clickableCheckClass : ''}
+              onClick={isClickable ? () => onCheckClick(check) : undefined}
+            >
+              {check.text}
+            </span>
+          )}
         </span>
         {copyFor(check.text, check.filePath, check.startLine)}
       </p>
@@ -298,7 +370,7 @@ function renderReviewChecks(
           <ul className="slide-prose review-checks-list mt-1.5">
             {split.map((sentence, i) => (
               <li key={i} className="review-checks-item">
-                <Markdown className="review-focus-markdown">{sentence}</Markdown>
+                {todoFor(sentence, <Markdown className="review-focus-markdown">{sentence}</Markdown>)}
                 {copyFor(sentence)}
               </li>
             ))}
@@ -312,7 +384,7 @@ function renderReviewChecks(
           <span className="editorial-label">What to check.</span>
         </p>
         <div className="slide-prose mt-1.5 flex items-start gap-2">
-          <Markdown className="review-focus-markdown">{focus}</Markdown>
+          {todoFor(focus, <Markdown className="review-focus-markdown">{focus}</Markdown>)}
           {copyFor(focus)}
         </div>
       </>
@@ -321,7 +393,7 @@ function renderReviewChecks(
   return (
     <p className="slide-prose">
       <span className="editorial-label">What to check.</span>{' '}
-      <span className="review-focus-content">{focus}</span>
+      <span className="review-focus-content">{todoFor(focus, <>{focus}</>)}</span>
       {copyFor(focus)}
     </p>
   );
@@ -381,6 +453,8 @@ export function SlideView({
   slide,
   slideNumber,
   prUrl,
+  checkedChecks,
+  onToggleCheck,
   pendingComments,
   commentCallbacks,
   diffLayout,
@@ -533,7 +607,17 @@ export function SlideView({
       )}
 
       <div className="editorial-callout select-text">
-        {renderReviewChecks(slide.reviewChecks, slide.reviewFocus, anchorable, handleCheckClick, slide.title, prUrl)}
+        {renderReviewChecks(
+          slide.reviewChecks,
+          slide.reviewFocus,
+          anchorable,
+          handleCheckClick,
+          slide.id,
+          slide.title,
+          prUrl,
+          checkedChecks,
+          onToggleCheck,
+        )}
         {anchorMiss && (
           <p className="slide-meta mt-2" role="status" aria-live="polite">
             Line {anchorMiss.line} in <span className="font-mono">{anchorMiss.filePath}</span> isn't in this slide's

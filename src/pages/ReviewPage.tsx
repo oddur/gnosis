@@ -54,6 +54,32 @@ function saveProgress(review: ReviewGuide, reviewed: Set<number>) {
   }
 }
 
+// Per-check "done" marks inside the "What to check" callout. Same
+// keying scheme as slide progress so one review's marks don't leak
+// into another review of the same PR. Each entry is
+// `${slideId}:${hash(check.text)}` — stable across re-renders and
+// robust to bullet-vs-inline layout choice.
+function checksKey(review: ReviewGuide): string {
+  return `gnosis-checks:${review.prUrl}:${review.headSha ?? 'unknown'}`;
+}
+
+function loadChecks(review: ReviewGuide): Set<string> {
+  try {
+    const stored = localStorage.getItem(checksKey(review));
+    return stored ? new Set(JSON.parse(stored) as string[]) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function saveChecks(review: ReviewGuide, checked: Set<string>) {
+  try {
+    localStorage.setItem(checksKey(review), JSON.stringify([...checked]));
+  } catch {
+    /* non-fatal */
+  }
+}
+
 export function ReviewPage({ review: initialReview, onBack, onReReview }: Props) {
   const [review, setReview] = useState(initialReview);
   const [currentSlide, setCurrentSlide] = useState(0);
@@ -77,6 +103,22 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
   // independently. Restored on mount so interrupted reviews resume
   // exactly where the user left off.
   const [reviewed, setReviewed] = useState<Set<number>>(() => loadProgress(initialReview));
+
+  // Per-check done marks (the "What to check" checkboxes). Same
+  // keying scheme as reviewed, but keyed by `slideId:hash(check.text)`.
+  const [checkedChecks, setCheckedChecks] = useState<Set<string>>(() => loadChecks(initialReview));
+  const toggleCheck = useCallback(
+    (key: string) => {
+      setCheckedChecks((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        saveChecks(review, next);
+        return next;
+      });
+    },
+    [review]
+  );
 
   // "Hide reviewed" toggle — when active, the TocRail collapses
   // reviewed entries and slide navigation skips them.
@@ -501,6 +543,8 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
               slideNumber={currentSlide}
               totalSlides={review.slides.length}
               prUrl={review.prUrl}
+              checkedChecks={checkedChecks}
+              onToggleCheck={toggleCheck}
               pendingComments={comments}
               commentCallbacks={commentCallbacks}
               diffLayout={diffLayout}
