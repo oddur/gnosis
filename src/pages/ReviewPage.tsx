@@ -500,6 +500,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
               slide={review.slides[currentSlide - 1]}
               slideNumber={currentSlide}
               totalSlides={review.slides.length}
+              prUrl={review.prUrl}
               pendingComments={comments}
               commentCallbacks={commentCallbacks}
               diffLayout={diffLayout}
