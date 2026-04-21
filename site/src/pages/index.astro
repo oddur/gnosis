@@ -1,0 +1,98 @@
+---
+import Base from '../layouts/Base.astro';
+
+const chapters = [
+  {
+    num: '01',
+    title: 'Read the story, not the patch.',
+    body:
+      "Gnosis breaks a pull request into a sequence of slides. Each slide explains why a change exists before it shows you what the change is. The diff is still there — it just isn't the first thing you read.",
+  },
+  {
+    num: '02',
+    title: 'Calibrated questions, not generic checklists.',
+    body:
+      'Every slide ends with two to four "What to check" prompts grounded in the actual code. Anchored to file and line. Phrased as questions a careful reviewer would ask, not as platitudes.',
+  },
+  {
+    num: '03',
+    title: 'Local-first. Your code, your machine.',
+    body:
+      'Reviews run against the Claude or Gemini CLI you already have installed. Nothing in the diff leaves your machine except through the model you chose. No server, no telemetry on the review itself.',
+  },
+  {
+    num: '04',
+    title: 'Aware of your conventions.',
+    body:
+      "Gnosis reads CLAUDE.md and the .claude/ folder of the repo it's reviewing. If your team has a security-audit skill or a custom code-style command, the reviewer knows about it.",
+  },
+];
+---
+
+<Base title="Gnosis — AI-guided code review">
+  <main class="mx-auto max-w-3xl px-6 py-16 sm:py-24 flex flex-col gap-16">
+    <!-- Masthead -->
+    <header class="flex flex-col gap-5">
+      <p class="slide-chapter">
+        <span>Gnosis</span>
+        <span aria-hidden="true">·</span>
+        <span>v0.19</span>
+        <span aria-hidden="true">·</span>
+        <span>local desktop app</span>
+      </p>
+      <h1 class="slide-title">
+        Understand the pull request before you read the diff.
+      </h1>
+      <p class="slide-prose text-[color:var(--muted-foreground)]">
+        Gnosis is a desktop app that turns a pull request into a guided review — narrated, paced, and grounded in your team's conventions. So you can review code the way you read a paper.
+      </p>
+      <div class="flex flex-wrap items-center gap-3 mt-2">
+        <a class="btn-ink" href="https://github.com/oddur/gnosis/releases/latest" rel="noopener">
+          Download for macOS
+        </a>
+        <a class="btn-quiet" href="https://github.com/oddur/gnosis" rel="noopener">
+          View on GitHub
+        </a>
+      </div>
+      <p class="slide-meta">
+        Also available for Windows and Linux on the
+        <a class="link-claret" href="https://github.com/oddur/gnosis/releases/latest" rel="noopener">releases page</a>.
+        macOS users can also <code class="font-mono text-foreground">brew install --cask oddur/gnosis/gnosis</code>.
+      </p>
+    </header>
+
+    <!-- Chapters -->
+    <section class="flex flex-col gap-12 hairline pt-12">
+      {chapters.map((c) => (
+        <article class="flex flex-col gap-3">
+          <div class="flex items-baseline gap-3">
+            <span class="slide-chapter">{c.num}</span>
+            <h2 class="editorial-heading">{c.title}</h2>
+          </div>
+          <p class="slide-prose text-[color:var(--muted-foreground)]">{c.body}</p>
+        </article>
+      ))}
+    </section>
+
+    <!-- Quiet "what's in it" -->
+    <section class="flex flex-col gap-4 hairline pt-12">
+      <p class="slide-chapter">What's in the box</p>
+      <ul class="slide-prose text-[color:var(--muted-foreground)] flex flex-col gap-2 list-none p-0">
+        <li><span class="editorial-label">Guided slides</span> — narrative for each meaningful change, ordered for sequential reading.</li>
+        <li><span class="editorial-label">Anchored checks</span> — clickable hints that jump to the exact line in the diff.</li>
+        <li><span class="editorial-label">Education mode</span> — short explainers for concepts the code assumes you know.</li>
+        <li><span class="editorial-label">Proactive mode</span> — reviews waiting for you when you open the app, generated in the background.</li>
+        <li><span class="editorial-label">Importable .gr files</span> — pass a finished review to a teammate as a single file.</li>
+      </ul>
+    </section>
+
+    <!-- Footer -->
+    <footer class="hairline pt-8 flex flex-col gap-2 slide-meta">
+      <p>
+        <a class="link-claret" href="https://github.com/oddur/gnosis" rel="noopener">github.com/oddur/gnosis</a>
+        · MIT licence
+      </p>
+      <p>Built in Reykjavík.</p>
+    </footer>
+  </main>
+</Base>

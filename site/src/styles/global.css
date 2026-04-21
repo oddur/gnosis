@@ -1,0 +1,178 @@
+@import 'tailwindcss';
+
+/* Editorial token sheet — mirrors src/globals.css from the app so
+   the site reads as the same artefact. Self-contained: no app-only
+   component classes (.slide-*, .newspaper-*, etc.) — just the tokens
+   and a small set of editorial utilities the marketing pages need. */
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --font-sans: var(--font-sans);
+  --font-serif: var(--font-serif);
+  --font-mono: var(--font-mono);
+}
+
+:root {
+  --font-sans:
+    'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-serif: 'Fraunces', 'Source Serif 4', 'Iowan Old Style', 'Charter', Georgia, 'Times New Roman', serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+
+  --measure-prose: 68ch;
+  --measure-prose-narrow: 56ch;
+
+  /* Light — printed paper. */
+  --background: oklch(0.985 0.005 75);
+  --foreground: oklch(0.2 0.008 65);
+  --muted: oklch(0.95 0.006 70);
+  --muted-foreground: oklch(0.45 0.012 65);
+  --border: oklch(0.9 0.006 65);
+  --ring: oklch(0.4 0.12 15);
+}
+
+.dark {
+  /* Dark — well-lit study at night. */
+  --background: oklch(0.155 0.006 65);
+  --foreground: oklch(0.965 0.005 75);
+  --muted: oklch(0.24 0.008 65);
+  --muted-foreground: oklch(0.68 0.012 65);
+  --border: oklch(0.965 0.005 75 / 9%);
+  --ring: oklch(0.65 0.13 15);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --background: oklch(0.155 0.006 65);
+    --foreground: oklch(0.965 0.005 75);
+    --muted: oklch(0.24 0.008 65);
+    --muted-foreground: oklch(0.68 0.012 65);
+    --border: oklch(0.965 0.005 75 / 9%);
+    --ring: oklch(0.65 0.13 15);
+  }
+}
+
+html {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-feature-settings: 'ss01' on, 'cv11' on;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+/* ── Editorial type ── */
+
+.slide-title {
+  font-family: var(--font-serif);
+  font-feature-settings: 'opsz' 96;
+  font-weight: 440;
+  font-size: clamp(2rem, 1rem + 3vw, 3.25rem);
+  line-height: 1.05;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+}
+
+.editorial-heading {
+  font-family: var(--font-serif);
+  font-feature-settings: 'opsz' 28;
+  font-weight: 540;
+  font-size: 1.375rem;
+  letter-spacing: -0.005em;
+  text-wrap: balance;
+}
+
+.slide-chapter {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.slide-prose {
+  font-size: 1rem;
+  line-height: 1.65;
+  max-width: var(--measure-prose);
+  text-wrap: pretty;
+}
+
+.slide-meta {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+.editorial-label {
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+/* Hairline rule — the section divider used between chapters. */
+.hairline {
+  border-top: 1px solid var(--border);
+}
+
+/* Brand-accent claret link — the only chromatic moment. */
+.link-claret {
+  color: var(--ring);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+  transition: text-decoration-style 120ms ease-out;
+}
+.link-claret:hover {
+  text-decoration-style: solid;
+}
+
+/* Buttons follow ink-on-paper, not the accent. */
+.btn-ink {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.1rem;
+  background: var(--foreground);
+  color: var(--background);
+  border: 1px solid var(--foreground);
+  border-radius: 0.5rem;
+  font-size: 0.95rem;
+  font-weight: 500;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+.btn-ink:hover {
+  background: transparent;
+  color: var(--foreground);
+}
+
+.btn-quiet {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  font-size: 0.95rem;
+  color: var(--foreground);
+  transition: border-color 120ms ease-out;
+}
+.btn-quiet:hover {
+  border-color: var(--foreground);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
