@@ -28,6 +28,8 @@ declare global {
       loadReview: (id: string) => Promise<ReviewGuide>;
       deleteReview: (id: string) => Promise<void>;
       deleteAllReviews: () => Promise<void>;
+      exportReview: (id: string) => Promise<string | null>;
+      importReview: () => Promise<ReviewHistoryEntry | null>;
       onReviewProgress: (callback: (reviewId: string, chunk: string, isThinking: boolean) => void) => void;
       offReviewProgress: () => void;
       onReviewToolUse: (callback: (reviewId: string, toolName: string) => void) => void;
