@@ -26,6 +26,10 @@
   --measure-prose: 68ch;
   --measure-prose-narrow: 56ch;
 
+  /* Single easing curve for every transition on the site —
+     "natural deceleration" per the brief's motion guidance. */
+  --ease-page: cubic-bezier(0.25, 1, 0.5, 1);
+
   /* Light — printed paper. */
   --background: oklch(0.985 0.005 75);
   --foreground: oklch(0.2 0.008 65);
@@ -156,6 +160,30 @@ body {
   border-top: 1px solid var(--border);
 }
 
+/* Skip-to-content link. Visually hidden until focused, then anchors
+   to the top-left so a keyboard user can jump past the masthead on
+   every visit. The :focus-visible rule above wraps it in the brand
+   ring automatically. */
+.skip-link {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--foreground);
+  color: var(--background);
+  border-radius: 0.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.025em;
+  text-decoration: none;
+  transform: translateY(-200%);
+  transition: transform 140ms var(--ease-page);
+}
+.skip-link:focus,
+.skip-link:focus-visible {
+  transform: translateY(0);
+}
+
 /* Brand-accent claret link — the only chromatic moment in body text. */
 .link-claret {
   color: var(--ring);
@@ -237,7 +265,13 @@ body {
 .code-pill button {
   display: inline-flex;
   align-items: center;
-  padding: 0;
+  justify-content: center;
+  /* Padded out to a 24×24 hit area without changing the visual
+     glyph size — meets WCAG 2.5.8 (Target Size — Minimum) without
+     bulking up the line. */
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0.4rem;
   background: none;
   border: 0;
   color: var(--muted-foreground);
@@ -283,8 +317,10 @@ code {
   font-size: 0.75rem;
   color: var(--muted-foreground);
   letter-spacing: 0.025em;
+  /* Vertical padding pads the tap target out to ~24px without
+     enlarging the visible text — WCAG 2.5.8 minimum. */
+  padding: 0.4rem 0;
   border-bottom: 1px solid transparent;
-  padding-bottom: 1px;
   transition: color 120ms ease-out, border-color 120ms ease-out;
 }
 .toc a:hover {
@@ -305,11 +341,17 @@ code {
   border-radius: 0.5rem;
   overflow: hidden;
   background: var(--muted);
+  /* Reserve the slot before the image arrives — kills CLS during
+     the 380 ms settle-hero delay even on browsers that don't read
+     img width/height attrs through flex. The ratio matches the
+     hero screenshot's intrinsic dimensions. */
+  aspect-ratio: 1512 / 1012;
 }
 .figure-frame img {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
+  object-fit: cover;
 }
 .figure-caption {
   font-family: var(--font-mono);
@@ -325,11 +367,8 @@ code {
    primitives only: a brief opacity + tiny Y-translate, used as a
    staggered settle on page load (the masthead and hero) and as a
    scroll-triggered reveal for the long tail of chapter sections.
-   Nothing scales, nothing rotates, nothing pulses. */
-:root {
-  --ease-page: cubic-bezier(0.25, 1, 0.5, 1);
-}
-
+   Nothing scales, nothing rotates, nothing pulses.
+   The easing curve --ease-page lives in the main :root block. */
 @keyframes settle-in {
   from {
     opacity: 0;

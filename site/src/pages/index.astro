@@ -158,13 +158,21 @@ const sections: Section[] = [
 ---
 
 <Base title="Gnosis — AI-guided code review">
+  <a href="#read" class="skip-link">Skip to content</a>
   <main class="mx-auto max-w-3xl px-6 py-16 sm:py-24 flex flex-col gap-16">
-    <!-- Masthead — staggered settle on load -->
+    <!-- Masthead — staggered settle on load.
+         Chapter line: each item in its own span with the middot
+         separators marked aria-hidden so screen readers hear a
+         comma-separated list instead of "middle dot middle dot". -->
     <header class="flex flex-col gap-5">
       <p class="slide-chapter settle settle-1">
         <span>local desktop app</span>
         <span aria-hidden="true">·</span>
-        <span>macOS · Windows · Linux</span>
+        <span>macOS</span>
+        <span aria-hidden="true">·</span>
+        <span>Windows</span>
+        <span aria-hidden="true">·</span>
+        <span>Linux</span>
         <span aria-hidden="true">·</span>
         <span>v0.19</span>
       </p>
@@ -201,10 +209,13 @@ const sections: Section[] = [
       </p>
     </header>
 
-    <!-- Hero screenshot — arrives last in the masthead sequence -->
+    <!-- Hero screenshot — arrives last in the masthead sequence.
+         WebP saves ~85% over the source PNG; .figure-frame reserves
+         the slot via aspect-ratio so the settle-hero fade doesn't
+         shift the page. -->
     <figure class="figure-frame settle-hero">
       <img
-        src="/screenshots/overview.png"
+        src="/screenshots/overview.webp"
         alt="Gnosis review overview — slide-numbered chapters, risk badges, and a serif title in a paper-coloured monograph layout."
         width="1512"
         height="1012"
@@ -287,11 +298,10 @@ const sections: Section[] = [
       <p class="slide-meta">
         Or via Homebrew:
         <span class="code-pill">
-          <span>brew tap oddur/gnosis &amp;&amp; brew install --cask gnosis</span>
+          <code>brew tap oddur/gnosis &amp;&amp; brew install --cask gnosis</code>
           <button
             type="button"
             data-copy="brew tap oddur/gnosis && brew install --cask gnosis"
-            aria-label="Copy install command"
           >
             copy
           </button>
@@ -316,7 +326,7 @@ const sections: Section[] = [
           <span>
             <span class="editorial-label">Install a CLI.</span> Gnosis uses one you already have, or one you install once.
             <a class="link-claret" href="https://claude.ai/code" target="_blank" rel="noopener noreferrer">Claude Code</a>
-            (then <code class="font-mono text-foreground">claude auth</code>) or
+            (then <code>claude auth</code>) or
             <a class="link-claret" href="https://github.com/google-gemini/gemini-cli" target="_blank" rel="noopener noreferrer">Gemini CLI</a>.
           </span>
         </li>
@@ -325,7 +335,7 @@ const sections: Section[] = [
           <span>
             <span class="editorial-label">Install Gnosis.</span> Download from the releases page above, or
             <span class="code-pill">
-              <span>brew tap oddur/gnosis &amp;&amp; brew install --cask gnosis</span>
+              <code>brew tap oddur/gnosis &amp;&amp; brew install --cask gnosis</code>
             </span>
           </span>
         </li>
