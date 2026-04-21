@@ -23,7 +23,7 @@ const sections: Section[] = [
       {
         label: 'Guided slideshow',
         body:
-          "Changes are grouped by theme and ordered by dependency — foundations first, then implementations, then tests and config — not by filename. The order matters; you read context before consequences.",
+          'Changes are grouped by theme and ordered by dependency — foundations first, then implementations, then tests and config — not by filename. Toggle between split and unified diff layouts at any time.',
       },
       {
         label: 'Risk assessment',
@@ -35,28 +35,18 @@ const sections: Section[] = [
         body:
           'Slides can include sequence, flowchart, and class diagrams when the change benefits from a picture. Click to open fullscreen.',
       },
-      {
-        label: 'Split or unified diff',
-        body:
-          'Toggle between side-by-side and inline diff layouts at any time. Your preference persists across sessions.',
-      },
     ],
   },
   {
     num: '02',
     title: 'Targeted things to check.',
     intro:
-      'Every slide ends with two to four "What to check" prompts grounded in the actual code. Each one is a specific question — not a generic checklist item — anchored to a file and line so a click jumps you straight to the spot.',
+      'Every slide ends with two to four "What to check" prompts grounded in the actual code. Each one is a specific question — not a generic checklist item — anchored to a file and line.',
     features: [
       {
         label: 'Anchored review checks',
         body:
-          "Click a check to scroll to the exact line it's about. The line flashes briefly so you don't lose your place.",
-      },
-      {
-        label: 'Persistent check-offs',
-        body:
-          'Tick each check as you verify it. The marks survive restarts and PR head changes are tracked separately, so an updated review starts fresh without losing the old one.',
+          "Click a check to scroll to the exact line it's about. Tick each one as you verify it — marks persist across restarts and update cleanly when the PR gets new commits.",
       },
       {
         label: 'Copy as agent prompt',
@@ -87,24 +77,19 @@ const sections: Section[] = [
           'Each slide can include short explainers for concepts the code assumes you already know — "Unit of Work", "CORS preflight", "idempotency key" — so you can follow along without breaking flow to look something up.',
       },
       {
-        label: 'Web research',
+        label: 'External context',
         body:
-          'Optionally let the model search framework docs and best-practice references during generation. Sources are cited on the overview slide.',
-      },
-      {
-        label: 'GitHub MCP context',
-        body:
-          'Optionally let the model query related GitHub state — issues, sibling PRs, file contents at other refs — through MCP. Useful when a PR references discussions or earlier work.',
+          "Optionally let the model search framework docs on the web and query related GitHub state (issues, sibling PRs, file contents at other refs) through MCP. Useful when a PR references discussions or earlier work. Sources are cited on the overview.",
       },
       {
         label: 'Smart imports',
         body:
-          "A fast model detects local file imports across all languages — C#, Rust, Python, Go — so reviewers get import context beyond what regex catches in the JS/TS world.",
+          "A fast model detects local file imports across languages — C#, Rust, Python, Go — so reviewers get import context beyond what regex catches in the JS/TS world.",
       },
       {
         label: 'Custom instructions',
         body:
-          'Steer any review with free-text prompts. "Focus on security." "Explain the auth flow." "I\u2019m not familiar with this domain — assume nothing." The model treats these as authoritative.',
+          'Steer any review with free-text prompts. "Focus on security." "Explain the auth flow." "Assume I don\u2019t know this domain." The model treats these as authoritative.',
       },
     ],
   },
@@ -112,37 +97,22 @@ const sections: Section[] = [
     num: '04',
     title: 'Workflow that fits the day.',
     intro:
-      'You shouldn\u2019t have to babysit a review. Gnosis runs in the background, wakes you when reviews are ready, and remembers everything you\u2019ve already worked through.',
+      "You shouldn\u2019t have to babysit a review. Gnosis runs in the background, wakes you when reviews are ready, and remembers everything you\u2019ve already worked through.",
     features: [
       {
         label: 'Proactive mode',
         body:
-          'Watches your PRs, your assigned reviews, and any repos you pin. Reviews are waiting in the Archives when you open the app, regenerated whenever the PR head changes.',
+          'Watches your PRs, assigned reviews, and any repos you pin. Reviews are ready in the Archives when you open the app, regenerated whenever a PR gets new commits — with a stale-review banner showing what changed. A menu-bar tray surfaces pending reviews and CI status without opening the window.',
       },
       {
         label: 'Background generation',
         body:
-          'Reviews stream while you keep working. Submit several at once, browse existing reviews, or close the app entirely — generation continues and tray status shows progress.',
-      },
-      {
-        label: 'Menu-bar tray',
-        body:
-          'Quick view of pending reviews, currently-generating jobs, and CI status for watched PRs without opening the window.',
+          'Submit a review and keep working. Generation streams in the background, multiple reviews run in parallel, and the app can stay closed — work resumes when you reopen.',
       },
       {
         label: 'Slide chat',
         body:
-          'Ask follow-up questions about any slide in an inline resizable side panel. Tool-call indicators show what the model is doing while it answers.',
-      },
-      {
-        label: 'Selection-to-chat',
-        body:
-          'Highlight code anywhere in the diff and ask about exactly that snippet — no need to paste it into the chat by hand.',
-      },
-      {
-        label: 'Stale review detection',
-        body:
-          "If a PR receives new commits after your review was generated, a banner shows what changed and offers to re-generate. Old reviews aren\u2019t silently discarded.",
+          'Ask follow-up questions about any slide in an inline resizable side panel. Highlight code in the diff to ask about that exact snippet, no copy-paste needed.',
       },
     ],
   },
@@ -155,22 +125,12 @@ const sections: Section[] = [
       {
         label: 'Multi-provider',
         body:
-          'Claude (Opus 4.7, Sonnet 4.6, Haiku 4.5) or Gemini (3.1 Pro, 3 Pro, 3 Flash, 2.5 Pro, 2.5 Flash). Switch per review, or set different defaults for manual vs. proactive runs.',
+          'Claude (Opus 4.7, Sonnet 4.6, Haiku 4.5) or Gemini (3.1 Pro, 3 Pro, 3 Flash, 2.5 Pro, 2.5 Flash). Switch per review, or set different defaults for manual vs. proactive runs. Extended thinking available for Claude when the diff warrants it.',
       },
       {
-        label: 'Extended thinking',
+        label: 'Smart context curation',
         body:
-          'Enable deeper reasoning for Claude models when the diff warrants it. Off by default for proactive mode to keep cost predictable.',
-      },
-      {
-        label: 'Signal boost',
-        body:
-          'Filters out trivial changes — whitespace, import reordering, boilerplate — and focuses the review on design decisions, complexity, and API surface.',
-      },
-      {
-        label: 'Large file filtering',
-        body:
-          'Generated artefacts (lockfiles, bundles, minified output) are detected and excluded automatically so the model spends its context on changes that matter.',
+          'Trivial changes — whitespace, import reordering, boilerplate — get filtered out. Generated artefacts like lockfiles and bundles are excluded automatically. The model\u2019s context goes to changes that actually matter for review.',
       },
     ],
   },
@@ -178,27 +138,17 @@ const sections: Section[] = [
     num: '06',
     title: 'Pass it along.',
     intro:
-      "Reviews shouldn\u2019t live in one head. Send a finished review to a teammate as a single file — or browse and re-open everything you've already reviewed.",
+      "Reviews shouldn\u2019t live in one head. Browse what you\u2019ve already done, hand a finished review to a teammate, or pick up where you left off.",
     features: [
       {
-        label: 'Export as .gr',
+        label: '.gr archives',
         body:
-          "Any review exports to a single .gr archive — review JSON, history entry, and the original prompt. Send it to a teammate via Slack, email, or anywhere a file fits.",
-      },
-      {
-        label: 'Import .gr',
-        body:
-          "Drop a .gr file into Gnosis and it appears in your Archives as if you'd generated it locally. Useful for handoffs, second opinions, and onboarding new team members onto a complex change.",
+          'Export any review to a single .gr file — review, history entry, and the original prompt all packaged together. Send it via Slack or email; the recipient drops it into their Gnosis and it appears in their Archives as if generated locally. Good for handoffs, second opinions, and onboarding.',
       },
       {
         label: 'Local review history',
         body:
-          'Every past review is saved on disk and grouped by PR on the home screen. Click any to reload without re-generating.',
-      },
-      {
-        label: 'PR browser',
-        body:
-          'Browse your open PRs and assigned review requests instead of pasting URLs. Two-click reviews from your inbox.',
+          'Every past review is saved on disk and grouped by PR on the home screen. Click any to reload without regenerating. Browse your open PRs and assigned reviews from the home screen instead of pasting URLs.',
       },
     ],
   },
@@ -211,27 +161,12 @@ const sections: Section[] = [
       {
         label: 'Editorial type',
         body:
-          'Fraunces serif for headlines, Plus Jakarta Sans for prose, JetBrains Mono for code and meta. Tuned for the editorial measure (~68 characters per line) so prose stays readable and the diff stays code.',
+          'Fraunces serif for headlines, Plus Jakarta Sans for prose, JetBrains Mono for code and meta — tuned for the ~68-character editorial measure. Pick your code font and syntax theme in Settings; existing reviews re-render on the fly.',
       },
       {
         label: 'Light and dark, both first-class',
         body:
           'Both modes are tested against WCAG AA. Warm OKLCH paper or warm OKLCH study — no cool blue gradients, no "dark mode is just inverted" surprises.',
-      },
-      {
-        label: 'Code appearance',
-        body:
-          'Pick your code font and syntax theme in Settings. Choices persist across reviews and re-render existing reviews on the fly.',
-      },
-      {
-        label: 'Auto-update',
-        body:
-          'New releases download and install in the background on macOS and Windows. Linux gets an in-app banner pointing at the relevant package.',
-      },
-      {
-        label: 'Cross-platform',
-        body:
-          'Builds for macOS (signed + notarized), Windows, and Linux (deb + rpm).',
       },
     ],
   },
