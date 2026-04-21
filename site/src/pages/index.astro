@@ -1,0 +1,410 @@
+---
+import Base from '../layouts/Base.astro';
+
+interface Feature {
+  label: string;
+  body: string;
+}
+
+interface Section {
+  num: string;
+  id: string;
+  title: string;
+  intro?: string;
+  features: Feature[];
+}
+
+const sections: Section[] = [
+  {
+    num: '01',
+    id: 'read',
+    title: 'Read it like a paper.',
+    intro:
+      'Reviews open as a guided slideshow — narrated, ordered, and grounded in the diff. Each slide explains why something changed before it shows you what changed.',
+    features: [
+      {
+        label: 'Guided slideshow',
+        body:
+          'Changes are grouped by theme and ordered by dependency — foundations first, then implementations, then tests and config — not by filename. Toggle between split and unified diff layouts at any time.',
+      },
+      {
+        label: 'Risk assessment',
+        body:
+          'Each review is rated low, medium, or high risk based on what changed. Critical slides — auth, data integrity, public APIs — are flagged so you read them with sharper eyes.',
+      },
+      {
+        label: 'Mermaid diagrams',
+        body:
+          'Slides can include sequence, flowchart, and class diagrams when the change benefits from a picture. Click to open fullscreen.',
+      },
+    ],
+  },
+  {
+    num: '02',
+    id: 'check',
+    title: 'Targeted things to check.',
+    intro:
+      'Every slide ends with two to four "What to check" prompts grounded in the actual code. Each one is a specific question — not a generic checklist item — anchored to a file and line.',
+    features: [
+      {
+        label: 'Anchored review checks',
+        body:
+          "Click a check to scroll to the exact line it's about. Tick each one as you verify it — marks persist across restarts and update cleanly when the PR gets new commits.",
+      },
+      {
+        label: 'Copy as agent prompt',
+        body:
+          'A small icon next to each check copies a ready-to-paste prompt for Claude Code, Cursor, or any other agent — including the slide title, PR URL, and file:line so the agent can investigate without further setup.',
+      },
+      {
+        label: 'Inline GitHub comments',
+        body:
+          'Add comments on specific diff lines and submit directly to GitHub as an approval, request for changes, or comment. No copy-pasting between tabs.',
+      },
+    ],
+  },
+  {
+    num: '03',
+    id: 'aware',
+    title: 'Aware of your project.',
+    intro:
+      "Gnosis reads more than the diff. It picks up the conventions the team has already written down — and lets you pull in extra context when the diff alone isn't enough.",
+    features: [
+      {
+        label: 'Project Claude conventions',
+        body:
+          "Reads CLAUDE.md and the .claude/ folder of the repo it's reviewing. Custom commands, agents, and skills the team has built become part of the reviewer's context — filtered to ones that signal review relevance, not generic dev tooling.",
+      },
+      {
+        label: 'Education mode',
+        body:
+          'Each slide can include short explainers for concepts the code assumes you already know — "Unit of Work", "CORS preflight", "idempotency key" — so you can follow along without breaking flow to look something up.',
+      },
+      {
+        label: 'External context',
+        body:
+          'Optionally let the model search framework docs on the web and query related GitHub state — issues, sibling PRs, file contents at other refs — through MCP. Sources are cited on the overview.',
+      },
+      {
+        label: 'Steering',
+        body:
+          'A fast model detects local file imports across languages — C#, Rust, Python, Go — beyond what regex catches in the JS/TS world. And every review accepts free-text instructions: "focus on security", "explain the auth flow", "assume I don\u2019t know this domain". The model treats them as authoritative.',
+      },
+    ],
+  },
+  {
+    num: '04',
+    id: 'workflow',
+    title: 'Workflow that fits the day.',
+    intro:
+      'You shouldn\u2019t have to babysit a review. Gnosis runs in the background, wakes you when reviews are ready, and remembers everything you\u2019ve already worked through.',
+    features: [
+      {
+        label: 'Proactive mode',
+        body:
+          'Watches your PRs, assigned reviews, and any repos you pin. Reviews are ready in the Archives when you open the app, regenerated whenever a PR gets new commits — with a stale-review banner showing what changed. A menu-bar tray surfaces pending reviews and CI status without opening the window.',
+      },
+      {
+        label: 'Background generation',
+        body:
+          'Submit a review and keep working. Generation streams in the background, multiple reviews run in parallel, and the app can stay closed — work resumes when you reopen.',
+      },
+      {
+        label: 'Slide chat',
+        body:
+          'Ask follow-up questions about any slide in an inline resizable side panel. Highlight code in the diff to ask about that exact snippet, no copy-paste needed.',
+      },
+    ],
+  },
+  {
+    num: '05',
+    id: 'local',
+    title: 'Local-first by design.',
+    intro:
+      "Your code stays on your machine. Reviews run against the Claude or Gemini CLI you already have installed. There is no Gnosis server in the loop.",
+    features: [
+      {
+        label: 'Multi-provider',
+        body:
+          'Claude (Opus 4.7, Sonnet 4.6, Haiku 4.5) or Gemini (3.1 Pro, 3 Pro, 3 Flash, 2.5 Pro, 2.5 Flash). Switch per review, or set different defaults for manual vs. proactive runs. Extended thinking available for Claude when the diff warrants it.',
+      },
+      {
+        label: 'Smart context curation',
+        body:
+          'Trivial changes — whitespace, import reordering, boilerplate — get filtered out. Generated artefacts like lockfiles and bundles are excluded automatically. The model\u2019s context goes to changes that actually matter for review.',
+      },
+    ],
+  },
+  {
+    num: '06',
+    id: 'share',
+    title: 'Pass it along.',
+    intro:
+      "Reviews shouldn\u2019t live in one head. Browse what you\u2019ve already done, hand a finished review to a teammate, or pick up where you left off.",
+    features: [
+      {
+        label: '.gr archives',
+        body:
+          'Export any review to a single .gr file — review, history entry, and the original prompt all packaged together. Send it via Slack or email; the recipient drops it into their Gnosis and it appears in their Archives as if generated locally. Good for handoffs, second opinions, and onboarding.',
+      },
+      {
+        label: 'Local review history',
+        body:
+          'Every past review is saved on disk and grouped by PR on the home screen. Click any to reload without regenerating. Browse your open PRs and assigned reviews from the home screen instead of pasting URLs.',
+      },
+    ],
+  },
+];
+---
+
+<Base title="Gnosis — AI-guided code review">
+  <a href="#read" class="skip-link">Skip to content</a>
+  <main class="mx-auto max-w-3xl px-6 py-16 sm:py-24 flex flex-col gap-16">
+    <!-- Masthead — staggered settle on load.
+         Chapter line: each item in its own span with the middot
+         separators marked aria-hidden so screen readers hear a
+         comma-separated list instead of "middle dot middle dot". -->
+    <header class="flex flex-col gap-5">
+      <p class="slide-chapter settle settle-1">
+        <span>local desktop app</span>
+        <span aria-hidden="true">·</span>
+        <span>macOS</span>
+        <span aria-hidden="true">·</span>
+        <span>Windows</span>
+        <span aria-hidden="true">·</span>
+        <span>Linux</span>
+        <span aria-hidden="true">·</span>
+        <span>v0.19</span>
+      </p>
+      <h1 class="slide-title settle settle-2">
+        Understand the pull request before you read the diff.
+      </h1>
+      <p class="slide-prose settle settle-3">
+        <em>Gnosis</em> is an ancient Greek word for knowledge — not the surface kind, but the deep, direct understanding of a thing. The Gnostics used it for insight that comes from within, from truly comprehending something rather than just observing it from the outside. That's what's missing from most code reviews: you see the diff, but you don't get the understanding. Gnosis tries to close that gap.
+      </p>
+      <div class="flex flex-wrap items-center gap-3 mt-2 settle settle-4">
+        <a
+          class="btn-ink"
+          href="https://github.com/oddur/gnosis/releases/latest"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Download for macOS
+        </a>
+        <a
+          class="btn-quiet"
+          href="https://github.com/oddur/gnosis"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          View on GitHub
+        </a>
+      </div>
+      <p class="slide-meta settle settle-5">
+        Code never leaves your machine. Reviews run against the
+        <a class="link-claret" href="https://claude.ai/code" target="_blank" rel="noopener noreferrer">Claude Code</a>
+        or
+        <a class="link-claret" href="https://github.com/google-gemini/gemini-cli" target="_blank" rel="noopener noreferrer">Gemini</a>
+        CLI you already have installed. No servers. MIT licensed.
+      </p>
+    </header>
+
+    <!-- Hero screenshot — arrives last in the masthead sequence.
+         WebP saves ~85% over the source PNG; .figure-frame reserves
+         the slot via aspect-ratio so the settle-hero fade doesn't
+         shift the page. -->
+    <figure class="figure-frame settle-hero">
+      <img
+        src="/screenshots/overview.webp"
+        alt="Gnosis review overview — slide-numbered chapters, risk badges, and a serif title in a paper-coloured monograph layout."
+        width="1512"
+        height="1012"
+        loading="eager"
+      />
+    </figure>
+
+    <!-- The premise -->
+    <section class="hairline pt-12 flex flex-col gap-4 reveal">
+      <p class="slide-chapter">The premise</p>
+      <p class="slide-prose">
+        We've gotten fast at writing code. Reviewing it hasn't kept up. Pull requests are still reviewed the same way they always have been — scrolling through file diffs in whatever order GitHub decides to show them, with no grouping, no context, and no sense of which changes depend on which. It works, but it's slow, and it's easy to miss things.
+      </p>
+      <p class="slide-prose">
+        You paste a PR URL; Gnosis reads the diff, groups related changes, and presents them as an ordered slideshow. Foundation changes first, then the features built on top, then tests and config. Each slide has a short explanation of <em>why</em> the change exists, the relevant diff, and optionally a diagram. The goal is to walk you through the change the way the author understands it, not the way the filesystem happens to order it.
+      </p>
+    </section>
+
+    <!-- Pull-quote — the page's one moment of breath between premise and chapters -->
+    <blockquote class="pull-quote reveal">
+      You read context before consequences.
+    </blockquote>
+
+    <!-- TOC -->
+    <nav aria-label="Sections" class="hairline pt-12 flex flex-col gap-4 reveal">
+      <p class="slide-chapter">Contents</p>
+      <ul class="toc">
+        {sections.map((s) => (
+          <li>
+            <a href={`#${s.id}`}>
+              <span>{s.num}</span>
+              <span>{s.title}</span>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+
+    <!-- Themed feature sections -->
+    {sections.map((s) => (
+      <section id={s.id} class="hairline pt-12 flex flex-col gap-6 scroll-mt-8 reveal">
+        <header class="flex flex-col gap-3">
+          <div class="flex items-baseline gap-3">
+            <span class="slide-chapter">{s.num}</span>
+            <h2 class="editorial-heading">{s.title}</h2>
+          </div>
+          {s.intro && <p class="slide-prose">{s.intro}</p>}
+        </header>
+        <ul class="flex flex-col gap-4 list-none p-0 m-0">
+          {s.features.map((f) => (
+            <li class="slide-prose">
+              <span class="editorial-label">{f.label}.</span> {f.body}
+            </li>
+          ))}
+        </ul>
+      </section>
+    ))}
+
+    <!-- Repeated CTA — for readers sold mid-page -->
+    <section class="hairline pt-12 flex flex-col gap-4 reveal">
+      <p class="slide-chapter">Get it</p>
+      <div class="flex flex-wrap items-center gap-3">
+        <a
+          class="btn-ink"
+          href="https://github.com/oddur/gnosis/releases/latest"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Download for macOS
+        </a>
+        <a
+          class="btn-quiet"
+          href="https://github.com/oddur/gnosis"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          View on GitHub
+        </a>
+      </div>
+      <p class="slide-meta">
+        Or via Homebrew:
+        <span class="code-pill">
+          <code>brew tap oddur/gnosis &amp;&amp; brew install --cask gnosis</code>
+          <button
+            type="button"
+            data-copy="brew tap oddur/gnosis && brew install --cask gnosis"
+          >
+            copy
+          </button>
+        </span>
+      </p>
+    </section>
+
+    <!-- Getting started — the post-CTA "now what?" moment. Three
+         concrete steps, sequenced numerically using the same chapter
+         vocabulary as the rest of the page. Sets the expectation that
+         the path is short and well-marked. -->
+    <section class="hairline pt-12 flex flex-col gap-6 reveal">
+      <header class="flex flex-col gap-3">
+        <p class="slide-chapter">Getting started</p>
+        <p class="slide-prose">
+          From clean install to first review in about five minutes.
+        </p>
+      </header>
+      <ol class="flex flex-col gap-5 list-none p-0 m-0">
+        <li class="slide-prose flex gap-4">
+          <span class="slide-chapter shrink-0 pt-1">01</span>
+          <span>
+            <span class="editorial-label">Install a CLI.</span> Gnosis uses one you already have, or one you install once.
+            <a class="link-claret" href="https://claude.ai/code" target="_blank" rel="noopener noreferrer">Claude Code</a>
+            (then <code>claude auth</code>) or
+            <a class="link-claret" href="https://github.com/google-gemini/gemini-cli" target="_blank" rel="noopener noreferrer">Gemini CLI</a>.
+          </span>
+        </li>
+        <li class="slide-prose flex gap-4">
+          <span class="slide-chapter shrink-0 pt-1">02</span>
+          <span>
+            <span class="editorial-label">Install Gnosis.</span> Download from the releases page above, or
+            <span class="code-pill">
+              <code>brew tap oddur/gnosis &amp;&amp; brew install --cask gnosis</code>
+            </span>
+          </span>
+        </li>
+        <li class="slide-prose flex gap-4">
+          <span class="slide-chapter shrink-0 pt-1">03</span>
+          <span>
+            <span class="editorial-label">Sign in and paste a PR URL.</span> First launch opens a GitHub OAuth flow — or paste a PAT if your org blocks it. Drop in a PR URL and your first review starts in seconds.
+          </span>
+        </li>
+      </ol>
+      <p class="slide-prose">
+        Reviews take 2–4 minutes the first time. After that, turn on Proactive mode and your team's PRs will be waiting when you open the app.
+      </p>
+    </section>
+
+    <!-- Footer -->
+    <footer class="hairline pt-8 flex flex-col gap-2 slide-meta reveal">
+      <p>
+        <a class="link-claret" href="https://github.com/oddur/gnosis" target="_blank" rel="noopener noreferrer">github.com/oddur/gnosis</a>
+        · MIT licence
+      </p>
+      <p>An experiment in changing how code review feels.</p>
+    </footer>
+
+    <!-- Tiny inline page script. No bundler, no framework — one
+         IntersectionObserver to fade-in scrolled-to sections, one
+         click handler for the install-line copy button. Works even
+         if JS fails: the reduced-motion CSS rule makes .reveal
+         visible by default, and the brew incantation is selectable
+         text users can ⌘C themselves. -->
+    <script is:inline>
+      // Reveal sections as they scroll into view. Once-only — the
+      // observer stops watching after the first reveal so there's no
+      // idle work after the page settles.
+      const io = new IntersectionObserver(
+        (entries) => {
+          for (const e of entries) {
+            if (e.isIntersecting) {
+              e.target.classList.add('in-view');
+              io.unobserve(e.target);
+            }
+          }
+        },
+        { threshold: 0.15, rootMargin: '0px 0px -10% 0px' }
+      );
+      document.querySelectorAll('.reveal').forEach((el) => io.observe(el));
+
+      // Install-line copy. Brief opacity fade between "copy" and
+      // "copied" — the editorial register doesn't want a hard swap.
+      document.querySelectorAll('button[data-copy]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const text = btn.getAttribute('data-copy') || '';
+          navigator.clipboard.writeText(text).then(() => {
+            const original = btn.textContent;
+            btn.style.opacity = '0';
+            setTimeout(() => {
+              btn.textContent = 'copied';
+              btn.style.opacity = '1';
+            }, 120);
+            setTimeout(() => {
+              btn.style.opacity = '0';
+              setTimeout(() => {
+                btn.textContent = original;
+                btn.style.opacity = '1';
+              }, 120);
+            }, 1400);
+          });
+        });
+      });
+    </script>
+  </main>
+</Base>

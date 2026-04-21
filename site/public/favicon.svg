@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="6" fill="oklch(0.985 0.005 75)"/>
+  <text x="16" y="23" text-anchor="middle"
+    font-family="Fraunces, 'Source Serif 4', Georgia, serif"
+    font-size="22" font-weight="500"
+    fill="oklch(0.4 0.12 15)">g</text>
+</svg>
