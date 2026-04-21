@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from 'react-resizable-panels';
-import { MessageCircle, MessageSquarePlus } from 'lucide-react';
+import { Check, Copy, MessageCircle, MessageSquarePlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DiffHunkGroup } from '@/components/DiffHunk';
 import { InteractiveDiffHunkGroup } from '@/components/InteractiveDiffHunk';
@@ -17,6 +17,7 @@ interface Props {
   slide: Slide;
   slideNumber: number;
   totalSlides: number;
+  prUrl: string;
   pendingComments?: PendingReviewComment[];
   commentCallbacks?: CommentCallbacks;
   diffLayout: Preferences['diffLayout'];
@@ -103,6 +104,56 @@ function splitIntoProseChecks(text: string): string[] {
 const clickableCheckClass =
   'cursor-pointer underline decoration-dotted decoration-[var(--ring)]/50 underline-offset-4 hover:decoration-[var(--ring)]';
 
+// Turn a review check into a ready-to-paste agent prompt. The agent
+// gets the bare question plus enough pointers to find the code, so
+// the user can paste into Claude Code / Cursor / similar and have it
+// investigate without further explanation.
+function buildAgentPrompt(
+  text: string,
+  slideTitle: string,
+  prUrl: string,
+  filePath?: string | null,
+  startLine?: number | null
+): string {
+  const lines = [
+    'Please investigate this code-review check against the PR and report whether the concern is valid, unclear, or handled.',
+    '',
+    `Check: ${text.trim()}`,
+    '',
+    `Slide: ${slideTitle}`,
+    `PR: ${prUrl}`,
+  ];
+  if (filePath) {
+    lines.push(`Location: ${filePath}${startLine ? `:${startLine}` : ''}`);
+  }
+  return lines.join('\n');
+}
+
+// Small icon button that copies the given text to clipboard and
+// flips to a check mark for ~1.4s as confirmation. Title attribute
+// doubles as the tooltip. Visible but quiet — brightens on hover
+// and focus-visible for keyboard users.
+function CopyPromptButton({ prompt, className = '' }: { prompt: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        void navigator.clipboard.writeText(prompt).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1400);
+        });
+      }}
+      title={copied ? 'Copied.' : 'Copy as agent prompt'}
+      aria-label={copied ? 'Copied' : 'Copy as agent prompt'}
+      className={`inline-flex items-center shrink-0 text-muted-foreground/70 hover:text-foreground focus-visible:text-foreground transition-colors align-middle ${className}`}
+    >
+      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+    </button>
+  );
+}
+
 // A check is only rendered as a clickable anchor when the
 // `{filePath, line}` actually resolves to a line inside this slide's
 // hunks. Prevents silent no-op clicks on hallucinated or out-of-slide
@@ -116,8 +167,16 @@ function renderReviewChecks(
   checks: ReviewCheck[] | undefined,
   reviewFocus: string | null,
   anchorable: Set<string>,
-  onCheckClick: (check: ReviewCheck) => void
+  onCheckClick: (check: ReviewCheck) => void,
+  slideTitle: string,
+  prUrl: string
 ): ReactNode {
+  const copyFor = (text: string, filePath?: string | null, startLine?: number | null) => (
+    <CopyPromptButton
+      prompt={buildAgentPrompt(text, slideTitle, prUrl, filePath, startLine)}
+      className="ml-2"
+    />
+  );
   // Multi-item structured: custom bulleted list, per-item click
   // affordance for anchored checks.
   if (checks && checks.length > 1) {
@@ -137,6 +196,7 @@ function renderReviewChecks(
                 >
                   {check.text}
                 </span>
+                {copyFor(check.text, check.filePath, check.startLine)}
               </li>
             );
           })}
@@ -173,6 +233,7 @@ function renderReviewChecks(
                 >
                   <Markdown className="review-focus-markdown">{sentence}</Markdown>
                 </span>
+                {copyFor(sentence, check.filePath, check.startLine)}
               </li>
             ))}
           </ul>
@@ -185,13 +246,14 @@ function renderReviewChecks(
           <p className="slide-prose">
             <span className="editorial-label">What to check.</span>
           </p>
-          <div className="slide-prose mt-1.5">
+          <div className="slide-prose mt-1.5 flex items-start gap-2">
             <span
               className={isClickable ? clickableCheckClass : ''}
               onClick={isClickable ? () => onCheckClick(check) : undefined}
             >
               <Markdown className="review-focus-markdown">{check.text}</Markdown>
             </span>
+            {copyFor(check.text, check.filePath, check.startLine)}
           </div>
         </>
       );
@@ -207,6 +269,7 @@ function renderReviewChecks(
             {check.text}
           </span>
         </span>
+        {copyFor(check.text, check.filePath, check.startLine)}
       </p>
     );
   }
@@ -236,6 +299,7 @@ function renderReviewChecks(
             {split.map((sentence, i) => (
               <li key={i} className="review-checks-item">
                 <Markdown className="review-focus-markdown">{sentence}</Markdown>
+                {copyFor(sentence)}
               </li>
             ))}
           </ul>
@@ -247,8 +311,9 @@ function renderReviewChecks(
         <p className="slide-prose">
           <span className="editorial-label">What to check.</span>
         </p>
-        <div className="slide-prose mt-1.5">
+        <div className="slide-prose mt-1.5 flex items-start gap-2">
           <Markdown className="review-focus-markdown">{focus}</Markdown>
+          {copyFor(focus)}
         </div>
       </>
     );
@@ -257,6 +322,7 @@ function renderReviewChecks(
     <p className="slide-prose">
       <span className="editorial-label">What to check.</span>{' '}
       <span className="review-focus-content">{focus}</span>
+      {copyFor(focus)}
     </p>
   );
 }
@@ -314,6 +380,7 @@ function DiffLayoutToggle({
 export function SlideView({
   slide,
   slideNumber,
+  prUrl,
   pendingComments,
   commentCallbacks,
   diffLayout,
@@ -466,7 +533,7 @@ export function SlideView({
       )}
 
       <div className="editorial-callout select-text">
-        {renderReviewChecks(slide.reviewChecks, slide.reviewFocus, anchorable, handleCheckClick)}
+        {renderReviewChecks(slide.reviewChecks, slide.reviewFocus, anchorable, handleCheckClick, slide.title, prUrl)}
         {anchorMiss && (
           <p className="slide-meta mt-2" role="status" aria-live="polite">
             Line {anchorMiss.line} in <span className="font-mono">{anchorMiss.filePath}</span> isn't in this slide's
