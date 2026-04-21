@@ -596,43 +596,39 @@ export async function getFileMetadata(
 
 const CLAUDE_MD_MAX_CHARS = 8 * 1024;
 const CLAUDE_ENTRY_SUMMARY_CHARS = 240;
+const CLAUDE_PATHS = {
+  md: 'CLAUDE.md',
+  root: '.claude',
+  commands: 'commands',
+  agents: 'agents',
+  skills: 'skills',
+} as const;
 
-async function listDirMarkdown(
+type DirEntry = { type: string; name: string; path: string };
+
+async function listDirEntries(
   octokit: Octokit,
   owner: string,
   repo: string,
   path: string,
-  ref: string
+  ref: string,
+  predicate: (entry: DirEntry) => boolean
 ): Promise<string[]> {
   try {
     const { data } = await octokit.repos.getContent({ owner, repo, path, ref });
     if (!Array.isArray(data)) return [];
-    return data.filter((e) => e.type === 'file' && e.name.endsWith('.md')).map((e) => e.path);
+    return data.filter(predicate).map((e) => e.path);
   } catch {
     return [];
   }
 }
 
-async function listDirSubdirs(
-  octokit: Octokit,
-  owner: string,
-  repo: string,
-  path: string,
-  ref: string
-): Promise<string[]> {
-  try {
-    const { data } = await octokit.repos.getContent({ owner, repo, path, ref });
-    if (!Array.isArray(data)) return [];
-    return data.filter((e) => e.type === 'dir').map((e) => e.path);
-  } catch {
-    return [];
-  }
-}
+const isMarkdown = (e: DirEntry) => e.type === 'file' && e.name.endsWith('.md');
+const isDir = (e: DirEntry) => e.type === 'dir';
 
-// Extract a short "what this does" summary from a markdown agent /
-// command file. Prefers a front-matter `description:` field, then the
-// first non-empty paragraph of body prose. Hard-truncated so a single
-// verbose file can't eat the context budget.
+// Prefers a front-matter `description:` field, then the first
+// non-empty paragraph. Hard-truncated so a verbose file can't eat
+// the context budget.
 function summariseClaudeEntry(content: string): string {
   const fmMatch = /^---\n([\s\S]*?)\n---\n?/.exec(content);
   let body = content;
@@ -655,21 +651,23 @@ function entryName(path: string): string {
   return base.replace(/\.md$/, '');
 }
 
-// Decide whether a .claude/ command/agent/skill is worth including
-// in the review prompt. Whitelist by positive signal — review
-// relevance, code quality, conventions, security, testing, design
-// systems, refactor tools. Entries that only teach how to use a
-// dev-environment tool (install this, configure that MCP, set an
-// API key) add noise without helping the reviewer.
-const CLAUDE_REVIEW_POSITIVE =
-  /\b(review|audit|lint|security|accessib|convention|coding\s*style|style\s*guide|architecture|refactor|critique|invariant|contract|type\s*safety|quality|design\s*(system|pattern|principle|quality)|correctness|harden|simplify|polish|distill|normalize|responsive|a11y|performance|optim|vulnerab|best\s*practice|anti[- ]?pattern|testing|test\s*strategy|naming\s*convention|frontend|ui\s+(design|component)|visual|typograph)\b/;
-
+// Whitelist of review-signal keywords. Expressed as an array so
+// adding / removing a term doesn't risk breaking regex escaping or
+// accidental alternation boundaries.
+const CLAUDE_REVIEW_KEYWORDS = [
+  'review', 'audit', 'lint', 'security', 'accessib', 'convention', 'coding\\s*style',
+  'style\\s*guide', 'architecture', 'refactor', 'critique', 'invariant', 'contract',
+  'type\\s*safety', 'quality', 'design\\s*(system|pattern|principle|quality)', 'correctness',
+  'harden', 'simplify', 'polish', 'distill', 'normalize', 'responsive', 'a11y', 'performance',
+  'optim', 'vulnerab', 'best\\s*practice', 'anti[- ]?pattern', 'testing', 'test\\s*strategy',
+  'naming\\s*convention', 'frontend', 'ui\\s+(design|component)', 'visual', 'typograph',
+];
+const CLAUDE_REVIEW_POSITIVE = new RegExp(`\\b(${CLAUDE_REVIEW_KEYWORDS.join('|')})\\b`);
 const CLAUDE_REVIEW_HARD_NEGATIVE = /\bmcp\b|\bapi[- ]?key\b/;
 
 function isReviewRelevantClaudeEntry(name: string, content: string): boolean {
-  // Only look at name + the first chunk of content — summaries are
-  // usually up top (front matter / first paragraph) and a 20 KB body
-  // dragging in a passing positive match isn't a good signal.
+  // Scan name + first 2 KB only — summaries are up top, and a pass
+  // match buried 20 KB into a body isn't a trustworthy signal.
   const lower = (name + ' ' + content.slice(0, 2000)).toLowerCase();
   if (CLAUDE_REVIEW_HARD_NEGATIVE.test(lower)) return false;
   return CLAUDE_REVIEW_POSITIVE.test(lower);
@@ -706,24 +704,45 @@ async function fetchSummarisedEntries(
 }
 
 // Probe the PR repo for Claude-Code conventions at the given ref.
-// Returns `null` when nothing is found so callers can skip the
-// prompt/UI surface cleanly. All errors are swallowed — a missing
-// `.claude/` directory or a 403 just means "no conventions here",
-// never a generation failure.
+// Returns `null` when nothing is found. All errors swallow to null
+// so a missing `.claude/` or a 403 never fails the review.
 export async function getProjectClaudeContext(
   octokit: Octokit,
   owner: string,
   repo: string,
   ref: string
 ): Promise<ProjectClaudeContext | null> {
-  const [claudeMdRaw, commandPaths, agentPaths, skillDirs] = await Promise.all([
-    getFileContent(octokit, owner, repo, 'CLAUDE.md', ref),
-    listDirMarkdown(octokit, owner, repo, '.claude/commands', ref),
-    listDirMarkdown(octokit, owner, repo, '.claude/agents', ref),
-    listDirSubdirs(octokit, owner, repo, '.claude/skills', ref),
+  // First pass: CLAUDE.md + one listing of `.claude/` itself. Skips
+  // the three subdir requests on repos that have no Claude setup
+  // (the common case in public repos).
+  const [claudeMdRaw, claudeRootEntries] = await Promise.all([
+    getFileContent(octokit, owner, repo, CLAUDE_PATHS.md, ref),
+    listDirEntries(octokit, owner, repo, CLAUDE_PATHS.root, ref, isDir),
   ]);
 
-  const hasAny = !!claudeMdRaw || commandPaths.length > 0 || agentPaths.length > 0 || skillDirs.length > 0;
+  const hasRoot = claudeRootEntries.some((p) => p.endsWith(`/${CLAUDE_PATHS.commands}`)
+    || p.endsWith(`/${CLAUDE_PATHS.agents}`)
+    || p.endsWith(`/${CLAUDE_PATHS.skills}`));
+
+  // Second pass: fetch the subdir listings, but only for ones that
+  // actually exist in the root listing.
+  const hasCommands = claudeRootEntries.some((p) => p.endsWith(`/${CLAUDE_PATHS.commands}`));
+  const hasAgents = claudeRootEntries.some((p) => p.endsWith(`/${CLAUDE_PATHS.agents}`));
+  const hasSkills = claudeRootEntries.some((p) => p.endsWith(`/${CLAUDE_PATHS.skills}`));
+
+  const [commandPaths, agentPaths, skillDirs] = await Promise.all([
+    hasCommands
+      ? listDirEntries(octokit, owner, repo, `${CLAUDE_PATHS.root}/${CLAUDE_PATHS.commands}`, ref, isMarkdown)
+      : Promise.resolve<string[]>([]),
+    hasAgents
+      ? listDirEntries(octokit, owner, repo, `${CLAUDE_PATHS.root}/${CLAUDE_PATHS.agents}`, ref, isMarkdown)
+      : Promise.resolve<string[]>([]),
+    hasSkills
+      ? listDirEntries(octokit, owner, repo, `${CLAUDE_PATHS.root}/${CLAUDE_PATHS.skills}`, ref, isDir)
+      : Promise.resolve<string[]>([]),
+  ]);
+
+  const hasAny = !!claudeMdRaw || hasRoot;
   if (!hasAny) return null;
 
   let projectInstructions: string | null = null;

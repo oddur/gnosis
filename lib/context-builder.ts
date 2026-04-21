@@ -146,14 +146,6 @@ ${expandedDiff}
     neighborStr += '</neighbor_files>';
   }
 
-  // Step 1b: Drop the Claude project-context block. Helpful but not
-  // load-bearing — the diff and file contents carry the actual
-  // review signal.
-  if (totalSize() > MAX_CHARS && claudeContextSection) {
-    console.warn('[context-builder] Context too large — dropping project Claude context');
-    claudeContextSection = '';
-  }
-
   // Step 2: Truncate file contents to 200 lines each
   if (totalSize() > MAX_CHARS) {
     console.warn('[context-builder] Context too large — truncating file contents to 200 lines each');
@@ -174,6 +166,14 @@ ${expandedDiff}
   if (totalSize() > MAX_CHARS) {
     console.warn('[context-builder] Still too large — dropping neighbor files');
     neighborStr = '<neighbor_files>\n<!-- omitted: context budget exceeded -->\n</neighbor_files>';
+  }
+
+  // Step 3b: Drop the Claude project-context block. Small but not
+  // load-bearing vs. the diff and file contents carrying the actual
+  // review signal.
+  if (totalSize() > MAX_CHARS && claudeContextSection) {
+    console.warn('[context-builder] Still too large — dropping project Claude context');
+    claudeContextSection = '';
   }
 
   // Step 4: Drop file contents entirely (keep only the diff)
