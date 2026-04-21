@@ -1,6 +1,16 @@
 import { Octokit } from '@octokit/rest';
 import { getProvider } from './provider';
-import type { ChangedFile, CiCheck, FileMetadata, PrMetadata, PrSearchResult, Provider, RepoSearchResult, ReviewSummary } from './types';
+import type {
+  ChangedFile,
+  CiCheck,
+  FileMetadata,
+  PrMetadata,
+  PrSearchResult,
+  ProjectClaudeContext,
+  Provider,
+  RepoSearchResult,
+  ReviewSummary,
+} from './types';
 
 export function parsePrUrl(url: string): { owner: string; repo: string; pullNumber: number } {
   const match = url.match(/github\.com\/([^/]+)\/([^/]+)\/pulls?\/(\d+)/);
@@ -580,4 +590,206 @@ export async function getFileMetadata(
   }
 
   return metadata;
+}
+
+// ── Claude Code project conventions ─────────────────────────────
+
+const CLAUDE_MD_MAX_CHARS = 8 * 1024;
+const CLAUDE_ENTRY_SUMMARY_CHARS = 240;
+const CLAUDE_PATHS = {
+  md: 'CLAUDE.md',
+  root: '.claude',
+  commands: 'commands',
+  agents: 'agents',
+  skills: 'skills',
+} as const;
+
+type DirEntry = { type: string; name: string; path: string };
+
+async function listDirEntries(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  path: string,
+  ref: string,
+  predicate: (entry: DirEntry) => boolean
+): Promise<string[]> {
+  try {
+    const { data } = await octokit.repos.getContent({ owner, repo, path, ref });
+    if (!Array.isArray(data)) return [];
+    return data.filter(predicate).map((e) => e.path);
+  } catch {
+    return [];
+  }
+}
+
+const isMarkdown = (e: DirEntry) => e.type === 'file' && e.name.endsWith('.md');
+const isDir = (e: DirEntry) => e.type === 'dir';
+
+// Prefers a front-matter `description:` field, then the first
+// non-empty paragraph. Hard-truncated so a verbose file can't eat
+// the context budget.
+function summariseClaudeEntry(content: string): string {
+  const fmMatch = /^---\n([\s\S]*?)\n---\n?/.exec(content);
+  let body = content;
+  if (fmMatch) {
+    body = content.slice(fmMatch[0].length);
+    const descMatch = /^description:\s*(.+)$/m.exec(fmMatch[1]);
+    if (descMatch) {
+      return descMatch[1].trim().slice(0, CLAUDE_ENTRY_SUMMARY_CHARS);
+    }
+  }
+  const firstPara = body
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .find((p) => p.length > 0 && !p.startsWith('#'));
+  return (firstPara ?? body.trim()).replace(/\s+/g, ' ').slice(0, CLAUDE_ENTRY_SUMMARY_CHARS);
+}
+
+function entryName(path: string): string {
+  const base = path.split('/').pop() ?? path;
+  return base.replace(/\.md$/, '');
+}
+
+// Whitelist of review-signal keywords. Expressed as an array so
+// adding / removing a term doesn't risk breaking regex escaping or
+// accidental alternation boundaries.
+const CLAUDE_REVIEW_KEYWORDS = [
+  'review', 'audit', 'lint', 'security', 'accessib', 'convention', 'coding\\s*style',
+  'style\\s*guide', 'architecture', 'refactor', 'critique', 'invariant', 'contract',
+  'type\\s*safety', 'quality', 'design\\s*(system|pattern|principle|quality)', 'correctness',
+  'harden', 'simplify', 'polish', 'distill', 'normalize', 'responsive', 'a11y', 'performance',
+  'optim', 'vulnerab', 'best\\s*practice', 'anti[- ]?pattern', 'testing', 'test\\s*strategy',
+  'naming\\s*convention', 'frontend', 'ui\\s+(design|component)', 'visual', 'typograph',
+];
+const CLAUDE_REVIEW_POSITIVE = new RegExp(`\\b(${CLAUDE_REVIEW_KEYWORDS.join('|')})\\b`);
+const CLAUDE_REVIEW_HARD_NEGATIVE = /\bmcp\b|\bapi[- ]?key\b/;
+
+function isReviewRelevantClaudeEntry(name: string, content: string): boolean {
+  // Scan name + first 2 KB only — summaries are up top, and a pass
+  // match buried 20 KB into a body isn't a trustworthy signal.
+  const lower = (name + ' ' + content.slice(0, 2000)).toLowerCase();
+  if (CLAUDE_REVIEW_HARD_NEGATIVE.test(lower)) return false;
+  return CLAUDE_REVIEW_POSITIVE.test(lower);
+}
+
+async function fetchSummarisedEntries(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  paths: string[],
+  ref: string,
+  filter: (name: string, content: string) => boolean = () => true
+): Promise<{ included: { name: string; summary: string }[]; droppedCount: number }> {
+  const included: { name: string; summary: string }[] = [];
+  let droppedCount = 0;
+  const concurrency = 5;
+  for (let i = 0; i < paths.length; i += concurrency) {
+    const batch = paths.slice(i, i + concurrency);
+    await Promise.all(
+      batch.map(async (p) => {
+        const content = await getFileContent(octokit, owner, repo, p, ref);
+        if (!content) return;
+        const name = entryName(p);
+        if (!filter(name, content)) {
+          droppedCount += 1;
+          return;
+        }
+        included.push({ name, summary: summariseClaudeEntry(content) });
+      })
+    );
+  }
+  included.sort((a, b) => a.name.localeCompare(b.name));
+  return { included, droppedCount };
+}
+
+// Probe the PR repo for Claude-Code conventions at the given ref.
+// Returns `null` when nothing is found. All errors swallow to null
+// so a missing `.claude/` or a 403 never fails the review.
+export async function getProjectClaudeContext(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  ref: string
+): Promise<ProjectClaudeContext | null> {
+  // First pass: CLAUDE.md + one listing of `.claude/` itself. Skips
+  // the three subdir requests on repos that have no Claude setup
+  // (the common case in public repos).
+  const [claudeMdRaw, claudeRootEntries] = await Promise.all([
+    getFileContent(octokit, owner, repo, CLAUDE_PATHS.md, ref),
+    listDirEntries(octokit, owner, repo, CLAUDE_PATHS.root, ref, isDir),
+  ]);
+
+  const hasRoot = claudeRootEntries.some((p) => p.endsWith(`/${CLAUDE_PATHS.commands}`)
+    || p.endsWith(`/${CLAUDE_PATHS.agents}`)
+    || p.endsWith(`/${CLAUDE_PATHS.skills}`));
+
+  // Second pass: fetch the subdir listings, but only for ones that
+  // actually exist in the root listing.
+  const hasCommands = claudeRootEntries.some((p) => p.endsWith(`/${CLAUDE_PATHS.commands}`));
+  const hasAgents = claudeRootEntries.some((p) => p.endsWith(`/${CLAUDE_PATHS.agents}`));
+  const hasSkills = claudeRootEntries.some((p) => p.endsWith(`/${CLAUDE_PATHS.skills}`));
+
+  const [commandPaths, agentPaths, skillDirs] = await Promise.all([
+    hasCommands
+      ? listDirEntries(octokit, owner, repo, `${CLAUDE_PATHS.root}/${CLAUDE_PATHS.commands}`, ref, isMarkdown)
+      : Promise.resolve<string[]>([]),
+    hasAgents
+      ? listDirEntries(octokit, owner, repo, `${CLAUDE_PATHS.root}/${CLAUDE_PATHS.agents}`, ref, isMarkdown)
+      : Promise.resolve<string[]>([]),
+    hasSkills
+      ? listDirEntries(octokit, owner, repo, `${CLAUDE_PATHS.root}/${CLAUDE_PATHS.skills}`, ref, isDir)
+      : Promise.resolve<string[]>([]),
+  ]);
+
+  const hasAny = !!claudeMdRaw || hasRoot;
+  if (!hasAny) return null;
+
+  let projectInstructions: string | null = null;
+  let projectInstructionsBytes: number | undefined;
+  if (claudeMdRaw) {
+    projectInstructionsBytes = Buffer.byteLength(claudeMdRaw, 'utf-8');
+    projectInstructions =
+      claudeMdRaw.length > CLAUDE_MD_MAX_CHARS
+        ? claudeMdRaw.slice(0, CLAUDE_MD_MAX_CHARS) + `\n\n… [truncated, original ${projectInstructionsBytes} bytes]`
+        : claudeMdRaw;
+  }
+
+  const [cmdResult, agentResult, skillResult] = await Promise.all([
+    fetchSummarisedEntries(octokit, owner, repo, commandPaths, ref, isReviewRelevantClaudeEntry),
+    fetchSummarisedEntries(octokit, owner, repo, agentPaths, ref, isReviewRelevantClaudeEntry),
+    fetchSummarisedEntries(
+      octokit,
+      owner,
+      repo,
+      skillDirs.map((d) => `${d}/SKILL.md`),
+      ref,
+      isReviewRelevantClaudeEntry
+    ),
+  ]);
+
+  const totalDropped = cmdResult.droppedCount + agentResult.droppedCount + skillResult.droppedCount;
+  if (totalDropped > 0) {
+    console.log(
+      `[claude-context] Filtered out ${totalDropped} non-review entries (commands: ${cmdResult.droppedCount}, agents: ${agentResult.droppedCount}, skills: ${skillResult.droppedCount})`
+    );
+  }
+
+  // If post-filter nothing of substance remains (no CLAUDE.md and
+  // every command/agent/skill got dropped as non-review), drop the
+  // whole context so the UI doesn't render an empty disclosure.
+  const postFilterHasAny =
+    !!projectInstructions ||
+    cmdResult.included.length > 0 ||
+    agentResult.included.length > 0 ||
+    skillResult.included.length > 0;
+  if (!postFilterHasAny) return null;
+
+  return {
+    projectInstructions,
+    projectInstructionsBytes,
+    commands: cmdResult.included,
+    agents: agentResult.included,
+    skills: skillResult.included,
+  };
 }

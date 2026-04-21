@@ -1,8 +1,88 @@
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Markdown } from '@/components/Markdown';
 import { riskConfig, safeConfigLookup } from '@/lib/constants';
-import type { PrStatus, ReviewGuide } from '@/lib/types';
+import type { PrStatus, ProjectClaudeContext, ReviewGuide } from '@/lib/types';
+
+// Quiet disclosure used throughout the overview for PR description,
+// web sources, project conventions, and remaining-files — all share
+// the same mono title + chevron affordance and a left-rule content
+// frame. Extracted so adding a new section stays a one-liner and all
+// disclosures move together stylistically.
+function CollapsibleSection({
+  title,
+  delay,
+  className = '',
+  children,
+}: {
+  title: ReactNode;
+  delay?: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section
+      className={`animate-fade-in-up ${className}`}
+      style={delay ? { animationDelay: delay } : undefined}
+    >
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="slide-meta hover:text-foreground transition-colors flex items-center gap-1.5"
+      >
+        {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+        {title}
+      </button>
+      {open && children}
+    </section>
+  );
+}
+
+// CLAUDE.md / .claude/ conventions that were folded into the review
+// prompt. Shown so the reviewer can see what the AI was aware of —
+// no external links; these files belong to the PR repo, not the web.
+function ProjectClaudeContextSection({ ctx }: { ctx: ProjectClaudeContext }) {
+  const parts: string[] = [];
+  if (ctx.projectInstructions) parts.push('CLAUDE.md');
+  if (ctx.commands.length) parts.push(`${ctx.commands.length} command${ctx.commands.length === 1 ? '' : 's'}`);
+  if (ctx.agents.length) parts.push(`${ctx.agents.length} agent${ctx.agents.length === 1 ? '' : 's'}`);
+  if (ctx.skills.length) parts.push(`${ctx.skills.length} skill${ctx.skills.length === 1 ? '' : 's'}`);
+  if (parts.length === 0) return null;
+
+  return (
+    <CollapsibleSection title={`Project Claude context (${parts.join(' · ')})`} delay="210ms">
+      <ul className="mt-3 ml-4 flex flex-col gap-1.5 border-l border-border pl-4">
+        {ctx.projectInstructions && (
+          <li className="text-sm text-muted-foreground">
+            <span className="text-foreground">CLAUDE.md</span>
+            {ctx.projectInstructionsBytes
+              ? ` — ${(ctx.projectInstructionsBytes / 1024).toFixed(1)} KB of project instructions`
+              : ' — project instructions'}
+          </li>
+        )}
+        {ctx.commands.map((c) => (
+          <li key={`cmd-${c.name}`} className="text-sm text-muted-foreground">
+            <span className="text-foreground font-mono">/{c.name}</span>
+            {c.summary && ` — ${c.summary}`}
+          </li>
+        ))}
+        {ctx.agents.map((a) => (
+          <li key={`ag-${a.name}`} className="text-sm text-muted-foreground">
+            <span className="text-foreground">agent: {a.name}</span>
+            {a.summary && ` — ${a.summary}`}
+          </li>
+        ))}
+        {ctx.skills.map((s) => (
+          <li key={`sk-${s.name}`} className="text-sm text-muted-foreground">
+            <span className="text-foreground">skill: {s.name}</span>
+            {s.summary && ` — ${s.summary}`}
+          </li>
+        ))}
+      </ul>
+    </CollapsibleSection>
+  );
+}
 
 interface Props {
   review: ReviewGuide;
@@ -119,9 +199,6 @@ function StatusLine({ status }: { status: PrStatus | null }) {
 
 export function OverviewSlide({ review, prStatus, onNavigate }: Props) {
   const risk = safeConfigLookup(riskConfig, review.riskLevel, riskConfig.low);
-  const [descOpen, setDescOpen] = useState(false);
-  const [sourcesOpen, setSourcesOpen] = useState(false);
-  const [remainingOpen, setRemainingOpen] = useState(false);
 
   // Files that appear in changedFiles but not in any slide's
   // affectedFiles. These are the "remaining changes" — files in the
@@ -172,51 +249,33 @@ export function OverviewSlide({ review, prStatus, onNavigate }: Props) {
           </p>
         </section>
 
-        {/* PR Description — collapsible inline disclosure. */}
         {review.prDescription && (
-          <section className="animate-fade-in-up" style={{ animationDelay: '120ms' }}>
-            <button
-              onClick={() => setDescOpen((v) => !v)}
-              className="slide-meta hover:text-foreground transition-colors flex items-center gap-1.5"
-            >
-              {descOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-              PR description
-            </button>
-            {descOpen && (
-              <div className="mt-3 ml-4 max-h-64 overflow-y-auto border-l border-border pl-4">
-                <Markdown className="text-sm text-muted-foreground leading-relaxed">{review.prDescription}</Markdown>
-              </div>
-            )}
-          </section>
+          <CollapsibleSection title="PR description" delay="120ms">
+            <div className="mt-3 ml-4 max-h-64 overflow-y-auto border-l border-border pl-4">
+              <Markdown className="text-sm text-muted-foreground leading-relaxed">{review.prDescription}</Markdown>
+            </div>
+          </CollapsibleSection>
         )}
 
-        {/* Web Sources — same pattern as PR description. */}
         {review.webSources && review.webSources.length > 0 && (
-          <section className="animate-fade-in-up" style={{ animationDelay: '180ms' }}>
-            <button
-              onClick={() => setSourcesOpen((v) => !v)}
-              className="slide-meta hover:text-foreground transition-colors flex items-center gap-1.5"
-            >
-              {sourcesOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-              Web sources ({review.webSources.length})
-            </button>
-            {sourcesOpen && (
-              <ul className="mt-3 ml-4 flex flex-col gap-1.5 border-l border-border pl-4">
-                {review.webSources.map((source, i) => (
-                  <li key={i}>
-                    <button
-                      onClick={() => window.electronAPI.openExternal(source.url)}
-                      className="text-sm text-[var(--ring)] hover:underline truncate max-w-full text-left"
-                      title={source.url}
-                    >
-                      {source.title || source.url}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+          <CollapsibleSection title={`Web sources (${review.webSources.length})`} delay="180ms">
+            <ul className="mt-3 ml-4 flex flex-col gap-1.5 border-l border-border pl-4">
+              {review.webSources.map((source, i) => (
+                <li key={i}>
+                  <button
+                    onClick={() => window.electronAPI.openExternal(source.url)}
+                    className="text-sm text-[var(--ring)] hover:underline truncate max-w-full text-left"
+                    title={source.url}
+                  >
+                    {source.title || source.url}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </CollapsibleSection>
         )}
+
+        {review.projectClaudeContext && <ProjectClaudeContextSection ctx={review.projectClaudeContext} />}
 
         {/* Start reading — the explicit "click here to begin"
             affordance. The bottom nav also surfaces this as
@@ -245,30 +304,22 @@ export function OverviewSlide({ review, prStatus, onNavigate }: Props) {
             distract, but visible enough that the reviewer knows
             they exist and can inspect them. Ensures 100% coverage. */}
         {remainingFiles.length > 0 && (
-          <section
-            className="animate-fade-in-up pt-6 mt-2 border-t border-border"
-            style={{ animationDelay: '300ms' }}
+          <CollapsibleSection
+            title={`${remainingFiles.length} ${remainingFiles.length === 1 ? 'file' : 'files'} not featured in the walkthrough`}
+            delay="300ms"
+            className="pt-6 mt-2 border-t border-border"
           >
-            <button
-              onClick={() => setRemainingOpen((v) => !v)}
-              className="slide-meta hover:text-foreground transition-colors flex items-center gap-1.5"
-            >
-              {remainingOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-              {remainingFiles.length} {remainingFiles.length === 1 ? 'file' : 'files'} not featured in the walkthrough
-            </button>
-            {remainingOpen && (
-              <ul className="mt-3 ml-4 flex flex-col gap-1 border-l border-border pl-4">
-                {remainingFiles.map((f) => (
-                  <li key={f.filename} className="slide-meta flex items-center gap-3">
-                    <span className="truncate">{f.filename}</span>
-                    <span className="shrink-0 opacity-60">
-                      +{f.additions} −{f.deletions}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+            <ul className="mt-3 ml-4 flex flex-col gap-1 border-l border-border pl-4">
+              {remainingFiles.map((f) => (
+                <li key={f.filename} className="slide-meta flex items-center gap-3">
+                  <span className="truncate">{f.filename}</span>
+                  <span className="shrink-0 opacity-60">
+                    +{f.additions} −{f.deletions}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </CollapsibleSection>
         )}
       </div>
     </div>

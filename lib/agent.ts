@@ -140,6 +140,14 @@ const CONCISE_SUFFIX = `
 
 IMPORTANT: Be concise. Keep narrative and reviewFocus under 2 sentences each. Omit contextSnippets entirely (use empty arrays). Limit diffHunkIds to the 5 most important hunk IDs per slide. Return only raw JSON starting with { and ending with }.`;
 
+const CLAUDE_CONTEXT_DIRECTIVE = `
+PROJECT CONVENTIONS — ACTIVE
+This repo ships its own Claude Code conventions under <project_claude_context>. Apply them:
+- Treat <project_instructions> (the repo's CLAUDE.md) as authoritative project norms. Flag diff changes that violate them.
+- If <custom_commands>, <custom_agents>, or <custom_skills> exist, they reveal domain workflows the team has built — weigh risks in light of those workflows (e.g. a repo with a "security-audit" skill probably cares about auth changes more than average).
+- Do NOT invent rules. Only cite conventions that are literally present in <project_claude_context>.
+`;
+
 const EDUCATION_DIRECTIVE = `
 EDUCATION MODE — ACTIVE
 The reviewer may not be familiar with every concept the code assumes knowledge of. Where a slide's narrative references a named pattern, domain concept, or non-obvious library primitive, include a short entry in "educationNotes" for that slide explaining it.
@@ -206,6 +214,9 @@ export interface GenerateReviewGuideOptions {
   reviewSuggestions?: boolean;
   webResearch?: boolean;
   educationMode?: boolean;
+  /** Set when the contextPackage already includes a `<project_claude_context>` block.
+   *  Only effect is appending the PROJECT CONVENTIONS directive so the model applies it. */
+  hasClaudeContext?: boolean;
   mcpConfigPath?: string;
   allowedTools?: string[];
   onChunk?: (chunk: string, isThinking: boolean) => void;
@@ -225,6 +236,7 @@ export async function generateReviewGuide(opts: GenerateReviewGuideOptions): Pro
     reviewSuggestions = true,
     webResearch = false,
     educationMode = false,
+    hasClaudeContext = false,
     mcpConfigPath,
     allowedTools,
     onChunk,
@@ -256,10 +268,11 @@ export async function generateReviewGuide(opts: GenerateReviewGuideOptions): Pro
 
     const webResearchDirective = webResearch ? WEB_RESEARCH_DIRECTIVE : '';
     const educationDirective = educationMode ? EDUCATION_DIRECTIVE : '';
+    const claudeContextDirective = hasClaudeContext ? CLAUDE_CONTEXT_DIRECTIVE : '';
 
     // Signal boost is always on — deprioritize formatting and
     // import-only changes, emphasize design decisions.
-    const baseSystem = `${FOCUS_DIRECTIVE}\n${webResearchDirective}${educationDirective}${SYSTEM_PROMPT}${reviewSuggestionsDirective}`;
+    const baseSystem = `${FOCUS_DIRECTIVE}\n${webResearchDirective}${educationDirective}${claudeContextDirective}${SYSTEM_PROMPT}${reviewSuggestionsDirective}`;
 
     const system = customInstructions
       ? `${baseSystem}\n\nIMPORTANT — CUSTOM REVIEWER INSTRUCTIONS:\nThe reviewer has provided the following instructions. These take precedence over the default writing style and tone guidelines above. Adapt your narrative, reviewFocus, summary, and all prose fields accordingly.\n\n<instructions>\n${customInstructions}\n</instructions>`
@@ -485,6 +498,7 @@ export interface GenerateSlideOptions {
   reviewSuggestions?: boolean;
   thinking?: boolean;
   educationMode?: boolean;
+  hasClaudeContext?: boolean;
   onChunk?: (chunk: string, isThinking: boolean) => void;
   signal?: AbortSignal;
 }
@@ -498,6 +512,7 @@ export async function generateSlide(opts: GenerateSlideOptions): Promise<WriterS
     reviewSuggestions = true,
     thinking = false,
     educationMode = false,
+    hasClaudeContext = false,
     onChunk,
     signal,
   } = opts;
@@ -507,8 +522,9 @@ export async function generateSlide(opts: GenerateSlideOptions): Promise<WriterS
     ? ''
     : '\nSet "reviewFocus" to null. Do not generate review focus content.\n';
   const educationDirective = educationMode ? EDUCATION_DIRECTIVE : '';
+  const claudeContextDirective = hasClaudeContext ? CLAUDE_CONTEXT_DIRECTIVE : '';
 
-  let system = WRITER_SYSTEM + reviewSuggestionsDirective + educationDirective;
+  let system = WRITER_SYSTEM + reviewSuggestionsDirective + educationDirective + claudeContextDirective;
   if (instructions?.trim()) {
     system += `\n\nCUSTOM REVIEWER INSTRUCTIONS (take precedence over style guidelines):\n${instructions.trim()}`;
   }

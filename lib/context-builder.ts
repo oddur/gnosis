@@ -1,4 +1,4 @@
-import type { PrMetadata, ChangedFile, TopicPlan } from './types';
+import type { PrMetadata, ChangedFile, ProjectClaudeContext, TopicPlan } from './types';
 import type { IndexedHunk } from './diff-parse';
 
 const CHARS_PER_TOKEN = 4;
@@ -12,6 +12,37 @@ function truncateFileContent(content: string, maxLines: number): string {
   return lines.slice(0, maxLines).join('\n') + `\n... [truncated after ${maxLines} lines]`;
 }
 
+// Render the Claude-conventions block for the prompt. Returns empty
+// string when there's nothing to include — callers can concatenate
+// unconditionally. Omits inner tags with no content so the prompt
+// isn't cluttered by empty envelopes.
+function renderClaudeContextSection(ctx: ProjectClaudeContext | null | undefined): string {
+  if (!ctx) return '';
+  const parts: string[] = [];
+  if (ctx.projectInstructions) {
+    parts.push(`<project_instructions source="CLAUDE.md">\n${ctx.projectInstructions}\n</project_instructions>`);
+  }
+  if (ctx.commands.length > 0) {
+    parts.push(
+      '<custom_commands>\n' +
+        ctx.commands.map((c) => `- /${c.name} — ${c.summary}`).join('\n') +
+        '\n</custom_commands>'
+    );
+  }
+  if (ctx.agents.length > 0) {
+    parts.push(
+      '<custom_agents>\n' + ctx.agents.map((a) => `- ${a.name} — ${a.summary}`).join('\n') + '\n</custom_agents>'
+    );
+  }
+  if (ctx.skills.length > 0) {
+    parts.push(
+      '<custom_skills>\n' + ctx.skills.map((s) => `- ${s.name} — ${s.summary}`).join('\n') + '\n</custom_skills>'
+    );
+  }
+  if (parts.length === 0) return '';
+  return '<project_claude_context>\n' + parts.join('\n\n') + '\n</project_claude_context>';
+}
+
 export function buildContextPackage(
   prData: PrMetadata,
   expandedDiff: string,
@@ -20,7 +51,8 @@ export function buildContextPackage(
   headFileContents: Record<string, string>,
   neighborFiles: Record<string, string>,
   hunkIndex: string,
-  excludedFilesSummary?: string
+  excludedFilesSummary?: string,
+  claudeContext?: ProjectClaudeContext | null
 ): string {
   const totalAdditions = changedFiles.reduce((s, f) => s + f.additions, 0);
   const totalDeletions = changedFiles.reduce((s, f) => s + f.deletions, 0);
@@ -32,6 +64,8 @@ Description: ${prData.description || '(no description)'}
 Base branch: ${prData.baseBranch}
 Files changed: ${changedFiles.length} | Lines added: ${totalAdditions} | Lines deleted: ${totalDeletions}
 </pr_metadata>`;
+
+  let claudeContextSection = renderClaudeContextSection(claudeContext);
 
   const diffSection = `<full_diff>
 ${expandedDiff}
@@ -70,6 +104,7 @@ ${expandedDiff}
   function totalSize(): number {
     return (
       metaSection.length +
+      (claudeContextSection ? claudeContextSection.length + 4 : 0) +
       excludedStr.length +
       4 +
       diffStr.length +
@@ -133,6 +168,14 @@ ${expandedDiff}
     neighborStr = '<neighbor_files>\n<!-- omitted: context budget exceeded -->\n</neighbor_files>';
   }
 
+  // Step 3b: Drop the Claude project-context block. Small but not
+  // load-bearing vs. the diff and file contents carrying the actual
+  // review signal.
+  if (totalSize() > MAX_CHARS && claudeContextSection) {
+    console.warn('[context-builder] Still too large — dropping project Claude context');
+    claudeContextSection = '';
+  }
+
   // Step 4: Drop file contents entirely (keep only the diff)
   if (totalSize() > MAX_CHARS) {
     console.warn('[context-builder] Still too large — dropping file contents, keeping diff only');
@@ -159,6 +202,7 @@ ${expandedDiff}
 
   const finalPackage =
     metaSection +
+    (claudeContextSection ? '\n\n' + claudeContextSection : '') +
     (excludedStr ? '\n\n' + excludedStr : '') +
     '\n\n' +
     diffStr +
@@ -190,6 +234,7 @@ export function buildPlannerContext(
   changedFiles: ChangedFile[],
   hunkIndex: string,
   excludedFilesSummary?: string,
+  claudeContext?: ProjectClaudeContext | null,
 ): string {
   const totalAdditions = changedFiles.reduce((s, f) => s + f.additions, 0);
   const totalDeletions = changedFiles.reduce((s, f) => s + f.deletions, 0);
@@ -202,6 +247,8 @@ Base branch: ${prData.baseBranch}
 Files changed: ${changedFiles.length} | Lines added: ${totalAdditions} | Lines deleted: ${totalDeletions}
 </pr_metadata>`;
 
+  const claudeSection = renderClaudeContextSection(claudeContext);
+  if (claudeSection) ctx += '\n\n' + claudeSection;
   if (excludedFilesSummary) ctx += '\n\n' + excludedFilesSummary;
   ctx += '\n\n' + hunkIndex;
 
@@ -222,6 +269,7 @@ export function buildTopicContext(
   prDescription: string,
   storyArc: string,
   allTopics: TopicPlan[],
+  claudeContext?: ProjectClaudeContext | null,
 ): string {
   const relevantHunks = topic.hunkIds
     .map((id) => hunkMap.get(id))
@@ -237,11 +285,12 @@ export function buildTopicContext(
     .map((t) => `- "${t.title}" (${t.slideType}): ${t.narrativeBrief}`)
     .join('\n');
 
+  const claudeSection = renderClaudeContextSection(claudeContext);
   let ctx = `<story_arc>${storyArc}</story_arc>
 
 <narrative_brief>${topic.narrativeBrief}</narrative_brief>
 
-${depBriefs ? `<prior_topics>\nThis slide builds on:\n${depBriefs}\n</prior_topics>\n\n` : ''}<topic>
+${claudeSection ? claudeSection + '\n\n' : ''}${depBriefs ? `<prior_topics>\nThis slide builds on:\n${depBriefs}\n</prior_topics>\n\n` : ''}<topic>
 Title: ${topic.title}
 Type: ${topic.slideType}
 Importance: ${topic.importance}
