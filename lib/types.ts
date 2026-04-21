@@ -77,6 +77,19 @@ export interface WebSource {
   title: string;
 }
 
+// Claude Code conventions discovered in the target repo — fed into
+// the review prompt and surfaced on the overview slide so the user
+// knows what the AI saw.
+export interface ProjectClaudeContext {
+  /** Full CLAUDE.md contents, truncated at a hard cap. */
+  projectInstructions: string | null;
+  /** CLAUDE.md size in bytes before any truncation — shown in the UI. */
+  projectInstructionsBytes?: number;
+  commands: { name: string; summary: string }[];
+  agents: { name: string; summary: string }[];
+  skills: { name: string; summary: string }[];
+}
+
 export interface AIReviewGuide {
   prTitle: string;
   prDescription: string;
@@ -148,6 +161,7 @@ export interface ReviewGuide {
   slides: Slide[];
   headSha?: string;
   webSources?: WebSource[];
+  projectClaudeContext?: ProjectClaudeContext;
   // Full list of changed files with metadata (age, churn). Used by
   // the Remaining Changes section (files not in any slide) and by
   // file age/churn badges on diff headers.
@@ -266,6 +280,7 @@ export interface Preferences {
   proactiveModel: ModelId;
   proactiveThinking: boolean;
   educationMode: boolean;
+  claudeContext: boolean;
 }
 
 export interface SendSlideChatRequest {
@@ -293,6 +308,7 @@ export interface GenerateReviewRequest {
   reviewSuggestions?: boolean;
   webResearch?: boolean;
   educationMode?: boolean;
+  claudeContext?: boolean;
   excludedFiles?: string[];
 }
 

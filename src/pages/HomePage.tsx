@@ -128,6 +128,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   const [reviewSuggestions, setReviewSuggestions] = useState(true);
   const [webResearch, setWebResearch] = useState(false);
   const [educationMode, setEducationMode] = useState(true);
+  const [claudeContext, setClaudeContext] = useState(true);
   const [instructions, setInstructions] = useState('');
   const [prefsLoaded, setPrefsLoaded] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -269,6 +270,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
       setReviewSuggestions(prefs.reviewSuggestions);
       setWebResearch(prefs.enableWebResearch);
       setEducationMode(prefs.educationMode);
+      setClaudeContext(prefs.claudeContext);
       setIncludeAllFiles(prefs.includeAllFiles);
       setPrefsLoaded(true);
       if (!prefs.firstRunSeen) {
@@ -532,6 +534,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
           reviewSuggestions,
           enableWebResearch: webResearch,
           educationMode,
+          claudeContext,
           includeAllFiles,
           ...overrides,
         });
@@ -546,6 +549,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
       reviewSuggestions,
       webResearch,
       educationMode,
+      claudeContext,
       includeAllFiles,
     ]
   );
@@ -562,6 +566,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
     reviewSuggestions,
     webResearch,
     educationMode,
+    claudeContext,
     includeAllFiles,
     savePrefs,
   ]);
@@ -616,6 +621,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
         reviewSuggestions,
         webResearch,
         educationMode,
+        claudeContext,
         excludedFiles: excludedFiles.length > 0 ? excludedFiles : undefined,
       });
       setGenerationStartTimes((prev) => new Map(prev).set(result.reviewId, Date.now()));
@@ -1305,6 +1311,13 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                       description="Small explainer notes for concepts the code assumes knowledge of (e.g. Unit of Work)"
                       checked={educationMode}
                       onToggle={() => setEducationMode((e) => !e)}
+                    />
+                    <ToggleSwitch
+                      id="claude-context"
+                      label="Apply project's Claude conventions"
+                      description="Read CLAUDE.md and .claude/ in the PR repo so the review respects the team's Claude Code setup"
+                      checked={claudeContext}
+                      onToggle={() => setClaudeContext((c) => !c)}
                     />
                     {provider === 'claude' && (
                       <ToggleSwitch

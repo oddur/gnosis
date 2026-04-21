@@ -13,6 +13,7 @@ import {
   getFileContent,
   getFileMetadata,
   getNeighborFiles,
+  getProjectClaudeContext,
   searchPullRequests,
   searchRepos,
   listRepoPullRequests,
@@ -503,6 +504,7 @@ async function triggerProactiveReview(
       smartImports: prefs.smartImports,
       reviewSuggestions: prefs.reviewSuggestions,
       educationMode: prefs.educationMode,
+      claudeContext: prefs.claudeContext,
     };
 
     await runBackgroundGeneration(reviewId, request, prData, abortController.signal);
@@ -961,6 +963,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   proactiveModel: 'claude-sonnet-4-6',
   proactiveThinking: false,
   educationMode: true,
+  claudeContext: true,
 };
 
 function applyBinaryOverrides(prefs: Preferences): void {
@@ -1329,8 +1332,18 @@ async function runBackgroundGeneration(
   prData: Awaited<ReturnType<typeof getPrMetadata>>,
   signal: AbortSignal
 ): Promise<void> {
-  const { prUrl, provider, model, instructions, thinking, smartImports, reviewSuggestions, webResearch, educationMode } =
-    request;
+  const {
+    prUrl,
+    provider,
+    model,
+    instructions,
+    thinking,
+    smartImports,
+    reviewSuggestions,
+    webResearch,
+    educationMode,
+    claudeContext,
+  } = request;
 
   try {
     const token = getResolvedToken();
@@ -1411,15 +1424,27 @@ async function runBackgroundGeneration(
     broadcastToAllWindows('review-phase', { reviewId, phase: 'Resolving imports' });
 
     const allFileContents = { ...fileContents, ...headFileContents };
-    const neighborFiles = await getNeighborFiles(
-      octokit,
-      owner,
-      repo,
-      normalFiles.map((f) => f.filename),
-      allFileContents,
-      baseRef,
-      smartImports ? provider : undefined
-    );
+    // Fire the Claude-context probe in parallel with the neighbour
+    // fetch — it hits `.claude/` and `CLAUDE.md` at head, which is
+    // independent of the import graph we're walking in neighbours.
+    const [neighborFiles, projectClaudeContext] = await Promise.all([
+      getNeighborFiles(
+        octokit,
+        owner,
+        repo,
+        normalFiles.map((f) => f.filename),
+        allFileContents,
+        baseRef,
+        smartImports ? provider : undefined
+      ),
+      claudeContext ? getProjectClaudeContext(octokit, owner, repo, headRef) : Promise.resolve(null),
+    ]);
+    if (projectClaudeContext) {
+      const { commands, agents, skills, projectInstructionsBytes } = projectClaudeContext;
+      console.log(
+        `[claude-context] CLAUDE.md=${projectInstructionsBytes ?? 0}B, commands=${commands.length}, agents=${agents.length}, skills=${skills.length}`
+      );
+    }
 
     broadcastToAllWindows('review-phase', { reviewId, phase: 'Building context' });
 
@@ -1441,7 +1466,8 @@ async function runBackgroundGeneration(
         headFileContents,
         neighborFiles,
         hunkIndex,
-        excludedFilesSummary
+        excludedFilesSummary,
+        projectClaudeContext
       );
     }
 
@@ -1459,7 +1485,7 @@ async function runBackgroundGeneration(
       // ── Two-phase: planner → parallel writers ──
       broadcastToAllWindows('review-phase', { reviewId, phase: 'Planning review structure' });
 
-      const plannerContext = buildPlannerContext(prData, changedFiles, hunkIndex, excludedFilesSummary);
+      const plannerContext = buildPlannerContext(prData, changedFiles, hunkIndex, excludedFilesSummary, projectClaudeContext);
       plan = await planReview(
         hunkIndex,
         plannerContext,
@@ -1488,6 +1514,7 @@ async function runBackgroundGeneration(
             const topicCtx = buildTopicContext(
               topic, hunkMap, fileContents, headFileContents, neighborFiles,
               prData.title, prData.description, storyArc, sortedTopics,
+              projectClaudeContext,
             );
 
             const writerOutput = await generateSlide({
@@ -1498,6 +1525,7 @@ async function runBackgroundGeneration(
               reviewSuggestions,
               thinking,
               educationMode,
+              hasClaudeContext: !!projectClaudeContext,
               onChunk: (chunk, isThinking) =>
                 broadcastToAllWindows('review-progress', { reviewId, chunk, isThinking }),
               signal,
@@ -1554,6 +1582,7 @@ async function runBackgroundGeneration(
           reviewSuggestions,
           webResearch,
           educationMode,
+          hasClaudeContext: !!projectClaudeContext,
           mcpConfigPath,
           allowedTools,
           onChunk: (chunk, isThinking) => {
@@ -1683,6 +1712,7 @@ async function runBackgroundGeneration(
       slides: resolvedSlides,
       headSha: prData.headSha,
       webSources: aiResult?.webSources,
+      projectClaudeContext: projectClaudeContext ?? undefined,
       changedFiles: fileMetadata,
     };
 

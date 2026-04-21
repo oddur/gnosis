@@ -142,6 +142,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
   const [maxPrsPerRepo, setMaxPrsPerRepo] = useState(10);
   const [parallelReview, setParallelReview] = useState(false);
   const [educationMode, setEducationMode] = useState(true);
+  const [claudeContext, setClaudeContext] = useState(true);
   const [analytics, setAnalytics] = useState(true);
   const [proactiveReviewOverrides, setProactiveReviewOverrides] = useState(false);
   const [proactiveProvider, setProactiveProvider] = useState<Provider>('claude');
@@ -169,6 +170,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
       setMaxPrsPerRepo(prefs.maxPrsPerRepo);
       setParallelReview(prefs.parallelReview);
       setEducationMode(prefs.educationMode);
+      setClaudeContext(prefs.claudeContext);
       setAnalytics(prefs.analytics);
       setProactiveReviewOverrides(prefs.proactiveReviewOverrides);
       setProactiveProvider(prefs.proactiveProvider);
@@ -303,6 +305,21 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                   const next = !educationMode;
                   setEducationMode(next);
                   saveField({ educationMode: next });
+                }}
+              />
+            </SettingRow>
+
+            <SettingRow
+              label="Apply project's Claude conventions"
+              description="When reviewing a PR, read the repo's CLAUDE.md and .claude/ (commands, agents, skills) and feed them into the prompt so the review respects the team's Claude Code setup."
+            >
+              <Toggle
+                checked={claudeContext}
+                ariaLabel="Apply project's Claude conventions"
+                onChange={() => {
+                  const next = !claudeContext;
+                  setClaudeContext(next);
+                  saveField({ claudeContext: next });
                 }}
               />
             </SettingRow>

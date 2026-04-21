@@ -121,6 +121,7 @@ export function OverviewSlide({ review, prStatus, onNavigate }: Props) {
   const risk = safeConfigLookup(riskConfig, review.riskLevel, riskConfig.low);
   const [descOpen, setDescOpen] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [claudeCtxOpen, setClaudeCtxOpen] = useState(false);
   const [remainingOpen, setRemainingOpen] = useState(false);
 
   // Files that appear in changedFiles but not in any slide's
@@ -217,6 +218,62 @@ export function OverviewSlide({ review, prStatus, onNavigate }: Props) {
             )}
           </section>
         )}
+
+        {/* Project Claude context — the repo's CLAUDE.md / .claude/
+            that was folded into the review prompt. Shown as a quiet
+            disclosure so the reviewer can confirm what conventions
+            the AI was aware of. No external links — these files
+            belong to the PR repo, not the public web. */}
+        {review.projectClaudeContext && (() => {
+          const ctx = review.projectClaudeContext;
+          const parts: string[] = [];
+          if (ctx.projectInstructions) parts.push('CLAUDE.md');
+          if (ctx.commands.length) parts.push(`${ctx.commands.length} command${ctx.commands.length === 1 ? '' : 's'}`);
+          if (ctx.agents.length) parts.push(`${ctx.agents.length} agent${ctx.agents.length === 1 ? '' : 's'}`);
+          if (ctx.skills.length) parts.push(`${ctx.skills.length} skill${ctx.skills.length === 1 ? '' : 's'}`);
+          if (parts.length === 0) return null;
+          return (
+            <section className="animate-fade-in-up" style={{ animationDelay: '210ms' }}>
+              <button
+                onClick={() => setClaudeCtxOpen((v) => !v)}
+                className="slide-meta hover:text-foreground transition-colors flex items-center gap-1.5"
+              >
+                {claudeCtxOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                Project Claude context ({parts.join(' · ')})
+              </button>
+              {claudeCtxOpen && (
+                <ul className="mt-3 ml-4 flex flex-col gap-1.5 border-l border-border pl-4">
+                  {ctx.projectInstructions && (
+                    <li className="text-sm text-muted-foreground">
+                      <span className="text-foreground">CLAUDE.md</span>
+                      {ctx.projectInstructionsBytes
+                        ? ` — ${(ctx.projectInstructionsBytes / 1024).toFixed(1)} KB of project instructions`
+                        : ' — project instructions'}
+                    </li>
+                  )}
+                  {ctx.commands.map((c) => (
+                    <li key={`cmd-${c.name}`} className="text-sm text-muted-foreground">
+                      <span className="text-foreground font-mono">/{c.name}</span>
+                      {c.summary && ` — ${c.summary}`}
+                    </li>
+                  ))}
+                  {ctx.agents.map((a) => (
+                    <li key={`ag-${a.name}`} className="text-sm text-muted-foreground">
+                      <span className="text-foreground">agent: {a.name}</span>
+                      {a.summary && ` — ${a.summary}`}
+                    </li>
+                  ))}
+                  {ctx.skills.map((s) => (
+                    <li key={`sk-${s.name}`} className="text-sm text-muted-foreground">
+                      <span className="text-foreground">skill: {s.name}</span>
+                      {s.summary && ` — ${s.summary}`}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          );
+        })()}
 
         {/* Start reading — the explicit "click here to begin"
             affordance. The bottom nav also surfaces this as

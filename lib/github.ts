@@ -1,6 +1,16 @@
 import { Octokit } from '@octokit/rest';
 import { getProvider } from './provider';
-import type { ChangedFile, CiCheck, FileMetadata, PrMetadata, PrSearchResult, Provider, RepoSearchResult, ReviewSummary } from './types';
+import type {
+  ChangedFile,
+  CiCheck,
+  FileMetadata,
+  PrMetadata,
+  PrSearchResult,
+  ProjectClaudeContext,
+  Provider,
+  RepoSearchResult,
+  ReviewSummary,
+} from './types';
 
 export function parsePrUrl(url: string): { owner: string; repo: string; pullNumber: number } {
   const match = url.match(/github\.com\/([^/]+)\/([^/]+)\/pulls?\/(\d+)/);
@@ -580,4 +590,135 @@ export async function getFileMetadata(
   }
 
   return metadata;
+}
+
+// ── Claude Code project conventions ─────────────────────────────
+
+const CLAUDE_MD_MAX_CHARS = 8 * 1024;
+const CLAUDE_ENTRY_SUMMARY_CHARS = 240;
+
+async function listDirMarkdown(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  path: string,
+  ref: string
+): Promise<string[]> {
+  try {
+    const { data } = await octokit.repos.getContent({ owner, repo, path, ref });
+    if (!Array.isArray(data)) return [];
+    return data.filter((e) => e.type === 'file' && e.name.endsWith('.md')).map((e) => e.path);
+  } catch {
+    return [];
+  }
+}
+
+async function listDirSubdirs(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  path: string,
+  ref: string
+): Promise<string[]> {
+  try {
+    const { data } = await octokit.repos.getContent({ owner, repo, path, ref });
+    if (!Array.isArray(data)) return [];
+    return data.filter((e) => e.type === 'dir').map((e) => e.path);
+  } catch {
+    return [];
+  }
+}
+
+// Extract a short "what this does" summary from a markdown agent /
+// command file. Prefers a front-matter `description:` field, then the
+// first non-empty paragraph of body prose. Hard-truncated so a single
+// verbose file can't eat the context budget.
+function summariseClaudeEntry(content: string): string {
+  const fmMatch = /^---\n([\s\S]*?)\n---\n?/.exec(content);
+  let body = content;
+  if (fmMatch) {
+    body = content.slice(fmMatch[0].length);
+    const descMatch = /^description:\s*(.+)$/m.exec(fmMatch[1]);
+    if (descMatch) {
+      return descMatch[1].trim().slice(0, CLAUDE_ENTRY_SUMMARY_CHARS);
+    }
+  }
+  const firstPara = body
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .find((p) => p.length > 0 && !p.startsWith('#'));
+  return (firstPara ?? body.trim()).replace(/\s+/g, ' ').slice(0, CLAUDE_ENTRY_SUMMARY_CHARS);
+}
+
+function entryName(path: string): string {
+  const base = path.split('/').pop() ?? path;
+  return base.replace(/\.md$/, '');
+}
+
+async function fetchSummarisedEntries(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  paths: string[],
+  ref: string
+): Promise<{ name: string; summary: string }[]> {
+  const results: { name: string; summary: string }[] = [];
+  const concurrency = 5;
+  for (let i = 0; i < paths.length; i += concurrency) {
+    const batch = paths.slice(i, i + concurrency);
+    await Promise.all(
+      batch.map(async (p) => {
+        const content = await getFileContent(octokit, owner, repo, p, ref);
+        if (content) results.push({ name: entryName(p), summary: summariseClaudeEntry(content) });
+      })
+    );
+  }
+  results.sort((a, b) => a.name.localeCompare(b.name));
+  return results;
+}
+
+// Probe the PR repo for Claude-Code conventions at the given ref.
+// Returns `null` when nothing is found so callers can skip the
+// prompt/UI surface cleanly. All errors are swallowed — a missing
+// `.claude/` directory or a 403 just means "no conventions here",
+// never a generation failure.
+export async function getProjectClaudeContext(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  ref: string
+): Promise<ProjectClaudeContext | null> {
+  const [claudeMdRaw, commandPaths, agentPaths, skillDirs] = await Promise.all([
+    getFileContent(octokit, owner, repo, 'CLAUDE.md', ref),
+    listDirMarkdown(octokit, owner, repo, '.claude/commands', ref),
+    listDirMarkdown(octokit, owner, repo, '.claude/agents', ref),
+    listDirSubdirs(octokit, owner, repo, '.claude/skills', ref),
+  ]);
+
+  const hasAny = !!claudeMdRaw || commandPaths.length > 0 || agentPaths.length > 0 || skillDirs.length > 0;
+  if (!hasAny) return null;
+
+  let projectInstructions: string | null = null;
+  let projectInstructionsBytes: number | undefined;
+  if (claudeMdRaw) {
+    projectInstructionsBytes = Buffer.byteLength(claudeMdRaw, 'utf-8');
+    projectInstructions =
+      claudeMdRaw.length > CLAUDE_MD_MAX_CHARS
+        ? claudeMdRaw.slice(0, CLAUDE_MD_MAX_CHARS) + `\n\n… [truncated, original ${projectInstructionsBytes} bytes]`
+        : claudeMdRaw;
+  }
+
+  const [commands, agents, skills] = await Promise.all([
+    fetchSummarisedEntries(octokit, owner, repo, commandPaths, ref),
+    fetchSummarisedEntries(octokit, owner, repo, agentPaths, ref),
+    fetchSummarisedEntries(
+      octokit,
+      owner,
+      repo,
+      skillDirs.map((d) => `${d}/SKILL.md`),
+      ref
+    ),
+  ]);
+
+  return { projectInstructions, projectInstructionsBytes, commands, agents, skills };
 }
