@@ -655,26 +655,54 @@ function entryName(path: string): string {
   return base.replace(/\.md$/, '');
 }
 
+// Decide whether a .claude/ command/agent/skill is worth including
+// in the review prompt. Whitelist by positive signal — review
+// relevance, code quality, conventions, security, testing, design
+// systems, refactor tools. Entries that only teach how to use a
+// dev-environment tool (install this, configure that MCP, set an
+// API key) add noise without helping the reviewer.
+const CLAUDE_REVIEW_POSITIVE =
+  /\b(review|audit|lint|security|accessib|convention|coding\s*style|style\s*guide|architecture|refactor|critique|invariant|contract|type\s*safety|quality|design\s*(system|pattern|principle|quality)|correctness|harden|simplify|polish|distill|normalize|responsive|a11y|performance|optim|vulnerab|best\s*practice|anti[- ]?pattern|testing|test\s*strategy|naming\s*convention|frontend|ui\s+(design|component)|visual|typograph)\b/;
+
+const CLAUDE_REVIEW_HARD_NEGATIVE = /\bmcp\b|\bapi[- ]?key\b/;
+
+function isReviewRelevantClaudeEntry(name: string, content: string): boolean {
+  // Only look at name + the first chunk of content — summaries are
+  // usually up top (front matter / first paragraph) and a 20 KB body
+  // dragging in a passing positive match isn't a good signal.
+  const lower = (name + ' ' + content.slice(0, 2000)).toLowerCase();
+  if (CLAUDE_REVIEW_HARD_NEGATIVE.test(lower)) return false;
+  return CLAUDE_REVIEW_POSITIVE.test(lower);
+}
+
 async function fetchSummarisedEntries(
   octokit: Octokit,
   owner: string,
   repo: string,
   paths: string[],
-  ref: string
-): Promise<{ name: string; summary: string }[]> {
-  const results: { name: string; summary: string }[] = [];
+  ref: string,
+  filter: (name: string, content: string) => boolean = () => true
+): Promise<{ included: { name: string; summary: string }[]; droppedCount: number }> {
+  const included: { name: string; summary: string }[] = [];
+  let droppedCount = 0;
   const concurrency = 5;
   for (let i = 0; i < paths.length; i += concurrency) {
     const batch = paths.slice(i, i + concurrency);
     await Promise.all(
       batch.map(async (p) => {
         const content = await getFileContent(octokit, owner, repo, p, ref);
-        if (content) results.push({ name: entryName(p), summary: summariseClaudeEntry(content) });
+        if (!content) return;
+        const name = entryName(p);
+        if (!filter(name, content)) {
+          droppedCount += 1;
+          return;
+        }
+        included.push({ name, summary: summariseClaudeEntry(content) });
       })
     );
   }
-  results.sort((a, b) => a.name.localeCompare(b.name));
-  return results;
+  included.sort((a, b) => a.name.localeCompare(b.name));
+  return { included, droppedCount };
 }
 
 // Probe the PR repo for Claude-Code conventions at the given ref.
@@ -708,17 +736,41 @@ export async function getProjectClaudeContext(
         : claudeMdRaw;
   }
 
-  const [commands, agents, skills] = await Promise.all([
-    fetchSummarisedEntries(octokit, owner, repo, commandPaths, ref),
-    fetchSummarisedEntries(octokit, owner, repo, agentPaths, ref),
+  const [cmdResult, agentResult, skillResult] = await Promise.all([
+    fetchSummarisedEntries(octokit, owner, repo, commandPaths, ref, isReviewRelevantClaudeEntry),
+    fetchSummarisedEntries(octokit, owner, repo, agentPaths, ref, isReviewRelevantClaudeEntry),
     fetchSummarisedEntries(
       octokit,
       owner,
       repo,
       skillDirs.map((d) => `${d}/SKILL.md`),
-      ref
+      ref,
+      isReviewRelevantClaudeEntry
     ),
   ]);
 
-  return { projectInstructions, projectInstructionsBytes, commands, agents, skills };
+  const totalDropped = cmdResult.droppedCount + agentResult.droppedCount + skillResult.droppedCount;
+  if (totalDropped > 0) {
+    console.log(
+      `[claude-context] Filtered out ${totalDropped} non-review entries (commands: ${cmdResult.droppedCount}, agents: ${agentResult.droppedCount}, skills: ${skillResult.droppedCount})`
+    );
+  }
+
+  // If post-filter nothing of substance remains (no CLAUDE.md and
+  // every command/agent/skill got dropped as non-review), drop the
+  // whole context so the UI doesn't render an empty disclosure.
+  const postFilterHasAny =
+    !!projectInstructions ||
+    cmdResult.included.length > 0 ||
+    agentResult.included.length > 0 ||
+    skillResult.included.length > 0;
+  if (!postFilterHasAny) return null;
+
+  return {
+    projectInstructions,
+    projectInstructionsBytes,
+    commands: cmdResult.included,
+    agents: agentResult.included,
+    skills: skillResult.included,
+  };
 }
