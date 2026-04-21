@@ -498,6 +498,44 @@
   background: oklch(0.65 0.13 15 / 70%);
 }
 
+/* Per-check "I've verified this" checkbox, shown next to every
+   rendered "What to check" item so the reviewer can tick them off as
+   they go. Marks persist per {prUrl, headSha, slideId, checkHash} in
+   localStorage. Claret accent on the native input ties the control
+   to the brand focus colour without adding new chrome. */
+.check-todo {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  cursor: pointer;
+}
+
+.check-todo-input {
+  accent-color: var(--ring);
+  width: 0.95rem;
+  height: 0.95rem;
+  flex-shrink: 0;
+  cursor: pointer;
+  /* Nudge the native box into optical alignment with text's
+     baseline row — checkboxes typically render slightly low. */
+  transform: translateY(0.1em);
+  margin: 0;
+}
+
+.check-todo-done {
+  text-decoration: line-through;
+  text-decoration-color: oklch(0.5 0.012 65 / 60%);
+  text-decoration-thickness: 1px;
+  color: var(--muted-foreground);
+  transition: color 120ms ease-out, text-decoration-color 120ms ease-out;
+}
+
+/* When a check is ticked inside a bulleted list, dim the bullet too
+   so the visual mirrors the completed state. */
+.review-checks-item:has(.check-todo-input:checked)::before {
+  opacity: 0.3;
+}
+
 /* Reused when a single packed check or a markdown-formatted
    reviewFocus is rendered as a block inside the callout. Tightens
    the default Markdown spacing so the block doesn't feel like an
