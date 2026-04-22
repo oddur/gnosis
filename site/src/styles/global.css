@@ -160,6 +160,47 @@ body {
   border-top: 1px solid var(--border);
 }
 
+/* ── Newspaper masthead ──
+   Ported from the app's globals.css. Sits above the page content
+   as a broadsheet nameplate: uppercase wide-tracked Fraunces at
+   opsz 96 with a thick-thin double rule above and below. Not an
+   <h1> — the page's actual h1 is the value prop. This is a visual
+   brand mark. */
+.newspaper-masthead {
+  text-align: center;
+  padding: 1.5rem 0 0;
+}
+.newspaper-masthead .nameplate {
+  display: block;
+  font-family: var(--font-serif);
+  font-size: clamp(2.25rem, 1.5rem + 3.5vw, 3.75rem);
+  font-weight: 300;
+  letter-spacing: 0.22em;
+  line-height: 1;
+  font-variation-settings: 'opsz' 96;
+  color: var(--foreground);
+  text-transform: uppercase;
+  margin: 0;
+}
+.newspaper-tagline {
+  font-family: var(--font-serif);
+  font-size: 0.9375rem;
+  font-weight: 300;
+  font-style: italic;
+  letter-spacing: 0.04em;
+  color: var(--muted-foreground);
+  font-variation-settings: 'opsz' 12;
+  margin: 0.25rem 0 0;
+}
+.newspaper-rule--double {
+  height: 0;
+  border-top: 2px solid var(--foreground);
+  border-bottom: 1px solid var(--foreground);
+  padding-top: 3px;
+  background: none;
+  margin: 0;
+}
+
 /* Skip-to-content link. Visually hidden until focused, then anchors
    to the top-left so a keyboard user can jump past the masthead on
    every visit. The :focus-visible rule above wraps it in the brand

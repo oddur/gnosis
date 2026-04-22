@@ -160,7 +160,18 @@ const sections: Section[] = [
 <Base title="Gnosis — AI-guided code review">
   <a href="#read" class="skip-link">Skip to content</a>
   <main class="mx-auto max-w-3xl px-6 py-16 sm:py-24 flex flex-col gap-16">
-    <!-- Masthead — staggered settle on load.
+    <!-- Newspaper nameplate — same broadsheet header the app uses
+         on its auth screen. Sits above the page's actual header as
+         a brand mark; visually large but not an <h1> (that's the
+         value-prop headline below). -->
+    <div class="newspaper-masthead settle">
+      <hr class="newspaper-rule--double" aria-hidden="true" />
+      <span class="nameplate">Gnosis</span>
+      <p class="newspaper-tagline">Code Review, Narrated</p>
+      <hr class="newspaper-rule--double" aria-hidden="true" />
+    </div>
+
+    <!-- Value-prop header — staggered settle on load.
          Chapter line: each item in its own span with the middot
          separators marked aria-hidden so screen readers hear a
          comma-separated list instead of "middle dot middle dot". -->
