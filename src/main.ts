@@ -63,6 +63,17 @@ const GITHUB_CLIENT_SECRET: string = typeof __GH_CLIENT_SECRET__ !== 'undefined'
 const APTABASE_APP_KEY = 'A-EU-7599830434';
 let aptabaseInitialized = false;
 
+// Aptabase's Electron SDK requires initialize() to run BEFORE app.whenReady().
+// loadPreferences() only touches app.getPath('userData'), which is safe pre-ready.
+try {
+  if (loadPreferences().analytics) {
+    void initAptabase(APTABASE_APP_KEY);
+    aptabaseInitialized = true;
+  }
+} catch {
+  /* prefs unreadable — skip analytics */
+}
+
 function enableAnalyticsIfAllowed(prefs: Preferences): void {
   if (!prefs.analytics || aptabaseInitialized) return;
   void initAptabase(APTABASE_APP_KEY);
