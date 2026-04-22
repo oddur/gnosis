@@ -14,6 +14,8 @@ import {
   GitPullRequestClosed,
   AlertTriangle,
   Eraser,
+  Share2,
+  Upload,
 } from 'lucide-react';
 import { GitHubIcon } from '../../lib/constants';
 import { Button } from '../../components/ui/button';
@@ -682,6 +684,25 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
     e.stopPropagation();
     await window.electronAPI.deleteReview(id);
     setHistory((prev) => prev.filter((h) => h.id !== id));
+  }
+
+  async function handleExportReview(id: string) {
+    try {
+      await window.electronAPI.exportReview(id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't export this review.");
+    }
+  }
+
+  async function handleImportReview() {
+    try {
+      const entry = await window.electronAPI.importReview();
+      if (entry) {
+        setHistory((prev) => [entry, ...prev.filter((h) => h.id !== entry.id)]);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't import that .gr file.");
+    }
   }
 
   async function handleDeleteAllHistory() {
@@ -1460,6 +1481,15 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                 Your reviews will appear here, grouped by pull request.
                 Each review takes 2–4 minutes to generate and is stored locally on your machine.
               </p>
+              <p className="slide-meta mt-3">
+                Got a <span className="font-mono">.gr</span> file from a teammate?{' '}
+                <button
+                  onClick={() => void handleImportReview()}
+                  className="underline decoration-dotted underline-offset-2 hover:text-foreground transition-colors"
+                >
+                  Import it.
+                </button>
+              </p>
             </section>
           )}
 
@@ -1493,6 +1523,14 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                       <span>Clear closed</span>
                     </button>
                   )}
+                  <button
+                    onClick={() => void handleImportReview()}
+                    className="hover:text-foreground transition-colors flex items-center gap-1"
+                    title="Import a .gr review file"
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    <span>Import</span>
+                  </button>
                   <button
                     onClick={() => setConfirmDelete('all')}
                     className="hover:text-foreground transition-colors flex items-center gap-1"
@@ -1653,6 +1691,14 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                               aria-label="View prompt"
                             >
                               <FileText className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); void handleExportReview(latestId); }}
+                              className="text-muted-foreground hover:text-foreground transition-colors p-1.5 -m-1.5"
+                              title="Export as .gr file"
+                              aria-label="Export review"
+                            >
+                              <Share2 className="h-3.5 w-3.5" />
                             </button>
                             <button
                               onClick={(e) => handleDeleteFromHistory(e, latestId)}

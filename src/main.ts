@@ -23,6 +23,7 @@ import {
 import type { CiCheck, FileMetadata, PrMetadata, PrSearchResult, PrStatus } from '../lib/types';
 import { buildContextPackage, buildPlannerContext, buildTopicContext } from '../lib/context-builder';
 import { generateReviewGuide, planReview, generateSlide } from '../lib/agent';
+import { buildArchive, parseArchive } from '../lib/review-archive';
 import { checkForUpdate } from '../lib/updater';
 import { renderDiffHunk, reRenderAllHunks } from '../lib/highlight';
 import { parseDiffLines, parsePatchValidLines } from '../lib/diff-lines';
@@ -767,6 +768,16 @@ function ensureReviewsDir() {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
+function suggestArchiveName(entry: ReviewHistoryEntry): string {
+  // Lifted from the PR URL when possible so the default file name
+  // reads as e.g. "owner-repo-pr-123.gr"; falls back to the title.
+  const m = /github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/.exec(entry.prUrl);
+  const base = m
+    ? `${m[1]}-${m[2]}-pr-${m[3]}`
+    : entry.prTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'review';
+  return `${base}.gr`;
+}
+
 function readReviewsIndex(): ReviewHistoryEntry[] {
   try {
     const entries = JSON.parse(fs.readFileSync(getReviewsIndexPath(), 'utf-8')) as ReviewHistoryEntry[];
@@ -1171,6 +1182,68 @@ ipcMain.handle('delete-review', (_event, id: string) => {
   const index = readReviewsIndex().filter((e) => e.id !== id);
   fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
   rebuildTrayMenu();
+});
+
+ipcMain.handle('export-review', async (event, id: string): Promise<string | null> => {
+  const index = readReviewsIndex();
+  const entry = index.find((e) => e.id === id);
+  if (!entry) throw new Error(`Review ${id} not found.`);
+
+  const reviewPath = path.join(getReviewsDir(), `${id}.json`);
+  const promptPath = path.join(getReviewsDir(), `${id}-prompt.md`);
+  const review = JSON.parse(fs.readFileSync(reviewPath, 'utf-8')) as ReviewGuide;
+  const prompt = fs.existsSync(promptPath) ? fs.readFileSync(promptPath, 'utf-8') : undefined;
+
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const defaultName = suggestArchiveName(entry);
+  const saveOpts = {
+    title: 'Export review',
+    defaultPath: defaultName,
+    filters: [{ name: 'Gnosis Review', extensions: ['gr'] }],
+  };
+  const chosen = win ? await dialog.showSaveDialog(win, saveOpts) : await dialog.showSaveDialog(saveOpts);
+  if (chosen.canceled || !chosen.filePath) return null;
+
+  const buffer = buildArchive({ review, history: entry, prompt, appVersion: app.getVersion() });
+  fs.writeFileSync(chosen.filePath, buffer);
+  return chosen.filePath;
+});
+
+ipcMain.handle('import-review', async (event): Promise<ReviewHistoryEntry | null> => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const openOpts = {
+    title: 'Import review',
+    properties: ['openFile'] satisfies Array<'openFile'>,
+    filters: [{ name: 'Gnosis Review', extensions: ['gr'] }],
+  };
+  const chosen = win ? await dialog.showOpenDialog(win, openOpts) : await dialog.showOpenDialog(openOpts);
+  if (chosen.canceled || chosen.filePaths.length === 0) return null;
+
+  const buffer = fs.readFileSync(chosen.filePaths[0]);
+  const parsed = parseArchive(buffer);
+
+  ensureReviewsDir();
+  const newId = crypto.randomUUID();
+  fs.writeFileSync(
+    path.join(getReviewsDir(), `${newId}.json`),
+    JSON.stringify(parsed.review, null, 2)
+  );
+  if (parsed.prompt) {
+    fs.writeFileSync(path.join(getReviewsDir(), `${newId}-prompt.md`), parsed.prompt);
+  }
+
+  const entry: ReviewHistoryEntry = {
+    ...parsed.metadata.history,
+    id: newId,
+    imported: true,
+    status: 'completed',
+  };
+  const index = readReviewsIndex();
+  index.unshift(entry);
+  fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+  rebuildTrayMenu();
+  broadcastToAllWindows('new-review-in-history');
+  return entry;
 });
 
 ipcMain.handle('delete-all-reviews', () => {

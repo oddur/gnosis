@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadReview: (id: string): Promise<ReviewGuide> => ipcRenderer.invoke('load-review', id),
   deleteReview: (id: string): Promise<void> => ipcRenderer.invoke('delete-review', id),
   deleteAllReviews: (): Promise<void> => ipcRenderer.invoke('delete-all-reviews'),
+  exportReview: (id: string): Promise<string | null> => ipcRenderer.invoke('export-review', id),
+  importReview: (): Promise<ReviewHistoryEntry | null> => ipcRenderer.invoke('import-review'),
   onReviewProgress: (callback: (reviewId: string, chunk: string, isThinking: boolean) => void): void => {
     ipcRenderer.on(
       'review-progress',
