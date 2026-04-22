@@ -3,7 +3,7 @@ import { ExternalLink, ArrowLeft, Settings, GitBranch, Check } from 'lucide-reac
 import { GitHubIcon, riskConfig, safeConfigLookup } from '@/lib/constants';
 import type { ReviewGuide } from '@/lib/types';
 import { formatDuration } from '@/lib/utils';
-import { isLocalUrl } from '@/lib/diffSource';
+import { isLocalUrl } from '@/lib/local-url';
 
 interface Props {
   review: ReviewGuide;

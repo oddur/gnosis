@@ -5,6 +5,7 @@ import type {
   ProjectClaudeContext,
   Provider,
 } from './types';
+import { isLocalUrl } from './local-url';
 
 /**
  * Abstract source of diff + repo data for the review pipeline. Concrete
@@ -37,10 +38,6 @@ export interface DiffSource {
    *  on a local source). Returned strings are surfaced as review-phase
    *  warnings; an empty array means everything is clean. */
   checkRuntimeWarnings?(): Promise<string[]>;
-}
-
-export function isLocalUrl(url: string): boolean {
-  return url.startsWith('local:');
 }
 
 /**
