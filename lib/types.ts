@@ -275,6 +275,10 @@ export interface Preferences {
   proactiveThinking: boolean;
   educationMode: boolean;
   claudeContext: boolean;
+  /** True once the user has opted in to using Gnosis without a GitHub
+   *  account. Unlocks the rest of the app (compose form, history, local
+   *  review) for users who only want to review local git diffs. */
+  guestMode: boolean;
 }
 
 export interface SendSlideChatRequest {
