@@ -238,6 +238,10 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   useEffect(() => {
     window.electronAPI.onUpdateAvailable((info) => setUpdateInfo(info));
     window.electronAPI.onUpdateReady((version) => setReadyVersion(version));
+    // Squirrel often completes download before this effect mounts — replay.
+    void window.electronAPI.getPendingUpdateReady().then((v) => {
+      if (v) setReadyVersion((prev) => prev ?? v);
+    });
     return () => {
       window.electronAPI.offUpdateAvailable();
       window.electronAPI.offUpdateReady();
@@ -896,7 +900,9 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
               manual platforms show a download link. */}
           {(() => {
             const supportsAutoUpdate = window.electronAPI.platform !== 'linux' && window.electronAPI.isPackaged;
-            if (supportsAutoUpdate && readyVersion) {
+            // Dev: allow GNOSIS_FAKE_UPDATE_READY to surface the banner even when unpackaged.
+            const showReadyBanner = window.electronAPI.platform !== 'linux' && readyVersion;
+            if (showReadyBanner) {
               return (
                 <div className="newspaper-extra">
                   <span className="newspaper-extra-label">Extra</span>

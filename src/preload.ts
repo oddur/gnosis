@@ -119,6 +119,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('update-ready');
   },
   dismissUpdate: (version: string): Promise<void> => ipcRenderer.invoke('dismiss-update', version),
+  getPendingUpdateReady: (): Promise<string | null> => ipcRenderer.invoke('get-pending-update-ready'),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('open-external', url),
   openLogsDirectory: (): Promise<void> => ipcRenderer.invoke('open-logs-directory'),
   openReviewPrompt: (id: string): Promise<void> => ipcRenderer.invoke('open-review-prompt', id),

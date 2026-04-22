@@ -11,14 +11,19 @@ export function UpdateBanner() {
   useEffect(() => {
     window.electronAPI.onUpdateAvailable((info) => setUpdate(info));
     window.electronAPI.onUpdateReady((version) => setReadyVersion(version));
+    // Squirrel often completes download before this effect mounts — replay.
+    void window.electronAPI.getPendingUpdateReady().then((v) => {
+      if (v) setReadyVersion((prev) => prev ?? v);
+    });
     return () => {
       window.electronAPI.offUpdateAvailable();
       window.electronAPI.offUpdateReady();
     };
   }, []);
 
-  // macOS/Windows: show banner when update has been downloaded and is ready to install
-  if (supportsAutoUpdate && readyVersion !== null) {
+  // Show "ready to install" on macOS/Windows. In dev, GNOSIS_FAKE_UPDATE_READY
+  // forces readyVersion so the banner can be tested without a packaged build.
+  if (window.electronAPI.platform !== 'linux' && readyVersion !== null) {
     return (
       <div className="updateBanner flex items-center justify-between gap-3 px-6 py-1.5 text-xs">
         <span>
