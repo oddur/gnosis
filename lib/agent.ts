@@ -219,6 +219,12 @@ export interface GenerateReviewGuideOptions {
   hasClaudeContext?: boolean;
   mcpConfigPath?: string;
   allowedTools?: string[];
+  /** Working directory for the CLI. Set for local reviews so project-local
+   *  MCP servers, skills, and tests are discoverable. */
+  cwd?: string;
+  /** When true, don't lock MCP to `mcpConfigPath` — lets the CLI also pick up
+   *  the repo's own `.mcp.json`. */
+  nonStrictMcp?: boolean;
   onChunk?: (chunk: string, isThinking: boolean) => void;
   onToolUse?: (toolName: string) => void;
   onPromptReady?: (system: string, userMessage: string) => void;
@@ -239,6 +245,8 @@ export async function generateReviewGuide(opts: GenerateReviewGuideOptions): Pro
     hasClaudeContext = false,
     mcpConfigPath,
     allowedTools,
+    cwd,
+    nonStrictMcp,
     onChunk,
     onToolUse,
     onPromptReady,
@@ -295,6 +303,8 @@ export async function generateReviewGuide(opts: GenerateReviewGuideOptions): Pro
       onToolUse,
       mcpConfigPath,
       allowedTools,
+      cwd,
+      nonStrictMcp,
       signal,
     });
     console.log('[agent] Generation complete, parsing response...');
@@ -403,7 +413,8 @@ export async function planReview(
   model: ModelId,
   onChunk?: (chunk: string, isThinking: boolean) => void,
   thinking: boolean = false,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  toolOpts?: { cwd?: string; mcpConfigPath?: string; allowedTools?: string[]; nonStrictMcp?: boolean },
 ): Promise<PlannerOutput> {
   const provider = getProvider(providerName);
   const userMessage = prMetadata + '\n' + hunkIndex + PLANNER_USER_SUFFIX;
@@ -415,6 +426,10 @@ export async function planReview(
     model,
     thinking,
     onChunk,
+    cwd: toolOpts?.cwd,
+    mcpConfigPath: toolOpts?.mcpConfigPath,
+    allowedTools: toolOpts?.allowedTools,
+    nonStrictMcp: toolOpts?.nonStrictMcp,
     signal,
   });
 
@@ -499,6 +514,10 @@ export interface GenerateSlideOptions {
   thinking?: boolean;
   educationMode?: boolean;
   hasClaudeContext?: boolean;
+  cwd?: string;
+  mcpConfigPath?: string;
+  allowedTools?: string[];
+  nonStrictMcp?: boolean;
   onChunk?: (chunk: string, isThinking: boolean) => void;
   signal?: AbortSignal;
 }
@@ -513,6 +532,10 @@ export async function generateSlide(opts: GenerateSlideOptions): Promise<WriterS
     thinking = false,
     educationMode = false,
     hasClaudeContext = false,
+    cwd,
+    mcpConfigPath,
+    allowedTools,
+    nonStrictMcp,
     onChunk,
     signal,
   } = opts;
@@ -542,6 +565,10 @@ export async function generateSlide(opts: GenerateSlideOptions): Promise<WriterS
       model,
       thinking,
       onChunk,
+      cwd,
+      mcpConfigPath,
+      allowedTools,
+      nonStrictMcp,
       signal,
     });
 

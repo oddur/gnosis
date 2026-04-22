@@ -23,7 +23,7 @@ export const claudeProvider: LLMProvider = {
     { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', quick: true },
   ],
 
-  async generate({ content, systemPrompt, model, thinking, onChunk, onToolUse, mcpConfigPath, allowedTools, signal }) {
+  async generate({ content, systemPrompt, model, thinking, onChunk, onToolUse, mcpConfigPath, allowedTools, cwd, nonStrictMcp, signal }) {
     const claudePath = resolveClaudePath();
     let fullText = '';
 
@@ -68,17 +68,20 @@ export const claudeProvider: LLMProvider = {
 
     const toolArgs: string[] = [];
     if (mcpConfigPath) {
-      toolArgs.push('--mcp-config', mcpConfigPath, '--strict-mcp-config');
+      toolArgs.push('--mcp-config', mcpConfigPath);
+      if (!nonStrictMcp) toolArgs.push('--strict-mcp-config');
     }
     if (allowedTools && allowedTools.length > 0) {
       toolArgs.push('--allowedTools', allowedTools.join(','));
-    } else if (!mcpConfigPath) {
+    } else if (!mcpConfigPath && !nonStrictMcp) {
+      // No explicit tool set AND no project-local MCP discovery → lock tools off.
       toolArgs.push('--tools', '');
     }
 
     await spawnCliStreaming({
       binPath: claudePath,
       cliName: 'Claude',
+      cwd,
       args: [
         '-p',
         '--model',
@@ -112,11 +115,12 @@ export const claudeProvider: LLMProvider = {
     return fullText.trim();
   },
 
-  quick({ content, systemPrompt, model }) {
+  quick({ content, systemPrompt, model, cwd }) {
     const claudePath = resolveClaudePath();
     return spawnCliQuick({
       binPath: claudePath,
       cliName: 'Claude',
+      cwd,
       args: [
         '-p',
         '--model',

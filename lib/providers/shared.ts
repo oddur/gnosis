@@ -113,6 +113,9 @@ export interface StreamingCliOptions {
   processLine: (line: string) => void;
   /** Environment overrides (merged with process.env) */
   env?: NodeJS.ProcessEnv;
+  /** Working directory for the child process. When set, the CLI auto-discovers
+   *  project-local config (.mcp.json, .claude/settings.json, skills) from here. */
+  cwd?: string;
   /** Install instructions shown when CLI is not found */
   installHint: string;
   /** Custom error handler for non-zero exit codes. Return an Error or undefined to use default. */
@@ -133,7 +136,10 @@ function withBinDir(binPath: string, env: NodeJS.ProcessEnv | undefined): NodeJS
 
 export function spawnCliStreaming(opts: StreamingCliOptions): Promise<void> {
   return new Promise((resolve, reject) => {
-    const proc = spawn(opts.binPath, opts.args, { env: withBinDir(opts.binPath, opts.env) });
+    const proc = spawn(opts.binPath, opts.args, {
+      env: withBinDir(opts.binPath, opts.env),
+      cwd: opts.cwd,
+    });
     const tag = `[${opts.cliName}]`;
 
     if (opts.signal) {
@@ -207,6 +213,7 @@ export interface QuickCliOptions {
   args: string[];
   stdinContent: string;
   env?: NodeJS.ProcessEnv;
+  cwd?: string;
   installHint: string;
   handleExitError?: (stderr: string) => Error | undefined;
 }
@@ -217,7 +224,10 @@ export interface QuickCliOptions {
  */
 export function spawnCliQuick(opts: QuickCliOptions): Promise<string> {
   return new Promise((resolve, reject) => {
-    const proc = spawn(opts.binPath, opts.args, { env: withBinDir(opts.binPath, opts.env) });
+    const proc = spawn(opts.binPath, opts.args, {
+      env: withBinDir(opts.binPath, opts.env),
+      cwd: opts.cwd,
+    });
 
     proc.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'ENOENT') {

@@ -304,6 +304,10 @@ export interface GenerateReviewRequest {
   educationMode?: boolean;
   claudeContext?: boolean;
   excludedFiles?: string[];
+  /** Local reviews only. When true, Claude runs with cwd=repoPath and can
+   *  discover the repo's project-local config (.mcp.json, .claude/settings.json,
+   *  skills) plus run read-only shell tools like tests. Ignored for GitHub URLs. */
+  localTools?: boolean;
 }
 
 export interface GenerateReviewResponse {
