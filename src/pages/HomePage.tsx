@@ -1409,29 +1409,10 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
             </form>
           </section>
 
-          {/* Dialogs (unchanged — just mounted here) */}
+          {/* Dialogs (unchanged — just mounted here). LocalRepoDialog
+              is lifted to the main root below so the pre-auth welcome
+              screen can open it too. */}
           <PRPickerDialog open={prPickerOpen} onOpenChange={setPrPickerOpen} onSelect={setPrUrl} />
-          <LocalRepoDialog
-            open={localRepoOpen}
-            onOpenChange={setLocalRepoOpen}
-            onSubmit={(localUrl, { localTools }) => {
-              // Flip guestMode on first local review from the welcome gate
-              // so the rest of the app unlocks without forcing a GitHub
-              // sign-in. Persists so returning users skip the gate.
-              if (!guestMode && !isAuthenticated) {
-                setGuestMode(true);
-                void window.electronAPI.loadPreferences().then((current) => {
-                  void window.electronAPI.savePreferences({
-                    ...current,
-                    guestMode: true,
-                    firstRunSeen: true,
-                  });
-                });
-              }
-              setPrUrl(localUrl);
-              void startReviewForUrl(localUrl, { localTools });
-            }}
-          />
           <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onReplayOnboarding={replayOnboarding} />
           <FilePickerDialog
             open={filePickerOpen}
@@ -1869,6 +1850,28 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
           </div>
         </div>
       )}
+
+      {/* Mounted outside the auth gate so the pre-auth welcome screen
+          can open it. On submit, flips guestMode when the user isn't
+          authenticated — unlocks the rest of the app for return visits. */}
+      <LocalRepoDialog
+        open={localRepoOpen}
+        onOpenChange={setLocalRepoOpen}
+        onSubmit={(localUrl, { localTools }) => {
+          if (!guestMode && !isAuthenticated) {
+            setGuestMode(true);
+            void window.electronAPI.loadPreferences().then((current) => {
+              void window.electronAPI.savePreferences({
+                ...current,
+                guestMode: true,
+                firstRunSeen: true,
+              });
+            });
+          }
+          setPrUrl(localUrl);
+          void startReviewForUrl(localUrl, { localTools });
+        }}
+      />
     </main>
   );
 }
