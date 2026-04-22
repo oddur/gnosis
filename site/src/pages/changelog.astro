@@ -1,0 +1,146 @@
+---
+import Base from '../layouts/Base.astro';
+import { marked } from 'marked';
+
+interface GitHubRelease {
+  tag_name: string;
+  name: string | null;
+  body: string | null;
+  published_at: string;
+  html_url: string;
+  draft: boolean;
+  prerelease: boolean;
+}
+
+// Fetch release notes from the GitHub API at build time. No runtime
+// calls, no client JS, no rate-limit exposure at page load. The
+// workflow re-triggers on `release: published` so the site stays in
+// sync without a manual push.
+const token = process.env.GITHUB_TOKEN;
+const headers: Record<string, string> = {
+  'User-Agent': 'gnosis-site',
+  Accept: 'application/vnd.github+json',
+};
+if (token) headers.Authorization = `Bearer ${token}`;
+
+let releases: GitHubRelease[] = [];
+let fetchError: string | null = null;
+
+try {
+  const res = await fetch(
+    'https://api.github.com/repos/oddur/gnosis/releases?per_page=20',
+    { headers }
+  );
+  if (res.ok) {
+    const data: GitHubRelease[] = await res.json();
+    releases = data.filter((r) => !r.draft).slice(0, 20);
+  } else {
+    fetchError = `GitHub API returned ${res.status}`;
+  }
+} catch (err) {
+  fetchError = err instanceof Error ? err.message : String(err);
+}
+
+marked.setOptions({ gfm: true, breaks: false });
+
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+}
+
+// Release body comes from a repo maintainer's markdown. Trust level
+// is "same as CLAUDE.md / source files" — we don't sanitize.
+function renderBody(body: string | null): string {
+  if (!body) return '';
+  const out = marked.parse(body);
+  return typeof out === 'string' ? out : '';
+}
+---
+
+<Base
+  title="Changelog — Gnosis"
+  description="Recent Gnosis releases, pulled from GitHub."
+>
+  <a href="#top" class="skip-link">Skip to content</a>
+  <main id="top" class="mx-auto max-w-3xl px-6 py-16 sm:py-24 flex flex-col gap-12">
+    <header class="flex flex-col gap-5">
+      <p class="slide-chapter">
+        <a href="/" class="link-claret">← gnosis.to</a>
+      </p>
+      <h1 class="slide-title">Changelog.</h1>
+      <p class="slide-prose">
+        Recent releases, pulled from
+        <a
+          class="link-claret"
+          href="https://github.com/oddur/gnosis/releases"
+          target="_blank"
+          rel="noopener noreferrer"
+        >GitHub</a>. The site rebuilds whenever a new release is published.
+      </p>
+    </header>
+
+    {fetchError && (
+      <section class="hairline pt-12">
+        <p class="slide-prose">
+          Couldn't load releases at build time ({fetchError}). Head to
+          <a
+            class="link-claret"
+            href="https://github.com/oddur/gnosis/releases"
+            target="_blank"
+            rel="noopener noreferrer"
+          >GitHub</a>
+          to see what's new.
+        </p>
+      </section>
+    )}
+
+    {releases.length > 0 && (
+      <ol class="flex flex-col gap-12 list-none p-0 m-0">
+        {releases.map((r) => (
+          <li class="hairline pt-10 flex flex-col gap-4">
+            <header class="flex flex-col gap-2">
+              <p class="slide-chapter">
+                <span class="release-tag">{r.tag_name}</span>
+                <span aria-hidden="true">·</span>
+                <span>{formatDate(r.published_at)}</span>
+                {r.prerelease && <>
+                  <span aria-hidden="true">·</span>
+                  <span>prerelease</span>
+                </>}
+              </p>
+              {r.name && r.name !== r.tag_name && (
+                <h2 class="editorial-heading">{r.name}</h2>
+              )}
+            </header>
+            {r.body && r.body.trim().length > 0 && (
+              <div class="slide-prose release-body" set:html={renderBody(r.body)} />
+            )}
+            <p class="slide-meta">
+              <a
+                class="link-claret"
+                href={r.html_url}
+                target="_blank"
+                rel="noopener noreferrer"
+              >View on GitHub →</a>
+            </p>
+          </li>
+        ))}
+      </ol>
+    )}
+
+    <footer class="hairline pt-8 flex flex-col gap-2 slide-meta">
+      <p>
+        <a
+          class="link-claret"
+          href="https://github.com/oddur/gnosis/releases"
+          target="_blank"
+          rel="noopener noreferrer"
+        >All releases on GitHub</a>
+        · <a class="link-claret" href="/">Back to gnosis.to</a>
+      </p>
+    </footer>
+  </main>
+</Base>

@@ -6,6 +6,10 @@ on:
     paths:
       - 'site/**'
       - '.github/workflows/site.yml'
+  # Re-trigger on every published release so /changelog stays in
+  # sync without a manual push to site/.
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -35,6 +39,11 @@ jobs:
 
       - run: npm ci
       - run: npm run build
+        env:
+          # Used by src/pages/changelog.astro to authenticate the
+          # GitHub API fetch at build time. Without it the call is
+          # anonymous and capped at 60/hour/IP.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/upload-pages-artifact@v3
         with:
