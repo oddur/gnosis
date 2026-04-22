@@ -12,6 +12,7 @@ import {
   GitMerge,
   GitPullRequest,
   GitPullRequestClosed,
+  GitCompare,
   AlertTriangle,
   Eraser,
   Share2,
@@ -131,6 +132,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   const [includeAllFiles, setIncludeAllFiles] = useState(true);
   const [prPickerOpen, setPrPickerOpen] = useState(false);
   const [localRepoOpen, setLocalRepoOpen] = useState(false);
+  const [guestMode, setGuestMode] = useState(false);
   const [filePickerOpen, setFilePickerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [cliNotFound, setCliNotFound] = useState<{ provider: string } | null>(null);
@@ -270,8 +272,9 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
       setEducationMode(prefs.educationMode);
       setClaudeContext(prefs.claudeContext);
       setIncludeAllFiles(prefs.includeAllFiles);
+      setGuestMode(prefs.guestMode);
       setPrefsLoaded(true);
-      if (!prefs.firstRunSeen) {
+      if (!prefs.firstRunSeen && !prefs.guestMode) {
         setRepoSetupOpen(true);
       }
     });
@@ -781,7 +784,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
         </div>
       )}
 
-      {authStatus === 'unauthenticated' && (
+      {authStatus === 'unauthenticated' && !guestMode && (
         <div className="newspaper">
           <header className="newspaper-masthead">
             <hr className="newspaper-rule--double" />
@@ -789,78 +792,112 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
             <p className="newspaper-tagline">Code Review, Narrated</p>
             <hr className="newspaper-rule--double" />
           </header>
-          <div className="max-w-md mx-auto w-full pt-8 flex flex-col gap-8">
+          <div className="max-w-[52ch] mx-auto w-full pt-8 flex flex-col gap-10">
             {authError && (
               <Alert variant="destructive">
                 <AlertDescription>{authError}</AlertDescription>
               </Alert>
             )}
-            <div className="flex flex-col gap-4 text-center">
-              <p className="newspaper-lede">
-                Sign in with your GitHub account to begin reading.
+
+            <p className="newspaper-lede">
+              Two ways in. Pick whichever fits the change you want to read.
+            </p>
+
+            {/* ── Path 1: GitHub ── */}
+            <section className="flex flex-col gap-3">
+              <h2 className="text-base font-semibold text-foreground">
+                With a GitHub account
+              </h2>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                Sign in and Gnosis fetches pull request diffs, remembers your reviews,
+                and can submit comments back. Uses your account only to talk to
+                GitHub — nothing leaves your machine otherwise.
               </p>
-              <p className="slide-meta max-w-[52ch] mx-auto">
-                Gnosis uses your GitHub account to fetch pull request diffs, post review comments, and remember which
-                reviews are yours. Nothing leaves your machine besides the requests to GitHub.
-              </p>
-            </div>
-            <Button onClick={handleSignIn} className="w-full gap-2">
-              <GitHubIcon className="h-4 w-4" />
-              Sign in with GitHub
-            </Button>
-            <button
-              type="button"
-              className="slide-meta hover:text-foreground transition-colors flex items-center gap-1.5 self-center"
-              onClick={() => {
-                setPatExpanded((v) => !v);
-                setPatError(null);
-              }}
-            >
-              {patExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-              Use a Personal Access Token instead
-            </button>
-            {patExpanded && (
-              <div className="border-l border-border pl-4 flex flex-col gap-3">
-                <p className="slide-meta">
-                  Create a token with <code className="font-mono">repo</code> scope at{' '}
-                  <button
-                    type="button"
-                    className="underline hover:text-foreground"
-                    onClick={() =>
-                      void window.electronAPI.openExternal(
-                        'https://github.com/settings/tokens/new?scopes=repo&description=Gnosis'
-                      )
-                    }
+              <Button onClick={handleSignIn} className="w-fit gap-2">
+                <GitHubIcon className="h-4 w-4" />
+                Sign in with GitHub
+              </Button>
+              <button
+                type="button"
+                className="slide-meta hover:text-foreground transition-colors flex items-center gap-1.5 self-start"
+                onClick={() => {
+                  setPatExpanded((v) => !v);
+                  setPatError(null);
+                }}
+              >
+                {patExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                Use a Personal Access Token instead
+              </button>
+              {patExpanded && (
+                <div className="border-l border-border pl-4 flex flex-col gap-3 mt-1">
+                  <p className="slide-meta">
+                    Create a token with <code className="font-mono">repo</code> scope at{' '}
+                    <button
+                      type="button"
+                      className="underline hover:text-foreground"
+                      onClick={() =>
+                        void window.electronAPI.openExternal(
+                          'https://github.com/settings/tokens/new?scopes=repo&description=Gnosis'
+                        )
+                      }
+                    >
+                      github.com/settings/tokens
+                    </button>
+                    , then paste it below.
+                  </p>
+                  <input
+                    type="password"
+                    placeholder="ghp_…"
+                    value={patToken}
+                    onChange={(e) => setPatToken(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') void handleConnectPat();
+                    }}
+                    className="w-full bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground/60 transition-colors"
+                  />
+                  {patError && (
+                    <Alert variant="destructive">
+                      <AlertDescription>{patError}</AlertDescription>
+                    </Alert>
+                  )}
+                  <Button
+                    onClick={() => void handleConnectPat()}
+                    disabled={!patToken.trim() || patConnecting}
+                    className="w-fit"
+                    size="sm"
                   >
-                    github.com/settings/tokens
-                  </button>
-                  , then paste it below.
-                </p>
-                <input
-                  type="password"
-                  placeholder="ghp_…"
-                  value={patToken}
-                  onChange={(e) => setPatToken(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') void handleConnectPat();
-                  }}
-                  className="w-full bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground/60 transition-colors"
-                />
-                {patError && (
-                  <Alert variant="destructive">
-                    <AlertDescription>{patError}</AlertDescription>
-                  </Alert>
-                )}
-                <Button
-                  onClick={() => void handleConnectPat()}
-                  disabled={!patToken.trim() || patConnecting}
-                  className="w-full"
-                  size="sm"
-                >
-                  {patConnecting ? 'Connecting…' : 'Connect'}
-                </Button>
-              </div>
-            )}
+                    {patConnecting ? 'Connecting…' : 'Connect'}
+                  </Button>
+                </div>
+              )}
+            </section>
+
+            <div className="relative flex items-center gap-3 text-muted-foreground/60">
+              <span className="flex-1 h-px bg-border" />
+              <span className="slide-meta">or</span>
+              <span className="flex-1 h-px bg-border" />
+            </div>
+
+            {/* ── Path 2: Local git ── */}
+            <section className="flex flex-col gap-3">
+              <h2 className="text-base font-semibold text-foreground">
+                With any local git repository
+              </h2>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                No account needed. Point Gnosis at a folder on your machine and two
+                commits — a branch against <code className="font-mono">main</code>, a
+                tag against HEAD, any two refs. Works fully offline, and with the
+                repo's own Claude skills and MCP servers if you want them.
+              </p>
+              <Button
+                variant="outline"
+                onClick={() => setLocalRepoOpen(true)}
+                className="w-fit gap-2"
+              >
+                <GitCompare className="h-4 w-4" />
+                Review a local git diff
+              </Button>
+            </section>
           </div>
         </div>
       )}
@@ -879,7 +916,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
           story, dispatches sidebar, classified submission form,
           and a multi-column archives grid.
           ══════════════════════════════════════════════════════════ */}
-      {isAuthenticated && (
+      {(isAuthenticated || guestMode) && (
         <div className="newspaper">
           {/* ── Masthead ── */}
           <header className="newspaper-masthead">
@@ -888,18 +925,30 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
             <p className="newspaper-tagline">Code Review, Narrated</p>
             <p className="newspaper-dateline">
               No. {editionNumber} · {dateline} ·{' '}
-              <span className="inline-flex items-center gap-1.5">
-                <Avatar className="h-3.5 w-3.5 inline-block align-middle">
-                  <AvatarImage
-                    src={`https://github.com/${login}.png`}
-                    alt={login}
-                  />
-                  <AvatarFallback className="text-[8px]">
-                    {login.slice(0, 2).toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
-                @{login}
-              </span>
+              {isAuthenticated ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <Avatar className="h-3.5 w-3.5 inline-block align-middle">
+                    <AvatarImage
+                      src={`https://github.com/${login}.png`}
+                      alt={login}
+                    />
+                    <AvatarFallback className="text-[8px]">
+                      {login.slice(0, 2).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  @{login}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleSignIn}
+                  className="inline-flex items-center gap-1 hover:text-foreground transition-colors"
+                  title="Connect a GitHub account to review pull requests"
+                >
+                  <GitHubIcon className="h-3 w-3" />
+                  Guest · connect GitHub
+                </button>
+              )}
             </p>
             <hr className="newspaper-rule--double" />
           </header>
@@ -1176,17 +1225,22 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
 
               {/* Alternative source pickers — framed as prose so they read
                   as options, not as primary actions competing with the
-                  Generate review button. */}
+                  Generate review button. Guest-mode users only see the
+                  local option; browsing PRs requires a GitHub account. */}
               <p className="slide-meta -mt-1">
                 or{' '}
-                <button
-                  type="button"
-                  onClick={() => setPrPickerOpen(true)}
-                  className="pb-0.5 border-b border-transparent hover:text-foreground hover:border-[var(--ring)] transition-colors"
-                >
-                  browse your pull requests
-                </button>
-                {' · '}
+                {isAuthenticated && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setPrPickerOpen(true)}
+                      className="pb-0.5 border-b border-transparent hover:text-foreground hover:border-[var(--ring)] transition-colors"
+                    >
+                      browse your pull requests
+                    </button>
+                    {' · '}
+                  </>
+                )}
                 <button
                   type="button"
                   onClick={() => setLocalRepoOpen(true)}
@@ -1361,6 +1415,19 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
             open={localRepoOpen}
             onOpenChange={setLocalRepoOpen}
             onSubmit={(localUrl, { localTools }) => {
+              // Flip guestMode on first local review from the welcome gate
+              // so the rest of the app unlocks without forcing a GitHub
+              // sign-in. Persists so returning users skip the gate.
+              if (!guestMode && !isAuthenticated) {
+                setGuestMode(true);
+                void window.electronAPI.loadPreferences().then((current) => {
+                  void window.electronAPI.savePreferences({
+                    ...current,
+                    guestMode: true,
+                    firstRunSeen: true,
+                  });
+                });
+              }
               setPrUrl(localUrl);
               void startReviewForUrl(localUrl, { localTools });
             }}

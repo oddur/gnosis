@@ -1006,6 +1006,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   proactiveThinking: false,
   educationMode: true,
   claudeContext: true,
+  guestMode: false,
 };
 
 function applyBinaryOverrides(prefs: Preferences): void {

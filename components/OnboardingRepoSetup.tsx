@@ -94,6 +94,9 @@ export function OnboardingRepoSetup({ open, onComplete, onSkip }: Props) {
           <p>
             Reviews refresh when PRs update and you'll get a notification when they're ready.
           </p>
+          <p className="text-xs opacity-80">
+            Prefer to work offline? You can also review any local git repo — skip this step and use <em>Review a local git diff</em> from the home screen.
+          </p>
         </div>
 
         {/* Search input */}
