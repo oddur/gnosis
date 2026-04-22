@@ -62,6 +62,7 @@ declare global {
       onUpdateReady: (callback: (version: string) => void) => void;
       offUpdateReady: () => void;
       dismissUpdate: (version: string) => Promise<void>;
+      getPendingUpdateReady: () => Promise<string | null>;
       openExternal: (url: string) => Promise<void>;
       openLogsDirectory: () => Promise<void>;
       openReviewPrompt: (id: string) => Promise<void>;

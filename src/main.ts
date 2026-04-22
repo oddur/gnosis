@@ -655,6 +655,15 @@ function stopProactivePolling() {
 }
 
 // ── Auto-updater (Squirrel) ─────────────────────────────────────
+
+// Squirrel fires update-downloaded at most once per launch, and if the
+// download completes before the renderer has mounted its IPC listener,
+// the event is dropped. Cache the last-known ready version so a newly
+// mounted banner can pull it on startup.
+// GNOSIS_FAKE_UPDATE_READY=<version> surfaces the "ready to install" banner
+// in dev without needing a packaged build and Squirrel round-trip.
+let pendingUpdateReadyVersion: string | null = process.env.GNOSIS_FAKE_UPDATE_READY ?? null;
+
 function setupAutoUpdater() {
   if (!app.isPackaged) return;
   if (process.platform === 'linux') return;
@@ -667,10 +676,23 @@ function setupAutoUpdater() {
     return;
   }
 
+  autoUpdater.on('checking-for-update', () => {
+    console.log('[main] Auto-updater: checking for update');
+  });
+
+  autoUpdater.on('update-available', () => {
+    console.log('[main] Auto-updater: update available, downloading');
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    console.log('[main] Auto-updater: no update available');
+  });
+
   autoUpdater.on('update-downloaded', (_event, _releaseNotes, releaseName) => {
     const version = releaseName.replace(/^v/, '');
     const label = version ? ` ${version}` : '';
     console.log(`[main] Update${label} downloaded, will install on exit`);
+    pendingUpdateReadyVersion = version;
     if (loadPreferences().notifications) {
       const notif = new Notification({
         title: 'A new update is ready to install',
@@ -1046,6 +1068,8 @@ const WEB_ONLY_TOOLS = ['WebFetch', 'WebSearch'];
 ipcMain.handle('dismiss-update', (_event, version: string) => {
   dismissedUpdateVersion = version;
 });
+
+ipcMain.handle('get-pending-update-ready', () => pendingUpdateReadyVersion);
 
 ipcMain.handle('open-external', (_event, url: string) => {
   try {
