@@ -35,6 +35,11 @@ const { title, description = 'AI-guided code review. Understand the story before
       rel="stylesheet"
     />
     <title>{title}</title>
+    <script>
+      import { init, trackEvent } from '@aptabase/web';
+      init('A-EU-1996018704');
+      trackEvent('pageview', { path: location.pathname });
+    </script>
   </head>
   <body>
     <slot />
