@@ -66,6 +66,15 @@ function renderBody(body: string | null): string {
 >
   <a href="#top" class="skip-link">Skip to content</a>
   <main id="top" class="mx-auto max-w-3xl px-6 py-16 sm:py-24 flex flex-col gap-12">
+    <!-- Shared newspaper nameplate — same as the homepage so the two
+         routes read as editions of the same broadsheet. -->
+    <div class="newspaper-masthead">
+      <hr class="newspaper-rule--double" aria-hidden="true" />
+      <span class="nameplate">Gnosis</span>
+      <p class="newspaper-tagline">Code Review, Narrated</p>
+      <hr class="newspaper-rule--double" aria-hidden="true" />
+    </div>
+
     <header class="flex flex-col gap-5">
       <p class="slide-chapter">
         <a href="/" class="link-claret">← gnosis.to</a>
