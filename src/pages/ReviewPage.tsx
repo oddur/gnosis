@@ -15,7 +15,7 @@ import { useReviewComments } from '../../lib/use-review-comments';
 import { useSlideChat } from '../../lib/use-slide-chat';
 import { useKeyboardShortcuts, type ShortcutMap } from '../../lib/use-keyboard-shortcuts';
 import { buildFileUrlBase } from '../../lib/github-url';
-import { isLocalUrl } from '../../lib/diffSource';
+import { isLocalUrl } from '../../lib/local-url';
 import type {
   ReviewGuide,
   ReviewEvent,

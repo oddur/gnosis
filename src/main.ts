@@ -14,8 +14,9 @@ import {
   getCiStatus,
   getReviewStatus,
 } from '../lib/github';
-import { createDiffSource, isLocalUrl } from '../lib/diffSource';
+import { createDiffSource } from '../lib/diffSource';
 import type { DiffSource } from '../lib/diffSource';
+import { isLocalUrl } from '../lib/local-url';
 import type { CiCheck, FileMetadata, PrMetadata, PrSearchResult, PrStatus } from '../lib/types';
 import { buildContextPackage, buildPlannerContext, buildTopicContext } from '../lib/context-builder';
 import { generateReviewGuide, planReview, generateSlide } from '../lib/agent';
