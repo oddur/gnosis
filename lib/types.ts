@@ -235,18 +235,11 @@ export interface StartReviewResult {
   author: string;
 }
 
-export type Provider = 'claude' | 'gemini';
+export type Provider = 'claude';
 
 export type ClaudeModel = 'claude-opus-4-7' | 'claude-sonnet-4-6' | 'claude-haiku-4-5-20251001';
 
-export type GeminiModel =
-  | 'gemini-3.1-pro-preview'
-  | 'gemini-3-pro-preview'
-  | 'gemini-3-flash-preview'
-  | 'gemini-2.5-pro'
-  | 'gemini-2.5-flash';
-
-export type ModelId = ClaudeModel | GeminiModel;
+export type ModelId = ClaudeModel;
 
 export interface Preferences {
   instructions: string;
@@ -262,7 +255,6 @@ export interface Preferences {
   codeTheme: string;
   codeFont: string;
   claudePath: string;
-  geminiPath: string;
   notifications: boolean;
   diffLayout: 'unified' | 'split';
   includeAllFiles: boolean;

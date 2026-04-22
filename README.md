@@ -8,13 +8,13 @@ Pull requests are still reviewed the same way they always have been — scrollin
 
 Gnosis is an experiment in changing that. Paste a PR URL and it reads the diff, groups related changes together, and presents them as an ordered slideshow — foundation changes first, then the features built on top, then tests and config. Each slide has a short explanation of _why_ the change is there, the relevant diff, and optionally a diagram. The goal is to walk the reviewer through the change the way the author understands it, not the way the filesystem happens to order it.
 
-It runs locally and uses the [Claude Code CLI](https://claude.ai/code) or [Gemini CLI](https://github.com/google-gemini/gemini-cli) under the hood.
+It runs locally and uses the [Claude Code CLI](https://claude.ai/code) under the hood.
 
 ## Features
 
 - **Guided slideshow** — changes are grouped by theme and ordered by dependency (foundations first, then implementations, then tests and config), not by filename
-- **Multi-provider** — choose between Claude (Opus, Sonnet, Haiku) and Gemini (3.1 Pro, 3 Pro, 3 Flash, 2.5 Pro, 2.5 Flash)
-- **Extended thinking** — enable deeper reasoning for Claude models (slower, more thorough)
+- **Claude-native** — pick between Claude Opus 4.7, Sonnet 4.6, and Haiku 4.5
+- **Extended thinking** — enable deeper reasoning (slower, more thorough)
 - **Custom instructions** — steer the review with free-text prompts (e.g. _focus on security_, _explain the auth flow_)
 - **Inline review comments** — add comments on specific diff lines and submit directly to GitHub as an approval, request for changes, or comment
 - **Split diff view** — toggle between unified and side-by-side diff layout; preference persists across sessions
@@ -39,9 +39,7 @@ It runs locally and uses the [Claude Code CLI](https://claude.ai/code) or [Gemin
 
 ## Requirements
 
-- **At least one** of the following CLIs installed and authenticated:
-  - [Claude Code CLI](https://claude.ai/code) — authenticate with `claude auth`
-  - [Gemini CLI](https://github.com/google-gemini/gemini-cli)
+- [Claude Code CLI](https://claude.ai/code) installed and authenticated with `claude auth`
 
 ## Install
 
@@ -63,8 +61,8 @@ On first launch, click **Sign in with GitHub** to authenticate via OAuth.
 ## Usage
 
 1. Paste a GitHub PR URL — or click **Browse** to pick from your open PRs and review requests
-2. Choose a provider (Claude or Gemini) and model
-3. Optionally enable **Extended thinking** for deeper analysis (Claude only, slower)
+2. Choose a Claude model
+3. Optionally enable **Extended thinking** for deeper analysis (slower)
 4. Optionally add custom instructions — e.g. _focus on security_, _explain the auth flow_
 5. Hit **Generate Review** — the review generates in the background so you can submit more PRs or browse existing reviews while it runs
 

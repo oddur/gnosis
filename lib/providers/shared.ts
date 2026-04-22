@@ -103,7 +103,7 @@ export function resolveBinaryPath(name: string, extraCandidates: string[] = []):
 export interface StreamingCliOptions {
   /** Absolute path to the CLI binary */
   binPath: string;
-  /** CLI name for log prefix and error messages (e.g. "claude", "gemini") */
+  /** CLI name for log prefix and error messages (e.g. "claude") */
   cliName: string;
   /** Arguments to pass to the CLI */
   args: string[];
@@ -123,7 +123,7 @@ export interface StreamingCliOptions {
 
 /**
  * Spawn a CLI process with streaming stdout line-buffering, debug logging,
- * and ENOENT handling. Used by both Claude and Gemini providers.
+ * and ENOENT handling.
  */
 function withBinDir(binPath: string, env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv {
   const binDir = path.dirname(binPath);

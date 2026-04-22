@@ -1,5 +1,4 @@
 import { claudeProvider } from './providers/claude';
-import { geminiProvider } from './providers/gemini';
 import type { ModelId, Provider } from './types';
 
 export interface GenerateOptions {
@@ -39,7 +38,6 @@ export interface LLMProvider {
 
 const providers: Record<Provider, LLMProvider> = {
   claude: claudeProvider,
-  gemini: geminiProvider,
 };
 
 export function getProvider(name: Provider): LLMProvider {
