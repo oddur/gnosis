@@ -344,7 +344,7 @@ export function LocalRepoDialog({ open, onOpenChange, onSubmit }: Props) {
                   Validating…
                 </>
               ) : (
-                'Begin review'
+                'Generate review'
               )}
             </Button>
           </DialogFooter>
