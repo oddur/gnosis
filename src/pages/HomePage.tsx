@@ -22,6 +22,7 @@ import { Button } from '../../components/ui/button';
 import { Alert, AlertDescription } from '../../components/ui/alert';
 import { Badge } from '../../components/ui/badge';
 import { PRPickerDialog } from '../../components/PRPickerDialog';
+import { LocalRepoDialog } from '../../components/LocalRepoDialog';
 import { FilePickerDialog } from '../../components/FilePickerDialog';
 import { SettingsDialog } from '../../components/SettingsDialog';
 import { ShortcutOverlay } from '../../components/ShortcutOverlay';
@@ -129,6 +130,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   const [history, setHistory] = useState<ReviewHistoryEntry[]>([]);
   const [includeAllFiles, setIncludeAllFiles] = useState(true);
   const [prPickerOpen, setPrPickerOpen] = useState(false);
+  const [localRepoOpen, setLocalRepoOpen] = useState(false);
   const [filePickerOpen, setFilePickerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [cliNotFound, setCliNotFound] = useState<{ provider: string } | null>(null);
@@ -335,6 +337,13 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
         group: 'Actions',
         keywords: 'pr search find',
         perform: () => setPrPickerOpen(true),
+      },
+      {
+        id: 'local-repo',
+        label: 'Review a local git diff',
+        group: 'Actions',
+        keywords: 'local git diff branch commit offline',
+        perform: () => setLocalRepoOpen(true),
       },
       {
         id: 'settings',
@@ -602,7 +611,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
     setAuthStatus('unauthenticated');
   }
 
-  async function doStartReview(excludedFiles: string[], urlOverride?: string) {
+  async function doStartReview(excludedFiles: string[], urlOverride?: string, extra?: { localTools?: boolean }) {
     const targetUrl = (urlOverride ?? prUrl).trim();
     if (!targetUrl) return;
     setSubmitting(true);
@@ -619,6 +628,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
         educationMode,
         claudeContext,
         excludedFiles: excludedFiles.length > 0 ? excludedFiles : undefined,
+        localTools: extra?.localTools,
       });
       setGenerationStartTimes((prev) => new Map(prev).set(result.reviewId, Date.now()));
       const updated = await window.electronAPI.listReviews();
@@ -635,7 +645,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   // submit AND the inline "Generate review →" link in the suggested
   // section. The latter passes a URL directly so the review starts
   // without first writing to the input field.
-  async function startReviewForUrl(targetUrl: string) {
+  async function startReviewForUrl(targetUrl: string, extra?: { localTools?: boolean }) {
     if (!targetUrl.trim() || submitting) return;
     savePrefs();
     setError(null);
@@ -653,7 +663,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
       return;
     }
 
-    void doStartReview([], targetUrl);
+    void doStartReview([], targetUrl, extra);
   }
 
   async function handleSubmit(e: React.SyntheticEvent) {
@@ -1139,25 +1149,16 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
             </span>
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
               <div className="flex items-end gap-4 flex-wrap">
-                <div className="flex-1 min-w-[280px] flex items-end gap-3">
-                  <input
-                    ref={prInputRef}
-                    id="pr-url"
-                    type="url"
-                    placeholder="Paste a pull request URL — github.com/owner/repo/pull/123"
-                    value={prUrl}
-                    onChange={(e) => setPrUrl(e.target.value)}
-                    className="flex-1 bg-transparent border-0 border-b border-border px-0 py-2.5 text-base placeholder:text-muted-foreground/60 transition-colors"
-                    required
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setPrPickerOpen(true)}
-                    className="slide-meta hover:text-foreground transition-colors pb-2.5"
-                  >
-                    Browse
-                  </button>
-                </div>
+                <input
+                  ref={prInputRef}
+                  id="pr-url"
+                  type="text"
+                  placeholder="Paste a pull request URL — github.com/owner/repo/pull/123"
+                  value={prUrl}
+                  onChange={(e) => setPrUrl(e.target.value)}
+                  className="flex-1 min-w-[280px] bg-transparent border-0 border-b border-border px-0 py-2.5 text-base placeholder:text-muted-foreground/60 transition-colors"
+                  required
+                />
                 <Button type="submit" className="gap-2 px-6 py-2.5 h-auto" disabled={submitting}>
                   {submitting ? (
                     <>
@@ -1172,6 +1173,28 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                   )}
                 </Button>
               </div>
+
+              {/* Alternative source pickers — framed as prose so they read
+                  as options, not as primary actions competing with the
+                  Generate review button. */}
+              <p className="slide-meta -mt-1">
+                or{' '}
+                <button
+                  type="button"
+                  onClick={() => setPrPickerOpen(true)}
+                  className="pb-0.5 border-b border-transparent hover:text-foreground hover:border-[var(--ring)] transition-colors"
+                >
+                  browse your pull requests
+                </button>
+                {' · '}
+                <button
+                  type="button"
+                  onClick={() => setLocalRepoOpen(true)}
+                  className="pb-0.5 border-b border-transparent hover:text-foreground hover:border-[var(--ring)] transition-colors"
+                >
+                  review a local git diff
+                </button>
+              </p>
 
               {/* Options row */}
               <div className="flex items-center gap-6 slide-meta">
@@ -1334,6 +1357,14 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
 
           {/* Dialogs (unchanged — just mounted here) */}
           <PRPickerDialog open={prPickerOpen} onOpenChange={setPrPickerOpen} onSelect={setPrUrl} />
+          <LocalRepoDialog
+            open={localRepoOpen}
+            onOpenChange={setLocalRepoOpen}
+            onSubmit={(localUrl, { localTools }) => {
+              setPrUrl(localUrl);
+              void startReviewForUrl(localUrl, { localTools });
+            }}
+          />
           <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onReplayOnboarding={replayOnboarding} />
           <FilePickerDialog
             open={filePickerOpen}

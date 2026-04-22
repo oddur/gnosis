@@ -75,6 +75,35 @@ declare global {
       markReviewRead: (id: string) => Promise<void>;
       getPrState: (prUrl: string) => Promise<{ prState: 'open' | 'merged' | 'closed'; headSha: string }>;
       getPrFiles: (prUrl: string) => Promise<ChangedFile[]>;
+      pickRepoDir: () => Promise<string | null>;
+      listRepoRefs: (
+        repoPath: string,
+      ) => Promise<{
+        branches: string[];
+        tags: string[];
+        defaultBase: string | null;
+        defaultHead: string | null;
+        error?: string;
+      }>;
+      validateLocalRepo: (
+        repoPath: string,
+        baseRef: string,
+        headRef: string,
+      ) => Promise<
+        | {
+            ok: true;
+            baseSha: string;
+            headSha: string;
+            mergeBase: string | null;
+            changedFileCount: number;
+          }
+        | {
+            ok: false;
+            reason: 'not-a-repo' | 'same-refs' | 'unknown-ref' | 'other';
+            message: string;
+            ref?: string;
+          }
+      >;
       platform: NodeJS.Platform;
       isPackaged: boolean;
     };

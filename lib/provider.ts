@@ -10,6 +10,12 @@ export interface GenerateOptions {
   onToolUse?: (toolName: string) => void;
   mcpConfigPath?: string;
   allowedTools?: string[];
+  /** Directory the CLI runs in. When set, project-local config
+   *  (.mcp.json, .claude/settings.json, skills) is auto-discovered. */
+  cwd?: string;
+  /** When true, don't pass --strict-mcp-config — lets the CLI pick up
+   *  the project's own `.mcp.json` in addition to any `mcpConfigPath`. */
+  nonStrictMcp?: boolean;
   signal?: AbortSignal;
 }
 
@@ -17,6 +23,7 @@ export interface QuickOptions {
   content: string;
   systemPrompt: string;
   model: ModelId;
+  cwd?: string;
 }
 
 export interface ModelInfo {

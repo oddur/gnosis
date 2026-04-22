@@ -142,6 +142,35 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPrState: (prUrl: string): Promise<{ prState: 'open' | 'merged' | 'closed'; headSha: string }> =>
     ipcRenderer.invoke('get-pr-state', prUrl),
   getPrFiles: (prUrl: string): Promise<ChangedFile[]> => ipcRenderer.invoke('get-pr-files', prUrl),
+  pickRepoDir: (): Promise<string | null> => ipcRenderer.invoke('pick-repo-dir'),
+  listRepoRefs: (
+    repoPath: string,
+  ): Promise<{
+    branches: string[];
+    tags: string[];
+    defaultBase: string | null;
+    defaultHead: string | null;
+    error?: string;
+  }> => ipcRenderer.invoke('list-repo-refs', repoPath),
+  validateLocalRepo: (
+    repoPath: string,
+    baseRef: string,
+    headRef: string,
+  ): Promise<
+    | {
+        ok: true;
+        baseSha: string;
+        headSha: string;
+        mergeBase: string | null;
+        changedFileCount: number;
+      }
+    | {
+        ok: false;
+        reason: 'not-a-repo' | 'same-refs' | 'unknown-ref' | 'other';
+        message: string;
+        ref?: string;
+      }
+  > => ipcRenderer.invoke('validate-local-repo', repoPath, baseRef, headRef),
   platform: process.platform,
   isPackaged: process.env.APP_IS_PACKAGED === '1',
 });

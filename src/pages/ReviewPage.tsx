@@ -15,6 +15,7 @@ import { useReviewComments } from '../../lib/use-review-comments';
 import { useSlideChat } from '../../lib/use-slide-chat';
 import { useKeyboardShortcuts, type ShortcutMap } from '../../lib/use-keyboard-shortcuts';
 import { buildFileUrlBase } from '../../lib/github-url';
+import { isLocalUrl } from '../../lib/diffSource';
 import type {
   ReviewGuide,
   ReviewEvent,
@@ -233,7 +234,11 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
     void window.electronAPI.getAuthState().then((state) => setCurrentLogin(state.login));
   }, []);
 
+  const isLocal = isLocalUrl(review.prUrl);
+
   useEffect(() => {
+    // Local reviews have no remote PR to poll or describe — skip both calls.
+    if (isLocal) return;
     let cancelled = false;
     void window.electronAPI.checkPrFreshness(review.prUrl, review.headSha).then((result) => {
       if (!cancelled) setFreshness(result);
@@ -249,7 +254,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
     return () => {
       cancelled = true;
     };
-  }, [review.prUrl, review.headSha]);
+  }, [review.prUrl, review.headSha, isLocal]);
 
   const handlePrev = useCallback(() => {
     setCurrentSlide((n) => Math.max(0, n - 1));
@@ -592,18 +597,20 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
         onPrev={handlePrev}
         onNext={handleNext}
         commentCount={comments.length}
-        onSubmitReview={() => setShowSubmitDialog(true)}
+        onSubmitReview={isLocal ? undefined : () => setShowSubmitDialog(true)}
       />
 
-      <SubmitReviewDialog
-        open={showSubmitDialog}
-        onOpenChange={setShowSubmitDialog}
-        comments={comments}
-        prUrl={review.prUrl}
-        headSha={review.headSha}
-        isOwnPr={currentLogin !== null && currentLogin === review.author}
-        onSubmit={handleSubmitReview}
-      />
+      {!isLocal && (
+        <SubmitReviewDialog
+          open={showSubmitDialog}
+          onOpenChange={setShowSubmitDialog}
+          comments={comments}
+          prUrl={review.prUrl}
+          headSha={review.headSha}
+          isOwnPr={currentLogin !== null && currentLogin === review.author}
+          onSubmit={handleSubmitReview}
+        />
+      )}
 
       <SettingsDialog
         open={settingsOpen}

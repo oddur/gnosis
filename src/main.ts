@@ -8,18 +8,14 @@ import { Octokit } from '@octokit/rest';
 import {
   parsePrUrl,
   getPrMetadata,
-  getPrDiff,
-  getChangedFiles,
-  getFileContent,
-  getFileMetadata,
-  getNeighborFiles,
-  getProjectClaudeContext,
   searchPullRequests,
   searchRepos,
   listRepoPullRequests,
   getCiStatus,
   getReviewStatus,
 } from '../lib/github';
+import { createDiffSource, isLocalUrl } from '../lib/diffSource';
+import type { DiffSource } from '../lib/diffSource';
 import type { CiCheck, FileMetadata, PrMetadata, PrSearchResult, PrStatus } from '../lib/types';
 import { buildContextPackage, buildPlannerContext, buildTopicContext } from '../lib/context-builder';
 import { generateReviewGuide, planReview, generateSlide } from '../lib/agent';
@@ -485,11 +481,12 @@ async function triggerProactiveReview(
   const reviewId = crypto.randomUUID();
 
   try {
+    // Proactive mode only ever operates on GitHub PR URLs — local
+    // reviews have no remote to poll.
+    const source = await createDiffSource(prUrl, { token: cachedToken });
     let prData = opts.prData;
     if (!prData) {
-      const octokit = new Octokit({ auth: cachedToken ?? undefined });
-      const { owner, repo, pullNumber } = parsePrUrl(prUrl);
-      prData = await getPrMetadata(octokit, owner, repo, pullNumber);
+      prData = await source.getMetadata();
     }
 
     // Cancel any in-flight generation for this PR
@@ -519,7 +516,7 @@ async function triggerProactiveReview(
       claudeContext: prefs.claudeContext,
     };
 
-    await runBackgroundGeneration(reviewId, request, prData, abortController.signal);
+    await runBackgroundGeneration(reviewId, request, source, prData, abortController.signal);
 
     broadcastToAllWindows('new-review-in-history');
     console.log(`[proactive] Completed ${opts.autoUpdated ? 'update' : 'review'} for ${prUrl}`);
@@ -613,6 +610,8 @@ async function runProactiveCheck() {
     for (const [prUrl, entry] of openCompletedByPr) {
       if (updateCount >= PROACTIVE_MAX_CONCURRENT_UPDATES) break;
       if (generatingPrUrls.has(prUrl)) continue;
+      // Local reviews are pinned to commit shas — nothing to poll.
+      if (isLocalUrl(prUrl)) continue;
 
       try {
         const { owner, repo, pullNumber } = parsePrUrl(prUrl);
@@ -1063,6 +1062,18 @@ const ALLOWED_TOOLS = [
 
 const WEB_ONLY_TOOLS = ['WebFetch', 'WebSearch'];
 
+// Read-only + test tools for local reviews. Lets Claude grep the tree,
+// read files, and run shell commands (tests, linters) without letting it
+// mutate the working tree. No Edit/Write/NotebookEdit.
+const LOCAL_REVIEW_TOOLS = [
+  'Bash',
+  'Read',
+  'Grep',
+  'Glob',
+  'WebFetch',
+  'WebSearch',
+];
+
 // ── IPC handlers ────────────────────────────────────────────────
 
 ipcMain.handle('dismiss-update', (_event, version: string) => {
@@ -1305,6 +1316,11 @@ ipcMain.handle('delete-all-reviews', () => {
 ipcMain.handle(
   'check-pr-freshness',
   async (_event, prUrl: string, headSha: string | undefined): Promise<FreshnessResult> => {
+    // Local reviews are pinned to a specific commit range — there's no
+    // remote to compare against, so the review is always "current".
+    if (isLocalUrl(prUrl)) {
+      return { status: 'current' };
+    }
     if (!headSha) {
       return { status: 'unknown', reason: 'Review has no stored head SHA' };
     }
@@ -1360,6 +1376,9 @@ ipcMain.handle(
 );
 
 async function fetchPrStatus(prUrl: string): Promise<PrStatus | null> {
+  // Local reviews have no CI, no reviewers, no mergeability — return null so
+  // callers that render PR status chrome simply show nothing.
+  if (isLocalUrl(prUrl)) return null;
   const token = getResolvedToken();
   if (!token) return null;
   const octokit = new Octokit({ auth: token });
@@ -1393,6 +1412,9 @@ async function fetchPrStatus(prUrl: string): Promise<PrStatus | null> {
 }
 
 ipcMain.handle('get-pr-status', async (_event, prUrl: string): Promise<PrStatus> => {
+  if (isLocalUrl(prUrl)) {
+    throw new Error('Local review — no PR status available');
+  }
   const status = await fetchPrStatus(prUrl);
   if (!status) throw new Error('Not authenticated');
   return status;
@@ -1401,6 +1423,13 @@ ipcMain.handle('get-pr-status', async (_event, prUrl: string): Promise<PrStatus>
 ipcMain.handle(
   'get-pr-state',
   async (_event, prUrl: string): Promise<{ prState: 'open' | 'merged' | 'closed'; headSha: string }> => {
+    if (isLocalUrl(prUrl)) {
+      // Local reviews are immutable — always report the commit range as open
+      // with the resolved head SHA.
+      const source = await createDiffSource(prUrl);
+      const meta = await source.getMetadata();
+      return { prState: 'open', headSha: meta.headSha };
+    }
     try {
       const token = getResolvedToken();
       const octokit = new Octokit({ auth: token ?? undefined });
@@ -1416,10 +1445,197 @@ ipcMain.handle(
 
 ipcMain.handle('get-pr-files', async (_event, prUrl: string): Promise<ChangedFile[]> => {
   const token = getResolvedToken();
-  const octokit = new Octokit({ auth: token ?? undefined });
-  const { owner, repo, pullNumber } = parsePrUrl(prUrl);
-  return getChangedFiles(octokit, owner, repo, pullNumber);
+  const source = await createDiffSource(prUrl, { token });
+  return source.getChangedFiles();
 });
+
+// ── Local git repo selection ────────────────────────────────────
+
+ipcMain.handle('pick-repo-dir', async (): Promise<string | null> => {
+  const windows = BrowserWindow.getAllWindows();
+  const win = BrowserWindow.getFocusedWindow() ?? (windows.length > 0 ? windows[0] : null);
+  const opts: Electron.OpenDialogOptions = {
+    title: 'Select a git repository',
+    buttonLabel: 'Select',
+    properties: ['openDirectory'],
+  };
+  const result = win
+    ? await dialog.showOpenDialog(win, opts)
+    : await dialog.showOpenDialog(opts);
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0];
+});
+
+type ValidateLocalRepoResult =
+  | {
+      ok: true;
+      baseSha: string;
+      headSha: string;
+      /** Merge-base SHA of base & head — the fork point three-dot diff uses. */
+      mergeBase: string | null;
+      /** Changed file count in the three-dot diff. Surfaced so the reviewer
+       *  can spot a runaway diff (stale main, wrong base) before starting. */
+      changedFileCount: number;
+    }
+  | {
+      ok: false;
+      reason: 'not-a-repo' | 'same-refs' | 'unknown-ref' | 'other';
+      message: string;
+      /** For 'unknown-ref', which ref failed (the user-supplied string). */
+      ref?: string;
+    };
+
+interface LocalRepoRefs {
+  branches: string[];
+  tags: string[];
+  defaultBase: string | null;
+  defaultHead: string | null;
+  error?: string;
+}
+
+ipcMain.handle(
+  'list-repo-refs',
+  async (_event, repoPath: string): Promise<LocalRepoRefs> => {
+    const { execFile } = await import('child_process');
+    const { promisify } = await import('util');
+    const exec = promisify(execFile);
+    const run = async (args: string[]): Promise<string> => {
+      const { stdout } = await exec('git', args, { cwd: repoPath, maxBuffer: 16 * 1024 * 1024 });
+      return stdout;
+    };
+    try {
+      const [localOut, remoteOut, tagOut, headOut] = await Promise.all([
+        run(['for-each-ref', '--format=%(refname:short)', 'refs/heads']).catch(() => ''),
+        run(['for-each-ref', '--format=%(refname:short)', 'refs/remotes']).catch(() => ''),
+        run(['for-each-ref', '--format=%(refname:short)', 'refs/tags']).catch(() => ''),
+        run(['symbolic-ref', '--short', 'HEAD']).catch(() => ''),
+      ]);
+      const local = localOut.split('\n').filter(Boolean);
+      const remotes = remoteOut
+        .split('\n')
+        .filter(Boolean)
+        // Filter `origin/HEAD -> origin/main` rows.
+        .filter((b) => !b.endsWith('/HEAD'));
+      const tags = tagOut.split('\n').filter(Boolean);
+      const currentBranch = headOut.trim() || null;
+
+      // The default-base picker operates over the FULL list (local + all
+      // remotes, undeduped) so remote-tracking refs can win even when the
+      // user has a local branch of the same name. The display list is
+      // deduped separately below.
+      const allBranches = [...local, ...remotes];
+
+      // Pick a sensible default base — the branch we assume the user wants
+      // to compare *against*. Strategy, in order:
+      //   1. `origin/HEAD` (the remote's default branch) — the most reliable
+      //      signal for "what's main called here." Works for `main`, `master`,
+      //      `develop`, `trunk`, or anything custom.
+      //   2. Fall back to common names if origin/HEAD isn't set.
+      // Prefer remote-tracking refs over bare local branches — local `main`
+      // can be arbitrarily stale, `origin/main` follows upstream.
+      let defaultBase: string | null = null;
+      const remoteHeadOut = await run(['symbolic-ref', 'refs/remotes/origin/HEAD', '--short']).catch(() => '');
+      const remoteHead = remoteHeadOut.trim();
+      if (remoteHead && allBranches.includes(remoteHead)) {
+        defaultBase = remoteHead;
+      }
+      if (!defaultBase) {
+        const pick = (candidates: string[]) =>
+          candidates.find((c) => allBranches.includes(c)) ?? null;
+        defaultBase = pick([
+          'origin/main', 'origin/master', 'origin/develop', 'origin/trunk', 'origin/dev',
+          'main', 'master', 'develop', 'trunk', 'dev',
+        ]);
+      }
+
+      // De-dupe ONLY for the display list — if both `main` and `origin/main`
+      // exist, showing both in the autocomplete is noise.
+      const localSet = new Set(local);
+      const remotesFiltered = remotes.filter((r) => {
+        const short = r.split('/').slice(1).join('/');
+        return !localSet.has(short);
+      });
+      const branches = [...local, ...remotesFiltered];
+      // …but if the chosen default is a remote ref that got deduped out,
+      // re-add it so the input value has a matching datalist entry.
+      if (defaultBase && !branches.includes(defaultBase)) branches.unshift(defaultBase);
+      // If the user is already on the default branch, suggesting base=main,
+      // head=main would compare a branch against itself. Drop the default
+      // and let HEAD~1 stand — they probably want to review the latest commit.
+      if (currentBranch && defaultBase === currentBranch) defaultBase = null;
+
+      const defaultHead = currentBranch && branches.includes(currentBranch) ? currentBranch : null;
+      return { branches, tags, defaultBase, defaultHead };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { branches: [], tags: [], defaultBase: null, defaultHead: null, error: msg };
+    }
+  },
+);
+
+ipcMain.handle(
+  'validate-local-repo',
+  async (
+    _event,
+    repoPath: string,
+    baseRef: string,
+    headRef: string,
+  ): Promise<ValidateLocalRepoResult> => {
+    const { execFile } = await import('child_process');
+    const { promisify } = await import('util');
+    const exec = promisify(execFile);
+    const run = (args: string[]) =>
+      exec('git', args, { cwd: repoPath, maxBuffer: 16 * 1024 * 1024 });
+
+    // 1. Is this a git repo at all?
+    try {
+      await run(['rev-parse', '--git-dir']);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return { ok: false, reason: 'not-a-repo', message };
+    }
+
+    // 2. Resolve each ref individually so we can say which one failed.
+    const resolveOne = async (ref: string): Promise<string | null> => {
+      try {
+        const { stdout } = await run(['rev-parse', '--verify', `${ref}^{commit}`]);
+        return stdout.trim();
+      } catch {
+        return null;
+      }
+    };
+    const [baseSha, headSha] = await Promise.all([resolveOne(baseRef), resolveOne(headRef)]);
+    if (!baseSha) return { ok: false, reason: 'unknown-ref', message: `Couldn't find "${baseRef}"`, ref: baseRef };
+    if (!headSha) return { ok: false, reason: 'unknown-ref', message: `Couldn't find "${headRef}"`, ref: headRef };
+
+    // 3. Same ref on both sides → empty diff; catch it before the pipeline throws "no changed files".
+    if (baseSha === headSha) {
+      return { ok: false, reason: 'same-refs', message: 'Base and head point to the same commit.' };
+    }
+
+    // 4. Compute merge-base + changed-file count for the three-dot diff that
+    //    the pipeline will actually review. Surfacing this here lets the
+    //    dialog warn about runaway diffs (stale main → huge fork gap) before
+    //    the user kicks off generation.
+    let mergeBase: string | null = null;
+    try {
+      const { stdout } = await run(['merge-base', baseSha, headSha]);
+      mergeBase = stdout.trim() || null;
+    } catch {
+      // No merge-base (disjoint histories) — the three-dot diff would be
+      // effectively "everything." Let the user proceed but report it.
+    }
+    let changedFileCount = 0;
+    try {
+      const { stdout } = await run(['diff', '--name-only', `${baseSha}...${headSha}`]);
+      changedFileCount = stdout.split('\n').filter(Boolean).length;
+    } catch {
+      /* leave at 0; main pipeline will surface the real error */
+    }
+
+    return { ok: true, baseSha, headSha, mergeBase, changedFileCount };
+  },
+);
 
 // ── Background review generation ────────────────────────────────
 
@@ -1447,7 +1663,8 @@ function resolveDiffHunks(
 async function runBackgroundGeneration(
   reviewId: string,
   request: GenerateReviewRequest,
-  prData: Awaited<ReturnType<typeof getPrMetadata>>,
+  source: DiffSource,
+  prData: PrMetadata,
   signal: AbortSignal
 ): Promise<void> {
   const {
@@ -1465,21 +1682,32 @@ async function runBackgroundGeneration(
 
   try {
     const token = getResolvedToken();
-    const octokit = new Octokit({ auth: token ?? undefined });
-    const { owner, repo, pullNumber } = parsePrUrl(prUrl);
 
     broadcastToAllWindows('review-phase', { reviewId, phase: 'Fetching PR data' });
 
-    // Fetch changed files first so we can pass them to getPrDiff as fallback
-    const allChangedFiles = await getChangedFiles(octokit, owner, repo, pullNumber);
-    const diff = await getPrDiff(octokit, owner, repo, pullNumber, allChangedFiles);
+    // Surface non-fatal source-level warnings (e.g. dirty working tree on
+    // a local review). Fire-and-forget — never block the pipeline on this.
+    if (source.checkRuntimeWarnings) {
+      try {
+        const warnings = await source.checkRuntimeWarnings();
+        for (const phase of warnings) {
+          broadcastToAllWindows('review-phase', { reviewId, phase });
+        }
+      } catch {
+        // Warnings are best-effort.
+      }
+    }
+
+    // Fetch changed files first so we can pass them to getDiff as fallback
+    const allChangedFiles = await source.getChangedFiles();
+    const diff = await source.getDiff(allChangedFiles);
 
     // Fetch file metadata (age + churn) in the background while the
     // rest of the pipeline proceeds. We don't await it here — it
     // joins later when we assemble the ReviewGuide. This avoids
     // blocking the critical path (diff fetching, AI generation).
-    const fileMetadataPromise: Promise<FileMetadata[]> = getFileMetadata(
-      octokit, owner, repo, pullNumber, prData.baseSha, allChangedFiles
+    const fileMetadataPromise: Promise<FileMetadata[]> = source.getFileMetadata(
+      allChangedFiles
     ).catch((err: unknown) => {
       console.warn('[main] File metadata fetch failed, proceeding without:', err);
       return allChangedFiles.map((f) => ({
@@ -1513,9 +1741,6 @@ async function runBackgroundGeneration(
       );
     }
 
-    const baseRef = prData.baseBranch;
-    const headRef = prData.headSha;
-
     broadcastToAllWindows('review-phase', { reviewId, phase: 'Fetching file contents' });
 
     const fileContents: Record<string, string> = {};
@@ -1529,11 +1754,11 @@ async function runBackgroundGeneration(
       const baseBatch = filesToFetchBase.slice(i, i + concurrency);
       await Promise.all([
         ...headBatch.map(async (f) => {
-          const content = await getFileContent(octokit, owner, repo, f.filename, headRef);
+          const content = await source.getFileContent(f.filename, 'head');
           if (content !== null) headFileContents[f.filename] = content;
         }),
         ...baseBatch.map(async (f) => {
-          const content = await getFileContent(octokit, owner, repo, f.filename, baseRef);
+          const content = await source.getFileContent(f.filename, 'base');
           if (content !== null) fileContents[f.filename] = content;
         }),
       ]);
@@ -1546,16 +1771,15 @@ async function runBackgroundGeneration(
     // fetch — it hits `.claude/` and `CLAUDE.md` at head, which is
     // independent of the import graph we're walking in neighbours.
     const [neighborFiles, projectClaudeContext] = await Promise.all([
-      getNeighborFiles(
-        octokit,
-        owner,
-        repo,
+      source.getNeighborFiles(
         normalFiles.map((f) => f.filename),
         allFileContents,
-        baseRef,
-        smartImports ? provider : undefined
+        'base',
+        smartImports ? provider : undefined,
       ),
-      claudeContext ? getProjectClaudeContext(octokit, owner, repo, headRef) : Promise.resolve(null),
+      claudeContext
+        ? source.getProjectClaudeContext({ unfiltered: !!request.localTools })
+        : Promise.resolve(null),
     ]);
     if (projectClaudeContext) {
       const { commands, agents, skills, projectInstructionsBytes } = projectClaudeContext;
@@ -1599,6 +1823,21 @@ async function runBackgroundGeneration(
     const hunkMap = new Map(indexedHunks.map((h) => [h.id, h]));
     const assignedIds = new Set<string>();
 
+    // Local-tool mode: when the reviewer opted in on a local review, run the
+    // CLI with cwd = repo, stop writing the GitHub-specific MCP config, and
+    // allow a read-only + test tool set. The repo's own `.mcp.json` and
+    // `.claude/skills/` are auto-discovered from the cwd.
+    const localToolsOn = source.kind === 'local' && !!request.localTools && !!source.cwd;
+    if (localToolsOn) {
+      broadcastToAllWindows('review-phase', {
+        reviewId,
+        phase: 'Tool mode: project skills, MCP, and tests enabled',
+      });
+    }
+    const toolCwd = localToolsOn ? source.cwd : undefined;
+    const toolNonStrictMcp = localToolsOn;
+    const toolLocalAllowed = localToolsOn ? LOCAL_REVIEW_TOOLS : undefined;
+
     if (prefs.parallelReview) {
       // ── Two-phase: planner → parallel writers ──
       broadcastToAllWindows('review-phase', { reviewId, phase: 'Planning review structure' });
@@ -1612,6 +1851,7 @@ async function runBackgroundGeneration(
         (chunk, isThinking) => broadcastToAllWindows('review-progress', { reviewId, chunk, isThinking }),
         thinking ?? false,
         signal,
+        { cwd: toolCwd, allowedTools: toolLocalAllowed, nonStrictMcp: toolNonStrictMcp },
       );
 
       console.log(`[main] Planner produced ${plan.topics.length} topics`);
@@ -1644,6 +1884,9 @@ async function runBackgroundGeneration(
               thinking,
               educationMode,
               hasClaudeContext: !!projectClaudeContext,
+              cwd: toolCwd,
+              allowedTools: toolLocalAllowed,
+              nonStrictMcp: toolNonStrictMcp,
               onChunk: (chunk, isThinking) =>
                 broadcastToAllWindows('review-progress', { reviewId, chunk, isThinking }),
               signal,
@@ -1677,7 +1920,11 @@ async function runBackgroundGeneration(
 
       let mcpConfigPath: string | undefined;
       let allowedTools: string[] | undefined;
-      if (prefs.enableTools) {
+      if (localToolsOn) {
+        // Local-tool mode: the repo's own `.mcp.json` is discovered from cwd.
+        // Don't write a GitHub-specific MCP config.
+        allowedTools = LOCAL_REVIEW_TOOLS;
+      } else if (prefs.enableTools) {
         if (token) {
           mcpConfigPath = writeMcpConfig(token);
           allowedTools = ALLOWED_TOOLS;
@@ -1703,6 +1950,8 @@ async function runBackgroundGeneration(
           hasClaudeContext: !!projectClaudeContext,
           mcpConfigPath,
           allowedTools,
+          cwd: toolCwd,
+          nonStrictMcp: toolNonStrictMcp,
           onChunk: (chunk, isThinking) => {
             const phase = isThinking ? 'Thinking' : 'Generating review';
             if (phase !== lastStreamPhase) {
@@ -1895,11 +2144,10 @@ function formatMs(ms: number): string {
 
 ipcMain.handle('start-review', async (_event, request: GenerateReviewRequest): Promise<StartReviewResult> => {
   const token = getResolvedToken();
-  const octokit = new Octokit({ auth: token ?? undefined });
-  const { owner, repo, pullNumber } = parsePrUrl(request.prUrl);
+  const source = await createDiffSource(request.prUrl, { token });
 
-  // Fetch PR metadata (fast, single API call)
-  const prData = await getPrMetadata(octokit, owner, repo, pullNumber);
+  // Fetch PR metadata (fast, single API call / git command)
+  const prData = await source.getMetadata();
 
   const reviewId = crypto.randomUUID();
   const prState = prData.merged ? 'merged' : prData.state === 'open' ? 'open' : 'closed';
@@ -1921,7 +2169,7 @@ ipcMain.handle('start-review', async (_event, request: GenerateReviewRequest): P
   // Track and fire off background generation (no await)
   const abortController = new AbortController();
   activeGenerations.set(reviewId, { abortController, prUrl: request.prUrl });
-  void runBackgroundGeneration(reviewId, request, prData, abortController.signal);
+  void runBackgroundGeneration(reviewId, request, source, prData, abortController.signal);
 
   return {
     reviewId,
@@ -1981,6 +2229,9 @@ ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
 });
 
 ipcMain.handle('submit-review', async (_event, req: SubmitReviewRequest) => {
+  if (isLocalUrl(req.prUrl)) {
+    throw new Error('Local reviews cannot be submitted back to GitHub — there is no remote PR to comment on.');
+  }
   const token = getResolvedToken();
   const octokit = new Octokit({ auth: token ?? undefined });
   const { owner, repo, pullNumber } = parsePrUrl(req.prUrl);
