@@ -800,12 +800,14 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
             )}
 
             <p className="newspaper-lede">
-              Two ways in. Pick whichever fits the change you want to read.
+              Gnosis turns a code diff into a guided, narrated walkthrough — slides
+              grouped by theme, a short narrative on every page. Two ways to point it
+              at one.
             </p>
 
             {/* ── Path 1: GitHub ── */}
             <section className="flex flex-col gap-3">
-              <h2 className="text-base font-semibold text-foreground">
+              <h2 className="editorial-heading">
                 With a GitHub account
               </h2>
               <p className="text-sm text-muted-foreground leading-relaxed">
@@ -872,15 +874,11 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
               )}
             </section>
 
-            <div className="relative flex items-center gap-3 text-muted-foreground/60">
-              <span className="flex-1 h-px bg-border" />
-              <span className="slide-meta">or</span>
-              <span className="flex-1 h-px bg-border" />
-            </div>
+            <hr className="newspaper-rule--thin" />
 
             {/* ── Path 2: Local git ── */}
             <section className="flex flex-col gap-3">
-              <h2 className="text-base font-semibold text-foreground">
+              <h2 className="editorial-heading">
                 With any local git repository
               </h2>
               <p className="text-sm text-muted-foreground leading-relaxed">
@@ -924,34 +922,48 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
             <h1>Gnosis</h1>
             <p className="newspaper-tagline">Code Review, Narrated</p>
             <p className="newspaper-dateline">
-              No. {editionNumber} · {dateline} ·{' '}
-              {isAuthenticated ? (
-                <span className="inline-flex items-center gap-1.5">
-                  <Avatar className="h-3.5 w-3.5 inline-block align-middle">
-                    <AvatarImage
-                      src={`https://github.com/${login}.png`}
-                      alt={login}
-                    />
-                    <AvatarFallback className="text-[8px]">
-                      {login.slice(0, 2).toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
-                  @{login}
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleSignIn}
-                  className="inline-flex items-center gap-1 hover:text-foreground transition-colors"
-                  title="Connect a GitHub account to review pull requests"
-                >
-                  <GitHubIcon className="h-3 w-3" />
-                  Guest · connect GitHub
-                </button>
+              No. {editionNumber} · {dateline}
+              {isAuthenticated && (
+                <>
+                  {' · '}
+                  <span className="inline-flex items-center gap-1.5">
+                    <Avatar className="h-3.5 w-3.5 inline-block align-middle">
+                      <AvatarImage
+                        src={`https://github.com/${login}.png`}
+                        alt={login}
+                      />
+                      <AvatarFallback className="text-[8px]">
+                        {login.slice(0, 2).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    @{login}
+                  </span>
+                </>
               )}
             </p>
             <hr className="newspaper-rule--double" />
           </header>
+
+          {/* Guest-mode upgrade affordance. Reuses the same "Extra" strip
+              as the update-available banner so the visual grammar is
+              consistent — a thin, editorial notice between masthead and
+              content. Only shown to users without a connected GitHub
+              account; one click opens the sign-in flow. */}
+          {!isAuthenticated && guestMode && (
+            <div className="newspaper-extra">
+              <span className="newspaper-extra-label">Reading locally</span>
+              <span className="newspaper-extra-text">
+                Submitting reviews and watching PRs needs a GitHub account.
+              </span>
+              <button
+                type="button"
+                onClick={handleSignIn}
+                className="text-xs text-[var(--ring)] hover:underline transition-colors"
+              >
+                Connect GitHub →
+              </button>
+            </div>
+          )}
 
           {/* ── EXTRA: Update available ── Rendered as a newspaper
               "Extra" notice strip between the masthead and content.
@@ -1228,9 +1240,9 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                   Generate review button. Guest-mode users only see the
                   local option; browsing PRs requires a GitHub account. */}
               <p className="slide-meta -mt-1">
-                or{' '}
-                {isAuthenticated && (
+                {isAuthenticated ? (
                   <>
+                    or{' '}
                     <button
                       type="button"
                       onClick={() => setPrPickerOpen(true)}
@@ -1239,15 +1251,23 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                       browse your pull requests
                     </button>
                     {' · '}
+                    <button
+                      type="button"
+                      onClick={() => setLocalRepoOpen(true)}
+                      className="pb-0.5 border-b border-transparent hover:text-foreground hover:border-[var(--ring)] transition-colors"
+                    >
+                      review a local git diff
+                    </button>
                   </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setLocalRepoOpen(true)}
+                    className="pb-0.5 border-b border-transparent hover:text-foreground hover:border-[var(--ring)] transition-colors"
+                  >
+                    Review a local git diff instead
+                  </button>
                 )}
-                <button
-                  type="button"
-                  onClick={() => setLocalRepoOpen(true)}
-                  className="pb-0.5 border-b border-transparent hover:text-foreground hover:border-[var(--ring)] transition-colors"
-                >
-                  review a local git diff
-                </button>
               </p>
 
               {/* Options row */}

@@ -1,4 +1,5 @@
-import { ExternalLink, ArrowLeft, Settings, GitCompare } from 'lucide-react';
+import { useState } from 'react';
+import { ExternalLink, ArrowLeft, Settings, GitBranch, Check } from 'lucide-react';
 import { GitHubIcon, riskConfig, safeConfigLookup } from '@/lib/constants';
 import type { ReviewGuide } from '@/lib/types';
 import { formatDuration } from '@/lib/utils';
@@ -33,6 +34,17 @@ export function PRSummaryBanner({ review, onBack, onOpenSettings }: Props) {
   const risk = safeConfigLookup(riskConfig, review.riskLevel, riskConfig.low);
   const isLocal = isLocalUrl(review.prUrl);
   const localRange = isLocal ? parseLocalRange(review.prUrl) : null;
+  const [copied, setCopied] = useState(false);
+
+  async function copyLocalUrl() {
+    try {
+      await navigator.clipboard.writeText(review.prUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard denied — silently no-op, user can still read the tooltip */
+    }
+  }
 
   return (
     <header className="border-b border-border px-6 py-3">
@@ -71,11 +83,17 @@ export function PRSummaryBanner({ review, onBack, onOpenSettings }: Props) {
             </button>
           )}
           {isLocal ? (
-            <span
-              className="flex items-center gap-1.5 text-muted-foreground font-mono tabular-nums"
-              title={review.prUrl}
+            <button
+              type="button"
+              onClick={() => void copyLocalUrl()}
+              className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground font-mono tabular-nums transition-colors"
+              title={copied ? 'Copied' : `Click to copy: ${review.prUrl}`}
             >
-              <GitCompare className="h-3.5 w-3.5" />
+              {copied ? (
+                <Check className="h-3.5 w-3.5" />
+              ) : (
+                <GitBranch className="h-3.5 w-3.5" />
+              )}
               {localRange ? (
                 <span className="truncate max-w-[28ch]">
                   {localRange.base} <span className="text-muted-foreground/60">→</span> {localRange.head}
@@ -83,7 +101,7 @@ export function PRSummaryBanner({ review, onBack, onOpenSettings }: Props) {
               ) : (
                 <span>Local</span>
               )}
-            </span>
+            </button>
           ) : (
             <a
               href={review.prUrl}
