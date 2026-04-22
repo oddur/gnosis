@@ -171,29 +171,15 @@ const sections: Section[] = [
       <hr class="newspaper-rule--double" aria-hidden="true" />
     </div>
 
-    <!-- Value-prop header — staggered settle on load.
-         Chapter line: each item in its own span with the middot
-         separators marked aria-hidden so screen readers hear a
-         comma-separated list instead of "middle dot middle dot". -->
+    <!-- Value-prop header — staggered settle on load. -->
     <header class="flex flex-col gap-5">
-      <p class="slide-chapter settle settle-1">
-        <span>local desktop app</span>
-        <span aria-hidden="true">·</span>
-        <span>macOS</span>
-        <span aria-hidden="true">·</span>
-        <span>Windows</span>
-        <span aria-hidden="true">·</span>
-        <span>Linux</span>
-        <span aria-hidden="true">·</span>
-        <span>v0.19</span>
-      </p>
-      <h1 class="slide-title settle settle-2">
+      <h1 class="slide-title settle settle-1">
         Understand the pull request before you read the diff.
       </h1>
-      <p class="slide-prose settle settle-3">
+      <p class="slide-prose settle settle-2">
         <em>Gnosis</em> is an ancient Greek word for knowledge — not the surface kind, but the deep, direct understanding of a thing. The Gnostics used it for insight that comes from within, from truly comprehending something rather than just observing it from the outside. That's what's missing from most code reviews: you see the diff, but you don't get the understanding. Gnosis tries to close that gap.
       </p>
-      <div class="flex flex-wrap items-center gap-3 mt-2 settle settle-4">
+      <div class="flex flex-wrap items-center gap-3 mt-2 settle settle-3">
         <a
           class="btn-ink"
           href="https://github.com/oddur/gnosis/releases/latest"
@@ -211,7 +197,7 @@ const sections: Section[] = [
           View on GitHub
         </a>
       </div>
-      <p class="slide-meta settle settle-5">
+      <p class="slide-meta settle settle-4">
         Code never leaves your machine. Reviews run against the
         <a class="link-claret" href="https://claude.ai/code" target="_blank" rel="noopener noreferrer">Claude Code</a>
         or
