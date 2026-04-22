@@ -305,6 +305,22 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
     });
   }
 
+  // Flip guestMode on and persist it — unlocks the newspaper for users
+  // who choose not to connect GitHub. Used by the LocalRepoDialog's
+  // onSubmit AND by the explicit "Continue without signing in" link on
+  // the welcome screen (so users can get into the app without first
+  // completing a review).
+  function enterGuestMode() {
+    setGuestMode(true);
+    void window.electronAPI.loadPreferences().then((current) => {
+      void window.electronAPI.savePreferences({
+        ...current,
+        guestMode: true,
+        firstRunSeen: true,
+      });
+    });
+  }
+
   // Resets every onboarding flag — the firstRunSeen pref, the
   // hasEverHadPendingReviews localStorage key, the keyboardHint flag,
   // and the dismissed-pending-prs list. Reopens the inline welcome
@@ -898,6 +914,19 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                 Review a local git diff
               </Button>
             </section>
+
+            {/* Tertiary escape hatch — lets visitors enter the app
+                without starting a review. Connects them later via the
+                "Connect GitHub →" strip on the newspaper. */}
+            <p className="slide-meta text-center">
+              <button
+                type="button"
+                onClick={enterGuestMode}
+                className="pb-0.5 border-b border-transparent hover:text-foreground hover:border-[var(--ring)] transition-colors"
+              >
+                Continue without signing in →
+              </button>
+            </p>
           </div>
         </div>
       )}
@@ -1858,16 +1887,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
         open={localRepoOpen}
         onOpenChange={setLocalRepoOpen}
         onSubmit={(localUrl, { localTools }) => {
-          if (!guestMode && !isAuthenticated) {
-            setGuestMode(true);
-            void window.electronAPI.loadPreferences().then((current) => {
-              void window.electronAPI.savePreferences({
-                ...current,
-                guestMode: true,
-                firstRunSeen: true,
-              });
-            });
-          }
+          if (!guestMode && !isAuthenticated) enterGuestMode();
           setPrUrl(localUrl);
           void startReviewForUrl(localUrl, { localTools });
         }}
