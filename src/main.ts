@@ -947,7 +947,6 @@ const DEFAULT_PREFERENCES: Preferences = {
   codeTheme: 'aurora-x',
   codeFont: 'jetbrains-mono',
   claudePath: '',
-  geminiPath: '',
   notifications: true,
   diffLayout: 'unified',
   includeAllFiles: true,
@@ -968,7 +967,6 @@ const DEFAULT_PREFERENCES: Preferences = {
 
 function applyBinaryOverrides(prefs: Preferences): void {
   setBinaryOverride('claude', prefs.claudePath);
-  setBinaryOverride('gemini', prefs.geminiPath);
 }
 
 function loadPreferences(): Preferences {
@@ -980,6 +978,18 @@ function loadPreferences(): Preferences {
       delete stored.autoReviewOnRequest;
     }
     if (stored.model === 'claude-opus-4-6') stored.model = 'claude-opus-4-7';
+    // Drop Gemini settings from stored prefs of users who previously
+    // selected it — provider reverts to claude, model falls back to
+    // the default, the orphaned geminiPath string is discarded.
+    if (stored.provider === 'gemini') stored.provider = 'claude';
+    if (typeof stored.model === 'string' && stored.model.startsWith('gemini')) {
+      stored.model = DEFAULT_PREFERENCES.model;
+    }
+    if (stored.proactiveProvider === 'gemini') stored.proactiveProvider = 'claude';
+    if (typeof stored.proactiveModel === 'string' && stored.proactiveModel.startsWith('gemini')) {
+      stored.proactiveModel = DEFAULT_PREFERENCES.proactiveModel;
+    }
+    delete stored.geminiPath;
     return { ...DEFAULT_PREFERENCES, ...(stored as Partial<Preferences>) };
   } catch {
     return { ...DEFAULT_PREFERENCES };
@@ -1559,14 +1569,14 @@ async function runBackgroundGeneration(
 
       let mcpConfigPath: string | undefined;
       let allowedTools: string[] | undefined;
-      if (prefs.enableTools && provider === 'claude') {
+      if (prefs.enableTools) {
         if (token) {
           mcpConfigPath = writeMcpConfig(token);
           allowedTools = ALLOWED_TOOLS;
         } else {
           allowedTools = WEB_ONLY_TOOLS;
         }
-      } else if (webResearch && provider === 'claude') {
+      } else if (webResearch) {
         allowedTools = WEB_ONLY_TOOLS;
       }
 
@@ -1829,7 +1839,7 @@ ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
   let mcpConfigPath: string | undefined;
   let allowedTools: string[] | undefined;
 
-  if (prefs.enableTools && req.provider === 'claude') {
+  if (prefs.enableTools) {
     const token = getResolvedToken();
     if (token) {
       mcpConfigPath = writeMcpConfig(token);
@@ -1837,7 +1847,7 @@ ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
     } else {
       allowedTools = WEB_ONLY_TOOLS;
     }
-  } else if (prefs.enableWebResearch && req.provider === 'claude') {
+  } else if (prefs.enableWebResearch) {
     allowedTools = WEB_ONLY_TOOLS;
   }
 

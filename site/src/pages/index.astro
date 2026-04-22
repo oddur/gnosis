@@ -121,12 +121,12 @@ const sections: Section[] = [
     id: 'local',
     title: 'Local-first by design.',
     intro:
-      "Your code stays on your machine. Reviews run against the Claude or Gemini CLI you already have installed. There is no Gnosis server in the loop.",
+      "Your code stays on your machine. Reviews run against the Claude CLI you already have installed. There is no Gnosis server in the loop.",
     features: [
       {
-        label: 'Multi-provider',
+        label: 'Claude-native',
         body:
-          'Claude (Opus 4.7, Sonnet 4.6, Haiku 4.5) or Gemini (3.1 Pro, 3 Pro, 3 Flash, 2.5 Pro, 2.5 Flash). Switch per review, or set different defaults for manual vs. proactive runs. Extended thinking available for Claude when the diff warrants it.',
+          'Claude Opus 4.7, Sonnet 4.6, or Haiku 4.5. Switch per review, or set different defaults for manual vs. proactive runs. Extended thinking available when the diff warrants it.',
       },
       {
         label: 'Smart context curation',
@@ -200,8 +200,6 @@ const sections: Section[] = [
       <p class="slide-meta settle settle-4">
         Code never leaves your machine. Reviews run against the
         <a class="link-claret" href="https://claude.ai/code" target="_blank" rel="noopener noreferrer">Claude Code</a>
-        or
-        <a class="link-claret" href="https://github.com/google-gemini/gemini-cli" target="_blank" rel="noopener noreferrer">Gemini</a>
         CLI you already have installed. No servers. MIT licensed.
       </p>
     </header>
@@ -321,10 +319,9 @@ const sections: Section[] = [
         <li class="slide-prose flex gap-4">
           <span class="slide-chapter shrink-0 pt-1">01</span>
           <span>
-            <span class="editorial-label">Install a CLI.</span> Gnosis uses one you already have, or one you install once.
+            <span class="editorial-label">Install the Claude CLI.</span> Gnosis uses
             <a class="link-claret" href="https://claude.ai/code" target="_blank" rel="noopener noreferrer">Claude Code</a>
-            (then <code>claude auth</code>) or
-            <a class="link-claret" href="https://github.com/google-gemini/gemini-cli" target="_blank" rel="noopener noreferrer">Gemini CLI</a>.
+            — install it once, then run <code>claude auth</code>.
           </span>
         </li>
         <li class="slide-prose flex gap-4">

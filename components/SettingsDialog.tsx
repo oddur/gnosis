@@ -14,16 +14,6 @@ const PROVIDER_MODELS: Record<Provider, { label: string; models: { id: ModelId; 
       { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
     ],
   },
-  gemini: {
-    label: 'Gemini',
-    models: [
-      { id: 'gemini-3.1-pro-preview', label: '3.1 Pro' },
-      { id: 'gemini-3-pro-preview', label: '3 Pro' },
-      { id: 'gemini-3-flash-preview', label: '3 Flash' },
-      { id: 'gemini-2.5-pro', label: '2.5 Pro' },
-      { id: 'gemini-2.5-flash', label: '2.5 Flash' },
-    ],
-  },
 };
 
 interface Props {
@@ -145,13 +135,10 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
   const [claudeContext, setClaudeContext] = useState(true);
   const [analytics, setAnalytics] = useState(true);
   const [proactiveReviewOverrides, setProactiveReviewOverrides] = useState(false);
-  const [proactiveProvider, setProactiveProvider] = useState<Provider>('claude');
   const [proactiveModel, setProactiveModel] = useState<ModelId>('claude-sonnet-4-6');
   const [proactiveThinking, setProactiveThinking] = useState(false);
   const [claudePath, setClaudePath] = useState('');
-  const [geminiPath, setGeminiPath] = useState('');
   const [claudeDetected, setClaudeDetected] = useState('');
-  const [geminiDetected, setGeminiDetected] = useState('');
 
   // Clean up debounce timer on unmount
   useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
@@ -173,14 +160,11 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
       setClaudeContext(prefs.claudeContext);
       setAnalytics(prefs.analytics);
       setProactiveReviewOverrides(prefs.proactiveReviewOverrides);
-      setProactiveProvider(prefs.proactiveProvider);
       setProactiveModel(prefs.proactiveModel);
       setProactiveThinking(prefs.proactiveThinking);
       setClaudePath(prefs.claudePath || '');
-      setGeminiPath(prefs.geminiPath || '');
     });
     void window.electronAPI.detectBinaryPath('claude').then(setClaudeDetected);
-    void window.electronAPI.detectBinaryPath('gemini').then(setGeminiDetected);
   }, [open]);
 
   function handleSelectAppTheme(theme: ThemeChoice) {
@@ -462,31 +446,9 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
 
               {proactiveReviewOverrides && (
                 <div className="flex flex-col gap-3 mt-1">
-                  <div className="flex items-center gap-5 slide-meta">
-                    <span className="text-foreground/60">Provider</span>
-                    {(['claude', 'gemini'] as const).map((p) => (
-                      <button
-                        key={p}
-                        type="button"
-                        onClick={() => {
-                          const firstModel = PROVIDER_MODELS[p].models[0].id;
-                          setProactiveProvider(p);
-                          setProactiveModel(firstModel);
-                          saveField({ proactiveProvider: p, proactiveModel: firstModel });
-                        }}
-                        className={`pb-0.5 border-b transition-colors ${
-                          proactiveProvider === p
-                            ? 'text-foreground border-[var(--ring)]'
-                            : 'border-transparent hover:text-foreground'
-                        }`}
-                      >
-                        {PROVIDER_MODELS[p].label}
-                      </button>
-                    ))}
-                  </div>
                   <div className="flex flex-wrap items-center gap-x-5 gap-y-2 slide-meta">
-                    <span className="text-foreground/60">Model</span>
-                    {PROVIDER_MODELS[proactiveProvider].models.map((m) => (
+                    <span className="text-foreground/60">Claude</span>
+                    {PROVIDER_MODELS.claude.models.map((m) => (
                       <button
                         key={m.id}
                         type="button"
@@ -575,19 +537,6 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                 placeholder={claudeDetected || 'auto-detect'}
                 onChange={(e) => setClaudePath(e.target.value)}
                 onBlur={() => saveField({ claudePath })}
-                className="bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground/60 transition-colors"
-              />
-              <p className="slide-meta">Leave empty to auto-detect.</p>
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium text-foreground">Gemini CLI path</label>
-              <input
-                type="text"
-                value={geminiPath}
-                placeholder={geminiDetected || 'auto-detect'}
-                onChange={(e) => setGeminiPath(e.target.value)}
-                onBlur={() => saveField({ geminiPath })}
                 className="bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground/60 transition-colors"
               />
               <p className="slide-meta">Leave empty to auto-detect.</p>

@@ -48,16 +48,6 @@ const PROVIDERS = {
       { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
     ],
   },
-  gemini: {
-    label: 'Gemini',
-    models: [
-      { id: 'gemini-3.1-pro-preview', label: '3.1 Pro' },
-      { id: 'gemini-3-pro-preview', label: '3 Pro' },
-      { id: 'gemini-3-flash-preview', label: '3 Flash' },
-      { id: 'gemini-2.5-pro', label: '2.5 Pro' },
-      { id: 'gemini-2.5-flash', label: '2.5 Flash' },
-    ],
-  },
 } as const;
 
 const MODEL_LABELS: Record<string, string> = Object.fromEntries(
@@ -707,12 +697,6 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
     });
   }
 
-  function handleProviderChange(p: Provider) {
-    setProvider(p);
-    setModel(PROVIDERS[p].models[0].id);
-    if (p === 'gemini') setThinking(false);
-  }
-
   // Scroll the second unread row in the history list into view. The
   // first unread is shown in the pickup hero above, so the "+ N more
   // unread" link should jump to the next one. Honors reduced motion.
@@ -1224,33 +1208,18 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
               {/* Model menu disclosure */}
               <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${modelMenuExpanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
                 <div className="overflow-hidden">
-                  <div className="flex flex-col gap-3 pt-1 pb-2">
-                    <div className="flex items-center gap-5 slide-meta">
-                      <span className="text-foreground/60">Provider</span>
-                      {(['claude', 'gemini'] as const).map((p) => (
-                        <button
-                          key={p}
-                          type="button"
-                          onClick={() => handleProviderChange(p)}
-                          className={`pb-0.5 border-b transition-colors ${provider === p ? 'text-foreground border-[var(--ring)]' : 'border-transparent hover:text-foreground'}`}
-                        >
-                          {PROVIDERS[p].label}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 slide-meta">
-                      <span className="text-foreground/60">Model</span>
-                      {PROVIDERS[provider].models.map((m) => (
-                        <button
-                          key={m.id}
-                          type="button"
-                          onClick={() => setModel(m.id)}
-                          className={`pb-0.5 border-b transition-colors ${model === m.id ? 'text-foreground border-[var(--ring)]' : 'border-transparent hover:text-foreground'}`}
-                        >
-                          {m.label}
-                        </button>
-                      ))}
-                    </div>
+                  <div className="flex flex-wrap items-center gap-x-5 gap-y-2 slide-meta pt-1 pb-2">
+                    <span className="text-foreground/60">Claude</span>
+                    {PROVIDERS.claude.models.map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => setModel(m.id)}
+                        className={`pb-0.5 border-b transition-colors ${model === m.id ? 'text-foreground border-[var(--ring)]' : 'border-transparent hover:text-foreground'}`}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -1281,15 +1250,13 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                       checked={includeAllFiles}
                       onToggle={() => setIncludeAllFiles((v) => !v)}
                     />
-                    {provider === 'claude' && (
-                      <ToggleSwitch
-                        id="thinking"
-                        label="Extended thinking"
-                        description="Deeper reasoning before writing. Catches subtle bugs that standard mode misses. Takes longer."
-                        checked={thinking}
-                        onToggle={() => setThinking((t) => !t)}
-                      />
-                    )}
+                    <ToggleSwitch
+                      id="thinking"
+                      label="Extended thinking"
+                      description="Deeper reasoning before writing. Catches subtle bugs that standard mode misses. Takes longer."
+                      checked={thinking}
+                      onToggle={() => setThinking((t) => !t)}
+                    />
                     <ToggleSwitch
                       id="smart-imports"
                       label="Smart imports"
@@ -1319,15 +1286,13 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                       checked={claudeContext}
                       onToggle={() => setClaudeContext((c) => !c)}
                     />
-                    {provider === 'claude' && (
-                      <ToggleSwitch
-                        id="web-research"
-                        label="Web research"
-                        description="Search for framework docs and best practices (slower)"
-                        checked={webResearch}
-                        onToggle={() => setWebResearch((w) => !w)}
-                      />
-                    )}
+                    <ToggleSwitch
+                      id="web-research"
+                      label="Web research"
+                      description="Search for framework docs and best practices (slower)"
+                      checked={webResearch}
+                      onToggle={() => setWebResearch((w) => !w)}
+                    />
                   </div>
                 </div>
               </div>
@@ -1352,11 +1317,11 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
           <Dialog open={cliNotFound !== null} onOpenChange={() => setCliNotFound(null)}>
             <DialogContent className="bg-card sm:max-w-md">
               <DialogHeader>
-                <DialogTitle>{cliNotFound?.provider === 'claude' ? 'Claude' : 'Gemini'} CLI not found</DialogTitle>
+                <DialogTitle>Claude CLI not found</DialogTitle>
               </DialogHeader>
               <div className="flex flex-col gap-3 text-sm text-muted-foreground">
-                <p>Gnosis runs reviews against your local {cliNotFound?.provider === 'claude' ? 'Claude' : 'Gemini'} CLI, but couldn't find it on your machine.</p>
-                <p>{cliNotFound?.provider === 'claude' ? 'Install it from claude.ai/code and authenticate with `claude auth`.' : 'Install it from github.com/google-gemini/gemini-cli and authenticate.'}</p>
+                <p>Gnosis runs reviews against your local Claude CLI, but couldn't find it on your machine.</p>
+                <p>Install it from claude.ai/code and authenticate with `claude auth`.</p>
                 <p>Already installed? Set the path manually in Settings.</p>
               </div>
               <div className="flex gap-2 justify-end pt-2">
