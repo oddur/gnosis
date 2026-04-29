@@ -3,6 +3,7 @@ import { GitHubIcon, riskConfig, safeConfigLookup } from '@/lib/constants';
 import type { ReviewGuide } from '@/lib/types';
 import { formatDuration } from '@/lib/utils';
 import { isLocalUrl } from '@/lib/local-url';
+import { CopyAllChecksButton } from '@/components/CopyAllChecksButton';
 
 interface Props {
   review: ReviewGuide;
@@ -61,6 +62,7 @@ export function PRSummaryBanner({ review, onBack, onOpenSettings }: Props) {
           </span>
           <span>{review.totalLinesChanged} lines</span>
           {review.generationDurationMs != null && <span>{formatDuration(review.generationDurationMs)}</span>}
+          <CopyAllChecksButton review={review} variant="compact" />
           {onOpenSettings && (
             <button
               onClick={onOpenSettings}

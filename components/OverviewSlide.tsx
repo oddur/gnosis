@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Markdown } from '@/components/Markdown';
+import { CopyAllChecksButton } from '@/components/CopyAllChecksButton';
 import { riskConfig, safeConfigLookup } from '@/lib/constants';
 import type { PrStatus, ProjectClaudeContext, ReviewGuide } from '@/lib/types';
 
@@ -284,7 +285,7 @@ export function OverviewSlide({ review, prStatus, onNavigate }: Props) {
             without noticing the bottom bar. */}
         {firstSlide && (
           <section
-            className="animate-fade-in-up pt-6 mt-2 border-t border-border"
+            className="animate-fade-in-up pt-6 mt-2 border-t border-border flex flex-col gap-3"
             style={{ animationDelay: '240ms' }}
           >
             <button
@@ -296,6 +297,11 @@ export function OverviewSlide({ review, prStatus, onNavigate }: Props) {
                 {firstSlide.slideNumber.toString().padStart(2, '0')} — {firstSlide.title} →
               </span>
             </button>
+            {/* Bulk-copy escape hatch — pulls every "what to check" item into
+                one agent prompt for reviewers who'd rather hand the whole
+                investigation to Claude/Cursor in one shot. Hides itself when
+                the review has zero checks. */}
+            <CopyAllChecksButton review={review} variant="full" />
           </section>
         )}
 
