@@ -25,6 +25,7 @@ import type {
   Provider,
   ModelId,
 } from '../../lib/types';
+import { DEFAULT_FAST_CLAUDE_MODEL } from '../../lib/models';
 
 interface Props {
   review: ReviewGuide;
@@ -92,7 +93,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
   const [chatOpen, setChatOpen] = useState(false);
   const [chatQuotedCode, setChatQuotedCode] = useState<string | null>(null);
   const [chatProvider, setChatProvider] = useState<Provider>('claude');
-  const [chatModel, setChatModel] = useState<ModelId>('claude-sonnet-5');
+  const [chatModel, setChatModel] = useState<ModelId>(DEFAULT_FAST_CLAUDE_MODEL);
   const [diffLayout, setDiffLayout] = useState<Preferences['diffLayout']>('unified');
   const [slideViewMode, setSlideViewMode] = useState<'split' | 'focus'>('split');
   const [prefs, setPrefs] = useState<Preferences | null>(null);

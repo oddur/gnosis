@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from 'react-resizable-panels';
-import { Check, Copy, MessageCircle, MessageSquarePlus } from 'lucide-react';
+import { Check, Copy, CopyX, MessageCircle, MessageSquarePlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DiffHunkGroup } from '@/components/DiffHunk';
 import { InteractiveDiffHunkGroup } from '@/components/InteractiveDiffHunk';
@@ -10,6 +10,14 @@ import { FilePathLink } from '@/components/FilePathLink';
 import { Markdown } from '@/components/Markdown';
 import { MermaidDiagram } from '@/components/MermaidDiagram';
 import { slideTypeConfig, safeConfigLookup } from '@/lib/constants';
+import {
+  buildAgentPrompt,
+  buildAnchorableSet,
+  isAnchorable,
+  looksLikePackedList,
+  splitIntoProseChecks,
+} from '@/lib/review-checks';
+import { useCopyToClipboard } from '@/lib/use-copy';
 import type { CommentCallbacks } from '@/components/shared-diff-utils';
 import type { Slide, DiffHunk, FileMetadata, PendingReviewComment, Preferences, ReviewCheck } from '@/lib/types';
 
@@ -48,121 +56,44 @@ function formatFileAge(lastModified: string | null | undefined): string | null {
   return null; // modified today — not worth showing
 }
 
-// Build the set of `{filePath}:{newFileLine}` + `{filePath}:{oldFileLine}`
-// keys that any review check could resolve to inside this slide's
-// hunks. Used to pre-filter clickable anchors at render time so the
-// callout never shows a link that would silently do nothing. Parses
-// hunk headers directly (`@@ -baseStart,baseCount +headStart,headCount @@`)
-// rather than walking rendered lines — much cheaper.
-function buildAnchorableSet(hunks: DiffHunk[]): Set<string> {
-  const keys = new Set<string>();
-  for (const hunk of hunks) {
-    const m = hunk.hunkHeader.match(/@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
-    if (!m) continue;
-    const baseStart = parseInt(m[1], 10);
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- regex optional groups can be undefined at runtime
-    const baseCount = m[2] !== undefined ? parseInt(m[2], 10) : 1;
-    const headStart = parseInt(m[3], 10);
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- regex optional groups can be undefined at runtime
-    const headCount = m[4] !== undefined ? parseInt(m[4], 10) : 1;
-    for (let i = 0; i < headCount; i++) keys.add(`${hunk.filePath}:${headStart + i}`);
-    for (let i = 0; i < baseCount; i++) keys.add(`${hunk.filePath}:${baseStart + i}`);
-  }
-  return keys;
-}
-
-// A loose heuristic for "this single string is actually multiple
-// bullets jammed together". The model sometimes returns one long
-// reviewFocus or one single reviewCheck that contains its own
-// markdown list. If that happens, we want to render it as a list
-// instead of a wall of text.
-function looksLikePackedList(text: string): boolean {
-  // Markdown bullets on their own line.
-  if (/\n\s*[-*]\s+/.test(text)) return true;
-  // Numbered list items on their own line.
-  if (/\n\s*\d+[.)]\s+/.test(text)) return true;
-  return false;
-}
-
-// Try to split a prose check into its constituent sentences so a
-// model-emitted "one giant check with three topics" renders as
-// bullets instead of a paragraph. Splits on sentence terminators
-// (`.`, `?`, `!`) followed by whitespace then a capital letter or
-// a backtick (next sentence starts with an identifier). Only returns
-// multiple segments when each is a reasonable bullet length — under
-// 20 chars is probably noise, over 500 is a tell the split picked
-// the wrong boundary.
-function splitIntoProseChecks(text: string): string[] {
-  if (!text) return [];
-  const trimmed = text.trim();
-  const parts = trimmed.split(/(?<=[.?!])\s+(?=[A-Z`])/).map((s) => s.trim()).filter(Boolean);
-  if (parts.length < 2) return [trimmed];
-  if (parts.some((p) => p.length < 20 || p.length > 500)) return [trimmed];
-  return parts;
-}
-
 // Inline click affordance for a single anchored check — dotted
 // underline in brand claret so it reads as a quiet link.
 const clickableCheckClass =
   'cursor-pointer underline decoration-dotted decoration-[var(--ring)]/50 underline-offset-4 hover:decoration-[var(--ring)]';
 
-// Turn a review check into a ready-to-paste agent prompt. The agent
-// gets the bare question plus enough pointers to find the code, so
-// the user can paste into Claude Code / Cursor / similar and have it
-// investigate without further explanation.
-function buildAgentPrompt(
-  text: string,
-  slideTitle: string,
-  prUrl: string,
-  filePath?: string | null,
-  startLine?: number | null
-): string {
-  const lines = [
-    'Please investigate this code-review check against the PR and report whether the concern is valid, unclear, or handled.',
-    '',
-    `Check: ${text.trim()}`,
-    '',
-    `Slide: ${slideTitle}`,
-    `PR: ${prUrl}`,
-  ];
-  if (filePath) {
-    lines.push(`Location: ${filePath}${startLine ? `:${startLine}` : ''}`);
-  }
-  return lines.join('\n');
-}
-
 // Small icon button that copies the given text to clipboard and
-// flips to a check mark for ~1.4s as confirmation. Title attribute
-// doubles as the tooltip. Visible but quiet — brightens on hover
-// and focus-visible for keyboard users.
+// flips to a check mark (or an error mark when the clipboard write
+// fails) for ~1.5s as confirmation. Title attribute doubles as the
+// tooltip. Visible but quiet — brightens on hover and focus-visible
+// for keyboard users.
 function CopyPromptButton({ prompt, className = '' }: { prompt: string; className?: string }) {
-  const [copied, setCopied] = useState(false);
+  const { state, copy } = useCopyToClipboard();
+  const label =
+    state === 'copied'
+      ? 'Copied'
+      : state === 'failed'
+        ? 'Copy failed — click to retry'
+        : 'Copy as agent prompt';
   return (
     <button
       type="button"
       onClick={(e) => {
         e.stopPropagation();
-        void navigator.clipboard.writeText(prompt).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1400);
-        });
+        copy(prompt);
       }}
-      title={copied ? 'Copied.' : 'Copy as agent prompt'}
-      aria-label={copied ? 'Copied' : 'Copy as agent prompt'}
+      title={label}
+      aria-label={label}
       className={`inline-flex items-center shrink-0 text-muted-foreground/70 hover:text-foreground focus-visible:text-foreground transition-colors align-middle ${className}`}
     >
-      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+      {state === 'copied' ? (
+        <Check className="h-3 w-3" />
+      ) : state === 'failed' ? (
+        <CopyX className="h-3 w-3 text-destructive" />
+      ) : (
+        <Copy className="h-3 w-3" />
+      )}
     </button>
   );
-}
-
-// A check is only rendered as a clickable anchor when the
-// `{filePath, line}` actually resolves to a line inside this slide's
-// hunks. Prevents silent no-op clicks on hallucinated or out-of-slide
-// anchors. `anchorable` is the pre-built set from buildAnchorableSet.
-function isAnchorable(check: ReviewCheck, anchorable: Set<string>): boolean {
-  if (!check.filePath || check.startLine == null || check.startLine <= 0) return false;
-  return anchorable.has(`${check.filePath}:${check.startLine}`);
 }
 
 // djb2 — a tiny, stable string hash. Used as the trailing segment of
@@ -259,7 +190,11 @@ function renderReviewChecks(
                     {check.text}
                   </span>
                 )}
-                {copyFor(check.text, check.filePath, check.startLine)}
+                {copyFor(
+                  check.text,
+                  isClickable ? check.filePath : null,
+                  isClickable ? check.startLine : null
+                )}
               </li>
             );
           })}
@@ -299,7 +234,11 @@ function renderReviewChecks(
                     <Markdown className="review-focus-markdown">{sentence}</Markdown>
                   </span>
                 )}
-                {copyFor(sentence, check.filePath, check.startLine)}
+                {copyFor(
+                  sentence,
+                  isClickable ? check.filePath : null,
+                  isClickable ? check.startLine : null
+                )}
               </li>
             ))}
           </ul>
@@ -322,7 +261,11 @@ function renderReviewChecks(
                 <Markdown className="review-focus-markdown">{check.text}</Markdown>
               </span>
             )}
-            {copyFor(check.text, check.filePath, check.startLine)}
+            {copyFor(
+              check.text,
+              isClickable ? check.filePath : null,
+              isClickable ? check.startLine : null
+            )}
           </div>
         </>
       );
@@ -341,7 +284,11 @@ function renderReviewChecks(
             </span>
           )}
         </span>
-        {copyFor(check.text, check.filePath, check.startLine)}
+        {copyFor(
+          check.text,
+          isClickable ? check.filePath : null,
+          isClickable ? check.startLine : null
+        )}
       </p>
     );
   }
