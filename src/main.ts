@@ -980,7 +980,7 @@ function getPreferencesPath() {
 const DEFAULT_PREFERENCES: Preferences = {
   instructions: '',
   provider: 'claude',
-  model: 'claude-opus-4-7',
+  model: 'claude-opus-5',
   thinking: true,
   smartImports: true,
   reviewSuggestions: true,
@@ -1003,7 +1003,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   analytics: true,
   proactiveReviewOverrides: false,
   proactiveProvider: 'claude',
-  proactiveModel: 'claude-sonnet-4-6',
+  proactiveModel: 'claude-sonnet-5',
   proactiveThinking: false,
   educationMode: true,
   claudeContext: true,
@@ -1022,7 +1022,18 @@ function loadPreferences(): Preferences {
       stored.proactiveMode = stored.autoReviewOnRequest;
       delete stored.autoReviewOnRequest;
     }
-    if (stored.model === 'claude-opus-4-6') stored.model = 'claude-opus-4-7';
+    // Migrate stored prefs from retired/superseded models to their successors.
+    const MODEL_MIGRATIONS: Record<string, string> = {
+      'claude-opus-4-6': 'claude-opus-5',
+      'claude-opus-4-7': 'claude-opus-5',
+      'claude-sonnet-4-6': 'claude-sonnet-5',
+    };
+    for (const key of ['model', 'proactiveModel'] as const) {
+      const value = stored[key];
+      if (typeof value === 'string' && MODEL_MIGRATIONS[value]) {
+        stored[key] = MODEL_MIGRATIONS[value];
+      }
+    }
     // Drop Gemini settings from stored prefs of users who previously
     // selected it — provider reverts to claude, model falls back to
     // the default, the orphaned geminiPath string is discarded.

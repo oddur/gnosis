@@ -47,16 +47,28 @@ const PROVIDERS = {
   claude: {
     label: 'Claude',
     models: [
-      { id: 'claude-opus-4-7', label: 'Opus 4.7' },
-      { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+      { id: 'claude-fable-5', label: 'Fable 5' },
+      { id: 'claude-opus-5', label: 'Opus 5' },
+      { id: 'claude-sonnet-5', label: 'Sonnet 5' },
       { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
     ],
   },
 } as const;
 
-const MODEL_LABELS: Record<string, string> = Object.fromEntries(
-  Object.values(PROVIDERS).flatMap((p) => p.models.map((m) => [m.id, `${p.label} ${m.label}`]))
-);
+// Labels for models no longer offered in the picker, so old history entries
+// still render a friendly name instead of the raw ID.
+const LEGACY_MODEL_LABELS: Record<string, string> = {
+  'claude-opus-4-6': 'Claude Opus 4.6',
+  'claude-opus-4-7': 'Claude Opus 4.7',
+  'claude-sonnet-4-6': 'Claude Sonnet 4.6',
+};
+
+const MODEL_LABELS: Record<string, string> = {
+  ...LEGACY_MODEL_LABELS,
+  ...Object.fromEntries(
+    Object.values(PROVIDERS).flatMap((p) => p.models.map((m) => [m.id, `${p.label} ${m.label}`]))
+  ),
+};
 
 function getEntryStatus(entry: ReviewHistoryEntry): 'generating' | 'completed' | 'failed' {
   return entry.status ?? 'completed';
@@ -116,7 +128,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   const [authStatus, setAuthStatus] = useState<AuthStatus>('checking');
   const [prUrl, setPrUrl] = useState(prefillPrUrl ?? '');
   const [provider, setProvider] = useState<Provider>('claude');
-  const [model, setModel] = useState<ModelId>('claude-opus-4-7');
+  const [model, setModel] = useState<ModelId>('claude-opus-5');
   const [thinking, setThinking] = useState(true);
   const [smartImports, setSmartImports] = useState(true);
   const [reviewSuggestions, setReviewSuggestions] = useState(true);
