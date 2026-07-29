@@ -1,3 +1,5 @@
+import type { ClaudeModel } from './models';
+
 export type SlideType = 'foundation' | 'feature' | 'refactor' | 'bugfix' | 'test' | 'config' | 'docs';
 
 export interface CiCheck {
@@ -237,7 +239,7 @@ export interface StartReviewResult {
 
 export type Provider = 'claude';
 
-export type ClaudeModel = 'claude-fable-5' | 'claude-opus-5' | 'claude-sonnet-5' | 'claude-haiku-4-5-20251001';
+export type { ClaudeModel };
 
 export type ModelId = ClaudeModel;
 

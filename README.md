@@ -13,7 +13,7 @@ It runs locally and uses the [Claude Code CLI](https://claude.ai/code) under the
 ## Features
 
 - **Guided slideshow** — changes are grouped by theme and ordered by dependency (foundations first, then implementations, then tests and config), not by filename
-- **Claude-native** — pick between Claude Opus 4.7, Sonnet 4.6, and Haiku 4.5
+- **Claude-native** — pick between Claude Fable 5, Opus 5, Sonnet 5, and Haiku 4.5
 - **Extended thinking** — enable deeper reasoning (slower, more thorough)
 - **Custom instructions** — steer the review with free-text prompts (e.g. _focus on security_, _explain the auth flow_)
 - **Inline review comments** — add comments on specific diff lines and submit directly to GitHub as an approval, request for changes, or comment

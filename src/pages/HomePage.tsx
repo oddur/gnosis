@@ -33,6 +33,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../componen
 import { OnboardingRepoSetup } from '../../components/OnboardingRepoSetup';
 import { Avatar, AvatarFallback, AvatarImage } from '../../components/ui/avatar';
 import { riskConfig, safeConfigLookup } from '../../lib/constants';
+import { CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, RETIRED_CLAUDE_MODELS } from '../../lib/models';
 import type { ModelId, Preferences, Provider, PrSearchResult, ReviewGuide, ReviewHistoryEntry, UpdateInfo } from '../../lib/types';
 import { timeAgo, formatDuration, formatBytes, groupReviewsByPR } from '../../lib/utils';
 
@@ -46,25 +47,16 @@ type AuthStatus = 'checking' | 'unauthenticated' | 'signing-in' | { login: strin
 const PROVIDERS = {
   claude: {
     label: 'Claude',
-    models: [
-      { id: 'claude-fable-5', label: 'Fable 5' },
-      { id: 'claude-opus-5', label: 'Opus 5' },
-      { id: 'claude-sonnet-5', label: 'Sonnet 5' },
-      { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
-    ],
+    models: CLAUDE_MODELS,
   },
 } as const;
 
-// Labels for models no longer offered in the picker, so old history entries
-// still render a friendly name instead of the raw ID.
-const LEGACY_MODEL_LABELS: Record<string, string> = {
-  'claude-opus-4-6': 'Claude Opus 4.6',
-  'claude-opus-4-7': 'Claude Opus 4.7',
-  'claude-sonnet-4-6': 'Claude Sonnet 4.6',
-};
-
+// Current roster labels plus retired-model labels, so old history
+// entries still render a friendly name instead of the raw ID.
 const MODEL_LABELS: Record<string, string> = {
-  ...LEGACY_MODEL_LABELS,
+  ...Object.fromEntries(
+    Object.entries(RETIRED_CLAUDE_MODELS).map(([id, m]) => [id, m.label])
+  ),
   ...Object.fromEntries(
     Object.values(PROVIDERS).flatMap((p) => p.models.map((m) => [m.id, `${p.label} ${m.label}`]))
   ),
@@ -128,7 +120,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   const [authStatus, setAuthStatus] = useState<AuthStatus>('checking');
   const [prUrl, setPrUrl] = useState(prefillPrUrl ?? '');
   const [provider, setProvider] = useState<Provider>('claude');
-  const [model, setModel] = useState<ModelId>('claude-opus-5');
+  const [model, setModel] = useState<ModelId>(DEFAULT_CLAUDE_MODEL);
   const [thinking, setThinking] = useState(true);
   const [smartImports, setSmartImports] = useState(true);
   const [reviewSuggestions, setReviewSuggestions] = useState(true);

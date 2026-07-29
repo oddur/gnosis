@@ -18,6 +18,12 @@ import { createDiffSource } from '../lib/diffSource';
 import type { DiffSource } from '../lib/diffSource';
 import { isLocalUrl } from '../lib/local-url';
 import type { CiCheck, FileMetadata, PrMetadata, PrSearchResult, PrStatus } from '../lib/types';
+import {
+  DEFAULT_CLAUDE_MODEL,
+  DEFAULT_FAST_CLAUDE_MODEL,
+  RETIRED_CLAUDE_MODELS,
+  isClaudeModel,
+} from '../lib/models';
 import { buildContextPackage, buildPlannerContext, buildTopicContext } from '../lib/context-builder';
 import { generateReviewGuide, planReview, generateSlide } from '../lib/agent';
 import { buildArchive, parseArchive } from '../lib/review-archive';
@@ -980,7 +986,7 @@ function getPreferencesPath() {
 const DEFAULT_PREFERENCES: Preferences = {
   instructions: '',
   provider: 'claude',
-  model: 'claude-opus-5',
+  model: DEFAULT_CLAUDE_MODEL,
   thinking: true,
   smartImports: true,
   reviewSuggestions: true,
@@ -1003,7 +1009,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   analytics: true,
   proactiveReviewOverrides: false,
   proactiveProvider: 'claude',
-  proactiveModel: 'claude-sonnet-5',
+  proactiveModel: DEFAULT_FAST_CLAUDE_MODEL,
   proactiveThinking: false,
   educationMode: true,
   claudeContext: true,
@@ -1022,29 +1028,22 @@ function loadPreferences(): Preferences {
       stored.proactiveMode = stored.autoReviewOnRequest;
       delete stored.autoReviewOnRequest;
     }
-    // Migrate stored prefs from retired/superseded models to their successors.
-    const MODEL_MIGRATIONS: Record<string, string> = {
-      'claude-opus-4-6': 'claude-opus-5',
-      'claude-opus-4-7': 'claude-opus-5',
-      'claude-sonnet-4-6': 'claude-sonnet-5',
-    };
+    // Normalize stored model ids against the roster: retired models map
+    // to their successor, and anything else unknown (gemini leftovers,
+    // hand-edited prefs, a model retired without a table entry) falls
+    // back to the default rather than reaching the CLI as `--model`.
     for (const key of ['model', 'proactiveModel'] as const) {
       const value = stored[key];
-      if (typeof value === 'string' && MODEL_MIGRATIONS[value]) {
-        stored[key] = MODEL_MIGRATIONS[value];
-      }
+      if (typeof value !== 'string' || isClaudeModel(value)) continue;
+      stored[key] = Object.prototype.hasOwnProperty.call(RETIRED_CLAUDE_MODELS, value)
+        ? RETIRED_CLAUDE_MODELS[value].successor
+        : DEFAULT_PREFERENCES[key];
     }
     // Drop Gemini settings from stored prefs of users who previously
-    // selected it — provider reverts to claude, model falls back to
-    // the default, the orphaned geminiPath string is discarded.
+    // selected it — provider reverts to claude, the orphaned geminiPath
+    // string is discarded (models are covered by the normalization above).
     if (stored.provider === 'gemini') stored.provider = 'claude';
-    if (typeof stored.model === 'string' && stored.model.startsWith('gemini')) {
-      stored.model = DEFAULT_PREFERENCES.model;
-    }
     if (stored.proactiveProvider === 'gemini') stored.proactiveProvider = 'claude';
-    if (typeof stored.proactiveModel === 'string' && stored.proactiveModel.startsWith('gemini')) {
-      stored.proactiveModel = DEFAULT_PREFERENCES.proactiveModel;
-    }
     delete stored.geminiPath;
     return { ...DEFAULT_PREFERENCES, ...(stored as Partial<Preferences>) };
   } catch {

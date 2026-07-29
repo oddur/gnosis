@@ -1,4 +1,5 @@
 import os from 'os';
+import { CLAUDE_MODELS } from '../models';
 import type { LLMProvider } from '../provider';
 import { resolveBinaryPath, spawnCliStreaming, spawnCliQuick } from './shared';
 
@@ -17,12 +18,7 @@ function makeClaudeEnv(thinking: boolean): NodeJS.ProcessEnv {
 
 export const claudeProvider: LLMProvider = {
   name: 'claude',
-  models: [
-    { id: 'claude-fable-5', label: 'Fable 5' },
-    { id: 'claude-opus-5', label: 'Opus 5' },
-    { id: 'claude-sonnet-5', label: 'Sonnet 5' },
-    { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', quick: true },
-  ],
+  models: [...CLAUDE_MODELS],
 
   async generate({ content, systemPrompt, model, thinking, onChunk, onToolUse, mcpConfigPath, allowedTools, cwd, nonStrictMcp, signal }) {
     const claudePath = resolveClaudePath();

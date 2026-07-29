@@ -3,17 +3,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { CODE_THEMES, CODE_FONTS } from '@/lib/constants';
 import type { CodeTheme, CodeFont } from '@/lib/constants';
 import { applyTheme, type ThemeChoice } from '@/lib/theme';
+import { CLAUDE_MODELS, DEFAULT_FAST_CLAUDE_MODEL } from '@/lib/models';
 import type { ModelId, Preferences, Provider, RepoSearchResult } from '@/lib/types';
 
-const PROVIDER_MODELS: Record<Provider, { label: string; models: { id: ModelId; label: string }[] }> = {
+const PROVIDER_MODELS: Record<Provider, { label: string; models: typeof CLAUDE_MODELS }> = {
   claude: {
     label: 'Claude',
-    models: [
-      { id: 'claude-fable-5', label: 'Fable 5' },
-      { id: 'claude-opus-5', label: 'Opus 5' },
-      { id: 'claude-sonnet-5', label: 'Sonnet 5' },
-      { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
-    ],
+    models: CLAUDE_MODELS,
   },
 };
 
@@ -136,7 +132,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
   const [claudeContext, setClaudeContext] = useState(true);
   const [analytics, setAnalytics] = useState(true);
   const [proactiveReviewOverrides, setProactiveReviewOverrides] = useState(false);
-  const [proactiveModel, setProactiveModel] = useState<ModelId>('claude-sonnet-5');
+  const [proactiveModel, setProactiveModel] = useState<ModelId>(DEFAULT_FAST_CLAUDE_MODEL);
   const [proactiveThinking, setProactiveThinking] = useState(false);
   const [claudePath, setClaudePath] = useState('');
   const [claudeDetected, setClaudeDetected] = useState('');
