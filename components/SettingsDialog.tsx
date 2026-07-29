@@ -9,8 +9,9 @@ const PROVIDER_MODELS: Record<Provider, { label: string; models: { id: ModelId; 
   claude: {
     label: 'Claude',
     models: [
-      { id: 'claude-opus-4-7', label: 'Opus 4.7' },
-      { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+      { id: 'claude-fable-5', label: 'Fable 5' },
+      { id: 'claude-opus-5', label: 'Opus 5' },
+      { id: 'claude-sonnet-5', label: 'Sonnet 5' },
       { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
     ],
   },
@@ -135,7 +136,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
   const [claudeContext, setClaudeContext] = useState(true);
   const [analytics, setAnalytics] = useState(true);
   const [proactiveReviewOverrides, setProactiveReviewOverrides] = useState(false);
-  const [proactiveModel, setProactiveModel] = useState<ModelId>('claude-sonnet-4-6');
+  const [proactiveModel, setProactiveModel] = useState<ModelId>('claude-sonnet-5');
   const [proactiveThinking, setProactiveThinking] = useState(false);
   const [claudePath, setClaudePath] = useState('');
   const [claudeDetected, setClaudeDetected] = useState('');
