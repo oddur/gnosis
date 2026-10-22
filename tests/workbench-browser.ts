@@ -29,7 +29,7 @@ void app.whenReady().then(async () => {
   fs.mkdirSync(shots, { recursive: true });
   const capture = async (name: string) => {
     await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
-    await new Promise(resolve=>setTimeout(resolve,120));
+    await new Promise((resolve) => setTimeout(resolve, 120));
     fs.writeFileSync(path.join(shots, name + '.png'), (await window.webContents.capturePage()).toPNG());
   };
   try {
@@ -71,6 +71,18 @@ void app.whenReady().then(async () => {
     window.setSize(800, 700);
     await wait('innerWidth <= 800');
     assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
+    await wait('!!document.querySelector(\'[aria-label="Review pane"]\')');
+    await click('Code');
+    assert.equal(await js("document.querySelector('.review-code').getBoundingClientRect().width > 600"), true);
+    await capture('review-narrow');
+    await click('Explanation');
+    await click('Explore');
+    await wait("!!document.querySelector('.review-tool-slot iframe')");
+    assert.equal(
+      await js("document.querySelector('.review-tool-slot iframe').getBoundingClientRect().width > 600"),
+      true
+    );
+    await capture('exploration-narrow');
     console.log('Workbench browser checks passed. Screenshots: ' + shots);
   } catch (error) {
     console.error(error);

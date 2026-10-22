@@ -28,15 +28,7 @@ export function applyCodeFont(fontId: string) {
 // Quiet toggle switch — drops the bg-primary fill (now ink) and the
 // shadow-sm thumb in favor of a warm-amber active state and a flat
 // thumb. Used across all the on/off settings.
-function Toggle({
-  checked,
-  onChange,
-  ariaLabel,
-}: {
-  checked: boolean;
-  onChange: () => void;
-  ariaLabel?: string;
-}) {
+function Toggle({ checked, onChange, ariaLabel }: { checked: boolean; onChange: () => void; ariaLabel?: string }) {
   return (
     <button
       type="button"
@@ -76,7 +68,9 @@ function Chip({
       onClick={onClick}
       style={style}
       className={`text-sm pb-0.5 border-b transition-colors ${
-        active ? 'text-foreground border-[var(--ring)]' : 'border-transparent text-muted-foreground hover:text-foreground'
+        active
+          ? 'text-foreground border-[var(--ring)]'
+          : 'border-transparent text-muted-foreground hover:text-foreground'
       }`}
     >
       {children}
@@ -110,7 +104,10 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
   const [codeTheme, setCodeTheme] = useState<CodeTheme>('aurora-x');
   const [codeFont, setCodeFont] = useState<CodeFont>('jetbrains-mono');
   const [enableTools, setEnableTools] = useState(false);
-  const [proactiveMode, setProactiveMode] = useState(false);
+  const [instructions, setInstructions] = useState('');
+  const [thinking, setThinking] = useState(false);
+  const [smartImports, setSmartImports] = useState(true);
+  const [autoBriefings, setAutoBriefings] = useState(false);
   const [watchedRepos, setWatchedRepos] = useState<string[]>([]);
   const [watchedRepoInput, setWatchedRepoInput] = useState('');
   const [repoSuggestions, setRepoSuggestions] = useState<RepoSearchResult[]>([]);
@@ -119,7 +116,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [notifications, setNotifications] = useState(true);
   const [trayEnabled, setTrayEnabled] = useState(true);
-  const [maxPrsPerRepo, setMaxPrsPerRepo] = useState(10);
+  const [briefingDailyLimit, setBriefingDailyLimit] = useState(10);
   const [parallelReview, setParallelReview] = useState(false);
   const [educationMode, setEducationMode] = useState(true);
   const [claudeContext, setClaudeContext] = useState(true);
@@ -134,7 +131,12 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
   const [claudeDetected, setClaudeDetected] = useState('');
 
   // Clean up debounce timer on unmount
-  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
+  useEffect(
+    () => () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    },
+    []
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -143,11 +145,14 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
       if (prefs.codeTheme) setCodeTheme(prefs.codeTheme as CodeTheme);
       if (prefs.codeFont) setCodeFont(prefs.codeFont as CodeFont);
       setEnableTools(prefs.enableTools);
-      setProactiveMode(prefs.proactiveMode);
-      setWatchedRepos(prefs.watchedRepos ?? []);
+      setInstructions(prefs.instructions);
+      setThinking(prefs.thinking);
+      setSmartImports(prefs.smartImports);
+      setAutoBriefings(prefs.autoBriefings !== false);
+      setWatchedRepos(prefs.watchedRepos);
       setNotifications(prefs.notifications);
       setTrayEnabled(prefs.trayEnabled);
-      setMaxPrsPerRepo(prefs.maxPrsPerRepo);
+      setBriefingDailyLimit(prefs.briefingDailyLimit ?? 10);
       setParallelReview(prefs.parallelReview);
       setEducationMode(prefs.educationMode);
       setClaudeContext(prefs.claudeContext);
@@ -304,133 +309,166 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
               />
             </SettingRow>
 
+            <SettingRow label="Deeper review reasoning" description="Give detailed reviews more reasoning time.">
+              <Toggle
+                checked={thinking}
+                ariaLabel="Deeper review reasoning"
+                onChange={() => {
+                  setThinking(!thinking);
+                  saveField({ thinking: !thinking });
+                }}
+              />
+            </SettingRow>
+            <SettingRow label="Simplify import changes" description="Condense import-only changes in the walkthrough.">
+              <Toggle
+                checked={smartImports}
+                ariaLabel="Simplify import changes"
+                onChange={() => {
+                  setSmartImports(!smartImports);
+                  saveField({ smartImports: !smartImports });
+                }}
+              />
+            </SettingRow>
+            <label className="flex flex-col gap-2 text-sm">
+              Review instructions
+              <textarea
+                value={instructions}
+                rows={3}
+                placeholder="What should reviews focus on?"
+                onChange={(e) => setInstructions(e.target.value)}
+                onBlur={() => saveField({ instructions })}
+                className="rounded-md border border-border bg-background p-2 text-sm"
+              />
+            </label>
             <SettingRow
-              label="Proactive mode"
-              description="Automatically review your PRs, assigned reviews, and watched repos. Re-generates when the PR updates."
+              label="Automatic briefings"
+              description="Generate short queue summaries within your daily limit. Open a detailed review when you need it."
             >
               <Toggle
-                checked={proactiveMode}
-                ariaLabel="Proactive mode"
+                checked={autoBriefings}
+                ariaLabel="Automatic briefings"
                 onChange={() => {
-                  const next = !proactiveMode;
-                  setProactiveMode(next);
-                  saveField({ proactiveMode: next });
+                  const next = !autoBriefings;
+                  setAutoBriefings(next);
+                  saveField({ autoBriefings: next });
                 }}
               />
             </SettingRow>
 
-            {proactiveMode && (
-              <div className="flex flex-col gap-2 ml-0.5">
-                <label className="text-sm font-medium text-foreground">Watched repos</label>
-                <p className="text-xs text-muted-foreground">
-                  All open PRs in these repos will be reviewed automatically.
-                </p>
-                <div className="relative">
-                  <div className="flex items-end gap-2">
-                    <input
-                      type="text"
-                      value={watchedRepoInput}
-                      placeholder="Search for a repo…"
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setWatchedRepoInput(val);
-                        setSuggestionsDismissed(false);
-                        if (debounceRef.current) clearTimeout(debounceRef.current);
-                        if (val.trim().length >= 2) {
-                          debounceRef.current = setTimeout(() => {
-                            void window.electronAPI.searchRepos(val.trim()).then((results) => {
-                              setRepoSuggestions(results.filter((r) => !watchedRepos.includes(r.fullName)));
-                            });
-                          }, 300);
-                        } else {
-                          setRepoSuggestions([]);
-                        }
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          const trimmed = watchedRepoInput.trim();
-                          if (trimmed.includes('/')) addWatchedRepo(trimmed);
-                        }
-                        if (e.key === 'Escape') setSuggestionsDismissed(true);
-                      }}
-                      onFocus={() => setSuggestionsDismissed(false)}
-                      onBlur={() => setTimeout(() => setSuggestionsDismissed(true), 200)}
-                      className="flex-1 bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground/60 transition-colors"
-                    />
-                  </div>
-                  {showSuggestions && (
-                    <ul className="absolute z-50 top-full left-0 right-0 mt-1 bg-popover border border-border rounded-md shadow-md max-h-48 overflow-y-auto">
-                      {repoSuggestions.map((repo) => (
-                        <li key={repo.fullName}>
-                          <button
-                            type="button"
-                            className="w-full text-left px-3 py-2 text-sm hover:bg-accent transition-colors flex flex-col gap-0.5"
-                            onMouseDown={(e) => { e.preventDefault(); addWatchedRepo(repo.fullName); }}
-                          >
-                            <span className="font-mono text-xs text-foreground">{repo.fullName}</span>
-                            {repo.description && (
-                              <span className="text-xs text-muted-foreground truncate">{repo.description}</span>
-                            )}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+            <div className="flex flex-col gap-2 ml-0.5">
+              <label className="text-sm font-medium text-foreground">Watched repos</label>
+              <p className="text-xs text-muted-foreground">Add open PRs from these repositories to your queue.</p>
+              <div className="relative">
+                <div className="flex items-end gap-2">
+                  <input
+                    type="text"
+                    value={watchedRepoInput}
+                    placeholder="Search for a repo…"
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setWatchedRepoInput(val);
+                      setSuggestionsDismissed(false);
+                      if (debounceRef.current) clearTimeout(debounceRef.current);
+                      if (val.trim().length >= 2) {
+                        debounceRef.current = setTimeout(() => {
+                          void window.electronAPI.searchRepos(val.trim()).then((results) => {
+                            setRepoSuggestions(results.filter((r) => !watchedRepos.includes(r.fullName)));
+                          });
+                        }, 300);
+                      } else {
+                        setRepoSuggestions([]);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const trimmed = watchedRepoInput.trim();
+                        if (trimmed.includes('/')) addWatchedRepo(trimmed);
+                      }
+                      if (e.key === 'Escape') setSuggestionsDismissed(true);
+                    }}
+                    onFocus={() => setSuggestionsDismissed(false)}
+                    onBlur={() => setTimeout(() => setSuggestionsDismissed(true), 200)}
+                    className="flex-1 bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground/60 transition-colors"
+                  />
                 </div>
-                {watchedRepos.length > 0 && (
-                  <ul className="flex flex-col gap-1 mt-1">
-                    {watchedRepos.map((repo) => (
-                      <li key={repo} className="flex items-center justify-between gap-2 text-sm text-foreground">
-                        <span className="font-mono text-xs">{repo}</span>
+                {showSuggestions && (
+                  <ul className="absolute z-50 top-full left-0 right-0 mt-1 bg-popover border border-border rounded-md shadow-md max-h-48 overflow-y-auto">
+                    {repoSuggestions.map((repo) => (
+                      <li key={repo.fullName}>
                         <button
                           type="button"
-                          onClick={() => {
-                            const next = watchedRepos.filter((r) => r !== repo);
-                            setWatchedRepos(next);
-                            saveField({ watchedRepos: next });
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-accent transition-colors flex flex-col gap-0.5"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            addWatchedRepo(repo.fullName);
                           }}
-                          className="text-xs text-muted-foreground hover:text-destructive transition-colors"
                         >
-                          Remove
+                          <span className="font-mono text-xs text-foreground">{repo.fullName}</span>
+                          {repo.description && (
+                            <span className="text-xs text-muted-foreground truncate">{repo.description}</span>
+                          )}
                         </button>
                       </li>
                     ))}
                   </ul>
                 )}
+              </div>
+              {watchedRepos.length > 0 && (
+                <ul className="flex flex-col gap-1 mt-1">
+                  {watchedRepos.map((repo) => (
+                    <li key={repo} className="flex items-center justify-between gap-2 text-sm text-foreground">
+                      <span className="font-mono text-xs">{repo}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = watchedRepos.filter((r) => r !== repo);
+                          setWatchedRepos(next);
+                          saveField({ watchedRepos: next });
+                        }}
+                        className="text-xs text-muted-foreground hover:text-destructive transition-colors"
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
               <div className="flex items-center justify-between gap-4 mt-2">
                 <div className="flex flex-col gap-0.5">
-                  <label className="text-sm font-medium text-foreground">Max PRs per repo</label>
+                  <label className="text-sm font-medium text-foreground">Daily briefing limit</label>
                   <p className="text-xs text-muted-foreground">
-                    How many recently updated open PRs to review per watched repo.
+                    Maximum generation attempts per day, including retries.
                   </p>
                 </div>
                 <select
-                  value={maxPrsPerRepo}
+                  value={briefingDailyLimit}
                   onChange={(e) => {
                     const next = Number(e.target.value);
-                    setMaxPrsPerRepo(next);
-                    saveField({ maxPrsPerRepo: next });
+                    setBriefingDailyLimit(next);
+                    saveField({ briefingDailyLimit: next });
                   }}
                   className="bg-transparent border border-border rounded-md px-2 py-1 text-sm text-foreground"
                 >
-                  {[5, 10, 15, 20, 30, 50].map((n) => (
-                    <option key={n} value={n}>{n}</option>
+                  {[0, 1, 5, 10, 15, 20, 30, 50].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
                   ))}
                 </select>
               </div>
 
               <div className="mt-2 pt-3 border-t border-border flex items-center justify-between gap-4">
                 <div className="flex flex-col gap-0.5 min-w-0">
-                  <span className="text-sm font-medium text-foreground">Use different model for proactive reviews</span>
+                  <span className="text-sm font-medium text-foreground">Use a different model for briefings</span>
                   <span className="slide-meta">
-                    Run background reviews on a faster/cheaper model (e.g. Sonnet) while keeping your manual default for hand-picked PRs.
+                    Use a faster model for queue summaries while keeping your preferred model for detailed reviews.
                   </span>
                 </div>
                 <div className="shrink-0">
                   <Toggle
                     checked={proactiveReviewOverrides}
-                    ariaLabel="Use different model for proactive reviews"
+                    ariaLabel="Use a different model for briefings"
                     onChange={() => {
                       const next = !proactiveReviewOverrides;
                       setProactiveReviewOverrides(next);
@@ -481,8 +519,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                   </div>
                 </div>
               )}
-              </div>
-            )}
+            </div>
 
             <SettingRow label="Desktop notifications" description="Notify when a review completes">
               <Toggle
@@ -541,7 +578,9 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
 
           <section className="flex flex-col gap-4 border-t border-border pt-5">
             <div className="flex flex-col gap-1.5">
-              <label htmlFor="codex-path" className="text-sm font-medium text-foreground">Codex CLI path</label>
+              <label htmlFor="codex-path" className="text-sm font-medium text-foreground">
+                Codex CLI path
+              </label>
               <input
                 id="codex-path"
                 type="text"
@@ -551,7 +590,9 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                 onBlur={() => saveField({ codexPath })}
                 className="bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground/60 transition-colors"
               />
-              <p className="slide-meta">Leave empty to auto-detect. Sign in first with <code>codex login</code>.</p>
+              <p className="slide-meta">
+                Leave empty to auto-detect. Sign in first with <code>codex login</code>.
+              </p>
             </div>
           </section>
 

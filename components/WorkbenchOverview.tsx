@@ -1,3 +1,4 @@
+import { sourceForPath } from '../lib/workbench';
 import { ArrowRight, GitPullRequest, Layers, Check, ExternalLink } from 'lucide-react';
 import { Markdown } from './Markdown';
 import { Button } from './ui/button';
@@ -7,11 +8,13 @@ export function WorkbenchOverview({
   reviewed,
   onNavigate,
   onSubmit,
+  submissions = {},
 }: {
   review: ReviewGuide;
   reviewed: Set<number>;
   onNavigate: (n: number) => void;
   onSubmit: (url: string) => void;
+  submissions?: Record<string, string>;
 }) {
   const subject = review.snapshot?.subject;
   return (
@@ -62,34 +65,43 @@ export function WorkbenchOverview({
           <Markdown className="text-sm leading-relaxed">{review.riskRationale}</Markdown>
           <h2>{subject?.kind === 'stack' ? 'Stack members and review actions' : 'Review action'}</h2>
           {subject ? (
-            subject.members.map((m, i) => (
-              <div className="overview-member" key={m.url}>
-                <div className="flex items-start gap-2">
-                  <span className="stack-step">{i + 1}</span>
-                  <span className="text-sm font-medium">
-                    #{m.number} {m.title}
-                  </span>
+            subject.members.map((m, i) => {
+              const topics = review.slides.filter((s) =>
+                s.diffHunks.some((h) => sourceForPath(review, h.filePath).member?.url === m.url)
+              );
+              const done = topics.filter((s) => reviewed.has(s.slideNumber)).length;
+              return (
+                <div className="overview-member" key={m.url}>
+                  <div className="flex items-start gap-2">
+                    <span className="stack-step">{i + 1}</span>
+                    <span className="text-sm font-medium">
+                      #{m.number} {m.title}
+                    </span>
+                  </div>
+                  <p>
+                    {m.repo} · {m.author} · {m.merged ? 'Merged' : m.state}
+                  </p>
+                  <p>
+                    {done}/{topics.length} topics reviewed{submissions[m.url] ? ` · ${submissions[m.url]}` : ''}
+                  </p>
+                  <div className="flex gap-3 mt-2 text-xs">
+                    <button
+                      className="text-[var(--ring)]"
+                      onClick={() => onSubmit(m.url)}
+                      disabled={m.merged || m.state === 'closed'}
+                    >
+                      Submit review
+                    </button>
+                    <button
+                      className="inline-flex items-center gap-1 text-muted-foreground"
+                      onClick={() => void window.electronAPI.openExternal(m.url)}
+                    >
+                      GitHub <ExternalLink size={11} />
+                    </button>
+                  </div>
                 </div>
-                <p>
-                  {m.repo} · {m.author} · {m.merged ? 'Merged' : m.state}
-                </p>
-                <div className="flex gap-3 mt-2 text-xs">
-                  <button
-                    className="text-[var(--ring)]"
-                    onClick={() => onSubmit(m.url)}
-                    disabled={m.merged || m.state === 'closed'}
-                  >
-                    Review this PR
-                  </button>
-                  <button
-                    className="inline-flex items-center gap-1 text-muted-foreground"
-                    onClick={() => void window.electronAPI.openExternal(m.url)}
-                  >
-                    GitHub <ExternalLink size={11} />
-                  </button>
-                </div>
-              </div>
-            ))
+              );
+            })
           ) : (
             <Button
               variant="outline"

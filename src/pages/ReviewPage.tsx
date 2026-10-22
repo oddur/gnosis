@@ -30,13 +30,19 @@ interface Props {
 // localStorage key for review progress. Keyed by prUrl + headSha so
 // each review generation gets its own progress state.
 function progressKey(review: ReviewGuide): string {
-  return review.snapshot ? `gnosis-progress:${subjectForReview(review)}` : `gnosis-progress:${review.prUrl}:${review.headSha ?? 'unknown'}`;
+  return review.snapshot
+    ? `gnosis-progress:${subjectForReview(review)}`
+    : `gnosis-progress:${review.prUrl}:${review.headSha ?? 'unknown'}`;
 }
 
 function loadProgress(review: ReviewGuide): Set<number> {
   try {
     const stored = JSON.parse(localStorage.getItem(progressKey(review)) ?? '[]') as (string | number)[];
-    return new Set(review.slides.filter((s) => stored.includes(coverageKey(review, s)) || (!review.snapshot && stored.includes(s.slideNumber))).map((s) => s.slideNumber));
+    return new Set(
+      review.slides
+        .filter((s) => stored.includes(coverageKey(review, s)) || (!review.snapshot && stored.includes(s.slideNumber)))
+        .map((s) => s.slideNumber)
+    );
   } catch {
     return new Set();
   }
@@ -94,6 +100,14 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
   const focusBeforeTool = useRef<HTMLElement | null>(null);
 
   const [showSubmitDialog, setShowSubmitDialog] = useState(false);
+  const submissionKey = `gnosis-submissions:${review.snapshot?.fingerprint ?? review.prUrl}`;
+  const [submissions, setSubmissions] = useState<Record<string, string>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(submissionKey) ?? '{}') as Record<string, string>;
+    } catch {
+      return {};
+    }
+  });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [currentLogin, setCurrentLogin] = useState<string | null>(null);
   const [freshness, setFreshness] = useState<FreshnessResult | null>(null);
@@ -485,6 +499,17 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
         body: c.body,
       })),
     });
+    const next = {
+      ...submissions,
+      [submitUrl]:
+        event === 'APPROVE'
+          ? 'Approval submitted'
+          : event === 'REQUEST_CHANGES'
+            ? 'Changes requested'
+            : 'Comments submitted',
+    };
+    setSubmissions(next);
+    localStorage.setItem(submissionKey, JSON.stringify(next));
     selectedComments.forEach((c) => removeComment(c.id));
     return result;
   }
@@ -605,6 +630,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
               review={review}
               reviewed={reviewed}
               onNavigate={handleJumpTo}
+              submissions={submissions}
               onSubmit={(url) => {
                 setSubmitUrl(url);
                 setShowSubmitDialog(true);

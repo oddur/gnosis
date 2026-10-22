@@ -6,8 +6,23 @@ Reviewers can handle a high volume of PRs while understanding how the codebase c
 The workbench treats a standalone PR or an entire stack as one review subject.
 It supports fast triage, a concise briefing, and detailed review connected to source code.
 
-The product direction is agreed. The implementation choices and numeric defaults below are proposals for delivery.
-This plan does not claim that the workbench is implemented.
+The workbench is implemented on `feat/review-workbench` and ready for local feedback.
+The sections below preserve the agreed direction and acceptance criteria.
+
+## Delivery evidence
+
+- The queue groups repository-qualified PR dependencies and supports manual grouping corrections.
+- Stacks receive a combined briefing and walkthrough with source attribution and individual submission actions.
+- Briefings have daily attempt limits, cached results, revision checks, and resumable foreground interruption.
+- Existing automatic-generation preferences migrate to briefings. Full reviews run on demand.
+- Explanation and code share two resizable panes. Smaller windows have explicit pane controls.
+- Topic coverage survives unrelated changes. Drafts and submitted-action records retain their snapshot context.
+- TypeScript, 38 unit tests, and both Electron browser suites pass locally.
+- Browser checks cover both themes, laptop layouts, narrow windows, chat, and explorations.
+- The Impeccable detector reports no findings for the changed workbench surfaces.
+
+Automatic grouping uses explicit branch dependencies and observed history.
+External stacking-tool metadata adapters are not included in this build.
 
 ## Agreed experience
 

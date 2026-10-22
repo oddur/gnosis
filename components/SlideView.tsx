@@ -155,7 +155,8 @@ function renderReviewChecks(
   slideTitle: string,
   prUrl: string,
   checkedChecks: Set<string>,
-  onToggleCheck: (key: string) => void
+  onToggleCheck: (key: string) => void,
+  review?: ReviewGuide
 ): ReactNode {
   const todoFor = (text: string, children: ReactNode): ReactNode => {
     const key = checkKey(slideId, text);
@@ -165,9 +166,15 @@ function renderReviewChecks(
       </CheckTodo>
     );
   };
-  const copyFor = (text: string, filePath?: string | null, startLine?: number | null) => (
-    <CopyPromptButton prompt={buildAgentPrompt(text, slideTitle, prUrl, filePath, startLine)} className="ml-2" />
-  );
+  const copyFor = (text: string, filePath?: string | null, startLine?: number | null) => {
+    const origin = review && filePath ? sourceForPath(review, filePath) : undefined;
+    return (
+      <CopyPromptButton
+        prompt={buildAgentPrompt(text, slideTitle, origin?.member?.url ?? prUrl, origin?.path ?? filePath, startLine)}
+        className="ml-2"
+      />
+    );
+  };
   // Multi-item structured: custom bulleted list, per-item click
   // affordance for anchored checks.
   if (checks && checks.length > 1) {
@@ -408,6 +415,22 @@ export function SlideView({
   const Icon = typeConfig.icon;
   const groupedHunks = groupHunksByFile(slide.diffHunks);
   const rightPanelRef = useRef<HTMLDivElement>(null);
+  const [narrow, setNarrow] = useState(() => window.matchMedia('(max-width: 1000px)').matches);
+  const [narrowPane, setNarrowPane] = useState<'explanation' | 'code'>('explanation');
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 1000px)');
+    const update = () => setNarrow(media.matches);
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
+  const hasLeftSlot = !!leftSlot,
+    hasRightSlot = !!rightSlot;
+  useEffect(() => {
+    if (hasRightSlot) setNarrowPane('code');
+  }, [hasRightSlot]);
+  useEffect(() => {
+    if (hasLeftSlot) setNarrowPane('explanation');
+  }, [hasLeftSlot]);
 
   // Selection-to-chat: when the user selects code in the diff panel,
   // show a small floating "Ask about this" button near the selection.
@@ -578,7 +601,8 @@ export function SlideView({
           slide.title,
           prUrl,
           checkedChecks,
-          onToggleCheck
+          onToggleCheck,
+          review
         )}
         {anchorMiss && (
           <p className="slide-meta mt-2" role="status" aria-live="polite">
@@ -710,6 +734,42 @@ export function SlideView({
       })}
     </div>
   );
+
+  if (narrow)
+    return (
+      <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+        <div className="flex gap-2 border-b border-border px-3 py-2" aria-label="Review pane">
+          <Button
+            size="sm"
+            variant={narrowPane === 'explanation' ? 'secondary' : 'ghost'}
+            aria-pressed={narrowPane === 'explanation'}
+            onClick={() => setNarrowPane('explanation')}
+          >
+            {leftSlot ? 'Chat' : 'Explanation'}
+          </Button>
+          <Button
+            size="sm"
+            variant={narrowPane === 'code' ? 'secondary' : 'ghost'}
+            aria-pressed={narrowPane === 'code'}
+            onClick={() => setNarrowPane('code')}
+          >
+            {rightSlot ? 'Exploration' : 'Code'}
+          </Button>
+        </div>
+        <div hidden={narrowPane !== 'explanation'} className="flex-1 min-h-0 overflow-hidden">
+          <div hidden={!!leftSlot} className="h-full overflow-y-auto">
+            {narrativeContent}
+          </div>
+          {leftSlot && <div className="review-tool-slot">{leftSlot}</div>}
+        </div>
+        <div hidden={narrowPane !== 'code'} className="flex-1 min-h-0 overflow-hidden">
+          <div hidden={!!rightSlot} className="h-full overflow-y-auto">
+            {diffContent}
+          </div>
+          {rightSlot && <div className="review-tool-slot">{rightSlot}</div>}
+        </div>
+      </div>
+    );
 
   // ── Split mode ── resizable narrative (left) + diff (right) panels
   if (viewMode === 'split' || leftSlot || rightSlot) {

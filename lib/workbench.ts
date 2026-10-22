@@ -15,6 +15,7 @@ export interface StackEdge {
 export interface ReviewSubject {
   id: string;
   kind: 'pr' | 'stack';
+  scope?: 'single';
   title: string;
   members: ReviewMember[];
   edges: StackEdge[];
@@ -215,6 +216,6 @@ export function coverageKey(review: ReviewGuide, slide: Slide): string {
     members
       .filter((m) => involved.has(m.url))
       .map((m) => [m.url, m.baseSha, direct.has(m.url) ? null : m.headSha, m.description]),
-    review.snapshot?.subject.edges ?? [],
+    (review.snapshot?.subject.edges ?? []).filter((e) => involved.has(e.child) && involved.has(e.parent)),
   ]);
 }

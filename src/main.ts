@@ -549,7 +549,7 @@ async function runProactiveCheck() {
     return;
   }
   const prefs = loadPreferences();
-  if (!prefs.proactiveMode || prefs.autoBriefings) return;
+  if (!prefs.proactiveMode || prefs.autoBriefings !== undefined) return;
 
   try {
     const octokit = new Octokit({ auth: cachedToken });
@@ -1042,6 +1042,8 @@ function loadPreferences(): Preferences {
       stored.proactiveMode = stored.autoReviewOnRequest;
       delete stored.autoReviewOnRequest;
     }
+    // Preserve the existing choice about automatic generation during migration.
+    if (!('autoBriefings' in stored)) stored.autoBriefings = stored.proactiveMode === true;
     const selection = normalizeModelSelection(stored.provider, stored.model);
     const proactive = normalizeModelSelection(stored.proactiveProvider, stored.proactiveModel, true);
     Object.assign(stored, selection, {
@@ -2213,7 +2215,7 @@ ipcMain.handle('start-review', async (_event, request: GenerateReviewRequest): P
   if (!subject && !isLocalUrl(request.prUrl)) {
     const parsed=parsePrUrl(request.prUrl);
     const repo=parsed.owner+'/'+parsed.repo;
-    subject={id:request.prUrl,kind:'pr',title:prData.title,members:[{...prData,repo,headRepo:prData.headRepo??repo,baseRepo:prData.baseRepo??repo,number:parsed.pullNumber,role:'watched'}],edges:[],warnings:[]};
+    subject={scope:request.standalone ? 'single' : undefined,id:request.prUrl,kind:'pr',title:prData.title,members:[{...prData,repo,headRepo:prData.headRepo??repo,baseRepo:prData.baseRepo??repo,number:parsed.pullNumber,role:'watched'}],edges:[],warnings:[]};
   }
   if (subject?.members.length === 1) subject.members[0] = {...subject.members[0],...prData,headRepo:prData.headRepo??subject.members[0].headRepo,baseRepo:prData.baseRepo??subject.members[0].baseRepo};
   const reviewSnapshot = subject ? snapshot(subject) : undefined;

@@ -73,14 +73,14 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   const refresh = useCallback(async (force = false) => {
     if (force) setRefreshing(true);
     try {
-      const [next, entries] = await Promise.all([
-        window.electronAPI.workbenchQueue(force),
-        window.electronAPI.listReviews(),
+      await Promise.all([
+        window.electronAPI.workbenchQueue(force).then((next) => {
+          if (alive.current) setQueue(next);
+        }),
+        window.electronAPI.listReviews().then((entries) => {
+          if (alive.current) setHistory(entries);
+        }),
       ]);
-      if (alive.current) {
-        setQueue(next);
-        setHistory(entries);
-      }
     } catch (e) {
       if (alive.current) setError(String(e));
     } finally {
@@ -141,24 +141,29 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
     if (selected) localStorage.setItem('gnosis-queue-selection', selected);
     let cancelled = false;
     setStatuses({});
-    if (selectedItem)
-      void Promise.allSettled(
-        selectedItem.subject.members.map(async (m) => ({
-          url: m.url,
-          status: await window.electronAPI.getPrStatus(m.url),
-        }))
-      ).then((results) => {
-        if (!cancelled)
-          setStatuses(
-            Object.fromEntries(
-              results.flatMap((r) => (r.status === 'fulfilled' ? [[r.value.url, r.value.status]] : []))
-            )
-          );
-      });
+    const refreshStatuses = () => {
+      if (selectedItem)
+        void Promise.allSettled(
+          selectedItem.subject.members.map(async (m) => ({
+            url: m.url,
+            status: await window.electronAPI.getPrStatus(m.url),
+          }))
+        ).then((results) => {
+          if (!cancelled)
+            setStatuses(
+              Object.fromEntries(
+                results.flatMap((r) => (r.status === 'fulfilled' ? [[r.value.url, r.value.status]] : []))
+              )
+            );
+        });
+    };
+    refreshStatuses();
+    const timer = setInterval(refreshStatuses, 60000);
     return () => {
       cancelled = true;
+      clearInterval(timer);
     };
-  }, [selected, selectedItem?.subject.id]);
+  }, [selected, selectedItem?.subject.id, selectedItem?.subject.members.map((m) => m.url).join(',')]);
   const savePrefs = async (next: Preferences) => {
     await window.electronAPI.savePreferences(next);
     setPrefs(next);
@@ -301,7 +306,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
             ) : item.review?.status === 'completed' ? (
               <>
                 <Check size={13} />
-                Reviewed
+                Review ready
               </>
             ) : item.briefing?.status === 'generating' ? (
               <>

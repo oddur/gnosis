@@ -1,3 +1,4 @@
+import { sourceForPath } from './workbench';
 import { deriveSlideChecks, formatReviewSource } from './review-checks';
 import type { ReviewGuide } from './types';
 
@@ -37,10 +38,9 @@ export function buildAllChecksPrompt(review: ReviewGuide): AllChecksSummary {
 
     const slideHeader = `## ${slide.slideNumber.toString().padStart(2, '0')} — ${slide.title}`;
     const items = checks.map((c) => {
-      const anchor = c.filePath
-        ? ` _(${c.filePath}${c.startLine ? `:${c.startLine}` : ''})_`
-        : '';
-      return `- ${c.text}${anchor}`;
+      const origin = c.filePath ? sourceForPath(review, c.filePath) : undefined;
+      const anchor = c.filePath ? ` _(${origin?.path ?? c.filePath}${c.startLine ? `:${c.startLine}` : ''})_` : '';
+      return `- ${c.text}${anchor}${origin?.member ? ` — ${origin.member.url} at ${origin.member.headSha}` : ''}`;
     });
     sections.push([slideHeader, ...items].join('\n'));
     count += checks.length;
@@ -53,7 +53,7 @@ export function buildAllChecksPrompt(review: ReviewGuide): AllChecksSummary {
   const intro = [
     `You are investigating a code review of: **${review.prTitle}**`,
     '',
-    `Source: ${formatReviewSource(review.prUrl)}`,
+    `Source: ${review.snapshot?.subject.kind === 'stack' ? review.snapshot.subject.members.map((m) => `${m.url} at ${m.headSha}`).join(', ') : formatReviewSource(review.prUrl)}`,
     '',
     `Below is the full set of "what to check" items the reviewer surfaced — ${count} check${count === 1 ? '' : 's'} across ${sections.length} slide${sections.length === 1 ? '' : 's'}. For each one, investigate against the code and report whether the concern is **valid**, **handled**, or **unclear**, with file:line evidence. Group your response by slide so it's easy to map findings back to the review.`,
     '',

@@ -10,6 +10,7 @@ import {
   memberPrefix,
   type ReviewMember,
 } from '../lib/workbench';
+import { buildAllChecksPrompt } from '../lib/all-checks-prompt';
 import { namespaceDiff } from '../lib/stack-source';
 import { buildArchive, parseArchive } from '../lib/review-archive';
 import type { ReviewGuide } from '../lib/types';
@@ -177,4 +178,22 @@ test('stack snapshots survive archive export and import', () => {
     },
   });
   assert.deepEqual(parseArchive(archive).review.snapshot, review.snapshot);
+});
+
+test('adding downstream work preserves completed ancestor coverage', () => {
+  const r = reviewFor([member(1), member(2, 'branch-1')]);
+  const key = coverageKey(r, r.slides[0]);
+  r.snapshot = snapshot(groupSubjects([...r.snapshot!.subject.members, member(3, 'branch-2')])[0]);
+  assert.equal(coverageKey(r, r.slides[0]), key);
+});
+
+test('bulk check prompts keep the real member source and revision', () => {
+  const r = reviewFor([member(1), member(2, 'branch-1')]);
+  r.slides[0].reviewChecks = [
+    { text: 'Check cancellation', filePath: memberPrefix(member(2)) + 'queue.ts', startLine: 1 },
+  ];
+  const { prompt } = buildAllChecksPrompt(r);
+  assert.match(prompt, /queue.ts/);
+  assert.match(prompt, /pull\/2 at sha-2/);
+  assert.doesNotMatch(prompt, /PR-owner/);
 });
