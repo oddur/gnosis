@@ -7,6 +7,7 @@ import { getPrMetadata, parsePrUrl, searchPullRequests, listRepoPullRequests, ge
 import { getProvider } from '../lib/provider';
 import {
   groupSubjects,
+  briefingModel,
   fingerprint,
   attentionFor,
   type ReviewSubject,
@@ -81,18 +82,8 @@ export function createWorkbenchService(deps: Deps) {
     fs.writeFileSync(temp, JSON.stringify(load()));
     fs.renameSync(temp, cachePath());
   }
-  function modelSettings() {
-    const p = deps.preferences();
-    return p.proactiveReviewOverrides
-      ? {
-          provider: p.proactiveProvider ?? p.provider,
-          model: p.proactiveModel ?? p.model,
-          thinking: p.proactiveThinking ?? false,
-        }
-      : { provider: p.provider, model: p.model, thinking: false };
-  }
-  function key(subject: ReviewSubject) {
-    const p = modelSettings();
+  const modelSettings = () => briefingModel(deps.preferences());
+  function key(subject: ReviewSubject, p = modelSettings()) {
     return createHash('sha256')
       .update(JSON.stringify([fingerprint(subject), p.provider, p.model, p.thinking, 'briefing-v2']))
       .digest('hex');
@@ -295,13 +286,14 @@ export function createWorkbenchService(deps: Deps) {
       const s = load();
       const item = view().items.find((i) => !s.briefs[key(i.subject)] || s.briefs[key(i.subject)]?.status === 'paused');
       if (!item || s.used >= limit()) return;
+      const p = modelSettings();
       const subject = item.subject,
-        k = key(subject);
+        k = key(subject, p);
       const controller = new AbortController();
       running = controller;
       const timeout = setTimeout(() => controller.abort(new Error('Briefing exceeded 90 seconds.')), 90000);
       const preempt = setInterval(() => {
-        if (deps.busy()) controller.abort(new BriefingPaused());
+        if (deps.busy() || key(subject) !== k) controller.abort(new BriefingPaused());
       }, 500);
       s.used++;
       s.briefs[k] = { key: k, status: 'generating', updatedAt: new Date().toISOString() };
@@ -328,7 +320,6 @@ export function createWorkbenchService(deps: Deps) {
             throw new Error('This change updated during briefing. Refresh the queue for a new briefing.');
         };
         await assertRevision();
-        const p = modelSettings();
         const evidence = { members: context, dependencies: subject.edges, incomplete: false };
         while (JSON.stringify(evidence).length > 45000 && evidence.members.length) {
           evidence.incomplete = true;
@@ -336,6 +327,8 @@ export function createWorkbenchService(deps: Deps) {
           if (last.files.length) last.files.pop();
           else evidence.members.pop();
         }
+        if (key(subject) !== k) controller.abort(new BriefingPaused());
+        controller.signal.throwIfAborted();
         let output = 0;
         const raw = await (deps.provider ?? getProvider)(p.provider).generate({
           model: p.model,

@@ -35,12 +35,22 @@ void app.whenReady().then(async () => {
   try {
     await window.loadURL(process.env.GNOSIS_WORKBENCH_URL!);
     await wait("document.querySelectorAll('.queue-item').length === 7");
+    await js(
+      `(() => { const select = document.querySelector('[aria-label="Review model"]'); select.value = 'codex:gpt-6-astra'; select.dispatchEvent(new Event('change', {bubbles:true})); })()`
+    );
+    assert.equal(await js('window.electronAPI.loadPreferences().then(p => p.model)'), 'gpt-6-astra');
+    assert.equal(
+      await js('window.electronAPI.loadPreferences().then(p => p.proactiveReviewOverrides)'),
+      false,
+      'The workbench model must apply to briefings too'
+    );
     assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
     assert.equal(await js("getComputedStyle(document.querySelector('.queue-toolbar h1')).fontSize"), '22px');
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
     await wait("document.querySelector('.briefing-panel')?.textContent.includes('Cancellation must release')");
+    assert.match(await js(`document.querySelector('[aria-label="Briefing model"]').textContent`), /GPT-6 Astra/);
     await js('document.querySelector(\'.queue-disclosure[aria-label*="Introduce"]\').click()');
     assert.equal(await js("document.querySelectorAll('.queue-member').length"), 3);
     await capture('queue-light');

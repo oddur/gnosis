@@ -1,4 +1,4 @@
-import type { PrMetadata, PrSearchResult, ReviewGuide, ReviewHistoryEntry, Slide } from './types';
+import type { Preferences, PrMetadata, PrSearchResult, ReviewGuide, ReviewHistoryEntry, Slide } from './types';
 
 export interface ReviewMember extends PrMetadata {
   number: number;
@@ -218,4 +218,20 @@ export function coverageKey(review: ReviewGuide, slide: Slide): string {
       .map((m) => [m.url, m.baseSha, direct.has(m.url) ? null : m.headSha, m.description]),
     (review.snapshot?.subject.edges ?? []).filter((e) => involved.has(e.child) && involved.has(e.parent)),
   ]);
+}
+
+/** One effective model selection for briefing generation and its visible label. */
+export function briefingModel(
+  p: Pick<Preferences, 'provider' | 'model'> &
+    Partial<
+      Pick<Preferences, 'proactiveReviewOverrides' | 'proactiveProvider' | 'proactiveModel' | 'proactiveThinking'>
+    >
+) {
+  return p.proactiveReviewOverrides
+    ? {
+        provider: p.proactiveProvider ?? p.provider,
+        model: p.proactiveModel ?? p.model,
+        thinking: p.proactiveThinking ?? false,
+      }
+    : { provider: p.provider, model: p.model, thinking: false };
 }

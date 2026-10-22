@@ -462,7 +462,8 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                 <div className="flex flex-col gap-0.5 min-w-0">
                   <span className="text-sm font-medium text-foreground">Use a different model for briefings</span>
                   <span className="slide-meta">
-                    Use a faster model for queue summaries while keeping your preferred model for detailed reviews.
+                    Override the workbench model for queue summaries. Choosing a model in the workbench clears this
+                    override.
                   </span>
                 </div>
                 <div className="shrink-0">

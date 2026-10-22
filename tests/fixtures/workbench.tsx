@@ -176,7 +176,7 @@ let prefs: Preferences = {
   maxPrsPerRepo: 10,
   parallelReview: true,
   analytics: false,
-  proactiveReviewOverrides: false,
+  proactiveReviewOverrides: true,
   proactiveProvider: 'claude',
   proactiveModel: DEFAULT_FAST_CLAUDE_MODEL,
   proactiveThinking: false,
@@ -225,7 +225,9 @@ Object.defineProperty(window, 'electronAPI', {
 });
 localStorage.clear();
 const { renderDiffHunk } = await import('../../lib/highlight');
-for (const topic of review.slides) for (const hunk of topic.diffHunks) hunk.renderedHtml=await renderDiffHunk(hunk.content,hunk.language,'github-dark',hunk.hunkHeader);
+for (const topic of review.slides)
+  for (const hunk of topic.diffHunks)
+    hunk.renderedHtml = await renderDiffHunk(hunk.content, hunk.language, 'github-dark', hunk.hunkHeader);
 const { App } = await import('../../src/App');
 const root = document.getElementById('root');
 if (root) createRoot(root).render(<App />);

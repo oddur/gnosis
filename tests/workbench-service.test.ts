@@ -291,3 +291,34 @@ test('cached queue remains usable while GitHub refresh is pending', { timeout: 1
     s.cleanup();
   }
 });
+
+test('clearing the briefing override routes generation to the selected Codex model', async () => {
+  const s = setup(async () => '{"summary":"Ready"}', false);
+  const calls: { provider: string; model: string }[] = [];
+  s.prefs.provider = 'codex';
+  s.prefs.model = 'gpt-6-astra';
+  s.prefs.proactiveReviewOverrides = true;
+  s.prefs.proactiveProvider = 'claude';
+  s.prefs.proactiveModel = 'claude-sonnet-5-5';
+  s.prefs.briefingDailyLimit = 2;
+  s.deps.provider = ((provider: string) => ({
+    generate: (req: { model: string }) => {
+      calls.push({ provider, model: req.model });
+      return Promise.resolve('{"summary":"Ready"}');
+    },
+  })) as unknown as typeof getProvider;
+  const service = createWorkbenchService(s.deps);
+  try {
+    await service.queue();
+    s.prefs.autoBriefings = true;
+    await settle(service, 'ready');
+    s.prefs.proactiveReviewOverrides = false;
+    await settle(service, 'ready');
+    assert.deepEqual(calls, [
+      { provider: 'claude', model: 'claude-sonnet-5-5' },
+      { provider: 'codex', model: 'gpt-6-astra' },
+    ]);
+  } finally {
+    s.cleanup();
+  }
+});

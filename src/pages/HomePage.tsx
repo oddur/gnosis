@@ -28,7 +28,13 @@ import { Button } from '../../components/ui/button';
 import { Markdown } from '../../components/Markdown';
 import { PROVIDERS } from '../../lib/models';
 import { timeAgo } from '../../lib/utils';
-import { fingerprint, type QueueItem, type ReviewSubject, type WorkbenchQueue } from '../../lib/workbench';
+import {
+  briefingModel,
+  fingerprint,
+  type QueueItem,
+  type ReviewSubject,
+  type WorkbenchQueue,
+} from '../../lib/workbench';
 import type { Preferences, PrStatus, ReviewGuide, ReviewHistoryEntry, ModelId, Provider } from '../../lib/types';
 
 interface Props {
@@ -69,6 +75,10 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   const [statuses, setStatuses] = useState<Partial<Record<string, PrStatus>>>({});
   const alive = useRef(true);
   const selectedItem = queue.items.find((i) => i.subject.id === selected);
+  const briefingSelection = prefs ? briefingModel(prefs) : undefined;
+  const briefingModelLabel = briefingSelection
+    ? `${PROVIDERS[briefingSelection.provider].label} · ${PROVIDERS[briefingSelection.provider].models.find((m) => m.id === briefingSelection.model)?.label ?? briefingSelection.model}`
+    : '';
 
   const refresh = useCallback(async (force = false) => {
     if (force) setRefreshing(true);
@@ -354,11 +364,17 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
           {prefs && (
             <select
               aria-label="Review model"
+              title="Model for reviews and briefings"
               className="workbench-select model-select"
               value={`${prefs.provider}:${prefs.model}`}
               onChange={(e) => {
                 const [provider, ...rest] = e.target.value.split(':');
-                void savePrefs({ ...prefs, provider: provider as Provider, model: rest.join(':') as ModelId });
+                void savePrefs({
+                  ...prefs,
+                  provider: provider as Provider,
+                  model: rest.join(':') as ModelId,
+                  proactiveReviewOverrides: false,
+                });
               }}
             >
               {Object.values(PROVIDERS).map((p) => (
@@ -688,6 +704,12 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                   </button>
                 </div>
                 <h2>{selectedItem.subject.title}</h2>
+                {briefingSelection && (
+                  <p className="text-xs text-muted-foreground mb-3" aria-label="Briefing model">
+                    Briefing model: {briefingModelLabel}
+                    {prefs?.proactiveReviewOverrides ? ' (Settings override)' : ''}
+                  </p>
+                )}
                 <div className="briefing-actions">
                   <Button
                     size="sm"
