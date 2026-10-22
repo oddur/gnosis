@@ -266,6 +266,23 @@ export function ExplainerView({ reviewId, slide, onClose, onSaved }: Props) {
                       Refine <ArrowUpRight />
                     </Button>
                   </div>
+                  {!/data-motion-id/.test(artifact.html + artifact.javascript) && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={busy}
+                      className="mt-2 -ml-2"
+                      onClick={() => {
+                        const instruction =
+                          'Add meaningful animated transitions to this example. Preserve its teaching point, source-backed behavior, controls, and compact layout. Use stable data-motion-id groups so the host can move the same logical items between states, animate additions and removals, and highlight the current event. Keep each shape and its label together. Leave enough time between events to read the caption.';
+                        setRefinement(instruction);
+                        void generate(instruction);
+                      }}
+                    >
+                      Add animated transitions
+                    </Button>
+                  )}
                   <p className="text-xs text-muted-foreground mt-2">
                     Refining generates a new version. Your current example stays available if it fails.
                   </p>

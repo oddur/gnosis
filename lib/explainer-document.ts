@@ -1,4 +1,5 @@
 import type { InteractiveExplainer } from './types';
+import { EXPLAINER_MOTION_RUNTIME } from './explainer-motion';
 
 // The document has an opaque origin (sandbox="allow-scripts", never
 // allow-same-origin). No Electron preload, network, forms, popups or frames.
@@ -24,7 +25,7 @@ button, input, select { font: inherit; accent-color: var(--accent); } button, se
 button { cursor: pointer; } :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 label { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; } p { max-width: 75ch; } .muted { color: var(--muted); }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
-</style></head><body><main id="root"></main><script nonce="${token}">const config = ${data};${RUNTIME}</script></body></html>`;
+</style></head><body><main id="root"></main><script nonce="${token}">const config = ${data};${EXPLAINER_MOTION_RUNTIME}${RUNTIME}</script></body></html>`;
 }
 
 const RUNTIME = String.raw`
@@ -32,8 +33,10 @@ const RUNTIME = String.raw`
   const root = document.getElementById('root');
   const notify = (event, extra = {}) => parent.postMessage({type: 'gnosis-explainer', token: config.token, event, ...extra}, '*');
   let playing = false, raf = 0, last = 0, failed = false;
-  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const stop = () => { playing = false; cancelAnimationFrame(raf); notify('state', {playing: false}); };
+  const motionPreference = matchMedia('(prefers-reduced-motion: reduce)');
+  let motion = null;
+  const reduced = motionPreference.matches;
+  const stop = () => { playing = false; cancelAnimationFrame(raf); motion?.pause(); notify('state', {playing: false}); };
   const fail = message => { failed = true; stop(); notify('error', {message: String(message).slice(0, 500)}); };
   addEventListener('error', e => fail(e.message));
   addEventListener('unhandledrejection', e => fail(e.reason));
@@ -62,7 +65,7 @@ const RUNTIME = String.raw`
   if (!api || ['reset', 'step', 'tick'].some(k => typeof api[k] !== 'function')) { fail('The explainer must provide reset, step, and tick functions.'); return; }
   // Bound the drawings, not the HTML controls or captions. Older artifacts
   // often use width:100% on tall SVGs, scaling their text far beyond 100%.
-  let fit = true, layoutFrame = 0;
+  let fit = true, layoutFrame = 0, lastLayout = '';
   const tallDrawing = [...root.querySelectorAll('svg')].filter(svg => !svg.ownerSVGElement);
   // A single tall diagram with sibling controls/captions can use the width
   // of a desktop window instead of stacking everything above and below it.
@@ -132,6 +135,8 @@ const RUNTIME = String.raw`
       const height = Math.min(naturalHeight, Math.max(120, available * naturalHeight / total));
       svg.style.setProperty('max-height', fit ? height + 'px' : 'none', 'important');
     }
+    const layoutKey = innerWidth + ':' + innerHeight + ':' + fit;
+    if (layoutKey !== lastLayout) { lastLayout = layoutKey; motion?.sync(); }
   }
   function scheduleLayout() {
     if (!layoutFrame) layoutFrame = requestAnimationFrame(layout);
@@ -141,18 +146,21 @@ const RUNTIME = String.raw`
   addEventListener('resize', scheduleLayout);
   root.addEventListener('input', scheduleLayout);
   root.addEventListener('change', scheduleLayout);
+  motion = createExplainerMotion(root, motionPreference);
+  root.addEventListener('input', () => motion.sync());
+  root.addEventListener('change', () => motion.sync());
   function run(command) {
     try {
       if (command === 'fit' || command === 'actual-size') { fit = command === 'fit'; scheduleLayout(); }
       if (command === 'pause') stop();
-      if (command === 'reset') { stop(); api.reset(); }
-      if (command === 'step') { stop(); api.step(); }
+      if (command === 'reset') { stop(); motion.update(() => api.reset(), false); }
+      if (command === 'step') { stop(); motion.update(() => api.step()); }
       if (command === 'play') {
         if (playing) return;
-        playing = true; last = performance.now(); notify('state', {playing: true});
+        playing = true; motion.resume(); last = performance.now(); notify('state', {playing: true});
         const frame = now => {
           if (!playing) return;
-          try { api.tick(Math.min(now - last, 100)); last = now; raf = requestAnimationFrame(frame); }
+          try { motion.update(() => api.tick(Math.min(now - last, 100))); last = now; raf = requestAnimationFrame(frame); }
           catch (e) { fail(e.message); }
         };
         raf = requestAnimationFrame(frame);
@@ -167,6 +175,7 @@ const RUNTIME = String.raw`
   try {
     api.reset();
     layout();
+    motion.sync();
     if (!root.querySelector('svg')) throw new Error('The explainer must include an SVG visualization.');
     if (config.validate) {
       api.step(); api.tick(50); api.reset();

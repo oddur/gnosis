@@ -6,10 +6,12 @@ import path from 'node:path';
 import { buildExplainerDocument } from '../lib/explainer-document';
 import { validateExplainerInBrowser, protectExplainerFrames } from '../src/explainer-validation';
 import { explainer } from './fixtures/explainer';
+import { testExplainerMotion } from './explainer-motion-browser';
 
 app.on('window-all-closed', () => {});
 void app.whenReady().then(async () => {
   try {
+    console.log('browser: validation');
     await validateExplainerInBrowser(explainer);
     await assert.rejects(validateExplainerInBrowser({ ...explainer, javascript: 'not valid javascript !!!' }));
     await assert.rejects(
@@ -41,6 +43,7 @@ if (accessed) throw new Error('Parent DOM leaked');`,
 
     // Exercise the production iframe policy without the validator's extra
     // session-wide network block: fetches, images and navigation must fail.
+    console.log('browser: isolation');
     let requests = 0;
     const server = createServer((_req, res) => {
       requests++;
@@ -99,6 +102,7 @@ setTimeout(() => { location.href = ${JSON.stringify(url)}; }, 20);`,
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
     // Tall saved diagrams fit beside their controls without scaling up text.
+    console.log('browser: layout');
     const layoutWindow = new BrowserWindow({
       show: false,
       webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
@@ -172,6 +176,7 @@ setTimeout(() => { location.href = ${JSON.stringify(url)}; }, 20);`,
     } finally {
       layoutWindow.destroy();
     }
+    console.log('browser: UI');
     const ui = new BrowserWindow({
       show: false,
       width: 1400,
@@ -226,11 +231,22 @@ setTimeout(() => { location.href = ${JSON.stringify(url)}; }, 20);`,
         'Refined queue',
         'failed refinement keeps the previous artifact'
       );
+      await ui.webContents.executeJavaScript(`${button('Add animated transitions')}.click()`);
+      await waitFor(
+        `document.querySelector('textarea').value === '' && !${button('Add animated transitions')}.disabled`
+      );
+      assert.equal(
+        await ui.webContents.executeJavaScript(`document.querySelector('[role=alert]') === null`),
+        true,
+        'the animation refinement action generates a replacement'
+      );
       await ui.webContents.executeJavaScript(`${button('Back to explanation')}.click()`);
       await waitFor(`document.body.textContent.includes('Returned to review')`);
     } finally {
       ui.destroy();
     }
+    console.log('browser: motion');
+    await testExplainerMotion();
     console.log(
       'Explainer browser checks passed: playback, input boundaries, errors, timeouts, host isolation, network, navigation, and React UI/refinement.'
     );

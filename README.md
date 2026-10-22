@@ -93,6 +93,8 @@ Navigate slides with **← →** or the Prev/Next buttons. Drag the divider betw
 Past reviews are saved locally and grouped by PR on the home screen — click any to reload without re-generating.
 
 For suitable topics, **Explore** builds an interactive example when you request it. Generation uses your selected Claude or Codex model.
+
+New explanations animate items between states during Play or Step. Pause freezes transitions; Reset returns to the initial state. Reduced-motion settings show state changes immediately. For a saved example, open **Details & refine → Add animated transitions** to generate a version with item movement.
 Use **Play**, **Step**, and **Reset** to follow the example. Read its assumptions and select a source file to inspect the saved diff.
 **Try another scenario** generates a refined version from your instructions. Explainers are saved with the review and included in exported review archives.
 The examples illustrate code behavior. Their displayed timings are model inputs unless the supplied evidence establishes measured values.
