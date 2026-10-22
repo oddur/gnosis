@@ -1872,3 +1872,21 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .dark .slide-prose,.dark .overview-summary,.dark .briefing-summary { font-weight:425; letter-spacing:.002em; line-height:1.7; }
 .queue-meta,.queue-count,.queue-state,.workbench-footer,.activity-task-meta { font-variant-numeric:tabular-nums; }
 .queue-meta>span { overflow-wrap:anywhere; }
+
+/* Notifications stay above Activity and never take keyboard focus on arrival. */
+.app-toasts { position:fixed; right:12px; bottom:46px; z-index:60; width:min(380px,calc(100vw - 24px)); display:flex; flex-direction:column-reverse; gap:8px; outline:none; pointer-events:none; }
+body:has(.activity-drawer) .app-toasts { bottom:auto; top:64px; }
+.app-toast { pointer-events:auto; background:var(--popover); color:var(--popover-foreground); border:1px solid var(--border); border-radius:8px; transition:opacity 180ms ease-out,transform 180ms ease-out; }
+.app-toast[data-starting-style],.app-toast[data-ending-style] { opacity:0; transform:translateY(8px); }
+.app-toast[data-limited] { display:none; }
+.app-toast-content { display:flex; align-items:flex-start; gap:10px; padding:12px; }
+.app-toast-icon { flex-shrink:0; margin-top:2px; color:var(--ring); }
+.app-toast[data-type=success] .app-toast-icon { color:var(--color-success); }
+.app-toast[data-type=error] .app-toast-icon { color:var(--color-danger); }
+.app-toast-copy { min-width:0; flex:1; }
+.app-toast-title { font-size:var(--type-body); font-weight:600; line-height:1.5; }
+.app-toast-description { font-size:var(--type-control); line-height:1.5; color:var(--muted-foreground); overflow-wrap:anywhere; max-height:6em; overflow:auto; }
+.app-toast-action { display:block; margin-top:8px; color:var(--ring); font-size:var(--type-control); font-weight:600; text-decoration:underline; text-underline-offset:3px; }
+.app-toast-action:disabled { opacity:.5; }
+.app-toast .workbench-icon { width:24px; height:24px; }
+@media(prefers-reduced-motion:reduce) { .app-toast { transition:none; } }

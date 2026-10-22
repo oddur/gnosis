@@ -201,9 +201,8 @@ void app.whenReady().then(async () => {
       "document.querySelector('.interactive-explanation-prompt')?.textContent.includes('Create interactive explanation')"
     );
     await click('Create interactive explanation');
-    await wait("!!document.querySelector('.review-tool-slot iframe')");
+    assert.equal(await js("!!document.querySelector('.review-tool-slot iframe')"), false);
     assert.equal(await js('Number(document.body.dataset.explainerCalls)'), 1);
-    await click('Close interactive explanation');
     await wait(
       "document.querySelector('.interactive-explanation-prompt')?.textContent.includes('Open interactive explanation')"
     );
@@ -590,6 +589,94 @@ void app.whenReady().then(async () => {
     await capture('typeset-zoom-light');
     assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
     window.webContents.setZoomFactor(1);
+    // Background generation never replaces the current review. Completion toasts
+    // remain actionable after navigation and open the exact saved topic.
+    window.setSize(1280, 800);
+    await window.loadURL(fixtureUrl + '?notifications');
+    await wait("document.querySelectorAll('.queue-item').length === 7");
+    await wait("document.querySelector('.activity-summary')?.textContent.includes('2 running')");
+    assert.equal(await js("document.querySelectorAll('[data-slot=toast]').length"), 0, 'No historical ready toasts');
+    await js(`(async () => {
+      const review = await window.electronAPI.loadReview('workbench-review');
+      const artifact = review.slides[0].explainer;
+      delete review.slides[0].explainer;
+      const tasks = [];
+      window.electronAPI.listActivity = async () => structuredClone(tasks);
+      window.electronAPI.generateExplainer = (req) => {
+        document.body.dataset.explainerCalls = String(Number(document.body.dataset.explainerCalls ?? 0) + 1);
+        const task = {id:'exploration:notification',kind:'exploration',title:review.prTitle,detail:'Generating the example',reviewId:req.reviewId,slideId:req.slideId,status:'running',updatedAt:new Date().toISOString(),canCancel:true,canRetry:false};
+        tasks.push(task);
+        return new Promise(resolve => {
+          window.finishExploration = () => {
+            review.slides.find(s=>s.id===req.slideId).explainer = artifact;
+            Object.assign(task,{status:'completed',detail:'Bound work before it reaches the worker',canCancel:false,updatedAt:new Date().toISOString()});
+            resolve(artifact);
+          };
+        });
+      };
+      window.finishReview = () => tasks.push({id:'review:notification',kind:'review',title:'Completed background review',detail:'Ready',reviewId:'workbench-review',status:'completed',updatedAt:new Date().toISOString(),canCancel:false,canRetry:false});
+    })()`);
+    await js(
+      "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
+    );
+    await click('Continue review');
+    await wait("!!document.querySelector('.workbench-overview')");
+    await click('Continue review');
+    await wait("!!document.querySelector('.review-narrative')");
+    await click('Create interactive explanation');
+    await wait("document.querySelector('[data-slot=toast]')?.textContent.includes('Building interactive explanation')");
+    assert.equal(await js("!!document.querySelector('.review-tool-slot iframe')"), false);
+    assert.equal(await js("!!document.querySelector('.review-code .review-diff')"), true);
+    await click('View activity');
+    await wait("document.querySelector('.activity-task')?.textContent.includes('Generating the example')");
+    assert.equal(await js("!!document.querySelector('.activity-task [role=progressbar]')"), true);
+    await capture('exploration-background');
+    await js('document.querySelector(\'[aria-label="Close activity"]\').click()');
+    await click('Back');
+    await wait("!!document.querySelector('.queue-list')");
+    await js("document.querySelector('.queue-search input').focus()");
+    await js('window.finishExploration()');
+    await wait("document.querySelector('[data-slot=toast]')?.textContent.includes('Interactive explanation ready')");
+    assert.equal(
+      await js("document.activeElement === document.querySelector('.queue-search input')"),
+      true,
+      'Notification must not steal focus'
+    );
+    await capture('ready-notification-light');
+    await js("document.documentElement.classList.add('dark')");
+    await capture('ready-notification-dark');
+    window.setSize(800, 700);
+    await capture('ready-notification-narrow');
+    await js("document.documentElement.classList.remove('dark')");
+    await capture('ready-notification-narrow-light');
+    await js("document.documentElement.classList.add('dark')");
+    assert.equal(
+      await js(
+        "document.querySelector('.app-toasts').getBoundingClientRect().bottom < document.querySelector('.activity-shell').getBoundingClientRect().top"
+      ),
+      true
+    );
+    await js("document.querySelector('[data-slot=toast] .app-toast-action').click()");
+    await wait("!!document.querySelector('.review-tool-slot iframe')");
+    assert.equal(await js("document.querySelector('.review-toolbar select').value"), '1');
+    assert.equal(
+      await js('Number(document.body.dataset.explainerCalls)'),
+      1,
+      'Opening a completed result uses its saved artifact'
+    );
+    await wait("!document.querySelector('[data-slot=toast]')");
+    await js('window.finishReview()');
+    await wait("document.querySelector('[data-slot=toast]')?.textContent.includes('Review ready')");
+    await js("document.querySelector('[data-slot=toast] .app-toast-action').click()");
+    await wait("!document.querySelector('.review-tool-slot iframe') && !!document.querySelector('.review-toolbar')");
+    await wait("!document.querySelector('[data-slot=toast]')");
+    await new Promise((resolve) => setTimeout(resolve, 2200));
+    assert.equal(
+      await js("document.querySelectorAll('[data-slot=toast]').length"),
+      0,
+      'Repeated polling must not duplicate ready notifications'
+    );
+
     console.log('Workbench browser checks passed. Screenshots: ' + shots);
   } catch (error) {
     console.error(error);

@@ -7,11 +7,13 @@ import { UpdateBanner } from '../components/UpdateBanner';
 import { applyCodeFont } from '../components/SettingsDialog';
 import { applyTheme } from '../lib/theme';
 import type { ReviewGuide } from '../lib/types';
+import { Toaster } from '../components/ui/toast';
 
 type Page = 'home' | 'review';
 
 export function App() {
   const [page, setPage] = useState<Page>('home');
+  const [activityOpen, setActivityOpen] = useState(false);
   const [destination, setDestination] = useState<{
     subjectId?: string;
     slideId?: string;
@@ -43,6 +45,7 @@ export function App() {
       setDestination((d) => ({ subjectId: task.subjectId, nonce: d.nonce + 1 }));
       setReview(null);
       setPage('home');
+      setActivityOpen(false);
       return;
     }
     if (!task.reviewId) throw new Error('This task has no saved review.');
@@ -50,6 +53,7 @@ export function App() {
     setReview(loaded);
     setPage('review');
     setDestination((d) => ({ slideId: task.slideId, explore: task.kind === 'exploration', nonce: d.nonce + 1 }));
+    setActivityOpen(false);
   }
 
   function handleBack() {
@@ -106,10 +110,12 @@ export function App() {
             onReReview={handleReReview}
             initialSlideId={destination.slideId}
             exploreInitially={destination.explore}
+            onShowActivity={() => setActivityOpen(true)}
           />
         )}
       </div>
-      <ActivityDrawer onOpen={openActivity} />
+      <ActivityDrawer onOpen={openActivity} open={activityOpen} onOpenChange={setActivityOpen} />
+      <Toaster />
     </>
   );
 }
