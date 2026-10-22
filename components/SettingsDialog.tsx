@@ -464,13 +464,13 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                   ))}
                   <div className="flex items-center justify-between gap-4">
                     <div className="flex flex-col gap-0.5 min-w-0">
-                      <span className="text-sm font-medium text-foreground">Extended thinking</span>
+                      <span className="text-sm font-medium text-foreground">Deeper reasoning</span>
                       <span className="slide-meta">Off is usually faster and cheaper for background runs.</span>
                     </div>
                     <div className="shrink-0">
                       <Toggle
                         checked={proactiveThinking}
-                        ariaLabel="Proactive extended thinking"
+                        ariaLabel="Proactive deeper reasoning"
                         onChange={() => {
                           const next = !proactiveThinking;
                           setProactiveThinking(next);

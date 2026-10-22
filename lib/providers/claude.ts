@@ -9,10 +9,13 @@ function resolveClaudePath(): string {
   return resolveBinaryPath('claude', [`${os.homedir()}/.volta/bin/claude`]);
 }
 
-function makeClaudeEnv(thinking: boolean): NodeJS.ProcessEnv {
+function makeClaudeEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
   delete env.CLAUDECODE;
-  if (!thinking) env.MAX_THINKING_TOKENS = '0';
+  // Current Claude models always use adaptive reasoning. Control effort with
+  // --effort, without an inherited environment override or fixed token budget.
+  delete env.CLAUDE_CODE_EFFORT_LEVEL;
+  delete env.MAX_THINKING_TOKENS;
   return env;
 }
 
@@ -20,7 +23,19 @@ export const claudeProvider: LLMProvider = {
   name: 'claude',
   models: [...CLAUDE_MODELS],
 
-  async generate({ content, systemPrompt, model, thinking, onChunk, onToolUse, mcpConfigPath, allowedTools, cwd, nonStrictMcp, signal }) {
+  async generate({
+    content,
+    systemPrompt,
+    model,
+    thinking,
+    onChunk,
+    onToolUse,
+    mcpConfigPath,
+    allowedTools,
+    cwd,
+    nonStrictMcp,
+    signal,
+  }) {
     const claudePath = resolveClaudePath();
     let fullText = '';
 
@@ -91,11 +106,12 @@ export const claudeProvider: LLMProvider = {
         '--verbose',
         '--include-partial-messages',
         '--no-session-persistence',
-        ...(thinking ? ['--effort', 'high'] : []),
+        '--effort',
+        thinking ? 'high' : 'low',
       ],
       stdinContent: content,
       processLine,
-      env: makeClaudeEnv(thinking),
+      env: makeClaudeEnv(),
       installHint: INSTALL_HINT,
       signal,
       handleExitError: (stderr: string) => {
@@ -129,9 +145,11 @@ export const claudeProvider: LLMProvider = {
         '--output-format',
         'text',
         '--no-session-persistence',
+        '--effort',
+        'low',
       ],
       stdinContent: content,
-      env: makeClaudeEnv(false),
+      env: makeClaudeEnv(),
       installHint: INSTALL_HINT,
     });
   },
