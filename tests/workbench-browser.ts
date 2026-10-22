@@ -31,6 +31,7 @@ void app.whenReady().then(async () => {
   const shots = process.env.GNOSIS_SCREENSHOT_DIR ?? path.join(os.tmpdir(), 'gnosis-workbench-screenshots');
   fs.mkdirSync(shots, { recursive: true });
   const capture = async (name: string) => {
+    await js('document.fonts.ready');
     await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
     await new Promise((resolve) => setTimeout(resolve, 120));
     fs.writeFileSync(path.join(shots, name + '.png'), (await window.webContents.capturePage()).toPNG());
@@ -38,6 +39,13 @@ void app.whenReady().then(async () => {
   try {
     await window.loadURL(fixtureUrl);
     await wait("document.querySelectorAll('.queue-item').length === 7");
+    assert.equal(await js(`document.fonts.load('650 22px "Plus Jakarta Sans"').then(f=>f.length)`), 1);
+    assert.equal(await js(`document.fonts.load('400 13px "JetBrains Mono"').then(f=>f.length)`), 1);
+    assert.equal(
+      await js(`document.querySelectorAll('link[href*="fonts.googleapis"], link[href*="cdn.jsdelivr"]').length`),
+      0
+    );
+
     await js(
       `(() => { const select = document.querySelector('[aria-label="Review model"]'); select.value = 'codex:gpt-6-astra'; select.dispatchEvent(new Event('change', {bubbles:true})); })()`
     );
@@ -540,6 +548,10 @@ void app.whenReady().then(async () => {
     );
     await navigate('Work queue');
     await wait("document.querySelectorAll('.queue-item').length === 7");
+    window.webContents.setZoomFactor(1.25);
+    await capture('typeset-zoom-light');
+    assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
+    window.webContents.setZoomFactor(1);
     console.log('Workbench browser checks passed. Screenshots: ' + shots);
   } catch (error) {
     console.error(error);
