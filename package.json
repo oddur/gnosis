@@ -16,14 +16,15 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,json,css,md}\" \"lib/**/*.{ts,tsx}\" \"components/**/*.{ts,tsx}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,js,jsx,json,css,md}\" \"lib/**/*.{ts,tsx}\" \"components/**/*.{ts,tsx}\"",
     "pre-commit:run": "pre-commit run --all-files",
-    "test": "tsx --test tests/claude.test.ts tests/codex.test.ts tests/slide-chat.test.ts tests/explainer.test.ts tests/workbench.test.ts tests/workbench-service.test.ts tests/activity.test.ts tests/github-client.test.ts tests/queue-filters.test.ts",
+    "test": "tsx --test tests/claude.test.ts tests/codex.test.ts tests/slide-chat.test.ts tests/explainer.test.ts tests/workbench.test.ts tests/workbench-service.test.ts tests/activity.test.ts tests/github-client.test.ts tests/queue-filters.test.ts tests/review-diff.test.ts",
     "test:explainer": "node scripts/test-explainer.mjs",
-    "test:workbench": "node scripts/test-workbench.mjs"
+    "test:workbench": "node scripts/test-workbench.mjs && node scripts/test-workbench.mjs --split-diff"
   },
   "dependencies": {
     "@aptabase/electron": "^0.3.1",
     "@octokit/rest": "^22.0.1",
-    "@shikijs/transformers": "^3.22.0",
+    "@pierre/diffs": "1.6.1",
+    "@shikijs/transformers": "4.5.0",
     "adm-zip": "^0.5.17",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -36,7 +37,7 @@
     "react-markdown": "^10.1.0",
     "react-resizable-panels": "^4.6.4",
     "remark-gfm": "^4.0.1",
-    "shiki": "^3.22.0",
+    "shiki": "4.5.0",
     "tailwind-merge": "^3.5.0"
   },
   "devDependencies": {

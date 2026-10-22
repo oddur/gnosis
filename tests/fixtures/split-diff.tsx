@@ -2,7 +2,9 @@ import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { SlideView } from '../../components/SlideView';
 import { slide } from './explainer';
-import { SplitDiffHunkGroup } from '../../components/SplitDiffHunk';
+import { ReviewDiff } from '../../components/ReviewDiff';
+import { DiffAppearanceMenu } from '../../components/DiffAppearanceMenu';
+import { DEFAULT_DIFF_APPEARANCE } from '../../lib/review-diff';
 import { renderDiffHunk } from '../../lib/highlight';
 import type { DiffHunk, PendingReviewComment } from '../../lib/types';
 import '../../src/globals.css';
@@ -26,15 +28,25 @@ const hunks: DiffHunk[] = await Promise.all(
   }))
 );
 function Fixture() {
+  const [selectedCode, setSelectedCode] = useState('');
+  const [appearance, setAppearance] = useState(DEFAULT_DIFF_APPEARANCE);
   const [comments, setComments] = useState<PendingReviewComment[]>([]);
   return (
     <main style={{ width: 650, maxWidth: '100%', padding: 16 }}>
+      <DiffAppearanceMenu value={appearance} onChange={setAppearance} />
       {hunks.map((hunk, index) => (
         <section key={hunk.filePath} data-case={cases[index][0]} style={{ marginBottom: 24 }}>
           <h2>{cases[index][0]}</h2>
           {cases[index][0].startsWith('metadata-') ? (
             <SlideView
-              slide={{ ...slide, diffHunks: [hunk], mermaidDiagram: undefined, affectedFiles: [hunk.filePath] }}
+              slide={{
+                ...slide,
+                diffHunks: [hunk],
+                mermaidDiagram: undefined,
+                affectedFiles: [hunk.filePath],
+                reviewChecks: [{ text: 'Verify the ready flag', filePath: hunk.filePath, startLine: 1 }],
+              }}
+              onAskAboutSelection={setSelectedCode}
               slideNumber={1}
               totalSlides={1}
               prUrl="https://github.com/example/repo/pull/1"
@@ -58,7 +70,10 @@ function Fixture() {
               }
             />
           ) : (
-            <SplitDiffHunkGroup
+            <ReviewDiff
+              diffLayout="split"
+              slideIndex={1}
+              appearance={appearance}
               filePath={hunk.filePath}
               hunks={[hunk]}
               pendingComments={comments}
@@ -77,6 +92,7 @@ function Fixture() {
           )}
         </section>
       ))}
+      <output id="selected-code">{selectedCode}</output>
       <output id="comments">{JSON.stringify(comments)}</output>
     </main>
   );

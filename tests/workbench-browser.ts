@@ -120,6 +120,25 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelectorAll('.source-attribution').length"), 1);
     assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
     await capture('review-dark');
+    await click('Diff appearance');
+    await wait("!!document.querySelector('[role=dialog] select')");
+    await capture('diff-appearance-dark');
+    await js(
+      "[...document.querySelectorAll('label')].find(l=>l.textContent==='Wrap long lines').querySelector('input').click()"
+    );
+    await wait('window.electronAPI.loadPreferences().then(p=>p.diffAppearance?.wrap === true)');
+    await js("document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))");
+    await click('Diff appearance');
+    assert.equal(
+      await js(
+        "[...document.querySelectorAll('label')].find(l=>l.textContent==='Wrap long lines').querySelector('input').checked"
+      ),
+      true
+    );
+    await click('Reset appearance');
+    await wait('window.electronAPI.loadPreferences().then(p=>p.diffAppearance?.wrap === false)');
+    await js("document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))");
+
     await click('Ask a question');
     await wait("!!document.querySelector('.review-tool-slot .chat-sheet')");
     assert.equal(await js("document.querySelector('.review-code').getBoundingClientRect().width > 350"), true);
@@ -285,6 +304,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelector('.staleBanner-unknown details').open"), false);
     assert.ok(await js("document.querySelector('.staleBanner-unknown').getBoundingClientRect().height < 100"));
     await js("document.documentElement.classList.add('dark')");
+    await wait("document.querySelector('diffs-container')?.shadowRoot?.querySelectorAll('[data-line]').length > 60");
     await js("document.querySelector('.review-code').parentElement.scrollTop = 300");
     const sticky = await js<{ offset: number; text: string }>(`(() => {
       const pane = document.querySelector('.review-code').parentElement;
@@ -295,9 +315,7 @@ void app.whenReady().then(async () => {
     assert.match(sticky.text, /PR #121/);
     assert.match(sticky.text, /command-queue.ts/);
     assert.ok(
-      await js(
-        "document.querySelector('pre.aurora-x').innerHTML.includes('#91A7B2') || document.querySelector('pre.aurora-x').innerHTML.includes('#91a7b2')"
-      )
+      await js("document.querySelector('diffs-container').shadowRoot.innerHTML.toLowerCase().includes('#91a7b2')")
     );
     await capture('sticky-source-dark');
     await js(`(() => {

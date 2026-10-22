@@ -1,0 +1,238 @@
+import { useMemo, useState, type CSSProperties } from 'react';
+import { FileDiff } from '@pierre/diffs/react';
+import { bundledLanguages } from 'shiki/langs';
+import { bundledThemes } from 'shiki/themes';
+import { processFile, registerCustomTheme } from '@pierre/diffs';
+import type { DiffLineAnnotation, FileDiffOptions } from '@pierre/diffs';
+import { CODE_THEMES } from '@/lib/constants';
+import { DEFAULT_DIFF_APPEARANCE, prepareReviewHunk, type DiffAppearance } from '@/lib/review-diff';
+import type { DiffHunk, DiffSide, FileMetadata, PendingReviewComment } from '@/lib/types';
+import { DiffHunkGroup } from './DiffHunk';
+import { InteractiveDiffHunkGroup } from './InteractiveDiffHunk';
+import { SplitDiffHunkGroup } from './SplitDiffHunk';
+import { CommentBubble, InlineCommentForm, extractShikiStyles, type CommentCallbacks } from './shared-diff-utils';
+
+// Match the readable Aurora comment color used in saved review highlighting.
+registerCustomTheme('gnosis-aurora-x', async () => {
+  const { default: theme } = await bundledThemes['aurora-x']();
+  return {
+    ...theme,
+    name: 'gnosis-aurora-x',
+    tokenColors: theme.tokenColors?.map((token) => ({
+      ...token,
+      settings: {
+        ...token.settings,
+        foreground: token.settings.foreground?.toLowerCase() === '#546e7a' ? '#91a7b2' : token.settings.foreground,
+      },
+    })),
+  };
+});
+
+type Location = { line: number; side: DiffSide };
+interface Props {
+  filePath: string;
+  hunks: DiffHunk[];
+  fileStatus?: FileMetadata['status'];
+  diffLayout: 'split' | 'unified';
+  appearance?: DiffAppearance;
+  pendingComments?: PendingReviewComment[];
+  slideIndex: number;
+  commentCallbacks?: CommentCallbacks;
+}
+
+const shadowCSS = `
+[data-line] { scroll-margin-block: 4rem; }
+.check-highlight { animation: check-flash 1.6s ease-out; }
+@keyframes check-flash { from { background-color: #b5822680; } to { background-color: transparent; } }
+@media (prefers-reduced-motion: reduce) { .check-highlight { animation: none; outline: 2px solid #b58226; } }
+::selection { background: #b5822655; }
+`;
+
+function ReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: DiffHunk }) {
+  const {
+    filePath,
+    fileStatus,
+    diffLayout,
+    slideIndex,
+    commentCallbacks,
+    pendingComments = [],
+    appearance = DEFAULT_DIFF_APPEARANCE,
+  } = props;
+  const prepared = useMemo(() => {
+    const data = prepareReviewHunk(hunk, fileStatus);
+    if (!data) return null;
+    try {
+      const file = processFile(data.patch, { throwOnError: true });
+      if (!file) return null;
+      file.name = filePath;
+      if (hunk.language in bundledLanguages) file.lang = hunk.language as keyof typeof bundledLanguages;
+      return { ...data, file };
+    } catch {
+      return null;
+    }
+  }, [hunk, fileStatus, filePath]);
+  const lineMaps = useMemo(
+    () => ({
+      old: new Map(prepared?.lines.filter((l) => l.baseLineNumber != null).map((l) => [l.baseLineNumber, l])),
+      head: new Map(prepared?.lines.filter((l) => l.headLineNumber != null).map((l) => [l.headLineNumber, l])),
+    }),
+    [prepared]
+  );
+  const [active, setActive] = useState<Location | null>(null);
+  const theme = useMemo(() => {
+    const classes = extractShikiStyles(hunk.renderedHtml).preClass.split(' ');
+    return CODE_THEMES.find((t) => classes.includes(t.id))?.id ?? 'aurora-x';
+  }, [hunk.renderedHtml]);
+  const options = useMemo<FileDiffOptions<Location, undefined>>(
+    () => ({
+      theme: theme === 'aurora-x' ? 'gnosis-aurora-x' : theme,
+      themeType: 'dark',
+      diffStyle: prepared?.singleSide ? 'unified' : diffLayout,
+      disableFileHeader: true,
+      hunkSeparators: 'metadata',
+      diffIndicators: appearance.indicators,
+      disableBackground: !appearance.backgrounds,
+      disableLineNumbers: !appearance.lineNumbers,
+      overflow: appearance.wrap ? 'wrap' : 'scroll',
+      lineDiffType: appearance.inline,
+      unsafeCSS: shadowCSS,
+      enableGutterUtility: !!commentCallbacks,
+      onGutterUtilityClick: commentCallbacks
+        ? (range) => setActive({ line: range.start, side: range.side === 'deletions' ? 'LEFT' : 'RIGHT' })
+        : undefined,
+      onLineNumberClick: commentCallbacks
+        ? (event) =>
+            setActive({ line: event.lineNumber, side: event.annotationSide === 'deletions' ? 'LEFT' : 'RIGHT' })
+        : undefined,
+      onPostRender(node) {
+        for (const el of node.shadowRoot?.querySelectorAll<HTMLElement>('[data-code] [data-line]') ?? []) {
+          const old = !!el.closest('[data-deletions]') || el.dataset.lineType === 'change-deletion';
+          const n = Number(el.dataset.line);
+          const info = (old ? lineMaps.old : lineMaps.head).get(n);
+          el.dataset.filePath = filePath;
+          delete el.dataset.lineNumber;
+          delete el.dataset.baseLine;
+          if (info?.headLineNumber != null && !old) el.dataset.lineNumber = String(info.headLineNumber);
+          if (info?.baseLineNumber != null && (old || diffLayout === 'unified'))
+            el.dataset.baseLine = String(info.baseLineNumber);
+        }
+      },
+    }),
+    [theme, prepared, diffLayout, appearance, commentCallbacks, filePath, lineMaps]
+  );
+  const annotations = useMemo<DiffLineAnnotation<Location>[]>(() => {
+    const locations = [...pendingComments.filter((c) => c.filePath === filePath), ...(active ? [active] : [])];
+    const seen = new Set<string>();
+    return locations.flatMap((location) => {
+      const key = `${location.side}:${location.line}`;
+      if (
+        seen.has(key) ||
+        !prepared?.lines.some((l) => (location.side === 'LEFT' ? l.baseLineNumber : l.headLineNumber) === location.line)
+      )
+        return [];
+      seen.add(key);
+      return [
+        { lineNumber: location.line, side: location.side === 'LEFT' ? 'deletions' : 'additions', metadata: location },
+      ];
+    });
+  }, [pendingComments, filePath, active, prepared]);
+  if (!prepared) {
+    if (diffLayout === 'split') return <SplitDiffHunkGroup {...props} hunks={[hunk]} showFileHeader={false} />;
+    if (commentCallbacks)
+      return (
+        <InteractiveDiffHunkGroup
+          {...props}
+          {...commentCallbacks}
+          pendingComments={pendingComments}
+          hunks={[hunk]}
+          showFileHeader={false}
+        />
+      );
+    return <DiffHunkGroup filePath={filePath} hunks={[hunk]} showFileHeader={false} />;
+  }
+  return (
+    <FileDiff
+      fileDiff={prepared.file}
+      options={options}
+      lineAnnotations={annotations}
+      style={
+        {
+          '--diffs-font-family': 'var(--font-mono)',
+          '--diffs-font-size': '13px',
+          '--diffs-line-height': '20px',
+        } as CSSProperties
+      }
+      renderAnnotation={({ metadata: location }) =>
+        commentCallbacks && (
+          <div className="font-sans text-foreground text-sm">
+            {active?.line === location.line && active.side === location.side && (
+              <InlineCommentForm
+                onCancel={() => setActive(null)}
+                onSubmit={(body) => {
+                  const info = prepared.lines.find(
+                    (l) => (location.side === 'LEFT' ? l.baseLineNumber : l.headLineNumber) === location.line
+                  );
+                  commentCallbacks.onAddComment({
+                    filePath,
+                    ...location,
+                    body,
+                    slideIndex,
+                    hunkHeader: hunk.hunkHeader,
+                    codeSnippet: info?.text ?? '',
+                  });
+                  setActive(null);
+                }}
+              />
+            )}
+            {pendingComments
+              .filter((c) => c.filePath === filePath && c.line === location.line && c.side === location.side)
+              .map((c) => (
+                <CommentBubble
+                  key={c.id}
+                  comment={c}
+                  onEdit={commentCallbacks.onEditComment}
+                  onRemove={commentCallbacks.onRemoveComment}
+                />
+              ))}
+          </div>
+        )
+      }
+    />
+  );
+}
+
+export function ReviewDiff({ hunks, ...props }: Props) {
+  return (
+    <div className="review-diff select-text min-w-0 overflow-hidden rounded-md border">
+      {hunks.map((hunk, i) => (
+        <ReviewHunk key={i} hunk={hunk} {...props} />
+      ))}
+    </div>
+  );
+}
+
+/** Keep the renderer's shadow DOM boundary out of review navigation. */
+export function findReviewLine(container: HTMLElement, filePath: string, line: number): HTMLElement | null {
+  const roots: (HTMLElement | ShadowRoot)[] = [
+    container,
+    ...Array.from(container.querySelectorAll('diffs-container')).flatMap((el) =>
+      el.shadowRoot ? [el.shadowRoot] : []
+    ),
+  ];
+  for (const attr of ['data-line-number', 'data-base-line']) {
+    for (const root of roots) {
+      const result = root.querySelector<HTMLElement>(`[data-file-path="${CSS.escape(filePath)}"][${attr}="${line}"]`);
+      if (result) return result;
+    }
+  }
+  return null;
+}
+
+export function reviewCodeSelection(container: HTMLElement) {
+  for (const host of container.querySelectorAll('diffs-container')) {
+    const root = host.shadowRoot as (ShadowRoot & { getSelection?: () => Selection | null }) | null;
+    const selection = root?.getSelection?.();
+    if (selection && !selection.isCollapsed && selection.rangeCount) return selection;
+  }
+  return window.getSelection();
+}

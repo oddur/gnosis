@@ -294,6 +294,7 @@ export interface Preferences {
   codexPath: string;
   notifications: boolean;
   diffLayout: 'unified' | 'split';
+  diffAppearance?: import('./review-diff').DiffAppearance;
   includeAllFiles: boolean;
   reviewSignature: boolean;
   firstRunSeen: boolean;

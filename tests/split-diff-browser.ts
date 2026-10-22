@@ -28,11 +28,14 @@ void app.whenReady().then(async () => {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     if (!url) throw new Error('Missing fixture URL');
     await window.loadURL(url);
-    await wait('!!document.querySelector("[data-case=added] [data-line-number]")');
+    await js(
+      `void (window.diffRoot = name => document.querySelector('[data-case=' + name + '] diffs-container')?.shadowRoot)`
+    );
+    await wait('!!window.diffRoot("added")?.querySelector("[data-line-number]")');
     for (const name of ['metadata-added', 'metadata-deleted', 'added', 'deleted', 'added-plain']) {
       const dimensions = await js<{ offset: number; width: number; available: number }>(`(() => {
         const section = document.querySelector('[data-case=${name}]');
-        const line = section.querySelector('[data-line-number], [data-base-line]');
+        const line = window.diffRoot('${name}').querySelector('[data-line-number], [data-base-line]');
         const box = line.getBoundingClientRect();
         const parent = (section.querySelector('.review-file-group') ?? section).getBoundingClientRect();
         return {offset: box.left - parent.left, width: box.width, available: parent.width};
@@ -42,7 +45,7 @@ void app.whenReady().then(async () => {
     }
     for (const name of ['insert', 'modify']) {
       assert.ok(
-        await js(`!!document.querySelector('[data-case=${name}] .split-diff-separator')`),
+        await js(`!!window.diffRoot('${name}').querySelector('[data-code][data-deletions]')`),
         `${name} must stay split`
       );
     }
@@ -50,7 +53,7 @@ void app.whenReady().then(async () => {
       ['added', 'RIGHT'],
       ['deleted', 'LEFT'],
     ]) {
-      await js(`document.querySelector('[data-case=${name}] [title="Comment on line 1"]').click()`);
+      await js(`window.diffRoot('${name}').querySelector('[data-column-number="1"]').click()`);
       await wait(`!!document.querySelector('[data-case=${name}] textarea')`);
       await js(`(() => {
         const field = document.querySelector('[data-case=${name}] textarea');
@@ -69,7 +72,64 @@ void app.whenReady().then(async () => {
       );
       assert.ok(comments.some((c) => c.filePath === name + '.ts' && c.side === side && c.line === 1));
     }
-    console.log('Split diff layout and comment checks passed');
+    // Review checks cross the renderer's shadow boundary and select exact code.
+    await js(
+      `Array.from(document.querySelectorAll('[data-case=metadata-added] span')).find(b=>b.textContent==='Verify the ready flag' && b.className.includes('cursor-pointer')).click()`
+    );
+    await wait(`!!window.diffRoot('metadata-added').querySelector('[data-line-number="1"].check-highlight')`);
+    await js(`(() => {
+      const line = window.diffRoot('metadata-added').querySelector('[data-line-number="1"]');
+      const range = document.createRange(); range.selectNodeContents(line);
+      const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+      line.dispatchEvent(new MouseEvent('mouseup', {bubbles:true, composed:true}));
+    })()`);
+    await wait(
+      `Array.from(document.querySelectorAll('[data-case=metadata-added] button')).some(b=>b.textContent.includes('Ask about this'))`
+    );
+    await js(
+      `Array.from(document.querySelectorAll('[data-case=metadata-added] button')).find(b=>b.textContent.includes('Ask about this')).click()`
+    );
+    assert.equal(await js(`document.querySelector('#selected-code').textContent`), 'export const ready = true;');
+
+    await js(`Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Diff appearance').click()`);
+    await wait(`!!document.querySelector('[role=dialog] select')`);
+    for (const [label, value, attribute, expected] of [
+      ['Change indicators', 'bars', 'data-indicators', 'bars'],
+      ['Change indicators', 'none', 'data-indicators', null],
+    ]) {
+      await js(
+        `(() => { const select = Array.from(document.querySelectorAll('label')).find(l=>l.textContent.includes('${label}')).querySelector('select'); select.value='${value}'; select.dispatchEvent(new Event('change',{bubbles:true})); })()`
+      );
+      await wait(
+        `window.diffRoot('modify').querySelector('pre').getAttribute('${attribute}') === ${JSON.stringify(expected)}`
+      );
+    }
+    for (const [label, attribute, expected] of [
+      ['Line backgrounds', 'data-background', false],
+      ['Line numbers', 'data-disable-line-numbers', true],
+      ['Wrap long lines', 'data-overflow', 'wrap'],
+    ]) {
+      await js(
+        `Array.from(document.querySelectorAll('label')).find(l=>l.textContent==='${label}').querySelector('input').click()`
+      );
+      await wait(
+        typeof expected === 'boolean'
+          ? `window.diffRoot('modify').querySelector('pre').hasAttribute('${attribute}') === ${expected}`
+          : `window.diffRoot('modify').querySelector('pre').getAttribute('${attribute}') === ${JSON.stringify(expected)}`
+      );
+    }
+    for (const mode of ['word', 'word-line', 'char', 'none', 'word-alt']) {
+      await js(
+        `(() => { const select = Array.from(document.querySelectorAll('label')).find(l=>l.textContent.includes('Inline changes')).querySelector('select'); select.value='${mode}'; select.dispatchEvent(new Event('change',{bubbles:true})); })()`
+      );
+      await wait(`!!window.diffRoot('modify').querySelector('[data-line-number="1"]')`);
+    }
+    await js(`Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Reset appearance').click()`);
+    await wait(
+      `window.diffRoot('modify').querySelector('pre').getAttribute('data-indicators') === 'classic' && !window.diffRoot('modify').querySelector('pre').hasAttribute('data-disable-line-numbers')`
+    );
+    await js(`document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))`);
+    console.log('Diff layout, comments, check links, selection, and appearance checks passed');
   } catch (error) {
     console.error(error);
     process.exitCode = 1;

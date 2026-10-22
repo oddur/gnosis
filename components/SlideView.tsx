@@ -6,9 +6,9 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from 'react-resizable-panels';
 import { Check, Copy, CopyX, MessageCircle, MessageSquarePlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { DiffHunkGroup } from '@/components/DiffHunk';
-import { InteractiveDiffHunkGroup } from '@/components/InteractiveDiffHunk';
-import { SplitDiffHunkGroup } from '@/components/SplitDiffHunk';
+import { ReviewDiff, findReviewLine, reviewCodeSelection } from './ReviewDiff';
+import { DiffAppearanceMenu } from './DiffAppearanceMenu';
+import { DEFAULT_DIFF_APPEARANCE, type DiffAppearance } from '@/lib/review-diff';
 import { FilePathLink } from '@/components/FilePathLink';
 import { Markdown } from '@/components/Markdown';
 import { MermaidDiagram } from '@/components/MermaidDiagram';
@@ -38,6 +38,8 @@ interface Props {
   commentCallbacks?: CommentCallbacks;
   diffLayout: Preferences['diffLayout'];
   onDiffLayoutChange: (layout: Preferences['diffLayout']) => void;
+  diffAppearance?: DiffAppearance;
+  onDiffAppearanceChange?: (value: DiffAppearance) => void;
   onAskQuestion?: () => void;
   onExplore?: () => void;
   onAskAboutSelection?: (quotedCode: string) => void;
@@ -400,6 +402,8 @@ export function SlideView({
   commentCallbacks,
   diffLayout,
   onDiffLayoutChange,
+  diffAppearance = DEFAULT_DIFF_APPEARANCE,
+  onDiffAppearanceChange,
   onAskQuestion,
   onExplore,
   onAskAboutSelection,
@@ -442,7 +446,7 @@ export function SlideView({
 
   const handleDiffMouseUp = useCallback(() => {
     if (!onAskAboutSelection) return;
-    const sel = window.getSelection();
+    const sel = rightPanelRef.current ? reviewCodeSelection(rightPanelRef.current) : null;
     const text = sel?.toString().trim();
     if (!text || text.length < 3) {
       setSelectionPopover(null);
@@ -495,23 +499,18 @@ export function SlideView({
     const container = rightPanelRef.current;
     if (!container) return;
 
-    const escapedPath = CSS.escape(check.filePath);
-    // Primary: new-file line number (matches what the AI is told to emit).
-    // Fallback: old-file line number, in case the AI anchored at a
-    // removed line.
-    const target =
-      container.querySelector(`[data-file-path="${escapedPath}"][data-line-number="${check.startLine}"]`) ??
-      container.querySelector(`[data-file-path="${escapedPath}"][data-base-line="${check.startLine}"]`);
+    const target = findReviewLine(container, check.filePath, check.startLine);
 
     if (!target) {
       setAnchorMiss({ filePath: check.filePath, line: check.startLine, at: Date.now() });
       return;
     }
 
-    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setNarrowPane('code');
+    requestAnimationFrame(() => target.scrollIntoView({ behavior: 'smooth', block: 'center' }));
     target.classList.remove('check-highlight');
     // Force reflow to restart animation if clicking the same item again
-    void (target as HTMLElement).offsetWidth;
+    void target.offsetWidth;
     target.classList.add('check-highlight');
   }, []);
 
@@ -687,7 +686,10 @@ export function SlideView({
         </button>
       )}
       <div className="flex items-center justify-end">
-        <DiffLayoutToggle value={diffLayout} onChange={onDiffLayoutChange} />
+        <div className="flex items-center gap-3 flex-wrap">
+          <DiffLayoutToggle value={diffLayout} onChange={onDiffLayoutChange} />
+          {onDiffAppearanceChange && <DiffAppearanceMenu value={diffAppearance} onChange={onDiffAppearanceChange} />}
+        </div>
       </div>
 
       {slide.mermaidDiagram && <MermaidDiagram chart={slide.mermaidDiagram} />}
@@ -737,32 +739,16 @@ export function SlideView({
                 {churnBadge && <span className="statusPill-neutral">{churnBadge}</span>}
               </div>
             )}
-            {diffLayout === 'split' ? (
-              <SplitDiffHunkGroup
-                showFileHeader={false}
-                filePath={filePath}
-                fileStatus={fm?.status}
-                hunks={hunks}
-                pendingComments={pendingComments}
-                slideIndex={slideNumber}
-                commentCallbacks={commentCallbacks}
-                gitFileUrlBase={sourceUrl}
-              />
-            ) : commentCallbacks ? (
-              <InteractiveDiffHunkGroup
-                showFileHeader={false}
-                filePath={filePath}
-                hunks={hunks}
-                pendingComments={pendingComments ?? []}
-                slideIndex={slideNumber}
-                onAddComment={commentCallbacks.onAddComment}
-                onRemoveComment={commentCallbacks.onRemoveComment}
-                onEditComment={commentCallbacks.onEditComment}
-                gitFileUrlBase={sourceUrl}
-              />
-            ) : (
-              <DiffHunkGroup showFileHeader={false} filePath={filePath} hunks={hunks} gitFileUrlBase={sourceUrl} />
-            )}
+            <ReviewDiff
+              filePath={filePath}
+              fileStatus={fm?.status}
+              hunks={hunks}
+              diffLayout={diffLayout}
+              appearance={diffAppearance}
+              pendingComments={pendingComments}
+              slideIndex={slideNumber}
+              commentCallbacks={commentCallbacks}
+            />
           </div>
         );
       })}

@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { DEFAULT_DIFF_APPEARANCE, type DiffAppearance } from '../../lib/review-diff';
 import { ArrowLeft, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react';
 import { PRSummaryBanner } from '../../components/PRSummaryBanner';
 import { StaleBanner } from '../../components/StaleBanner';
@@ -122,6 +123,10 @@ export function ReviewPage({ review: initialReview, onBack, onReReview, initialS
   const [diffLayout, setDiffLayout] = useState<Preferences['diffLayout']>('unified');
   const [slideViewMode, setSlideViewMode] = useState<'split' | 'focus'>('split');
   const [prefs, setPrefs] = useState<Preferences | null>(null);
+  const diffAppearance = useMemo(
+    () => ({ ...DEFAULT_DIFF_APPEARANCE, ...prefs?.diffAppearance }),
+    [prefs?.diffAppearance]
+  );
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [exploreOpen, setExploreOpen] = useState(exploreInitially ?? false);
@@ -339,6 +344,14 @@ export function ReviewPage({ review: initialReview, onBack, onReReview, initialS
     },
     [prefs]
   );
+
+  const handleDiffAppearanceChange = useCallback((value: DiffAppearance) => {
+    setPrefs((current) => (current ? { ...current, diffAppearance: value } : current));
+    // Read current settings so appearance changes cannot revert unrelated preferences.
+    void window.electronAPI
+      .loadPreferences()
+      .then((current) => window.electronAPI.savePreferences({ ...current, diffAppearance: value }));
+  }, []);
 
   // Build the keyboard shortcut map. The hook handles input
   // suppression, modifier signatures, and two-key sequences.
@@ -653,6 +666,8 @@ export function ReviewPage({ review: initialReview, onBack, onReReview, initialS
               pendingComments={comments}
               commentCallbacks={commentCallbacks}
               diffLayout={diffLayout}
+              diffAppearance={diffAppearance}
+              onDiffAppearanceChange={handleDiffAppearanceChange}
               onDiffLayoutChange={handleDiffLayoutChange}
               onAskQuestion={() => {
                 setExploreOpen(false);
