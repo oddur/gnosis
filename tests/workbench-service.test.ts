@@ -366,3 +366,50 @@ test('running briefing cancellation is not reported as a provider failure', asyn
     s.cleanup();
   }
 });
+
+test('Dependabot PRs are ignored by default in personal and watched queues without spending briefing attempts', async () => {
+  let calls = 0;
+  const s = setup(async () => {
+    calls++;
+    return '{"summary":"Ready"}';
+  });
+  s.pr.user.login = 'dependabot[bot]';
+  s.prefs.watchedRepos = ['owner/repo'];
+  try {
+    const queue = await s.service.queue();
+    assert.equal(queue.items.length, 0);
+    assert.equal(calls, 0);
+    assert.equal(queue.remaining, 1);
+    assert.deepEqual(s.service.activity(), []);
+    s.prefs.ignoreDependabotPrs = false;
+    assert.equal((await s.service.queue(true)).items.length, 1);
+    await settle(s.service, 'ready');
+    assert.equal(calls, 1);
+    // Previously cached entries disappear immediately when the setting is enabled.
+    s.prefs.ignoreDependabotPrs = true;
+    assert.equal((await s.service.queue()).items.length, 0);
+    assert.deepEqual(s.service.activity(), []);
+  } finally {
+    s.cleanup();
+  }
+});
+test('human dependency updates remain visible and keep required Dependabot parents', async () => {
+  const s = setup(async () => '{"summary":"Ready"}', false);
+  try {
+    s.pr.title = 'Bump dependencies using dependabot configuration';
+    assert.equal((await s.service.queue()).items.length, 1);
+    const parent = { ...structuredClone(s.pr), html_url: 'https://github.com/owner/repo/pull/2' };
+    parent.user.login = 'dependabot[bot]';
+    parent.head.ref = 'dependency-base';
+    s.pr.base.ref = 'dependency-base';
+    Object.assign(s.deps.client().pulls, {
+      get: async (args: { pull_number: number }) => ({ data: args.pull_number === 2 ? parent : s.pr }),
+      list: async (args: { head?: string }) => ({ data: args.head ? [] : [parent, s.pr] }),
+    });
+    const queue = await s.service.queue(true);
+    assert.equal(queue.items.length, 1);
+    assert.equal(queue.items[0].subject.members.length, 2);
+  } finally {
+    s.cleanup();
+  }
+});

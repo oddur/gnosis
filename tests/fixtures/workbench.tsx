@@ -276,6 +276,7 @@ const mocks = {
       );
     return Promise.resolve();
   },
+  detectBinaryPath: (name: string) => Promise.resolve('/fixture/' + name),
   getAuthState: () => Promise.resolve({ authenticated: true, login: 'oddur' }),
   loadPreferences: () => Promise.resolve(prefs),
   savePreferences: (next: Preferences) => {

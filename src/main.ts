@@ -1002,6 +1002,7 @@ function getPreferencesPath() {
 }
 
 const DEFAULT_PREFERENCES: Preferences = {
+  ignoreDependabotPrs: true,
   instructions: '',
   provider: 'claude',
   model: DEFAULT_CLAUDE_MODEL,

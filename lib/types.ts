@@ -275,6 +275,7 @@ export interface StartReviewResult {
 export type { ClaudeModel, CodexModel, ModelId, Provider } from './models';
 
 export interface Preferences {
+  ignoreDependabotPrs?: boolean;
   autoBriefings?: boolean;
   briefingDailyLimit?: number;
   instructions: string;

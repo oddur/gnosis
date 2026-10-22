@@ -235,3 +235,8 @@ export function briefingModel(
       }
     : { provider: p.provider, model: p.model, thinking: false };
 }
+
+/** Match GitHub bot identities, never PR titles or dependency-related labels. */
+export function isDependabot(author: string): boolean {
+  return /^(?:dependabot|dependabot-preview)(?:\[bot\])?$/i.test(author);
+}

@@ -107,6 +107,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
   const [instructions, setInstructions] = useState('');
   const [thinking, setThinking] = useState(false);
   const [smartImports, setSmartImports] = useState(true);
+  const [ignoreDependabotPrs, setIgnoreDependabotPrs] = useState(true);
   const [autoBriefings, setAutoBriefings] = useState(false);
   const [watchedRepos, setWatchedRepos] = useState<string[]>([]);
   const [watchedRepoInput, setWatchedRepoInput] = useState('');
@@ -149,6 +150,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
       setThinking(prefs.thinking);
       setSmartImports(prefs.smartImports);
       setAutoBriefings(prefs.autoBriefings !== false);
+      setIgnoreDependabotPrs(prefs.ignoreDependabotPrs !== false);
       setWatchedRepos(prefs.watchedRepos);
       setNotifications(prefs.notifications);
       setTrayEnabled(prefs.trayEnabled);
@@ -340,6 +342,20 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                 className="rounded-md border border-border bg-background p-2 text-sm"
               />
             </label>
+            <SettingRow
+              label="Ignore Dependabot PRs"
+              description="Hide Dependabot changes from the queue and automatic briefings. Keep required parents in human-authored stacks."
+            >
+              <Toggle
+                checked={ignoreDependabotPrs}
+                ariaLabel="Ignore Dependabot PRs"
+                onChange={() => {
+                  const next = !ignoreDependabotPrs;
+                  setIgnoreDependabotPrs(next);
+                  saveField({ ignoreDependabotPrs: next });
+                }}
+              />
+            </SettingRow>
             <SettingRow
               label="Automatic briefings"
               description="Generate short queue summaries within your daily limit. Open a detailed review when you need it."

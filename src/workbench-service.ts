@@ -8,6 +8,7 @@ import { getPrMetadata, parsePrUrl, searchPullRequests, listRepoPullRequests, ge
 import { getProvider } from '../lib/provider';
 import {
   groupSubjects,
+  isDependabot,
   briefingModel,
   fingerprint,
   attentionFor,
@@ -29,7 +30,7 @@ interface State {
 }
 export type WorkbenchPreferences = Pick<
   Preferences,
-  'provider' | 'model' | 'watchedRepos' | 'autoBriefings' | 'briefingDailyLimit'
+  'provider' | 'model' | 'watchedRepos' | 'autoBriefings' | 'briefingDailyLimit' | 'ignoreDependabotPrs'
 > &
   Partial<Pick<Preferences, 'proactiveReviewOverrides' | 'proactiveProvider' | 'proactiveModel' | 'proactiveThinking'>>;
 interface Deps {
@@ -96,26 +97,30 @@ export function createWorkbenchService(deps: Deps) {
       .digest('hex');
   }
   const limit = () => Math.min(100, Math.max(0, (deps.preferences().briefingDailyLimit ?? 10) || 0));
+  function includeSubject(subject: ReviewSubject) {
+    // Retain necessary parent context when a human-authored change depends on a bot PR.
+    return subject.members.some(
+      (m) => m.state === 'open' && (deps.preferences().ignoreDependabotPrs === false || !isDependabot(m.author))
+    );
+  }
   function view(): WorkbenchQueue {
     const s = load();
     const history = deps.history();
     const selection = modelSettings();
-    const items = s.subjects
-      .filter((subject) => subject.members.some((m) => m.state === 'open'))
-      .map((subject) => {
-        const review =
-          history.find((h) => (h.snapshot?.subject.id ?? h.prUrl) === subject.id) ??
-          history.find((h) => subject.members.some((m) => m.url === h.prUrl));
-        const k = key(subject, selection);
-        const cached = s.briefs[k];
-        const briefing = cached ?? {
-          key: k,
-          status:
-            deps.preferences().autoBriefings !== false && s.used < limit() ? ('queued' as const) : ('paused' as const),
-          updatedAt: new Date().toISOString(),
-        };
-        return { subject, review, briefing, attention: attentionFor(subject, review) };
-      });
+    const items = s.subjects.filter(includeSubject).map((subject) => {
+      const review =
+        history.find((h) => (h.snapshot?.subject.id ?? h.prUrl) === subject.id) ??
+        history.find((h) => subject.members.some((m) => m.url === h.prUrl));
+      const k = key(subject, selection);
+      const cached = s.briefs[k];
+      const briefing = cached ?? {
+        key: k,
+        status:
+          deps.preferences().autoBriefings !== false && s.used < limit() ? ('queued' as const) : ('paused' as const),
+        updatedAt: new Date().toISOString(),
+      };
+      return { subject, review, briefing, attention: attentionFor(subject, review) };
+    });
     const order = { updated: 0, requested: 1, blocking: 2, other: 3 };
     items.sort(
       (a, b) =>
@@ -155,16 +160,24 @@ export function createWorkbenchService(deps: Deps) {
     const found = await searchPullRequests(octokit, login, 100);
     if (found.length === 100)
       warnings.push('Your personal queue reached its search limit. Some changes may be missing.');
-    const seeds = new Map<string, Pick<PrSearchResult, 'url' | 'role'>>(found.map((m) => [m.url, m]));
+    const seeds = new Map<string, Pick<PrSearchResult, 'url' | 'role'>>(
+      found.filter((m) => prefs.ignoreDependabotPrs === false || !isDependabot(m.author)).map((m) => [m.url, m])
+    );
     for (const fullName of prefs.watchedRepos) {
       const [owner, repo] = fullName.split('/');
       if (!owner || !repo) continue;
       try {
         for (const pr of await listRepoPullRequests(octokit, owner, repo, 100))
-          if (!seeds.has(pr.url)) seeds.set(pr.url, pr);
+          if (!seeds.has(pr.url) && (prefs.ignoreDependabotPrs === false || !isDependabot(pr.author)))
+            seeds.set(pr.url, pr);
       } catch {
         for (const m of previousMembers.values())
-          if (m.repo === fullName && m.state === 'open' && !seeds.has(m.url))
+          if (
+            m.repo === fullName &&
+            m.state === 'open' &&
+            !seeds.has(m.url) &&
+            (prefs.ignoreDependabotPrs === false || !isDependabot(m.author))
+          )
             seeds.set(m.url, { ...m, role: 'watched' });
         warnings.push(`Could not refresh ${fullName}. Some changes may be missing.`);
       }
@@ -302,7 +315,7 @@ export function createWorkbenchService(deps: Deps) {
       runningKey = k;
       const timeout = setTimeout(() => controller.abort(new Error('Briefing exceeded 90 seconds.')), 90000);
       const preempt = setInterval(() => {
-        if (deps.busy() || deps.preferences().autoBriefings === false || key(subject) !== k)
+        if (deps.busy() || deps.preferences().autoBriefings === false || !includeSubject(subject) || key(subject) !== k)
           controller.abort(new BriefingPaused());
       }, 500);
       s.used++;
@@ -337,7 +350,7 @@ export function createWorkbenchService(deps: Deps) {
           if (last.files.length) last.files.pop();
           else evidence.members.pop();
         }
-        if (key(subject) !== k) controller.abort(new BriefingPaused());
+        if (!includeSubject(subject) || key(subject) !== k) controller.abort(new BriefingPaused());
         controller.signal.throwIfAborted();
         let output = 0;
         const raw = await (deps.provider ?? getProvider)(p.provider).generate({

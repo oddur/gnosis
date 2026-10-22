@@ -44,6 +44,21 @@ void app.whenReady().then(async () => {
       false,
       'The workbench model must apply to briefings too'
     );
+    await js(`document.querySelector('[aria-label="Settings"]').click()`);
+    await wait(`!!document.querySelector('[aria-label="Ignore Dependabot PRs"]')`);
+    assert.equal(
+      await js(`document.querySelector('[aria-label="Ignore Dependabot PRs"]').getAttribute('aria-checked')`),
+      'true'
+    );
+    await js(`document.querySelector('[aria-label="Ignore Dependabot PRs"]').click()`);
+    assert.equal(await js(`window.electronAPI.loadPreferences().then(p=>p.ignoreDependabotPrs)`), false);
+    await js(`document.querySelector('[data-slot="dialog-close"]').click()`);
+    await js(`document.querySelector('[aria-label="Settings"]').click()`);
+    await wait(
+      `document.querySelector('[aria-label="Ignore Dependabot PRs"]')?.getAttribute('aria-checked') === 'false'`
+    );
+    await js(`document.querySelector('[aria-label="Ignore Dependabot PRs"]').click()`);
+    await js(`document.querySelector('[data-slot="dialog-close"]').click()`);
     assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
     assert.equal(await js("getComputedStyle(document.querySelector('.queue-toolbar h1')).fontSize"), '22px');
     await js(
