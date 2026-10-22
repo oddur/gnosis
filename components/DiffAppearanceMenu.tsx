@@ -23,7 +23,11 @@ export function DiffAppearanceMenu({
   return (
     <Popover.Root>
       <Popover.Trigger asChild>
-        <Button size="sm" variant="ghost">
+        <Button
+          size="sm"
+          variant="ghost"
+          className="data-[state=open]:bg-accent data-[state=open]:text-accent-foreground"
+        >
           <SlidersHorizontal className="size-3.5" />
           Diff appearance
         </Button>

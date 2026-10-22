@@ -69,7 +69,11 @@ export function ReviewFileHeader({
           />
         </div>
         <div className="review-file-details">
-          {statusLabel && <span>{statusLabel}</span>}
+          {statusLabel && (
+            <span className="review-file-status" data-status={status}>
+              {statusLabel}
+            </span>
+          )}
           {(counts.additions > 0 || counts.deletions > 0) && (
             <span
               className="review-file-counts"
@@ -82,7 +86,7 @@ export function ReviewFileHeader({
           )}
           {commentCount > 0 && (
             <span
-              className="inline-flex items-center gap-1"
+              className="review-file-comments inline-flex items-center gap-1"
               title={`${commentCount} pending ${commentCount === 1 ? 'comment' : 'comments'}`}
             >
               <MessageSquare className="size-3" aria-hidden="true" />

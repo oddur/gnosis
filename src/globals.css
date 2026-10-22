@@ -1760,6 +1760,12 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .review-file-heading { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; }
 .review-file-identity { display:flex; align-items:center; gap:8px; min-width:0; flex:1 1 180px; }
 .review-file-details { display:flex; align-items:center; gap:10px; color:var(--muted-foreground); font-size:var(--type-caption); white-space:nowrap; }
+.review-file-status { padding:1px 5px; border-radius:3px; background:var(--muted); color:var(--muted-foreground); }
+.review-file-status[data-status=added] { color:var(--color-success); background:color-mix(in srgb,var(--color-success) 10%,var(--card)); }
+.review-file-status[data-status=deleted] { color:var(--color-danger); background:color-mix(in srgb,var(--color-danger) 10%,var(--card)); }
+.review-file-comments { padding:1px 5px; border-radius:3px; background:var(--accent); color:var(--accent-foreground); font-variant-numeric:tabular-nums; }
+.review-context-action { color:var(--ring); }
+.review-context-action:hover { color:var(--accent-foreground); }
 .review-file-counts { display:inline-flex; gap:8px; font-family:var(--font-mono); font-variant-numeric:tabular-nums; }
 .review-file-summary { margin-top:6px; font-size:var(--type-control); line-height:1.45; overflow-wrap:anywhere; }
 .review-file-history { display:flex; flex-wrap:wrap; gap:4px 12px; margin-top:5px; font-size:var(--type-caption); color:var(--muted-foreground); }

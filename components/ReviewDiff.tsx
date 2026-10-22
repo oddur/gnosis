@@ -53,7 +53,7 @@ const shadowCSS = `
 .check-highlight { animation: check-flash 1.6s ease-out; }
 @keyframes check-flash { from { background-color: #b5822680; } to { background-color: transparent; } }
 @media (prefers-reduced-motion: reduce) { .check-highlight { animation: none; outline: 2px solid #b58226; } }
-::selection { background: #b5822655; }
+::selection { background: var(--accent); color: var(--accent-foreground); }
 `;
 
 function ReviewHunk({
@@ -260,7 +260,7 @@ function FoldableReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: D
       {revealed.size > 0 && (
         <div className="flex justify-end border-b bg-muted/30 px-3 py-1">
           <button
-            className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"
+            className="review-context-action text-xs underline underline-offset-2"
             onClick={() => changeContext(() => setRevealed(new Set()))}
           >
             Hide extra context
@@ -307,14 +307,14 @@ function FoldableReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: D
               {count} unchanged {count === 1 ? 'line' : 'lines'} hidden
             </span>
             <button
-              className="text-foreground underline underline-offset-2 hover:text-[var(--ring)]"
+              className="review-context-action underline underline-offset-2"
               onClick={() => changeContext(() => reveal(false))}
             >
               Show {Math.min(count, 10)} more {Math.min(count, 10) === 1 ? 'line' : 'lines'}
             </button>
             {count > 10 && (
               <button
-                className="text-foreground underline underline-offset-2 hover:text-[var(--ring)]"
+                className="review-context-action underline underline-offset-2"
                 onClick={() => changeContext(() => reveal(true))}
               >
                 Show all {count} lines
