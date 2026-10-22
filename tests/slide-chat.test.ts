@@ -83,7 +83,7 @@ for (const provider of ['codex', 'claude'] as const) {
     });
     let chat: ReturnType<typeof useSlideChat> | undefined;
     function Probe() {
-      chat = useSlideChat(review, provider, provider === 'codex' ? 'gpt-6.1-sol' : 'claude-opus-5');
+      chat = useSlideChat(review, provider, provider === 'codex' ? 'gpt-6.1-sol' : 'claude-opus-5-5');
       return createElement(
         'div',
         {},

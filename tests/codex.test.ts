@@ -4,7 +4,7 @@ import path from 'node:path';
 import { after, test } from 'node:test';
 import { codexProvider, createCodexEventHandler } from '../lib/providers/codex';
 import { setBinaryOverride } from '../lib/providers/shared';
-import { normalizeModelSelection } from '../lib/models';
+import { normalizeModelSelection, RETIRED_CLAUDE_MODELS } from '../lib/models';
 
 setBinaryOverride('codex', path.resolve('tests/fixtures/codex.mjs'));
 after(() => setBinaryOverride('codex', ''));
@@ -99,15 +99,33 @@ void test('ignores diagnostics, unknown events and recovered stream errors', () 
 
 void test('preserves Codex preferences and migrates retired or mismatched model IDs', () => {
   assert.deepEqual(normalizeModelSelection('codex', 'gpt-6-luna'), { provider: 'codex', model: 'gpt-6-luna' });
-  assert.deepEqual(normalizeModelSelection('codex', 'claude-opus-5'), { provider: 'codex', model: 'gpt-6.1-sol' });
-  assert.deepEqual(normalizeModelSelection('claude', 'gpt-6-astra'), { provider: 'claude', model: 'claude-opus-5' });
+  assert.deepEqual(normalizeModelSelection('codex', 'claude-opus-5-5'), { provider: 'codex', model: 'gpt-6.1-sol' });
+  assert.deepEqual(normalizeModelSelection('claude', 'gpt-6-astra'), { provider: 'claude', model: 'claude-opus-5-5' });
   assert.deepEqual(normalizeModelSelection('claude', 'claude-opus-4-7'), {
     provider: 'claude',
-    model: 'claude-opus-5',
+    model: 'claude-opus-5-5',
   });
   assert.deepEqual(normalizeModelSelection('gemini', 'removed', true), {
     provider: 'claude',
-    model: 'claude-sonnet-5',
+    model: 'claude-sonnet-5-5',
   });
-  assert.deepEqual(normalizeModelSelection(undefined, undefined), { provider: 'claude', model: 'claude-opus-5' });
+  assert.deepEqual(normalizeModelSelection(undefined, undefined), { provider: 'claude', model: 'claude-opus-5-5' });
+});
+
+void test('upgrades saved Claude preferences within each model family and preserves history labels', () => {
+  for (const [previous, current, label] of [
+    ['claude-fable-5', 'claude-fable-5-1', 'Claude Fable 5'],
+    ['claude-opus-5', 'claude-opus-5-5', 'Claude Opus 5'],
+    ['claude-sonnet-5', 'claude-sonnet-5-5', 'Claude Sonnet 5'],
+    ['claude-haiku-4-5-20251001', 'claude-haiku-5-5', 'Claude Haiku 4.5'],
+    ['claude-opus-4-6', 'claude-opus-5-5', 'Claude Opus 4.6'],
+    ['claude-opus-4-7', 'claude-opus-5-5', 'Claude Opus 4.7'],
+    ['claude-sonnet-4-6', 'claude-sonnet-5-5', 'Claude Sonnet 4.6'],
+  ]) {
+    for (const proactive of [false, true]) {
+      assert.deepEqual(normalizeModelSelection('claude', previous, proactive), { provider: 'claude', model: current });
+      assert.deepEqual(normalizeModelSelection('claude', current, proactive), { provider: 'claude', model: current });
+    }
+    assert.equal(RETIRED_CLAUDE_MODELS[previous].label, label);
+  }
 });

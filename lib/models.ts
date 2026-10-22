@@ -6,18 +6,18 @@
 // and the Electron main process.
 
 export const CLAUDE_MODELS = [
-  { id: 'claude-fable-5', label: 'Fable 5', quick: false },
-  { id: 'claude-opus-5', label: 'Opus 5', quick: false },
-  { id: 'claude-sonnet-5', label: 'Sonnet 5', quick: false },
-  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5', quick: true },
+  { id: 'claude-fable-5-1', label: 'Fable 5.1', quick: false },
+  { id: 'claude-opus-5-5', label: 'Opus 5.5', quick: false },
+  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', quick: false },
+  { id: 'claude-haiku-5-5', label: 'Haiku 5.5', quick: true },
 ] as const;
 
 export type ClaudeModel = (typeof CLAUDE_MODELS)[number]['id'];
 
 /** Default for manual reviews and the general model preference. */
-export const DEFAULT_CLAUDE_MODEL: ClaudeModel = 'claude-opus-5';
+export const DEFAULT_CLAUDE_MODEL: ClaudeModel = 'claude-opus-5-5';
 /** Default for background/proactive reviews and slide chat — fast and cheap. */
-export const DEFAULT_FAST_CLAUDE_MODEL: ClaudeModel = 'claude-sonnet-5';
+export const DEFAULT_FAST_CLAUDE_MODEL: ClaudeModel = 'claude-sonnet-5-5';
 
 export function isClaudeModel(id: string): id is ClaudeModel {
   return CLAUDE_MODELS.some((m) => m.id === id);
@@ -31,9 +31,13 @@ export function isClaudeModel(id: string): id is ClaudeModel {
  * default model instead of passing a retired id to the CLI.
  */
 export const RETIRED_CLAUDE_MODELS: Record<string, { label: string; successor: ClaudeModel }> = {
-  'claude-opus-4-6': { label: 'Claude Opus 4.6', successor: 'claude-opus-5' },
-  'claude-opus-4-7': { label: 'Claude Opus 4.7', successor: 'claude-opus-5' },
-  'claude-sonnet-4-6': { label: 'Claude Sonnet 4.6', successor: 'claude-sonnet-5' },
+  'claude-fable-5': { label: 'Claude Fable 5', successor: 'claude-fable-5-1' },
+  'claude-opus-5': { label: 'Claude Opus 5', successor: 'claude-opus-5-5' },
+  'claude-sonnet-5': { label: 'Claude Sonnet 5', successor: 'claude-sonnet-5-5' },
+  'claude-haiku-4-5-20251001': { label: 'Claude Haiku 4.5', successor: 'claude-haiku-5-5' },
+  'claude-opus-4-6': { label: 'Claude Opus 4.6', successor: 'claude-opus-5-5' },
+  'claude-opus-4-7': { label: 'Claude Opus 4.7', successor: 'claude-opus-5-5' },
+  'claude-sonnet-4-6': { label: 'Claude Sonnet 4.6', successor: 'claude-sonnet-5-5' },
 };
 
 export const CODEX_MODELS = [
