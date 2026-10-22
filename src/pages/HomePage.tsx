@@ -1388,8 +1388,8 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                     />
                     <ToggleSwitch
                       id="thinking"
-                      label="Extended thinking"
-                      description="Deeper reasoning before writing. Catches subtle bugs that standard mode misses. Takes longer."
+                      label="Deeper reasoning"
+                      description="Use more reasoning effort. Responses may take longer. Models can still reason with this off."
                       checked={thinking}
                       onToggle={() => setThinking((t) => !t)}
                     />

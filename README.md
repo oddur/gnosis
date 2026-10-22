@@ -14,7 +14,7 @@ It runs locally and uses the [Claude Code CLI](https://claude.ai/code) or [Codex
 
 - **Guided slideshow** — changes are grouped by theme and ordered by dependency (foundations first, then implementations, then tests and config), not by filename
 - **Model choice** — use Claude or Codex for reviews, slide chat, and smart imports. Codex supports GPT-6.1 Sol, GPT-6 Astra, and GPT-6 Luna.
-- **Extended thinking** — enable deeper reasoning (slower, more thorough)
+- **Deeper reasoning** — use more reasoning effort (slower, more thorough)
 - **Custom instructions** — steer the review with free-text prompts (e.g. _focus on security_, _explain the auth flow_)
 - **Inline review comments** — add comments on specific diff lines and submit directly to GitHub as an approval, request for changes, or comment
 - **Split diff view** — toggle between unified and side-by-side diff layout; preference persists across sessions
@@ -41,8 +41,10 @@ It runs locally and uses the [Claude Code CLI](https://claude.ai/code) or [Codex
 
 Install and authenticate at least one CLI:
 
-- [Claude Code CLI](https://claude.ai/code): authenticate with `claude auth`.
+- [Claude Code CLI](https://claude.ai/code) 2.1.293 or later: run `claude update` to upgrade. Authenticate with `claude auth`.
 - [Codex CLI](https://learn.chatgpt.com/docs/cli) 0.163.0 or later: install with `npm install -g @openai/codex`, then authenticate with `codex login`.
+
+Claude offers Fable 5.1, Opus 5.5, Sonnet 5.5, and Haiku 5.5. Model access depends on your Claude account.
 
 Codex uses its saved CLI login. Gnosis does not require a separate OpenAI API key.
 Model access depends on your Codex account.
@@ -51,12 +53,14 @@ In the model menu, select a model under **Codex**.
 If Gnosis cannot find the CLI, set **Codex CLI path** in Settings.
 
 Codex supports GitHub PRs, local Git diffs, background reviews, slide chat, and smart imports.
-Extended thinking selects high reasoning effort. With this option off, Codex uses low effort.
 Codex reviews the context supplied by Gnosis in a read-only session.
 Gnosis disables Codex shell tools, apps, plugins, hooks, and web search for these sessions.
 Gnosis does not load user CLI settings or project instructions automatically.
 The **Apply project's Claude conventions** option still adds those files to the supplied review context.
 Web research, GitHub MCP, and local project tools require Claude.
+
+**Deeper reasoning** selects high reasoning effort for Claude and Codex. With this option off, both providers use low effort.
+Models can still reason at low effort. Slide chat and smart imports always request low effort.
 
 ## Install
 
@@ -79,7 +83,7 @@ On first launch, click **Sign in with GitHub** to authenticate via OAuth.
 
 1. Paste a GitHub PR URL — or click **Browse** to pick from your open PRs and review requests
 2. Choose a Claude or Codex model
-3. Optionally enable **Extended thinking** for deeper analysis (slower)
+3. Optionally enable **Deeper reasoning** for deeper analysis (slower)
 4. Optionally add custom instructions — e.g. _focus on security_, _explain the auth flow_
 5. Hit **Generate Review** — the review generates in the background so you can submit more PRs or browse existing reviews while it runs
 
