@@ -98,6 +98,80 @@ setTimeout(() => { location.href = ${JSON.stringify(url)}; }, 20);`,
       window.destroy();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+    // Tall saved diagrams fit beside their controls without scaling up text.
+    const layoutWindow = new BrowserWindow({
+      show: false,
+      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
+    });
+    try {
+      const tall = {
+        ...explainer,
+        html: '<section><div><label>Queue length <input id="count" type="range" min="1" max="5" value="3"></label></div><svg viewBox="0 0 900 650"><text id="state" x="30" y="100"></text></svg><p>Step through the queue to remove one item at a time.</p></section>',
+        css: 'svg {width:100%} svg text {font-size:20px}',
+      };
+      const document = buildExplainerDocument(tall, 'layout-test');
+      await layoutWindow.loadURL('data:text/html,<body style="margin:0"></body>');
+      await layoutWindow.webContents.executeJavaScript(`{
+        const frame = document.createElement('iframe');
+        frame.sandbox = 'allow-scripts'; frame.style = 'width:100vw;height:100vh;border:0;display:block';
+        frame.srcdoc = ${JSON.stringify(document)}; document.body.append(frame);
+      }`);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const frame = layoutWindow.webContents.mainFrame.frames.find((f) => f.url === 'about:srcdoc');
+      assert.ok(frame);
+      for (const [width, height] of [
+        [1600, 700],
+        [1050, 550],
+        [800, 450],
+      ]) {
+        layoutWindow.setContentSize(width, height);
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        const metrics = (await frame.executeJavaScript(`({
+          height: innerHeight, scrollHeight: document.documentElement.scrollHeight,
+          width: innerWidth, scrollWidth: document.documentElement.scrollWidth,
+          svgWidth: document.querySelector('svg').getBoundingClientRect().width,
+          textScale: document.querySelector('svg').getScreenCTM().a,
+          controlFont: parseFloat(getComputedStyle(document.querySelector('input')).fontSize)
+        })`)) as {
+          height: number;
+          scrollHeight: number;
+          width: number;
+          scrollWidth: number;
+          svgWidth: number;
+          textScale: number;
+          controlFont: number;
+        };
+        assert.ok(metrics.scrollHeight <= metrics.height + 1, 'fitted diagram has no vertical scrolling');
+        assert.ok(metrics.scrollWidth <= metrics.width + 1, 'fitted diagram has no horizontal scrolling');
+        assert.ok(metrics.svgWidth <= 900, 'a wide window does not enlarge diagram labels');
+        assert.ok(metrics.textScale >= 0.5, 'the diagram retains legible labels');
+        assert.ok(metrics.controlFont >= 13, 'fitting does not shrink the input text');
+      }
+      const command = async (command: string) => {
+        await layoutWindow.webContents.executeJavaScript(
+          `document.querySelector('iframe').contentWindow.postMessage({type:'gnosis-explainer-control', token:'layout-test', command:${JSON.stringify(command)}}, '*')`
+        );
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      };
+      await command('step');
+      await command('actual-size');
+      await command('fit');
+      assert.equal(
+        await frame.executeJavaScript('document.getElementById("state").textContent'),
+        '2 items waiting',
+        'changing layout retains the simulation state'
+      );
+      await frame.executeJavaScript(
+        `{const input = document.getElementById('count'); input.value='5'; input.dispatchEvent(new Event('input', {bubbles:true}));}`
+      );
+      assert.equal(
+        await frame.executeJavaScript('document.getElementById("state").textContent'),
+        '5 items waiting',
+        'moved controls retain their listeners'
+      );
+    } finally {
+      layoutWindow.destroy();
+    }
     const ui = new BrowserWindow({
       show: false,
       width: 1400,
@@ -130,6 +204,7 @@ setTimeout(() => { location.href = ${JSON.stringify(url)}; }, 20);`,
       await waitFor(`!!${button('Pause')}`);
       await ui.webContents.executeJavaScript(`${button('Pause')}.click()`);
       await waitFor(`!!${button('Play')}`);
+      await ui.webContents.executeJavaScript(`${button('Details & refine')}.click()`);
       await ui.webContents.executeJavaScript(`${button('queue.ts')}.click()`);
       await waitFor(`document.querySelector('pre')?.textContent.includes('queue.shift()')`);
       for (const instruction of ['two requests', 'fail']) {

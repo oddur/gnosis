@@ -17,7 +17,8 @@ export function buildExplainerDocument(
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root { color-scheme: ${theme}; --paper: ${theme === 'dark' ? '#211f1c' : '#faf8f3'}; --ink: ${theme === 'dark' ? '#e9e4da' : '#2a2824'}; --muted: ${theme === 'dark' ? '#b4ada0' : '#655e54'}; --line: ${theme === 'dark' ? '#514b42' : '#d6cfc2'}; --accent: ${theme === 'dark' ? '#d8a16c' : '#91522c'}; }
-* { box-sizing: border-box; } body { margin: 0; padding: 24px; background: var(--paper); color: var(--ink); font: 15px/1.6 system-ui, sans-serif; }
+* { box-sizing: border-box; } body { margin: 0; padding: 12px; background: var(--paper); color: var(--ink); font: 14px/1.4 system-ui, sans-serif; }
+#root { display: flow-root; min-width: 0; }
 svg { display: block; max-width: 100%; height: auto; } svg text { fill: var(--ink); }
 button, input, select { font: inherit; accent-color: var(--accent); } button, select { background: var(--paper); color: var(--ink); border: 1px solid var(--line); padding: 6px 12px; border-radius: 4px; }
 button { cursor: pointer; } :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
@@ -59,8 +60,90 @@ const RUNTIME = String.raw`
   const script = document.createElement('script'); script.nonce = config.token; script.textContent = config.artifact.javascript; document.body.append(script);
   const api = window.explainer;
   if (!api || ['reset', 'step', 'tick'].some(k => typeof api[k] !== 'function')) { fail('The explainer must provide reset, step, and tick functions.'); return; }
+  // Bound the drawings, not the HTML controls or captions. Older artifacts
+  // often use width:100% on tall SVGs, scaling their text far beyond 100%.
+  let fit = true, layoutFrame = 0;
+  const tallDrawing = [...root.querySelectorAll('svg')].filter(svg => !svg.ownerSVGElement);
+  // A single tall diagram with sibling controls/captions can use the width
+  // of a desktop window instead of stacking everything above and below it.
+  let stage = null, notes = null;
+  if (tallDrawing.length === 1) {
+    const svg = tallDrawing[0], box = svg.viewBox.baseVal, parent = svg.parentElement;
+    if (box.width >= 200 && box.height / box.width > 0.55 && parent.children.length > 1) {
+      stage = parent;
+      notes = document.createElement('div');
+      notes.setAttribute('aria-label', 'Scenario controls and current step');
+      notes.setAttribute('data-explainer-notes', '');
+      for (const child of [...stage.children]) if (child !== svg) notes.append(child);
+      stage.append(notes);
+      const layoutStyle = document.createElement('style');
+      layoutStyle.textContent = '[data-explainer-notes] {min-width:0;overflow:auto;padding:2px 8px 8px 2px;} ' +
+        '[data-explainer-notes] * {min-width:0!important;} ' +
+        '[data-explainer-notes] p {font-size:13px!important;line-height:1.4!important;margin-block:8px!important;} ' +
+        '[data-explainer-notes] label {font-size:13px!important;gap:4px!important;} ' +
+        '[data-explainer-notes] select, [data-explainer-notes] button {font-size:13px!important;padding:6px!important;} ' +
+        '[data-explainer-notes] strong {font-size:14px!important;}';
+      document.head.append(layoutStyle);
+      for (const child of notes.children) {
+        if (child.querySelector('input, select, button')) {
+          child.style.setProperty('display', 'grid', 'important');
+          child.style.setProperty('grid-template-columns', 'minmax(0, 1fr)', 'important');
+          child.style.setProperty('gap', '8px', 'important');
+        }
+      }
+    }
+  }
+  function layout() {
+    layoutFrame = 0;
+    const sideBySide = fit && stage && innerWidth >= 700;
+    if (stage) {
+      stage.style.setProperty('display', sideBySide ? 'grid' : 'block', 'important');
+      stage.style.setProperty('grid-template-columns', 'minmax(0, 1fr) 280px', 'important');
+      stage.style.setProperty('gap', '16px', 'important');
+      stage.style.setProperty('align-items', 'start', 'important');
+      notes.style.maxHeight = sideBySide ? Math.max(180, innerHeight - 48) + 'px' : 'none';
+    }
+    const drawings = [...root.querySelectorAll('svg')].filter(svg =>
+      !svg.ownerSVGElement && svg.viewBox.baseVal.width >= 200 && svg.viewBox.baseVal.height >= 100);
+    if (!drawings.length) return;
+    const sizes = drawings.map(svg => {
+      const box = svg.viewBox.baseVal;
+      const columnWidth = sideBySide && svg.parentElement === stage ? stage.clientWidth - 296 : svg.parentElement.clientWidth;
+      const width = Math.min(box.width, columnWidth);
+      svg.style.setProperty('width', width + 'px', 'important');
+      svg.style.setProperty('max-width', '100%', 'important');
+      svg.style.setProperty('height', 'auto', 'important');
+      svg.style.setProperty('min-height', '0', 'important');
+      svg.style.setProperty('display', 'block', 'important');
+      svg.style.setProperty('margin-inline', 'auto', 'important');
+      // The default preserves geometry when height is constrained.
+      svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+      return { svg, naturalHeight: width * box.height / box.width };
+    });
+    const used = sizes.reduce((sum, {svg}) => sum + svg.getBoundingClientRect().height, 0);
+    const bodyStyle = getComputedStyle(document.body);
+    const padding = parseFloat(bodyStyle.paddingTop) + parseFloat(bodyStyle.paddingBottom);
+    const otherContent = sideBySide ? 24 : root.getBoundingClientRect().height - used;
+    const available = Math.max(0, innerHeight - padding - otherContent - 2);
+    const total = sizes.reduce((sum, item) => sum + item.naturalHeight, 0);
+    for (const {svg, naturalHeight} of sizes) {
+      // Very small windows retain scrolling rather than clipping controls or
+      // making the drawing disappear. 100% is available for inspecting detail.
+      const height = Math.min(naturalHeight, Math.max(120, available * naturalHeight / total));
+      svg.style.setProperty('max-height', fit ? height + 'px' : 'none', 'important');
+    }
+  }
+  function scheduleLayout() {
+    if (!layoutFrame) layoutFrame = requestAnimationFrame(layout);
+  }
+  new ResizeObserver(scheduleLayout).observe(root);
+  new MutationObserver(scheduleLayout).observe(root, {subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['viewBox']});
+  addEventListener('resize', scheduleLayout);
+  root.addEventListener('input', scheduleLayout);
+  root.addEventListener('change', scheduleLayout);
   function run(command) {
     try {
+      if (command === 'fit' || command === 'actual-size') { fit = command === 'fit'; scheduleLayout(); }
       if (command === 'pause') stop();
       if (command === 'reset') { stop(); api.reset(); }
       if (command === 'step') { stop(); api.step(); }
@@ -83,6 +166,7 @@ const RUNTIME = String.raw`
   document.addEventListener('visibilitychange', () => { if (document.hidden) stop(); });
   try {
     api.reset();
+    layout();
     if (!root.querySelector('svg')) throw new Error('The explainer must include an SVG visualization.');
     if (config.validate) {
       api.step(); api.tick(50); api.reset();

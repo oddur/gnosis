@@ -21,6 +21,8 @@ export function ExplainerView({ reviewId, slide, onClose, onSaved }: Props) {
   const [refinement, setRefinement] = useState('');
   const [source, setSource] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [fit, setFit] = useState(true);
   const [dark, setDark] = useState(document.documentElement.classList.contains('dark'));
   const frameRef = useRef<HTMLIFrameElement>(null);
   const backRef = useRef<HTMLButtonElement>(null);
@@ -70,6 +72,7 @@ export function ExplainerView({ reviewId, slide, onClose, onSaved }: Props) {
   useEffect(() => {
     setReady(false);
     setPlaying(false);
+    setFit(true);
     setRuntimeError('');
     if (!documentState) return;
     const timer = setTimeout(
@@ -110,22 +113,32 @@ export function ExplainerView({ reviewId, slide, onClose, onSaved }: Props) {
   }
 
   return (
-    <section className="flex-1 min-h-0 overflow-y-auto px-6 py-5 lg:px-10" aria-label="Interactive explanation">
-      <Button ref={backRef} variant="ghost" size="sm" onClick={onClose} className="-ml-2 mb-6">
-        <ArrowLeft /> Back to explanation
-      </Button>
-      <div className="max-w-[1500px] mx-auto">
-        <p className="editorial-label mb-2">Explore · {slide.title}</p>
-        <h1 className="font-serif text-3xl lg:text-4xl leading-tight mb-3">
+    <section
+      className="flex-1 min-h-0 flex flex-col overflow-y-auto px-4 py-3 lg:px-6"
+      aria-label="Interactive explanation"
+    >
+      <div className="flex items-center gap-4 mb-2 shrink-0">
+        <Button ref={backRef} variant="ghost" size="sm" onClick={onClose} className="-ml-2 shrink-0">
+          <ArrowLeft /> Back to explanation
+        </Button>
+        <p className="text-xs text-muted-foreground truncate" title={slide.title}>
+          Explore · {slide.title}
+        </p>
+      </div>
+      <div className="w-full max-w-[1600px] mx-auto flex-1 min-h-0 flex flex-col">
+        <h1 className="font-serif text-xl leading-tight mb-1 shrink-0">
           {artifact?.title ?? slide.explainerIdea?.title ?? slide.title}
         </h1>
-        <p className="text-muted-foreground max-w-[75ch] leading-relaxed mb-6">
+        <p className="text-muted-foreground text-sm leading-snug mb-3 shrink-0">
           {artifact?.description ??
             slide.explainerIdea?.description ??
             'Explore this code with an interactive example.'}
         </p>
         {busy && (
-          <div role="status" className="flex flex-wrap items-center gap-3 py-5 border-y border-border mb-5 text-sm">
+          <div
+            role="status"
+            className="flex flex-wrap items-center gap-3 py-2 border-y border-border mb-2 text-sm shrink-0"
+          >
             <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" />
             <span>
               {artifact
@@ -138,7 +151,7 @@ export function ExplainerView({ reviewId, slide, onClose, onSaved }: Props) {
           </div>
         )}
         {error && (
-          <div role="alert" className="mb-5 text-sm">
+          <div role="alert" className="mb-2 text-sm shrink-0">
             <p className="text-destructive mb-2">{error}</p>
             <Button
               variant="outline"
@@ -151,9 +164,9 @@ export function ExplainerView({ reviewId, slide, onClose, onSaved }: Props) {
           </div>
         )}
         {artifact && documentState && (
-          <div className="flex flex-col xl:flex-row gap-8 items-stretch">
-            <div className="flex-1 min-w-0">
-              <div className="flex flex-wrap items-center gap-2 pb-3 border-b border-border">
+          <div className="flex flex-col flex-1 min-h-0">
+            <div className="flex-1 min-w-0 min-h-0 flex flex-col">
+              <div className="flex flex-wrap items-center gap-1 pb-2 border-b border-border shrink-0">
                 <Button
                   variant="outline"
                   size="sm"
@@ -169,7 +182,41 @@ export function ExplainerView({ reviewId, slide, onClose, onSaved }: Props) {
                 <Button variant="ghost" size="sm" disabled={!ready || busy} onClick={() => control('reset')}>
                   <RotateCcw /> Reset
                 </Button>
-                <span className="text-xs text-muted-foreground ml-auto">Illustrative model</span>
+                <div className="flex items-center gap-1 ml-auto">
+                  <Button
+                    variant={fit ? 'secondary' : 'ghost'}
+                    size="sm"
+                    disabled={!ready}
+                    aria-pressed={fit}
+                    onClick={() => {
+                      setFit(true);
+                      control('fit');
+                    }}
+                  >
+                    Fit
+                  </Button>
+                  <Button
+                    variant={!fit ? 'secondary' : 'ghost'}
+                    size="sm"
+                    disabled={!ready}
+                    aria-pressed={!fit}
+                    onClick={() => {
+                      setFit(false);
+                      control('actual-size');
+                    }}
+                  >
+                    Full size
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-expanded={detailsOpen}
+                    aria-controls="explainer-details"
+                    onClick={() => setDetailsOpen((open) => !open)}
+                  >
+                    Details & refine
+                  </Button>
+                </div>
               </div>
               {runtimeError && (
                 <div role="alert" className="py-4 text-sm">
@@ -186,84 +233,91 @@ export function ExplainerView({ reviewId, slide, onClose, onSaved }: Props) {
                 sandbox="allow-scripts"
                 referrerPolicy="no-referrer"
                 srcDoc={documentState.html}
-                className="w-full border-0 min-h-[560px] h-[65vh]"
+                className="w-full border-0 flex-1 min-h-[180px]"
               />
-              <form
-                className="pt-5 border-t border-border"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (refinement.trim()) void generate(refinement.trim());
-                }}
-              >
-                <label htmlFor="explainer-refinement" className="text-sm font-medium block mb-2">
-                  Try another scenario
-                </label>
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <textarea
-                    id="explainer-refinement"
-                    value={refinement}
-                    onChange={(e) => setRefinement(e.target.value)}
-                    maxLength={2000}
-                    rows={2}
-                    disabled={busy}
-                    placeholder="Show two requests arriving together, or add a timeout…"
-                    className="flex-1 min-w-0 resize-y bg-background border border-border rounded-md p-3 text-sm focus-visible:outline-[var(--ring)]"
-                  />
-                  <Button type="submit" variant="outline" disabled={busy || !refinement.trim()} className="self-end">
-                    Refine <ArrowUpRight />
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground mt-2">
-                  Refining generates a new version. Your current example stays available if it fails.
-                </p>
-              </form>
             </div>
-            <aside className="xl:w-80 shrink-0 space-y-7" aria-label="Explanation evidence">
-              <div>
-                <h2 className="font-serif text-xl mb-3">Assumptions</h2>
-                <ul className="list-disc pl-4 text-sm leading-relaxed space-y-2 text-muted-foreground">
-                  {artifact.assumptions.map((a, i) => (
-                    <li key={i}>{a}</li>
-                  ))}
-                </ul>
-              </div>
-              <div>
-                <h2 className="font-serif text-xl mb-3">In the code</h2>
-                <div className="space-y-4">
-                  {artifact.sources.map((s, i) => (
-                    <div key={i}>
-                      <button
-                        type="button"
-                        onClick={() => setSource(source === s.filePath ? null : s.filePath)}
-                        aria-expanded={source === s.filePath}
-                        className="text-left font-mono text-xs break-all underline decoration-dotted underline-offset-4 hover:text-primary focus-visible:outline-[var(--ring)]"
-                      >
-                        {s.filePath}
-                      </button>
-                      <p className="text-sm text-muted-foreground leading-relaxed mt-1">{s.explanation}</p>
+            {detailsOpen && (
+              <div
+                id="explainer-details"
+                className="shrink-0 max-h-[40%] overflow-y-auto border-t border-border py-3 grid gap-6 lg:grid-cols-[minmax(240px,1fr)_2fr]"
+              >
+                <form
+                  className="min-w-0"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (refinement.trim()) void generate(refinement.trim());
+                  }}
+                >
+                  <label htmlFor="explainer-refinement" className="text-sm font-medium block mb-2">
+                    Try another scenario
+                  </label>
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <textarea
+                      id="explainer-refinement"
+                      value={refinement}
+                      onChange={(e) => setRefinement(e.target.value)}
+                      maxLength={2000}
+                      rows={2}
+                      disabled={busy}
+                      placeholder="Show two requests arriving together, or add a timeout…"
+                      className="flex-1 min-w-0 resize-y bg-background border border-border rounded-md p-3 text-sm focus-visible:outline-[var(--ring)]"
+                    />
+                    <Button type="submit" variant="outline" disabled={busy || !refinement.trim()} className="self-end">
+                      Refine <ArrowUpRight />
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Refining generates a new version. Your current example stays available if it fails.
+                  </p>
+                </form>
+                <aside className="min-w-0 grid gap-5 md:grid-cols-2" aria-label="Explanation evidence">
+                  <div>
+                    <h2 className="font-serif text-xl mb-3">Assumptions</h2>
+                    <ul className="list-disc pl-4 text-sm leading-relaxed space-y-2 text-muted-foreground">
+                      {artifact.assumptions.map((a, i) => (
+                        <li key={i}>{a}</li>
+                      ))}
+                    </ul>
+                  </div>
+                  <div>
+                    <h2 className="font-serif text-xl mb-3">In the code</h2>
+                    <div className="space-y-4">
+                      {artifact.sources.map((s, i) => (
+                        <div key={i}>
+                          <button
+                            type="button"
+                            onClick={() => setSource(source === s.filePath ? null : s.filePath)}
+                            aria-expanded={source === s.filePath}
+                            className="text-left font-mono text-xs break-all underline decoration-dotted underline-offset-4 hover:text-primary focus-visible:outline-[var(--ring)]"
+                          >
+                            {s.filePath}
+                          </button>
+                          <p className="text-sm text-muted-foreground leading-relaxed mt-1">{s.explanation}</p>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
+                  </div>
+                  {source && (
+                    <div>
+                      <h3 className="font-mono text-xs break-all mb-2">{source}</h3>
+                      <pre
+                        tabIndex={0}
+                        className="max-h-[480px] overflow-auto text-xs bg-muted/30 p-3 rounded border border-border"
+                      >
+                        {slide.diffHunks
+                          .filter((h) => h.filePath === source)
+                          .map((h) => h.hunkHeader + '\n' + h.content)
+                          .join('\n\n')}
+                      </pre>
+                    </div>
+                  )}
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Built from this review’s saved code. The controls were checked for execution errors; use the source
+                    to assess the model’s accuracy.
+                  </p>
+                </aside>
               </div>
-              {source && (
-                <div>
-                  <h3 className="font-mono text-xs break-all mb-2">{source}</h3>
-                  <pre
-                    tabIndex={0}
-                    className="max-h-[480px] overflow-auto text-xs bg-muted/30 p-3 rounded border border-border"
-                  >
-                    {slide.diffHunks
-                      .filter((h) => h.filePath === source)
-                      .map((h) => h.hunkHeader + '\n' + h.content)
-                      .join('\n\n')}
-                  </pre>
-                </div>
-              )}
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                Built from this review’s saved code. The controls were checked for execution errors; use the source to
-                assess the model’s accuracy.
-              </p>
-            </aside>
+            )}
           </div>
         )}
         {!artifact && !busy && !error && (

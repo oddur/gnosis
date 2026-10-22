@@ -534,14 +534,14 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
           the active slide (overview or chapter) in the center, and
           the optional chat sheet on the right. */}
       <div className="flex-1 overflow-hidden flex flex-row min-h-0">
-        <TocRail
+        {!exploreOpen && <TocRail
           slides={review.slides}
           currentSlide={currentSlide}
           reviewed={reviewed}
           hideReviewed={hideReviewed}
           onToggleHideReviewed={() => setHideReviewed((v) => !v)}
           onNavigate={(n) => { setExploreOpen(false); setCurrentSlide(n); }}
-        />
+        />}
 
         <div key={currentSlide} className="slide-enter flex-1 min-w-0 overflow-hidden flex flex-col">
           {exploreOpen && currentSlide > 0 && review.reviewId ? (
