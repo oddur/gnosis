@@ -17,6 +17,7 @@ import { SettingsDialog } from '../../components/SettingsDialog';
 import { ShortcutOverlay } from '../../components/ShortcutOverlay';
 import { CommandPalette, type Command } from '../../components/CommandPalette';
 import { useReviewComments } from '../../lib/use-review-comments';
+import { useViewedFiles } from '../../lib/use-viewed-files';
 import { useSlideChat } from '../../lib/use-slide-chat';
 import { useKeyboardShortcuts, type ShortcutMap } from '../../lib/use-keyboard-shortcuts';
 import { buildFileUrlBase } from '../../lib/github-url';
@@ -99,6 +100,7 @@ export function ReviewPage({
   onShowActivity,
 }: Props) {
   const [review, setReview] = useState(initialReview);
+  const { viewedFiles, setFileViewed } = useViewedFiles(review);
   const [currentSlide, setCurrentSlide] = useState(() => {
     if (initialSlideId) return initialReview.slides.find((s) => s.id === initialSlideId)?.slideNumber ?? 0;
     const saved = Number(
@@ -716,7 +718,10 @@ export function ReviewPage({
             />
           ) : (
             <SlideView
+              key={review.snapshot?.fingerprint ?? review.headSha ?? review.reviewId}
               review={review}
+              viewedFiles={viewedFiles}
+              onFileViewedChange={setFileViewed}
               slide={review.slides[currentSlide - 1]}
               slideNumber={currentSlide}
               totalSlides={review.slides.length}

@@ -1772,6 +1772,11 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .review-file-context .source-attribution { padding:0; border:0; background:transparent; color:var(--foreground); font-weight:600; white-space:nowrap; }
 .review-file-context + div { border-top-left-radius:0; border-top-right-radius:0; }
 .review-file-group .line { scroll-margin-top:48px; }
+.review-file-context[data-collapsed=true] { border-radius:5px; }
+.review-file-expand { display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; width:24px; height:24px; border-radius:4px; color:var(--muted-foreground); }
+.review-file-expand:hover,.review-file-viewed:hover { background:var(--accent); color:var(--accent-foreground); }
+.review-file-viewed { display:inline-flex; align-items:center; gap:6px; padding:3px 5px; border-radius:4px; cursor:pointer; color:var(--foreground); }
+.review-file-viewed input { accent-color:var(--primary); width:14px; height:14px; cursor:pointer; }
 .queue-keyboard-help { padding:6px 24px; margin:0; border-bottom:1px solid var(--border); color:var(--muted-foreground); font-size:var(--type-caption); }
 .queue-keyboard-help kbd { font:inherit; color:var(--foreground); }
 .queue-row-main:focus-visible { outline:2px solid var(--ring); outline-offset:4px; border-radius:2px; }

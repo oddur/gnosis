@@ -128,10 +128,17 @@ void app.whenReady().then(async () => {
     );
     assert.ok(await js(`window.contextLines().some(l=>l.dataset.lineNumber==='120')`));
     // Review checks cross the renderer's shadow boundary and select exact code.
+    await js("document.querySelector('[data-case=metadata-added] .review-file-expand').click()");
+    assert.equal(await js("document.querySelector('[data-case=metadata-added] .review-file-content').hidden"), true);
     await js(
       `Array.from(document.querySelectorAll('[data-case=metadata-added] span')).find(b=>b.textContent==='Verify the ready flag' && b.className.includes('cursor-pointer')).click()`
     );
     await wait(`!!window.diffRoot('metadata-added').querySelector('[data-line-number="1"].check-highlight')`);
+    assert.equal(
+      await js("document.querySelector('[data-case=metadata-added] .review-file-content').hidden"),
+      false,
+      'A review check reveals its target inside a collapsed file'
+    );
     await js(`(() => {
       const line = window.diffRoot('metadata-added').querySelector('[data-line-number="1"]');
       const range = document.createRange(); range.selectNodeContents(line);

@@ -1,4 +1,4 @@
-import { FileCode2, MessageSquare } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileCode2, MessageSquare } from 'lucide-react';
 import { FilePathLink } from './FilePathLink';
 import { prepareReviewHunk } from '@/lib/review-diff';
 import type { DiffHunk, FileMetadata } from '@/lib/types';
@@ -12,6 +12,11 @@ interface Props {
   source?: { number: number; title: string };
   commentCount: number;
   age?: string | null;
+  expanded?: boolean;
+  contentId?: string;
+  onToggleExpanded?: () => void;
+  viewed?: boolean;
+  onViewedChange?: (viewed: boolean) => void;
 }
 
 function shownCounts(hunks: DiffHunk[]) {
@@ -37,6 +42,11 @@ export function ReviewFileHeader({
   source,
   commentCount,
   age,
+  expanded = true,
+  contentId,
+  onToggleExpanded,
+  viewed = false,
+  onViewedChange,
 }: Props) {
   const counts = metadata ?? shownCounts(hunks);
   const scope = metadata ? 'in this change' : 'shown in this topic';
@@ -52,9 +62,21 @@ export function ReviewFileHeader({
             ? 'Modified'
             : null;
   return (
-    <div className="review-file-context" aria-label="Current source">
+    <div className="review-file-context" aria-label="Current source" data-collapsed={!expanded}>
       <div className="review-file-heading">
         <div className="review-file-identity">
+          {onToggleExpanded && (
+            <button
+              type="button"
+              className="review-file-expand"
+              aria-label={`${expanded ? 'Collapse' : 'Expand'} ${filePath}`}
+              aria-expanded={expanded}
+              aria-controls={contentId}
+              onClick={onToggleExpanded}
+            >
+              {expanded ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
+            </button>
+          )}
           <FileCode2 className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
           {source && (
             <span className="source-attribution" title={source.title}>
@@ -94,10 +116,21 @@ export function ReviewFileHeader({
               <span className="sr-only"> pending {commentCount === 1 ? 'comment' : 'comments'}</span>
             </span>
           )}
+          {onViewedChange && (
+            <label className="review-file-viewed" title="Track this file as viewed in Gnosis">
+              <input
+                type="checkbox"
+                checked={viewed}
+                onChange={(event) => onViewedChange(event.target.checked)}
+                aria-label={`Viewed ${filePath}`}
+              />
+              Viewed
+            </label>
+          )}
         </div>
       </div>
-      {summary && <p className="review-file-summary select-text">{summary}</p>}
-      {(age || (metadata?.prCommitCount ?? 1) > 1) && (
+      {expanded && summary && <p className="review-file-summary select-text">{summary}</p>}
+      {expanded && (age || (metadata?.prCommitCount ?? 1) > 1) && (
         <div className="review-file-history">
           {age && <span>Last changed {age.replace(/ old$/, '')} ago</span>}
           {(metadata?.prCommitCount ?? 1) > 1 && <span>Touched in {metadata?.prCommitCount} commits in this PR</span>}

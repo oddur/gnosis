@@ -2,7 +2,7 @@ import { sourceForPath } from '../lib/workbench';
 import { buildFileUrlBase } from '../lib/github-url';
 import type { ReviewGuide } from '../lib/types';
 import type { ReactNode } from 'react';
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, useCallback } from 'react';
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from 'react-resizable-panels';
 import { Check, Copy, CopyX, MessageCircle, MessageSquarePlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -52,6 +52,8 @@ interface Props {
   isReviewed?: boolean;
   onMarkReviewed?: () => void;
   onToggleReviewed?: () => void;
+  viewedFiles?: Set<string>;
+  onFileViewedChange?: (filePath: string, viewed: boolean) => void;
 }
 
 // Format a file's last-modified date as a human-readable age badge.
@@ -416,11 +418,15 @@ export function SlideView({
   isReviewed,
   onMarkReviewed,
   onToggleReviewed,
+  viewedFiles,
+  onFileViewedChange,
 }: Props) {
   const typeConfig = safeConfigLookup(slideTypeConfig, slide.slideType, slideTypeConfig.foundation);
   const Icon = typeConfig.icon;
   const groupedHunks = groupHunksByFile(slide.diffHunks);
   const rightPanelRef = useRef<HTMLDivElement>(null);
+  const fileContentId = useId();
+  const [fileExpansion, setFileExpansion] = useState<Record<string, boolean>>({});
   const [narrow, setNarrow] = useState(() => window.matchMedia('(max-width: 1000px)').matches);
   const [narrowPane, setNarrowPane] = useState<'explanation' | 'code'>('explanation');
   useEffect(() => {
@@ -498,6 +504,7 @@ export function SlideView({
 
   const handleCheckClick = useCallback((check: ReviewCheck) => {
     if (!check.filePath || !check.startLine) return;
+    const filePath = check.filePath;
     const container = rightPanelRef.current;
     if (!container) return;
 
@@ -509,6 +516,7 @@ export function SlideView({
     }
 
     setNarrowPane('code');
+    setFileExpansion((current) => ({ ...current, [filePath]: true }));
     requestAnimationFrame(() => target.scrollIntoView({ behavior: 'smooth', block: 'center' }));
     target.classList.remove('check-highlight');
     // Force reflow to restart animation if clicking the same item again
@@ -702,15 +710,34 @@ export function SlideView({
           <p className="slide-meta">No code changes here — this topic provides context for what follows.</p>
         </div>
       )}
-      {groupedHunks.map(({ filePath, hunks }) => {
+      {groupedHunks.map(({ filePath, hunks }, index) => {
         const origin = review ? sourceForPath(review, filePath) : undefined;
         const sourceUrl = origin?.member ? buildFileUrlBase(origin.member.url, origin.member.headSha) : gitFileUrlBase;
         const fm = fileMetadataMap?.get(filePath);
         const ageBadge = fm ? formatFileAge(fm.lastModified) : null;
+        const viewed = viewedFiles?.has(filePath) ?? false;
+        const expanded = fileExpansion[filePath] ?? !viewed;
+        const contentId = `${fileContentId}-${index}`;
 
         return (
-          <div key={filePath} className="review-file-group flex flex-col gap-0">
+          <div key={filePath} className="review-file-group flex flex-col gap-0" data-file-path={filePath}>
             <ReviewFileHeader
+              expanded={expanded}
+              contentId={contentId}
+              onToggleExpanded={() => {
+                setFileExpansion((current) => ({ ...current, [filePath]: !expanded }));
+                setSelectionPopover(null);
+              }}
+              viewed={viewed}
+              onViewedChange={
+                onFileViewedChange
+                  ? (next) => {
+                      setFileExpansion((current) => ({ ...current, [filePath]: !next }));
+                      onFileViewedChange(filePath, next);
+                      setSelectionPopover(null);
+                    }
+                  : undefined
+              }
               filePath={origin?.path ?? filePath}
               hunks={hunks}
               gitFileUrlBase={sourceUrl}
@@ -720,20 +747,22 @@ export function SlideView({
               commentCount={pendingComments?.filter((c) => c.filePath === filePath).length ?? 0}
               age={ageBadge}
             />
-            <ReviewFileDiscussion
-              review={review}
-              filePath={filePath}
-              pinnedLines={slide.reviewChecks
-                ?.filter((check) => check.filePath === filePath && check.startLine != null)
-                .map((check) => check.startLine as number)}
-              fileStatus={fm?.status}
-              hunks={hunks}
-              diffLayout={diffLayout}
-              appearance={diffAppearance}
-              pendingComments={pendingComments}
-              slideIndex={slideNumber}
-              commentCallbacks={commentCallbacks}
-            />
+            <div id={contentId} className="review-file-content" hidden={!expanded}>
+              <ReviewFileDiscussion
+                review={review}
+                filePath={filePath}
+                pinnedLines={slide.reviewChecks
+                  ?.filter((check) => check.filePath === filePath && check.startLine != null)
+                  .map((check) => check.startLine as number)}
+                fileStatus={fm?.status}
+                hunks={hunks}
+                diffLayout={diffLayout}
+                appearance={diffAppearance}
+                pendingComments={pendingComments}
+                slideIndex={slideNumber}
+                commentCallbacks={commentCallbacks}
+              />
+            </div>
           </div>
         );
       })}

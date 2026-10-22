@@ -408,7 +408,7 @@ Object.defineProperty(window, 'electronAPI', {
     get: (target, key) => (key in target ? target[key as keyof typeof target] : () => Promise.resolve()),
   }),
 });
-localStorage.clear();
+if (!new URLSearchParams(location.search).has('keep-progress')) localStorage.clear();
 const { renderDiffHunk } = await import('../../lib/highlight');
 for (const topic of review.slides)
   for (const hunk of topic.diffHunks)

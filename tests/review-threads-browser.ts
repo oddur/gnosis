@@ -39,6 +39,36 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.workbench-overview')");
     await click('Continue review');
     await wait("document.querySelectorAll('.github-thread').length===5");
+    const toggleViewed = () => js("document.querySelector('.review-file-viewed input').click()");
+    const toggleFile = () => js("document.querySelector('.review-file-expand').click()");
+    await toggleViewed();
+    assert.equal(await js("document.querySelector('.review-file-content').hidden"), true);
+    assert.equal(await js("!!document.querySelector('.review-file-summary')"), false);
+    assert.equal(await js("document.querySelector('.review-file-expand').getAttribute('aria-expanded')"), 'false');
+    await capture('viewed-file-light');
+    await toggleFile();
+    assert.equal(await js("document.querySelector('.review-file-content').hidden"), false);
+    assert.equal(
+      await js("document.querySelector('.review-file-viewed input').checked"),
+      true,
+      'Expanding a viewed file does not clear its progress'
+    );
+    // Reopening the review restores its viewed files collapsed, including after a renderer reload.
+    await win.loadURL(url + '?threads&keep-progress');
+    await wait("document.querySelectorAll('.queue-item').length===7");
+    await js(
+      "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
+    );
+    await click('Continue review');
+    await wait("document.querySelectorAll('.github-thread').length===5");
+    assert.equal(await js("document.querySelector('.review-file-viewed input').checked"), true);
+    assert.equal(await js("document.querySelector('.review-file-content').hidden"), true);
+    await toggleViewed();
+    assert.equal(
+      await js("document.querySelector('.review-file-content').hidden"),
+      false,
+      'Unmarking a viewed file reveals its code'
+    );
     assert.equal(await js('document.body.dataset.discussionPr'), 'https://github.com/klang/engine/pull/121');
     assert.equal(await js("document.querySelectorAll('.review-diff .github-thread').length"), 3);
     assert.equal(await js("document.querySelectorAll('.github-unplaced-threads .github-thread').length"), 2);
@@ -71,6 +101,15 @@ void app.whenReady().then(async () => {
     await js(
       `(()=>{const input=document.querySelector('.github-thread textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'I checked cancellation and the slot is released.');input.dispatchEvent(new Event('input',{bubbles:true}));document.body.dataset.replyFail='true';})()`
     );
+    await toggleViewed();
+    await capture('viewed-file-dark');
+    await toggleFile();
+    assert.equal(
+      await js("document.querySelector('.github-thread textarea').value"),
+      'I checked cancellation and the slot is released.',
+      'Collapsing a file preserves an unsent reply'
+    );
+    await toggleViewed();
     await click('Refresh comments');
     assert.equal(
       await js("!!document.querySelector('.github-thread textarea')"),
@@ -137,6 +176,47 @@ void app.whenReady().then(async () => {
       3,
       'Threads on folded lines stay visible'
     );
+    // File progress follows source-qualified paths across topics, but not new revisions.
+    await toggleViewed();
+    await js(`(async () => {
+      const review = await window.electronAPI.loadReview('workbench-review');
+      review.slides[1].diffHunks = structuredClone(review.slides[0].diffHunks);
+      review.slides[2].diffHunks = structuredClone(review.slides[0].diffHunks).map(h => ({
+        ...h, filePath: h.filePath.replace('-121/', '-122/')
+      }));
+    })()`);
+    const selectTopic = (number: number) =>
+      js(`(() => {
+      const select = document.querySelector('.review-toolbar select');
+      select.value = '${number}'; select.dispatchEvent(new Event('change', {bubbles:true}));
+    })()`);
+    await selectTopic(2);
+    assert.equal(
+      await js("document.querySelector('.review-file-viewed input').checked"),
+      true,
+      'The same source file stays viewed in another topic'
+    );
+    await selectTopic(3);
+    assert.equal(
+      await js("document.querySelector('.review-file-viewed input').checked"),
+      false,
+      'A matching filename from another PR in the stack remains unviewed'
+    );
+    await selectTopic(1);
+    await js(`(async () => {
+      const review = await window.electronAPI.loadReview('workbench-review');
+      review.snapshot = {...review.snapshot, fingerprint: 'new-revision'};
+    })()`);
+    await click('Back');
+    await wait("!!document.querySelector('.queue-list')");
+    await click('Continue review');
+    await wait("!!document.querySelector('.review-file-viewed input')");
+    assert.equal(
+      await js("document.querySelector('.review-file-viewed input').checked"),
+      false,
+      'Viewed marks are not reused for a new code revision'
+    );
+    assert.equal(await js("document.querySelector('.review-file-content').hidden"), false);
     console.log('GitHub thread browser checks passed. Screenshots: ' + screenshots);
   } catch (e) {
     console.error(e);
