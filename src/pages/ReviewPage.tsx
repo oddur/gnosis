@@ -600,7 +600,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview, initialS
         )}
         {review.snapshot?.subject.kind === 'stack' && (
           <label className="ml-auto flex items-center gap-2 text-xs">
-            Review action for
+            Submit review to
             <select
               aria-label="PR for review submission"
               value={submitUrl}
@@ -740,6 +740,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview, initialS
       )}
 
       <SettingsDialog
+        initialSection="review"
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         onThemeChange={async () => {

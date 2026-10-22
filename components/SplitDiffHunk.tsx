@@ -13,6 +13,7 @@ import {
 } from '@/components/shared-diff-utils';
 
 interface SplitDiffHunkGroupProps {
+  showFileHeader?: boolean;
   filePath: string;
   hunks: DiffHunk[];
   pendingComments?: PendingReviewComment[];
@@ -305,6 +306,7 @@ function SplitDiffRowFragment({
 }
 
 export function SplitDiffHunkGroup({
+  showFileHeader = true,
   filePath,
   hunks,
   pendingComments = [],
@@ -316,15 +318,17 @@ export function SplitDiffHunkGroup({
 
   return (
     <div className="rounded-md border overflow-x-auto">
-      <div className="bg-muted/50 px-3 py-2 font-mono text-xs text-muted-foreground border-b truncate flex items-center justify-between">
-        <FilePathLink filePath={filePath} gitFileUrlBase={gitFileUrlBase} />
-        {commentCallbacks && fileCommentCount > 0 && (
-          <span className="ml-2 inline-flex items-center gap-1 text-[var(--ring)]">
-            <MessageSquarePlus className="h-3 w-3" />
-            {fileCommentCount}
-          </span>
-        )}
-      </div>
+      {showFileHeader && (
+        <div className="bg-muted/50 px-3 py-2 font-mono text-xs text-muted-foreground border-b truncate flex items-center justify-between">
+          <FilePathLink filePath={filePath} gitFileUrlBase={gitFileUrlBase} />
+          {commentCallbacks && fileCommentCount > 0 && (
+            <span className="ml-2 inline-flex items-center gap-1 text-[var(--ring)]">
+              <MessageSquarePlus className="h-3 w-3" />
+              {fileCommentCount}
+            </span>
+          )}
+        </div>
+      )}
       {hunks.map((hunk, i) => (
         <div key={i}>
           {i > 0 && <div className="border-t border-dashed border-muted" />}

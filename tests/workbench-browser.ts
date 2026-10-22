@@ -12,7 +12,10 @@ void app.whenReady().then(async () => {
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
   });
   window.webContents.on('console-message', (_event, _level, message) => console.log('renderer:', message));
-  const js = (code: string) => window.webContents.executeJavaScript(code);
+  const js = <T = unknown>(code: string) => window.webContents.executeJavaScript(code) as Promise<T>;
+  const match = (actual: unknown, pattern: RegExp) => assert.match(String(actual), pattern);
+  const fixtureUrl = process.env.GNOSIS_WORKBENCH_URL;
+  if (!fixtureUrl) throw new Error('Missing workbench fixture URL');
   const wait = async (expression: string) => {
     for (let i = 0; i < 200; i++) {
       if (await js(expression)) return;
@@ -33,7 +36,7 @@ void app.whenReady().then(async () => {
     fs.writeFileSync(path.join(shots, name + '.png'), (await window.webContents.capturePage()).toPNG());
   };
   try {
-    await window.loadURL(process.env.GNOSIS_WORKBENCH_URL!);
+    await window.loadURL(fixtureUrl);
     await wait("document.querySelectorAll('.queue-item').length === 7");
     await js(
       `(() => { const select = document.querySelector('[aria-label="Review model"]'); select.value = 'codex:gpt-6-astra'; select.dispatchEvent(new Event('change', {bubbles:true})); })()`
@@ -65,7 +68,7 @@ void app.whenReady().then(async () => {
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
     await wait("document.querySelector('.briefing-panel')?.textContent.includes('Cancellation must release')");
-    assert.match(await js(`document.querySelector('[aria-label="Briefing model"]').textContent`), /GPT-6 Astra/);
+    match(await js(`document.querySelector('[aria-label="Briefing model"]').textContent`), /GPT-6 Astra/);
     await js('document.querySelector(\'.queue-disclosure[aria-label*="Introduce"]\').click()');
     assert.equal(await js("document.querySelectorAll('.queue-member').length"), 3);
     await capture('queue-light');
@@ -151,6 +154,107 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('.activity-trigger').click()");
     await click('Open exploration');
     await wait("!!document.querySelector('.review-tool-slot iframe') && !document.querySelector('.activity-drawer')");
+    // Critique regressions: use realistic unavailable states and long cross-PR code.
+    window.setSize(1280, 800);
+    await window.loadURL(fixtureUrl + '?polish');
+    await wait("document.querySelectorAll('.queue-item').length === 7");
+    await js(
+      "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
+    );
+    await wait("document.querySelector('.saved-briefing')?.textContent.includes('Cancellation must release')");
+    match(await js("document.querySelector('.briefing-status').textContent"), /Daily briefing limit reached/);
+    match(await js("document.querySelector('.saved-briefing').textContent"), /latest changes are not verified/);
+    assert.equal(await js("[...document.querySelectorAll('button')].some(b=>b.textContent==='Open saved')"), false);
+    await wait("document.querySelectorAll('.member-status-error').length === 3");
+    await click('Retry status');
+    await wait("document.querySelectorAll('.member-status-error').length === 0");
+    match(await js("document.querySelector('.stack-members').textContent"), /CI success/);
+    await capture('fallback-light');
+
+    await click('Manage briefings');
+    await wait("!!document.querySelector('[role=tab][aria-selected=true]')");
+    match(await js("document.querySelector('[role=tab][aria-selected=true]').textContent"), /Queue/);
+    await js('document.querySelector(\'[aria-label="Automatic briefings"]\').click()');
+    await js("document.querySelector('[data-slot=dialog-close]').click()");
+    await wait("document.querySelector('.briefing-status')?.textContent.includes('Automatic briefings are off')");
+    await click('Manage briefings');
+    await js("[...document.querySelectorAll('[role=tab]')].find(b=>b.textContent==='Appearance').focus()");
+    await wait("document.querySelector('[role=tabpanel][data-state=active]')?.textContent.includes('Code font')");
+    assert.equal(await js("document.querySelectorAll('[role=tabpanel][data-state=active] select').length"), 2);
+    match(await js("document.querySelector('[role=tabpanel][data-state=active]').textContent"), /Light/);
+    window.setSize(800, 700);
+    await capture('settings-appearance-narrow');
+    await js("[...document.querySelectorAll('[role=tab]')].find(b=>b.textContent.includes('Queue')).focus()");
+    await capture('settings-queue-narrow');
+    assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
+    await js("document.querySelector('[data-slot=dialog-close]').click()");
+    await wait("!document.querySelector('[role=dialog]')");
+    window.setSize(1280, 800);
+
+    // Native keyboard events verify focus, selection, typing, and activation together.
+    const press = async (keyCode: string) => {
+      window.webContents.sendInputEvent({ type: 'keyDown', keyCode });
+      window.webContents.sendInputEvent({ type: 'keyUp', keyCode });
+      await new Promise((r) => setTimeout(r, 80));
+    };
+    await js("document.querySelector('.queue-row-main[aria-pressed=true]').focus()");
+    await press('Down');
+    assert.equal(await js("document.activeElement?.getAttribute('aria-pressed')"), 'true');
+    match(await js("document.querySelector('.briefing-panel h2').textContent"), /Add trace context/);
+    await press('Up');
+    match(await js("document.querySelector('.briefing-panel h2').textContent"), /Introduce a bounded/);
+    await press('/');
+    assert.equal(await js("document.activeElement?.getAttribute('aria-label')"), 'Search reviews');
+    await window.webContents.insertText('queue');
+    assert.equal(await js('document.querySelector(\'[aria-label="Search reviews"]\').value'), 'queue');
+    await press('Down');
+    assert.equal(await js("document.activeElement?.getAttribute('aria-pressed')"), 'true');
+    await press('Enter');
+    await wait("!!document.querySelector('.workbench-overview')");
+    await click('Continue review');
+    await wait("document.querySelectorAll('.review-file-context').length === 2");
+    match(await js("document.querySelector('.staleBanner-unknown').textContent"), /API limit was reached/);
+    assert.equal(await js("document.querySelector('.staleBanner-unknown details').open"), false);
+    assert.ok(await js("document.querySelector('.staleBanner-unknown').getBoundingClientRect().height < 100"));
+    await js("document.documentElement.classList.add('dark')");
+    await js("document.querySelector('.review-code').parentElement.scrollTop = 300");
+    const sticky = await js<{ offset: number; text: string }>(`(() => {
+      const pane = document.querySelector('.review-code').parentElement;
+      const header = document.querySelector('.review-file-context');
+      return { offset: header.getBoundingClientRect().top - pane.getBoundingClientRect().top, text: header.textContent };
+    })()`);
+    assert.ok(Math.abs(sticky.offset) < 2, 'Source header must stay pinned during diff scroll');
+    assert.match(sticky.text, /PR #121/);
+    assert.match(sticky.text, /command-queue.ts/);
+    assert.ok(
+      await js(
+        "document.querySelector('pre.aurora-x').innerHTML.includes('#91A7B2') || document.querySelector('pre.aurora-x').innerHTML.includes('#91a7b2')"
+      )
+    );
+    await capture('sticky-source-dark');
+    await js(`(() => {
+      const pane = document.querySelector('.review-code').parentElement;
+      const next = document.querySelectorAll('.review-file-context')[1];
+      pane.scrollTop += next.getBoundingClientRect().top - pane.getBoundingClientRect().top + 100;
+    })()`);
+    assert.ok(
+      await js(`(() => {
+      const pane = document.querySelector('.review-code').parentElement;
+      const header = document.querySelectorAll('.review-file-context')[1];
+      return Math.abs(header.getBoundingClientRect().top - pane.getBoundingClientRect().top) < 2 && header.textContent.includes('PR #122');
+    })()`),
+      'Pinned source must follow the next stack member'
+    );
+    await capture('sticky-next-source-dark');
+    window.setSize(800, 700);
+    await capture('review-polished-narrow');
+    assert.ok(
+      await js(`(() => {
+      const [previous, center, next] = document.querySelector('.review-bottom-nav').children;
+      return previous.getBoundingClientRect().right <= center.getBoundingClientRect().left && center.getBoundingClientRect().right <= next.getBoundingClientRect().left;
+    })()`),
+      'Long navigation labels must not overlap submission'
+    );
     console.log('Workbench browser checks passed. Screenshots: ' + shots);
   } catch (error) {
     console.error(error);

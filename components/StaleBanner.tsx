@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { FreshnessResult } from '../lib/types';
 import { timeAgo } from '../lib/utils';
+import { githubFailureMessage } from '../lib/github-feedback';
 
 interface Props {
   freshness: FreshnessResult;
@@ -29,7 +30,13 @@ export function StaleBanner({ freshness, onReReview }: Props) {
   if (freshness.status === 'unknown') {
     return (
       <div className="staleBanner-unknown border-b border-border px-6 py-1.5 text-xs">
-        Couldn't check freshness: {freshness.reason}
+        <p>Freshness unavailable. {githubFailureMessage(freshness.reason)}</p>
+        {freshness.reason && (
+          <details className="status-diagnostics">
+            <summary>Technical details</summary>
+            <p>{freshness.reason}</p>
+          </details>
+        )}
       </div>
     );
   }

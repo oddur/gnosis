@@ -690,13 +690,28 @@ export function SlideView({
         const churnBadge = fm && (fm.prCommitCount ?? 1) > 1 ? `${fm.prCommitCount}× in this PR` : null;
 
         return (
-          <div key={filePath} className="flex flex-col gap-0">
-            {origin?.member && review?.snapshot?.subject.kind === 'stack' && (
-              <div className="source-attribution">
-                <span>PR #{origin.member.number}</span>
-                <span className="text-muted-foreground truncate">{origin.member.title}</span>
+          <div key={filePath} className="review-file-group flex flex-col gap-0">
+            <div className="review-file-context" aria-label="Current source">
+              <div className="flex items-center gap-2 min-w-0">
+                {origin?.member && review?.snapshot?.subject.kind === 'stack' && (
+                  <span className="source-attribution" title={origin.member.title}>
+                    PR #{origin.member.number}
+                  </span>
+                )}
+                <FilePathLink
+                  compact
+                  filePath={origin?.path ?? filePath}
+                  gitFileUrlBase={sourceUrl}
+                  className="font-mono text-xs min-w-0 flex-1"
+                />
+                {(pendingComments?.filter((c) => c.filePath === filePath).length ?? 0) > 0 && (
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">
+                    {pendingComments?.filter((c) => c.filePath === filePath).length} comments
+                  </span>
+                )}
               </div>
-            )}
+            </div>
+
             {/* File metadata badges — age + churn. Render as quiet
                 mono text above the file's diff header, only when
                 data is available. */}
@@ -708,6 +723,7 @@ export function SlideView({
             )}
             {diffLayout === 'split' ? (
               <SplitDiffHunkGroup
+                showFileHeader={false}
                 filePath={filePath}
                 hunks={hunks}
                 pendingComments={pendingComments}
@@ -717,6 +733,7 @@ export function SlideView({
               />
             ) : commentCallbacks ? (
               <InteractiveDiffHunkGroup
+                showFileHeader={false}
                 filePath={filePath}
                 hunks={hunks}
                 pendingComments={pendingComments ?? []}
@@ -727,7 +744,7 @@ export function SlideView({
                 gitFileUrlBase={sourceUrl}
               />
             ) : (
-              <DiffHunkGroup filePath={filePath} hunks={hunks} gitFileUrlBase={sourceUrl} />
+              <DiffHunkGroup showFileHeader={false} filePath={filePath} hunks={hunks} gitFileUrlBase={sourceUrl} />
             )}
           </div>
         );

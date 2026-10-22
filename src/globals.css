@@ -1744,3 +1744,29 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .activity-failure summary { cursor:pointer; }
 .activity-failure p { margin-top:6px; overflow-wrap:anywhere; white-space:pre-wrap; }
 @media(prefers-reduced-motion:reduce) { .activity-shell * { animation:none!important; transition:none!important; } }
+
+/* Persistent context and task-based controls in the review workbench. */
+.review-file-context { position:sticky; top:0; z-index:20; padding:9px 12px; background:var(--card); border:1px solid var(--border); border-radius:5px 5px 0 0; }
+.review-file-context .source-attribution { padding:0; border:0; background:transparent; color:var(--foreground); font-weight:600; white-space:nowrap; }
+.review-file-context + div { border-top-left-radius:0; border-top-right-radius:0; }
+.review-file-group .line { scroll-margin-top:48px; }
+.queue-keyboard-help { padding:6px 24px; margin:0; border-bottom:1px solid var(--border); color:var(--muted-foreground); font-size:11px; }
+.queue-keyboard-help kbd { font:inherit; color:var(--foreground); }
+.queue-row-main:focus-visible { outline:2px solid var(--ring); outline-offset:4px; border-radius:2px; }
+.saved-briefing { margin-top:20px; padding-top:4px; border-top:1px solid var(--border); }
+.briefing-status button,.member-status-error button { color:var(--ring); margin-top:8px; font-size:12px; }
+.status-diagnostics { margin-top:6px; font-size:12px; }
+.status-diagnostics summary { cursor:pointer; width:fit-content; }
+.status-diagnostics p { max-width:75ch; overflow-wrap:anywhere; white-space:pre-wrap; margin-top:8px; }
+.member-status-error { margin:8px 0; }
+.settings-dialog { max-height:80dvh; display:flex; flex-direction:column; overflow:hidden; }
+.settings-tabs { display:flex; flex-direction:column; min-height:0; }
+.settings-sections { display:flex; flex-shrink:0; border-bottom:1px solid var(--border); gap:4px; }
+.settings-sections button { padding:10px 12px; border-bottom:2px solid transparent; color:var(--muted-foreground); font-size:12px; }
+.settings-sections button[data-state=active] { border-color:var(--ring); color:var(--foreground); font-weight:600; }
+.settings-panel { min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:20px; padding:20px 4px 4px; }
+.settings-panel[data-state=inactive] { display:none; }
+.settings-field { display:flex; flex-direction:column; gap:8px; font-size:14px; font-weight:500; }
+.settings-field select { padding:8px 10px; background:var(--background); color:var(--foreground); border:1px solid var(--border); border-radius:5px; font-size:13px; font-weight:400; }
+@media(max-width:850px) { .review-bottom-nav { gap:10px; padding-inline:12px; } .review-bottom-nav>button { gap:6px; } }
+@media(max-width:620px) { .settings-sections { display:grid; grid-template-columns:1fr 1fr; } .settings-sections button { padding:8px; } .queue-keyboard-help { padding-inline:12px; } }

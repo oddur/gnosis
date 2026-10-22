@@ -28,6 +28,8 @@ import { Button } from '../../components/ui/button';
 import { Markdown } from '../../components/Markdown';
 import { PROVIDERS } from '../../lib/models';
 import { timeAgo } from '../../lib/utils';
+import { githubFailureMessage } from '../../lib/github-feedback';
+import { useKeyboardShortcuts } from '../../lib/use-keyboard-shortcuts';
 import {
   briefingModel,
   fingerprint,
@@ -73,6 +75,11 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   const [parentUrl, setParentUrl] = useState('');
   const [childUrl, setChildUrl] = useState('');
   const [grouping, setGrouping] = useState(false);
+  const [statusErrors, setStatusErrors] = useState<Record<string, string>>({});
+  const [statusAttempt, setStatusAttempt] = useState(0);
+  const [savedSummary, setSavedSummary] = useState<{ id: string; summary: string; focus: string } | null>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
+  const rowButtons = useRef(new Map<string, HTMLButtonElement>());
   const [statuses, setStatuses] = useState<Partial<Record<string, PrStatus>>>({});
   const alive = useRef(true);
   const selectedItem = queue.items.find((i) => i.subject.id === selected);
@@ -125,6 +132,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
     if (selected) localStorage.setItem('gnosis-queue-selection', selected);
     let cancelled = false;
     setStatuses({});
+    setStatusErrors({});
     const refreshStatuses = () => {
       if (selectedItem)
         void Promise.allSettled(
@@ -133,12 +141,20 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
             status: await window.electronAPI.getPrStatus(m.url),
           }))
         ).then((results) => {
-          if (!cancelled)
+          if (!cancelled) {
+            setStatusErrors(
+              Object.fromEntries(
+                results.flatMap((r, i) =>
+                  r.status === 'rejected' ? [[selectedItem.subject.members[i].url, String(r.reason)]] : []
+                )
+              )
+            );
             setStatuses(
               Object.fromEntries(
                 results.flatMap((r) => (r.status === 'fulfilled' ? [[r.value.url, r.value.status]] : []))
               )
             );
+          }
         });
     };
     refreshStatuses();
@@ -147,7 +163,32 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
       cancelled = true;
       clearInterval(timer);
     };
-  }, [selected, selectedItem?.subject.id, selectedItem?.subject.members.map((m) => m.url).join(',')]);
+  }, [selected, selectedItem?.subject.id, selectedItem?.subject.members.map((m) => m.url).join(','), statusAttempt]);
+  const fallbackReview =
+    selectedItem?.review?.status === 'completed' && selectedItem.briefing?.status !== 'ready'
+      ? selectedItem.review
+      : undefined;
+  useEffect(() => {
+    let cancelled = false;
+    setSavedSummary(null);
+    if (fallbackReview) {
+      void window.electronAPI
+        .loadReview(fallbackReview.id)
+        .then((review) => {
+          if (!cancelled)
+            setSavedSummary({ id: fallbackReview.id, summary: review.summary, focus: review.riskRationale });
+        })
+        .catch(() => {
+          /* The indexed excerpt remains available if the saved file cannot be read. */
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [fallbackReview?.id, fallbackReview?.savedAt]);
+  useEffect(() => {
+    rowButtons.current.get(selected ?? '')?.scrollIntoView({ block: 'nearest' });
+  }, [selected, loading, section, query, repo]);
   const savePrefs = async (next: Preferences) => {
     await window.electronAPI.savePreferences(next);
     setPrefs(next);
@@ -221,6 +262,40 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
     () => history.filter((h) => `${h.prTitle} ${h.prUrl}`.toLowerCase().includes(query.toLowerCase())),
     [history, query]
   );
+  const orderedItems = (['updated', 'requested', 'blocking', 'other'] as const).flatMap((category) =>
+    items.filter((item) => item.attention === category)
+  );
+  const activate = (item: QueueItem) => {
+    const entry = item.review;
+    if (entry?.status === 'generating' || starting) return;
+    if (entry?.status === 'completed' && entry.snapshot?.fingerprint === fingerprint(item.subject)) void open(entry);
+    else void start(item.subject.members[0].url, item.subject);
+  };
+  const moveSelection = (direction: number) => {
+    const index = orderedItems.findIndex((item) => item.subject.id === selected);
+    const next = orderedItems.at(
+      index < 0
+        ? direction > 0
+          ? 0
+          : orderedItems.length - 1
+        : Math.max(0, Math.min(orderedItems.length - 1, index + direction))
+    );
+    if (!next) return;
+    setSelected(next.subject.id);
+    rowButtons.current.get(next.subject.id)?.focus({ preventScroll: true });
+  };
+  useKeyboardShortcuts(
+    {
+      '/': () => searchInput.current?.focus(),
+      j: (e) => {
+        if (!(e.target instanceof HTMLElement) || !e.target.closest('.activity-shell')) moveSelection(1);
+      },
+      k: (e) => {
+        if (!(e.target instanceof HTMLElement) || !e.target.closest('.activity-shell')) moveSelection(-1);
+      },
+    },
+    { enabled: !settings && !localOpen && section !== 'saved' }
+  );
   const correct = async (action: 'link' | 'unlink', parent = parentUrl, child = childUrl) => {
     setGrouping(true);
     setError('');
@@ -244,6 +319,8 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
             className="queue-disclosure"
             aria-label={`${expanded.has(s.id) ? 'Collapse' : 'Expand'} ${s.title}`}
             disabled={s.kind !== 'stack'}
+            aria-expanded={s.kind === 'stack' ? expanded.has(s.id) : undefined}
+            aria-controls={s.kind === 'stack' ? `members-${s.id}` : undefined}
             onClick={() =>
               setExpanded((prev) => {
                 const n = new Set(prev);
@@ -265,6 +342,24 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
           </button>
           <button
             className="queue-row-main"
+            ref={(node) => {
+              if (node) rowButtons.current.set(s.id, node);
+              else rowButtons.current.delete(s.id);
+            }}
+            aria-pressed={active}
+            tabIndex={
+              active || (!items.some((i) => i.subject.id === selected) && orderedItems[0]?.subject.id === s.id) ? 0 : -1
+            }
+            aria-describedby="queue-keyboard-help"
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault();
+                moveSelection(e.key === 'ArrowDown' ? 1 : -1);
+              } else if (e.key === 'Enter' && active && !e.repeat) {
+                e.preventDefault();
+                activate(item);
+              }
+            }}
             onClick={() => {
               setSelected(s.id);
               setStatuses({});
@@ -305,15 +400,18 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
             )}
           </span>
         </div>
-        {expanded.has(s.id) &&
-          s.members.map((m) => (
-            <button key={m.url} className="queue-member" onClick={() => setSelected(s.id)}>
-              <GitBranch size={13} />
-              <span>#{m.number}</span>
-              <span className="truncate">{m.title}</span>
-              <span className="ml-auto">{m.merged ? 'Merged' : m.isDraft ? 'Draft' : m.state}</span>
-            </button>
-          ))}
+        {expanded.has(s.id) && (
+          <div id={`members-${s.id}`}>
+            {s.members.map((m) => (
+              <button key={m.url} className="queue-member" onClick={() => setSelected(s.id)}>
+                <GitBranch size={13} />
+                <span>#{m.number}</span>
+                <span className="truncate">{m.title}</span>
+                <span className="ml-auto">{m.merged ? 'Merged' : m.isDraft ? 'Draft' : m.state}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     );
   }
@@ -384,6 +482,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
             return (
               <button
                 key={id as string}
+                title={label as string}
                 aria-current={section === id ? 'page' : undefined}
                 className={section === id ? 'active' : ''}
                 onClick={() => {
@@ -404,11 +503,12 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
             );
           })}
           <div className="mt-auto flex flex-col gap-1">
-            <button onClick={() => setLocalOpen(true)}>
+            <button title="Local changes" onClick={() => setLocalOpen(true)}>
               <FolderGit2 size={16} />
               Local changes
             </button>
             <button
+              title="Import review"
               onClick={() =>
                 void window.electronAPI
                   .importReview()
@@ -525,7 +625,21 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
             <label className="queue-search">
               <Search size={15} />
               <input
+                ref={searchInput}
                 aria-label="Search reviews"
+                onKeyDown={(e) => {
+                  if (e.key === 'ArrowDown' || e.key === 'Enter') {
+                    e.preventDefault();
+                    const first = orderedItems.at(0);
+                    if (first) {
+                      setSelected(first.subject.id);
+                      rowButtons.current.get(first.subject.id)?.focus();
+                    }
+                  } else if (e.key === 'Escape') {
+                    setQuery('');
+                    searchInput.current?.blur();
+                  }
+                }}
                 placeholder="Find a change…"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -548,6 +662,12 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
               {section === 'saved' ? saved.length : items.length} {section === 'saved' ? 'reviews' : 'changes'}
             </span>
           </div>
+          {section !== 'saved' && (
+            <p className="queue-keyboard-help" id="queue-keyboard-help">
+              <kbd>↑</kbd> <kbd>↓</kbd> or <kbd>j</kbd> <kbd>k</kbd> select · <kbd>Enter</kbd> guided review ·{' '}
+              <kbd>/</kbd> search
+            </p>
+          )}
           <div className="queue-content">
             <section className="queue-list" aria-label="Review queue">
               {loading ? (
@@ -641,7 +761,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                 </details>
               )}
             </section>
-            {selectedItem && section !== 'saved' && (
+            {selectedItem && items.some((i) => i.subject.id === selected) && section !== 'saved' && (
               <aside className="briefing-panel" aria-label="Change briefing">
                 <div className="briefing-top">
                   <span>
@@ -672,15 +792,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                   <Button
                     size="sm"
                     disabled={starting || selectedItem.review?.status === 'generating'}
-                    onClick={() => {
-                      const entry = selectedItem.review;
-                      if (
-                        entry?.status === 'completed' &&
-                        entry.snapshot?.fingerprint === fingerprint(selectedItem.subject)
-                      )
-                        void open(entry);
-                      else void start(selectedItem.subject.members[0].url, selectedItem.subject);
-                    }}
+                    onClick={() => activate(selectedItem)}
                   >
                     {selectedItem.review?.status === 'completed' &&
                     selectedItem.review.snapshot?.fingerprint === fingerprint(selectedItem.subject)
@@ -688,10 +800,35 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                       : 'Start guided review'}
                     <ArrowRight size={14} />
                   </Button>
-                  {selectedItem.review?.status === 'completed' && (
-                    <button onClick={() => selectedItem.review && void open(selectedItem.review)}>Open saved</button>
-                  )}
+                  {selectedItem.review?.status === 'completed' &&
+                    selectedItem.review.snapshot?.fingerprint !== fingerprint(selectedItem.subject) && (
+                      <button onClick={() => selectedItem.review && void open(selectedItem.review)}>
+                        Open previous review
+                      </button>
+                    )}
                 </div>
+                {fallbackReview && (savedSummary?.id === fallbackReview.id || fallbackReview.summary) && (
+                  <section className="saved-briefing" aria-label="Saved review summary">
+                    <h3>From saved review</h3>
+                    <p className="text-xs text-muted-foreground">
+                      Saved {timeAgo(fallbackReview.savedAt)} ·{' '}
+                      {fallbackReview.snapshot
+                        ? fallbackReview.snapshot.fingerprint === fingerprint(selectedItem.subject)
+                          ? 'Matches the last queue update; latest changes are not verified.'
+                          : 'The queue has changed since this review.'
+                        : 'Freshness is unknown.'}
+                    </p>
+                    <Markdown className="briefing-summary">
+                      {savedSummary?.id === fallbackReview.id ? savedSummary.summary : (fallbackReview.summary ?? '')}
+                    </Markdown>
+                    {savedSummary?.id === fallbackReview.id && savedSummary.focus && (
+                      <>
+                        <h3>Where to focus</h3>
+                        <Markdown className="briefing-summary">{savedSummary.focus}</Markdown>
+                      </>
+                    )}
+                  </section>
+                )}
                 {selectedItem.briefing?.status === 'ready' ? (
                   <>
                     <Markdown className="briefing-summary">{selectedItem.briefing.summary ?? ''}</Markdown>
@@ -714,17 +851,33 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                       {selectedItem.briefing?.status === 'generating'
                         ? 'Preparing a short briefing…'
                         : selectedItem.briefing?.status === 'failed'
-                          ? selectedItem.briefing.error
+                          ? 'The briefing could not be generated. Retry it or open the guided review.'
                           : selectedItem.briefing?.status === 'cancelled'
                             ? 'Briefing cancelled. Retry it from Activity.'
                             : selectedItem.briefing?.status === 'paused'
-                              ? 'Automatic briefings are paused or the daily limit is reached.'
+                              ? prefs?.autoBriefings === false
+                                ? 'Automatic briefings are off.'
+                                : queue.remaining <= 0
+                                  ? 'Daily briefing limit reached.'
+                                  : 'Briefing is paused while other work runs.'
                               : 'Briefing queued. You can start the detailed review now.'}
                     </p>
+                    {selectedItem.briefing?.status === 'failed' && selectedItem.briefing.error && (
+                      <details className="status-diagnostics">
+                        <summary>Technical details</summary>
+                        <p>{selectedItem.briefing.error}</p>
+                      </details>
+                    )}
+                    {selectedItem.briefing?.status === 'paused' && (
+                      <button onClick={() => setSettings(true)}>Manage briefings</button>
+                    )}
                     {selectedItem.briefing?.status === 'failed' && (
                       <button
                         onClick={() =>
-                          void window.electronAPI.workbenchBriefing(selectedItem.subject.id).then(setQueue)
+                          void window.electronAPI
+                            .workbenchBriefing(selectedItem.subject.id)
+                            .then(setQueue)
+                            .catch((e: unknown) => setError(String(e)))
                         }
                       >
                         Retry briefing
@@ -751,8 +904,20 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                           {m.merged ? 'Merged' : m.isDraft ? 'Draft' : m.state} ·{' '}
                           {statuses[m.url]
                             ? `CI ${statuses[m.url]?.ciConclusion} · ${statuses[m.url]?.reviewSummary.approved} approvals`
-                            : 'Loading status…'}
+                            : statusErrors[m.url]
+                              ? 'Status unavailable'
+                              : 'Loading status…'}
                         </p>
+                        {statusErrors[m.url] && (
+                          <div className="member-status-error" role="status">
+                            <p>{githubFailureMessage(statusErrors[m.url])}</p>
+                            <button onClick={() => setStatusAttempt((n) => n + 1)}>Retry status</button>
+                            <details className="status-diagnostics">
+                              <summary>Technical details</summary>
+                              <p>{statusErrors[m.url]}</p>
+                            </details>
+                          </div>
+                        )}
                         {selectedItem.subject.kind === 'stack' && (
                           <button onClick={() => void start(m.url, undefined, undefined, true)}>
                             Review this PR only

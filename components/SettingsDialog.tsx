@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { Tabs } from 'radix-ui';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { CODE_THEMES, CODE_FONTS } from '@/lib/constants';
 import type { CodeTheme, CodeFont } from '@/lib/constants';
@@ -6,7 +7,10 @@ import { applyTheme, type ThemeChoice } from '@/lib/theme';
 import { PROVIDERS, PROVIDER_IDS, DEFAULT_FAST_CLAUDE_MODEL } from '@/lib/models';
 import type { ModelId, Preferences, Provider, RepoSearchResult } from '@/lib/types';
 
+export type SettingsSection = 'queue' | 'review' | 'appearance' | 'integrations';
+
 interface Props {
+  initialSection?: SettingsSection;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onThemeChange?: (theme: string) => void;
@@ -66,6 +70,7 @@ function Chip({
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={active}
       style={style}
       className={`text-sm pb-0.5 border-b transition-colors ${
         active
@@ -99,7 +104,17 @@ function SettingRow({
   );
 }
 
-export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnboarding }: Props) {
+export function SettingsDialog({
+  open,
+  onOpenChange,
+  onThemeChange,
+  onReplayOnboarding,
+  initialSection = 'queue',
+}: Props) {
+  const [section, setSection] = useState<SettingsSection>(initialSection);
+  useEffect(() => {
+    if (open) setSection(initialSection);
+  }, [open, initialSection]);
   const [appTheme, setAppTheme] = useState<ThemeChoice>('system');
   const [codeTheme, setCodeTheme] = useState<CodeTheme>('aurora-x');
   const [codeFont, setCodeFont] = useState<CodeFont>('jetbrains-mono');
@@ -205,52 +220,221 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-card sm:max-w-md max-h-[80vh] overflow-y-auto">
+      <DialogContent className="settings-dialog bg-card sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle className="editorial-heading">Settings</DialogTitle>
-          <DialogDescription className="slide-meta">Configure your preferences</DialogDescription>
+          <DialogTitle>Settings</DialogTitle>
+          <DialogDescription>Changes save automatically.</DialogDescription>
         </DialogHeader>
+        <Tabs.Root
+          className="settings-tabs"
+          value={section}
+          onValueChange={(value) => setSection(value as SettingsSection)}
+        >
+          <Tabs.List className="settings-sections" aria-label="Settings sections">
+            <Tabs.Trigger value="queue">Queue &amp; briefings</Tabs.Trigger>
+            <Tabs.Trigger value="review">Review</Tabs.Trigger>
+            <Tabs.Trigger value="appearance">Appearance</Tabs.Trigger>
+            <Tabs.Trigger value="integrations">Integrations</Tabs.Trigger>
+          </Tabs.List>
+          <Tabs.Content value="queue" className="settings-panel">
+            <SettingRow
+              label="Ignore Dependabot PRs"
+              description="Hide Dependabot changes from the queue and automatic briefings. Keep required parents in human-authored stacks."
+            >
+              <Toggle
+                checked={ignoreDependabotPrs}
+                ariaLabel="Ignore Dependabot PRs"
+                onChange={() => {
+                  const next = !ignoreDependabotPrs;
+                  setIgnoreDependabotPrs(next);
+                  saveField({ ignoreDependabotPrs: next });
+                }}
+              />
+            </SettingRow>
+            <SettingRow
+              label="Automatic briefings"
+              description="Generate short queue summaries within your daily limit. Open a detailed review when you need it."
+            >
+              <Toggle
+                checked={autoBriefings}
+                ariaLabel="Automatic briefings"
+                onChange={() => {
+                  const next = !autoBriefings;
+                  setAutoBriefings(next);
+                  saveField({ autoBriefings: next });
+                }}
+              />
+            </SettingRow>
 
-        <div className="flex flex-col gap-6 mt-2">
-          <section className="flex flex-col gap-3">
-            <label className="text-sm font-medium text-foreground">Theme</label>
-            <div className="flex flex-wrap gap-x-4 gap-y-2">
-              {(['light', 'dark', 'system'] as const).map((t) => (
-                <Chip key={t} active={appTheme === t} onClick={() => handleSelectAppTheme(t)}>
-                  {t === 'light' ? 'Paper' : t === 'dark' ? 'Study' : 'Match system'}
-                </Chip>
-              ))}
+            <div className="flex flex-col gap-2 ml-0.5">
+              <label htmlFor="watched-repos" className="text-sm font-medium text-foreground">
+                Watched repositories
+              </label>
+              <p className="text-xs text-muted-foreground">Add open PRs from these repositories to your queue.</p>
+              <div className="relative">
+                <div className="flex items-end gap-2">
+                  <input
+                    id="watched-repos"
+                    type="text"
+                    value={watchedRepoInput}
+                    placeholder="Search for a repo…"
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setWatchedRepoInput(val);
+                      setSuggestionsDismissed(false);
+                      if (debounceRef.current) clearTimeout(debounceRef.current);
+                      if (val.trim().length >= 2) {
+                        debounceRef.current = setTimeout(() => {
+                          void window.electronAPI.searchRepos(val.trim()).then((results) => {
+                            setRepoSuggestions(results.filter((r) => !watchedRepos.includes(r.fullName)));
+                          });
+                        }, 300);
+                      } else {
+                        setRepoSuggestions([]);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const trimmed = watchedRepoInput.trim();
+                        if (trimmed.includes('/')) addWatchedRepo(trimmed);
+                      }
+                      if (e.key === 'Escape') setSuggestionsDismissed(true);
+                    }}
+                    onFocus={() => setSuggestionsDismissed(false)}
+                    onBlur={() => setTimeout(() => setSuggestionsDismissed(true), 200)}
+                    className="flex-1 bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground/60 transition-colors"
+                  />
+                </div>
+                {showSuggestions && (
+                  <ul className="absolute z-50 top-full left-0 right-0 mt-1 bg-popover border border-border rounded-md shadow-md max-h-48 overflow-y-auto">
+                    {repoSuggestions.map((repo) => (
+                      <li key={repo.fullName}>
+                        <button
+                          type="button"
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-accent transition-colors flex flex-col gap-0.5"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => addWatchedRepo(repo.fullName)}
+                        >
+                          <span className="font-mono text-xs text-foreground">{repo.fullName}</span>
+                          {repo.description && (
+                            <span className="text-xs text-muted-foreground truncate">{repo.description}</span>
+                          )}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              {watchedRepos.length > 0 && (
+                <ul className="flex flex-col gap-1 mt-1">
+                  {watchedRepos.map((repo) => (
+                    <li key={repo} className="flex items-center justify-between gap-2 text-sm text-foreground">
+                      <span className="font-mono text-xs">{repo}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = watchedRepos.filter((r) => r !== repo);
+                          setWatchedRepos(next);
+                          saveField({ watchedRepos: next });
+                        }}
+                        className="text-xs text-muted-foreground hover:text-destructive transition-colors"
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="flex items-center justify-between gap-4 mt-2">
+                <div className="flex flex-col gap-0.5">
+                  <label htmlFor="settings-briefing-limit" className="text-sm font-medium text-foreground">
+                    Daily briefing limit
+                  </label>
+                  <p className="text-xs text-muted-foreground">
+                    Maximum generation attempts per day, including retries.
+                  </p>
+                </div>
+                <input
+                  id="settings-briefing-limit"
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={briefingDailyLimit}
+                  onChange={(e) => {
+                    const next = Math.max(0, Math.min(100, Math.trunc(Number(e.target.value))));
+                    setBriefingDailyLimit(next);
+                    saveField({ briefingDailyLimit: next });
+                  }}
+                  className="w-20 bg-background border border-border rounded-md px-2 py-1 text-sm text-foreground"
+                />
+              </div>
+
+              <div className="mt-2 pt-3 border-t border-border flex items-center justify-between gap-4">
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <span className="text-sm font-medium text-foreground">Use a different model for briefings</span>
+                  <span className="slide-meta">
+                    Override the workbench model for queue summaries. Choosing a model in the workbench clears this
+                    override.
+                  </span>
+                </div>
+                <div className="shrink-0">
+                  <Toggle
+                    checked={proactiveReviewOverrides}
+                    ariaLabel="Use a different model for briefings"
+                    onChange={() => {
+                      const next = !proactiveReviewOverrides;
+                      setProactiveReviewOverrides(next);
+                      saveField({ proactiveReviewOverrides: next });
+                    }}
+                  />
+                </div>
+              </div>
+
+              {proactiveReviewOverrides && (
+                <div className="flex flex-col gap-3 mt-1">
+                  {PROVIDER_IDS.map((id) => (
+                    <div key={id} className="flex flex-wrap items-center gap-x-5 gap-y-2 slide-meta">
+                      <span className="text-foreground/60">{PROVIDERS[id].label}</span>
+                      {PROVIDERS[id].models.map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          aria-pressed={proactiveProvider === id && proactiveModel === m.id}
+                          onClick={() => {
+                            setProactiveProvider(id);
+                            setProactiveModel(m.id);
+                            saveField({ proactiveProvider: id, proactiveModel: m.id });
+                          }}
+                          className={`pb-0.5 border-b transition-colors ${proactiveModel === m.id ? 'text-foreground border-[var(--ring)]' : 'border-transparent hover:text-foreground'}`}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex flex-col gap-0.5 min-w-0">
+                      <span className="text-sm font-medium text-foreground">Deeper reasoning</span>
+                      <span className="slide-meta">Off is usually faster and cheaper for background runs.</span>
+                    </div>
+                    <div className="shrink-0">
+                      <Toggle
+                        checked={proactiveThinking}
+                        ariaLabel="Proactive deeper reasoning"
+                        onChange={() => {
+                          const next = !proactiveThinking;
+                          setProactiveThinking(next);
+                          saveField({ proactiveThinking: next });
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-          </section>
-
-          <section className="flex flex-col gap-3">
-            <label className="text-sm font-medium text-foreground">Code font</label>
-            <div className="flex flex-wrap gap-x-4 gap-y-2">
-              {CODE_FONTS.map((f) => (
-                <Chip
-                  key={f.id}
-                  active={codeFont === f.id}
-                  onClick={() => handleSelectFont(f.id)}
-                  style={{ fontFamily: `${f.family}, monospace` }}
-                >
-                  {f.label}
-                </Chip>
-              ))}
-            </div>
-          </section>
-
-          <section className="flex flex-col gap-3">
-            <label className="text-sm font-medium text-foreground">Code theme</label>
-            <div className="flex flex-wrap gap-x-4 gap-y-2">
-              {CODE_THEMES.map((t) => (
-                <Chip key={t.id} active={codeTheme === t.id} onClick={() => handleSelectTheme(t.id)}>
-                  {t.label}
-                </Chip>
-              ))}
-            </div>
-          </section>
-
-          <section className="flex flex-col gap-3 border-t border-border pt-5">
+          </Tabs.Content>
+          <Tabs.Content value="review" className="settings-panel">
             <SettingRow
               label="Web search and context (Claude only)"
               description="Let Claude search the web and fetch GitHub context during generation. More thorough, but slower."
@@ -342,202 +526,42 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                 className="rounded-md border border-border bg-background p-2 text-sm"
               />
             </label>
-            <SettingRow
-              label="Ignore Dependabot PRs"
-              description="Hide Dependabot changes from the queue and automatic briefings. Keep required parents in human-authored stacks."
-            >
-              <Toggle
-                checked={ignoreDependabotPrs}
-                ariaLabel="Ignore Dependabot PRs"
-                onChange={() => {
-                  const next = !ignoreDependabotPrs;
-                  setIgnoreDependabotPrs(next);
-                  saveField({ ignoreDependabotPrs: next });
-                }}
-              />
-            </SettingRow>
-            <SettingRow
-              label="Automatic briefings"
-              description="Generate short queue summaries within your daily limit. Open a detailed review when you need it."
-            >
-              <Toggle
-                checked={autoBriefings}
-                ariaLabel="Automatic briefings"
-                onChange={() => {
-                  const next = !autoBriefings;
-                  setAutoBriefings(next);
-                  saveField({ autoBriefings: next });
-                }}
-              />
-            </SettingRow>
-
-            <div className="flex flex-col gap-2 ml-0.5">
-              <label className="text-sm font-medium text-foreground">Watched repos</label>
-              <p className="text-xs text-muted-foreground">Add open PRs from these repositories to your queue.</p>
-              <div className="relative">
-                <div className="flex items-end gap-2">
-                  <input
-                    type="text"
-                    value={watchedRepoInput}
-                    placeholder="Search for a repo…"
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setWatchedRepoInput(val);
-                      setSuggestionsDismissed(false);
-                      if (debounceRef.current) clearTimeout(debounceRef.current);
-                      if (val.trim().length >= 2) {
-                        debounceRef.current = setTimeout(() => {
-                          void window.electronAPI.searchRepos(val.trim()).then((results) => {
-                            setRepoSuggestions(results.filter((r) => !watchedRepos.includes(r.fullName)));
-                          });
-                        }, 300);
-                      } else {
-                        setRepoSuggestions([]);
-                      }
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        const trimmed = watchedRepoInput.trim();
-                        if (trimmed.includes('/')) addWatchedRepo(trimmed);
-                      }
-                      if (e.key === 'Escape') setSuggestionsDismissed(true);
-                    }}
-                    onFocus={() => setSuggestionsDismissed(false)}
-                    onBlur={() => setTimeout(() => setSuggestionsDismissed(true), 200)}
-                    className="flex-1 bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground/60 transition-colors"
-                  />
-                </div>
-                {showSuggestions && (
-                  <ul className="absolute z-50 top-full left-0 right-0 mt-1 bg-popover border border-border rounded-md shadow-md max-h-48 overflow-y-auto">
-                    {repoSuggestions.map((repo) => (
-                      <li key={repo.fullName}>
-                        <button
-                          type="button"
-                          className="w-full text-left px-3 py-2 text-sm hover:bg-accent transition-colors flex flex-col gap-0.5"
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            addWatchedRepo(repo.fullName);
-                          }}
-                        >
-                          <span className="font-mono text-xs text-foreground">{repo.fullName}</span>
-                          {repo.description && (
-                            <span className="text-xs text-muted-foreground truncate">{repo.description}</span>
-                          )}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+          </Tabs.Content>
+          <Tabs.Content value="appearance" className="settings-panel">
+            <section className="flex flex-col gap-3">
+              <label className="text-sm font-medium text-foreground">Theme</label>
+              <div className="flex flex-wrap gap-x-4 gap-y-2">
+                {(['light', 'dark', 'system'] as const).map((t) => (
+                  <Chip key={t} active={appTheme === t} onClick={() => handleSelectAppTheme(t)}>
+                    {t === 'light' ? 'Light' : t === 'dark' ? 'Dark' : 'Match system'}
+                  </Chip>
+                ))}
               </div>
-              {watchedRepos.length > 0 && (
-                <ul className="flex flex-col gap-1 mt-1">
-                  {watchedRepos.map((repo) => (
-                    <li key={repo} className="flex items-center justify-between gap-2 text-sm text-foreground">
-                      <span className="font-mono text-xs">{repo}</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const next = watchedRepos.filter((r) => r !== repo);
-                          setWatchedRepos(next);
-                          saveField({ watchedRepos: next });
-                        }}
-                        className="text-xs text-muted-foreground hover:text-destructive transition-colors"
-                      >
-                        Remove
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <div className="flex items-center justify-between gap-4 mt-2">
-                <div className="flex flex-col gap-0.5">
-                  <label className="text-sm font-medium text-foreground">Daily briefing limit</label>
-                  <p className="text-xs text-muted-foreground">
-                    Maximum generation attempts per day, including retries.
-                  </p>
-                </div>
-                <select
-                  value={briefingDailyLimit}
-                  onChange={(e) => {
-                    const next = Number(e.target.value);
-                    setBriefingDailyLimit(next);
-                    saveField({ briefingDailyLimit: next });
-                  }}
-                  className="bg-transparent border border-border rounded-md px-2 py-1 text-sm text-foreground"
-                >
-                  {[0, 1, 5, 10, 15, 20, 30, 50].map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            </section>
 
-              <div className="mt-2 pt-3 border-t border-border flex items-center justify-between gap-4">
-                <div className="flex flex-col gap-0.5 min-w-0">
-                  <span className="text-sm font-medium text-foreground">Use a different model for briefings</span>
-                  <span className="slide-meta">
-                    Override the workbench model for queue summaries. Choosing a model in the workbench clears this
-                    override.
-                  </span>
-                </div>
-                <div className="shrink-0">
-                  <Toggle
-                    checked={proactiveReviewOverrides}
-                    ariaLabel="Use a different model for briefings"
-                    onChange={() => {
-                      const next = !proactiveReviewOverrides;
-                      setProactiveReviewOverrides(next);
-                      saveField({ proactiveReviewOverrides: next });
-                    }}
-                  />
-                </div>
-              </div>
-
-              {proactiveReviewOverrides && (
-                <div className="flex flex-col gap-3 mt-1">
-                  {PROVIDER_IDS.map((id) => (
-                    <div key={id} className="flex flex-wrap items-center gap-x-5 gap-y-2 slide-meta">
-                      <span className="text-foreground/60">{PROVIDERS[id].label}</span>
-                      {PROVIDERS[id].models.map((m) => (
-                        <button
-                          key={m.id}
-                          type="button"
-                          aria-pressed={proactiveProvider === id && proactiveModel === m.id}
-                          onClick={() => {
-                            setProactiveProvider(id);
-                            setProactiveModel(m.id);
-                            saveField({ proactiveProvider: id, proactiveModel: m.id });
-                          }}
-                          className={`pb-0.5 border-b transition-colors ${proactiveModel === m.id ? 'text-foreground border-[var(--ring)]' : 'border-transparent hover:text-foreground'}`}
-                        >
-                          {m.label}
-                        </button>
-                      ))}
-                    </div>
-                  ))}
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex flex-col gap-0.5 min-w-0">
-                      <span className="text-sm font-medium text-foreground">Deeper reasoning</span>
-                      <span className="slide-meta">Off is usually faster and cheaper for background runs.</span>
-                    </div>
-                    <div className="shrink-0">
-                      <Toggle
-                        checked={proactiveThinking}
-                        ariaLabel="Proactive deeper reasoning"
-                        onChange={() => {
-                          const next = !proactiveThinking;
-                          setProactiveThinking(next);
-                          saveField({ proactiveThinking: next });
-                        }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
+            <label className="settings-field">
+              Code font
+              <select value={codeFont} onChange={(e) => handleSelectFont(e.target.value as CodeFont)}>
+                {CODE_FONTS.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-field">
+              Code theme
+              <select value={codeTheme} onChange={(e) => handleSelectTheme(e.target.value as CodeTheme)}>
+                {CODE_THEMES.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs text-muted-foreground">Code colors are independent of the app theme.</span>
+            </label>
+          </Tabs.Content>
+          <Tabs.Content value="integrations" className="settings-panel">
             <SettingRow label="Desktop notifications" description="Notify when a review completes">
               <Toggle
                 checked={notifications}
@@ -576,13 +600,14 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                 }}
               />
             </SettingRow>
-          </section>
 
-          <section className="flex flex-col gap-4 border-t border-border pt-5">
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium text-foreground">Claude CLI path</label>
+              <label htmlFor="claude-path" className="text-sm font-medium text-foreground">
+                Claude CLI path
+              </label>
               <input
                 type="text"
+                id="claude-path"
                 value={claudePath}
                 placeholder={claudeDetected || 'auto-detect'}
                 onChange={(e) => setClaudePath(e.target.value)}
@@ -591,9 +616,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
               />
               <p className="slide-meta">Leave empty to auto-detect.</p>
             </div>
-          </section>
 
-          <section className="flex flex-col gap-4 border-t border-border pt-5">
             <div className="flex flex-col gap-1.5">
               <label htmlFor="codex-path" className="text-sm font-medium text-foreground">
                 Codex CLI path
@@ -611,9 +634,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                 Leave empty to auto-detect. Sign in first with <code>codex login</code>.
               </p>
             </div>
-          </section>
 
-          <section className="border-t border-border pt-5 flex flex-col gap-2 items-start">
             {onReplayOnboarding && (
               <button
                 type="button"
@@ -633,8 +654,8 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
             >
               Open logs directory →
             </button>
-          </section>
-        </div>
+          </Tabs.Content>
+        </Tabs.Root>
       </DialogContent>
     </Dialog>
   );

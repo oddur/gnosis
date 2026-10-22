@@ -5,6 +5,8 @@ import { groupSubjects, snapshot, memberPrefix, type ReviewMember, type QueueIte
 import type { Preferences, ReviewGuide, ReviewHistoryEntry } from '../../lib/types';
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_FAST_CLAUDE_MODEL } from '../../lib/models';
 import { review as example, slide, explainer } from './explainer';
+const polishScenario = new URLSearchParams(location.search).has('polish');
+let statusFailures = polishScenario ? 3 : 0;
 const date = '2026-10-22T15:30:00Z';
 const titles = [
   'Introduce a bounded command queue',
@@ -150,6 +152,19 @@ const items: QueueItem[] = [
     },
   })),
 ];
+if (polishScenario) {
+  items[0].briefing = { key: 'paused', status: 'paused', updatedAt: date };
+  // A long file followed by a different stack member exercises sticky attribution.
+  const first = review.slides[0].diffHunks[0];
+  first.content =
+    ' // Preserve producer order.\n' +
+    first.content +
+    '\n' +
+    Array.from({ length: 70 }, (_, i) => ` // Dispatch context ${i + 1}`).join('\n');
+  review.slides[0].diffHunks.push({ ...first, filePath: memberPrefix(members[2]) + 'src/batch-scheduler.ts' });
+  review.slides[1].title =
+    'Adapt batches without changing order or allowing a busy producer to monopolize the worker during cancellation';
+}
 let prefs: Preferences = {
   instructions: '',
   provider: 'claude',
@@ -283,27 +298,34 @@ const mocks = {
     prefs = next;
     return Promise.resolve();
   },
-  workbenchQueue: () => Promise.resolve({ items, warnings: [], remaining: 7 }),
+  workbenchQueue: () => Promise.resolve({ items, warnings: [], remaining: polishScenario ? 0 : 7 }),
   listReviews: () => Promise.resolve(history),
   loadReview: () => Promise.resolve(review),
   reRenderHunks: (r: ReviewGuide) => Promise.resolve(r),
   getPrStatus: () =>
-    Promise.resolve({
-      labels: [],
-      mergeable: true,
-      isDraft: false,
-      ciChecks: [],
-      ciConclusion: 'success',
-      reviewSummary: { approved: 1, changesRequested: 0, commented: 0 },
-      baseBranch: 'main',
-      commitCount: 3,
-      requestedReviewers: [],
-      requestedTeams: [],
-      mergeableState: 'clean',
-      autoMerge: null,
-      milestone: null,
-    }),
-  workbenchFreshness: () => Promise.resolve({ status: 'current' }),
+    statusFailures-- > 0
+      ? Promise.reject(new Error('API rate limit exceeded. Request ID fixture-request. Retry after the limit resets.'))
+      : Promise.resolve({
+          labels: [],
+          mergeable: true,
+          isDraft: false,
+          ciChecks: [],
+          ciConclusion: 'success',
+          reviewSummary: { approved: 1, changesRequested: 0, commented: 0 },
+          baseBranch: 'main',
+          commitCount: 3,
+          requestedReviewers: [],
+          requestedTeams: [],
+          mergeableState: 'clean',
+          autoMerge: null,
+          milestone: null,
+        }),
+  workbenchFreshness: () =>
+    Promise.resolve(
+      polishScenario
+        ? { status: 'unknown', reason: 'API rate limit exceeded. ' + 'Technical diagnostic details. '.repeat(30) }
+        : { status: 'current' }
+    ),
   getPendingUpdateReady: () => Promise.resolve(null),
   generateExplainer: () => Promise.resolve(explainer),
   checkCliInstalled: () => Promise.resolve({ installed: true, resolvedPath: '/fixture/claude' }),
@@ -319,7 +341,12 @@ localStorage.clear();
 const { renderDiffHunk } = await import('../../lib/highlight');
 for (const topic of review.slides)
   for (const hunk of topic.diffHunks)
-    hunk.renderedHtml = await renderDiffHunk(hunk.content, hunk.language, 'github-dark', hunk.hunkHeader);
+    hunk.renderedHtml = await renderDiffHunk(
+      hunk.content,
+      hunk.language,
+      polishScenario ? 'aurora-x' : 'github-dark',
+      hunk.hunkHeader
+    );
 const { App } = await import('../../src/App');
 const root = document.getElementById('root');
 if (root) createRoot(root).render(<App />);
