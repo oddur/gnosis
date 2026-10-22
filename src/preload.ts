@@ -1,3 +1,4 @@
+import type { ActivityTask, ActivityAction } from '../lib/activity';
 import type { WorkbenchQueue, GroupingOverride, ReviewSnapshot } from '../lib/workbench';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
@@ -19,6 +20,8 @@ import type {
 } from '../lib/types';
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  listActivity: (): Promise<ActivityTask[]> => ipcRenderer.invoke('list-activity'),
+  activityAction: (id:string, action:ActivityAction): Promise<void> => ipcRenderer.invoke('activity-action',id,action),
   workbenchQueue: (force = false): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-queue', force),
   workbenchGroup: (correction: GroupingOverride): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-group', correction),
   workbenchBriefing: (id: string): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-briefing', id),

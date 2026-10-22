@@ -1,3 +1,4 @@
+import type { ActivityTask, ActivityAction } from '../lib/activity';
 import type { WorkbenchQueue, GroupingOverride, ReviewSnapshot } from '../lib/workbench';
 import type {
   ChangedFile,
@@ -20,6 +21,8 @@ import type {
 declare global {
   interface Window {
     electronAPI: {
+      listActivity: () => Promise<ActivityTask[]>;
+      activityAction: (id:string, action:ActivityAction) => Promise<void>;
       workbenchQueue: (force?: boolean) => Promise<WorkbenchQueue>;
       workbenchGroup: (correction: GroupingOverride) => Promise<WorkbenchQueue>;
       workbenchBriefing: (id: string) => Promise<WorkbenchQueue>;

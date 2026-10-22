@@ -65,7 +65,7 @@ export function ExplainerView({ reviewId, slide, onClose, onSaved }: Props) {
     return () => {
       alive.current = false;
       observer.disconnect();
-      void window.electronAPI.cancelExplainer(req);
+      // Generation belongs to Activity and continues while this pane is closed.
     };
   }, []);
 

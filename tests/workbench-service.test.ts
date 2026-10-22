@@ -282,7 +282,13 @@ test('cached queue remains usable while GitHub refresh is pending', { timeout: 1
         return { data: s.pr };
       },
     });
-    const restarted = createWorkbenchService(s.deps);
+    let connected = false;
+    const restarted = createWorkbenchService({
+      ...s.deps,
+      auth: () => (connected ? s.deps.auth() : { token: 'fixture', login: null }),
+    });
+    assert.deepEqual(restarted.activity(), []);
+    connected = true;
     assert.equal((await restarted.queue()).items.length, 1);
     release();
     await restarted.queue(true);
@@ -318,6 +324,44 @@ test('clearing the briefing override routes generation to the selected Codex mod
       { provider: 'claude', model: 'claude-sonnet-5-5' },
       { provider: 'codex', model: 'gpt-6-astra' },
     ]);
+  } finally {
+    s.cleanup();
+  }
+});
+
+test('queued briefings can be cancelled without a model call and retried from activity', async () => {
+  let calls = 0;
+  const s = setup(async () => {
+    calls++;
+    return '{"summary":"Ready"}';
+  }, false);
+  try {
+    const id = (await s.service.queue()).items[0].subject.id;
+    s.setBusy(true);
+    s.prefs.autoBriefings = true;
+    assert.equal(s.service.activity()[0].status, 'queued');
+    s.service.cancel(id);
+    s.setBusy(false);
+    assert.equal(s.service.activity()[0].status, 'cancelled');
+    await s.service.queue();
+    assert.equal(calls, 0);
+    s.service.retry(id);
+    await settle(s.service, 'ready');
+    assert.equal(s.service.activity()[0].status, 'completed');
+    assert.equal(calls, 1);
+  } finally {
+    s.cleanup();
+  }
+});
+test('running briefing cancellation is not reported as a provider failure', async () => {
+  const s = setup(async () => {
+    s.service.cancel(s.pr.html_url);
+    return '{"summary":"Cancelled result"}';
+  });
+  try {
+    await s.service.queue();
+    await settle(s.service, 'cancelled');
+    assert.equal(s.service.activity()[0].status, 'cancelled');
   } finally {
     s.cleanup();
   }

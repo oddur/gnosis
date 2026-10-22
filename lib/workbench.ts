@@ -29,7 +29,7 @@ export interface ReviewSnapshot {
 }
 export interface Briefing {
   key: string;
-  status: 'queued' | 'generating' | 'ready' | 'failed' | 'paused';
+  status: 'queued' | 'generating' | 'ready' | 'failed' | 'paused' | 'cancelled';
   summary?: string;
   systems?: string[];
   priorities?: string[];

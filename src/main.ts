@@ -1,3 +1,5 @@
+import { createActivityService } from './activity-service';
+import type { ActivityAction } from '../lib/activity';
 import { createWorkbenchService } from './workbench-service';
 import { StackDiffSource } from '../lib/stack-source';
 import { snapshot, fingerprint, type ReviewSubject, type ReviewSnapshot, type GroupingOverride } from '../lib/workbench';
@@ -864,6 +866,7 @@ function backfillSummaries(): void {
 
 // ── Background generation tracking ──────────────────────────────
 
+const activities = createActivityService();
 const activeGenerations = new Map<string, { abortController?: AbortController; prUrl?: string }>();
 
 /** Cancel any in-flight generation for the same PR URL. */
@@ -921,6 +924,11 @@ function broadcastToAllWindows(channel: string, ...args: unknown[]): void {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send(channel, ...args);
   }
+}
+
+function reportReviewPhase(payload: {reviewId:string;phase:string;completed?:number;total?:number}): void {
+  activities.update(`review:${payload.reviewId}`,payload.phase,payload.total !== undefined ? {completed:payload.completed ?? 0,total:payload.total} : undefined);
+  broadcastToAllWindows('review-phase',payload);
 }
 
 function showOrCreateWindow(): void {
@@ -1696,6 +1704,10 @@ async function runBackgroundGeneration(
   signal: AbortSignal,
   reviewSnapshot?: ReviewSnapshot
 ): Promise<void> {
+  activities.start({id:`review:${reviewId}`,kind:'review',title:prData.title,detail:'Preparing review',model:request.model,reviewId}, {
+    cancel:()=>activeGenerations.get(reviewId)?.abortController?.abort('User cancelled'),
+    retry:()=>startReview(request),
+  });
   const {
     prUrl,
     provider,
@@ -1712,7 +1724,7 @@ async function runBackgroundGeneration(
   try {
     const token = getResolvedToken();
 
-    broadcastToAllWindows('review-phase', { reviewId, phase: 'Fetching PR data' });
+    reportReviewPhase( { reviewId, phase: 'Fetching PR data' });
 
     // Surface non-fatal source-level warnings (e.g. dirty working tree on
     // a local review). Fire-and-forget — never block the pipeline on this.
@@ -1720,7 +1732,7 @@ async function runBackgroundGeneration(
       try {
         const warnings = await source.checkRuntimeWarnings();
         for (const phase of warnings) {
-          broadcastToAllWindows('review-phase', { reviewId, phase });
+          reportReviewPhase( { reviewId, phase });
         }
       } catch {
         // Warnings are best-effort.
@@ -1770,7 +1782,7 @@ async function runBackgroundGeneration(
       );
     }
 
-    broadcastToAllWindows('review-phase', { reviewId, phase: 'Fetching file contents' });
+    reportReviewPhase( { reviewId, phase: 'Fetching file contents' });
 
     const fileContents: Record<string, string> = {};
     const headFileContents: Record<string, string> = {};
@@ -1793,7 +1805,7 @@ async function runBackgroundGeneration(
       ]);
     }
 
-    broadcastToAllWindows('review-phase', { reviewId, phase: 'Resolving imports' });
+    reportReviewPhase( { reviewId, phase: 'Resolving imports' });
 
     const allFileContents = { ...fileContents, ...headFileContents };
     // Fire the Claude-context probe in parallel with the neighbour
@@ -1817,7 +1829,7 @@ async function runBackgroundGeneration(
       );
     }
 
-    broadcastToAllWindows('review-phase', { reviewId, phase: 'Building context' });
+    reportReviewPhase( { reviewId, phase: 'Building context' });
 
     const prefs = loadPreferences();
 
@@ -1858,7 +1870,7 @@ async function runBackgroundGeneration(
     // `.claude/skills/` are auto-discovered from the cwd.
     const localToolsOn = provider === 'claude' && source.kind === 'local' && !!request.localTools && !!source.cwd;
     if (localToolsOn) {
-      broadcastToAllWindows('review-phase', {
+      reportReviewPhase( {
         reviewId,
         phase: 'Tool mode: project skills, MCP, and tests enabled',
       });
@@ -1869,7 +1881,7 @@ async function runBackgroundGeneration(
 
     if (prefs.parallelReview) {
       // ── Two-phase: planner → parallel writers ──
-      broadcastToAllWindows('review-phase', { reviewId, phase: 'Planning review structure' });
+      reportReviewPhase( { reviewId, phase: 'Planning review structure' });
 
       const plannerContext = buildPlannerContext(prData, changedFiles, hunkIndex, excludedFilesSummary, projectClaudeContext);
       plan = await planReview(
@@ -1888,15 +1900,14 @@ async function runBackgroundGeneration(
       // Sort topics by planner's order
       const sortedTopics = [...plan.topics].sort((a, b) => a.order - b.order);
       const storyArc = plan.storyArc;
+      let completedSections = 0;
+      reportReviewPhase({reviewId,phase:'Writing sections',completed:0,total:sortedTopics.length});
 
       // Fire all writers in parallel — the CLI/API handles its own rate limiting
       const slideResults: Slide[] = await Promise.all(
         sortedTopics.map(async (topic, idx) => {
             const slideNum = idx + 1;
-            broadcastToAllWindows('review-phase', {
-              reviewId,
-              phase: `Writing slide ${slideNum}/${sortedTopics.length}: ${topic.title}`,
-            });
+
 
             const topicCtx = buildTopicContext(
               topic, hunkMap, fileContents, headFileContents, neighborFiles,
@@ -1921,6 +1932,8 @@ async function runBackgroundGeneration(
               signal,
             });
 
+            completedSections++;
+            reportReviewPhase({reviewId,phase:'Writing sections',completed:completedSections,total:sortedTopics.length});
             const diffHunks = resolveDiffHunks(topic.hunkIds ?? [], hunkMap, assignedIds);
 
             return {
@@ -1946,7 +1959,7 @@ async function runBackgroundGeneration(
       resolvedSlides = slideResults;
     } else {
       // ── Single-shot: existing approach ──
-      broadcastToAllWindows('review-phase', { reviewId, phase: 'Generating review' });
+      reportReviewPhase( { reviewId, phase: 'Generating review' });
 
       let mcpConfigPath: string | undefined;
       let allowedTools: string[] | undefined;
@@ -1986,7 +1999,7 @@ async function runBackgroundGeneration(
             const phase = isThinking ? 'Thinking' : 'Generating review';
             if (phase !== lastStreamPhase) {
               lastStreamPhase = phase;
-              broadcastToAllWindows('review-phase', { reviewId, phase });
+              reportReviewPhase( { reviewId, phase });
             }
             broadcastToAllWindows('review-progress', { reviewId, chunk, isThinking });
           },
@@ -2115,7 +2128,7 @@ async function runBackgroundGeneration(
       changedFiles: fileMetadata,
     };
 
-    broadcastToAllWindows('review-phase', { reviewId, phase: 'Rendering' });
+    reportReviewPhase( { reviewId, phase: 'Rendering' });
 
     // Render syntax-highlighted HTML for each hunk
     const codeTheme = loadPreferences().codeTheme;
@@ -2145,6 +2158,7 @@ async function runBackgroundGeneration(
       snapshot: reviewSnapshot,
     });
 
+    activities.finish(`review:${reviewId}`, 'completed', 'Review ready');
     broadcastToAllWindows('review-completed', { reviewId });
 
     // Desktop notification
@@ -2160,7 +2174,7 @@ async function runBackgroundGeneration(
 
     console.log(`[main] Review ${reviewId} completed in ${formatMs(generationDurationMs)}`);
   } catch (err) {
-    const isCancelled = err instanceof Error && err.message === 'GNOSIS_CANCELLED';
+    const isCancelled = signal.aborted || (err instanceof Error && err.message === 'GNOSIS_CANCELLED');
     const errorMessage = isCancelled ? 'Cancelled' : err instanceof Error ? err.message : 'Unknown error';
     if (!isCancelled) console.error(`[main] Review ${reviewId} failed:`, errorMessage);
 
@@ -2169,6 +2183,7 @@ async function runBackgroundGeneration(
       error: errorMessage,
     });
 
+    activities.finish(`review:${reviewId}`, isCancelled ? 'cancelled' : 'failed', errorMessage);
     broadcastToAllWindows('review-failed', { reviewId, error: errorMessage });
   } finally {
     activeGenerations.delete(reviewId);
@@ -2185,10 +2200,25 @@ const workbench = createWorkbenchService({
   auth: () => ({ token: getResolvedToken(), login: cachedLogin }),
   preferences: loadPreferences,
   history: readReviewsIndex,
-  busy: () => activeGenerations.size > 0 || activeForegroundChats > 0,
+  busy: () => activeGenerations.size > 0 || activeForegroundChats > 0 || activities.list().some(t=>t.kind==='exploration' && t.status==='running'),
 });
 let activeForegroundChats = 0;
-ipcMain.handle('workbench-queue', (_event, force: boolean) => workbench.queue(force));
+const dismissedBriefings = new Map<string,string>();
+ipcMain.handle('list-activity', () => {
+  return [...activities.list(), ...workbench.activity().filter(t=>dismissedBriefings.get(t.id)!==t.updatedAt)];
+});
+ipcMain.handle('activity-action', async (_event, id:string, action:ActivityAction) => {
+  if (!['cancel','retry','dismiss'].includes(action)) throw new Error('Invalid task action.');
+  const briefing=workbench.activity().find(t=>t.id===id);
+  if (briefing) {
+    if (action==='dismiss' && !briefing.canCancel) {dismissedBriefings.set(id,briefing.updatedAt);return;}
+    if (action==='cancel' && briefing.canCancel && briefing.subjectId) {workbench.cancel(briefing.subjectId);return;}
+    if (action==='retry' && briefing.canRetry && briefing.subjectId) {workbench.retry(briefing.subjectId);return;}
+    throw new Error('This briefing action is no longer available.');
+  }
+  await activities.act(id,action);
+});
+ipcMain.handle('workbench-queue' , (_event, force: boolean) => workbench.queue(force));
 ipcMain.handle('workbench-group', (_event, correction: GroupingOverride) => workbench.correct(correction));
 ipcMain.handle('workbench-briefing', (_event, id: string) => workbench.retry(id));
 ipcMain.handle('workbench-freshness', async (_event, old: ReviewSnapshot) => {
@@ -2200,7 +2230,7 @@ ipcMain.handle('workbench-freshness', async (_event, old: ReviewSnapshot) => {
   } catch(error) {return {status:'unknown',reason: error instanceof Error ? error.message : String(error)};}
 });
 
-ipcMain.handle('start-review', async (_event, request: GenerateReviewRequest): Promise<StartReviewResult> => {
+async function startReview(request: GenerateReviewRequest): Promise<StartReviewResult> {
   const token = getResolvedToken();
   workbench.interrupt();
   let subject: ReviewSubject | undefined;
@@ -2250,7 +2280,8 @@ ipcMain.handle('start-review', async (_event, request: GenerateReviewRequest): P
     prUrl: request.prUrl,
     author: prData.author,
   };
-});
+}
+ipcMain.handle('start-review', (_event, request:GenerateReviewRequest)=>startReview(request));
 
 ipcMain.handle('cancel-review', (_event, reviewId: string) => {
   const gen = activeGenerations.get(reviewId);
@@ -2263,6 +2294,7 @@ const explainerService = createExplainerService({
   reviewsDir: getReviewsDir,
   preferences: loadPreferences,
   validate: validateExplainerInBrowser,
+  activity: activities,
 });
 
 ipcMain.handle('generate-explainer', async (event, req: GenerateExplainerRequest) => {

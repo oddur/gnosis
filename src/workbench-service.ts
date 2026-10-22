@@ -1,3 +1,4 @@
+import { ACTIVITY_RETENTION_MS, type ActivityTask } from '../lib/activity';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -40,6 +41,11 @@ interface Deps {
   client?: () => Octokit;
   provider?: typeof getProvider;
 }
+class BriefingCancelled extends Error {
+  constructor() {
+    super('Briefing cancelled.');
+  }
+}
 class BriefingPaused extends Error {
   constructor() {
     super('Paused for your active review.');
@@ -51,6 +57,7 @@ export function createWorkbenchService(deps: Deps) {
   let lastRefresh = 0;
   let warnings: string[] = [];
   let running: AbortController | undefined;
+  let runningKey: string | undefined;
   let pumping = false;
   const cachePath = () => path.join(deps.directory(), 'workbench.json');
   function load(): State {
@@ -92,13 +99,14 @@ export function createWorkbenchService(deps: Deps) {
   function view(): WorkbenchQueue {
     const s = load();
     const history = deps.history();
+    const selection = modelSettings();
     const items = s.subjects
       .filter((subject) => subject.members.some((m) => m.state === 'open'))
       .map((subject) => {
         const review =
           history.find((h) => (h.snapshot?.subject.id ?? h.prUrl) === subject.id) ??
           history.find((h) => subject.members.some((m) => m.url === h.prUrl));
-        const k = key(subject);
+        const k = key(subject, selection);
         const cached = s.briefs[k];
         const briefing = cached ?? {
           key: k,
@@ -291,9 +299,11 @@ export function createWorkbenchService(deps: Deps) {
         k = key(subject, p);
       const controller = new AbortController();
       running = controller;
+      runningKey = k;
       const timeout = setTimeout(() => controller.abort(new Error('Briefing exceeded 90 seconds.')), 90000);
       const preempt = setInterval(() => {
-        if (deps.busy() || key(subject) !== k) controller.abort(new BriefingPaused());
+        if (deps.busy() || deps.preferences().autoBriefings === false || key(subject) !== k)
+          controller.abort(new BriefingPaused());
       }, 500);
       s.used++;
       s.briefs[k] = { key: k, status: 'generating', updatedAt: new Date().toISOString() };
@@ -373,7 +383,12 @@ export function createWorkbenchService(deps: Deps) {
       } catch (error) {
         s.briefs[k] = {
           key: k,
-          status: controller.signal.reason instanceof BriefingPaused ? 'paused' : 'failed',
+          status:
+            controller.signal.reason instanceof BriefingPaused
+              ? 'paused'
+              : controller.signal.reason instanceof BriefingCancelled
+                ? 'cancelled'
+                : 'failed',
           error: error instanceof Error ? error.message : String(error),
           updatedAt: new Date().toISOString(),
         };
@@ -382,6 +397,7 @@ export function createWorkbenchService(deps: Deps) {
         clearInterval(preempt);
         fs.rmSync(cwd, { recursive: true, force: true });
         running = undefined;
+        runningKey = undefined;
         save();
       }
     } finally {
@@ -390,6 +406,60 @@ export function createWorkbenchService(deps: Deps) {
   }
   return {
     queue,
+    activity(): ActivityTask[] {
+      // The drawer mounts before GitHub authentication finishes restoring.
+      if (!deps.auth().login || !deps.auth().token) return [];
+      void pump();
+      const p = modelSettings();
+      return view().items.flatMap(({ subject, briefing }) => {
+        if (!briefing) return [];
+        const cached = load().briefs[briefing.key];
+        if (!cached && briefing.status === 'paused') return [];
+        if (
+          (briefing.status === 'ready' || briefing.status === 'cancelled') &&
+          Date.now() - Date.parse(briefing.updatedAt) > ACTIVITY_RETENTION_MS
+        )
+          return [];
+        const status =
+          briefing.status === 'generating' ? 'running' : briefing.status === 'ready' ? 'completed' : briefing.status;
+        return [
+          {
+            id: `briefing:${briefing.key}`,
+            kind: 'briefing' as const,
+            title: subject.title,
+            subjectId: subject.id,
+            model: p.model,
+            status,
+            detail:
+              status === 'failed'
+                ? (briefing.error ?? 'Briefing failed')
+                : status === 'running'
+                  ? 'Preparing a short briefing'
+                  : status === 'paused'
+                    ? 'Waiting for foreground work or the daily limit'
+                    : status === 'queued'
+                      ? 'Waiting to start'
+                      : status === 'completed'
+                        ? 'Briefing ready'
+                        : 'Cancelled',
+            updatedAt: briefing.updatedAt,
+            canCancel: ['running', 'queued', 'paused'].includes(status),
+            canRetry:
+              ['failed', 'cancelled'].includes(status) &&
+              deps.preferences().autoBriefings !== false &&
+              load().used < limit(),
+          },
+        ];
+      });
+    },
+    cancel(id: string) {
+      const sub = load().subjects.find((s) => s.id === id);
+      if (!sub) return;
+      const k = key(sub);
+      if (runningKey === k) running?.abort(new BriefingCancelled());
+      load().briefs[k] = { key: k, status: 'cancelled', updatedAt: new Date().toISOString() };
+      save();
+    },
     subject: (id: string) => load().subjects.find((s) => s.id === id),
     async correct(override: GroupingOverride) {
       if (refresh) await refresh;

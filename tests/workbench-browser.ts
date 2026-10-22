@@ -54,11 +54,41 @@ void app.whenReady().then(async () => {
     await js('document.querySelector(\'.queue-disclosure[aria-label*="Introduce"]\').click()');
     assert.equal(await js("document.querySelectorAll('.queue-member').length"), 3);
     await capture('queue-light');
+    await wait("document.querySelector('.activity-summary')?.textContent.includes('2 running')");
+    const toolbarY = await js("document.querySelector('.queue-toolbar').getBoundingClientRect().y");
+    await js("document.querySelector('.activity-trigger').click()");
+    await wait("document.querySelectorAll('.activity-task').length === 6");
+    assert.equal(await js("document.querySelector('.queue-toolbar').getBoundingClientRect().y"), toolbarY);
+    assert.equal(
+      await js("document.querySelector('.activity-list [role=progressbar]').getAttribute('aria-valuenow')"),
+      String((4 / 15) * 100)
+    );
+    assert.equal(
+      await js("document.querySelectorAll('.activity-list [role=progressbar]:not([aria-valuenow])').length"),
+      1
+    );
+    await capture('activity-light');
+    await js("document.documentElement.classList.add('dark')");
+    await capture('activity-dark');
+    await js(
+      "document.querySelector('.activity-drawer').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
+    );
+    assert.equal(await js("document.activeElement === document.querySelector('.activity-trigger')"), true);
+    await js("document.querySelector('.activity-trigger').click()");
+    await js(
+      "[...document.querySelectorAll('.activity-task')].find(t=>t.textContent.includes('Improve worker recovery')).querySelector('.activity-actions button').click()"
+    );
+    await wait("document.querySelector('.activity-summary')?.textContent.includes('1 running')");
+    await click('Retry');
+    await wait("document.querySelector('.activity-summary')?.textContent.includes('2 running')");
+    await js(`document.querySelector('[aria-label="Close activity"]').click()`);
+
     await js("document.documentElement.classList.add('dark')");
     await capture('queue-dark');
     await click('Continue review');
     await wait("!!document.querySelector('.workbench-overview')");
     await capture('overview-dark');
+    assert.ok(await js("document.querySelector('.activity-summary')?.textContent.includes('2 running')"));
     await click('Continue review');
     await wait("!!document.querySelector('.review-narrative')");
     assert.equal(await js("document.querySelectorAll('.source-attribution').length"), 1);
@@ -93,6 +123,19 @@ void app.whenReady().then(async () => {
       true
     );
     await capture('exploration-narrow');
+    await js("document.querySelector('.activity-trigger').click()");
+    await wait("!!document.querySelector('.activity-drawer')");
+    assert.equal(
+      await js("document.querySelector('.activity-drawer').getBoundingClientRect().right <= innerWidth"),
+      true
+    );
+    await capture('activity-narrow');
+    await click('Open review');
+    await wait("!!document.querySelector('.workbench-review') && !document.querySelector('.activity-drawer')");
+
+    await js("document.querySelector('.activity-trigger').click()");
+    await click('Open exploration');
+    await wait("!!document.querySelector('.review-tool-slot iframe') && !document.querySelector('.activity-drawer')");
     console.log('Workbench browser checks passed. Screenshots: ' + shots);
   } catch (error) {
     console.error(error);

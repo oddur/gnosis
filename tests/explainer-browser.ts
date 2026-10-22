@@ -240,7 +240,20 @@ setTimeout(() => { location.href = ${JSON.stringify(url)}; }, 20);`,
         true,
         'the animation refinement action generates a replacement'
       );
+      await ui.webContents.executeJavaScript(`{
+        const input = document.querySelector('textarea');
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'background');
+        input.dispatchEvent(new Event('input', {bubbles:true}));
+      }`);
+      await waitFor(`!${button('Refine')}.disabled`);
+      await ui.webContents.executeJavaScript(`${button('Refine')}.click()`);
       await ui.webContents.executeJavaScript(`${button('Back to explanation')}.click()`);
+      await waitFor(`document.body.dataset.backgroundCompleted === 'true'`);
+      assert.equal(
+        await ui.webContents.executeJavaScript(`document.body.dataset.cancelled`),
+        undefined,
+        'closing the pane keeps generation running'
+      );
       await waitFor(`document.body.textContent.includes('Returned to review')`);
     } finally {
       ui.destroy();

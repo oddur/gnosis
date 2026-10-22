@@ -40,6 +40,7 @@ import type { Preferences, PrStatus, ReviewGuide, ReviewHistoryEntry, ModelId, P
 interface Props {
   onReviewReady: (review: ReviewGuide) => void;
   prefillPrUrl?: string;
+  initialSubjectId?: string;
 }
 const labels = {
   updated: 'Updated since review',
@@ -48,7 +49,7 @@ const labels = {
   other: 'Following',
 };
 
-export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
+export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Props) {
   const [auth, setAuth] = useState<{ authenticated: boolean; login: string | null } | null>(null);
   const [prefs, setPrefs] = useState<Preferences | null>(null);
   const [queue, setQueue] = useState<WorkbenchQueue>({ items: [], warnings: [], remaining: 0 });
@@ -59,15 +60,15 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   const [query, setQuery] = useState('');
   const [repo, setRepo] = useState('all');
   const [section, setSection] = useState('all');
-  const [selected, setSelected] = useState<string | null>(() => localStorage.getItem('gnosis-queue-selection'));
+  const [selected, setSelected] = useState<string | null>(
+    () => initialSubjectId ?? localStorage.getItem('gnosis-queue-selection')
+  );
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [settings, setSettings] = useState(false);
   const [localOpen, setLocalOpen] = useState(false);
   const [url, setUrl] = useState(prefillPrUrl ?? '');
   const [showUrl, setShowUrl] = useState(!!prefillPrUrl);
   const [starting, setStarting] = useState(false);
-  const [pending, setPending] = useState<string | null>(null);
-  const [phase, setPhase] = useState('');
   const [pat, setPat] = useState('');
   const [parentUrl, setParentUrl] = useState('');
   const [childUrl, setChildUrl] = useState('');
@@ -121,33 +122,6 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
     };
   }, [refresh]);
   useEffect(() => {
-    window.electronAPI.onReviewPhase((id, value) => {
-      if (id === pending) setPhase(value);
-    });
-    window.electronAPI.onReviewCompleted((id) => {
-      void refresh();
-      if (id === pending) {
-        setPending(null);
-        void window.electronAPI
-          .loadReview(id)
-          .then(onReviewReady)
-          .catch((e: unknown) => setError(String(e)));
-      }
-    });
-    window.electronAPI.onReviewFailed((id, message) => {
-      if (id === pending) {
-        setPending(null);
-        setError(message);
-      }
-      void refresh();
-    });
-    return () => {
-      window.electronAPI.offReviewPhase();
-      window.electronAPI.offReviewCompleted();
-      window.electronAPI.offReviewFailed();
-    };
-  }, [pending, onReviewReady, refresh]);
-  useEffect(() => {
     if (selected) localStorage.setItem('gnosis-queue-selection', selected);
     let cancelled = false;
     setStatuses({});
@@ -187,7 +161,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
       const cli = await window.electronAPI.checkCliInstalled(prefs.provider);
       if (!cli.installed)
         throw new Error(`${PROVIDERS[prefs.provider].label} CLI was not found. Configure its path in Settings.`);
-      const result = await window.electronAPI.startReview({
+      await window.electronAPI.startReview({
         prUrl: target,
         subjectId: subject?.id,
         standalone,
@@ -202,8 +176,6 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
         claudeContext: prefs.claudeContext,
         localTools,
       });
-      setPending(result.reviewId);
-      setPhase('Preparing review');
       setShowUrl(false);
       setUrl('');
       void refresh();
@@ -519,20 +491,6 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
               </button>
             </div>
           )}
-          {pending && (
-            <div className="workbench-notice" role="status">
-              <Loader2 size={16} className="animate-spin" />
-              <span>{phase}. You can keep browsing.</span>
-              <button
-                onClick={() => {
-                  void window.electronAPI.cancelReview(pending);
-                  setPending(null);
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          )}
           {auth && !auth.authenticated && !prefs?.guestMode && (
             <section className="workbench-connect">
               <h2>Connect your review queue</h2>
@@ -757,9 +715,11 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                         ? 'Preparing a short briefing…'
                         : selectedItem.briefing?.status === 'failed'
                           ? selectedItem.briefing.error
-                          : selectedItem.briefing?.status === 'paused'
-                            ? 'Automatic briefings are paused or the daily limit is reached.'
-                            : 'Briefing queued. You can start the detailed review now.'}
+                          : selectedItem.briefing?.status === 'cancelled'
+                            ? 'Briefing cancelled. Retry it from Activity.'
+                            : selectedItem.briefing?.status === 'paused'
+                              ? 'Automatic briefings are paused or the daily limit is reached.'
+                              : 'Briefing queued. You can start the detailed review now.'}
                     </p>
                     {selectedItem.briefing?.status === 'failed' && (
                       <button

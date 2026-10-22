@@ -25,6 +25,8 @@ interface Props {
   review: ReviewGuide;
   onBack: () => void;
   onReReview: (prUrl: string) => void;
+  initialSlideId?: string;
+  exploreInitially?: boolean;
 }
 
 // localStorage key for review progress. Keyed by prUrl + headSha so
@@ -84,9 +86,10 @@ function saveChecks(review: ReviewGuide, checked: Set<string>) {
   }
 }
 
-export function ReviewPage({ review: initialReview, onBack, onReReview }: Props) {
+export function ReviewPage({ review: initialReview, onBack, onReReview, initialSlideId, exploreInitially }: Props) {
   const [review, setReview] = useState(initialReview);
   const [currentSlide, setCurrentSlide] = useState(() => {
+    if (initialSlideId) return initialReview.slides.find((s) => s.id === initialSlideId)?.slideNumber ?? 0;
     const saved = Number(
       localStorage.getItem(`gnosis-position:${subjectForReview(initialReview)}:${initialReview.reviewId}`) ?? 0
     );
@@ -120,7 +123,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
   const [prefs, setPrefs] = useState<Preferences | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [exploreOpen, setExploreOpen] = useState(false);
+  const [exploreOpen, setExploreOpen] = useState(exploreInitially ?? false);
 
   // Per-section "mark reviewed" progress. Persisted to localStorage
   // keyed by prUrl + headSha so each review generation is tracked
@@ -516,7 +519,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
 
   if (review.slides.length === 0) {
     return (
-      <main className="flex min-h-screen items-start justify-center px-10 lg:px-12 pt-[18vh]">
+      <main className="flex min-h-full items-start justify-center px-10 lg:px-12 pt-[18vh]">
         <div className="w-full max-w-2xl flex flex-col gap-6">
           <div className="slide-chapter">
             <span>Empty review</span>
@@ -555,7 +558,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
   const nextTitle = currentSlide >= review.slides.length ? null : (review.slides[currentSlide]?.title ?? null);
 
   return (
-    <div className="workbench-review flex flex-col h-screen overflow-hidden">
+    <div className="workbench-review flex flex-col h-full overflow-hidden">
       {/* Top-of-page reading progress hairline. 1px tall, fills in
           the brand claret as the reader moves through the deck.
           Honors prefers-reduced-motion via .loading-progress-fill. */}

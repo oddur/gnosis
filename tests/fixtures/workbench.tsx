@@ -1,3 +1,4 @@
+import type { ActivityTask, ActivityAction } from '../../lib/activity';
 import { createRoot } from 'react-dom/client';
 import '../../src/globals.css';
 import { groupSubjects, snapshot, memberPrefix, type ReviewMember, type QueueItem } from '../../lib/workbench';
@@ -184,7 +185,97 @@ let prefs: Preferences = {
   claudeContext: false,
   guestMode: false,
 };
+let activities: ActivityTask[] = [
+  {
+    id: 'exploration:ready',
+    kind: 'exploration',
+    title: 'Queue capacity, illustrated',
+    detail: 'Bound work before it reaches the worker',
+    reviewId: 'workbench-review',
+    slideId: 'slide-1',
+    model: 'gpt-6-astra',
+    status: 'completed',
+    updatedAt: date,
+    canCancel: false,
+    canRetry: false,
+  },
+  {
+    id: 'review:running',
+    kind: 'review',
+    title: 'Improve worker recovery',
+    detail: 'Writing sections',
+    model: 'gpt-6-astra',
+    status: 'running',
+    progress: { completed: 4, total: 15 },
+    updatedAt: date,
+    canCancel: true,
+    canRetry: false,
+  },
+  {
+    id: 'exploration:running',
+    kind: 'exploration',
+    title: 'Explain cancellation',
+    detail: 'Generating an interactive explanation',
+    model: 'gpt-6-astra',
+    status: 'running',
+    updatedAt: date,
+    canCancel: true,
+    canRetry: false,
+  },
+  {
+    id: 'briefing:queued',
+    kind: 'briefing',
+    title: 'Inspect scheduler changes',
+    detail: 'Waiting to start',
+    model: 'gpt-6-astra',
+    status: 'queued',
+    updatedAt: date,
+    canCancel: true,
+    canRetry: false,
+  },
+  {
+    id: 'review:failed',
+    kind: 'review',
+    title: 'Review transport shutdown',
+    detail: 'Provider rate limit. Retry when capacity is available.',
+    model: 'gpt-6-astra',
+    status: 'failed',
+    updatedAt: date,
+    canCancel: false,
+    canRetry: true,
+  },
+  {
+    id: 'review:ready',
+    kind: 'review',
+    title: review.prTitle,
+    detail: 'Review ready',
+    reviewId: 'workbench-review',
+    model: 'gpt-6-astra',
+    status: 'completed',
+    updatedAt: date,
+    canCancel: false,
+    canRetry: false,
+  },
+];
 const mocks = {
+  listActivity: () => Promise.resolve(activities),
+  activityAction: (id: string, action: ActivityAction) => {
+    if (action === 'dismiss') activities = activities.filter((t) => t.id !== id);
+    else
+      activities = activities.map((t) =>
+        t.id !== id
+          ? t
+          : {
+              ...t,
+              status: action === 'cancel' ? 'cancelled' : 'running',
+              detail: action === 'cancel' ? 'Cancelled' : 'Preparing review',
+              canCancel: action === 'retry',
+              canRetry: action === 'cancel',
+              progress: undefined,
+            }
+      );
+    return Promise.resolve();
+  },
   getAuthState: () => Promise.resolve({ authenticated: true, login: 'oddur' }),
   loadPreferences: () => Promise.resolve(prefs),
   savePreferences: (next: Preferences) => {
