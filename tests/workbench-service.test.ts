@@ -523,3 +523,112 @@ void test('signed-out queue reads do not create GitHub activity', async () => {
     s.cleanup();
   }
 });
+
+void test('a GitHub rate limit stops discovery and forced refreshes until the reset', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  let reads = 0;
+  const reset = Math.floor(Date.now() / 1000) + 1800;
+  Object.assign(s.deps.client().pulls, {
+    get: () => {
+      reads++;
+      return Promise.reject(
+        Object.assign(new Error('API rate limit exceeded'), {
+          status: 403,
+          response: { headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) } },
+        })
+      );
+    },
+  });
+  try {
+    await s.service.queue().catch(() => {});
+    assert.equal(reads, 1);
+    await s.service.queue(true).catch(() => {});
+    assert.equal(reads, 1, 'Refresh must not bypass the GitHub cooldown');
+    assert.equal(s.deps.activities.list()[0].status, 'paused');
+    assert.equal(s.deps.activities.list()[0].canRetry, false);
+  } finally {
+    s.cleanup();
+  }
+});
+
+void test('automatic refresh reuses unchanged PRs, detects branch changes, and periodically revalidates', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  let now = Date.now();
+  let reads = 0,
+    lists = 0;
+  s.prefs.watchedRepos = ['owner/repo'];
+  Object.assign(s.pr.base.repo, { default_branch: 'main' });
+  Object.assign(s.deps.client().pulls, {
+    get: () => {
+      reads++;
+      return Promise.resolve({ data: s.pr });
+    },
+    list: () => {
+      lists++;
+      return Promise.resolve({ data: [s.pr] });
+    },
+  });
+  const service = createWorkbenchService({ ...s.deps, now: () => now });
+  const refresh = async () => {
+    now += 5 * 60_000 + 1;
+    await service.queue();
+    return service.queue(true);
+  };
+  try {
+    await service.queue();
+    assert.equal(reads, 1);
+    assert.equal(lists, 1, 'Watched-repository results also serve stack discovery');
+    await service.queue(true, false);
+    assert.equal(reads, 1, 'Checking review freshness must not revalidate every unrelated PR');
+    await refresh();
+    assert.equal(reads, 1, 'An unchanged PR should not require another metadata request');
+    s.pr.head.sha = 'pushed';
+    const pushed = await refresh();
+    assert.equal(reads, 2);
+    assert.equal(pushed.items[0].subject.members[0].headSha, 'pushed');
+    s.pr.base.sha = 'new-parent';
+    await refresh();
+    assert.equal(reads, 3, 'A changed parent invalidates cached metadata even without updated_at changing');
+    await refresh();
+    await refresh();
+    await refresh();
+    assert.equal(reads, 4, 'Unchanged metadata is still revalidated after fifteen minutes');
+    await service.queue(true);
+    assert.equal(reads, 5, 'An explicit refresh revalidates PR details');
+  } finally {
+    s.cleanup();
+  }
+});
+
+void test('a paused refresh keeps saved results and resumes after the server deadline', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  let now = Date.now();
+  const service = createWorkbenchService({ ...s.deps, now: () => now });
+  let limited = false;
+  const original = s.deps.client().pulls.get;
+  Object.assign(s.deps.client().pulls, {
+    get: (...args: Parameters<typeof original>) =>
+      limited
+        ? Promise.reject(
+            Object.assign(new Error('Secondary rate limit'), {
+              status: 429,
+              response: { headers: { 'retry-after': '120' } },
+            })
+          )
+        : original(...args),
+  });
+  try {
+    await service.queue();
+    limited = true;
+    assert.equal((await service.queue(true)).items.length, 1);
+    assert.equal(s.deps.activities.list()[0].status, 'paused');
+    limited = false;
+    now += 121_001;
+    await service.queue();
+    const resumed = await service.queue(true);
+    assert.equal(s.deps.activities.list()[0].status, 'completed');
+    assert.deepEqual(resumed.warnings, []);
+  } finally {
+    s.cleanup();
+  }
+});

@@ -4,8 +4,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
-import { Octokit } from '@octokit/rest';
-import { getPrMetadata, parsePrUrl, searchPullRequests, listRepoPullRequests, getChangedFiles } from '../lib/github';
+import type { Octokit } from '@octokit/rest';
+import { getGitHubClient, githubClients, githubRateLimit, type GitHubBackoffError } from '../lib/github-client';
+import { getPrMetadata, parsePrUrl, searchPullRequests, getChangedFiles } from '../lib/github';
 import { getProvider } from '../lib/provider';
 import {
   groupSubjects,
@@ -28,6 +29,7 @@ interface State {
   briefs: Partial<Record<string, Briefing>>;
   day: string;
   used: number;
+  checkedAt?: Record<string, number>;
 }
 export type WorkbenchPreferences = Pick<
   Preferences,
@@ -43,6 +45,7 @@ interface Deps {
   activities?: ActivityService;
   client?: () => Octokit;
   provider?: typeof getProvider;
+  now?: () => number;
 }
 class BriefingCancelled extends Error {
   constructor() {
@@ -55,9 +58,12 @@ class BriefingPaused extends Error {
   }
 }
 export function createWorkbenchService(deps: Deps) {
+  const now = deps.now ?? Date.now;
+  let cooldown: { account: string; error: GitHubBackoffError } | undefined;
   let state: State | undefined;
   let refresh: Promise<WorkbenchQueue> | undefined;
   let lastRefresh = 0;
+  let lastAccount: string | null = null;
   let warnings: string[] = [];
   let running: AbortController | undefined;
   let runningKey: string | undefined;
@@ -65,7 +71,7 @@ export function createWorkbenchService(deps: Deps) {
   const cachePath = () => path.join(deps.directory(), 'workbench.json');
   function load(): State {
     const account = deps.auth().login ?? 'guest';
-    if (!state) {
+    if (!state || state.account !== account) {
       try {
         state = JSON.parse(fs.readFileSync(cachePath(), 'utf8')) as State;
         for (const brief of Object.values(state.briefs))
@@ -149,7 +155,8 @@ export function createWorkbenchService(deps: Deps) {
     };
   }
   async function discover(
-    progress: (detail: string, progress?: ActivityTask['progress']) => void
+    progress: (detail: string, progress?: ActivityTask['progress']) => void,
+    force: boolean
   ): Promise<WorkbenchQueue> {
     const { token, login } = deps.auth();
     if (!token || !login) {
@@ -157,15 +164,32 @@ export function createWorkbenchService(deps: Deps) {
       return { items: [], warnings: [], remaining: 0 };
     }
     const s = load();
-    const octokit = deps.client?.() ?? new Octokit({ auth: token });
+    const octokit = deps.client?.() ?? getGitHubClient(token);
     warnings = [];
+    const checkedAt = { ...s.checkedAt };
+    let reads = 0;
+    const checkAllowance = () => {
+      const paused = githubClients.backoff(token, true);
+      if (paused) throw paused;
+    };
+    const repoLists = new Map<string, ReturnType<typeof octokit.pulls.list>>();
+    const listRepo = (fullName: string) => {
+      let result = repoLists.get(fullName);
+      if (!result) {
+        checkAllowance();
+        const [owner, repo] = fullName.split('/');
+        result = octokit.pulls.list({ owner, repo, state: 'open', per_page: 100, sort: 'updated', direction: 'desc' });
+        repoLists.set(fullName, result);
+      }
+      return result;
+    };
     const prefs = deps.preferences();
     const previousMembers = new Map(s.subjects.flatMap((sub) => sub.members.map((m) => [m.url, m] as const)));
     progress('Finding your pull requests');
     const found = await searchPullRequests(octokit, login, 100);
     if (found.length === 100)
       warnings.push('Your personal queue reached its search limit. Some changes may be missing.');
-    const seeds = new Map<string, Pick<PrSearchResult, 'url' | 'role'>>(
+    const seeds = new Map<string, Pick<PrSearchResult, 'url' | 'role' | 'updatedAt'>>(
       found.filter((m) => prefs.ignoreDependabotPrs === false || !isDependabot(m.author)).map((m) => [m.url, m])
     );
     for (const [index, fullName] of prefs.watchedRepos.entries()) {
@@ -173,10 +197,14 @@ export function createWorkbenchService(deps: Deps) {
       const [owner, repo] = fullName.split('/');
       if (!owner || !repo) continue;
       try {
-        for (const pr of await listRepoPullRequests(octokit, owner, repo, 100))
-          if (!seeds.has(pr.url) && (prefs.ignoreDependabotPrs === false || !isDependabot(pr.author)))
-            seeds.set(pr.url, pr);
-      } catch {
+        for (const pr of (await listRepo(fullName)).data)
+          if (
+            !seeds.has(pr.html_url) &&
+            (prefs.ignoreDependabotPrs === false || !isDependabot(pr.user?.login ?? 'unknown'))
+          )
+            seeds.set(pr.html_url, { url: pr.html_url, role: 'watched', updatedAt: pr.updated_at });
+      } catch (error) {
+        if (githubRateLimit(error, now())) throw error;
         for (const m of previousMembers.values())
           if (
             m.repo === fullName &&
@@ -189,11 +217,49 @@ export function createWorkbenchService(deps: Deps) {
       }
     }
     const members = new Map<string, ReviewMember>();
-    const add = async (url: string, role?: ReviewMember['role']) => {
-      if (members.has(url)) return;
+    const add = async (
+      url: string,
+      role?: ReviewMember['role'],
+      listed?: { updated_at: string; head: { sha: string }; base: { sha: string; ref: string } }
+    ) => {
+      const current = members.get(url);
+      if (
+        current &&
+        (!listed ||
+          (current.updatedAt === listed.updated_at &&
+            current.headSha === listed.head.sha &&
+            current.baseSha === listed.base.sha &&
+            current.baseBranch === listed.base.ref))
+      )
+        return;
+      const cached = previousMembers.get(url);
+      const updatedAt = listed?.updated_at ?? seeds.get(url)?.updatedAt;
+      if (
+        !force &&
+        cached &&
+        updatedAt === cached.updatedAt &&
+        now() - (checkedAt[url] ?? 0) < 15 * 60_000 &&
+        (!listed ||
+          (cached.headSha === listed.head.sha &&
+            cached.baseSha === listed.base.sha &&
+            cached.baseBranch === listed.base.ref))
+      ) {
+        members.set(url, { ...cached, role: role ?? current?.role ?? 'watched' });
+        return;
+      }
+      if (reads >= 150) {
+        if (cached) members.set(url, { ...cached, role: role ?? 'watched' });
+        const warning = 'Only 150 PR details can be updated at once. Choose fewer repositories in Settings.';
+        if (!warnings.includes(warning)) warnings.push(warning);
+        return;
+      }
+      checkAllowance();
+      reads++;
       try {
-        members.set(url, await fetchMember(octokit, url, role));
-      } catch {
+        members.set(url, await fetchMember(octokit, url, role ?? current?.role));
+        checkedAt[url] = now();
+      } catch (error) {
+        if (githubRateLimit(error, now())) throw error;
         const cached = previousMembers.get(url);
         if (cached) members.set(url, { ...cached, role: role ?? 'watched' });
         warnings.push(`Could not read ${url}. Some PRs may be missing from their stacks.`);
@@ -226,14 +292,7 @@ export function createWorkbenchService(deps: Deps) {
       progress(`Checking PR stacks in ${fullName}`, { completed: index, total: repos.length, unit: 'repositories' });
       const [owner, repo] = fullName.split('/');
       try {
-        const { data } = await octokit.pulls.list({
-          owner,
-          repo,
-          state: 'open',
-          per_page: 100,
-          sort: 'updated',
-          direction: 'desc',
-        });
+        const { data } = await listRepo(fullName);
         if (data.length === 100)
           warnings.push(`${fullName} has at least 100 open PRs. Some PRs may be missing from their stacks.`);
         // Only add connected siblings, not every PR in the repository.
@@ -256,12 +315,18 @@ export function createWorkbenchService(deps: Deps) {
               changed = true;
             }
         }
-        for (const url of connected) await add(url);
+        for (const url of connected)
+          await add(
+            url,
+            undefined,
+            data.find((pr) => pr.html_url === url)
+          );
         // A base can still point at a closed/merged parent.
         const refs = [...new Set([...members.values()].filter((m) => m.repo === fullName).map((m) => m.baseBranch))];
         for (const ref of refs) {
           if (ref === data[0]?.base.repo.default_branch) continue;
           if ([...members.values()].some((m) => m.headRepo === fullName && m.headBranch === ref)) continue;
+          checkAllowance();
           const { data: parents } = await octokit.pulls.list({
             owner,
             repo,
@@ -273,7 +338,8 @@ export function createWorkbenchService(deps: Deps) {
           else if (parents.length > 1)
             warnings.push(`More than one earlier PR matches ${fullName}:${ref}. Check which PRs belong together.`);
         }
-      } catch {
+      } catch (error) {
+        if (githubRateLimit(error, now())) throw error;
         warnings.push(`Could not check which PRs depend on others in ${fullName}. Showing saved relationships.`);
       }
     }
@@ -288,25 +354,49 @@ export function createWorkbenchService(deps: Deps) {
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
       .slice(0, 200);
     s.briefs = Object.fromEntries(recent.map((b) => [b.key, b]));
-    lastRefresh = Date.now();
+    lastRefresh = now();
+    s.checkedAt = Object.fromEntries(
+      [...members.keys()].filter((url) => checkedAt[url]).map((url) => [url, checkedAt[url]])
+    );
     save();
     void pump();
     return view();
   }
-  async function queue(force = false): Promise<WorkbenchQueue> {
+  async function queue(force = false, revalidate = force): Promise<WorkbenchQueue> {
     if (refresh) return !force && load().subjects.length ? view() : refresh;
-    if (!force && Date.now() - lastRefresh < 60000) {
+    const { token, login } = deps.auth();
+    if (!token || !login) return { items: [], warnings: [], remaining: 0 };
+    if (lastAccount !== login) {
+      lastAccount = login;
+      lastRefresh = 0;
+      cooldown = undefined;
+      warnings = [];
+    }
+    const id = `github:${login}`;
+    const paused =
+      cooldown?.account === login && cooldown.error.retryAt > now()
+        ? cooldown.error
+        : githubClients.backoff(token, true);
+    if (paused) {
+      const detail = `${paused.message} Updates will resume automatically while the queue is open.`;
+      warnings = [detail];
+      if (!deps.activities?.list().some((task) => task.id === id && task.status === 'paused')) {
+        deps.activities?.start({ id, kind: 'github', title: 'Updating GitHub information', detail }, {});
+        deps.activities?.pause(id, detail);
+      }
+      return view();
+    }
+    const resuming = cooldown?.account === login;
+    cooldown = undefined;
+    if (!force && !resuming && now() - lastRefresh < 5 * 60_000) {
       void pump();
       return view();
     }
-    const { token, login } = deps.auth();
-    if (!token || !login) return { items: [], warnings: [], remaining: 0 };
-    const id = `github:${login}`;
     deps.activities?.start(
       { id, kind: 'github', title: 'Updating GitHub information', detail: 'Finding your pull requests' },
       { retry: () => queue(true) }
     );
-    refresh = discover((detail, progress) => deps.activities?.update(id, detail, progress))
+    refresh = discover((detail, progress) => deps.activities?.update(id, detail, progress), revalidate)
       .then((result) => {
         if (deps.auth().login !== login) {
           deps.activities?.finish(id, 'cancelled', 'GitHub account changed.');
@@ -323,13 +413,21 @@ export function createWorkbenchService(deps: Deps) {
         return result;
       })
       .catch((error: unknown) => {
+        const limited = githubRateLimit(error, now());
+        if (limited) {
+          cooldown = { account: login, error: limited };
+          const detail = `${limited.message} Updates will resume automatically while the queue is open.`;
+          warnings = [detail];
+          deps.activities?.pause(id, detail);
+          return view();
+        }
         const message = error instanceof Error ? error.message : String(error);
         const detail = load().subjects.length
           ? `Could not update GitHub information. Showing your saved queue. ${message}`
           : `Could not update GitHub information. Retry to load your queue. ${message}`;
         deps.activities?.finish(id, 'failed', detail);
         warnings = [detail];
-        lastRefresh = Date.now();
+        lastRefresh = now();
         throw error;
       })
       .finally(() => {
@@ -342,7 +440,15 @@ export function createWorkbenchService(deps: Deps) {
     return refresh;
   }
   async function pump() {
-    if (pumping || deps.busy() || deps.preferences().autoBriefings === false || !deps.auth().token) return;
+    if (
+      pumping ||
+      deps.busy() ||
+      deps.preferences().autoBriefings === false ||
+      !deps.auth().token ||
+      (cooldown && cooldown.error.retryAt > now()) ||
+      githubClients.backoff(deps.auth().token, true)
+    )
+      return;
     pumping = true;
     try {
       const s = load();
@@ -364,7 +470,7 @@ export function createWorkbenchService(deps: Deps) {
       save();
       const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-briefing-'));
       try {
-        const octokit = deps.client?.() ?? new Octokit({ auth: deps.auth().token ?? undefined });
+        const octokit = deps.client?.() ?? getGitHubClient(deps.auth().token);
         const context = [];
         for (const m of subject.members) {
           controller.signal.throwIfAborted();
@@ -527,7 +633,7 @@ export function createWorkbenchService(deps: Deps) {
       ];
       if (override.action === 'link') {
         if (override.parent === override.child) throw new Error('A PR cannot depend on itself.');
-        const octokit = deps.client?.() ?? new Octokit({ auth: deps.auth().token ?? undefined });
+        const octokit = deps.client?.() ?? getGitHubClient(deps.auth().token);
         const members = new Map(s.subjects.flatMap((sub) => sub.members.map((m) => [m.url, m] as const)));
         for (const url of [override.parent, override.child])
           if (!members.has(url)) members.set(url, await fetchMember(octokit, url));
@@ -557,7 +663,7 @@ export function createWorkbenchService(deps: Deps) {
     async fresh(subject: ReviewSubject) {
       const token = deps.auth().token;
       if (!token) throw new Error('Connect GitHub to refresh this review.');
-      const octokit = deps.client?.() ?? new Octokit({ auth: token });
+      const octokit = deps.client?.() ?? getGitHubClient(token);
       const members = await Promise.all(subject.members.map((m) => fetchMember(octokit, m.url, m.role)));
       const discovered =
         subject.scope !== 'single'

@@ -452,6 +452,18 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.activity-summary')?.textContent.includes('GitHub updated')");
     assert.equal(await js("document.querySelectorAll('.activity-actions button').length"), 0);
     assert.ok(await js("document.querySelector('.activity-task').textContent.includes('GitHub information updated')"));
+    await js(
+      "void Object.assign(window.githubTask, {status: 'paused', detail: 'GitHub’s API limit was reached. GitHub requests can resume after 11:17 PM. Updates will resume automatically while the queue is open.', canRetry: false, canCancel: false})"
+    );
+    await wait("document.querySelector('.activity-summary')?.textContent.includes('1 paused')");
+    assert.equal(await js("document.querySelectorAll('.activity-actions button').length"), 0);
+    assert.ok(
+      await js("document.querySelector('.activity-task-status').textContent.includes('resume after 11:17 PM')")
+    );
+    assert.ok(await js("!!document.querySelector('.workbench-review')"));
+    await capture('github-backoff-dark');
+    await js("document.documentElement.classList.remove('dark')");
+    await capture('github-backoff-light');
     console.log('Workbench browser checks passed. Screenshots: ' + shots);
   } catch (error) {
     console.error(error);

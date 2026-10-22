@@ -9,7 +9,7 @@ import fs from 'fs';
 import os from 'os';
 import http from 'http';
 import crypto from 'crypto';
-import { Octokit } from '@octokit/rest';
+import { getGitHubClient, githubClients, fetchGitHubLogin, githubRateLimit } from '../lib/github-client';
 import {
   parsePrUrl,
   getPrMetadata,
@@ -149,6 +149,21 @@ function getResolvedToken(): string | null {
   return token;
 }
 
+// Transient identity failures must not turn the renderer's polling into repeated /user requests.
+let loginFailure: { token: string; error: unknown; retryAt: number } | undefined;
+async function resolveGitHubLogin(token: string): Promise<string> {
+  if (loginFailure?.token === token && loginFailure.retryAt > Date.now()) throw loginFailure.error;
+  try {
+    const login = await fetchGitHubLogin(token);
+    if (getResolvedToken() !== token) throw new Error('GitHub account changed. Please try again.');
+    loginFailure = undefined;
+    return login;
+  } catch (error) {
+    loginFailure = { token, error, retryAt: githubRateLimit(error)?.retryAt ?? Date.now() + 60_000 };
+    throw error;
+  }
+}
+
 // ── OAuth flow ──────────────────────────────────────────────────
 
 async function exchangeCodeForToken(code: string, codeVerifier: string, redirectUri: string): Promise<string> {
@@ -171,27 +186,6 @@ async function exchangeCodeForToken(code: string, codeVerifier: string, redirect
     throw new Error(data.error_description ?? data.error ?? 'OAuth token exchange failed');
   }
   return data.access_token;
-}
-
-async function fetchGitHubLogin(token: string): Promise<string> {
-  const res = await fetch('https://api.github.com/user', {
-    headers: {
-      Authorization: `token ${token}`,
-      'User-Agent': 'Gnosis-App',
-    },
-  });
-  const data = (await res.json()) as { login?: string };
-  return data.login ?? 'unknown';
-}
-
-async function validateAndFetchLogin(token: string): Promise<string> {
-  const res = await fetch('https://api.github.com/user', {
-    headers: { Authorization: `token ${token}`, 'User-Agent': 'Gnosis-App' },
-  });
-  if (!res.ok) throw new Error(`Invalid token (GitHub returned ${res.status})`);
-  const data = (await res.json()) as { login?: string };
-  if (!data.login) throw new Error('Token validated but could not retrieve GitHub username');
-  return data.login;
 }
 
 function generatePkce(): { verifier: string; challenge: string } {
@@ -419,24 +413,11 @@ function startUpdateChecks() {
 // ── GitHub rate-limit handling ──────────────────────────────────
 
 function isRateLimitError(err: unknown): boolean {
-  if (err instanceof Error) {
-    const msg = err.message.toLowerCase();
-    return msg.includes('rate limit') || msg.includes('api rate limit');
-  }
-  return false;
+  return !!githubRateLimit(err);
 }
 
-/** Extract the reset time from a GitHub rate-limit error, or return a default backoff. */
 function getRateLimitResetMs(err: unknown): number {
-  // Octokit errors sometimes carry response headers
-  const response = (err as Record<string, unknown>)?.response as Record<string, unknown> | undefined;
-  const headers = response?.headers as Record<string, string> | undefined;
-  const reset = headers?.['x-ratelimit-reset'];
-  if (reset) {
-    const resetMs = parseInt(reset, 10) * 1000 - Date.now();
-    if (resetMs > 0) return Math.min(resetMs, 60 * 60 * 1000); // cap at 1 hour
-  }
-  return 5 * 60 * 1000; // default: 5 min backoff
+  return Math.max(0, (githubRateLimit(err)?.retryAt ?? Date.now() + 60_000) - Date.now());
 }
 
 /** Rethrow with a friendly message if the error is a rate limit. */
@@ -554,7 +535,7 @@ async function runProactiveCheck() {
   if (!prefs.proactiveMode || prefs.autoBriefings !== undefined) return;
 
   try {
-    const octokit = new Octokit({ auth: cachedToken });
+    const octokit = getGitHubClient(cachedToken);
 
     // ── Phase 1: Discover PRs from all three sources ──
 
@@ -735,6 +716,7 @@ function setupAutoUpdater() {
 
 void app.whenReady().then(() => {
   setupLogging();
+  githubClients.setStorage(path.join(app.getPath('userData'), 'github-budget.json'));
 
   // Expose packaged state to preload via env var (before creating windows)
   process.env.APP_IS_PACKAGED = app.isPackaged ? '1' : '0';
@@ -1145,7 +1127,7 @@ ipcMain.handle('start-oauth', async () => {
 ipcMain.handle('save-pat', async (_event, token: string) => {
   const trimmed = token.trim();
   if (!trimmed) throw new Error('Token must not be empty');
-  const login = await validateAndFetchLogin(trimmed);
+  const login = await fetchGitHubLogin(trimmed);
   persistToken(trimmed);
   cachedToken = trimmed;
   cachedLogin = login;
@@ -1156,12 +1138,15 @@ ipcMain.handle('get-auth-state', async () => {
   const token = getResolvedToken();
   if (!token) return { authenticated: false, login: null };
 
+  cachedLogin ??= githubClients.savedLogin(token) ?? null;
   if (!cachedLogin) {
     try {
-      cachedLogin = await fetchGitHubLogin(token);
-    } catch {
-      // token may be invalid
-      return { authenticated: false, login: null };
+      cachedLogin = await resolveGitHubLogin(token);
+    } catch (error) {
+      if ((error as { status?: number }).status === 401) return { authenticated: false, login: null };
+      const login = githubClients.savedLogin(token);
+      if (login) cachedLogin = login;
+      else return { authenticated: true, login: null };
     }
   }
 
@@ -1169,6 +1154,10 @@ ipcMain.handle('get-auth-state', async () => {
 });
 
 ipcMain.handle('sign-out', () => {
+  if (cachedToken) githubClients.forget(cachedToken);
+  loginFailure = undefined;
+  for (const task of activities.list())
+    if (task.kind === 'github' && (task.status === 'paused' || task.status === 'running')) activities.finish(task.id, 'cancelled', 'Signed out of GitHub.');
   cachedToken = null;
   cachedLogin = null;
   deleteStoredToken();
@@ -1178,7 +1167,7 @@ ipcMain.handle('search-pull-requests', async () => {
   const token = getResolvedToken();
   if (!token || !cachedLogin) throw new Error('Not authenticated');
   try {
-    const octokit = new Octokit({ auth: token });
+    const octokit = getGitHubClient(token);
     return await searchPullRequests(octokit, cachedLogin);
   } catch (err) {
     friendlyRateLimitError(err);
@@ -1189,7 +1178,7 @@ ipcMain.handle('search-repos', async (_event, query: string) => {
   const token = getResolvedToken();
   if (!token) throw new Error('Not authenticated');
   try {
-    const octokit = new Octokit({ auth: token });
+    const octokit = getGitHubClient(token);
     return await searchRepos(octokit, query);
   } catch (err) {
     if (isRateLimitError(err)) return []; // silently return empty for autocomplete
@@ -1364,7 +1353,7 @@ ipcMain.handle(
 
     const token = getResolvedToken();
     if (!token) return { status: 'unknown', reason: 'Not signed in' };
-    const octokit = new Octokit({ auth: token });
+    const octokit = getGitHubClient(token);
     const { owner, repo, pullNumber } = parsePrUrl(prUrl);
 
     try {
@@ -1418,7 +1407,7 @@ async function fetchPrStatus(prUrl: string): Promise<PrStatus | null> {
   if (isLocalUrl(prUrl)) return null;
   const token = getResolvedToken();
   if (!token) return null;
-  const octokit = new Octokit({ auth: token });
+  const octokit = getGitHubClient(token);
   const { owner, repo, pullNumber } = parsePrUrl(prUrl);
 
   const [prData, reviewSummary] = await Promise.all([
@@ -1469,7 +1458,7 @@ ipcMain.handle(
     }
     try {
       const token = getResolvedToken();
-      const octokit = new Octokit({ auth: token ?? undefined });
+      const octokit = getGitHubClient(token);
       const { owner, repo, pullNumber } = parsePrUrl(prUrl);
       const prData = await getPrMetadata(octokit, owner, repo, pullNumber);
       const prState = prData.merged ? 'merged' : prData.state === 'open' ? 'open' : 'closed';
@@ -2220,12 +2209,30 @@ ipcMain.handle('activity-action', async (_event, id:string, action:ActivityActio
   }
   await activities.act(id,action);
 });
-ipcMain.handle('workbench-queue' , (_event, force: boolean) => workbench.queue(force));
+ipcMain.handle('workbench-queue', async (_event, force: boolean) => {
+  const token = getResolvedToken();
+  if (token && !cachedLogin) {
+    try {
+      cachedLogin = await resolveGitHubLogin(token);
+    } catch (error) {
+      const limited = githubRateLimit(error);
+      if (limited) {
+        const id = 'github:sign-in';
+        activities.start({ id, kind: 'github', title: 'Checking your GitHub account', detail: limited.message }, {});
+        activities.pause(id, limited.message + ' The account check will resume automatically while the queue is open.');
+      }
+      throw error;
+    }
+    activities.finish('github:sign-in', 'completed', 'GitHub account verified');
+  }
+  return workbench.queue(force);
+});
 ipcMain.handle('workbench-group', (_event, correction: GroupingOverride) => workbench.correct(correction));
 ipcMain.handle('workbench-briefing', (_event, id: string) => workbench.retry(id));
 ipcMain.handle('workbench-freshness', async (_event, old: ReviewSnapshot) => {
   try {
-    await workbench.queue(true);
+    // Refresh stack relationships, then revalidate only the PRs in this review.
+    await workbench.queue(true, false);
     const current = await workbench.fresh(old.subject);
     const changed = fingerprint(current) !== old.fingerprint;
     return changed ? { status: 'stale', aheadBy: 0, commits: [], reason: 'A PR, parent revision, or stack member changed. Refresh the review to inspect the affected work.' } : {status: 'current'};
@@ -2359,7 +2366,7 @@ ipcMain.handle('submit-review', async (_event, req: SubmitReviewRequest) => {
     throw new Error('Local reviews cannot be submitted back to GitHub — there is no remote PR to comment on.');
   }
   const token = getResolvedToken();
-  const octokit = new Octokit({ auth: token ?? undefined });
+  const octokit = getGitHubClient(token);
   const { owner, repo, pullNumber } = parsePrUrl(req.prUrl);
 
   const current = await getPrMetadata(octokit, owner, repo, pullNumber);

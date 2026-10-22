@@ -1,4 +1,5 @@
-import { Octokit } from '@octokit/rest';
+import type { Octokit } from '@octokit/rest';
+import { getGitHubClient } from './github-client';
 import { getProvider } from './provider';
 import type { DiffSource } from './diffSource';
 import type {
@@ -647,7 +648,7 @@ export class GitHubDiffSource implements DiffSource {
 
   constructor(url: string, token: string | null) {
     this.key = url;
-    this.octokit = new Octokit({ auth: token ?? undefined });
+    this.octokit = getGitHubClient(token);
     const parsed = parsePrUrl(url);
     this.owner = parsed.owner;
     this.repo = parsed.repo;
