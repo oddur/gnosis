@@ -16,6 +16,13 @@ const cases = [
   ['modify', '@@ -1 +1 @@', '-export const ready = false;\n+export const ready = true;'],
   ['metadata-added', '@@ -1,1 +1,3 @@', '+export const ready = true;\n+export const limit = 10;\n '],
   ['metadata-deleted', '@@ -1,3 +1,1 @@', '-export const ready = true;\n-export const limit = 10;\n '],
+  [
+    'context',
+    '@@ -40,61 +60,61 @@',
+    Array.from({ length: 61 }, (_, i) =>
+      i === 10 || i === 40 ? '-old value\n+new value' : ` const context${i} = true;`
+    ).join('\n'),
+  ],
   ['added-plain', '@@ -0,0 +1,2 @@', 'export const ready = true;\nexport const limit = 10;'],
 ];
 const hunks: DiffHunk[] = await Promise.all(
@@ -28,11 +35,15 @@ const hunks: DiffHunk[] = await Promise.all(
   }))
 );
 function Fixture() {
+  const [layout, setLayout] = useState<'split' | 'unified'>('split');
   const [selectedCode, setSelectedCode] = useState('');
   const [appearance, setAppearance] = useState(DEFAULT_DIFF_APPEARANCE);
   const [comments, setComments] = useState<PendingReviewComment[]>([]);
   return (
     <main style={{ width: 650, maxWidth: '100%', padding: 16 }}>
+      <button onClick={() => setLayout((current) => (current === 'split' ? 'unified' : 'split'))}>
+        Toggle fixture layout
+      </button>
       <DiffAppearanceMenu value={appearance} onChange={setAppearance} />
       {hunks.map((hunk, index) => (
         <section key={hunk.filePath} data-case={cases[index][0]} style={{ marginBottom: 24 }}>
@@ -71,7 +82,7 @@ function Fixture() {
             />
           ) : (
             <ReviewDiff
-              diffLayout="split"
+              diffLayout={layout}
               slideIndex={1}
               appearance={appearance}
               filePath={hunk.filePath}

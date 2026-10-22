@@ -741,6 +741,9 @@ export function SlideView({
             )}
             <ReviewDiff
               filePath={filePath}
+              pinnedLines={slide.reviewChecks
+                ?.filter((check) => check.filePath === filePath && check.startLine != null)
+                .map((check) => check.startLine as number)}
               fileStatus={fm?.status}
               hunks={hunks}
               diffLayout={diffLayout}

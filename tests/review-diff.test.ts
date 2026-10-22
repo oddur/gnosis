@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { prepareReviewHunk } from '../lib/review-diff';
+import { prepareReviewHunk, reviewContextRanges, sliceReviewHunk } from '../lib/review-diff';
 import type { DiffHunk } from '../lib/types';
 const hunk = (hunkHeader: string, content: string, filePath = 'src/file.ts'): DiffHunk => ({
   hunkHeader,
@@ -72,4 +72,40 @@ void test('disjoint selected hunks preserve source numbers and stack-qualified p
 void test('unparseable and contradictory cached content uses the legacy fallback', () => {
   assert.equal(prepareReviewHunk(hunk('invalid', '+code')), null);
   assert.equal(prepareReviewHunk(hunk('@@ -1 +1 @@', '-old\n+new'), 'added'), null);
+});
+
+void test('folds unchanged lines around changes and reveals only saved context', () => {
+  const original = hunk(
+    '@@ -50,31 +70,31 @@',
+    Array.from({ length: 31 }, (_, i) => (i === 10 ? '-old\n+new' : ` context ${i}`)).join('\n')
+  );
+  const data = prepareReviewHunk(original);
+  assert.ok(data);
+  const ranges = reviewContextRanges(data.lines);
+  assert.deepEqual(ranges, [
+    { start: 0, end: 7, hidden: true },
+    { start: 7, end: 15, hidden: false },
+    { start: 15, end: 32, hidden: true },
+  ]);
+  const excerpt = sliceReviewHunk(original, data.lines, 7, 15);
+  assert.equal(excerpt.hunkHeader, '@@ -57,7 +77,7 @@');
+  const parsed = prepareReviewHunk(excerpt);
+  assert.ok(parsed);
+  assert.equal(parsed.lines[3].baseLineNumber, 60);
+  assert.equal(parsed.lines[4].headLineNumber, 80);
+  assert.deepEqual(reviewContextRanges(data.lines, new Set(), new Set(data.lines.map((_, i) => i))), [
+    { start: 0, end: 32, hidden: false },
+  ]);
+});
+
+void test('pins commented and referenced context and leaves context-only snippets intact', () => {
+  const data = prepareReviewHunk(
+    hunk('@@ -1,30 +1,30 @@', Array.from({ length: 30 }, (_, i) => (i === 15 ? '+' : ' ') + `line ${i}`).join('\n'))
+  );
+  assert.ok(data);
+  const ranges = reviewContextRanges(data.lines, new Set([1, 28]));
+  for (const line of [1, 15, 28]) assert.ok(ranges.some((r) => !r.hidden && r.start <= line && r.end > line));
+  assert.deepEqual(reviewContextRanges(data.lines.filter((l) => l.type === 'context')), [
+    { start: 0, end: 29, hidden: false },
+  ]);
 });

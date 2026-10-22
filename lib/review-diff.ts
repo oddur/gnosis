@@ -58,3 +58,59 @@ export function prepareReviewHunk(hunk: DiffHunk, status?: FileMetadata['status'
   const patch = `diff --git a/source b/source\n${added ? 'new file mode 100644\n' : deleted ? 'deleted file mode 100644\n' : ''}--- ${added ? '/dev/null' : 'a/source'}\n+++ ${deleted ? '/dev/null' : 'b/source'}\n${header}\n${lines.map((l) => (l.type === 'add' ? '+' : l.type === 'remove' ? '-' : ' ') + l.text).join('\n')}\n`;
   return { patch, lines, singleSide: added || deleted };
 }
+
+export interface ContextRange {
+  start: number;
+  end: number;
+  hidden: boolean;
+}
+
+/** Fold only unchanged source that is actually saved, never changes or unknown
+ * gaps between hunks. Comments/checks pin their source lines into view. */
+export function reviewContextRanges(
+  lines: ReturnType<typeof parseDiffLines>,
+  pinned: ReadonlySet<number> = new Set(),
+  revealed: ReadonlySet<number> = new Set(),
+  context = 3
+): ContextRange[] {
+  if (!lines.some((line) => line.type !== 'context')) return [{ start: 0, end: lines.length, hidden: false }];
+  const visible = new Set(revealed);
+  lines.forEach((line, index) => {
+    if (line.type !== 'context' || pinned.has(index)) {
+      for (let i = Math.max(0, index - context); i <= Math.min(lines.length - 1, index + context); i++) visible.add(i);
+    }
+  });
+  const ranges: ContextRange[] = [];
+  lines.forEach((_, index) => {
+    const hidden = !visible.has(index);
+    const last = ranges.length > 0 ? ranges[ranges.length - 1] : undefined;
+    if (last && last.hidden === hidden) last.end = index + 1;
+    else ranges.push({ start: index, end: index + 1, hidden });
+  });
+  return ranges;
+}
+
+/** Slice a saved hunk without renumbering its source. Normalization guarantees
+ * all hidden rows are context, so each emitted section starts at a real line. */
+export function sliceReviewHunk(
+  hunk: DiffHunk,
+  lines: ReturnType<typeof parseDiffLines>,
+  start: number,
+  end: number
+): DiffHunk {
+  const selected = lines.slice(start, end);
+  const header = hunk.hunkHeader.match(/@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
+  if (!header || !selected.length) return hunk;
+  const oldCount = selected.filter((line) => line.type !== 'add').length;
+  const newCount = selected.filter((line) => line.type !== 'remove').length;
+  const before = lines.slice(0, start);
+  const oldStart = Number(header[1]) + before.filter((line) => line.type !== 'add').length;
+  const newStart = Number(header[3]) + before.filter((line) => line.type !== 'remove').length;
+  return {
+    ...hunk,
+    hunkHeader: `@@ -${oldStart},${oldCount} +${newStart},${newCount} @@`,
+    content: selected
+      .map((line) => (line.type === 'add' ? '+' : line.type === 'remove' ? '-' : ' ') + line.text)
+      .join('\n'),
+  };
+}

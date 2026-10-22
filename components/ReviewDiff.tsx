@@ -1,11 +1,18 @@
-import { useMemo, useState, type CSSProperties } from 'react';
+import { useMemo, useState, useRef, type CSSProperties } from 'react';
 import { FileDiff } from '@pierre/diffs/react';
 import { bundledLanguages } from 'shiki/langs';
 import { bundledThemes } from 'shiki/themes';
 import { processFile, registerCustomTheme } from '@pierre/diffs';
 import type { DiffLineAnnotation, FileDiffOptions } from '@pierre/diffs';
+import { ChevronsUpDown } from 'lucide-react';
 import { CODE_THEMES } from '@/lib/constants';
-import { DEFAULT_DIFF_APPEARANCE, prepareReviewHunk, type DiffAppearance } from '@/lib/review-diff';
+import {
+  DEFAULT_DIFF_APPEARANCE,
+  prepareReviewHunk,
+  reviewContextRanges,
+  sliceReviewHunk,
+  type DiffAppearance,
+} from '@/lib/review-diff';
 import type { DiffHunk, DiffSide, FileMetadata, PendingReviewComment } from '@/lib/types';
 import { DiffHunkGroup } from './DiffHunk';
 import { InteractiveDiffHunkGroup } from './InteractiveDiffHunk';
@@ -32,6 +39,7 @@ type Location = { line: number; side: DiffSide };
 interface Props {
   filePath: string;
   hunks: DiffHunk[];
+  pinnedLines?: number[];
   fileStatus?: FileMetadata['status'];
   diffLayout: 'split' | 'unified';
   appearance?: DiffAppearance;
@@ -48,7 +56,11 @@ const shadowCSS = `
 ::selection { background: #b5822655; }
 `;
 
-function ReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: DiffHunk }) {
+function ReviewHunk({
+  hunk,
+  sourceHeader,
+  ...props
+}: Omit<Props, 'hunks'> & { hunk: DiffHunk; sourceHeader?: string }) {
   const {
     filePath,
     fileStatus,
@@ -89,7 +101,7 @@ function ReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: DiffHunk 
       themeType: 'dark',
       diffStyle: prepared?.singleSide ? 'unified' : diffLayout,
       disableFileHeader: true,
-      hunkSeparators: 'metadata',
+      hunkSeparators: sourceHeader ? 'simple' : 'metadata',
       diffIndicators: appearance.indicators,
       disableBackground: !appearance.backgrounds,
       disableLineNumbers: !appearance.lineNumbers,
@@ -118,7 +130,7 @@ function ReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: DiffHunk 
         }
       },
     }),
-    [theme, prepared, diffLayout, appearance, commentCallbacks, filePath, lineMaps]
+    [theme, prepared, diffLayout, appearance, commentCallbacks, filePath, lineMaps, sourceHeader]
   );
   const annotations = useMemo<DiffLineAnnotation<Location>[]>(() => {
     const locations = [...pendingComments.filter((c) => c.filePath === filePath), ...(active ? [active] : [])];
@@ -177,7 +189,7 @@ function ReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: DiffHunk 
                     ...location,
                     body,
                     slideIndex,
-                    hunkHeader: hunk.hunkHeader,
+                    hunkHeader: sourceHeader ?? hunk.hunkHeader,
                     codeSnippet: info?.text ?? '',
                   });
                   setActive(null);
@@ -201,11 +213,125 @@ function ReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: DiffHunk 
   );
 }
 
+function FoldableReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: DiffHunk }) {
+  const prepared = useMemo(() => prepareReviewHunk(hunk, props.fileStatus), [hunk, props.fileStatus]);
+  const [revealed, setRevealed] = useState<ReadonlySet<number>>(() => new Set());
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [draftNotice, setDraftNotice] = useState(false);
+  function changeContext(change: () => void) {
+    const draft = rootRef.current?.querySelector('textarea');
+    if (draft) {
+      setDraftNotice(true);
+      draft.focus();
+      return;
+    }
+    setDraftNotice(false);
+    change();
+  }
+  const pinned = useMemo(() => {
+    const result = new Set<number>();
+    prepared?.lines.forEach((line, index) => {
+      if (
+        props.pinnedLines?.some((n) => line.headLineNumber === n || line.baseLineNumber === n) ||
+        props.pendingComments?.some(
+          (c) =>
+            c.filePath === props.filePath && (c.side === 'LEFT' ? line.baseLineNumber : line.headLineNumber) === c.line
+        )
+      )
+        result.add(index);
+    });
+    return result;
+  }, [prepared, props.pinnedLines, props.pendingComments, props.filePath]);
+  const ranges = useMemo(
+    () => (prepared ? reviewContextRanges(prepared.lines, pinned, revealed) : []),
+    [prepared, pinned, revealed]
+  );
+  // New/deleted files contain changes on every line; never fold their content.
+  if (!prepared || prepared.singleSide || (!ranges.some((range) => range.hidden) && !revealed.size)) {
+    return <ReviewHunk hunk={hunk} {...props} />;
+  }
+  return (
+    <div ref={rootRef} className="review-context-hunk">
+      {draftNotice && (
+        <p className="px-3 py-2 text-xs text-muted-foreground" role="status">
+          Finish or cancel your comment before changing the visible context.
+        </p>
+      )}
+      {revealed.size > 0 && (
+        <div className="flex justify-end border-b bg-muted/30 px-3 py-1">
+          <button
+            className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"
+            onClick={() => changeContext(() => setRevealed(new Set()))}
+          >
+            Hide extra context
+          </button>
+        </div>
+      )}
+      {ranges.map((range) => {
+        if (!range.hidden)
+          return (
+            <ReviewHunk
+              key={`code-${range.start}`}
+              {...props}
+              hunk={sliceReviewHunk(hunk, prepared.lines, range.start, range.end)}
+              sourceHeader={hunk.hunkHeader}
+            />
+          );
+        const count = range.end - range.start;
+        const reveal = (all: boolean) =>
+          setRevealed((current) => {
+            const next = new Set(current);
+            const amount = all ? count : Math.min(count, 10);
+            // Reveal nearest the change: upwards above it, downwards below it,
+            // and from both ends when the hidden region lies between changes.
+            for (let i = 0; i < amount; i++) {
+              const index =
+                range.start === 0
+                  ? range.end - 1 - i
+                  : range.end === prepared.lines.length
+                    ? range.start + i
+                    : i % 2 === 0
+                      ? range.start + Math.floor(i / 2)
+                      : range.end - 1 - Math.floor(i / 2);
+              next.add(index);
+            }
+            return next;
+          });
+        return (
+          <div
+            key={`gap-${range.start}`}
+            className="diff-context-gap flex flex-wrap items-center gap-x-3 gap-y-1 border-y bg-muted/40 px-3 py-1.5 text-xs"
+          >
+            <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <span className="text-muted-foreground">
+              {count} unchanged {count === 1 ? 'line' : 'lines'} hidden
+            </span>
+            <button
+              className="text-foreground underline underline-offset-2 hover:text-[var(--ring)]"
+              onClick={() => changeContext(() => reveal(false))}
+            >
+              Show {Math.min(count, 10)} more {Math.min(count, 10) === 1 ? 'line' : 'lines'}
+            </button>
+            {count > 10 && (
+              <button
+                className="text-foreground underline underline-offset-2 hover:text-[var(--ring)]"
+                onClick={() => changeContext(() => reveal(true))}
+              >
+                Show all {count} lines
+              </button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function ReviewDiff({ hunks, ...props }: Props) {
   return (
     <div className="review-diff select-text min-w-0 overflow-hidden rounded-md border">
       {hunks.map((hunk, i) => (
-        <ReviewHunk key={i} hunk={hunk} {...props} />
+        <FoldableReviewHunk key={`${props.slideIndex}:${i}:${hunk.hunkHeader}`} hunk={hunk} {...props} />
       ))}
     </div>
   );

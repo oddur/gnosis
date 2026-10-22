@@ -72,6 +72,61 @@ void app.whenReady().then(async () => {
       );
       assert.ok(comments.some((c) => c.filePath === name + '.ts' && c.side === side && c.line === 1));
     }
+    // Fold saved context, preserving real source coordinates and pending comments.
+    await js(
+      `void (window.contextLines = () => Array.from(document.querySelectorAll('[data-case=context] diffs-container')).flatMap(h=>Array.from(h.shadowRoot.querySelectorAll('[data-line]'))))`
+    );
+    assert.equal(await js(`window.contextLines().filter(l=>l.dataset.lineType!=='context').length`), 4);
+    assert.equal(await js(`window.contextLines().some(l=>l.textContent.includes('const context0 '))`), false);
+    assert.equal(await js(`document.querySelectorAll('[data-case=context] .diff-context-gap').length`), 3);
+    await js(`document.querySelector('[data-case=context]').scrollIntoView({block:'start'})`);
+    fs.writeFileSync(
+      path.join(os.tmpdir(), 'gnosis-folded-context.png'),
+      (await window.webContents.capturePage()).toPNG()
+    );
+    await js(`document.querySelector('[data-case=context] .diff-context-gap button').click()`);
+    await wait(`window.contextLines().some(l=>l.dataset.lineNumber==='60')`);
+    await js(
+      `(() => { const line=window.contextLines().find(l=>l.dataset.lineNumber==='60'); line.closest('[data-code]').querySelector('[data-column-number="60"]').click(); })()`
+    );
+    await wait(`!!document.querySelector('[data-case=context] textarea')`);
+    await js(`(() => {
+      const field=document.querySelector('[data-case=context] textarea');
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(field,'Keep this source context');
+      field.dispatchEvent(new Event('input',{bubbles:true}));
+    })()`);
+    await js(
+      `Array.from(document.querySelectorAll('[data-case=context] button')).find(b=>b.textContent==='Hide extra context').click()`
+    );
+    assert.equal(await js(`document.querySelector('[data-case=context] textarea').value`), 'Keep this source context');
+    await js(
+      `Array.from(document.querySelectorAll('[data-case=context] button')).find(b=>b.textContent==='Add comment').click()`
+    );
+    await wait(`JSON.parse(document.querySelector('#comments').textContent).some(c=>c.filePath==='context.ts')`);
+    await js(
+      `Array.from(document.querySelectorAll('[data-case=context] button')).find(b=>b.textContent==='Hide extra context').click()`
+    );
+    await wait(`window.contextLines().some(l=>l.dataset.lineNumber==='60')`);
+    assert.ok(
+      await js(`document.querySelector('[data-case=context]').textContent.includes('Keep this source context')`)
+    );
+    const savedComment = await js<{ line: number; side: string; hunkHeader: string }>(
+      `JSON.parse(document.querySelector('#comments').textContent).find(c=>c.filePath==='context.ts')`
+    );
+    assert.equal(savedComment.line, 60);
+    assert.equal(savedComment.side, 'RIGHT');
+    assert.equal(savedComment.hunkHeader, '@@ -40,61 +60,61 @@');
+    await js(
+      `Array.from(document.querySelectorAll('[data-case=context] .diff-context-gap button')).filter(b=>b.textContent.startsWith('Show all')).forEach(b=>b.click())`
+    );
+    await wait(`window.contextLines().some(l=>l.textContent.includes('const context60 '))`);
+    await js(
+      `Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Toggle fixture layout').click()`
+    );
+    await wait(
+      `Array.from(document.querySelectorAll('[data-case=context] diffs-container')).every(h=>h.shadowRoot.querySelector('[data-code][data-unified]'))`
+    );
+    assert.ok(await js(`window.contextLines().some(l=>l.dataset.lineNumber==='120')`));
     // Review checks cross the renderer's shadow boundary and select exact code.
     await js(
       `Array.from(document.querySelectorAll('[data-case=metadata-added] span')).find(b=>b.textContent==='Verify the ready flag' && b.className.includes('cursor-pointer')).click()`
