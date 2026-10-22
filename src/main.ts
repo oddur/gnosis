@@ -1902,7 +1902,7 @@ async function runBackgroundGeneration(
       const sortedTopics = [...plan.topics].sort((a, b) => a.order - b.order);
       const storyArc = plan.storyArc;
       let completedSections = 0;
-      reportReviewPhase({reviewId,phase:'Writing sections',completed:0,total:sortedTopics.length});
+      reportReviewPhase({reviewId,phase:'Writing topics',completed:0,total:sortedTopics.length});
 
       // Fire all writers in parallel — the CLI/API handles its own rate limiting
       const slideResults: Slide[] = await Promise.all(
@@ -1934,7 +1934,7 @@ async function runBackgroundGeneration(
             });
 
             completedSections++;
-            reportReviewPhase({reviewId,phase:'Writing sections',completed:completedSections,total:sortedTopics.length});
+            reportReviewPhase({reviewId,phase:'Writing topics',completed:completedSections,total:sortedTopics.length});
             const diffHunks = resolveDiffHunks(topic.hunkIds ?? [], hunkMap, assignedIds);
 
             return {
@@ -2095,7 +2095,7 @@ async function runBackgroundGeneration(
         slideNumber: resolvedSlides.length + 1,
         title: 'Other changes',
         slideType: 'refactor',
-        narrative: 'Additional changes not covered in previous slides.',
+        narrative: 'Additional changes not covered in previous topics.',
         reviewFocus: null,
         diffHunks: sortDiffHunks(otherHunks),
         contextSnippets: [],
@@ -2159,13 +2159,13 @@ async function runBackgroundGeneration(
       snapshot: reviewSnapshot,
     });
 
-    activities.finish(`review:${reviewId}`, 'completed', 'Review ready');
+    activities.finish(`review:${reviewId}`, 'completed', 'Explanation ready');
     broadcastToAllWindows('review-completed', { reviewId });
 
     // Desktop notification
     if (loadPreferences().notifications) {
       const notif = new Notification({
-        title: 'Review ready',
+        title: 'Explanation ready',
         body: prData.title,
         silent: true,
       });

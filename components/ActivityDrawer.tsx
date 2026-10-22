@@ -3,7 +3,17 @@ import { Activity, ChevronUp, X, Loader2, Check, AlertCircle } from 'lucide-reac
 import { isActiveTask, type ActivityAction, type ActivityTask } from '../lib/activity';
 import { PROVIDERS } from '../lib/models';
 
-const kindLabels = { review: 'Review', briefing: 'Briefing', exploration: 'Exploration' };
+const kindLabels = { review: 'Guided review', briefing: 'Briefing', exploration: 'Interactive explanation' };
+const completedLabels = {
+  review: 'Explanation ready',
+  briefing: 'Briefing ready',
+  exploration: 'Interactive explanation ready',
+};
+const openLabels = {
+  review: 'Open guided review',
+  briefing: 'Open briefing',
+  exploration: 'Open interactive explanation',
+};
 const order = { running: 0, failed: 1, paused: 2, queued: 3, completed: 4, cancelled: 5 };
 function Progress({ task }: { task: ActivityTask }) {
   const progress = task.progress;
@@ -19,7 +29,7 @@ function Progress({ task }: { task: ActivityTask }) {
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={percent}
-      aria-valuetext={progress ? `${progress.completed} of ${progress.total} sections complete` : task.detail}
+      aria-valuetext={progress ? `${progress.completed} of ${progress.total} topics complete` : task.detail}
     >
       <span style={percent === undefined ? undefined : { width: `${percent}%` }} />
     </div>
@@ -147,7 +157,8 @@ export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Pro
           <div className="activity-list">
             {!tasks.length && (
               <p className="activity-empty">
-                Reviews, briefings, and explorations appear here while they work. You can keep browsing.
+                Guided reviews, briefings, and interactive explanations appear here while they are generated. You can
+                keep browsing.
               </p>
             )}
             {[...tasks]
@@ -183,7 +194,11 @@ export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Pro
                         <AlertCircle size={13} />
                       ) : null}
                       <span>
-                        {task.status === 'failed' ? 'Failed' : task.detail}
+                        {task.status === 'failed'
+                          ? 'Failed'
+                          : task.status === 'completed'
+                            ? completedLabels[task.kind]
+                            : task.detail}
                         {task.status === 'running' && task.progress
                           ? ` · ${task.progress.completed} of ${task.progress.total} complete`
                           : ''}
@@ -209,7 +224,7 @@ export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Pro
                       )}
                       {task.status === 'completed' && (
                         <button disabled={pending === task.id} onClick={() => void act(task, 'open')}>
-                          Open {task.kind === 'exploration' ? 'exploration' : task.kind}
+                          {openLabels[task.kind]}
                         </button>
                       )}
                       {pending === task.id && <Loader2 size={12} className="animate-spin" />}

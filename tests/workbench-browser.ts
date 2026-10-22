@@ -117,13 +117,71 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelector('.review-code').getBoundingClientRect().width > 350"), true);
     await capture('chat-dark');
     await click('Close chat');
-    await click('Explore');
+    await click('Open interactive explanation');
     await wait("!!document.querySelector('.review-tool-slot iframe')");
     assert.equal(await js("document.querySelector('.review-narrative').getBoundingClientRect().width > 250"), true);
+    assert.equal(
+      await js('Number(document.body.dataset.explainerCalls ?? 0)'),
+      0,
+      'Opening a saved interactive explanation does not generate it again'
+    );
     await capture('exploration-dark');
-    await click('Close exploration');
+    await click('Close interactive explanation');
     await js("document.documentElement.classList.remove('dark')");
     await capture('review-light');
+    // A stack's submission target is explicit and independent of the displayed source PR.
+    await js(`(() => {
+      const target = document.querySelector('[aria-label="PR for review submission"]');
+      target.value = 'https://github.com/klang/engine/pull/122';
+      target.dispatchEvent(new Event('change', {bubbles:true}));
+    })()`);
+    await click('Submit to GitHub');
+    await wait("!!document.querySelector('.submission-destination')");
+    assert.equal(
+      await js("document.querySelector('.submission-destination a').textContent.trim()"),
+      'klang/engine #122'
+    );
+    assert.equal(
+      await js("document.querySelector('.submission-destination a').getAttribute('href')"),
+      'https://github.com/klang/engine/pull/122'
+    );
+    assert.ok(await js("document.querySelector('.review-file-context').textContent.includes('#121')"));
+    await capture('submission-target-light');
+    await js("document.documentElement.classList.add('dark')");
+    window.setSize(800, 700);
+    await capture('submission-target-dark-narrow');
+    assert.ok(
+      await js(
+        "document.querySelector('[role=dialog]').scrollWidth <= document.querySelector('[role=dialog]').clientWidth"
+      )
+    );
+    await js("document.querySelector('[data-slot=dialog-close]').click()");
+    window.setSize(1280, 800);
+    await js("document.documentElement.classList.remove('dark')");
+    // Unsaved topics offer generation; saved topics offer reopening.
+    await js(`(() => {
+      const topic = document.querySelector('[aria-label="Review topic"]');
+      topic.value = '2'; topic.dispatchEvent(new Event('change', {bubbles:true}));
+    })()`);
+    await wait(
+      "document.querySelector('.interactive-explanation-prompt')?.textContent.includes('Create interactive explanation')"
+    );
+    await click('Create interactive explanation');
+    await wait("!!document.querySelector('.review-tool-slot iframe')");
+    assert.equal(await js('Number(document.body.dataset.explainerCalls)'), 1);
+    await click('Close interactive explanation');
+    await wait(
+      "document.querySelector('.interactive-explanation-prompt')?.textContent.includes('Open interactive explanation')"
+    );
+    await click('Open interactive explanation');
+    await wait("!!document.querySelector('.review-tool-slot iframe')");
+    assert.equal(await js('Number(document.body.dataset.explainerCalls)'), 1);
+    await click('Close interactive explanation');
+    await js(`(() => {
+      const topic = document.querySelector('[aria-label="Review topic"]');
+      topic.value = '1'; topic.dispatchEvent(new Event('change', {bubbles:true}));
+    })()`);
+
     window.setSize(1440, 900);
     await capture('review-large');
     window.setSize(800, 700);
@@ -134,7 +192,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelector('.review-code').getBoundingClientRect().width > 600"), true);
     await capture('review-narrow');
     await click('Explanation');
-    await click('Explore');
+    await click('Open interactive explanation');
     await wait("!!document.querySelector('.review-tool-slot iframe')");
     assert.equal(
       await js("document.querySelector('.review-tool-slot iframe').getBoundingClientRect().width > 600"),
@@ -148,11 +206,13 @@ void app.whenReady().then(async () => {
       true
     );
     await capture('activity-narrow');
-    await click('Open review');
+    await click('Open guided review');
     await wait("!!document.querySelector('.workbench-review') && !document.querySelector('.activity-drawer')");
 
     await js("document.querySelector('.activity-trigger').click()");
-    await click('Open exploration');
+    await js(
+      "[...document.querySelectorAll('.activity-actions button')].find(b=>b.textContent.trim()==='Open interactive explanation').click()"
+    );
     await wait("!!document.querySelector('.review-tool-slot iframe') && !document.querySelector('.activity-drawer')");
     // Critique regressions: use realistic unavailable states and long cross-PR code.
     window.setSize(1280, 800);

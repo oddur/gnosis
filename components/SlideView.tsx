@@ -522,7 +522,7 @@ export function SlideView({
   const narrativeContent = (
     <div className="review-narrative px-8 py-10 flex flex-col gap-6">
       <div className="slide-chapter select-text">
-        <span>Section {chapterNumber}</span>
+        <span>Topic {chapterNumber}</span>
         <span aria-hidden="true">·</span>
         <span>{fileCountLabel}</span>
         <span aria-hidden="true">·</span>
@@ -540,7 +540,7 @@ export function SlideView({
         (slide.explainerIdea ||
           slide.explainer ||
           (slide.explainerIdea === undefined && slide.diffHunks.length > 0)) && (
-          <div className="my-6 py-4 border-y border-border flex items-start justify-between gap-5">
+          <div className="interactive-explanation-prompt my-6 py-4 border-y border-border flex flex-col items-start gap-3">
             <div>
               <p className="editorial-label mb-1">Interactive explanation</p>
               <p className="font-serif text-lg">
@@ -556,10 +556,14 @@ export function SlideView({
               variant="outline"
               size="sm"
               onClick={onExplore}
-              title="Generate or reopen an interactive diagram for this topic"
+              title={
+                slide.explainer
+                  ? 'Open the saved interactive explanation without generating it again'
+                  : 'Generate an interactive diagram for this topic'
+              }
               className="mt-1"
             >
-              Explore
+              {slide.explainer ? 'Open interactive explanation' : 'Create interactive explanation'}
             </Button>
           </div>
         )}
@@ -637,13 +641,19 @@ export function SlideView({
       <div className="flex flex-col gap-2 mt-2">
         {onMarkReviewed && (
           <button
+            aria-describedby="topic-progress-help"
             onClick={isReviewed ? onToggleReviewed : onMarkReviewed}
             className={`slide-meta flex items-center gap-1.5 hover:text-foreground transition-colors self-start ${
               isReviewed ? 'text-[var(--ring)]' : ''
             }`}
           >
-            {isReviewed ? <>✓ Reviewed · press r to undo</> : <>Mark reviewed and continue · r</>}
+            {isReviewed ? <>✓ Topic reviewed · press r to undo</> : <>Mark topic reviewed and continue · r</>}
           </button>
+        )}
+        {onMarkReviewed && (
+          <p id="topic-progress-help" className="text-xs text-muted-foreground">
+            Tracks your progress in Gnosis. Does not approve or submit feedback to GitHub.
+          </p>
         )}
         {onAskQuestion && (
           <Button variant="outline" size="sm" onClick={onAskQuestion} className="gap-1.5 w-full">
@@ -684,8 +694,8 @@ export function SlideView({
 
       {groupedHunks.length === 0 && (
         <div className="flex flex-col gap-1.5">
-          <p className="editorial-label text-sm">Context section.</p>
-          <p className="slide-meta">No code changes here — this section provides context for what follows.</p>
+          <p className="editorial-label text-sm">Background topic.</p>
+          <p className="slide-meta">No code changes here — this topic provides context for what follows.</p>
         </div>
       )}
       {groupedHunks.map(({ filePath, hunks }) => {
@@ -776,7 +786,7 @@ export function SlideView({
             aria-pressed={narrowPane === 'code'}
             onClick={() => setNarrowPane('code')}
           >
-            {rightSlot ? 'Exploration' : 'Code'}
+            {rightSlot ? 'Interactive explanation' : 'Code'}
           </Button>
         </div>
         <div hidden={narrowPane !== 'explanation'} className="flex-1 min-h-0 overflow-hidden">

@@ -444,7 +444,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview, initialS
         },
         {
           id: 'chat',
-          label: 'Ask about this slide',
+          label: 'Ask about this topic',
           hint: 'c',
           group: 'Reviewing',
           keywords: 'chat question follow up',
@@ -456,7 +456,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview, initialS
     commands.push(
       {
         id: 'submit',
-        label: comments.length > 0 ? `Submit review (${comments.length} comments)` : 'Submit review',
+        label: comments.length > 0 ? `Submit to GitHub (${comments.length} comments)` : 'Submit to GitHub',
         group: 'Reviewing',
         keywords: 'send post approve',
         perform: () => setShowSubmitDialog(true),
@@ -525,7 +525,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview, initialS
           <div className="slide-chapter">
             <span>Empty review</span>
           </div>
-          <h1 className="slide-title">No slides were generated for this PR.</h1>
+          <h1 className="slide-title">No review topics were generated for this PR.</h1>
           <p className="slide-prose">
             This happens when the diff is empty, every file was filtered as boilerplate, or the model couldn't parse the
             change structure. Try re-running with different settings or a different model.
@@ -597,12 +597,12 @@ export function ReviewPage({ review: initialReview, onBack, onReReview, initialS
         {exploreOpen && (
           <button onClick={() => setExploreOpen(false)}>
             <X size={13} />
-            Close exploration
+            Close interactive explanation
           </button>
         )}
         {review.snapshot?.subject.kind === 'stack' && (
           <label className="ml-auto flex items-center gap-2 text-xs">
-            Submit review to
+            Send feedback to
             <select
               aria-label="PR for review submission"
               value={submitUrl}

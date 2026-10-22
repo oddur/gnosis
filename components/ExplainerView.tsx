@@ -122,7 +122,7 @@ export function ExplainerView({ reviewId, slide, onClose, onSaved }: Props) {
           <ArrowLeft /> Back to explanation
         </Button>
         <p className="text-xs text-muted-foreground truncate" title={slide.title}>
-          Explore · {slide.title}
+          Interactive explanation · {slide.title}
         </p>
       </div>
       <div className="w-full max-w-[1600px] mx-auto flex-1 min-h-0 flex flex-col">

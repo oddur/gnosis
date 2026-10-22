@@ -55,7 +55,9 @@ export function WorkbenchOverview({
             <button className="overview-topic" key={s.id} onClick={() => onNavigate(s.slideNumber)}>
               <span className="stack-step">{reviewed.has(s.slideNumber) ? <Check size={13} /> : s.slideNumber}</span>
               <span className="flex-1">{s.title}</span>
-              <span className="text-xs text-muted-foreground">{s.diffHunks.length} hunks</span>
+              <span className="text-xs text-muted-foreground">
+                {s.diffHunks.length} changed code {s.diffHunks.length === 1 ? 'block' : 'blocks'}
+              </span>
               <ArrowRight size={14} />
             </button>
           ))}
@@ -63,7 +65,7 @@ export function WorkbenchOverview({
         <aside>
           <h2>Where to focus</h2>
           <Markdown className="text-sm leading-relaxed">{review.riskRationale}</Markdown>
-          <h2>{subject?.kind === 'stack' ? 'Stack members and review actions' : 'Review action'}</h2>
+          <h2>{subject?.kind === 'stack' ? 'PRs in this stack' : 'GitHub feedback'}</h2>
           {subject ? (
             subject.members.map((m, i) => {
               const topics = review.slides.filter((s) =>
@@ -90,7 +92,7 @@ export function WorkbenchOverview({
                       onClick={() => onSubmit(m.url)}
                       disabled={m.merged || m.state === 'closed'}
                     >
-                      Submit review
+                      Submit to GitHub
                     </button>
                     <button
                       className="inline-flex items-center gap-1 text-muted-foreground"
@@ -109,7 +111,7 @@ export function WorkbenchOverview({
               onClick={() => onSubmit(review.prUrl)}
               disabled={review.prUrl.startsWith('local:')}
             >
-              Submit review
+              Submit to GitHub
             </Button>
           )}
           {subject?.warnings.map((w) => (

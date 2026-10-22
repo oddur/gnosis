@@ -264,9 +264,11 @@ export function SettingsDialog({
 
             <div className="flex flex-col gap-2 ml-0.5">
               <label htmlFor="watched-repos" className="text-sm font-medium text-foreground">
-                Watched repositories
+                Repositories in your queue
               </label>
-              <p className="text-xs text-muted-foreground">Add open PRs from these repositories to your queue.</p>
+              <p className="text-xs text-muted-foreground">
+                Add open PRs from these repositories. This does not change your GitHub Watch subscriptions.
+              </p>
               <div className="relative">
                 <div className="flex items-end gap-2">
                   <input
@@ -348,7 +350,8 @@ export function SettingsDialog({
                     Daily briefing limit
                   </label>
                   <p className="text-xs text-muted-foreground">
-                    Maximum generation attempts per day, including retries.
+                    Maximum automatic briefing attempts per day, including retries. Guided reviews do not count toward
+                    this limit.
                   </p>
                 </div>
                 <input
@@ -370,8 +373,8 @@ export function SettingsDialog({
                 <div className="flex flex-col gap-0.5 min-w-0">
                   <span className="text-sm font-medium text-foreground">Use a different model for briefings</span>
                   <span className="slide-meta">
-                    Override the workbench model for queue summaries. Choosing a model in the workbench clears this
-                    override.
+                    Choose a separate AI model for automatic briefings. Selecting a model in the queue makes reviews and
+                    briefings use that model again.
                   </span>
                 </div>
                 <div className="shrink-0">

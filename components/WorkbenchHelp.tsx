@@ -19,10 +19,23 @@ const terms = [
     'Guided review',
     'An AI walkthrough organized into topics, with explanations beside the relevant code changes. Starting one does not submit a review to GitHub.',
   ],
+  [
+    'Explanation ready',
+    'The AI has finished generating a guided review. This does not mean a person has reviewed or approved the PR.',
+  ],
+  ['Topic reviewed', 'Your reading progress in Gnosis. It does not approve the PR or send feedback to GitHub.'],
+  [
+    'Daily briefing limit',
+    'The number of automatic briefing attempts allowed each day, including retries. Guided reviews do not use this allowance.',
+  ],
+  [
+    'Other PRs',
+    'Changes in your queue that are not in Review requested, Updated since review, or PR dependencies. This does not mean you explicitly followed them.',
+  ],
   ['Topic', 'One part of a guided review. Topics follow the explanation of the change, rather than the file order.'],
   [
-    'Exploration',
-    'An interactive diagram that explains a concept in a topic. Use Explore to generate or reopen one, then try its controls.',
+    'Interactive explanation',
+    'An interactive diagram that explains a concept in a topic. Create interactive explanation generates one. Open interactive explanation reopens the saved result.',
   ],
   [
     'Activity',
@@ -30,7 +43,7 @@ const terms = [
   ],
   [
     'Saved review',
-    'A generated walkthrough stored on this computer. Reopen it to continue; check its freshness when the PR changes.',
+    'A generated walkthrough stored on this computer. Reopen it to continue; check whether it includes the latest changes.',
   ],
   [
     'Source PR',
@@ -41,8 +54,8 @@ const terms = [
     'Comments, approval, or a request for changes that you explicitly send to an individual GitHub PR. Marking a topic reviewed only tracks your progress in Gnosis.',
   ],
   [
-    'Watched repository',
-    'A repository whose open PRs you add to this queue. This is a Gnosis setting; it does not change your GitHub watch subscriptions.',
+    'Repositories in your queue',
+    'Repositories whose open PRs you add to this queue. This list is a Gnosis setting; it does not change your GitHub watch subscriptions.',
   ],
   [
     'AI tool and model',

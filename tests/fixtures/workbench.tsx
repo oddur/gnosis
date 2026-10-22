@@ -346,7 +346,10 @@ const mocks = {
         : { status: 'current' }
     ),
   getPendingUpdateReady: () => Promise.resolve(null),
-  generateExplainer: () => Promise.resolve(explainer),
+  generateExplainer: () => {
+    document.body.dataset.explainerCalls = String(Number(document.body.dataset.explainerCalls ?? 0) + 1);
+    return Promise.resolve(explainer);
+  },
   checkCliInstalled: () =>
     Promise.resolve({ installed: !onboardingScenario, resolvedPath: onboardingScenario ? null : '/fixture/claude' }),
   platform: 'darwin',

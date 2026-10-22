@@ -50,7 +50,7 @@ const labels = {
   updated: 'Updated since review',
   requested: 'Review requested',
   blocking: 'Other PRs depend on this',
-  other: 'Following',
+  other: 'Other PRs',
 };
 
 export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Props) {
@@ -415,7 +415,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
             ) : item.review?.status === 'completed' ? (
               <>
                 <Check size={13} />
-                Review ready
+                Explanation ready
               </>
             ) : item.briefing?.status === 'generating' ? (
               <>
@@ -752,7 +752,12 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                           {entry.snapshot?.subject.kind === 'stack'
                             ? `${entry.snapshot.subject.members.length} PR stack · `
                             : ''}
-                          {entry.author} · {timeAgo(entry.savedAt)} · {entry.status ?? 'completed'}
+                          {entry.author} · {timeAgo(entry.savedAt)} ·{' '}
+                          {entry.status === 'generating'
+                            ? 'Generating explanation'
+                            : entry.status === 'failed'
+                              ? 'Generation failed'
+                              : 'Explanation ready'}
                         </span>
                         {entry.error && <span className="text-xs text-destructive">{entry.error}</span>}
                       </button>
@@ -902,7 +907,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                 {briefingSelection && (
                   <p className="text-xs text-muted-foreground mb-3" aria-label="Briefing model">
                     Briefing model: {briefingModelLabel}
-                    {prefs?.proactiveReviewOverrides ? ' (Settings override)' : ''}
+                    {prefs?.proactiveReviewOverrides ? ' (separate model selected in Settings)' : ''}
                   </p>
                 )}
                 <div className="briefing-actions">
@@ -933,7 +938,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                         ? fallbackReview.snapshot.fingerprint === fingerprint(selectedItem.subject)
                           ? 'Matches the last queue update; latest changes are not verified.'
                           : 'The queue has changed since this review.'
-                        : 'Freshness is unknown.'}
+                        : 'Could not check whether this explanation includes the latest changes.'}
                     </p>
                     <Markdown className="briefing-summary">
                       {savedSummary?.id === fallbackReview.id ? savedSummary.summary : (fallbackReview.summary ?? '')}
@@ -1117,9 +1122,9 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                   />
                   Automatic briefings
                 </label>
-                <span>{queue.remaining} remaining today</span>
+                <span>{queue.remaining} automatic briefings remaining today</span>
                 <label>
-                  Daily limit{' '}
+                  Daily briefing limit{' '}
                   <input
                     type="number"
                     min={0}
