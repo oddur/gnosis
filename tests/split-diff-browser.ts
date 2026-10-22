@@ -14,7 +14,7 @@ void app.whenReady().then(async () => {
     try {
       return (await window.webContents.executeJavaScript(code)) as T;
     } catch (error) {
-      throw new Error(`Browser assertion failed: ${code}`, { cause: error });
+      throw new Error(`Browser assertion failed: ${code}\n${String(error)}`);
     }
   };
   const wait = async (expression: string) => {
