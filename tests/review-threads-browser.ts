@@ -69,6 +69,27 @@ void app.whenReady().then(async () => {
       false,
       'Unmarking a viewed file reveals its code'
     );
+    const toggleExplanations = () => js("document.querySelector('.inline-explanations-toggle input').click()");
+    assert.equal(await js("document.querySelectorAll('.inline-code-explanation').length"), 1);
+    await toggleExplanations();
+    await wait("document.querySelectorAll('.inline-code-explanation').length===0");
+    assert.equal(await js('window.electronAPI.loadPreferences().then(p => p.showInlineExplanations)'), false);
+    assert.equal(
+      await js("document.querySelectorAll('.github-thread').length"),
+      5,
+      'Hiding generated explanations preserves GitHub discussions'
+    );
+    await click('Back');
+    await wait("!!document.querySelector('.queue-list')");
+    await click('Continue review');
+    await wait("!!document.querySelector('.inline-explanations-toggle input')");
+    assert.equal(
+      await js("document.querySelector('.inline-explanations-toggle input').checked"),
+      false,
+      'Reopened reviews respect the saved explanation preference'
+    );
+    await toggleExplanations();
+    await wait("document.querySelectorAll('.inline-code-explanation').length===1");
     assert.equal(await js('document.body.dataset.discussionPr'), 'https://github.com/klang/engine/pull/121');
     assert.equal(await js("document.querySelectorAll('.review-diff .github-thread').length"), 3);
     assert.equal(await js("document.querySelectorAll('.github-unplaced-threads .github-thread').length"), 2);
@@ -92,6 +113,14 @@ void app.whenReady().then(async () => {
       `[...document.querySelectorAll('.review-diff .github-thread')].slice(0,2).map(t=>{const slot=t.closest('[slot]');return slot?.assignedSlot?.parentElement?.getAttribute('data-side')??slot?.getAttribute('slot');})`
     );
     assert.ok(slotSides.every(Boolean), 'Threads are rendered through Pierre annotations');
+    assert.equal(
+      await js(`(() => {
+      const slot = document.querySelector('.inline-code-explanation').closest('[slot]');
+      return !!slot.assignedSlot.closest('[data-additions]');
+    })()`),
+      true,
+      'Explanations use the correct side in split view'
+    );
     await js("document.documentElement.classList.add('dark')");
     await capture('threads-dark-split');
     await js(
@@ -100,6 +129,16 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.github-thread textarea')");
     await js(
       `(()=>{const input=document.querySelector('.github-thread textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'I checked cancellation and the slot is released.');input.dispatchEvent(new Event('input',{bubbles:true}));document.body.dataset.replyFail='true';})()`
+    );
+    await toggleExplanations();
+    assert.equal(
+      await js("document.querySelector('.inline-explanations-toggle input').checked"),
+      true,
+      'Do not change folded context while a reply is being composed'
+    );
+    assert.equal(
+      await js("document.querySelector('.github-thread textarea').value"),
+      'I checked cancellation and the slot is released.'
     );
     await toggleViewed();
     await capture('viewed-file-dark');
@@ -164,6 +203,8 @@ void app.whenReady().then(async () => {
       const hunk = review.slides[0].diffHunks[0];
       hunk.hunkHeader = '@@ -1,41 +1,41 @@';
       hunk.content = Array.from({length:41},(_,i)=>i===20 ? '-old\\n+new' : ' const context'+i+' = true;').join('\\n');
+      review.slides[0].inlineExplanations = [{filePath:hunk.filePath, line:5, side:'RIGHT', code:'const context4 = true;', text:'This context establishes the precondition used by the later change.'}];
+      review.slides[0].diffHunks.push(structuredClone(hunk));
       document.body.dataset.discussionStale='false';
     })()`);
     await click('Back');
@@ -175,6 +216,11 @@ void app.whenReady().then(async () => {
       await js("document.querySelectorAll('.review-diff .github-thread').length"),
       3,
       'Threads on folded lines stay visible'
+    );
+    assert.equal(
+      await js("document.querySelectorAll('.inline-code-explanation').length"),
+      1,
+      'Notes in folded context stay visible and overlapping hunks do not duplicate them'
     );
     // File progress follows source-qualified paths across topics, but not new revisions.
     await toggleViewed();

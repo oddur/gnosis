@@ -415,6 +415,13 @@ export function ReviewPage({
       .then((current) => window.electronAPI.savePreferences({ ...current, diffAppearance: value }));
   }, []);
 
+  const handleShowInlineExplanationsChange = useCallback((show: boolean) => {
+    setPrefs((current) => (current ? { ...current, showInlineExplanations: show } : current));
+    void window.electronAPI
+      .loadPreferences()
+      .then((current) => window.electronAPI.savePreferences({ ...current, showInlineExplanations: show }));
+  }, []);
+
   // Build the keyboard shortcut map. The hook handles input
   // suppression, modifier signatures, and two-key sequences.
   // Declared after handleDiffLayoutChange so the closures land
@@ -722,6 +729,8 @@ export function ReviewPage({
               review={review}
               viewedFiles={viewedFiles}
               onFileViewedChange={setFileViewed}
+              showInlineExplanations={prefs?.showInlineExplanations !== false}
+              onShowInlineExplanationsChange={handleShowInlineExplanationsChange}
               slide={review.slides[currentSlide - 1]}
               slideNumber={currentSlide}
               totalSlides={review.slides.length}

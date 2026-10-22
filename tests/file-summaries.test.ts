@@ -37,19 +37,32 @@ void test('both review generation paths request and retain file header summaries
     { filePath: 'PR-121/src/queue.ts', summary: 'Bounds pending work and releases cancelled queue slots.' },
   ];
   const writer = { narrative: 'Bound the queue.', reviewFocus: null, contextSnippets: [], fileSummaries };
+  const inlineExplanations = [
+    {
+      filePath: fileSummaries[0].filePath,
+      line: 4,
+      side: 'RIGHT',
+      code: 'await dispatch();',
+      text: 'Awaiting dispatch retains the slot until work completes.',
+    },
+  ];
+  const annotatedWriter = { ...writer, inlineExplanations };
   const responses = [
     {
       prTitle: 'Bound queue',
       summary: 'Prevent overload.',
       riskLevel: 'medium',
-      slides: [{ ...writer, diffHunkIds: ['hunk-1'] }],
+      slides: [{ ...annotatedWriter, diffHunkIds: ['hunk-1'] }],
     },
-    writer,
+    annotatedWriter,
   ];
   const generate = t.mock.method(getProvider('codex'), 'generate', (options: GenerateOptions) => {
     assert.match(options.systemPrompt, /FILE HEADER SUMMARIES/);
     assert.match(options.systemPrompt, /THIS topic/);
     assert.match(options.content, /"fileSummaries"/);
+    assert.match(options.systemPrompt, /If there is no such mechanism, return an empty array/);
+    assert.match(options.systemPrompt, /Never fill a quota/);
+    assert.match(options.content, /"inlineExplanations"/);
     return Promise.resolve(JSON.stringify(responses.shift()));
   });
   const review = await generateReviewGuide({
@@ -59,11 +72,13 @@ void test('both review generation paths request and retain file header summaries
     prUrl: 'https://github.com/example/repo/pull/121',
   });
   assert.deepEqual(review.slides[0].fileSummaries, fileSummaries);
+  assert.deepEqual(review.slides[0].inlineExplanations, inlineExplanations);
   const slide = await generateSlide({
     providerName: 'codex',
     model: DEFAULT_CODEX_MODEL,
     topicContext: 'Selected patch',
   });
   assert.deepEqual(slide.fileSummaries, fileSummaries);
+  assert.deepEqual(slide.inlineExplanations, inlineExplanations);
   assert.equal(generate.mock.calls.length, 2);
 });

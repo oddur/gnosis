@@ -64,6 +64,15 @@ export interface FileChangeSummary {
   summary: string;
 }
 
+export interface InlineExplanation {
+  filePath: string;
+  line: number;
+  side: DiffSide;
+  /** Exact source line, used to verify the generated location before display. */
+  code: string;
+  text: string;
+}
+
 export interface Slide {
   id: string;
   slideNumber: number;
@@ -76,6 +85,7 @@ export interface Slide {
   affectedFiles: string[];
   /** Short file header summaries scoped to the hunks in this topic. */
   fileSummaries?: FileChangeSummary[];
+  inlineExplanations?: InlineExplanation[];
   dependsOn: string[];
   mermaidDiagram?: string | null;
   reviewChecks?: ReviewCheck[];
@@ -103,6 +113,7 @@ export interface AISlide {
   affectedFiles: string[];
   /** Short file header summaries scoped to the hunks in this topic. */
   fileSummaries?: FileChangeSummary[];
+  inlineExplanations?: InlineExplanation[];
   dependsOn: string[];
   mermaidDiagram?: string | null;
   reviewChecks?: ReviewCheck[];
@@ -165,6 +176,7 @@ export interface PlannerOutput {
 // Writer output for a single slide in two-phase generation
 export interface WriterSlideOutput {
   fileSummaries?: FileChangeSummary[];
+  inlineExplanations?: InlineExplanation[];
   narrative: string;
   reviewFocus: string | null;
   contextSnippets: string[];
@@ -305,6 +317,7 @@ export interface Preferences {
   notifications: boolean;
   diffLayout: 'unified' | 'split';
   diffAppearance?: import('./review-diff').DiffAppearance;
+  showInlineExplanations?: boolean;
   includeAllFiles: boolean;
   reviewSignature: boolean;
   firstRunSeen: boolean;

@@ -49,6 +49,16 @@ void app.whenReady().then(async () => {
         `${name} must stay split`
       );
     }
+    for (const side of ['deletions', 'additions']) {
+      assert.equal(
+        await js(`(() => {
+        const slot = document.querySelector('[data-case=modify] [slot="annotation-${side}-1"]');
+        return !!slot?.querySelector('.inline-code-explanation') && !!slot.assignedSlot?.closest('[data-${side}]');
+      })()`),
+        true,
+        `Generated notes render on the ${side} side`
+      );
+    }
     for (const [name, side] of [
       ['added', 'RIGHT'],
       ['deleted', 'LEFT'],

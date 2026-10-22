@@ -11,6 +11,7 @@ import { ReviewFileDiscussion } from './ReviewFileDiscussion';
 import { DiffAppearanceMenu } from './DiffAppearanceMenu';
 import { DEFAULT_DIFF_APPEARANCE, type DiffAppearance } from '@/lib/review-diff';
 import { ReviewFileHeader } from './ReviewFileHeader';
+import { normalizeInlineExplanations } from '@/lib/inline-explanations';
 import { FilePathLink } from '@/components/FilePathLink';
 import { Markdown } from '@/components/Markdown';
 import { MermaidDiagram } from '@/components/MermaidDiagram';
@@ -54,6 +55,8 @@ interface Props {
   onToggleReviewed?: () => void;
   viewedFiles?: Set<string>;
   onFileViewedChange?: (filePath: string, viewed: boolean) => void;
+  showInlineExplanations?: boolean;
+  onShowInlineExplanationsChange?: (show: boolean) => void;
 }
 
 // Format a file's last-modified date as a human-readable age badge.
@@ -420,6 +423,8 @@ export function SlideView({
   onToggleReviewed,
   viewedFiles,
   onFileViewedChange,
+  showInlineExplanations = true,
+  onShowInlineExplanationsChange,
 }: Props) {
   const typeConfig = safeConfigLookup(slideTypeConfig, slide.slideType, slideTypeConfig.foundation);
   const Icon = typeConfig.icon;
@@ -427,6 +432,16 @@ export function SlideView({
   const rightPanelRef = useRef<HTMLDivElement>(null);
   const fileContentId = useId();
   const [fileExpansion, setFileExpansion] = useState<Record<string, boolean>>({});
+  const [explanationNotice, setExplanationNotice] = useState('');
+  const inlineExplanations = useMemo(
+    () =>
+      normalizeInlineExplanations(
+        slide.inlineExplanations,
+        slide.diffHunks,
+        review?.changedFiles ?? (fileMetadataMap ? [...fileMetadataMap.values()] : undefined)
+      ),
+    [slide.inlineExplanations, slide.diffHunks, review?.changedFiles, fileMetadataMap]
+  );
   const [narrow, setNarrow] = useState(() => window.matchMedia('(max-width: 1000px)').matches);
   const [narrowPane, setNarrowPane] = useState<'explanation' | 'code'>('explanation');
   useEffect(() => {
@@ -697,10 +712,35 @@ export function SlideView({
       )}
       <div className="flex items-center justify-end">
         <div className="flex items-center gap-3 flex-wrap">
+          {inlineExplanations.length > 0 && onShowInlineExplanationsChange && (
+            <label className="inline-explanations-toggle">
+              <input
+                type="checkbox"
+                checked={showInlineExplanations}
+                onChange={(event) => {
+                  const draft = rightPanelRef.current?.querySelector('textarea');
+                  if (draft) {
+                    draft.focus();
+                    setExplanationNotice('Finish or cancel your comment before changing inline explanations.');
+                    return;
+                  }
+                  setExplanationNotice('');
+                  onShowInlineExplanationsChange(event.target.checked);
+                }}
+              />
+              Inline explanations
+            </label>
+          )}
           <DiffLayoutToggle value={diffLayout} onChange={onDiffLayoutChange} />
           {onDiffAppearanceChange && <DiffAppearanceMenu value={diffAppearance} onChange={onDiffAppearanceChange} />}
         </div>
       </div>
+
+      {explanationNotice && (
+        <p className="text-xs text-muted-foreground" role="status">
+          {explanationNotice}
+        </p>
+      )}
 
       {slide.mermaidDiagram && <MermaidDiagram chart={slide.mermaidDiagram} />}
 
@@ -749,6 +789,9 @@ export function SlideView({
             />
             <div id={contentId} className="review-file-content" hidden={!expanded}>
               <ReviewFileDiscussion
+                inlineExplanations={
+                  showInlineExplanations ? inlineExplanations.filter((note) => note.filePath === filePath) : []
+                }
                 review={review}
                 filePath={filePath}
                 pinnedLines={slide.reviewChecks

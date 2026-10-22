@@ -1926,3 +1926,11 @@ body:has(.activity-drawer) .app-toasts { bottom:auto; top:64px; }
 .github-comment-body blockquote { padding-left:12px; border-left:1px solid var(--border); color:var(--muted-foreground); }
 .github-unplaced-threads>p { padding:8px 12px 0; font-size:var(--type-caption); color:var(--muted-foreground); }
 .github-unplaced-threads { scroll-margin-top:100px; }
+
+/* Generated explanations are quiet reading notes, separate from GitHub discussions. */
+.inline-explanations-toggle { display:inline-flex; align-items:center; gap:6px; font-size:var(--type-control); color:var(--muted-foreground); cursor:pointer; }
+.inline-explanations-toggle input { accent-color:var(--primary); }
+.inline-code-explanation { padding:8px 12px; border-block:1px solid var(--border); background:var(--accent); color:var(--accent-foreground); font-family:var(--font-sans); font-size:var(--type-control); line-height:1.5; white-space:normal; overflow-wrap:anywhere; }
+.inline-code-explanation-label { font-size:var(--type-caption); font-weight:600; }
+.inline-code-explanation p { margin-top:3px; max-width:75ch; }
+.inline-code-explanation code { font-family:var(--font-mono); font-size:.95em; }

@@ -83,6 +83,15 @@ const review: ReviewGuide = {
           summary: 'Limits pending commands and releases queue slots when work finishes or fails.',
         },
       ],
+      inlineExplanations: [
+        {
+          filePath: prefix + 'src/command-queue.ts',
+          line: 4,
+          side: 'RIGHT',
+          code: 'return await worker.run(command);',
+          text: 'Awaiting dispatch inside `try` keeps the slot occupied until work finishes. Returning the promise directly would run `finally` before that work completes.',
+        },
+      ],
       explainer: { ...explainer },
       reviewChecks: [{ text: 'Does cancellation release the slot before the next producer waits?' }],
     },

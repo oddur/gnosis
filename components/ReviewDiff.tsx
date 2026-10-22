@@ -14,7 +14,8 @@ import {
   sliceReviewHunk,
   type DiffAppearance,
 } from '@/lib/review-diff';
-import type { DiffHunk, DiffSide, FileMetadata, PendingReviewComment } from '@/lib/types';
+import type { DiffHunk, DiffSide, FileMetadata, InlineExplanation, PendingReviewComment } from '@/lib/types';
+import { InlineCodeExplanation } from './InlineCodeExplanation';
 import { DiffHunkGroup } from './DiffHunk';
 import { InteractiveDiffHunkGroup } from './InteractiveDiffHunk';
 import { SplitDiffHunkGroup } from './SplitDiffHunk';
@@ -48,6 +49,7 @@ interface Props {
   slideIndex: number;
   commentCallbacks?: CommentCallbacks;
   threads?: GitHubReviewThread[];
+  inlineExplanations?: InlineExplanation[];
   renderThread?: (thread: GitHubReviewThread) => ReactNode;
 }
 
@@ -72,6 +74,7 @@ function ReviewHunk({
     commentCallbacks,
     pendingComments = [],
     threads = [],
+    inlineExplanations = [],
     renderThread,
     appearance = DEFAULT_DIFF_APPEARANCE,
   } = props;
@@ -142,6 +145,7 @@ function ReviewHunk({
       ...pendingComments.filter((c) => c.filePath === filePath),
       ...(active ? [active] : []),
       ...threads.flatMap((t) => (t.line == null ? [] : [{ line: t.line, side: t.diffSide }])),
+      ...inlineExplanations,
     ];
     const seen = new Set<string>();
     return locations.flatMap((location) => {
@@ -156,7 +160,7 @@ function ReviewHunk({
         { lineNumber: location.line, side: location.side === 'LEFT' ? 'deletions' : 'additions', metadata: location },
       ];
     });
-  }, [pendingComments, filePath, active, prepared, threads]);
+  }, [pendingComments, filePath, active, prepared, threads, inlineExplanations]);
   if (!prepared) {
     if (diffLayout === 'split') return <SplitDiffHunkGroup {...props} hunks={[hunk]} showFileHeader={false} />;
     if (commentCallbacks)
@@ -185,6 +189,11 @@ function ReviewHunk({
       }
       renderAnnotation={({ metadata: location }) => (
         <div className="font-sans text-foreground text-sm">
+          {inlineExplanations
+            .filter((note) => note.line === location.line && note.side === location.side)
+            .map((note) => (
+              <InlineCodeExplanation key={`${note.side}:${note.line}`} explanation={note} />
+            ))}
           {commentCallbacks && active?.line === location.line && active.side === location.side && (
             <InlineCommentForm
               onCancel={() => setActive(null)}
@@ -245,6 +254,9 @@ function FoldableReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: D
       if (
         props.pinnedLines?.some((n) => line.headLineNumber === n || line.baseLineNumber === n) ||
         props.threads?.some((t) => (t.diffSide === 'LEFT' ? line.baseLineNumber : line.headLineNumber) === t.line) ||
+        props.inlineExplanations?.some(
+          (note) => (note.side === 'LEFT' ? line.baseLineNumber : line.headLineNumber) === note.line
+        ) ||
         props.pendingComments?.some(
           (c) =>
             c.filePath === props.filePath && (c.side === 'LEFT' ? line.baseLineNumber : line.headLineNumber) === c.line
@@ -253,7 +265,7 @@ function FoldableReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: D
         result.add(index);
     });
     return result;
-  }, [prepared, props.pinnedLines, props.pendingComments, props.filePath, props.threads]);
+  }, [prepared, props.pinnedLines, props.pendingComments, props.filePath, props.threads, props.inlineExplanations]);
   const ranges = useMemo(
     () => (prepared ? reviewContextRanges(prepared.lines, pinned, revealed) : []),
     [prepared, pinned, revealed]
@@ -340,7 +352,7 @@ function FoldableReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: D
 }
 
 export function ReviewDiff({ hunks, ...props }: Props) {
-  const threadsByHunk = useMemo(() => {
+  const annotationsByHunk = useMemo(() => {
     const owners = new Map<string, number>();
     hunks.forEach((hunk, index) => {
       for (const line of prepareReviewHunk(hunk, props.fileStatus)?.lines ?? []) {
@@ -353,13 +365,18 @@ export function ReviewDiff({ hunks, ...props }: Props) {
         }
       }
     });
-    const result = hunks.map(() => [] as GitHubReviewThread[]);
+    const result = hunks.map(() => ({ threads: [] as GitHubReviewThread[], explanations: [] as InlineExplanation[] }));
     for (const thread of props.threads ?? []) {
       const owner = owners.get(`${thread.diffSide}:${thread.line}`);
-      if (owner !== undefined) result[owner].push(thread);
+      if (owner !== undefined) result[owner].threads.push(thread);
+    }
+    for (const note of props.inlineExplanations ?? []) {
+      if (note.filePath !== props.filePath) continue;
+      const owner = owners.get(`${note.side}:${note.line}`);
+      if (owner !== undefined) result[owner].explanations.push(note);
     }
     return result;
-  }, [hunks, props.fileStatus, props.threads]);
+  }, [hunks, props.fileStatus, props.filePath, props.threads, props.inlineExplanations]);
   return (
     <div className="review-diff select-text min-w-0 overflow-hidden rounded-md border">
       {hunks.map((hunk, i) => (
@@ -367,7 +384,8 @@ export function ReviewDiff({ hunks, ...props }: Props) {
           key={`${props.slideIndex}:${i}:${hunk.hunkHeader}`}
           hunk={hunk}
           {...props}
-          threads={threadsByHunk[i]}
+          threads={annotationsByHunk[i].threads}
+          inlineExplanations={annotationsByHunk[i].explanations}
         />
       ))}
     </div>

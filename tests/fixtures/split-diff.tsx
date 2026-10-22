@@ -87,6 +87,26 @@ function Fixture() {
               appearance={appearance}
               filePath={hunk.filePath}
               hunks={[hunk]}
+              inlineExplanations={
+                hunk.filePath === 'modify.ts'
+                  ? [
+                      {
+                        filePath: hunk.filePath,
+                        line: 1,
+                        side: 'LEFT',
+                        code: 'export const ready = false;',
+                        text: 'The previous state kept callers waiting.',
+                      },
+                      {
+                        filePath: hunk.filePath,
+                        line: 1,
+                        side: 'RIGHT',
+                        code: 'export const ready = true;',
+                        text: 'Callers can now proceed without waiting.',
+                      },
+                    ]
+                  : undefined
+              }
               pendingComments={comments}
               commentCallbacks={
                 cases[index][0] === 'added-plain'
