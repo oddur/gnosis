@@ -26,6 +26,9 @@ import {
 import { buildContextPackage, buildPlannerContext, buildTopicContext } from '../lib/context-builder';
 import { generateReviewGuide, planReview, generateSlide } from '../lib/agent';
 import { buildArchive, parseArchive } from '../lib/review-archive';
+import { captureExplainerContext, normalizeExplainerIdea, parseExplainer } from '../lib/explainer';
+import { createExplainerService } from './explainer-service';
+import { protectExplainerFrames, validateExplainerInBrowser } from './explainer-validation';
 import { checkForUpdate } from '../lib/updater';
 import { renderDiffHunk, reRenderAllHunks } from '../lib/highlight';
 import { parseDiffLines, parsePatchValidLines } from '../lib/diff-lines';
@@ -50,6 +53,7 @@ import type {
   StartReviewResult,
   SubmitReviewRequest,
   FreshnessResult,
+  GenerateExplainerRequest,
 } from '../lib/types';
 
 // Injected by Electron Forge Vite plugin
@@ -341,6 +345,10 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
     },
   });
+
+  protectExplainerFrames(mainWindow);
+  const ownerId = mainWindow.webContents.id;
+  mainWindow.on('closed', () => explainerService.cancelOwner(ownerId));
 
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
     console.error('[main] Renderer failed to load:', errorCode, errorDescription);
@@ -1216,6 +1224,14 @@ ipcMain.handle('list-reviews', () => {
 ipcMain.handle('load-review', async (_event, id: string) => {
   const reviewPath = path.join(getReviewsDir(), `${id}.json`);
   const review = JSON.parse(fs.readFileSync(reviewPath, 'utf-8')) as ReviewGuide;
+  review.reviewId = id;
+  for (const slide of review.slides) {
+    if (slide.explainerIdea !== undefined) slide.explainerIdea = normalizeExplainerIdea(slide.explainerIdea);
+    if (slide.explainer) {
+      try { slide.explainer = parseExplainer(JSON.stringify(slide.explainer), slide); }
+      catch { delete slide.explainer; }
+    }
+  }
   const prefs = loadPreferences();
   await reRenderAllHunks(review, prefs.codeTheme);
   return review;
@@ -1911,6 +1927,7 @@ async function runBackgroundGeneration(
               affectedFiles: [...new Set(diffHunks.map((h) => h.filePath))],
               dependsOn: topic.dependsOn,
               mermaidDiagram: writerOutput.mermaidDiagram,
+              explainerIdea: normalizeExplainerIdea(writerOutput.explainerIdea),
               reviewChecks: writerOutput.reviewChecks,
               educationNotes: writerOutput.educationNotes,
               importance: topic.importance,
@@ -2007,6 +2024,7 @@ async function runBackgroundGeneration(
           // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
           dependsOn: aiSlide.dependsOn ?? [],
           mermaidDiagram: aiSlide.mermaidDiagram,
+          explainerIdea: normalizeExplainerIdea(aiSlide.explainerIdea),
           reviewChecks: aiSlide.reviewChecks,
           educationNotes: aiSlide.educationNotes,
           importance: aiSlide.importance ?? 'important',
@@ -2104,6 +2122,9 @@ async function runBackgroundGeneration(
     }
 
     // Save review JSON and update history entry to completed
+    for (const slide of reviewGuide.slides) {
+      if (slide.explainerIdea) slide.explainerContext = captureExplainerContext(slide, fileContents, headFileContents);
+    }
     fs.writeFileSync(path.join(getReviewsDir(), `${reviewId}.json`), JSON.stringify(reviewGuide));
     updateHistoryEntry(reviewId, {
       status: 'completed',
@@ -2189,6 +2210,21 @@ ipcMain.handle('cancel-review', (_event, reviewId: string) => {
   if (gen?.abortController) {
     gen.abortController.abort('User cancelled');
   }
+});
+
+const explainerService = createExplainerService({
+  reviewsDir: getReviewsDir,
+  preferences: loadPreferences,
+  validate: validateExplainerInBrowser,
+});
+
+ipcMain.handle('generate-explainer', (event, req: GenerateExplainerRequest) => {
+  if (event.senderFrame !== event.sender.mainFrame) throw new Error('Explainers can only be requested by the review window.');
+  return explainerService.generate(req, event.sender.id);
+});
+ipcMain.handle('cancel-explainer', (event, req: GenerateExplainerRequest) => {
+  if (event.senderFrame !== event.sender.mainFrame) return;
+  explainerService.cancel(req, event.sender.id);
 });
 
 ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {

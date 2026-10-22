@@ -4,6 +4,7 @@ import { PRSummaryBanner } from '../../components/PRSummaryBanner';
 import { StaleBanner } from '../../components/StaleBanner';
 import { OverviewSlide } from '../../components/OverviewSlide';
 import { SlideView } from '../../components/SlideView';
+import { ExplainerView } from '../../components/ExplainerView';
 import { SlideNav } from '../../components/SlideNav';
 import { TocRail } from '../../components/TocRail';
 import { SlideChatSheet } from '../../components/SlideChatSheet';
@@ -99,6 +100,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
   const [prefs, setPrefs] = useState<Preferences | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [exploreOpen, setExploreOpen] = useState(false);
 
   // Per-section "mark reviewed" progress. Persisted to localStorage
   // keyed by prUrl + headSha so each review generation is tracked
@@ -269,6 +271,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
   // Slide 0 is the overview, slides 1..N are the real chapters.
   const handleJumpTo = useCallback(
     (n: number) => {
+      setExploreOpen(false);
       setCurrentSlide(Math.max(0, Math.min(review.slides.length, n)));
     },
     [review.slides.length]
@@ -338,7 +341,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
     return map;
   }, [handlePrev, handleNext, handleJumpTo, handleDiffLayoutChange, markReviewedAndAdvance, jumpToNextUnreviewed, currentSlide, review.slides.length]);
 
-  useKeyboardShortcuts(shortcutMap);
+  useKeyboardShortcuts(shortcutMap, { enabled: !exploreOpen });
 
   // Build the command palette commands. The slide jump entries
   // are generated dynamically from the review so they read like a
@@ -531,17 +534,25 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
           the active slide (overview or chapter) in the center, and
           the optional chat sheet on the right. */}
       <div className="flex-1 overflow-hidden flex flex-row min-h-0">
-        <TocRail
+        {!exploreOpen && <TocRail
           slides={review.slides}
           currentSlide={currentSlide}
           reviewed={reviewed}
           hideReviewed={hideReviewed}
           onToggleHideReviewed={() => setHideReviewed((v) => !v)}
-          onNavigate={(n) => setCurrentSlide(n)}
-        />
+          onNavigate={(n) => { setExploreOpen(false); setCurrentSlide(n); }}
+        />}
 
         <div key={currentSlide} className="slide-enter flex-1 min-w-0 overflow-hidden flex flex-col">
-          {currentSlide === 0 ? (
+          {exploreOpen && currentSlide > 0 && review.reviewId ? (
+            <ExplainerView
+              key={`${review.reviewId}:${review.slides[currentSlide - 1].id}`}
+              reviewId={review.reviewId}
+              slide={review.slides[currentSlide - 1]}
+              onClose={() => setExploreOpen(false)}
+              onSaved={(artifact) => setReview(prev => ({ ...prev, slides: prev.slides.map((slide, i) => i === currentSlide - 1 ? { ...slide, explainer: artifact } : slide) }))}
+            />
+          ) : currentSlide === 0 ? (
             <OverviewSlide review={review} prStatus={prStatus} onNavigate={(n) => setCurrentSlide(n)} />
           ) : (
             <SlideView
@@ -556,6 +567,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
               diffLayout={diffLayout}
               onDiffLayoutChange={handleDiffLayoutChange}
               onAskQuestion={() => setChatOpen(true)}
+              onExplore={review.reviewId ? () => { setChatOpen(false); setExploreOpen(true); } : undefined}
               onAskAboutSelection={(code) => {
                 setChatQuotedCode(code);
                 setChatOpen(true);
@@ -571,7 +583,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
           )}
         </div>
 
-        {currentSlide > 0 && (
+        {currentSlide > 0 && !exploreOpen && (
           <SlideChatSheet
             open={chatOpen}
             onOpenChange={(open) => {
@@ -589,7 +601,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
         )}
       </div>
 
-      <SlideNav
+      {!exploreOpen && <SlideNav
         current={currentSlide}
         total={review.slides.length}
         reviewedCount={reviewedCount}
@@ -599,7 +611,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview }: Props)
         onNext={handleNext}
         commentCount={comments.length}
         onSubmitReview={isLocal ? undefined : () => setShowSubmitDialog(true)}
-      />
+      />}
 
       {!isLocal && (
         <SubmitReviewDialog

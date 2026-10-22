@@ -33,6 +33,7 @@ interface Props {
   diffLayout: Preferences['diffLayout'];
   onDiffLayoutChange: (layout: Preferences['diffLayout']) => void;
   onAskQuestion?: () => void;
+  onExplore?: () => void;
   onAskAboutSelection?: (quotedCode: string) => void;
   viewMode?: 'split' | 'focus';
   fileMetadataMap?: Map<string, FileMetadata>;
@@ -407,6 +408,7 @@ export function SlideView({
   diffLayout,
   onDiffLayoutChange,
   onAskQuestion,
+  onExplore,
   onAskAboutSelection,
   viewMode = 'split',
   fileMetadataMap,
@@ -524,6 +526,17 @@ export function SlideView({
       <h2 className="slide-title select-text">{slide.title}</h2>
 
       <Markdown className="slide-prose select-text">{slide.narrative}</Markdown>
+
+      {onExplore && (slide.explainerIdea || slide.explainer || (slide.explainerIdea === undefined && slide.diffHunks.length > 0)) && (
+        <div className="my-6 py-4 border-y border-border flex items-start justify-between gap-5">
+          <div>
+            <p className="editorial-label mb-1">Interactive explanation</p>
+            <p className="font-serif text-lg">{slide.explainerIdea?.title ?? slide.explainer?.title ?? 'Explore this change'}</p>
+            <p className="text-sm text-muted-foreground leading-relaxed mt-1">{slide.explainerIdea?.description ?? slide.explainer?.description ?? 'Build an interactive example from the code in this slide.'}</p>
+          </div>
+          <Button variant="outline" size="sm" onClick={onExplore} className="mt-1">Explore</Button>
+        </div>
+      )}
 
       {slide.educationNotes && slide.educationNotes.length > 0 && (
         <aside className="education-notes select-text" aria-label="Background concepts">

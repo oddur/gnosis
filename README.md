@@ -30,6 +30,7 @@ It runs locally and uses the [Claude Code CLI](https://claude.ai/code) or [Codex
 - **Clickable review checks** — click a "what to check" item to scroll directly to the relevant code in the diff
 - **Large file filtering** — automatically detects and excludes large generated files (lockfiles, bundles) from the review to keep the AI focused on meaningful changes
 - **Mermaid diagrams** — slides can include architecture and flow diagrams, viewable in fullscreen
+- **Interactive explanations** — select **Explore** on a slide to generate an animated SVG example. Step through an algorithm, adjust its inputs, and inspect the supporting code.
 - **Risk assessment** — each review is rated low/medium/high risk based on what changed
 - **Clickable file paths** — diff header file paths link directly to the file on GitHub
 - **Configurable CLI paths** — if the CLI isn't auto-detected (e.g. Finder/Dock launch), set the path manually in Settings
@@ -90,6 +91,13 @@ On first launch, click **Sign in with GitHub** to authenticate via OAuth.
 Navigate slides with **← →** or the Prev/Next buttons. Drag the divider between the narrative and diff panels to resize.
 
 Past reviews are saved locally and grouped by PR on the home screen — click any to reload without re-generating.
+
+For suitable topics, **Explore** builds an interactive example when you request it. Generation uses your selected Claude or Codex model.
+
+New explanations animate items between states during Play or Step. Pause freezes transitions; Reset returns to the initial state. Reduced-motion settings show state changes immediately. For a saved example, open **Details & refine → Add animated transitions** to generate a version with item movement.
+Use **Play**, **Step**, and **Reset** to follow the example. Read its assumptions and select a source file to inspect the saved diff.
+**Try another scenario** generates a refined version from your instructions. Explainers are saved with the review and included in exported review archives.
+The examples illustrate code behavior. Their displayed timings are model inputs unless the supplied evidence establishes measured values.
 
 ## Screenshots
 
