@@ -147,8 +147,13 @@ window.explainer = {reset() {state=0;elapsed=0;draw();}, step() {state=Math.min(
       'rapid stepping/reset does not leave ghost elements'
     );
     await command('step');
+    await command('pause');
+    await frame.executeJavaScript('Promise.all(document.getAnimations().map(animation => animation.ready))');
     await reducedMotion('reduce');
-    await wait(50);
+    await waitUntil(
+      frame,
+      "matchMedia('(prefers-reduced-motion: reduce)').matches && document.getAnimations().length === 0"
+    );
     assert.equal(
       await frame.executeJavaScript('document.getAnimations().length'),
       0,
