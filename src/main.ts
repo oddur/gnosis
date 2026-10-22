@@ -31,6 +31,7 @@ import {
 import { buildContextPackage, buildPlannerContext, buildTopicContext } from '../lib/context-builder';
 import { generateReviewGuide, planReview, generateSlide } from '../lib/agent';
 import { buildArchive, parseArchive } from '../lib/review-archive';
+import { normalizeFileSummaries } from '../lib/file-summaries';
 import { captureExplainerContext, normalizeExplainerIdea, parseExplainer } from '../lib/explainer';
 import { createExplainerService } from './explainer-service';
 import { protectExplainerFrames, validateExplainerInBrowser } from './explainer-validation';
@@ -1231,6 +1232,7 @@ ipcMain.handle('load-review', async (_event, id: string) => {
   const review = JSON.parse(fs.readFileSync(reviewPath, 'utf-8')) as ReviewGuide;
   review.reviewId = id;
   for (const slide of review.slides) {
+    slide.fileSummaries = normalizeFileSummaries(slide.fileSummaries, slide.diffHunks);
     if (slide.explainerIdea !== undefined) slide.explainerIdea = normalizeExplainerIdea(slide.explainerIdea);
     if (slide.explainer) {
       try { slide.explainer = parseExplainer(JSON.stringify(slide.explainer), slide); }
@@ -1939,6 +1941,7 @@ async function runBackgroundGeneration(
               dependsOn: topic.dependsOn,
               mermaidDiagram: writerOutput.mermaidDiagram,
               explainerIdea: normalizeExplainerIdea(writerOutput.explainerIdea),
+              fileSummaries: normalizeFileSummaries(writerOutput.fileSummaries, diffHunks),
               reviewChecks: writerOutput.reviewChecks,
               educationNotes: writerOutput.educationNotes,
               importance: topic.importance,
@@ -2036,6 +2039,7 @@ async function runBackgroundGeneration(
           dependsOn: aiSlide.dependsOn ?? [],
           mermaidDiagram: aiSlide.mermaidDiagram,
           explainerIdea: normalizeExplainerIdea(aiSlide.explainerIdea),
+          fileSummaries: normalizeFileSummaries(aiSlide.fileSummaries, diffHunks),
           reviewChecks: aiSlide.reviewChecks,
           educationNotes: aiSlide.educationNotes,
           importance: aiSlide.importance ?? 'important',

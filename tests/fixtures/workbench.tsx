@@ -59,6 +59,7 @@ const review: ReviewGuide = {
   riskLevel: 'medium',
   riskRationale:
     'Review the backpressure path and command ordering across worker handoffs. Cancellation must release the queue slot even when a batch is only partially processed.',
+  changedFiles: [{ filename: prefix + 'src/command-queue.ts', status: 'modified', additions: 6, deletions: 1 }],
   totalFilesChanged: 12,
   totalLinesChanged: 386,
   slides: [
@@ -75,6 +76,12 @@ const review: ReviewGuide = {
           ' export async function dispatch(command) {\n-  return worker.run(command);\n+  const slot = await queue.acquire();\n+  try {\n+    return await worker.run(command);\n+  } finally {\n+    slot.release();\n+  }\n }',
       })),
       affectedFiles: [prefix + 'src/command-queue.ts'],
+      fileSummaries: [
+        {
+          filePath: prefix + 'src/command-queue.ts',
+          summary: 'Limits pending commands and releases queue slots when work finishes or fails.',
+        },
+      ],
       explainer: { ...explainer },
       reviewChecks: [{ text: 'Does cancellation release the slot before the next producer waits?' }],
     },

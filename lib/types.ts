@@ -59,6 +59,11 @@ export interface GenerateExplainerRequest {
   refinement?: string;
 }
 
+export interface FileChangeSummary {
+  filePath: string;
+  summary: string;
+}
+
 export interface Slide {
   id: string;
   slideNumber: number;
@@ -69,6 +74,8 @@ export interface Slide {
   diffHunks: DiffHunk[];
   contextSnippets: string[];
   affectedFiles: string[];
+  /** Short file header summaries scoped to the hunks in this topic. */
+  fileSummaries?: FileChangeSummary[];
   dependsOn: string[];
   mermaidDiagram?: string | null;
   reviewChecks?: ReviewCheck[];
@@ -94,6 +101,8 @@ export interface AISlide {
   diffHunkIds: string[];
   contextSnippets: string[];
   affectedFiles: string[];
+  /** Short file header summaries scoped to the hunks in this topic. */
+  fileSummaries?: FileChangeSummary[];
   dependsOn: string[];
   mermaidDiagram?: string | null;
   reviewChecks?: ReviewCheck[];
@@ -155,6 +164,7 @@ export interface PlannerOutput {
 
 // Writer output for a single slide in two-phase generation
 export interface WriterSlideOutput {
+  fileSummaries?: FileChangeSummary[];
   narrative: string;
   reviewFocus: string | null;
   contextSnippets: string[];

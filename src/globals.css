@@ -1757,6 +1757,12 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 
 /* Persistent context and task-based controls in the review workbench. */
 .review-file-context { position:sticky; top:0; z-index:20; padding:9px 12px; background:var(--card); border:1px solid var(--border); border-radius:5px 5px 0 0; }
+.review-file-heading { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; }
+.review-file-identity { display:flex; align-items:center; gap:8px; min-width:0; flex:1 1 180px; }
+.review-file-details { display:flex; align-items:center; gap:10px; color:var(--muted-foreground); font-size:var(--type-caption); white-space:nowrap; }
+.review-file-counts { display:inline-flex; gap:8px; font-family:var(--font-mono); font-variant-numeric:tabular-nums; }
+.review-file-summary { margin-top:6px; font-size:var(--type-control); line-height:1.45; overflow-wrap:anywhere; }
+.review-file-history { display:flex; flex-wrap:wrap; gap:4px 12px; margin-top:5px; font-size:var(--type-caption); color:var(--muted-foreground); }
 .review-file-context .source-attribution { padding:0; border:0; background:transparent; color:var(--foreground); font-weight:600; white-space:nowrap; }
 .review-file-context + div { border-top-left-radius:0; border-top-right-radius:0; }
 .review-file-group .line { scroll-margin-top:48px; }

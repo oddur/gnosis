@@ -16,7 +16,7 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,json,css,md}\" \"lib/**/*.{ts,tsx}\" \"components/**/*.{ts,tsx}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,js,jsx,json,css,md}\" \"lib/**/*.{ts,tsx}\" \"components/**/*.{ts,tsx}\"",
     "pre-commit:run": "pre-commit run --all-files",
-    "test": "tsx --test tests/claude.test.ts tests/codex.test.ts tests/slide-chat.test.ts tests/explainer.test.ts tests/workbench.test.ts tests/workbench-service.test.ts tests/activity.test.ts tests/github-client.test.ts tests/queue-filters.test.ts tests/review-diff.test.ts",
+    "test": "tsx --test tests/claude.test.ts tests/codex.test.ts tests/slide-chat.test.ts tests/explainer.test.ts tests/workbench.test.ts tests/workbench-service.test.ts tests/activity.test.ts tests/github-client.test.ts tests/queue-filters.test.ts tests/review-diff.test.ts tests/file-summaries.test.ts",
     "test:explainer": "node scripts/test-explainer.mjs",
     "test:workbench": "node scripts/test-workbench.mjs && node scripts/test-workbench.mjs --split-diff"
   },

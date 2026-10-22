@@ -1,3 +1,4 @@
+import { FILE_SUMMARY_DIRECTIVE } from './file-summaries';
 import { getProvider } from './provider';
 import { EXPLAINER_IDEA_DIRECTIVE } from './explainer';
 import type { AIReviewGuide, ModelId, PlannerOutput, Provider, WriterSlideOutput } from './types';
@@ -123,6 +124,7 @@ The JSON must match this schema exactly:
       "diffHunkIds": ["hunk-0", "hunk-3", ...],
       "contextSnippets": string[],
       "affectedFiles": string[],
+      "fileSummaries": [{ "filePath": string, "summary": string }],
       "dependsOn": string[],
       "mermaidDiagram": string | null,
       "explainerIdea": { "title": string, "description": string } | null,
@@ -282,7 +284,7 @@ export async function generateReviewGuide(opts: GenerateReviewGuideOptions): Pro
 
     // Signal boost is always on — deprioritize formatting and
     // import-only changes, emphasize design decisions.
-    const baseSystem = `${FOCUS_DIRECTIVE}\n${webResearchDirective}${educationDirective}${claudeContextDirective}${SYSTEM_PROMPT}${EXPLAINER_IDEA_DIRECTIVE}${reviewSuggestionsDirective}`;
+    const baseSystem = `${FOCUS_DIRECTIVE}\n${webResearchDirective}${educationDirective}${claudeContextDirective}${SYSTEM_PROMPT}${FILE_SUMMARY_DIRECTIVE}${EXPLAINER_IDEA_DIRECTIVE}${reviewSuggestionsDirective}`;
 
     const system = customInstructions
       ? `${baseSystem}\n\nIMPORTANT — CUSTOM REVIEWER INSTRUCTIONS:\nThe reviewer has provided the following instructions. These take precedence over the default writing style and tone guidelines above. Adapt your narrative, reviewFocus, summary, and all prose fields accordingly.\n\n<instructions>\n${customInstructions}\n</instructions>`
@@ -491,6 +493,7 @@ Write the slide content for this topic. Respond with JSON matching this schema e
   "narrative": string,
   "reviewFocus": string | null,
   "contextSnippets": string[],
+  "fileSummaries": [{ "filePath": string, "summary": string }],
   "mermaidDiagram": string | null,
   "explainerIdea": { "title": string, "description": string } | null,
   "reviewChecks": [
@@ -550,7 +553,7 @@ export async function generateSlide(opts: GenerateSlideOptions): Promise<WriterS
   const educationDirective = educationMode ? EDUCATION_DIRECTIVE : '';
   const claudeContextDirective = hasClaudeContext ? CLAUDE_CONTEXT_DIRECTIVE : '';
 
-  let system = WRITER_SYSTEM + EXPLAINER_IDEA_DIRECTIVE + reviewSuggestionsDirective + educationDirective + claudeContextDirective;
+  let system = WRITER_SYSTEM + FILE_SUMMARY_DIRECTIVE + EXPLAINER_IDEA_DIRECTIVE + reviewSuggestionsDirective + educationDirective + claudeContextDirective;
   if (instructions?.trim()) {
     system += `\n\nCUSTOM REVIEWER INSTRUCTIONS (take precedence over style guidelines):\n${instructions.trim()}`;
   }

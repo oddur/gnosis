@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { ReviewDiff, findReviewLine, reviewCodeSelection } from './ReviewDiff';
 import { DiffAppearanceMenu } from './DiffAppearanceMenu';
 import { DEFAULT_DIFF_APPEARANCE, type DiffAppearance } from '@/lib/review-diff';
+import { ReviewFileHeader } from './ReviewFileHeader';
 import { FilePathLink } from '@/components/FilePathLink';
 import { Markdown } from '@/components/Markdown';
 import { MermaidDiagram } from '@/components/MermaidDiagram';
@@ -705,40 +706,19 @@ export function SlideView({
         const sourceUrl = origin?.member ? buildFileUrlBase(origin.member.url, origin.member.headSha) : gitFileUrlBase;
         const fm = fileMetadataMap?.get(filePath);
         const ageBadge = fm ? formatFileAge(fm.lastModified) : null;
-        const churnBadge = fm && (fm.prCommitCount ?? 1) > 1 ? `${fm.prCommitCount}× in this PR` : null;
 
         return (
           <div key={filePath} className="review-file-group flex flex-col gap-0">
-            <div className="review-file-context" aria-label="Current source">
-              <div className="flex items-center gap-2 min-w-0">
-                {origin?.member && review?.snapshot?.subject.kind === 'stack' && (
-                  <span className="source-attribution" title={origin.member.title}>
-                    PR #{origin.member.number}
-                  </span>
-                )}
-                <FilePathLink
-                  compact
-                  filePath={origin?.path ?? filePath}
-                  gitFileUrlBase={sourceUrl}
-                  className="font-mono text-xs min-w-0 flex-1"
-                />
-                {(pendingComments?.filter((c) => c.filePath === filePath).length ?? 0) > 0 && (
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">
-                    {pendingComments?.filter((c) => c.filePath === filePath).length} comments
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* File metadata badges — age + churn. Render as quiet
-                mono text above the file's diff header, only when
-                data is available. */}
-            {(ageBadge || churnBadge) && (
-              <div className="flex items-center gap-3 px-3 py-1 slide-meta">
-                {ageBadge && <span className="statusPill-amber">{ageBadge}</span>}
-                {churnBadge && <span className="statusPill-neutral">{churnBadge}</span>}
-              </div>
-            )}
+            <ReviewFileHeader
+              filePath={origin?.path ?? filePath}
+              hunks={hunks}
+              gitFileUrlBase={sourceUrl}
+              metadata={fm}
+              summary={slide.fileSummaries?.find((entry) => entry.filePath === filePath)?.summary}
+              source={review?.snapshot?.subject.kind === 'stack' ? origin?.member : undefined}
+              commentCount={pendingComments?.filter((c) => c.filePath === filePath).length ?? 0}
+              age={ageBadge}
+            />
             <ReviewDiff
               filePath={filePath}
               pinnedLines={slide.reviewChecks

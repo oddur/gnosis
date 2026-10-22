@@ -119,6 +119,13 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.review-narrative')");
     assert.equal(await js("document.querySelectorAll('.source-attribution').length"), 1);
     assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
+    assert.equal(await js("document.querySelectorAll('.review-file-context').length"), 1);
+    match(await js("document.querySelector('.review-file-summary').textContent"), /Limits pending commands/);
+    match(await js("document.querySelector('.review-file-details').textContent"), /Modified/);
+    match(
+      await js("document.querySelector('.review-file-counts').getAttribute('aria-label')"),
+      /6 added lines, 1 removed line/
+    );
     await capture('review-dark');
     await click('Diff appearance');
     await wait("!!document.querySelector('[role=dialog] select')");
@@ -217,6 +224,10 @@ void app.whenReady().then(async () => {
     await wait('!!document.querySelector(\'[aria-label="Review pane"]\')');
     await click('Code');
     assert.equal(await js("document.querySelector('.review-code').getBoundingClientRect().width > 600"), true);
+    assert.equal(
+      await js("[...document.querySelectorAll('.review-file-context')].every(h=>h.scrollWidth <= h.clientWidth)"),
+      true
+    );
     await capture('review-narrow');
     await click('Explanation');
     await click('Open interactive explanation');
@@ -318,6 +329,11 @@ void app.whenReady().then(async () => {
     assert.ok(Math.abs(sticky.offset) < 2, 'Source header must stay pinned during diff scroll');
     assert.match(sticky.text, /PR #121/);
     assert.match(sticky.text, /command-queue.ts/);
+    assert.match(sticky.text, /Limits pending commands/);
+    assert.equal(
+      await js("document.querySelectorAll('.review-file-context')[1].querySelector('.review-file-summary') === null"),
+      true
+    );
     assert.ok(
       await js("document.querySelector('diffs-container').shadowRoot.innerHTML.toLowerCase().includes('#91a7b2')")
     );
