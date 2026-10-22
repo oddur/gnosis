@@ -10,6 +10,7 @@ const INSTALL_HINT = 'Install with `npm install -g @openai/codex`, then sign in 
 /** Codex exec emits complete items, rather than Claude's text deltas. */
 export function createCodexEventHandler(onChunk?: GenerateOptions['onChunk']) {
   let failure: string | undefined;
+  let hasAgentMessage = false;
   const seen = new Set<string>();
   return {
     processLine: (line: string) => {
@@ -32,8 +33,13 @@ export function createCodexEventHandler(onChunk?: GenerateOptions['onChunk']) {
         if (seen.has(item.id)) return;
         seen.add(item.id);
       }
-      if (typeof item.text !== 'string') return;
-      if (item.type === 'agent_message') onChunk?.(item.text, false);
+      if (typeof item.text !== 'string' || !item.text) return;
+      if (item.type === 'agent_message') {
+        // Each completed item is a whole message, not a text delta. Keep
+        // Markdown blocks separate while the renderer shows progress.
+        onChunk?.(`${hasAgentMessage ? '\n\n' : ''}${item.text}`, false);
+        hasAgentMessage = true;
+      }
       if (item.type === 'reasoning') onChunk?.(item.text, true);
     },
     getFailure: () => failure,

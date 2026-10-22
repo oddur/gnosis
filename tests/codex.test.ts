@@ -34,7 +34,7 @@ void test('runs Codex with isolated context and returns only the final answer', 
   assert.deepEqual(chunks, [
     ['Considering changes', true],
     ['Preparing the answer', false],
-    [result, false],
+    [`\n\n${result}`, false],
   ]);
 });
 
