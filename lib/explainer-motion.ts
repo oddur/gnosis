@@ -86,7 +86,8 @@ function createExplainerMotion(root, preference) {
         const matrix = scene.node.getScreenCTM();
         if (!matrix) continue;
         const ghost = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-        ghost.setAttribute('transform', matrix.inverse().multiply(old.parentMatrix).toString());
+        const transform = matrix.inverse().multiply(old.parentMatrix);
+        ghost.setAttribute('transform', 'matrix(' + [transform.a, transform.b, transform.c, transform.d, transform.e, transform.f].join(',') + ')');
         ghost.setAttribute('aria-hidden', 'true');
         ghost.setAttribute('pointer-events', 'none');
         for (const node of [old.clone, ...old.clone.querySelectorAll('*')]) {

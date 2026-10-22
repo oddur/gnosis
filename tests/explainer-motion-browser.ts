@@ -44,7 +44,7 @@ export async function testExplainerMotion() {
       javascript: `let state = 0, elapsed = 0;
 const draw = () => document.getElementById('drawing').innerHTML = state === 2 ? '' :
   '<g data-motion-id="' + (state === 3 ? 'new-item' : 'request-1') + '" transform="translate(' + (state === 1 ? 260 : 40) + ', 80)"><rect width="80" height="40" fill="var(--accent)"/><text y="70">Request</text></g>';
-window.explainer = {reset() {state=0;elapsed=0;draw();}, step() {state=Math.min(state+1,3);draw();}, tick(ms) {elapsed+=ms;if(elapsed>=1200){elapsed=0;this.step();}}};`,
+window.explainer = {reset() {state=0;elapsed=0;draw();}, step() {state=Math.min(state+1,3);draw();}, tick(ms) {elapsed+=ms;if(elapsed>=100000){elapsed=0;this.step();}}};`,
     };
     async function load(html: string) {
       await window.webContents.executeJavaScript(`new Promise(resolve => {
@@ -56,13 +56,29 @@ window.explainer = {reset() {state=0;elapsed=0;draw();}, step() {state=Math.min(
       })`);
       const frame = window.webContents.mainFrame.frames.find((f) => f.url === 'about:srcdoc');
       assert.ok(frame);
+      await reducedMotion('no-preference');
+      await frame.executeJavaScript(
+        'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))'
+      );
       return frame;
     }
     const command = async (command: string) => {
-      await window.webContents.executeJavaScript(
-        `document.querySelector('iframe').contentWindow.postMessage({type:'gnosis-explainer-control',token:'motion-test',command:${JSON.stringify(command)}},'*')`
-      );
-      await wait(30);
+      await window.webContents.executeJavaScript(`new Promise(resolve => {
+        const frame = document.querySelector('iframe');
+        const receive = event => {
+          if (event.source !== frame.contentWindow || event.data?.token !== 'motion-test' || event.data.event !== 'state') return;
+          removeEventListener('message', receive); resolve(true);
+        };
+        addEventListener('message', receive);
+        frame.contentWindow.postMessage({type:'gnosis-explainer-control',token:'motion-test',command:${JSON.stringify(command)}},'*');
+      })`);
+    };
+    const waitUntil = async (frame: Awaited<ReturnType<typeof load>>, expression: string) => {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (await frame.executeJavaScript(expression)) return;
+        await wait(50);
+      }
+      assert.fail('Motion did not settle: ' + expression);
     };
     const frame = await load(buildExplainerDocument(artifact, 'motion-test'));
     assert.equal(await frame.executeJavaScript('document.getAnimations().length'), 0, 'opening a diagram starts still');
@@ -81,6 +97,7 @@ window.explainer = {reset() {state=0;elapsed=0;draw();}, step() {state=Math.min(
     )) as number;
     assert.ok(x > initialX && x < initialX + 220, 'the item occupies an intermediate position during its transition');
     await command('pause');
+    await frame.executeJavaScript('Promise.all(document.getAnimations().map(animation => animation.ready))');
     const pausedTime = (await frame.executeJavaScript('document.getAnimations()[0].currentTime')) as number;
     await wait(100);
     assert.equal(
@@ -89,7 +106,7 @@ window.explainer = {reset() {state=0;elapsed=0;draw();}, step() {state=Math.min(
       'Pause freezes the transition'
     );
     await command('play');
-    await wait(450);
+    await waitUntil(frame, 'document.getAnimations().length === 0');
     await command('pause');
     assert.equal(
       await frame.executeJavaScript('document.getAnimations().length'),
@@ -107,7 +124,7 @@ window.explainer = {reset() {state=0;elapsed=0;draw();}, step() {state=Math.min(
       0,
       'exit ghosts cannot duplicate semantic IDs'
     );
-    await wait(300);
+    await waitUntil(frame, 'document.querySelectorAll("svg > [aria-hidden=true]").length === 0');
     assert.equal(
       await frame.executeJavaScript('document.querySelectorAll("svg > [aria-hidden=true]").length'),
       0,
@@ -156,6 +173,32 @@ window.explainer = {reset() {state=0;elapsed=0;draw();}, step() {state=Math.min(
       'saved unkeyed diagrams get a gentle change transition'
     );
     assert.equal(await legacy.executeJavaScript('document.getElementById("state").textContent'), '2 items waiting');
+    for (const transform of ['translate(110 35)', 'scale(1.5 0.75)', 'translate(110 35) scale(1.5 0.75)']) {
+      const transformed = await load(
+        buildExplainerDocument(
+          {
+            ...artifact,
+            html: `<svg viewBox="0 0 900 320"><g transform="${transform}"><g id="drawing"></g></g></svg>`,
+          },
+          'motion-test'
+        )
+      );
+      await command('step');
+      await transformed.executeJavaScript('document.getAnimations().forEach(animation => animation.finish())');
+      const before = (await transformed.executeJavaScript(
+        'document.querySelector("[data-motion-id]").getBoundingClientRect().toJSON()'
+      )) as { x: number; y: number; width: number; height: number };
+      await command('step');
+      const ghost = (await transformed.executeJavaScript(
+        'document.querySelector("svg > [aria-hidden=true]").firstElementChild.getBoundingClientRect().toJSON()'
+      )) as typeof before;
+      for (const dimension of ['x', 'y', 'width', 'height'] as const) {
+        assert.ok(
+          Math.abs(ghost[dimension] - before[dimension]) < 0.1,
+          `exit ghost preserves ${dimension} under ${transform}: expected ${before[dimension]}, got ${ghost[dimension]}`
+        );
+      }
+    }
   } finally {
     window.destroy();
   }
