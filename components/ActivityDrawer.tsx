@@ -3,7 +3,12 @@ import { Activity, ChevronUp, X, Loader2, Check, AlertCircle } from 'lucide-reac
 import { isActiveTask, type ActivityAction, type ActivityTask } from '../lib/activity';
 import { PROVIDERS } from '../lib/models';
 
-const kindLabels = { review: 'Guided review', briefing: 'Briefing', exploration: 'Interactive explanation' };
+const kindLabels = {
+  review: 'Guided review',
+  briefing: 'Briefing',
+  exploration: 'Interactive explanation',
+  github: 'GitHub update',
+};
 const completedLabels = {
   review: 'Explanation ready',
   briefing: 'Briefing ready',
@@ -29,7 +34,9 @@ function Progress({ task }: { task: ActivityTask }) {
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={percent}
-      aria-valuetext={progress ? `${progress.completed} of ${progress.total} topics complete` : task.detail}
+      aria-valuetext={
+        progress ? `${progress.completed} of ${progress.total} ${progress.unit ?? 'topics'} complete` : task.detail
+      }
     >
       <span style={percent === undefined ? undefined : { width: `${percent}%` }} />
     </div>
@@ -97,7 +104,9 @@ export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Pro
   const running = tasks.filter((t) => t.status === 'running');
   const queued = tasks.filter((t) => t.status === 'queued').length;
   const failed = tasks.filter((t) => t.status === 'failed').length;
-  const ready = tasks.filter((t) => t.status === 'completed').length;
+  const ready = tasks.filter((t) => t.status === 'completed' && t.kind !== 'github').length;
+  const updated = tasks.filter((t) => t.status === 'completed' && t.kind === 'github' && !t.warnings?.length).length;
+  const warnings = tasks.filter((t) => !!t.warnings?.length).length;
   const paused = tasks.filter((t) => t.status === 'paused').length;
   const summary =
     [
@@ -106,6 +115,8 @@ export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Pro
       paused && `${paused} paused`,
       failed && `${failed} failed`,
       ready && `${ready} ready`,
+      updated && `GitHub updated`,
+      warnings && `${warnings} with warnings`,
     ]
       .filter(Boolean)
       .join(' · ') || 'No active tasks';
@@ -157,8 +168,8 @@ export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Pro
           <div className="activity-list">
             {!tasks.length && (
               <p className="activity-empty">
-                Guided reviews, briefings, and interactive explanations appear here while they are generated. You can
-                keep browsing.
+                GitHub updates, guided reviews, briefings, and interactive explanations appear here. You can keep
+                browsing while they run.
               </p>
             )}
             {[...tasks]
@@ -169,7 +180,11 @@ export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Pro
                     .flatMap((p) => p.models.map((m) => ({ id: m.id, label: `${p.label} · ${m.label}` })))
                     .find((m) => m.id === task.model)?.label ?? task.model;
                 return (
-                  <article className="activity-task" key={task.id} data-status={task.status}>
+                  <article
+                    className="activity-task"
+                    key={task.id}
+                    data-status={task.warnings?.length ? 'warning' : task.status}
+                  >
                     <div className="activity-task-meta">
                       <span>{kindLabels[task.kind]}</span>
                       {label && <span>{label}</span>}
@@ -188,6 +203,8 @@ export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Pro
                     <div className="activity-task-status">
                       {task.status === 'running' ? (
                         <Loader2 size={13} className="animate-spin" />
+                      ) : task.warnings?.length ? (
+                        <AlertCircle size={13} />
                       ) : task.status === 'completed' ? (
                         <Check size={13} />
                       ) : task.status === 'failed' ? (
@@ -196,11 +213,11 @@ export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Pro
                       <span>
                         {task.status === 'failed'
                           ? 'Failed'
-                          : task.status === 'completed'
+                          : task.status === 'completed' && task.kind !== 'github'
                             ? completedLabels[task.kind]
                             : task.detail}
                         {task.status === 'running' && task.progress
-                          ? ` · ${task.progress.completed} of ${task.progress.total} complete`
+                          ? ` · ${task.progress.completed} of ${task.progress.total} ${task.progress.unit ?? 'topics'} complete`
                           : ''}
                       </span>
                     </div>
@@ -208,6 +225,14 @@ export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Pro
                       <details className="activity-failure">
                         <summary>Error details</summary>
                         <p>{task.detail}</p>
+                      </details>
+                    )}
+                    {!!task.warnings?.length && (
+                      <details className="activity-failure">
+                        <summary>What could not be updated</summary>
+                        {task.warnings.map((warning) => (
+                          <p key={warning}>{warning}</p>
+                        ))}
                       </details>
                     )}
                     {task.status === 'running' && <Progress task={task} />}
@@ -222,7 +247,7 @@ export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Pro
                           Retry
                         </button>
                       )}
-                      {task.status === 'completed' && (
+                      {task.status === 'completed' && task.kind !== 'github' && (
                         <button disabled={pending === task.id} onClick={() => void act(task, 'open')}>
                           {openLabels[task.kind]}
                         </button>

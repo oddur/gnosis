@@ -872,7 +872,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                 <details className="queue-warnings">
                   <summary>
                     <AlertCircle size={14} />
-                    Discovery needs attention ({queue.warnings.length})
+                    Your queue may be incomplete ({queue.warnings.length})
                   </summary>
                   {queue.warnings.map((w, i) => (
                     <p key={i}>{w}</p>

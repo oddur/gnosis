@@ -1727,6 +1727,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .activity-task-status { display:flex; align-items:center; gap:6px; margin-top:6px; font-size:12px; color:var(--muted-foreground); }
 .activity-task-status svg { flex-shrink:0; }
 .activity-task[data-status=failed] .activity-task-status { color:var(--destructive); }
+.activity-task[data-status=warning] .activity-task-status { color:var(--color-warning); }
 .activity-progress { height:3px; background:var(--muted); border-radius:2px; overflow:hidden; margin-top:9px; }
 .activity-progress span { display:block; height:100%; background:var(--ring); transition:width 180ms ease-out; }
 .activity-mini-progress .activity-progress { margin:0; }

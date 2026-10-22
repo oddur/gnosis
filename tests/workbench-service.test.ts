@@ -6,6 +6,7 @@ import path from 'node:path';
 import type { Octokit } from '@octokit/rest';
 import { createWorkbenchService } from '../src/workbench-service';
 import type { WorkbenchPreferences } from '../src/workbench-service';
+import { createActivityService } from '../src/activity-service';
 import { DEFAULT_CLAUDE_MODEL } from '../lib/models';
 import type { getProvider } from '../lib/provider';
 
@@ -75,7 +76,9 @@ function setup(generate: () => Promise<string>, auto = true) {
     },
   } as unknown as Octokit;
   const provider = (() => ({ generate })) as unknown as typeof getProvider;
+  const activities = createActivityService();
   const deps = {
+    activities,
     directory: () => directory,
     auth: () => ({ token: 'fixture', login: 'reviewer' }),
     preferences: () => prefs,
@@ -409,6 +412,113 @@ test('human dependency updates remain visible and keep required Dependabot paren
     const queue = await s.service.queue(true);
     assert.equal(queue.items.length, 1);
     assert.equal(queue.items[0].subject.members.length, 2);
+  } finally {
+    s.cleanup();
+  }
+});
+
+void test('GitHub refresh reports progress once for concurrent callers and leaves cache reads quiet', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  let release = () => {};
+  let entered = () => {};
+  const reading = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let reads = 0;
+  Object.assign(s.deps.client().pulls, {
+    get: async () => {
+      reads++;
+      entered();
+      await gate;
+      return { data: s.pr };
+    },
+  });
+  try {
+    const first = s.service.queue();
+    const concurrent = s.service.queue(true);
+    await reading;
+    const [task] = s.deps.activities.list();
+    assert.equal(task.kind, 'github');
+    assert.equal(task.status, 'running');
+    assert.equal(task.canCancel, false);
+    assert.deepEqual(task.progress, { completed: 0, total: 1, unit: 'PRs' });
+    assert.equal(s.deps.activities.list().length, 1);
+    release();
+    await Promise.all([first, concurrent]);
+    assert.equal(reads, 1);
+    assert.equal(s.deps.activities.list()[0].detail, 'GitHub information updated');
+    await s.deps.activities.act(task.id, 'dismiss');
+    await s.service.queue();
+    assert.deepEqual(s.deps.activities.list(), []);
+    assert.equal(reads, 1);
+  } finally {
+    release();
+    s.cleanup();
+  }
+});
+
+void test('partial GitHub updates preserve queue warnings and can be retried from Activity', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  try {
+    await s.service.queue();
+    const original = s.deps.client().pulls.list;
+    Object.assign(s.deps.client().pulls, {
+      list: () => Promise.reject(new Error('Offline')),
+    });
+    const partial = await s.service.queue(true);
+    assert.equal(partial.items.length, 1);
+    assert.ok(partial.warnings.length);
+    const [task] = s.deps.activities.list();
+    assert.equal(task.status, 'completed');
+    assert.match(task.detail, /Updated with warnings/);
+    assert.deepEqual(task.warnings, partial.warnings);
+    assert.equal(task.canRetry, true);
+    Object.assign(s.deps.client().pulls, { list: original });
+    await s.deps.activities.act(task.id, 'retry');
+    assert.equal(s.deps.activities.list()[0].status, 'completed');
+    assert.equal(s.deps.activities.list()[0].canRetry, false);
+    assert.deepEqual((await s.service.queue()).warnings, []);
+  } finally {
+    s.cleanup();
+  }
+});
+
+void test('failed background GitHub updates keep saved results and retry the real refresh', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  try {
+    await s.service.queue();
+    const search = s.deps.client().search.issuesAndPullRequests;
+    Object.assign(s.deps.client().search, {
+      issuesAndPullRequests: () => Promise.reject(new Error('Network unavailable')),
+    });
+    const restarted = createWorkbenchService(s.deps);
+    assert.equal((await restarted.queue()).items.length, 1);
+    await assert.rejects(restarted.queue(true), /Network unavailable/);
+    const [task] = s.deps.activities.list();
+    assert.equal(task.status, 'failed');
+    assert.equal(task.canRetry, true);
+    assert.match(task.detail, /Showing your saved queue/);
+    const cached = await restarted.queue();
+    assert.equal(cached.items.length, 1);
+    assert.match(cached.warnings[0], /Network unavailable/);
+    Object.assign(s.deps.client().search, { issuesAndPullRequests: search });
+    await s.deps.activities.act(task.id, 'retry');
+    assert.equal(s.deps.activities.list()[0].status, 'completed');
+    assert.deepEqual((await restarted.queue()).warnings, []);
+  } finally {
+    s.cleanup();
+  }
+});
+
+void test('signed-out queue reads do not create GitHub activity', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  try {
+    const service = createWorkbenchService({ ...s.deps, auth: () => ({ token: null, login: null }) });
+    assert.deepEqual((await service.queue()).items, []);
+    assert.deepEqual(s.deps.activities.list(), []);
   } finally {
     s.cleanup();
   }

@@ -1,12 +1,13 @@
 export type ActivityStatus = 'queued' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
 export interface ActivityTask {
   id: string;
-  kind: 'review' | 'briefing' | 'exploration';
+  kind: 'review' | 'briefing' | 'exploration' | 'github';
   title: string;
   detail: string;
   model?: string;
   status: ActivityStatus;
-  progress?: { completed: number; total: number };
+  progress?: { completed: number; total: number; unit?: string };
+  warnings?: string[];
   updatedAt: string;
   reviewId?: string;
   slideId?: string;

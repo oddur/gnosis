@@ -2197,6 +2197,7 @@ function formatMs(ms: number): string {
 }
 
 const workbench = createWorkbenchService({
+  activities,
   directory: () => app.getPath('userData'),
   auth: () => ({ token: getResolvedToken(), login: cachedLogin }),
   preferences: loadPreferences,

@@ -1,4 +1,5 @@
 import { ACTIVITY_RETENTION_MS, type ActivityTask } from '../lib/activity';
+import type { ActivityService } from './activity-service';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -39,6 +40,7 @@ interface Deps {
   preferences: () => WorkbenchPreferences;
   history: () => ReviewHistoryEntry[];
   busy: () => boolean;
+  activities?: ActivityService;
   client?: () => Octokit;
   provider?: typeof getProvider;
 }
@@ -146,7 +148,9 @@ export function createWorkbenchService(deps: Deps) {
       role,
     };
   }
-  async function discover(): Promise<WorkbenchQueue> {
+  async function discover(
+    progress: (detail: string, progress?: ActivityTask['progress']) => void
+  ): Promise<WorkbenchQueue> {
     const { token, login } = deps.auth();
     if (!token || !login) {
       load();
@@ -157,13 +161,15 @@ export function createWorkbenchService(deps: Deps) {
     warnings = [];
     const prefs = deps.preferences();
     const previousMembers = new Map(s.subjects.flatMap((sub) => sub.members.map((m) => [m.url, m] as const)));
+    progress('Finding your pull requests');
     const found = await searchPullRequests(octokit, login, 100);
     if (found.length === 100)
       warnings.push('Your personal queue reached its search limit. Some changes may be missing.');
     const seeds = new Map<string, Pick<PrSearchResult, 'url' | 'role'>>(
       found.filter((m) => prefs.ignoreDependabotPrs === false || !isDependabot(m.author)).map((m) => [m.url, m])
     );
-    for (const fullName of prefs.watchedRepos) {
+    for (const [index, fullName] of prefs.watchedRepos.entries()) {
+      progress(`Checking ${fullName}`, { completed: index, total: prefs.watchedRepos.length, unit: 'repositories' });
       const [owner, repo] = fullName.split('/');
       if (!owner || !repo) continue;
       try {
@@ -190,7 +196,7 @@ export function createWorkbenchService(deps: Deps) {
       } catch {
         const cached = previousMembers.get(url);
         if (cached) members.set(url, { ...cached, role: role ?? 'watched' });
-        warnings.push(`Could not read ${url}. Stack discovery is incomplete.`);
+        warnings.push(`Could not read ${url}. Some PRs may be missing from their stacks.`);
       }
     };
     // Include previous parents to preserve lineage after retargeting and merging.
@@ -203,15 +209,21 @@ export function createWorkbenchService(deps: Deps) {
       for (const url of [override.parent, override.child]) if (!urls.has(url)) urls.set(url, 'watched');
     const entries = [...urls];
     if (entries.length > 150)
-      warnings.push('Queue discovery is limited to 150 known PRs. Narrow watched repositories to see more.');
-    for (let i = 0; i < Math.min(entries.length, 150); i += 5)
+      warnings.push('Only 150 known PRs can be updated at once. Choose fewer repositories in Settings.');
+    const total = Math.min(entries.length, 150);
+    progress('Updating pull request details', { completed: 0, total, unit: 'PRs' });
+    for (let i = 0; i < total; i += 5) {
       await Promise.all(entries.slice(i, i + 5).map(([url, role]) => add(url, role)));
+      progress('Updating pull request details', { completed: Math.min(i + 5, total), total, unit: 'PRs' });
+    }
     for (const [url, role] of entries.slice(150)) {
       const cached = previousMembers.get(url);
       if (cached) members.set(url, { ...cached, role });
     }
     // Fetch repository siblings once, including parents omitted by review-request filters.
-    for (const fullName of new Set([...members.values()].map((m) => m.repo))) {
+    const repos = [...new Set([...members.values()].map((m) => m.repo))];
+    for (const [index, fullName] of repos.entries()) {
+      progress(`Checking PR stacks in ${fullName}`, { completed: index, total: repos.length, unit: 'repositories' });
       const [owner, repo] = fullName.split('/');
       try {
         const { data } = await octokit.pulls.list({
@@ -223,7 +235,7 @@ export function createWorkbenchService(deps: Deps) {
           direction: 'desc',
         });
         if (data.length === 100)
-          warnings.push(`${fullName} has at least 100 open PRs. Stack discovery may be incomplete.`);
+          warnings.push(`${fullName} has at least 100 open PRs. Some PRs may be missing from their stacks.`);
         // Only add connected siblings, not every PR in the repository.
         const connected = new Set([...members.values()].filter((m) => m.repo === fullName).map((m) => m.url));
         for (let changed = true; changed; ) {
@@ -259,13 +271,14 @@ export function createWorkbenchService(deps: Deps) {
           });
           if (parents.length === 1) await add(parents[0].html_url);
           else if (parents.length > 1)
-            warnings.push(`Multiple historical parents for ${fullName}:${ref}. Confirm grouping manually.`);
+            warnings.push(`More than one earlier PR matches ${fullName}:${ref}. Check which PRs belong together.`);
         }
       } catch {
-        warnings.push(`Dependency discovery failed for ${fullName}. Existing information is retained.`);
+        warnings.push(`Could not check which PRs depend on others in ${fullName}. Showing saved relationships.`);
       }
     }
     if (deps.auth().login !== login) return { items: [], warnings: [], remaining: 0 };
+    progress('Updating your queue');
     s.subjects = groupSubjects([...members.values()], s.overrides, s.subjects);
     for (const subject of s.subjects)
       if (warnings.length)
@@ -286,16 +299,44 @@ export function createWorkbenchService(deps: Deps) {
       void pump();
       return view();
     }
-    refresh = discover().finally(() => {
-      refresh = undefined;
-    });
-    if (!force && load().subjects.length) {
-      void refresh.catch((error: unknown) => {
-        warnings = [
-          `Could not refresh GitHub. Showing saved queue: ${error instanceof Error ? error.message : String(error)}`,
-        ];
+    const { token, login } = deps.auth();
+    if (!token || !login) return { items: [], warnings: [], remaining: 0 };
+    const id = `github:${login}`;
+    deps.activities?.start(
+      { id, kind: 'github', title: 'Updating GitHub information', detail: 'Finding your pull requests' },
+      { retry: () => queue(true) }
+    );
+    refresh = discover((detail, progress) => deps.activities?.update(id, detail, progress))
+      .then((result) => {
+        if (deps.auth().login !== login) {
+          deps.activities?.finish(id, 'cancelled', 'GitHub account changed.');
+        } else {
+          deps.activities?.finish(
+            id,
+            'completed',
+            result.warnings.length
+              ? 'Updated with warnings — your queue may be incomplete'
+              : 'GitHub information updated',
+            result.warnings
+          );
+        }
+        return result;
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        const detail = load().subjects.length
+          ? `Could not update GitHub information. Showing your saved queue. ${message}`
+          : `Could not update GitHub information. Retry to load your queue. ${message}`;
+        deps.activities?.finish(id, 'failed', detail);
+        warnings = [detail];
         lastRefresh = Date.now();
+        throw error;
+      })
+      .finally(() => {
+        refresh = undefined;
       });
+    if (!force && load().subjects.length) {
+      void refresh.catch(() => {});
       return view();
     }
     return refresh;

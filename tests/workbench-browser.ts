@@ -413,6 +413,45 @@ void app.whenReady().then(async () => {
     await js('document.querySelector(\'[aria-label="Help and terminology"]\').click()');
     await wait("!!document.querySelector('.workbench-help')");
     assert.ok(await js("document.querySelector('.workbench-help').textContent.includes('Source PR')"));
+    await js('document.querySelector(\'[aria-label="Close help"]\').click()');
+    await js(`(() => {
+      window.githubTask = { id: 'github:fixture', kind: 'github', title: 'Updating GitHub information',
+        detail: 'Updating pull request details', status: 'running',
+        progress: {completed: 3, total: 8, unit: 'PRs'}, updatedAt: new Date().toISOString(), canCancel: false, canRetry: false };
+      window.electronAPI.listActivity = () => Promise.resolve([window.githubTask]);
+      window.githubActions = [];
+      window.electronAPI.activityAction = (id, action) => {
+        window.githubActions.push({id, action});
+        return Promise.resolve();
+      };
+    })()`);
+    await js("document.querySelector('.activity-trigger').click()");
+    await wait("document.querySelector('.activity-task')?.textContent.includes('Updating GitHub information')");
+    assert.equal(
+      await js("document.querySelector('.activity-list [role=progressbar]').getAttribute('aria-valuetext')"),
+      '3 of 8 PRs complete'
+    );
+    assert.equal(await js("document.querySelectorAll('.activity-actions button').length"), 0);
+    await js("document.documentElement.classList.remove('dark')");
+    await capture('github-activity-light');
+    window.setSize(1024, 700);
+    await js("document.documentElement.classList.add('dark')");
+    await capture('github-activity-dark-narrow');
+    await js(
+      "void Object.assign(window.githubTask, {status: 'completed', detail: 'Updated with warnings — your queue may be incomplete', progress: undefined, warnings: ['Could not check which PRs depend on others in owner/repo. Showing saved relationships.'], canRetry: true})"
+    );
+    await wait("document.querySelector('.activity-summary')?.textContent.includes('1 with warnings')");
+    assert.equal(await js("document.querySelector('.activity-summary').textContent.includes('ready')"), false);
+    await js("document.querySelector('.activity-failure summary').click()");
+    await capture('github-activity-warning-dark');
+    await click('Retry');
+    assert.deepEqual(await js('window.githubActions'), [{ id: 'github:fixture', action: 'retry' }]);
+    await js(
+      "void Object.assign(window.githubTask, {status: 'completed', detail: 'GitHub information updated', warnings: [], canRetry: false})"
+    );
+    await wait("document.querySelector('.activity-summary')?.textContent.includes('GitHub updated')");
+    assert.equal(await js("document.querySelectorAll('.activity-actions button').length"), 0);
+    assert.ok(await js("document.querySelector('.activity-task').textContent.includes('GitHub information updated')"));
     console.log('Workbench browser checks passed. Screenshots: ' + shots);
   } catch (error) {
     console.error(error);
