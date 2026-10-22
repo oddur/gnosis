@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 void app.whenReady().then(async () => {
   const window = new BrowserWindow({
-    width: 800,
+    width: 1280,
     height: 900,
     show: false,
     webPreferences: { backgroundThrottling: false },
@@ -29,12 +29,12 @@ void app.whenReady().then(async () => {
     if (!url) throw new Error('Missing fixture URL');
     await window.loadURL(url);
     await wait('!!document.querySelector("[data-case=added] [data-line-number]")');
-    for (const name of ['added', 'deleted', 'added-plain']) {
+    for (const name of ['metadata-added', 'metadata-deleted', 'added', 'deleted', 'added-plain']) {
       const dimensions = await js<{ offset: number; width: number; available: number }>(`(() => {
         const section = document.querySelector('[data-case=${name}]');
         const line = section.querySelector('[data-line-number], [data-base-line]');
         const box = line.getBoundingClientRect();
-        const parent = section.getBoundingClientRect();
+        const parent = (section.querySelector('.review-file-group') ?? section).getBoundingClientRect();
         return {offset: box.left - parent.left, width: box.width, available: parent.width};
       })()`);
       assert.ok(dimensions.offset < 100, `${name}: code starts ${dimensions.offset}px into the pane`);

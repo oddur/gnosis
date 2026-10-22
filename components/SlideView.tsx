@@ -741,6 +741,7 @@ export function SlideView({
               <SplitDiffHunkGroup
                 showFileHeader={false}
                 filePath={filePath}
+                fileStatus={fm?.status}
                 hunks={hunks}
                 pendingComments={pendingComments}
                 slideIndex={slideNumber}
