@@ -1,4 +1,5 @@
-import { useMemo, useState, useRef, type CSSProperties } from 'react';
+import { useMemo, useState, useRef, type CSSProperties, type ReactNode } from 'react';
+import type { GitHubReviewThread } from '../lib/review-threads';
 import { FileDiff } from '@pierre/diffs/react';
 import { bundledLanguages } from 'shiki/langs';
 import { bundledThemes } from 'shiki/themes';
@@ -46,6 +47,8 @@ interface Props {
   pendingComments?: PendingReviewComment[];
   slideIndex: number;
   commentCallbacks?: CommentCallbacks;
+  threads?: GitHubReviewThread[];
+  renderThread?: (thread: GitHubReviewThread) => ReactNode;
 }
 
 const shadowCSS = `
@@ -68,6 +71,8 @@ function ReviewHunk({
     slideIndex,
     commentCallbacks,
     pendingComments = [],
+    threads = [],
+    renderThread,
     appearance = DEFAULT_DIFF_APPEARANCE,
   } = props;
   const prepared = useMemo(() => {
@@ -133,7 +138,11 @@ function ReviewHunk({
     [theme, prepared, diffLayout, appearance, commentCallbacks, filePath, lineMaps, sourceHeader]
   );
   const annotations = useMemo<DiffLineAnnotation<Location>[]>(() => {
-    const locations = [...pendingComments.filter((c) => c.filePath === filePath), ...(active ? [active] : [])];
+    const locations = [
+      ...pendingComments.filter((c) => c.filePath === filePath),
+      ...(active ? [active] : []),
+      ...threads.flatMap((t) => (t.line == null ? [] : [{ line: t.line, side: t.diffSide }])),
+    ];
     const seen = new Set<string>();
     return locations.flatMap((location) => {
       const key = `${location.side}:${location.line}`;
@@ -147,7 +156,7 @@ function ReviewHunk({
         { lineNumber: location.line, side: location.side === 'LEFT' ? 'deletions' : 'additions', metadata: location },
       ];
     });
-  }, [pendingComments, filePath, active, prepared]);
+  }, [pendingComments, filePath, active, prepared, threads]);
   if (!prepared) {
     if (diffLayout === 'split') return <SplitDiffHunkGroup {...props} hunks={[hunk]} showFileHeader={false} />;
     if (commentCallbacks)
@@ -174,29 +183,29 @@ function ReviewHunk({
           '--diffs-line-height': '20px',
         } as CSSProperties
       }
-      renderAnnotation={({ metadata: location }) =>
-        commentCallbacks && (
-          <div className="font-sans text-foreground text-sm">
-            {active?.line === location.line && active.side === location.side && (
-              <InlineCommentForm
-                onCancel={() => setActive(null)}
-                onSubmit={(body) => {
-                  const info = prepared.lines.find(
-                    (l) => (location.side === 'LEFT' ? l.baseLineNumber : l.headLineNumber) === location.line
-                  );
-                  commentCallbacks.onAddComment({
-                    filePath,
-                    ...location,
-                    body,
-                    slideIndex,
-                    hunkHeader: sourceHeader ?? hunk.hunkHeader,
-                    codeSnippet: info?.text ?? '',
-                  });
-                  setActive(null);
-                }}
-              />
-            )}
-            {pendingComments
+      renderAnnotation={({ metadata: location }) => (
+        <div className="font-sans text-foreground text-sm">
+          {commentCallbacks && active?.line === location.line && active.side === location.side && (
+            <InlineCommentForm
+              onCancel={() => setActive(null)}
+              onSubmit={(body) => {
+                const info = prepared.lines.find(
+                  (l) => (location.side === 'LEFT' ? l.baseLineNumber : l.headLineNumber) === location.line
+                );
+                commentCallbacks.onAddComment({
+                  filePath,
+                  ...location,
+                  body,
+                  slideIndex,
+                  hunkHeader: sourceHeader ?? hunk.hunkHeader,
+                  codeSnippet: info?.text ?? '',
+                });
+                setActive(null);
+              }}
+            />
+          )}
+          {commentCallbacks &&
+            pendingComments
               .filter((c) => c.filePath === filePath && c.line === location.line && c.side === location.side)
               .map((c) => (
                 <CommentBubble
@@ -206,9 +215,11 @@ function ReviewHunk({
                   onRemove={commentCallbacks.onRemoveComment}
                 />
               ))}
-          </div>
-        )
-      }
+          {threads
+            .filter((t) => t.line === location.line && t.diffSide === location.side)
+            .map((t) => renderThread?.(t))}
+        </div>
+      )}
     />
   );
 }
@@ -233,6 +244,7 @@ function FoldableReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: D
     prepared?.lines.forEach((line, index) => {
       if (
         props.pinnedLines?.some((n) => line.headLineNumber === n || line.baseLineNumber === n) ||
+        props.threads?.some((t) => (t.diffSide === 'LEFT' ? line.baseLineNumber : line.headLineNumber) === t.line) ||
         props.pendingComments?.some(
           (c) =>
             c.filePath === props.filePath && (c.side === 'LEFT' ? line.baseLineNumber : line.headLineNumber) === c.line
@@ -241,7 +253,7 @@ function FoldableReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: D
         result.add(index);
     });
     return result;
-  }, [prepared, props.pinnedLines, props.pendingComments, props.filePath]);
+  }, [prepared, props.pinnedLines, props.pendingComments, props.filePath, props.threads]);
   const ranges = useMemo(
     () => (prepared ? reviewContextRanges(prepared.lines, pinned, revealed) : []),
     [prepared, pinned, revealed]
@@ -328,10 +340,35 @@ function FoldableReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: D
 }
 
 export function ReviewDiff({ hunks, ...props }: Props) {
+  const threadsByHunk = useMemo(() => {
+    const owners = new Map<string, number>();
+    hunks.forEach((hunk, index) => {
+      for (const line of prepareReviewHunk(hunk, props.fileStatus)?.lines ?? []) {
+        for (const [side, number] of [
+          ['LEFT', line.baseLineNumber],
+          ['RIGHT', line.headLineNumber],
+        ] as const) {
+          const key = `${side}:${number}`;
+          if (number != null && !owners.has(key)) owners.set(key, index);
+        }
+      }
+    });
+    const result = hunks.map(() => [] as GitHubReviewThread[]);
+    for (const thread of props.threads ?? []) {
+      const owner = owners.get(`${thread.diffSide}:${thread.line}`);
+      if (owner !== undefined) result[owner].push(thread);
+    }
+    return result;
+  }, [hunks, props.fileStatus, props.threads]);
   return (
     <div className="review-diff select-text min-w-0 overflow-hidden rounded-md border">
       {hunks.map((hunk, i) => (
-        <FoldableReviewHunk key={`${props.slideIndex}:${i}:${hunk.hunkHeader}`} hunk={hunk} {...props} />
+        <FoldableReviewHunk
+          key={`${props.slideIndex}:${i}:${hunk.hunkHeader}`}
+          hunk={hunk}
+          {...props}
+          threads={threadsByHunk[i]}
+        />
       ))}
     </div>
   );

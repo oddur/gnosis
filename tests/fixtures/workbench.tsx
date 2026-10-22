@@ -1,6 +1,7 @@
 import { normalizeQueueFilters, type QueueFilters } from '../../lib/queue-filters';
 import type { ActivityTask, ActivityAction } from '../../lib/activity';
 import { createRoot } from 'react-dom/client';
+import { threadMocks } from './review-threads';
 import '../../src/globals.css';
 import { groupSubjects, snapshot, memberPrefix, type ReviewMember, type QueueItem } from '../../lib/workbench';
 import type { Preferences, ReviewGuide, ReviewHistoryEntry } from '../../lib/types';
@@ -366,6 +367,7 @@ const mocks = {
   listReviews: () => Promise.resolve(onboardingScenario && !fixtureStarted ? [] : history),
   loadReview: () => Promise.resolve(review),
   reRenderHunks: (r: ReviewGuide) => Promise.resolve(r),
+  getReviewThreads: () => Promise.resolve({ headSha: 'fixture-head', baseSha: 'fixture-base', threads: [] }),
   getPrStatus: () =>
     statusFailures-- > 0
       ? Promise.reject(new Error('API rate limit exceeded. Request ID fixture-request. Retry after the limit resets.'))
@@ -400,6 +402,7 @@ const mocks = {
   platform: 'darwin',
   isPackaged: false,
 };
+if (new URLSearchParams(location.search).has('threads')) Object.assign(mocks, threadMocks());
 Object.defineProperty(window, 'electronAPI', {
   value: new Proxy(mocks, {
     get: (target, key) => (key in target ? target[key as keyof typeof target] : () => Promise.resolve()),

@@ -1,4 +1,6 @@
 import { createActivityService } from './activity-service';
+import { createReviewThreadService } from './review-thread-service';
+import type { ReviewThreadAction } from '../lib/review-threads';
 import type { ActivityAction } from '../lib/activity';
 import { createWorkbenchService } from './workbench-service';
 import { StackDiffSource } from '../lib/stack-source';
@@ -2365,6 +2367,17 @@ ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
     if (mcpConfigPath) cleanupMcpConfig(mcpConfigPath);
   }
 });
+
+const reviewThreads = createReviewThreadService();
+function discussionClient() {
+  const token = getResolvedToken();
+  if (!token) throw new Error('Sign in to GitHub to load review comments.');
+  return getGitHubClient(token);
+}
+ipcMain.handle('get-review-threads', (_event, prUrl: string, refresh: boolean) =>
+  reviewThreads.list(discussionClient(), prUrl, refresh));
+ipcMain.handle('review-thread-action', (_event, req: ReviewThreadAction) =>
+  reviewThreads.act(discussionClient(), req));
 
 ipcMain.handle('submit-review', async (_event, req: SubmitReviewRequest) => {
   if (isLocalUrl(req.prUrl)) {

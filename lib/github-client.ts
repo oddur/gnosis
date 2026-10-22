@@ -177,8 +177,11 @@ export function createGitHubClientPool(options: Options = {}) {
       };
       client.hook.wrap('request', (request, requestOptions) => {
         const endpoint = client.request.endpoint(requestOptions);
-        const resource = endpoint.url.includes('/search/') ? 'search' : 'core';
+        const graph = new URL(endpoint.url).pathname === '/graphql';
+        const resource = graph ? 'graphql' : endpoint.url.includes('/search/') ? 'search' : 'core';
         const get = endpoint.method === 'GET';
+        const graphRead =
+          graph && typeof requestOptions.query === 'string' && /^\s*(query\b|\{)/.test(requestOptions.query);
         const requestKey = JSON.stringify([
           endpoint.url,
           endpoint.headers.accept,
@@ -206,7 +209,13 @@ export function createGitHubClientPool(options: Options = {}) {
           try {
             const response = await request(requestOptions);
             observe(response.headers);
-            if (!get) {
+            if (
+              graph &&
+              (response.data as { errors?: { type?: string }[] }).errors?.some((e) => e.type === 'RATE_LIMITED')
+            ) {
+              throw Object.assign(new Error('GitHub API rate limit exceeded'), { status: 403, response });
+            }
+            if (!get && !graphRead) {
               cache.clear();
               cacheBytes = 0;
               generation++;

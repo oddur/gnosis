@@ -6,7 +6,8 @@ import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from 'react-resizable-panels';
 import { Check, Copy, CopyX, MessageCircle, MessageSquarePlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { ReviewDiff, findReviewLine, reviewCodeSelection } from './ReviewDiff';
+import { findReviewLine, reviewCodeSelection } from './ReviewDiff';
+import { ReviewFileDiscussion } from './ReviewFileDiscussion';
 import { DiffAppearanceMenu } from './DiffAppearanceMenu';
 import { DEFAULT_DIFF_APPEARANCE, type DiffAppearance } from '@/lib/review-diff';
 import { ReviewFileHeader } from './ReviewFileHeader';
@@ -719,7 +720,8 @@ export function SlideView({
               commentCount={pendingComments?.filter((c) => c.filePath === filePath).length ?? 0}
               age={ageBadge}
             />
-            <ReviewDiff
+            <ReviewFileDiscussion
+              review={review}
               filePath={filePath}
               pinnedLines={slide.reviewChecks
                 ?.filter((check) => check.filePath === filePath && check.startLine != null)

@@ -1,4 +1,5 @@
 import type { QueueFilters } from '../lib/queue-filters';
+import type { GitHubReviewThread, GitHubReviewThreads, ReviewThreadAction } from '../lib/review-threads';
 import type { ActivityTask, ActivityAction } from '../lib/activity';
 import type { WorkbenchQueue, GroupingOverride, ReviewSnapshot } from '../lib/workbench';
 import { contextBridge, ipcRenderer } from 'electron';
@@ -120,6 +121,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   searchRepos: (query: string): Promise<RepoSearchResult[]> => ipcRenderer.invoke('search-repos', query),
   reRenderHunks: (review: ReviewGuide): Promise<ReviewGuide> => ipcRenderer.invoke('re-render-hunks', review),
   getPrStatus: (prUrl: string): Promise<PrStatus> => ipcRenderer.invoke('get-pr-status', prUrl),
+  getReviewThreads: (prUrl: string, refresh?: boolean): Promise<GitHubReviewThreads> => ipcRenderer.invoke('get-review-threads', prUrl, refresh),
+  reviewThreadAction: (req: ReviewThreadAction): Promise<GitHubReviewThread> => ipcRenderer.invoke('review-thread-action', req),
   onUpdateAvailable: (callback: (info: UpdateInfo) => void): void => {
     ipcRenderer.on('update-available', (_event, info: UpdateInfo) => callback(info));
   },

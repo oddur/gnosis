@@ -1,4 +1,5 @@
 import type { QueueFilters } from '../lib/queue-filters';
+import type { GitHubReviewThread, GitHubReviewThreads, ReviewThreadAction } from '../lib/review-threads';
 import type { ActivityTask, ActivityAction } from '../lib/activity';
 import type { WorkbenchQueue, GroupingOverride, ReviewSnapshot } from '../lib/workbench';
 import type {
@@ -71,6 +72,8 @@ declare global {
       searchRepos: (query: string) => Promise<RepoSearchResult[]>;
       reRenderHunks: (review: ReviewGuide) => Promise<ReviewGuide>;
       getPrStatus: (prUrl: string) => Promise<PrStatus>;
+      getReviewThreads: (prUrl: string, refresh?: boolean) => Promise<GitHubReviewThreads>;
+      reviewThreadAction: (req: ReviewThreadAction) => Promise<GitHubReviewThread>;
       onUpdateAvailable: (callback: (info: UpdateInfo) => void) => void;
       offUpdateAvailable: () => void;
       onUpdateReady: (callback: (version: string) => void) => void;

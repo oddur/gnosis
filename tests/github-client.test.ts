@@ -152,3 +152,29 @@ void test('failed username lookups never become an authenticated unknown account
   assert.equal(await fetchGitHubLogin('fixture', valid.pool), 'reviewer');
   assert.equal(valid.pool.savedLogin('fixture'), 'reviewer');
 });
+
+void test('GraphQL reads retain REST cache and HTTP-200 rate limits enter the shared cooldown', async () => {
+  let limited = false;
+  const h = harness((url, headers) => {
+    if (url.endsWith('/graphql'))
+      return limited
+        ? json({ errors: [{ type: 'RATE_LIMITED', message: 'API rate limit exceeded' }] }, 200, {
+            'x-ratelimit-resource': 'graphql',
+            'x-ratelimit-remaining': '0',
+            'x-ratelimit-reset': '1100',
+          })
+        : json({ data: { viewer: { login: 'me' } } });
+    return headers.has('if-none-match')
+      ? new Response(null, { status: 304 })
+      : json({ value: 'cached' }, 200, { etag: '"v1"' });
+  });
+  const client = h.pool.client('one');
+  await client.request('GET /test');
+  await client.request('POST /graphql', { query: 'query { viewer { login } }' });
+  assert.deepEqual((await client.request('GET /test')).data, { value: 'cached' });
+  limited = true;
+  await assert.rejects(client.request('POST /graphql', { query: 'query { viewer { login } }' }), GitHubBackoffError);
+  const count = h.calls.length;
+  await assert.rejects(client.request('POST /graphql', { query: 'query { viewer { login } }' }), GitHubBackoffError);
+  assert.equal(h.calls.length, count);
+});

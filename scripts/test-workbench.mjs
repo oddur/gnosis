@@ -8,6 +8,7 @@ import process from 'node:process';
 import electron from 'electron';
 import { setTimeout, clearTimeout } from 'node:timers';
 const splitDiff = process.argv.includes('--split-diff');
+const threads = process.argv.includes('--threads');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-workbench-test-'));
 const server = await createServer({ configFile: 'vite.renderer.config.ts', server: { host: '127.0.0.1', port: 0 } });
 try {
@@ -15,7 +16,13 @@ try {
   const address = server.httpServer.address();
   const outfile = path.join(dir, 'test.cjs');
   await build({
-    entryPoints: [splitDiff ? 'tests/split-diff-browser.ts' : 'tests/workbench-browser.ts'],
+    entryPoints: [
+      threads
+        ? 'tests/review-threads-browser.ts'
+        : splitDiff
+          ? 'tests/split-diff-browser.ts'
+          : 'tests/workbench-browser.ts',
+    ],
     outfile,
     bundle: true,
     platform: 'node',
