@@ -1,4 +1,6 @@
 import { useState, useMemo } from 'react';
+import { DiffHunkGroup } from './DiffHunk';
+import { InteractiveDiffHunkGroup } from './InteractiveDiffHunk';
 import { MessageSquarePlus } from 'lucide-react';
 import { parseDiffLines, buildSplitRows, type DiffLineInfo, type SplitRow } from '@/lib/diff-lines';
 import type { DiffHunk, DiffSide, PendingReviewComment } from '@/lib/types';
@@ -314,6 +316,25 @@ export function SplitDiffHunkGroup({
   commentCallbacks,
   gitFileUrlBase,
 }: SplitDiffHunkGroupProps) {
+  // A zero origin and count means this file side is absent. A zero count
+  // elsewhere is just an insertion/deletion within an existing file and stays split.
+  const singleSide =
+    hunks.length > 0 &&
+    (hunks.every((h) => /^@@ -0,0 \+\d+(?:,\d+)? @@/.test(h.hunkHeader)) ||
+      hunks.every((h) => /^@@ -\d+(?:,\d+)? \+0,0 @@/.test(h.hunkHeader)));
+  if (singleSide) {
+    const props = { showFileHeader, filePath, hunks, gitFileUrlBase };
+    return commentCallbacks ? (
+      <InteractiveDiffHunkGroup
+        {...props}
+        pendingComments={pendingComments}
+        slideIndex={slideIndex}
+        {...commentCallbacks}
+      />
+    ) : (
+      <DiffHunkGroup {...props} />
+    );
+  }
   const fileCommentCount = pendingComments.filter((c) => c.filePath === filePath).length;
 
   return (
