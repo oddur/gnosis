@@ -549,10 +549,16 @@ export function SlideView({
               <p className="text-sm text-muted-foreground leading-relaxed mt-1">
                 {slide.explainerIdea?.description ??
                   slide.explainer?.description ??
-                  'Build an interactive example from the code in this slide.'}
+                  'Build an interactive diagram to explain the code in this topic.'}
               </p>
             </div>
-            <Button variant="outline" size="sm" onClick={onExplore} className="mt-1">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onExplore}
+              title="Generate or reopen an interactive diagram for this topic"
+              className="mt-1"
+            >
               Explore
             </Button>
           </div>

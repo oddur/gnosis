@@ -21,7 +21,9 @@ import {
   Download,
   Link2,
 } from 'lucide-react';
-import { SettingsDialog } from '../../components/SettingsDialog';
+import { GettingStarted } from '../../components/GettingStarted';
+import { WorkbenchHelp } from '../../components/WorkbenchHelp';
+import { SettingsDialog, type SettingsSection } from '../../components/SettingsDialog';
 import { LocalRepoDialog } from '../../components/LocalRepoDialog';
 import { UpdateBanner } from '../../components/UpdateBanner';
 import { Button } from '../../components/ui/button';
@@ -58,6 +60,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   const [history, setHistory] = useState<ReviewHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [queueFailed, setQueueFailed] = useState(false);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [repo, setRepo] = useState('all');
@@ -67,6 +70,9 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   );
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [settings, setSettings] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>('queue');
+  const [showGettingStarted, setShowGettingStarted] = useState(false);
+  const [connecting, setConnecting] = useState(false);
   const [localOpen, setLocalOpen] = useState(false);
   const [url, setUrl] = useState(prefillPrUrl ?? '');
   const [showUrl, setShowUrl] = useState(!!prefillPrUrl);
@@ -93,14 +99,20 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
     try {
       await Promise.all([
         window.electronAPI.workbenchQueue(force).then((next) => {
-          if (alive.current) setQueue(next);
+          if (alive.current) {
+            setQueue(next);
+            setQueueFailed(false);
+          }
         }),
         window.electronAPI.listReviews().then((entries) => {
           if (alive.current) setHistory(entries);
         }),
       ]);
     } catch (e) {
-      if (alive.current) setError(String(e));
+      if (alive.current) {
+        setError(String(e));
+        setQueueFailed(true);
+      }
     } finally {
       if (alive.current) {
         setLoading(false);
@@ -201,7 +213,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
     try {
       const cli = await window.electronAPI.checkCliInstalled(prefs.provider);
       if (!cli.installed)
-        throw new Error(`${PROVIDERS[prefs.provider].label} CLI was not found. Configure its path in Settings.`);
+        throw new Error(`${PROVIDERS[prefs.provider].label} was not found. Open Settings → Integrations for AI setup.`);
       await window.electronAPI.startReview({
         prUrl: target,
         subjectId: subject?.id,
@@ -217,6 +229,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
         claudeContext: prefs.claudeContext,
         localTools,
       });
+      if (!prefs.firstRunSeen || showGettingStarted) void dismissGettingStarted();
       setShowUrl(false);
       setUrl('');
       void refresh();
@@ -235,6 +248,8 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
     }
   };
   const login = async () => {
+    if (connecting) return;
+    setConnecting(true);
     try {
       setError('');
       if (pat) {
@@ -245,6 +260,8 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
       void refresh(true);
     } catch (e) {
       setError(String(e));
+    } finally {
+      setConnecting(false);
     }
   };
   const items = queue.items.filter((item) => {
@@ -265,6 +282,21 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   const orderedItems = (['updated', 'requested', 'blocking', 'other'] as const).flatMap((category) =>
     items.filter((item) => item.attention === category)
   );
+  const openSettings = (next: SettingsSection = 'queue') => {
+    setSettingsSection(next);
+    setSettings(true);
+  };
+  const dismissGettingStarted = async () => {
+    setShowGettingStarted(false);
+    try {
+      const current = await window.electronAPI.loadPreferences();
+      const next = { ...current, firstRunSeen: true };
+      await window.electronAPI.savePreferences(next);
+      setPrefs(next);
+    } catch {
+      setError('Could not save your getting-started preference. Try dismissing it again.');
+    }
+  };
   const activate = (item: QueueItem) => {
     const entry = item.review;
     if (entry?.status === 'generating' || starting) return;
@@ -461,7 +493,16 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
               ))}
             </select>
           )}
-          <button className="workbench-icon" title="Settings" aria-label="Settings" onClick={() => setSettings(true)}>
+          <WorkbenchHelp
+            onGettingStarted={() => {
+              setSection('all');
+              setSelected(null);
+              setQuery('');
+              setRepo('all');
+              setShowGettingStarted(true);
+            }}
+          />
+          <button className="workbench-icon" title="Settings" aria-label="Settings" onClick={() => openSettings()}>
             <Settings size={17} />
           </button>
           <span className="text-xs text-muted-foreground account-name">{auth?.login ?? 'Local workspace'}</span>
@@ -537,7 +578,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
               <p>
                 {section === 'saved'
                   ? 'Your review history, ready to resume.'
-                  : 'Understand what is changing. Focus on what needs you.'}
+                  : 'Select a PR or stack for a short briefing; start a guided review to inspect the code.'}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -562,15 +603,18 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                 void start(url);
               }}
             >
-              <input
-                autoFocus
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://github.com/owner/repo/pull/123"
-                aria-label="Pull request URL"
-              />
+              <label className="queue-url-field">
+                GitHub pull request URL
+                <input
+                  autoFocus
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder="https://github.com/owner/repo/pull/123"
+                  aria-label="Pull request URL"
+                />
+              </label>
               <Button size="sm" disabled={starting || !url.trim()} type="submit">
-                {starting ? 'Preparing…' : 'Review'}
+                {starting ? 'Preparing…' : 'Start guided review'}
               </Button>
               <button
                 type="button"
@@ -590,36 +634,6 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                 <X size={14} />
               </button>
             </div>
-          )}
-          {auth && !auth.authenticated && !prefs?.guestMode && (
-            <section className="workbench-connect">
-              <h2>Connect your review queue</h2>
-              <p>Connect GitHub to see your PRs and stacks. You can also review a local repository.</p>
-              <Button size="sm" onClick={() => void login()}>
-                Connect GitHub
-              </Button>
-              <details>
-                <summary>Use a personal access token</summary>
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    void login();
-                  }}
-                >
-                  <input
-                    type="password"
-                    aria-label="GitHub token"
-                    value={pat}
-                    onChange={(e) => setPat(e.target.value)}
-                    autoComplete="off"
-                  />
-                  <Button size="sm" type="submit">
-                    Connect
-                  </Button>
-                </form>
-              </details>
-              <button onClick={() => setLocalOpen(true)}>Review local changes</button>
-            </section>
           )}
           <div className="queue-filters">
             <label className="queue-search">
@@ -670,6 +684,53 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
           )}
           <div className="queue-content">
             <section className="queue-list" aria-label="Review queue">
+              {!loading && section !== 'saved' && auth && !auth.authenticated && !prefs?.guestMode && (
+                <section className="workbench-connect">
+                  <h2>Connect GitHub</h2>
+                  <p>Sign in to load your GitHub review requests. Local reviews work without a GitHub connection.</p>
+                  <Button size="sm" disabled={connecting} onClick={() => void login()}>
+                    {connecting ? 'Connecting…' : 'Sign in to GitHub'}
+                  </Button>
+                  <details>
+                    <summary>Use a personal access token</summary>
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void login();
+                      }}
+                    >
+                      <label htmlFor="github-token">GitHub personal access token</label>
+                      <input
+                        id="github-token"
+                        type="password"
+                        aria-label="GitHub personal access token"
+                        value={pat}
+                        onChange={(e) => setPat(e.target.value)}
+                        autoComplete="off"
+                      />
+                      <Button size="sm" disabled={connecting || !pat.trim()} type="submit">
+                        Connect
+                      </Button>
+                    </form>
+                  </details>
+                  <button onClick={() => setLocalOpen(true)}>Review local changes</button>
+                </section>
+              )}
+              {!loading &&
+                prefs &&
+                section === 'all' &&
+                !query &&
+                repo === 'all' &&
+                (showGettingStarted || (!prefs.firstRunSeen && history.length === 0)) && (
+                  <GettingStarted
+                    provider={prefs.provider}
+                    settingsOpen={settings}
+                    onSettings={() => openSettings('integrations')}
+                    onOpenPr={() => setShowUrl(true)}
+                    onLocal={() => setLocalOpen(true)}
+                    onDismiss={() => void dismissGettingStarted()}
+                  />
+                )}
               {loading ? (
                 <div className="queue-empty">
                   <Loader2 className="animate-spin" size={22} />
@@ -719,8 +780,15 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                 ) : (
                   <div className="queue-empty">
                     <Clock size={24} />
-                    <h2>No saved reviews yet</h2>
-                    <p>Open a PR or local change to create your first review.</p>
+                    <h2>{query ? 'No matching saved reviews' : 'No saved reviews yet'}</h2>
+                    <p>
+                      {query
+                        ? 'Try another title or clear the search.'
+                        : 'Guided reviews are saved on this computer so you can return to them.'}
+                    </p>
+                    <Button variant="outline" size="sm" onClick={() => (query ? setQuery('') : setShowUrl(true))}>
+                      {query ? 'Clear search' : 'Open a pull request'}
+                    </Button>
                   </div>
                 )
               ) : items.length ? (
@@ -738,14 +806,52 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
               ) : (
                 <div className="queue-empty">
                   <Inbox size={24} />
-                  <h2>{query ? 'No matching changes' : 'Your queue is clear'}</h2>
+                  <h2>
+                    {queueFailed
+                      ? 'Queue could not be loaded'
+                      : query || repo !== 'all'
+                        ? 'No matching changes'
+                        : !auth?.authenticated
+                          ? 'Your GitHub queue is not connected'
+                          : section !== 'all'
+                            ? `No changes in ${labels[section as keyof typeof labels].toLowerCase()}`
+                            : 'No pull requests in your queue'}
+                  </h2>
                   <p>
-                    {query
-                      ? 'Try another title, author, or repository.'
-                      : 'Open a PR by URL or add watched repositories in Settings.'}
+                    {queueFailed
+                      ? 'Try loading the queue again. You can still open a PR by URL or a saved review.'
+                      : query || repo !== 'all'
+                        ? 'Clear the search and repository filter to see more changes.'
+                        : !auth?.authenticated
+                          ? prefs?.guestMode
+                            ? 'You are using local mode. Review a repository on this computer.'
+                            : 'Connect GitHub above, or review local changes from the sidebar.'
+                          : section !== 'all'
+                            ? 'Try the full work queue to see other changes.'
+                            : 'Open a pull request by URL, or add repositories to follow in Settings. Dependabot PRs are hidden by default.'}
                   </p>
-                  <Button variant="outline" size="sm" onClick={() => setSettings(true)}>
-                    Manage repositories
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      if (queueFailed) void refresh(true);
+                      else if (query || repo !== 'all') {
+                        setQuery('');
+                        setRepo('all');
+                      } else if (section !== 'all') setSection('all');
+                      else if (!auth?.authenticated) setLocalOpen(true);
+                      else openSettings();
+                    }}
+                  >
+                    {queueFailed
+                      ? 'Retry queue'
+                      : query || repo !== 'all'
+                        ? 'Clear filters'
+                        : section !== 'all'
+                          ? 'Show work queue'
+                          : !auth?.authenticated
+                            ? 'Review local changes'
+                            : 'Manage repositories'}
                   </Button>
                 </div>
               )}
@@ -782,6 +888,9 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                   </button>
                 </div>
                 <h2>{selectedItem.subject.title}</h2>
+                <p className="briefing-definition">
+                  A briefing is a short summary. Start a guided review for explanations beside the code.
+                </p>
                 {briefingSelection && (
                   <p className="text-xs text-muted-foreground mb-3" aria-label="Briefing model">
                     Briefing model: {briefingModelLabel}
@@ -869,7 +978,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                       </details>
                     )}
                     {selectedItem.briefing?.status === 'paused' && (
-                      <button onClick={() => setSettings(true)}>Manage briefings</button>
+                      <button onClick={() => openSettings()}>Manage briefings</button>
                     )}
                     {selectedItem.briefing?.status === 'failed' && (
                       <button
@@ -885,7 +994,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                     )}
                   </div>
                 )}
-                <h3>{selectedItem.subject.kind === 'stack' ? 'Stack members' : 'Pull request'}</h3>
+                <h3>{selectedItem.subject.kind === 'stack' ? 'PRs in this stack' : 'Pull request'}</h3>
                 <div className="stack-members">
                   {selectedItem.subject.members.map((m, i) => (
                     <div key={m.url} className="stack-member">
@@ -937,15 +1046,18 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                     <Link2 size={14} />
                     Correct stack grouping
                   </summary>
-                  <p>Link a child PR to its parent. Use full GitHub PR URLs.</p>
+                  <p>
+                    A parent PR contains work that another PR builds on. Choose the dependent PR and paste its parent’s
+                    full GitHub URL.
+                  </p>
                   <input
                     aria-label="Parent PR URL"
                     placeholder="Parent PR URL"
                     value={parentUrl}
                     onChange={(e) => setParentUrl(e.target.value)}
                   />
-                  <select aria-label="Child PR" value={childUrl} onChange={(e) => setChildUrl(e.target.value)}>
-                    <option value="">Choose child PR</option>
+                  <select aria-label="Dependent PR" value={childUrl} onChange={(e) => setChildUrl(e.target.value)}>
+                    <option value="">Choose dependent PR</option>
                     {selectedItem.subject.members.map((m) => (
                       <option key={m.url} value={m.url}>
                         #{m.number} {m.title}
@@ -1004,6 +1116,14 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
         </main>
       </div>
       <SettingsDialog
+        initialSection={settingsSection}
+        onReplayOnboarding={() => {
+          setSection('all');
+          setQuery('');
+          setRepo('all');
+          setSelected(null);
+          setShowGettingStarted(true);
+        }}
         open={settings}
         onOpenChange={(open) => {
           setSettings(open);

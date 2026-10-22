@@ -255,6 +255,104 @@ void app.whenReady().then(async () => {
     })()`),
       'Long navigation labels must not overlap submission'
     );
+    // First use: optional setup, terminology, recovery, and a real review entry point.
+    window.setSize(1280, 800);
+    await window.loadURL(fixtureUrl + '?onboarding');
+    await wait("document.querySelector('.getting-started')?.textContent.includes('was not found')");
+    assert.ok(await js("document.body.textContent.includes('Your GitHub queue is not connected')"));
+    await capture('onboarding-light');
+    await js("document.documentElement.classList.add('dark')");
+    await capture('onboarding-dark');
+    await click('AI setup');
+    await wait("!!document.querySelector('#ai-setup-title')");
+    assert.equal(await js("document.querySelector('[data-state=active][role=tab]').textContent"), 'Integrations');
+    await js("void (window.electronAPI.checkCliInstalled = () => Promise.reject(new Error('fixture check failed')))");
+    await js("document.querySelector('[data-slot=dialog-close]').click()");
+    await wait("document.querySelector('.getting-started')?.textContent.includes('Could not check')");
+    await js(
+      "void (window.electronAPI.checkCliInstalled = () => Promise.resolve({installed:true,resolvedPath:'/fixture/claude'}))"
+    );
+    await click('Check again');
+    await wait("document.querySelector('.getting-started')?.textContent.includes('found. Make sure')");
+    await js('document.querySelector(\'[aria-label="Dismiss getting started"]\').click()');
+    await wait("!document.querySelector('.getting-started')");
+    assert.equal(await js('window.electronAPI.loadPreferences().then(p=>p.firstRunSeen)'), true);
+    await window.loadURL(fixtureUrl + '?onboarding');
+    await wait("!!document.querySelector('.workbench-connect')");
+    assert.equal(await js("!!document.querySelector('.getting-started')"), false, 'Dismissal persists on reopening');
+    await js('document.querySelector(\'[aria-label="Help and terminology"]\').click()');
+    await wait("!!document.querySelector('.workbench-help')");
+    await js("[...document.querySelectorAll('.workbench-help summary')].find(s=>s.textContent === 'Stack').click()");
+    await capture('help-light');
+    assert.ok(
+      await js("document.querySelector('.workbench-help').textContent.includes('Starting one does not submit')")
+    );
+    await js(
+      "document.querySelector('.workbench-help button').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
+    );
+    await wait("!document.querySelector('.workbench-help')");
+    assert.equal(await js("document.activeElement?.getAttribute('aria-label')"), 'Help and terminology');
+    await js('document.querySelector(\'[aria-label="Help and terminology"]\').click()');
+    await click('Show getting started');
+    await wait("!!document.querySelector('.getting-started') && !document.querySelector('.workbench-help')");
+    await click('Sign in to GitHub');
+    await wait("!document.querySelector('.workbench-connect')");
+    assert.ok(await js("document.body.textContent.includes('No pull requests in your queue')"));
+    await js(`(() => {
+      const input = document.querySelector('[aria-label="Search reviews"]');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'absent');
+      input.dispatchEvent(new Event('input', {bubbles:true}));
+    })()`);
+    await wait("document.body.textContent.includes('No matching changes')");
+    await click('Clear filters');
+    await wait("document.querySelector('[aria-label=\"Search reviews\"]').value === ''");
+    await js('document.querySelector(\'[title="Saved reviews"]\').click()');
+    await wait("document.body.textContent.includes('No saved reviews yet')");
+    await js('document.querySelector(\'[title="Work queue"]\').click()');
+    await js('void (window.fixtureQueue = window.electronAPI.workbenchQueue)');
+    await js("void (window.electronAPI.workbenchQueue = () => Promise.reject(new Error('Fixture network failure')))");
+    await js('document.querySelector(\'[aria-label="Refresh queue"]\').click()');
+    await wait("document.body.textContent.includes('Queue could not be loaded')");
+    await js('void (window.electronAPI.workbenchQueue = window.fixtureQueue)');
+    await click('Retry queue');
+    await wait("!document.body.textContent.includes('Queue could not be loaded')");
+    await js('document.querySelector(\'[aria-label="Dismiss error"]\').click()');
+    window.setSize(800, 700);
+    await js("document.documentElement.classList.add('dark')");
+    await capture('onboarding-narrow-dark');
+    await js('document.querySelector(\'[aria-label="Help and terminology"]\').click()');
+    await wait("!!document.querySelector('.workbench-help')");
+    await capture('help-narrow-dark');
+    assert.ok(await js("document.querySelector('.workbench-help').getBoundingClientRect().right <= innerWidth"));
+    assert.ok(await js("document.querySelector('.workbench-help').getBoundingClientRect().bottom <= innerHeight"));
+    // At 200% zoom, help remains bounded and internally scrollable.
+    window.webContents.setZoomFactor(2);
+    await capture('help-zoom');
+    assert.ok(await js("document.querySelector('.workbench-help').getBoundingClientRect().right <= innerWidth"));
+    assert.ok(await js("document.querySelector('.workbench-help').getBoundingClientRect().bottom <= innerHeight"));
+    window.webContents.setZoomFactor(1);
+    await js('document.querySelector(\'[aria-label="Close help"]\').click()');
+    await js(
+      "void (window.electronAPI.checkCliInstalled = () => Promise.resolve({installed:true,resolvedPath:'/fixture/claude'}))"
+    );
+    await click('Open a pull request');
+    await wait('!!document.querySelector(\'[aria-label="Pull request URL"]\')');
+    await js(`(() => {
+      const input = document.querySelector('[aria-label="Pull request URL"]');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'https://github.com/klang/engine/pull/120');
+      input.dispatchEvent(new Event('input', {bubbles:true}));
+    })()`);
+    await click('Start guided review');
+    await wait("document.querySelectorAll('.queue-item').length === 7 && !document.querySelector('.getting-started')");
+    await js(
+      "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
+    );
+    await wait("!!document.querySelector('.briefing-panel')");
+    await click('Continue review');
+    await wait("!!document.querySelector('.workbench-review')");
+    await js('document.querySelector(\'[aria-label="Help and terminology"]\').click()');
+    await wait("!!document.querySelector('.workbench-help')");
+    assert.ok(await js("document.querySelector('.workbench-help').textContent.includes('Source PR')"));
     console.log('Workbench browser checks passed. Screenshots: ' + shots);
   } catch (error) {
     console.error(error);

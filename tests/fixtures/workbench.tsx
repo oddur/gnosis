@@ -5,6 +5,9 @@ import { groupSubjects, snapshot, memberPrefix, type ReviewMember, type QueueIte
 import type { Preferences, ReviewGuide, ReviewHistoryEntry } from '../../lib/types';
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_FAST_CLAUDE_MODEL } from '../../lib/models';
 import { review as example, slide, explainer } from './explainer';
+const onboardingScenario = new URLSearchParams(location.search).has('onboarding');
+let fixtureAuthenticated = !onboardingScenario;
+let fixtureStarted = false;
 const polishScenario = new URLSearchParams(location.search).has('polish');
 let statusFailures = polishScenario ? 3 : 0;
 const date = '2026-10-22T15:30:00Z';
@@ -186,7 +189,7 @@ let prefs: Preferences = {
   diffLayout: 'unified',
   includeAllFiles: true,
   reviewSignature: false,
-  firstRunSeen: true,
+  firstRunSeen: onboardingScenario ? sessionStorage.getItem('fixture-first-run-seen') === 'true' : true,
   theme: 'light',
   trayEnabled: false,
   maxPrsPerRepo: 10,
@@ -272,6 +275,7 @@ let activities: ActivityTask[] = [
     canRetry: false,
   },
 ];
+if (onboardingScenario) activities = [];
 const mocks = {
   listActivity: () => Promise.resolve(activities),
   activityAction: (id: string, action: ActivityAction) => {
@@ -292,14 +296,29 @@ const mocks = {
     return Promise.resolve();
   },
   detectBinaryPath: (name: string) => Promise.resolve('/fixture/' + name),
-  getAuthState: () => Promise.resolve({ authenticated: true, login: 'oddur' }),
+  getAuthState: () =>
+    Promise.resolve({ authenticated: fixtureAuthenticated, login: fixtureAuthenticated ? 'oddur' : null }),
+  startOAuth: () => {
+    fixtureAuthenticated = true;
+    return Promise.resolve();
+  },
+  startReview: () => {
+    fixtureStarted = true;
+    return Promise.resolve('workbench-review');
+  },
   loadPreferences: () => Promise.resolve(prefs),
   savePreferences: (next: Preferences) => {
     prefs = next;
+    if (onboardingScenario) sessionStorage.setItem('fixture-first-run-seen', String(next.firstRunSeen));
     return Promise.resolve();
   },
-  workbenchQueue: () => Promise.resolve({ items, warnings: [], remaining: polishScenario ? 0 : 7 }),
-  listReviews: () => Promise.resolve(history),
+  workbenchQueue: () =>
+    Promise.resolve({
+      items: onboardingScenario && !fixtureStarted ? [] : items,
+      warnings: [],
+      remaining: polishScenario ? 0 : 7,
+    }),
+  listReviews: () => Promise.resolve(onboardingScenario && !fixtureStarted ? [] : history),
   loadReview: () => Promise.resolve(review),
   reRenderHunks: (r: ReviewGuide) => Promise.resolve(r),
   getPrStatus: () =>
@@ -328,7 +347,8 @@ const mocks = {
     ),
   getPendingUpdateReady: () => Promise.resolve(null),
   generateExplainer: () => Promise.resolve(explainer),
-  checkCliInstalled: () => Promise.resolve({ installed: true, resolvedPath: '/fixture/claude' }),
+  checkCliInstalled: () =>
+    Promise.resolve({ installed: !onboardingScenario, resolvedPath: onboardingScenario ? null : '/fixture/claude' }),
   platform: 'darwin',
   isPackaged: false,
 };

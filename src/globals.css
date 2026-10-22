@@ -1770,3 +1770,48 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .settings-field select { padding:8px 10px; background:var(--background); color:var(--foreground); border:1px solid var(--border); border-radius:5px; font-size:13px; font-weight:400; }
 @media(max-width:850px) { .review-bottom-nav { gap:10px; padding-inline:12px; } .review-bottom-nav>button { gap:6px; } }
 @media(max-width:620px) { .settings-sections { display:grid; grid-template-columns:1fr 1fr; } .settings-sections button { padding:8px; } .queue-keyboard-help { padding-inline:12px; } }
+
+/* Optional onboarding and contextual help share the workbench's compact surfaces. */
+.getting-started { padding:16px 24px; border-bottom:1px solid var(--border); background:var(--card); }
+.getting-started-heading,.workbench-help-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.getting-started h2,.workbench-help h2 { font-size:16px; font-weight:650; line-height:1.4; }
+.getting-started p { font-size:13px; line-height:1.6; max-width:70ch; }
+.getting-started-setup { margin:12px 0; }
+.getting-started-setup p { margin-bottom:6px; color:var(--muted-foreground); }
+.getting-started-setup button+button { margin-left:12px; }
+.getting-started-setup button,.workbench-help-link,.ai-setup-links button { color:var(--ring); text-decoration:underline; text-underline-offset:3px; font-size:12px; }
+.getting-started-setup button:hover,.workbench-help-link:hover,.ai-setup-links button:hover { color:var(--foreground); }
+.getting-started-actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+.getting-started .getting-started-note { font-size:12px; color:var(--muted-foreground); }
+.workbench-help-trigger { display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:6px; border-radius:4px; color:var(--muted-foreground); font-size:12px; flex-shrink:0; }
+.workbench-help-trigger:hover,.workbench-help-trigger[data-state=open] { background:var(--accent); color:var(--accent-foreground); }
+.workbench-help { z-index:55; width:min(440px,calc(100vw - 24px)); max-height:min(680px,var(--radix-popover-content-available-height)); overflow:auto; padding:16px 20px; background:var(--popover); color:var(--popover-foreground); border:1px solid var(--border); border-radius:5px; font-size:13px; line-height:1.6; }
+.workbench-help-heading { margin-bottom:8px; }
+.workbench-help>p { color:var(--muted-foreground); }
+.workbench-help h3 { margin:20px 0 8px; font-size:13px; font-weight:650; }
+.workbench-help-steps { list-style:decimal; padding-left:20px; margin:12px 0; }
+.workbench-help-steps li+li { margin-top:8px; }
+.workbench-glossary details { border-top:1px solid var(--border); padding:8px 0; }
+.workbench-help summary { cursor:pointer; font-weight:600; }
+.workbench-help summary:hover { color:var(--ring); }
+.workbench-help details p { margin:8px 0 4px; color:var(--muted-foreground); }
+.workbench-help-shortcuts { border-top:1px solid var(--border); margin-top:8px; padding-top:12px; }
+.workbench-help kbd { font-size:11px; padding:1px 3px; border:1px solid var(--border); border-radius:3px; }
+.ai-setup-guide { padding-bottom:16px; border-bottom:1px solid var(--border); }
+.ai-setup-guide h3 { font-size:14px; font-weight:600; }
+.ai-setup-guide p { margin-top:8px; font-size:12px; line-height:1.65; color:var(--muted-foreground); }
+.ai-setup-links { display:flex; flex-wrap:wrap; gap:12px; margin:12px 0; }
+.briefing-definition { font-size:12px; line-height:1.6; color:var(--muted-foreground); margin-bottom:12px; }
+.workbench-connect h2 { font-size:16px; }
+.workbench-connect form { flex-wrap:wrap; align-items:center; }
+.workbench-connect form label { flex-basis:100%; }
+.workbench-connect input { background:var(--background); border-radius:4px; min-width:0; }
+@media(max-width:620px) {
+  .getting-started { padding:16px 12px; }
+  .workbench-help-trigger span { display:none; }
+  .queue-url { flex-wrap:wrap; padding-inline:12px; }
+  .queue-url input { flex-basis:100%; }
+}
+.queue-url { align-items:flex-end; }
+.queue-url-field { display:flex; flex-direction:column; flex:1; min-width:0; gap:6px; font-size:12px; }
+@media(max-width:620px) { .queue-url-field { flex-basis:100%; } }

@@ -14,11 +14,7 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onThemeChange?: (theme: string) => void;
-  // Resets the first-run welcome, the keyboard hint, and any
-  // localStorage onboarding flags so the user can re-experience the
-  // first-time path. Owned by HomePage because HomePage holds the
-  // firstRunOpen / hasEverHadPendingReviews / keyboardHintDismissed
-  // state slots that need to be reset together.
+  // Reopens the optional setup panel in the work queue.
   onReplayOnboarding?: () => void;
 }
 
@@ -452,7 +448,7 @@ export function SettingsDialog({
 
             <SettingRow
               label="Parallel review"
-              description="Split generation into a planner step then parallel writers per topic. Faster for large PRs."
+              description="Generate several review topics at once. This can speed up large reviews and uses concurrent AI requests."
             >
               <Toggle
                 checked={parallelReview}
@@ -466,12 +462,12 @@ export function SettingsDialog({
             </SettingRow>
 
             <SettingRow
-              label="Education mode"
-              description="Add short explainer notes inside slides for concepts the code assumes knowledge of (e.g. Unit of Work). Helpful for reviewers less familiar with the area."
+              label="Explain background concepts"
+              description="Include short notes about concepts used by the code, alongside the relevant review topic."
             >
               <Toggle
                 checked={educationMode}
-                ariaLabel="Education mode"
+                ariaLabel="Explain background concepts"
                 onChange={() => {
                   const next = !educationMode;
                   setEducationMode(next);
@@ -482,7 +478,7 @@ export function SettingsDialog({
 
             <SettingRow
               label="Apply project's Claude conventions"
-              description="When reviewing a PR, read the repo's CLAUDE.md and .claude/ (commands, agents, skills) and feed them into the prompt so the review respects the team's Claude Code setup."
+              description="Use guidance from the repository’s CLAUDE.md and .claude/ files when generating the review."
             >
               <Toggle
                 checked={claudeContext}
@@ -505,7 +501,10 @@ export function SettingsDialog({
                 }}
               />
             </SettingRow>
-            <SettingRow label="Simplify import changes" description="Condense import-only changes in the walkthrough.">
+            <SettingRow
+              label="Simplify import changes"
+              description="Condense import-only changes in the guided review."
+            >
               <Toggle
                 checked={smartImports}
                 ariaLabel="Simplify import changes"
@@ -562,6 +561,31 @@ export function SettingsDialog({
             </label>
           </Tabs.Content>
           <Tabs.Content value="integrations" className="settings-panel">
+            <section className="ai-setup-guide" aria-labelledby="ai-setup-title">
+              <h3 id="ai-setup-title">Set up an AI tool</h3>
+              <p>
+                Gnosis uses Claude Code or Codex on your computer to generate explanations. Install one and sign in to
+                it in your terminal.
+              </p>
+              <p>
+                Choose its model at the top of the work queue. GitHub sign-in connects your PRs; it does not sign you in
+                to the AI tool.
+              </p>
+              <div className="ai-setup-links">
+                <button onClick={() => void window.electronAPI.openExternal('https://code.claude.com/docs/en/setup')}>
+                  Claude Code setup ↗
+                </button>
+                <button
+                  onClick={() => void window.electronAPI.openExternal('https://developers.openai.com/codex/cli/')}
+                >
+                  Codex setup ↗
+                </button>
+              </div>
+              <p>
+                The paths below locate the command-line programs (CLIs). Leave them empty unless automatic detection
+                fails.
+              </p>
+            </section>
             <SettingRow label="Desktop notifications" description="Notify when a review completes">
               <Toggle
                 checked={notifications}
@@ -603,7 +627,7 @@ export function SettingsDialog({
 
             <div className="flex flex-col gap-1.5">
               <label htmlFor="claude-path" className="text-sm font-medium text-foreground">
-                Claude CLI path
+                Claude Code program path
               </label>
               <input
                 type="text"
@@ -619,7 +643,7 @@ export function SettingsDialog({
 
             <div className="flex flex-col gap-1.5">
               <label htmlFor="codex-path" className="text-sm font-medium text-foreground">
-                Codex CLI path
+                Codex program path
               </label>
               <input
                 id="codex-path"
@@ -644,7 +668,7 @@ export function SettingsDialog({
                 }}
                 className="slide-meta hover:text-foreground transition-colors"
               >
-                Replay first-time welcome →
+                Show getting started →
               </button>
             )}
             <button

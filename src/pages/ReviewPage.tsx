@@ -10,6 +10,7 @@ import { SlideNav } from '../../components/SlideNav';
 import { TocRail } from '../../components/TocRail';
 import { SlideChatSheet } from '../../components/SlideChatSheet';
 import { SubmitReviewDialog } from '../../components/SubmitReviewDialog';
+import { WorkbenchHelp } from '../../components/WorkbenchHelp';
 import { SettingsDialog } from '../../components/SettingsDialog';
 import { ShortcutOverlay } from '../../components/ShortcutOverlay';
 import { CommandPalette, type Command } from '../../components/CommandPalette';
@@ -574,6 +575,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview, initialS
       {freshness && <StaleBanner freshness={freshness} onReReview={() => onReReview(review.prUrl)} />}
 
       <div className="review-toolbar">
+        <WorkbenchHelp />
         <button onClick={() => setNavOpen((v) => !v)} aria-pressed={navOpen} title="Toggle topic navigation">
           {navOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}Topics
         </button>
