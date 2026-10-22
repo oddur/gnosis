@@ -25,3 +25,7 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm test
+      - run: xvfb-run -a npm run test:explainer
+        if: runner.os == 'Linux'
+      - run: npm run test:explainer
+        if: runner.os != 'Linux'

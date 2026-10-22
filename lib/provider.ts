@@ -17,6 +17,8 @@ export interface GenerateOptions {
   /** When true, don't pass --strict-mcp-config — lets the CLI pick up
    *  the project's own `.mcp.json` in addition to any `mcpConfigPath`. */
   nonStrictMcp?: boolean;
+  /** Use only supplied context, without built-in tools or user/project settings. */
+  isolated?: boolean;
   signal?: AbortSignal;
 }
 

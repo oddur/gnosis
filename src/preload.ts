@@ -13,9 +13,13 @@ import type {
   FreshnessResult,
   RepoSearchResult,
   UpdateInfo,
+  GenerateExplainerRequest,
+  InteractiveExplainer,
 } from '../lib/types';
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  generateExplainer: (req: GenerateExplainerRequest): Promise<InteractiveExplainer> => ipcRenderer.invoke('generate-explainer', req),
+  cancelExplainer: (req: GenerateExplainerRequest): Promise<void> => ipcRenderer.invoke('cancel-explainer', req),
   startReview: (req: GenerateReviewRequest): Promise<StartReviewResult> => ipcRenderer.invoke('start-review', req),
   cancelReview: (reviewId: string): Promise<void> => ipcRenderer.invoke('cancel-review', reviewId),
   getConfig: (): Promise<{ githubToken: string | null }> => ipcRenderer.invoke('get-config'),

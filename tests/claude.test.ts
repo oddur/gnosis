@@ -8,6 +8,26 @@ import { setBinaryOverride } from '../lib/providers/shared';
 setBinaryOverride('claude', path.resolve('tests/fixtures/claude.mjs'));
 after(() => setBinaryOverride('claude', ''));
 
+void test('isolated Claude requests disable tools, MCP discovery, and settings sources', async () => {
+  const result = JSON.parse(
+    await claudeProvider.generate({
+      model: 'claude-opus-5-5',
+      thinking: true,
+      content: 'Explain the supplied code.',
+      systemPrompt: 'Return JSON.',
+      isolated: true,
+      allowedTools: ['Bash'],
+      nonStrictMcp: true,
+      mcpConfigPath: 'must-not-load.json',
+    })
+  ) as Invocation;
+  assert.equal(result.args[result.args.indexOf('--tools') + 1], '');
+  assert.ok(result.args.includes('--strict-mcp-config'));
+  assert.equal(result.args[result.args.indexOf('--mcp-config') + 1], '{"mcpServers":{}}');
+  assert.equal(result.args[result.args.indexOf('--setting-sources') + 1], '');
+  assert.ok(!result.args.includes('--allowedTools') && !result.args.includes('must-not-load.json'));
+});
+
 interface Invocation {
   args: string[];
   input: string;

@@ -12,11 +12,15 @@ import type {
   FreshnessResult,
   RepoSearchResult,
   UpdateInfo,
+  GenerateExplainerRequest,
+  InteractiveExplainer,
 } from '../lib/types';
 
 declare global {
   interface Window {
     electronAPI: {
+      generateExplainer: (req: GenerateExplainerRequest) => Promise<InteractiveExplainer>;
+      cancelExplainer: (req: GenerateExplainerRequest) => Promise<void>;
       startReview: (req: GenerateReviewRequest) => Promise<StartReviewResult>;
       cancelReview: (reviewId: string) => Promise<void>;
       getConfig: () => Promise<{ githubToken: string | null }>;

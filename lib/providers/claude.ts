@@ -35,6 +35,7 @@ export const claudeProvider: LLMProvider = {
     cwd,
     nonStrictMcp,
     signal,
+    isolated,
   }) {
     const claudePath = resolveClaudePath();
     let fullText = '';
@@ -79,13 +80,15 @@ export const claudeProvider: LLMProvider = {
     }
 
     const toolArgs: string[] = [];
-    if (mcpConfigPath) {
+    if (isolated) {
+      toolArgs.push('--tools', '', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--setting-sources', '');
+    } else if (mcpConfigPath) {
       toolArgs.push('--mcp-config', mcpConfigPath);
       if (!nonStrictMcp) toolArgs.push('--strict-mcp-config');
     }
-    if (allowedTools && allowedTools.length > 0) {
+    if (!isolated && allowedTools && allowedTools.length > 0) {
       toolArgs.push('--allowedTools', allowedTools.join(','));
-    } else if (!mcpConfigPath && !nonStrictMcp) {
+    } else if (!isolated && !mcpConfigPath && !nonStrictMcp) {
       // No explicit tool set AND no project-local MCP discovery → lock tools off.
       toolArgs.push('--tools', '');
     }

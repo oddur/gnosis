@@ -36,6 +36,28 @@ export interface EducationNote {
 
 export type SlideImportance = 'critical' | 'important' | 'minor';
 
+export interface ExplainerIdea {
+  title: string;
+  description: string;
+}
+
+export interface InteractiveExplainer {
+  version: 1;
+  title: string;
+  description: string;
+  assumptions: string[];
+  sources: { filePath: string; explanation: string }[];
+  html: string;
+  css: string;
+  javascript: string;
+}
+
+export interface GenerateExplainerRequest {
+  reviewId: string;
+  slideId: string;
+  refinement?: string;
+}
+
 export interface Slide {
   id: string;
   slideNumber: number;
@@ -54,6 +76,10 @@ export interface Slide {
   // contract changes. "important" = core logic, new features.
   // "minor" = config, docs, test boilerplate, import reordering.
   importance?: SlideImportance;
+  explainerIdea?: ExplainerIdea | null;
+  explainer?: InteractiveExplainer;
+  /** Snapshot of relevant source at review time, used only on demand. */
+  explainerContext?: string;
 }
 
 // Intermediate types for raw AI response (before hunk resolution)
@@ -72,6 +98,7 @@ export interface AISlide {
   reviewChecks?: ReviewCheck[];
   educationNotes?: EducationNote[];
   importance?: SlideImportance;
+  explainerIdea?: ExplainerIdea | null;
 }
 
 export interface WebSource {
@@ -133,6 +160,7 @@ export interface WriterSlideOutput {
   mermaidDiagram?: string | null;
   reviewChecks?: ReviewCheck[];
   educationNotes?: EducationNote[];
+  explainerIdea?: ExplainerIdea | null;
 }
 
 export interface FileMetadata {
@@ -148,6 +176,8 @@ export interface FileMetadata {
 }
 
 export interface ReviewGuide {
+  /** Assigned by the local store when loading a saved review. */
+  reviewId?: string;
   prTitle: string;
   prDescription: string;
   prUrl: string;
