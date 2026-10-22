@@ -1,3 +1,4 @@
+import type { QueueFilters } from './queue-filters';
 import type { Preferences, PrMetadata, PrSearchResult, ReviewGuide, ReviewHistoryEntry, Slide } from './types';
 
 export interface ReviewMember extends PrMetadata {
@@ -34,6 +35,7 @@ export interface Briefing {
   systems?: string[];
   priorities?: string[];
   error?: string;
+  pauseReason?: 'filter';
   updatedAt: string;
 }
 export interface QueueItem {
@@ -43,6 +45,7 @@ export interface QueueItem {
   attention: 'updated' | 'requested' | 'blocking' | 'other';
 }
 export interface WorkbenchQueue {
+  filters?: QueueFilters;
   items: QueueItem[];
   warnings: string[];
   remaining: number;

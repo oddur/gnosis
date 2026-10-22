@@ -2227,6 +2227,7 @@ ipcMain.handle('workbench-queue', async (_event, force: boolean) => {
   }
   return workbench.queue(force);
 });
+ipcMain.handle('workbench-set-filters', (_event, filters: unknown) => workbench.setFilters(filters));
 ipcMain.handle('workbench-group', (_event, correction: GroupingOverride) => workbench.correct(correction));
 ipcMain.handle('workbench-briefing', (_event, id: string) => workbench.retry(id));
 ipcMain.handle('workbench-freshness', async (_event, old: ReviewSnapshot) => {

@@ -1,3 +1,13 @@
+import { Popover } from 'radix-ui';
+import { QueueFilterPanel } from '../../components/QueueFilterPanel';
+import {
+  DEFAULT_QUEUE_FILTERS,
+  normalizeQueueFilters,
+  matchesQueueFilters,
+  activeQueueFilterCount,
+  describeQueueFilters,
+  type QueueFilters,
+} from '../../lib/queue-filters';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight,
@@ -20,6 +30,7 @@ import {
   Trash2,
   Download,
   Link2,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { GettingStarted } from '../../components/GettingStarted';
 import { WorkbenchHelp } from '../../components/WorkbenchHelp';
@@ -62,9 +73,32 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   const [refreshing, setRefreshing] = useState(false);
   const [queueFailed, setQueueFailed] = useState(false);
   const [error, setError] = useState('');
-  const [query, setQuery] = useState('');
-  const [repo, setRepo] = useState('all');
+  const [filters, setFilters] = useState<QueueFilters>(DEFAULT_QUEUE_FILTERS);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [savedQuery, setSavedQuery] = useState('');
+  const filtersLoaded = useRef(false);
+  const pendingFilters = useRef<QueueFilters | null>(null);
+  const filterVersion = useRef(0);
   const [section, setSection] = useState('all');
+  const query = section === 'saved' ? savedQuery : filters.query;
+  const repo = filters.repo;
+  const filterCount = activeQueueFilterCount(filters);
+  const updateFilters = (patch: Partial<QueueFilters>) => {
+    filterVersion.current++;
+    filtersLoaded.current = true;
+    if (patch.attention && section !== 'saved') setSection(patch.attention);
+    setFilters((current) => {
+      const next = normalizeQueueFilters({ ...current, ...patch });
+      pendingFilters.current = next;
+      return next;
+    });
+  };
+  const setQuery = (value: string) => (section === 'saved' ? setSavedQuery(value) : updateFilters({ query: value }));
+  const setRepo = (value: string) => updateFilters({ repo: value });
+  const resetFilters = () => {
+    updateFilters({ ...DEFAULT_QUEUE_FILTERS, briefingScope: filters.briefingScope });
+    setSection('all');
+  };
   const [selected, setSelected] = useState<string | null>(
     () => initialSubjectId ?? localStorage.getItem('gnosis-queue-selection')
   );
@@ -88,7 +122,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   const rowButtons = useRef(new Map<string, HTMLButtonElement>());
   const [statuses, setStatuses] = useState<Partial<Record<string, PrStatus>>>({});
   const alive = useRef(true);
-  const selectedItem = queue.items.find((i) => i.subject.id === selected);
+  const selectedItem = queue.items.find((i) => i.subject.id === selected && matchesQueueFilters(i, filters));
   const briefingSelection = prefs ? briefingModel(prefs) : undefined;
   const briefingModelLabel = briefingSelection
     ? `${PROVIDERS[briefingSelection.provider].label} · ${PROVIDERS[briefingSelection.provider].models.find((m) => m.id === briefingSelection.model)?.label ?? briefingSelection.model}`
@@ -101,6 +135,12 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
         window.electronAPI.workbenchQueue(force).then((next) => {
           if (alive.current) {
             setQueue(next);
+            if (!filtersLoaded.current && !pendingFilters.current) {
+              const restored = normalizeQueueFilters(next.filters);
+              setFilters(restored);
+              setSection(restored.attention);
+              filtersLoaded.current = true;
+            }
             setQueueFailed(false);
           }
         }),
@@ -140,6 +180,31 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
       clearInterval(timer);
     };
   }, [refresh]);
+  useEffect(() => {
+    if (!pendingFilters.current || !auth?.authenticated) return;
+    const version = filterVersion.current;
+    const timer = setTimeout(() => {
+      const next = pendingFilters.current;
+      if (!next) return;
+      void window.electronAPI
+        .workbenchSetFilters(next)
+        .then((result) => {
+          if (version !== filterVersion.current) return;
+          pendingFilters.current = null;
+          if (alive.current) setQueue(result);
+        })
+        .catch((e: unknown) => {
+          if (alive.current) setError(`Could not save queue filters: ${String(e)}`);
+        });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [filters, auth?.authenticated]);
+  useEffect(
+    () => () => {
+      if (pendingFilters.current) void window.electronAPI.workbenchSetFilters(pendingFilters.current).catch(() => {});
+    },
+    []
+  );
   useEffect(() => {
     if (selected) localStorage.setItem('gnosis-queue-selection', selected);
     let cancelled = false;
@@ -200,7 +265,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   }, [fallbackReview?.id, fallbackReview?.savedAt]);
   useEffect(() => {
     rowButtons.current.get(selected ?? '')?.scrollIntoView({ block: 'nearest' });
-  }, [selected, loading, section, query, repo]);
+  }, [selected, loading, section, filters]);
   const savePrefs = async (next: Preferences) => {
     await window.electronAPI.savePreferences(next);
     setPrefs(next);
@@ -264,17 +329,13 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
       setConnecting(false);
     }
   };
-  const items = queue.items.filter((item) => {
-    const s = item.subject;
-    return (
-      (section === 'all' || section === item.attention) &&
-      (repo === 'all' || s.members.some((m) => m.repo === repo)) &&
-      `${s.title} ${s.members.map((m) => `${m.repo} ${m.title} #${m.number} ${m.author}`).join(' ')}`
-        .toLowerCase()
-        .includes(query.toLowerCase())
-    );
-  });
-  const repos = [...new Set(queue.items.flatMap((i) => i.subject.members.map((m) => m.repo)))].sort();
+  const items = queue.items.filter((item) => matchesQueueFilters(item, filters));
+  const repos = [
+    ...new Set([
+      ...queue.items.flatMap((i) => i.subject.members.filter((m) => m.state === 'open').map((m) => m.repo)),
+      ...(repo === 'all' ? [] : [repo]),
+    ]),
+  ].sort();
   const saved = useMemo(
     () => history.filter((h) => `${h.prTitle} ${h.prUrl}`.toLowerCase().includes(query.toLowerCase())),
     [history, query]
@@ -528,6 +589,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                 className={section === id ? 'active' : ''}
                 onClick={() => {
                   setSection(id as string);
+                  if (id !== 'saved') updateFilters({ attention: id as QueueFilters['attention'] });
                   setSelected(null);
                 }}
               >
@@ -674,10 +736,57 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                 ))}
               </select>
             )}
-            <span className="queue-count">
-              {section === 'saved' ? saved.length : items.length} {section === 'saved' ? 'reviews' : 'changes'}
+            {section !== 'saved' && (
+              <Popover.Root open={filtersOpen} onOpenChange={setFiltersOpen}>
+                <Popover.Trigger asChild>
+                  <button className="queue-filter-toggle">
+                    <SlidersHorizontal size={14} /> Filters{filterCount ? ` (${filterCount})` : ''}
+                  </button>
+                </Popover.Trigger>
+                <Popover.Portal>
+                  <Popover.Content
+                    className="queue-filter-popover"
+                    align="end"
+                    sideOffset={8}
+                    collisionPadding={16}
+                    aria-label="Queue filters"
+                  >
+                    <div className="queue-filter-heading">
+                      <strong>Filter changes</strong>
+                      <Popover.Close className="workbench-icon" aria-label="Close filters">
+                        <X size={16} />
+                      </Popover.Close>
+                    </div>
+                    <QueueFilterPanel filters={filters} items={queue.items} onChange={updateFilters} />
+                  </Popover.Content>
+                </Popover.Portal>
+              </Popover.Root>
+            )}
+            <span className="queue-count" aria-live="polite">
+              {section === 'saved' ? `${saved.length} reviews` : `${items.length} of ${queue.items.length} changes`}
             </span>
           </div>
+          {section !== 'saved' && filterCount > 0 && (
+            <div className="queue-active-filters">
+              {describeQueueFilters(filters).map(({ key, label }) => (
+                <button
+                  key={key}
+                  className="queue-filter-chip"
+                  aria-label={`Remove ${label} filter`}
+                  onClick={() => updateFilters({ [key]: DEFAULT_QUEUE_FILTERS[key] })}
+                >
+                  {label}
+                  <X size={12} />
+                </button>
+              ))}
+              <span>
+                {filters.briefingScope === 'matches'
+                  ? 'Automatic briefings use this filter.'
+                  : 'Automatic briefings prioritize this filter.'}
+              </span>
+              <button onClick={resetFilters}>Clear filters</button>
+            </div>
+          )}
           {section !== 'saved' && (
             <p className="queue-keyboard-help" id="queue-keyboard-help">
               <kbd>↑</kbd> <kbd>↓</kbd> or <kbd>j</kbd> <kbd>k</kbd> select · <kbd>Enter</kbd> guided review ·{' '}
@@ -721,8 +830,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
               {!loading &&
                 prefs &&
                 section === 'all' &&
-                !query &&
-                repo === 'all' &&
+                filterCount === 0 &&
                 (showGettingStarted || (!prefs.firstRunSeen && history.length === 0)) && (
                   <GettingStarted
                     provider={prefs.provider}
@@ -822,7 +930,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                   <h2>
                     {queueFailed
                       ? 'Queue could not be loaded'
-                      : query || repo !== 'all'
+                      : filterCount > 0
                         ? 'No matching changes'
                         : !auth?.authenticated
                           ? 'Your GitHub queue is not connected'
@@ -833,8 +941,8 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                   <p>
                     {queueFailed
                       ? 'Try loading the queue again. You can still open a PR by URL or a saved review.'
-                      : query || repo !== 'all'
-                        ? 'Clear the search and repository filter to see more changes.'
+                      : filterCount > 0
+                        ? 'Clear filters to see more changes. All filters must match the same open PR; stacks stay together.'
                         : !auth?.authenticated
                           ? prefs?.guestMode
                             ? 'You are using local mode. Review a repository on this computer.'
@@ -848,17 +956,16 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                     size="sm"
                     onClick={() => {
                       if (queueFailed) void refresh(true);
-                      else if (query || repo !== 'all') {
-                        setQuery('');
-                        setRepo('all');
-                      } else if (section !== 'all') setSection('all');
+                      else if (filterCount > 0) {
+                        resetFilters();
+                      } else if (section !== 'all') resetFilters();
                       else if (!auth?.authenticated) setLocalOpen(true);
                       else openSettings();
                     }}
                   >
                     {queueFailed
                       ? 'Retry queue'
-                      : query || repo !== 'all'
+                      : filterCount > 0
                         ? 'Clear filters'
                         : section !== 'all'
                           ? 'Show work queue'
@@ -977,11 +1084,13 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                           : selectedItem.briefing?.status === 'cancelled'
                             ? 'Briefing cancelled. Retry it from Activity.'
                             : selectedItem.briefing?.status === 'paused'
-                              ? prefs?.autoBriefings === false
-                                ? 'Automatic briefings are off.'
-                                : queue.remaining <= 0
-                                  ? 'Daily briefing limit reached.'
-                                  : 'Briefing is paused while other work runs.'
+                              ? selectedItem.briefing.pauseReason === 'filter'
+                                ? 'Outside your current filters. Automatic briefings are limited to matching changes.'
+                                : prefs?.autoBriefings === false
+                                  ? 'Automatic briefings are off.'
+                                  : queue.remaining <= 0
+                                    ? 'Daily briefing limit reached.'
+                                    : 'Briefing is paused while other work runs.'
                               : 'Briefing queued. You can start the detailed review now.'}
                     </p>
                     {selectedItem.briefing?.status === 'failed' && selectedItem.briefing.error && (

@@ -632,3 +632,90 @@ void test('a paused refresh keeps saved results and resumes after the server dea
     s.cleanup();
   }
 });
+
+void test('briefings use persisted filters without fetching GitHub again, with an optional outside-filter fallback', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  const child = { ...structuredClone(s.pr), html_url: 'https://github.com/owner/repo/pull/2', title: 'Bob change' };
+  child.head.ref = 'bob-change';
+  child.user.login = 'bob';
+  let reads = 0;
+  const generated: string[] = [];
+  Object.assign(s.deps.client().pulls, {
+    get: (args: { pull_number: number }) => {
+      reads++;
+      return Promise.resolve({ data: args.pull_number === 2 ? child : s.pr });
+    },
+    list: (args: { head?: string }) => Promise.resolve({ data: args.head ? [] : [s.pr, child] }),
+  });
+  s.prefs.watchedRepos = ['owner/repo'];
+  s.prefs.briefingDailyLimit = 3;
+  s.deps.provider = (() => ({
+    generate: (req: { content: string }) => {
+      const evidence = JSON.parse(req.content) as { members: { pr: string }[] };
+      generated.push(evidence.members[0].pr);
+      return Promise.resolve('{"summary":"Ready"}');
+    },
+  })) as unknown as typeof getProvider;
+  const service = createWorkbenchService(s.deps);
+  const waitFor = async (count: number) => {
+    for (let i = 0; i < 100; i++) {
+      const q = await service.queue();
+      if (q.items.filter((item) => item.briefing?.status === 'ready').length === count) return q;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    throw new Error('Briefings did not finish');
+  };
+  try {
+    await service.queue();
+    const before = reads;
+    service.setFilters({ author: 'bob' });
+    assert.equal(reads, before, 'Changing filters must not fetch GitHub');
+    s.prefs.autoBriefings = true;
+    const ready = await waitFor(1);
+    assert.deepEqual(generated, [child.html_url]);
+    assert.equal(ready.items.find((i) => i.subject.members[0].author === 'author')?.briefing?.pauseReason, 'filter');
+    assert.equal(
+      service.activity().some((task) => task.title === s.pr.title),
+      false
+    );
+    s.prefs.autoBriefings = false;
+    const restarted = createWorkbenchService(s.deps);
+    assert.equal((await restarted.queue(true)).filters?.author, 'bob');
+    s.prefs.autoBriefings = true;
+    service.setFilters({ author: 'bob', briefingScope: 'all' });
+    await waitFor(2);
+    assert.deepEqual(generated, [child.html_url, s.pr.html_url]);
+  } finally {
+    s.cleanup();
+  }
+});
+
+void test('filter changes preserve a running briefing and apply to the next automatic task', async () => {
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let started = () => {};
+  const generating = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const s = setup(async () => {
+    started();
+    await gate;
+    return '{"summary":"Finished current work"}';
+  }, false);
+  try {
+    await s.service.queue();
+    s.prefs.autoBriefings = true;
+    await s.service.queue();
+    await generating;
+    s.service.setFilters({ author: 'nobody' });
+    release();
+    const q = await settle(s.service, 'ready');
+    assert.equal(q.items[0].briefing?.summary, 'Finished current work');
+    assert.equal(q.remaining, 0);
+  } finally {
+    release();
+    s.cleanup();
+  }
+});

@@ -1,3 +1,4 @@
+import { normalizeQueueFilters, type QueueFilters } from '../../lib/queue-filters';
 import type { ActivityTask, ActivityAction } from '../../lib/activity';
 import { createRoot } from 'react-dom/client';
 import '../../src/globals.css';
@@ -5,6 +6,8 @@ import { groupSubjects, snapshot, memberPrefix, type ReviewMember, type QueueIte
 import type { Preferences, ReviewGuide, ReviewHistoryEntry } from '../../lib/types';
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_FAST_CLAUDE_MODEL } from '../../lib/models';
 import { review as example, slide, explainer } from './explainer';
+const filterStorageKey = 'fixture-queue-filters' + location.search;
+let queueFilters = normalizeQueueFilters(JSON.parse(sessionStorage.getItem(filterStorageKey) ?? 'null'));
 const onboardingScenario = new URLSearchParams(location.search).has('onboarding');
 let fixtureAuthenticated = !onboardingScenario;
 let fixtureStarted = false;
@@ -155,6 +158,16 @@ const items: QueueItem[] = [
     },
   })),
 ];
+if (new URLSearchParams(location.search).has('filters')) {
+  items[1].subject.members[0].isDraft = true;
+  items[1].subject.members[0].labels = ['bug'];
+  items[1].subject.members[0].createdAt = '2020-01-01T00:00:00Z';
+  for (const item of items)
+    for (const member of item.subject.members) {
+      member.updatedAt = new Date().toISOString();
+      if (member.createdAt !== '2020-01-01T00:00:00Z') member.createdAt = new Date().toISOString();
+    }
+}
 if (polishScenario) {
   items[0].briefing = { key: 'paused', status: 'paused', updatedAt: date };
   // A long file followed by a different stack member exercises sticky attribution.
@@ -312,8 +325,14 @@ const mocks = {
     if (onboardingScenario) sessionStorage.setItem('fixture-first-run-seen', String(next.firstRunSeen));
     return Promise.resolve();
   },
+  workbenchSetFilters: (filters: QueueFilters) => {
+    queueFilters = normalizeQueueFilters(filters);
+    sessionStorage.setItem(filterStorageKey, JSON.stringify(queueFilters));
+    return Promise.resolve({ items, warnings: [], remaining: 7, filters: queueFilters });
+  },
   workbenchQueue: () =>
     Promise.resolve({
+      filters: queueFilters,
       items: onboardingScenario && !fixtureStarted ? [] : items,
       warnings: [],
       remaining: polishScenario ? 0 : 7,

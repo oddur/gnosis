@@ -464,6 +464,57 @@ void app.whenReady().then(async () => {
     await capture('github-backoff-dark');
     await js("document.documentElement.classList.remove('dark')");
     await capture('github-backoff-light');
+    await window.loadURL(fixtureUrl + '?filters');
+    window.setSize(1280, 800);
+    await wait("document.querySelectorAll('.queue-item').length === 7");
+    await js("document.querySelector('.queue-filter-toggle').click()");
+    const selectFilter = async (label: string, value: string) => {
+      await js(`(() => {
+        const label = [...document.querySelectorAll('.queue-filter-panel label')].find(l=>l.textContent.startsWith(${JSON.stringify(label)}));
+        const select = label.querySelector('select');
+        select.value = ${JSON.stringify(value)}; select.dispatchEvent(new Event('change',{bubbles:true}));
+      })()`);
+    };
+    await selectFilter('PR status', 'draft');
+    await wait("document.querySelectorAll('.queue-item').length === 1");
+    await selectFilter('Created', '30');
+    await wait("document.body.textContent.includes('No matching changes')");
+    await selectFilter('Created', '0');
+    await selectFilter('Last updated', '7');
+    await wait("document.querySelectorAll('.queue-item').length === 1");
+    await selectFilter('Author', 'sam');
+    await wait("document.body.textContent.includes('No matching changes')");
+    await selectFilter('Author', 'lena');
+    await selectFilter('GitHub label', 'bug');
+    await wait("document.querySelectorAll('.queue-item').length === 1");
+    await wait("window.electronAPI.workbenchQueue().then(q=>q.filters.author==='lena' && q.filters.label==='bug')");
+    await capture('queue-filters-light');
+    window.setSize(1024, 700);
+    await js("document.documentElement.classList.add('dark')");
+    await capture('queue-filters-dark-laptop');
+    assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
+    window.reload();
+    await wait(
+      "document.querySelectorAll('.queue-item').length === 1 && document.querySelector('.queue-filter-toggle').textContent.includes('(4)')"
+    );
+    await js("document.querySelector('.queue-filter-toggle').click()");
+    await selectFilter('Automatic briefings', 'all');
+    await wait("window.electronAPI.workbenchQueue().then(q=>q.filters.briefingScope==='all')");
+    await js('document.querySelector(\'[aria-label="Close filters"]\').click()');
+    await click('Clear filters');
+    await wait("document.querySelectorAll('.queue-item').length === 7");
+    await js("document.querySelector('.queue-filter-toggle').click()");
+    await selectFilter('Grouping', 'stack');
+    await selectFilter('Author', 'maya');
+    await wait("document.querySelectorAll('.queue-item').length === 1");
+    await js(
+      "document.querySelector('.queue-filter-popover').dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))"
+    );
+    await wait("!document.querySelector('.queue-filter-popover')");
+    assert.equal(await js("document.activeElement === document.querySelector('.queue-filter-toggle')"), true);
+    await js("document.querySelector('.queue-disclosure').click()");
+    assert.equal(await js("document.querySelectorAll('.queue-member').length"), 3);
+    await capture('queue-filters-stack');
     console.log('Workbench browser checks passed. Screenshots: ' + shots);
   } catch (error) {
     console.error(error);

@@ -1,3 +1,9 @@
+import {
+  normalizeQueueFilters,
+  matchesQueueFilters,
+  prioritizeBriefings,
+  type QueueFilters,
+} from '../lib/queue-filters';
 import { ACTIVITY_RETENTION_MS, type ActivityTask } from '../lib/activity';
 import type { ActivityService } from './activity-service';
 import fs from 'node:fs';
@@ -30,6 +36,7 @@ interface State {
   day: string;
   used: number;
   checkedAt?: Record<string, number>;
+  filters?: QueueFilters;
 }
 export type WorkbenchPreferences = Pick<
   Preferences,
@@ -114,6 +121,7 @@ export function createWorkbenchService(deps: Deps) {
   function view(): WorkbenchQueue {
     const s = load();
     const history = deps.history();
+    const filters = normalizeQueueFilters(s.filters);
     const selection = modelSettings();
     const items = s.subjects.filter(includeSubject).map((subject) => {
       const review =
@@ -127,7 +135,14 @@ export function createWorkbenchService(deps: Deps) {
           deps.preferences().autoBriefings !== false && s.used < limit() ? ('queued' as const) : ('paused' as const),
         updatedAt: new Date().toISOString(),
       };
-      return { subject, review, briefing, attention: attentionFor(subject, review) };
+      const item = { subject, review, briefing, attention: attentionFor(subject, review) };
+      if (
+        (!cached || briefing.status === 'paused') &&
+        filters.briefingScope === 'matches' &&
+        !matchesQueueFilters(item, filters, now())
+      )
+        return { ...item, briefing: { ...briefing, status: 'paused' as const, pauseReason: 'filter' as const } };
+      return item;
     });
     const order = { updated: 0, requested: 1, blocking: 2, other: 3 };
     items.sort(
@@ -136,7 +151,7 @@ export function createWorkbenchService(deps: Deps) {
         Math.max(...b.subject.members.map((m) => Date.parse(m.updatedAt))) -
           Math.max(...a.subject.members.map((m) => Date.parse(m.updatedAt)))
     );
-    return { items, warnings, remaining: Math.max(0, limit() - s.used) };
+    return { items, warnings, remaining: Math.max(0, limit() - s.used), filters };
   }
   async function fetchMember(
     octokit: Octokit,
@@ -452,7 +467,9 @@ export function createWorkbenchService(deps: Deps) {
     pumping = true;
     try {
       const s = load();
-      const item = view().items.find((i) => !s.briefs[key(i.subject)] || s.briefs[key(i.subject)]?.status === 'paused');
+      const item = prioritizeBriefings(view().items, normalizeQueueFilters(s.filters), now()).find(
+        (i) => !s.briefs[key(i.subject)] || s.briefs[key(i.subject)]?.status === 'paused'
+      );
       if (!item || s.used >= limit()) return;
       const p = modelSettings();
       const subject = item.subject,
@@ -566,6 +583,13 @@ export function createWorkbenchService(deps: Deps) {
   }
   return {
     queue,
+    setFilters(value: unknown) {
+      if (!deps.auth().login || !deps.auth().token) throw new Error('Connect GitHub to save queue filters.');
+      load().filters = normalizeQueueFilters(value);
+      save();
+      void pump();
+      return view();
+    },
     activity(): ActivityTask[] {
       // The drawer mounts before GitHub authentication finishes restoring.
       if (!deps.auth().login || !deps.auth().token) return [];
@@ -574,7 +598,7 @@ export function createWorkbenchService(deps: Deps) {
       return view().items.flatMap(({ subject, briefing }) => {
         if (!briefing) return [];
         const cached = load().briefs[briefing.key];
-        if (!cached && briefing.status === 'paused') return [];
+        if ((!cached && briefing.status === 'paused') || briefing.pauseReason === 'filter') return [];
         if (
           (briefing.status === 'ready' || briefing.status === 'cancelled') &&
           Date.now() - Date.parse(briefing.updatedAt) > ACTIVITY_RETENTION_MS
