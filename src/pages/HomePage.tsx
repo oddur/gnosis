@@ -60,8 +60,7 @@ interface Props {
 const labels = {
   updated: 'Updated since review',
   requested: 'Review requested',
-  blocking: 'Other PRs depend on this',
-  other: 'Other PRs',
+  other: 'Other changes',
 };
 
 export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Props) {
@@ -79,14 +78,20 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   const filtersLoaded = useRef(false);
   const pendingFilters = useRef<QueueFilters | null>(null);
   const filterVersion = useRef(0);
-  const [section, setSection] = useState('all');
+  const [savedView, setSavedView] = useState(false);
+  const section = savedView
+    ? 'saved'
+    : filters.attention !== 'all'
+      ? filters.attention
+      : filters.kind === 'stack'
+        ? 'stacks'
+        : 'all';
   const query = section === 'saved' ? savedQuery : filters.query;
   const repo = filters.repo;
   const filterCount = activeQueueFilterCount(filters);
   const updateFilters = (patch: Partial<QueueFilters>) => {
     filterVersion.current++;
     filtersLoaded.current = true;
-    if (patch.attention && section !== 'saved') setSection(patch.attention);
     setFilters((current) => {
       const next = normalizeQueueFilters({ ...current, ...patch });
       pendingFilters.current = next;
@@ -97,7 +102,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   const setRepo = (value: string) => updateFilters({ repo: value });
   const resetFilters = () => {
     updateFilters({ ...DEFAULT_QUEUE_FILTERS, briefingScope: filters.briefingScope });
-    setSection('all');
+    setSavedView(false);
   };
   const [selected, setSelected] = useState<string | null>(
     () => initialSubjectId ?? localStorage.getItem('gnosis-queue-selection')
@@ -138,7 +143,6 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
             if (!filtersLoaded.current && !pendingFilters.current) {
               const restored = normalizeQueueFilters(next.filters);
               setFilters(restored);
-              setSection(restored.attention);
               filtersLoaded.current = true;
             }
             setQueueFailed(false);
@@ -340,7 +344,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
     () => history.filter((h) => `${h.prTitle} ${h.prUrl}`.toLowerCase().includes(query.toLowerCase())),
     [history, query]
   );
-  const orderedItems = (['updated', 'requested', 'blocking', 'other'] as const).flatMap((category) =>
+  const orderedItems = (['updated', 'requested', 'other'] as const).flatMap((category) =>
     items.filter((item) => item.attention === category)
   );
   const openSettings = (next: SettingsSection = 'queue') => {
@@ -516,7 +520,8 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
           className="workbench-brand"
           onClick={(e) => {
             e.preventDefault();
-            setSection('all');
+            setSavedView(false);
+            updateFilters({ attention: 'all', kind: 'all' });
           }}
         >
           Gnosis
@@ -554,10 +559,8 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
           )}
           <WorkbenchHelp
             onGettingStarted={() => {
-              setSection('all');
+              resetFilters();
               setSelected(null);
-              setQuery('');
-              setRepo('all');
               setShowGettingStarted(true);
             }}
           />
@@ -575,21 +578,23 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
             ['all', 'Work queue', Inbox],
             ['requested', 'Requested', GitPullRequest],
             ['updated', 'Updated', RefreshCw],
-            ['blocking', 'PR dependencies', GitBranch],
+            ['stacks', 'Stacks', Layers],
             ['saved', 'Saved reviews', Clock],
           ].map(([id, label, Icon]) => {
             const I = Icon as typeof Inbox;
             return (
               <button
                 key={id as string}
-                title={
-                  id === 'blocking' ? 'Other PRs depend on this: changes that other PRs build on' : (label as string)
-                }
+                title={id === 'stacks' ? 'All stacks, including requested and updated changes' : (label as string)}
                 aria-current={section === id ? 'page' : undefined}
                 className={section === id ? 'active' : ''}
                 onClick={() => {
-                  setSection(id as string);
-                  if (id !== 'saved') updateFilters({ attention: id as QueueFilters['attention'] });
+                  setSavedView(id === 'saved');
+                  if (id !== 'saved')
+                    updateFilters({
+                      attention: id === 'stacks' ? 'all' : (id as QueueFilters['attention']),
+                      kind: id === 'stacks' ? 'stack' : 'all',
+                    });
                   setSelected(null);
                 }}
               >
@@ -600,7 +605,9 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                     ? history.length
                     : id === 'all'
                       ? queue.items.length
-                      : queue.items.filter((i) => i.attention === id).length}
+                      : id === 'stacks'
+                        ? queue.items.filter((i) => i.subject.kind === 'stack').length
+                        : queue.items.filter((i) => i.attention === id).length}
                 </span>
               </button>
             );
@@ -635,13 +642,15 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                   ? 'Saved reviews'
                   : section === 'all'
                     ? 'Work queue'
-                    : labels[section as keyof typeof labels]}
+                    : section === 'stacks'
+                      ? 'Stacks'
+                      : labels[section]}
               </h1>
               <p>
                 {section === 'saved'
                   ? 'Your review history, ready to resume.'
-                  : section === 'blocking'
-                    ? 'Other PRs build on changes here that are not merged yet. This does not mean checks are failing or work has stopped.'
+                  : section === 'stacks'
+                    ? 'PRs that build on one another, grouped for review. Includes requested and updated stacks; your other filters still apply.'
                     : 'Select a PR or stack for a short briefing; start a guided review to inspect the code.'}
               </p>
             </div>
@@ -907,19 +916,13 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                   </div>
                 )
               ) : items.length ? (
-                (['updated', 'requested', 'blocking', 'other'] as const).map((category) => {
+                (['updated', 'requested', 'other'] as const).map((category) => {
                   const group = items.filter((i) => i.attention === category);
                   return group.length ? (
                     <div key={category}>
                       <h2 className="queue-section-title">
                         {labels[category]} <span>{group.length}</span>
                       </h2>
-                      {category === 'blocking' && section === 'all' && (
-                        <p className="queue-dependency-help">
-                          Other PRs build on these unmerged changes. This describes a code dependency, not a failed
-                          check.
-                        </p>
-                      )}
                       {group.map(row)}
                     </div>
                   ) : null;
@@ -1257,9 +1260,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
       <SettingsDialog
         initialSection={settingsSection}
         onReplayOnboarding={() => {
-          setSection('all');
-          setQuery('');
-          setRepo('all');
+          resetFilters();
           setSelected(null);
           setShowGettingStarted(true);
         }}

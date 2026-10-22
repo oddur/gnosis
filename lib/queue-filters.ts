@@ -42,9 +42,10 @@ export function normalizeQueueFilters(value: unknown): QueueFilters {
     status: choice('status', ['all', 'ready', 'draft'], 'all'),
     createdWithin: days('createdWithin'),
     updatedWithin: days('updatedWithin'),
-    kind: choice('kind', ['all', 'stack', 'pr'], 'all'),
+    // Migrate the retired dependency category to the stack filter.
+    kind: raw.attention === 'blocking' ? 'stack' : choice('kind', ['all', 'stack', 'pr'], 'all'),
     explanation: choice('explanation', ['all', 'none', 'ready', 'outdated', 'generating', 'failed'], 'all'),
-    attention: choice('attention', ['all', 'updated', 'requested', 'blocking', 'other'], 'all'),
+    attention: choice('attention', ['all', 'updated', 'requested', 'other'], 'all'),
     briefingScope: choice('briefingScope', ['matches', 'all'], 'matches'),
   };
 }
@@ -107,8 +108,7 @@ export function describeQueueFilters(filters: QueueFilters): { key: keyof QueueF
       all: 'All changes',
       requested: 'Review requested',
       updated: 'Updated since review',
-      blocking: 'Other PRs depend on this',
-      other: 'Other PRs',
+      other: 'Other changes',
     }[filters.attention],
   };
   return (Object.keys(labels) as (keyof QueueFilters)[])

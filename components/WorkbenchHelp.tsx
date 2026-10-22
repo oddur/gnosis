@@ -28,10 +28,7 @@ const terms = [
     'Daily briefing limit',
     'The number of automatic briefing attempts allowed each day, including retries. Guided reviews do not use this allowance.',
   ],
-  [
-    'Other PRs',
-    'Changes in your queue that are not in Review requested, Updated since review, or PR dependencies. This does not mean you explicitly followed them.',
-  ],
+  ['Other changes', 'PRs and stacks that are not in Review requested or Updated since review.'],
   ['Topic', 'One part of a guided review. Topics follow the explanation of the change, rather than the file order.'],
   [
     'Interactive explanation',
@@ -115,13 +112,12 @@ export function WorkbenchHelp({ onGettingStarted }: { onGettingStarted?: () => v
             <summary>Queue filters and keyboard shortcuts</summary>
             <p>
               <strong>Requested</strong> means you were asked to review. <strong>Updated</strong> means code changed
-              since a saved review. <strong>PR dependencies</strong> shows changes that other PRs build on and that are
-              not merged yet.
+              since a saved review. <strong>Stacks</strong> shows all stacks, including requested and updated ones.
+              Author, date, and other filters still apply.
             </p>
             <p>
               For example, PR #42 adds an API and PR #43 uses it. #43 builds on #42; reviewing #42 helps the stack move
-              forward. “Other PRs depend on this” describes that relationship. It does not mean checks are failing or
-              work has stopped.
+              forward. Expand the stack to see its PRs in dependency order, with the base PR first.
             </p>
             <p>
               In the queue: <kbd>↑</kbd>/<kbd>↓</kbd> or <kbd>j</kbd>/<kbd>k</kbd> select a change; <kbd>Enter</kbd>{' '}

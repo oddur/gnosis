@@ -1815,7 +1815,6 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .queue-url { align-items:flex-end; }
 .queue-url-field { display:flex; flex-direction:column; flex:1; min-width:0; gap:6px; font-size:12px; }
 @media(max-width:620px) { .queue-url-field { flex-basis:100%; } }
-.queue-dependency-help { padding:8px 24px; font-size:12px; line-height:1.6; color:var(--muted-foreground); border-bottom:1px solid var(--border); }
 .stack-member .stack-dependency a { font-size:inherit; color:var(--ring); text-decoration:underline; text-underline-offset:2px; }
 .submission-destination { padding:12px; background:var(--muted); border:1px solid var(--border); border-radius:4px; }
 .submission-destination p { font-size:12px; line-height:1.6; color:var(--muted-foreground); }

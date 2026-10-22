@@ -158,6 +158,25 @@ const items: QueueItem[] = [
     },
   })),
 ];
+if (new URLSearchParams(location.search).has('stacks')) {
+  for (const [index, attention] of [
+    [1, 'updated'],
+    [2, 'other'],
+  ] as const) {
+    const parent = items[index].subject.members[0];
+    items[index].subject = groupSubjects([
+      parent,
+      {
+        ...parent,
+        number: parent.number + 100,
+        url: parent.url + '0',
+        headBranch: parent.headBranch + '-child',
+        baseBranch: parent.headBranch,
+      },
+    ])[0];
+    items[index].attention = attention;
+  }
+}
 if (new URLSearchParams(location.search).has('filters')) {
   items[1].subject.members[0].isDraft = true;
   items[1].subject.members[0].labels = ['bug'];

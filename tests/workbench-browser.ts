@@ -515,6 +515,31 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('.queue-disclosure').click()");
     assert.equal(await js("document.querySelectorAll('.queue-member').length"), 3);
     await capture('queue-filters-stack');
+    await window.loadURL(fixtureUrl + '?stacks');
+    await wait("document.querySelectorAll('.queue-item').length === 7");
+    const navigate = async (name: string) => {
+      await js(
+        `Array.from(document.querySelectorAll('.workbench-sidebar button')).find(b=>b.querySelector('span')?.textContent===${JSON.stringify(name)}).click()`
+      );
+    };
+    await navigate('Requested');
+    await navigate('Stacks');
+    await wait("document.querySelectorAll('.queue-item').length === 3");
+    assert.deepEqual(
+      await js("Array.from(document.querySelectorAll('.queue-section-title')).map(h=>h.childNodes[0].textContent)"),
+      ['Updated since review', 'Review requested', 'Other changes']
+    );
+    assert.equal(await js("document.body.textContent.includes('Other PRs depend on this')"), false);
+    await wait("window.electronAPI.workbenchQueue().then(q=>q.filters.kind==='stack' && q.filters.attention==='all')");
+    await capture('stacks-light');
+    await js("document.documentElement.classList.add('dark')");
+    await capture('stacks-dark');
+    window.reload();
+    await wait(
+      "document.querySelector('.queue-toolbar h1')?.textContent === 'Stacks' && document.querySelectorAll('.queue-item').length === 3"
+    );
+    await navigate('Work queue');
+    await wait("document.querySelectorAll('.queue-item').length === 7");
     console.log('Workbench browser checks passed. Screenshots: ' + shots);
   } catch (error) {
     console.error(error);

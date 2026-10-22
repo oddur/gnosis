@@ -97,3 +97,16 @@ void test('invalid or older saved filters normalize to supported defaults', () =
     DEFAULT_QUEUE_FILTERS
   );
 });
+
+void test('retired dependency filters migrate to all stacks, preserving other constraints', () => {
+  assert.deepEqual(normalizeQueueFilters({ attention: 'blocking', author: 'alice', createdWithin: 30 }), {
+    ...DEFAULT_QUEUE_FILTERS,
+    kind: 'stack',
+    author: 'alice',
+    createdWithin: 30,
+  });
+  const stack = item([member(1), member(2, { baseBranch: 'pr-1' })]);
+  for (const attention of ['requested', 'updated', 'other'] as const) {
+    assert.equal(matchesQueueFilters({ ...stack, attention }, { ...DEFAULT_QUEUE_FILTERS, kind: 'stack' }), true);
+  }
+});

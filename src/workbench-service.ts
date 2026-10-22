@@ -144,7 +144,7 @@ export function createWorkbenchService(deps: Deps) {
         return { ...item, briefing: { ...briefing, status: 'paused' as const, pauseReason: 'filter' as const } };
       return item;
     });
-    const order = { updated: 0, requested: 1, blocking: 2, other: 3 };
+    const order = { updated: 0, requested: 1, other: 2 };
     items.sort(
       (a, b) =>
         order[a.attention] - order[b.attention] ||
