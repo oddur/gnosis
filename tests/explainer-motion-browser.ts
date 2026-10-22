@@ -5,7 +5,7 @@ import { explainer } from './fixtures/explainer';
 
 export async function testExplainerMotion() {
   const window = new BrowserWindow({
-    show: false,
+    show: true,
     width: 1100,
     height: 600,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
@@ -47,11 +47,19 @@ const draw = () => document.getElementById('drawing').innerHTML = state === 2 ? 
 window.explainer = {reset() {state=0;elapsed=0;draw();}, step() {state=Math.min(state+1,3);draw();}, tick(ms) {elapsed+=ms;if(elapsed>=100000){elapsed=0;this.step();}}};`,
     };
     async function load(html: string) {
-      await window.webContents.executeJavaScript(`new Promise(resolve => {
+      await window.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Motion fixture did not become ready')), 5000);
         document.body.innerHTML = '';
         const frame = document.createElement('iframe'); frame.sandbox='allow-scripts';
         frame.style='width:100vw;height:100vh;border:0';
-        addEventListener('message', e => {if(e.source===frame.contentWindow && e.data?.event==='ready')resolve(true);}, {once:true});
+        const receive = e => {
+          if(e.source !== frame.contentWindow || e.data?.token !== 'motion-test') return;
+          if(e.data.event === 'ready' || e.data.event === 'error') {
+            removeEventListener('message', receive); clearTimeout(timer);
+            if(e.data.event === 'error') reject(new Error(e.data.message)); else resolve(true);
+          }
+        };
+        addEventListener('message', receive);
         frame.srcdoc=${JSON.stringify(html)};document.body.append(frame);
       })`);
       const frame = window.webContents.mainFrame.frames.find((f) => f.url === 'about:srcdoc');
@@ -63,11 +71,12 @@ window.explainer = {reset() {state=0;elapsed=0;draw();}, step() {state=Math.min(
       return frame;
     }
     const command = async (command: string) => {
-      await window.webContents.executeJavaScript(`new Promise(resolve => {
+      await window.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Motion command was not acknowledged: ' + ${JSON.stringify(command)})), 5000);
         const frame = document.querySelector('iframe');
         const receive = event => {
           if (event.source !== frame.contentWindow || event.data?.token !== 'motion-test' || event.data.event !== 'state') return;
-          removeEventListener('message', receive); resolve(true);
+          removeEventListener('message', receive); clearTimeout(timer); resolve(true);
         };
         addEventListener('message', receive);
         frame.contentWindow.postMessage({type:'gnosis-explainer-control',token:'motion-test',command:${JSON.stringify(command)}},'*');
@@ -80,6 +89,7 @@ window.explainer = {reset() {state=0;elapsed=0;draw();}, step() {state=Math.min(
       }
       assert.fail('Motion did not settle: ' + expression);
     };
+    console.log('motion: movement and playback');
     const frame = await load(buildExplainerDocument(artifact, 'motion-test'));
     assert.equal(await frame.executeJavaScript('document.getAnimations().length'), 0, 'opening a diagram starts still');
     const initialX = (await frame.executeJavaScript(
@@ -149,6 +159,7 @@ window.explainer = {reset() {state=0;elapsed=0;draw();}, step() {state=Math.min(
     await command('step');
     await command('pause');
     await frame.executeJavaScript('Promise.all(document.getAnimations().map(animation => animation.ready))');
+    console.log('motion: reduced motion');
     await reducedMotion('reduce');
     await waitUntil(
       frame,
@@ -171,6 +182,7 @@ window.explainer = {reset() {state=0;elapsed=0;draw();}, step() {state=Math.min(
       'translate(260, 80)'
     );
     await reducedMotion('no-preference');
+    console.log('motion: saved diagrams');
     const legacy = await load(buildExplainerDocument(explainer, 'motion-test'));
     await command('step');
     assert.ok(
@@ -178,6 +190,7 @@ window.explainer = {reset() {state=0;elapsed=0;draw();}, step() {state=Math.min(
       'saved unkeyed diagrams get a gentle change transition'
     );
     assert.equal(await legacy.executeJavaScript('document.getElementById("state").textContent'), '2 items waiting');
+    console.log('motion: transformed exits');
     for (const transform of ['translate(110 35)', 'scale(1.5 0.75)', 'translate(110 35) scale(1.5 0.75)']) {
       const transformed = await load(
         buildExplainerDocument(
