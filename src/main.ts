@@ -1,3 +1,6 @@
+import { createWorkbenchService } from './workbench-service';
+import { StackDiffSource } from '../lib/stack-source';
+import { snapshot, fingerprint, type ReviewSubject, type ReviewSnapshot, type GroupingOverride } from '../lib/workbench';
 import { app, autoUpdater, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
@@ -546,7 +549,7 @@ async function runProactiveCheck() {
     return;
   }
   const prefs = loadPreferences();
-  if (!prefs.proactiveMode) return;
+  if (!prefs.proactiveMode || prefs.autoBriefings) return;
 
   try {
     const octokit = new Octokit({ auth: cachedToken });
@@ -1000,6 +1003,8 @@ const DEFAULT_PREFERENCES: Preferences = {
   enableTools: false,
   enableWebResearch: false,
   proactiveMode: false,
+  autoBriefings: true,
+  briefingDailyLimit: 10,
   watchedRepos: [],
   codeTheme: 'aurora-x',
   codeFont: 'jetbrains-mono',
@@ -1686,7 +1691,8 @@ async function runBackgroundGeneration(
   request: GenerateReviewRequest,
   source: DiffSource,
   prData: PrMetadata,
-  signal: AbortSignal
+  signal: AbortSignal,
+  reviewSnapshot?: ReviewSnapshot
 ): Promise<void> {
   const {
     prUrl,
@@ -2087,6 +2093,7 @@ async function runBackgroundGeneration(
     const fileMetadata = await fileMetadataPromise;
 
     const reviewGuide: ReviewGuide = {
+      snapshot: reviewSnapshot,
       prTitle: aiResult?.prTitle || prData.title,
       prDescription: aiResult?.prDescription || prData.description,
       prUrl,
@@ -2125,12 +2132,15 @@ async function runBackgroundGeneration(
     for (const slide of reviewGuide.slides) {
       if (slide.explainerIdea) slide.explainerContext = captureExplainerContext(slide, fileContents, headFileContents);
     }
+    signal.throwIfAborted();
+    await source.assertCurrent?.();
     fs.writeFileSync(path.join(getReviewsDir(), `${reviewId}.json`), JSON.stringify(reviewGuide));
     updateHistoryEntry(reviewId, {
       status: 'completed',
       riskLevel: reviewGuide.riskLevel,
       generationDurationMs,
       summary: reviewGuide.summary,
+      snapshot: reviewSnapshot,
     });
 
     broadcastToAllWindows('review-completed', { reviewId });
@@ -2168,12 +2178,45 @@ function formatMs(ms: number): string {
   return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
 }
 
+const workbench = createWorkbenchService({
+  directory: () => app.getPath('userData'),
+  auth: () => ({ token: getResolvedToken(), login: cachedLogin }),
+  preferences: loadPreferences,
+  history: readReviewsIndex,
+  busy: () => activeGenerations.size > 0 || activeForegroundChats > 0,
+});
+let activeForegroundChats = 0;
+ipcMain.handle('workbench-queue', (_event, force: boolean) => workbench.queue(force));
+ipcMain.handle('workbench-group', (_event, correction: GroupingOverride) => workbench.correct(correction));
+ipcMain.handle('workbench-briefing', (_event, id: string) => workbench.retry(id));
+ipcMain.handle('workbench-freshness', async (_event, old: ReviewSnapshot) => {
+  try {
+    await workbench.queue(true);
+    const current = await workbench.fresh(old.subject);
+    const changed = fingerprint(current) !== old.fingerprint;
+    return changed ? { status: 'stale', aheadBy: 0, commits: [], reason: 'A PR, parent revision, or stack member changed. Refresh the review to inspect the affected work.' } : {status: 'current'};
+  } catch(error) {return {status:'unknown',reason: error instanceof Error ? error.message : String(error)};}
+});
+
 ipcMain.handle('start-review', async (_event, request: GenerateReviewRequest): Promise<StartReviewResult> => {
   const token = getResolvedToken();
-  const source = await createDiffSource(request.prUrl, { token });
-
-  // Fetch PR metadata (fast, single API call / git command)
+  workbench.interrupt();
+  let subject: ReviewSubject | undefined;
+  if (!isLocalUrl(request.prUrl)) {
+    await workbench.queue();
+    subject = request.subjectId ? workbench.subject(request.subjectId) : !request.standalone ? (await workbench.queue()).items.find(i=>i.subject.members.some(m=>m.url===request.prUrl))?.subject : undefined;
+    if (request.subjectId && !subject) throw new Error('This stack is no longer in the queue. Refresh and try again.');
+    if (subject) subject = await workbench.fresh(subject);
+  }
+  const source = subject && subject.members.length > 1 ? new StackDiffSource(subject, token) : await createDiffSource(request.prUrl, { token });
   const prData = await source.getMetadata();
+  if (!subject && !isLocalUrl(request.prUrl)) {
+    const parsed=parsePrUrl(request.prUrl);
+    const repo=parsed.owner+'/'+parsed.repo;
+    subject={id:request.prUrl,kind:'pr',title:prData.title,members:[{...prData,repo,headRepo:prData.headRepo??repo,baseRepo:prData.baseRepo??repo,number:parsed.pullNumber,role:'watched'}],edges:[],warnings:[]};
+  }
+  if (subject?.members.length === 1) subject.members[0] = {...subject.members[0],...prData,headRepo:prData.headRepo??subject.members[0].headRepo,baseRepo:prData.baseRepo??subject.members[0].baseRepo};
+  const reviewSnapshot = subject ? snapshot(subject) : undefined;
 
   const reviewId = crypto.randomUUID();
   const prState = prData.merged ? 'merged' : prData.state === 'open' ? 'open' : 'closed';
@@ -2189,13 +2232,15 @@ ipcMain.handle('start-review', async (_event, request: GenerateReviewRequest): P
     prData.headSha
   );
 
+  if (reviewSnapshot) updateHistoryEntry(reviewId, {snapshot:reviewSnapshot});
+
   // Cancel any in-flight generation for this PR
   cancelExistingGenerationForPr(request.prUrl);
 
   // Track and fire off background generation (no await)
   const abortController = new AbortController();
   activeGenerations.set(reviewId, { abortController, prUrl: request.prUrl });
-  void runBackgroundGeneration(reviewId, request, source, prData, abortController.signal);
+  void runBackgroundGeneration(reviewId, request, source, prData, abortController.signal, reviewSnapshot);
 
   return {
     reviewId,
@@ -2218,9 +2263,10 @@ const explainerService = createExplainerService({
   validate: validateExplainerInBrowser,
 });
 
-ipcMain.handle('generate-explainer', (event, req: GenerateExplainerRequest) => {
+ipcMain.handle('generate-explainer', async (event, req: GenerateExplainerRequest) => {
   if (event.senderFrame !== event.sender.mainFrame) throw new Error('Explainers can only be requested by the review window.');
-  return explainerService.generate(req, event.sender.id);
+  workbench.interrupt(); activeForegroundChats++;
+  try {return await explainerService.generate(req, event.sender.id);} finally {activeForegroundChats--;}
 });
 ipcMain.handle('cancel-explainer', (event, req: GenerateExplainerRequest) => {
   if (event.senderFrame !== event.sender.mainFrame) return;
@@ -2228,6 +2274,8 @@ ipcMain.handle('cancel-explainer', (event, req: GenerateExplainerRequest) => {
 });
 
 ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
+  workbench.interrupt();
+  activeForegroundChats++;
   const chatProvider = getProvider(req.provider);
   const systemPrompt = buildSlideChatSystemPrompt();
   const userMessage = buildSlideChatUserMessage(req);
@@ -2265,6 +2313,7 @@ ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
     });
     return result;
   } finally {
+    activeForegroundChats--;
     if (mcpConfigPath) cleanupMcpConfig(mcpConfigPath);
   }
 });
@@ -2276,6 +2325,12 @@ ipcMain.handle('submit-review', async (_event, req: SubmitReviewRequest) => {
   const token = getResolvedToken();
   const octokit = new Octokit({ auth: token ?? undefined });
   const { owner, repo, pullNumber } = parsePrUrl(req.prUrl);
+
+  const current = await getPrMetadata(octokit, owner, repo, pullNumber);
+  if (current.headSha !== req.headSha || (req.baseSha && current.baseSha !== req.baseSha) || (req.baseBranch && current.baseBranch !== req.baseBranch)) {
+    throw new Error('This PR or its parent changed. Refresh the review before submitting comments or approval.');
+  }
+  if (current.merged || current.state !== 'open') throw new Error('This PR is no longer open for review.');
 
   // Fetch actual PR file patches to validate line numbers.
   // The AI-generated hunks have expanded context (10 lines vs GitHub's 3),

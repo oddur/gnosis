@@ -22,6 +22,7 @@ export interface DiffSource {
   readonly cwd?: string;
 
   getMetadata(): Promise<PrMetadata>;
+  assertCurrent?(): Promise<void>;
   getDiff(changedFiles?: ChangedFile[]): Promise<string>;
   getChangedFiles(): Promise<ChangedFile[]>;
   getFileContent(path: string, ref: 'base' | 'head'): Promise<string | null>;

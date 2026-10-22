@@ -25,14 +25,7 @@ interface Props {
 // Reviewed sections show a quiet ✓ replacing the number. When "hide
 // reviewed" is active, reviewed entries collapse into a single
 // "{N} reviewed" summary line so the user sees only what's left.
-export function TocRail({
-  slides,
-  currentSlide,
-  reviewed,
-  hideReviewed,
-  onToggleHideReviewed,
-  onNavigate,
-}: Props) {
+export function TocRail({ slides, currentSlide, reviewed, hideReviewed, onToggleHideReviewed, onNavigate }: Props) {
   const currentRef = useRef<HTMLLIElement>(null);
 
   useEffect(() => {
@@ -50,15 +43,12 @@ export function TocRail({
   return (
     <nav
       aria-label="Table of contents"
-      className="w-[260px] shrink-0 border-r border-border overflow-y-auto py-8 px-6 hidden lg:block"
+      className="w-[210px] shrink-0 border-r border-border overflow-y-auto py-4 px-4 hidden lg:block"
     >
       <div className="flex items-baseline justify-between mb-5">
         <p className="slide-meta uppercase tracking-wider">Contents</p>
         {hasAnyReviewed && (
-          <button
-            onClick={onToggleHideReviewed}
-            className="slide-meta hover:text-foreground transition-colors"
-          >
+          <button onClick={onToggleHideReviewed} className="slide-meta hover:text-foreground transition-colors">
             {hideReviewed ? 'Show all' : 'Hide reviewed'}
           </button>
         )}
@@ -76,16 +66,10 @@ export function TocRail({
           <button
             onClick={() => onNavigate(0)}
             className={`group w-full text-left py-2 flex gap-3 transition-colors ${
-              currentSlide === 0
-                ? 'text-foreground'
-                : 'text-foreground/55 hover:text-foreground'
+              currentSlide === 0 ? 'text-foreground' : 'text-foreground/55 hover:text-foreground'
             }`}
           >
-            <span
-              className={`slide-meta shrink-0 tabular-nums w-6 ${
-                currentSlide === 0 ? 'text-[var(--ring)]' : ''
-              }`}
-            >
+            <span className={`slide-meta shrink-0 tabular-nums w-6 ${currentSlide === 0 ? 'text-[var(--ring)]' : ''}`}>
               00
             </span>
             <span className="font-serif text-base leading-snug">Overview</span>
@@ -116,9 +100,7 @@ export function TocRail({
                 }`}
               >
                 <span
-                  className={`shrink-0 w-6 flex items-center justify-center ${
-                    isCurrent ? 'text-[var(--ring)]' : ''
-                  }`}
+                  className={`shrink-0 w-6 flex items-center justify-center ${isCurrent ? 'text-[var(--ring)]' : ''}`}
                 >
                   {isReviewed && !isCurrent ? (
                     <Check className="h-3 w-3 text-[var(--ring)]/60 animate-fade-in" />

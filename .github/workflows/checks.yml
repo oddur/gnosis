@@ -34,3 +34,7 @@ jobs:
         if: runner.os == 'Linux'
       - run: npm run test:explainer
         if: runner.os != 'Linux'
+      - run: xvfb-run -a npm run test:workbench
+        if: runner.os == 'Linux'
+      - run: npm run test:workbench
+        if: runner.os != 'Linux'

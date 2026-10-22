@@ -1,0 +1,112 @@
+import { ArrowRight, GitPullRequest, Layers, Check, ExternalLink } from 'lucide-react';
+import { Markdown } from './Markdown';
+import { Button } from './ui/button';
+import type { ReviewGuide } from '../lib/types';
+export function WorkbenchOverview({
+  review,
+  reviewed,
+  onNavigate,
+  onSubmit,
+}: {
+  review: ReviewGuide;
+  reviewed: Set<number>;
+  onNavigate: (n: number) => void;
+  onSubmit: (url: string) => void;
+}) {
+  const subject = review.snapshot?.subject;
+  return (
+    <div className="workbench-overview">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground mb-3">
+        {subject?.kind === 'stack' ? (
+          <>
+            <Layers size={15} />
+            {subject.members.length} PRs · one review
+          </>
+        ) : (
+          <>
+            <GitPullRequest size={15} />
+            Change overview
+          </>
+        )}
+        <span className="ml-auto">
+          {reviewed.size}/{review.slides.length} topics reviewed
+        </span>
+      </div>
+      <h1>{review.prTitle}</h1>
+      <Markdown className="overview-summary">{review.summary}</Markdown>
+      <div className="flex items-center gap-3 mt-5">
+        <Button
+          size="sm"
+          onClick={() => onNavigate(review.slides.find((s) => !reviewed.has(s.slideNumber))?.slideNumber ?? 1)}
+        >
+          Continue review <ArrowRight size={14} />
+        </Button>
+        <span className="text-xs text-muted-foreground">
+          {review.totalFilesChanged} file changes · {review.totalLinesChanged} lines
+        </span>
+      </div>
+      <div className="overview-columns">
+        <section>
+          <h2>Review path</h2>
+          {review.slides.map((s) => (
+            <button className="overview-topic" key={s.id} onClick={() => onNavigate(s.slideNumber)}>
+              <span className="stack-step">{reviewed.has(s.slideNumber) ? <Check size={13} /> : s.slideNumber}</span>
+              <span className="flex-1">{s.title}</span>
+              <span className="text-xs text-muted-foreground">{s.diffHunks.length} hunks</span>
+              <ArrowRight size={14} />
+            </button>
+          ))}
+        </section>
+        <aside>
+          <h2>Where to focus</h2>
+          <Markdown className="text-sm leading-relaxed">{review.riskRationale}</Markdown>
+          <h2>{subject?.kind === 'stack' ? 'Stack members and review actions' : 'Review action'}</h2>
+          {subject ? (
+            subject.members.map((m, i) => (
+              <div className="overview-member" key={m.url}>
+                <div className="flex items-start gap-2">
+                  <span className="stack-step">{i + 1}</span>
+                  <span className="text-sm font-medium">
+                    #{m.number} {m.title}
+                  </span>
+                </div>
+                <p>
+                  {m.repo} · {m.author} · {m.merged ? 'Merged' : m.state}
+                </p>
+                <div className="flex gap-3 mt-2 text-xs">
+                  <button
+                    className="text-[var(--ring)]"
+                    onClick={() => onSubmit(m.url)}
+                    disabled={m.merged || m.state === 'closed'}
+                  >
+                    Review this PR
+                  </button>
+                  <button
+                    className="inline-flex items-center gap-1 text-muted-foreground"
+                    onClick={() => void window.electronAPI.openExternal(m.url)}
+                  >
+                    GitHub <ExternalLink size={11} />
+                  </button>
+                </div>
+              </div>
+            ))
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onSubmit(review.prUrl)}
+              disabled={review.prUrl.startsWith('local:')}
+            >
+              Submit review
+            </Button>
+          )}
+          {subject?.warnings.map((w) => (
+            <p className="workbench-notice mt-3" key={w}>
+              {w}
+            </p>
+          ))}
+        </aside>
+      </div>
+    </div>
+  );
+}

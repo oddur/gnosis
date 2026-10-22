@@ -1,3 +1,4 @@
+import type { WorkbenchQueue, GroupingOverride, ReviewSnapshot } from '../lib/workbench';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   ChangedFile,
@@ -18,6 +19,10 @@ import type {
 } from '../lib/types';
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  workbenchQueue: (force = false): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-queue', force),
+  workbenchGroup: (correction: GroupingOverride): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-group', correction),
+  workbenchBriefing: (id: string): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-briefing', id),
+  workbenchFreshness: (snapshot: ReviewSnapshot): Promise<FreshnessResult> => ipcRenderer.invoke('workbench-freshness', snapshot),
   generateExplainer: (req: GenerateExplainerRequest): Promise<InteractiveExplainer> => ipcRenderer.invoke('generate-explainer', req),
   cancelExplainer: (req: GenerateExplainerRequest): Promise<void> => ipcRenderer.invoke('cancel-explainer', req),
   startReview: (req: GenerateReviewRequest): Promise<StartReviewResult> => ipcRenderer.invoke('start-review', req),

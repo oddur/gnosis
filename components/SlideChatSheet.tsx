@@ -8,6 +8,7 @@ const MAX_WIDTH = 700;
 const DEFAULT_WIDTH = 460;
 
 interface Props {
+  embedded?: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   slideTitle: string;
@@ -111,6 +112,7 @@ function Message({ message }: { message: ChatMessage }) {
 }
 
 export function SlideChatSheet({
+  embedded = false,
   open,
   onOpenChange,
   slideTitle,
@@ -189,9 +191,7 @@ export function SlideChatSheet({
     // If there's quoted code from a selection, prepend it as a fenced
     // code block so the AI knows exactly which code the user is asking
     // about. Clear the quote after sending so it doesn't persist.
-    const message = quotedCode
-      ? `Regarding this code:\n\`\`\`\n${quotedCode}\n\`\`\`\n\n${trimmed}`
-      : trimmed;
+    const message = quotedCode ? `Regarding this code:\n\`\`\`\n${quotedCode}\n\`\`\`\n\n${trimmed}` : trimmed;
     setInput('');
     onQuotedCodeConsumed?.();
     onSend(message);
@@ -205,13 +205,13 @@ export function SlideChatSheet({
   }
 
   return (
-    <div className="shrink-0 flex flex-row h-full">
+    <div className="chat-sheet shrink-0 flex flex-row h-full">
       {/* Handle / toggle bar — hairline divider, no fill. */}
       <button
         type="button"
         onMouseDown={handleHandleMouseDown}
         onClick={handleHandleClick}
-        className={`group relative flex items-center justify-center w-4 border-l border-border hover:bg-muted/30 transition-colors ${open ? 'cursor-col-resize' : 'cursor-pointer'}`}
+        className={`${embedded ? 'hidden' : ''} group relative flex items-center justify-center w-4 border-l border-border hover:bg-muted/30 transition-colors ${open ? 'cursor-col-resize' : 'cursor-pointer'}`}
         aria-label={open ? 'Collapse chat panel' : 'Expand chat panel'}
       >
         {open ? (
@@ -228,13 +228,13 @@ export function SlideChatSheet({
       {/* Panel content */}
       <div
         className="overflow-hidden transition-[width] duration-300 ease-out"
-        style={{ width: open ? width : 0 }}
+        style={{ width: embedded ? '100%' : open ? width : 0 }}
       >
-        <div className="h-full flex flex-col bg-background" style={{ minWidth: width }}>
+        <div className="h-full flex flex-col bg-background" style={{ minWidth: embedded ? 0 : width }}>
           {/* Header — editorial heading + slide context as
               meta. Reads like the running header of an essay. */}
           <div className="border-b border-border px-6 py-4">
-            <h3 className="editorial-heading text-base">Ask about this slide</h3>
+            <h3 className="editorial-heading text-base">Ask about this topic</h3>
             <p className="slide-meta truncate mt-0.5">{slideTitle}</p>
           </div>
 
@@ -273,23 +273,23 @@ export function SlideChatSheet({
               </div>
             )}
             <div className="flex gap-3 items-end">
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Ask a question about this slide…"
-              rows={2}
-              className="flex-1 resize-none bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground/60 transition-colors"
-            />
-            <button
-              onClick={handleSend}
-              disabled={isStreaming || !input.trim()}
-              className="shrink-0 p-2 text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-default transition-colors"
-              aria-label="Send"
-            >
-              {isStreaming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            </button>
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Ask a question about this slide…"
+                rows={2}
+                className="flex-1 resize-none bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground/60 transition-colors"
+              />
+              <button
+                onClick={handleSend}
+                disabled={isStreaming || !input.trim()}
+                className="shrink-0 p-2 text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-default transition-colors"
+                aria-label="Send"
+              >
+                {isStreaming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              </button>
             </div>
           </div>
         </div>

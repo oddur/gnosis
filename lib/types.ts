@@ -1,3 +1,4 @@
+import type { ReviewSnapshot } from './workbench';
 import type { ModelId, Provider } from './models';
 
 export type SlideType = 'foundation' | 'feature' | 'refactor' | 'bugfix' | 'test' | 'config' | 'docs';
@@ -176,6 +177,7 @@ export interface FileMetadata {
 }
 
 export interface ReviewGuide {
+  snapshot?: ReviewSnapshot;
   /** Assigned by the local store when loading a saved review. */
   reviewId?: string;
   prTitle: string;
@@ -231,6 +233,8 @@ export interface PendingReviewComment {
 }
 
 export interface SubmitReviewRequest {
+  baseSha?: string;
+  baseBranch?: string;
   prUrl: string;
   headSha: string;
   event: ReviewEvent;
@@ -239,6 +243,7 @@ export interface SubmitReviewRequest {
 }
 
 export interface ReviewHistoryEntry {
+  snapshot?: ReviewSnapshot;
   id: string;
   prTitle: string;
   prUrl: string;
@@ -270,6 +275,8 @@ export interface StartReviewResult {
 export type { ClaudeModel, CodexModel, ModelId, Provider } from './models';
 
 export interface Preferences {
+  autoBriefings?: boolean;
+  briefingDailyLimit?: number;
   instructions: string;
   provider: Provider;
   model: ModelId;
@@ -326,6 +333,9 @@ export interface SendSlideChatRequest {
 }
 
 export interface GenerateReviewRequest {
+  standalone?: boolean;
+  subjectId?: string;
+  memberUrls?: string[];
   prUrl: string;
   provider: Provider;
   model: ModelId;
@@ -365,7 +375,7 @@ export interface FreshnessCommit {
 
 export type FreshnessResult =
   | { status: 'current' }
-  | { status: 'stale'; aheadBy: number; commits: FreshnessCommit[] }
+  | { status: 'stale'; aheadBy: number; commits: FreshnessCommit[]; reason?: string }
   | { status: 'force-pushed' }
   | { status: 'unknown'; reason: string };
 
@@ -392,6 +402,8 @@ export interface UpdateInfo {
 }
 
 export interface PrMetadata {
+  headRepo?: string;
+  baseRepo?: string;
   title: string;
   description: string;
   author: string;

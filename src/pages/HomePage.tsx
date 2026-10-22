@@ -1,1903 +1,875 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Play,
-  Trash2,
+  ArrowRight,
+  Check,
   ChevronDown,
   ChevronRight,
-  Loader2,
-  CircleX,
-  FileText,
-  RefreshCw,
-  X,
-  GitMerge,
+  GitBranch,
   GitPullRequest,
-  GitPullRequestClosed,
-  GitCompare,
-  AlertTriangle,
-  Eraser,
-  Share2,
+  Layers,
+  Loader2,
+  RefreshCw,
+  Search,
+  Settings,
   Upload,
+  X,
+  FolderGit2,
+  AlertCircle,
+  Inbox,
+  Clock,
+  Trash2,
+  Download,
+  Link2,
 } from 'lucide-react';
-import { GitHubIcon } from '../../lib/constants';
-import { Button } from '../../components/ui/button';
-import { Alert, AlertDescription } from '../../components/ui/alert';
-import { Badge } from '../../components/ui/badge';
-import { PRPickerDialog } from '../../components/PRPickerDialog';
-import { LocalRepoDialog } from '../../components/LocalRepoDialog';
-import { FilePickerDialog } from '../../components/FilePickerDialog';
 import { SettingsDialog } from '../../components/SettingsDialog';
-import { ShortcutOverlay } from '../../components/ShortcutOverlay';
-import { CommandPalette, type Command } from '../../components/CommandPalette';
-import { useKeyboardShortcuts, type ShortcutMap } from '../../lib/use-keyboard-shortcuts';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
-import { OnboardingRepoSetup } from '../../components/OnboardingRepoSetup';
-import { Avatar, AvatarFallback, AvatarImage } from '../../components/ui/avatar';
-import { riskConfig, safeConfigLookup } from '../../lib/constants';
-import { PROVIDERS, PROVIDER_IDS, DEFAULT_CLAUDE_MODEL, RETIRED_CLAUDE_MODELS } from '../../lib/models';
-import type { ModelId, Preferences, Provider, PrSearchResult, ReviewGuide, ReviewHistoryEntry, UpdateInfo } from '../../lib/types';
-import { timeAgo, formatDuration, formatBytes, groupReviewsByPR } from '../../lib/utils';
+import { LocalRepoDialog } from '../../components/LocalRepoDialog';
+import { UpdateBanner } from '../../components/UpdateBanner';
+import { Button } from '../../components/ui/button';
+import { Markdown } from '../../components/Markdown';
+import { PROVIDERS } from '../../lib/models';
+import { timeAgo } from '../../lib/utils';
+import { fingerprint, type QueueItem, type ReviewSubject, type WorkbenchQueue } from '../../lib/workbench';
+import type { Preferences, PrStatus, ReviewGuide, ReviewHistoryEntry, ModelId, Provider } from '../../lib/types';
 
 interface Props {
   onReviewReady: (review: ReviewGuide) => void;
   prefillPrUrl?: string;
 }
-
-type AuthStatus = 'checking' | 'unauthenticated' | 'signing-in' | { login: string };
-
-// Current roster labels plus retired-model labels, so old history
-// entries still render a friendly name instead of the raw ID.
-const MODEL_LABELS: Record<string, string> = {
-  ...Object.fromEntries(
-    Object.entries(RETIRED_CLAUDE_MODELS).map(([id, m]) => [id, m.label])
-  ),
-  ...Object.fromEntries(
-    Object.values(PROVIDERS).flatMap((p) => p.models.map((m) => [m.id, `${p.label} ${m.label}`]))
-  ),
+const labels = {
+  updated: 'Updated since review',
+  requested: 'Review requested',
+  blocking: 'Blocking dependent work',
+  other: 'Following',
 };
 
-function getEntryStatus(entry: ReviewHistoryEntry): 'generating' | 'completed' | 'failed' {
-  return entry.status ?? 'completed';
-}
-
-// ── Reusable toggle switch ──────────────────────────────────────
-
-interface ToggleSwitchProps {
-  id: string;
-  label: string;
-  description: string;
-  checked: boolean;
-  onToggle: () => void;
-  badge?: string;
-}
-
-function ToggleSwitch({ id, label, description, checked, onToggle, badge }: ToggleSwitchProps) {
-  return (
-    <div className="flex items-center justify-between gap-4">
-      <div className="flex flex-col gap-0.5 min-w-0">
-        <label htmlFor={id} className="text-sm font-medium text-foreground">
-          {label}
-          {badge && (
-            <>
-              {' '}
-              <span className="statusPill-amber ml-1 inline-block px-1.5 py-0.5 text-[10px] font-medium leading-none align-middle">
-                {badge}
-              </span>
-            </>
-          )}
-        </label>
-        <p className="text-xs text-muted-foreground">{description}</p>
-      </div>
-      <button
-        id={id}
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        onClick={onToggle}
-        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-          checked ? 'bg-[var(--ring)] border-[var(--ring)]' : 'bg-transparent border-border'
-        }`}
-      >
-        <span
-          className={`pointer-events-none block h-3.5 w-3.5 rounded-full transition-transform translate-y-px ${
-            checked ? 'bg-background translate-x-[1.125rem]' : 'bg-muted-foreground translate-x-[2px]'
-          }`}
-        />
-      </button>
-    </div>
-  );
-}
-
-// ── Main page ───────────────────────────────────────────────────
-
 export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
-  const [authStatus, setAuthStatus] = useState<AuthStatus>('checking');
-  const [prUrl, setPrUrl] = useState(prefillPrUrl ?? '');
-  const [provider, setProvider] = useState<Provider>('claude');
-  const [model, setModel] = useState<ModelId>(DEFAULT_CLAUDE_MODEL);
-  const [thinking, setThinking] = useState(true);
-  const [smartImports, setSmartImports] = useState(true);
-  const [reviewSuggestions, setReviewSuggestions] = useState(true);
-  const [webResearch, setWebResearch] = useState(false);
-  const [educationMode, setEducationMode] = useState(true);
-  const [claudeContext, setClaudeContext] = useState(true);
-  const [instructions, setInstructions] = useState('');
-  const [prefsLoaded, setPrefsLoaded] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [authError, setAuthError] = useState<string | null>(null);
+  const [auth, setAuth] = useState<{ authenticated: boolean; login: string | null } | null>(null);
+  const [prefs, setPrefs] = useState<Preferences | null>(null);
+  const [queue, setQueue] = useState<WorkbenchQueue>({ items: [], warnings: [], remaining: 0 });
   const [history, setHistory] = useState<ReviewHistoryEntry[]>([]);
-  const [includeAllFiles, setIncludeAllFiles] = useState(true);
-  const [prPickerOpen, setPrPickerOpen] = useState(false);
-  const [localRepoOpen, setLocalRepoOpen] = useState(false);
-  const [guestMode, setGuestMode] = useState(false);
-  const [filePickerOpen, setFilePickerOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [cliNotFound, setCliNotFound] = useState<{ provider: Provider } | null>(null);
-  const [expandedPRs, setExpandedPRs] = useState<Set<string>>(new Set());
-  const [reviewPhases, setReviewPhases] = useState<Map<string, string>>(new Map());
-  const [pendingReviews, setPendingReviews] = useState<PrSearchResult[]>([]);
-  const [pendingLoading, setPendingLoading] = useState(false);
-  const [dismissedPendingPrs, setDismissedPendingPrs] = useState<Set<string>>(() => {
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
+  const [query, setQuery] = useState('');
+  const [repo, setRepo] = useState('all');
+  const [section, setSection] = useState('all');
+  const [selected, setSelected] = useState<string | null>(() => localStorage.getItem('gnosis-queue-selection'));
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [settings, setSettings] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false);
+  const [url, setUrl] = useState(prefillPrUrl ?? '');
+  const [showUrl, setShowUrl] = useState(!!prefillPrUrl);
+  const [starting, setStarting] = useState(false);
+  const [pending, setPending] = useState<string | null>(null);
+  const [phase, setPhase] = useState('');
+  const [pat, setPat] = useState('');
+  const [parentUrl, setParentUrl] = useState('');
+  const [childUrl, setChildUrl] = useState('');
+  const [grouping, setGrouping] = useState(false);
+  const [statuses, setStatuses] = useState<Partial<Record<string, PrStatus>>>({});
+  const alive = useRef(true);
+  const selectedItem = queue.items.find((i) => i.subject.id === selected);
+
+  const refresh = useCallback(async (force = false) => {
+    if (force) setRefreshing(true);
     try {
-      const stored = localStorage.getItem('dismissed-pending-prs');
-      return stored ? new Set(JSON.parse(stored) as string[]) : new Set();
-    } catch {
-      return new Set();
+      const [next, entries] = await Promise.all([
+        window.electronAPI.workbenchQueue(force),
+        window.electronAPI.listReviews(),
+      ]);
+      if (alive.current) {
+        setQueue(next);
+        setHistory(entries);
+      }
+    } catch (e) {
+      if (alive.current) setError(String(e));
+    } finally {
+      if (alive.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  });
-  const [generationStartTimes, setGenerationStartTimes] = useState<Map<string, number>>(new Map());
-  const [elapsedSeconds, setElapsedSeconds] = useState<Map<string, number>>(new Map());
-  const [reviewBytes, setReviewBytes] = useState<Map<string, { inputBytes: number; outputBytes: number }>>(new Map());
-  const [livePrStates, setLivePrStates] = useState<
-    Map<string, { prState: 'open' | 'merged' | 'closed'; headSha: string }>
-  >(new Map());
-  const [patExpanded, setPatExpanded] = useState(false);
-  const [patToken, setPatToken] = useState('');
-  const [patError, setPatError] = useState<string | null>(null);
-  const [patConnecting, setPatConnecting] = useState(false);
-  const [firstRunOpen, setFirstRunOpen] = useState(false);
-  const [repoSetupOpen, setRepoSetupOpen] = useState(false);
-  const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const [paletteOpen, setPaletteOpen] = useState(false);
-  // The "About Gnosis" panel is the on-demand way to re-read the
-  // welcome content after the first-run flag has been flipped. Same
-  // copy as the inline welcome hero, just reachable from the top bar.
-  const [aboutOpen, setAboutOpen] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState<'all' | 'closed' | null>(null);
-  const [trayPromptOpen, setTrayPromptOpen] = useState(false);
-
-  // Update availability — rendered as a newspaper "Extra" notice
-  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
-  const [readyVersion, setReadyVersion] = useState<string | null>(null);
-
-  // Has the user EVER had a pending PR from GitHub? Persisted in
-  // localStorage so we know whether the empty Suggested-for-you
-  // section should render its teaching placeholder (first-time
-  // users) or hide entirely (returning users who already understand
-  // what the section is for).
-  const [hasEverHadPendingReviews, setHasEverHadPendingReviews] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem('gnosis-has-ever-had-pending') === '1';
-    } catch {
-      return false;
-    }
-  });
-
-  // Quiet keyboard discoverability hint shown under the compose row.
-  // Auto-dismisses the first time the user opens the shortcuts cheat
-  // sheet — that's signal that they've found the keyboard layer and
-  // no longer need the hint.
-  const [keyboardHintDismissed, setKeyboardHintDismissed] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem('gnosis-keyboard-hint-dismissed') === '1';
-    } catch {
-      return false;
-    }
-  });
-
-  const mainRef = useRef<HTMLElement>(null);
-  const scrollToTop = () => mainRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-
-  // Compose-row progressive disclosure. Each section starts collapsed
-  // so the default state of the page is one-line-of-intent. Instructions
-  // automatically expand if the user already has saved instructions
-  // (so they can see and edit them on return visits).
-  const prInputRef = useRef<HTMLInputElement>(null);
-  const [instructionsExpanded, setInstructionsExpanded] = useState(false);
-  const [prefsExpanded, setPrefsExpanded] = useState(false);
-  const [modelMenuExpanded, setModelMenuExpanded] = useState(false);
-
-  const prGroups = useMemo(() => groupReviewsByPR(history), [history]);
-
-  // Unread reviews drive the "Pick up where you left off" hero. The
-  // most recent unread is featured; the count of remaining unread
-  // becomes a "+ N more unread" link that scrolls down to the second
-  // unread row in the history list.
-  const unreadGroups = useMemo(
-    () => prGroups.filter((g) => g.latestReview.unread),
-    [prGroups]
-  );
-  // .at() returns T | undefined regardless of noUncheckedIndexedAccess,
-  // so the conditional renders below get the correct narrowing.
-  const latestUnreadGroup = unreadGroups.at(0);
-
+  }, []);
   useEffect(() => {
-    window.electronAPI.onNewReviewInHistory(() => {
-      void window.electronAPI.listReviews().then(setHistory);
-    });
+    alive.current = true;
+    void Promise.all([window.electronAPI.getAuthState(), window.electronAPI.loadPreferences()])
+      .then(([a, p]) => {
+        if (alive.current) {
+          setAuth(a);
+          setPrefs(p);
+          void refresh();
+        }
+      })
+      .catch((e: unknown) => {
+        setError(String(e));
+        setLoading(false);
+      });
+    const timer = setInterval(() => void refresh(), 4000);
     return () => {
-      window.electronAPI.offNewReviewInHistory();
+      alive.current = false;
+      clearInterval(timer);
     };
-  }, []);
-
+  }, [refresh]);
   useEffect(() => {
-    window.electronAPI.onShowTrayPrompt(() => setTrayPromptOpen(true));
-    return () => { window.electronAPI.offShowTrayPrompt(); };
-  }, []);
-
-  // Listen for app update events
-  useEffect(() => {
-    window.electronAPI.onUpdateAvailable((info) => setUpdateInfo(info));
-    window.electronAPI.onUpdateReady((version) => setReadyVersion(version));
-    // Squirrel often completes download before this effect mounts — replay.
-    void window.electronAPI.getPendingUpdateReady().then((v) => {
-      if (v) setReadyVersion((prev) => prev ?? v);
+    window.electronAPI.onReviewPhase((id, value) => {
+      if (id === pending) setPhase(value);
     });
-    return () => {
-      window.electronAPI.offUpdateAvailable();
-      window.electronAPI.offUpdateReady();
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void window.electronAPI.getAuthState().then(({ authenticated, login }) => {
-      if (!cancelled) setAuthStatus(authenticated && login ? { login } : 'unauthenticated');
-    });
-    void window.electronAPI.listReviews().then((reviews) => {
-      if (!cancelled) setHistory(reviews);
-    });
-    void window.electronAPI.loadPreferences().then((prefs) => {
-      if (cancelled) return;
-      if (prefs.instructions) setInstructions(prefs.instructions);
-      setProvider(prefs.provider);
-      setModel(prefs.model);
-      setThinking(prefs.thinking);
-      setSmartImports(prefs.smartImports);
-      setReviewSuggestions(prefs.reviewSuggestions);
-      setWebResearch(prefs.enableWebResearch);
-      setEducationMode(prefs.educationMode);
-      setClaudeContext(prefs.claudeContext);
-      setIncludeAllFiles(prefs.includeAllFiles);
-      setGuestMode(prefs.guestMode);
-      setPrefsLoaded(true);
-      if (!prefs.firstRunSeen && !prefs.guestMode) {
-        setRepoSetupOpen(true);
+    window.electronAPI.onReviewCompleted((id) => {
+      void refresh();
+      if (id === pending) {
+        setPending(null);
+        void window.electronAPI
+          .loadReview(id)
+          .then(onReviewReady)
+          .catch((e: unknown) => setError(String(e)));
       }
     });
-    return () => { cancelled = true; };
-  }, []);
-
-  // Keyboard shortcuts on the home screen. The hook handles input
-  // suppression and modifier signatures, so the manual `?` listener
-  // we used before is no longer needed. The `n` shortcut focuses the
-  // PR URL input — this is the single most common intent on this
-  // screen so it earns a one-keystroke entry point, consistent with
-  // the vim-style single-key navigation already on ReviewPage.
-  const shortcutMap = useMemo<ShortcutMap>(
-    () => ({
-      '?': () => setShortcutsOpen((v) => !v),
-      'cmd+k': () => setPaletteOpen(true),
-      'ctrl+k': () => setPaletteOpen(true),
-      n: () => prInputRef.current?.focus(),
-    }),
-    []
-  );
-  useKeyboardShortcuts(shortcutMap);
-
-  function dismissFirstRun() {
-    setFirstRunOpen(false);
-    void window.electronAPI.loadPreferences().then((current) => {
-      void window.electronAPI.savePreferences({ ...current, firstRunSeen: true });
-    });
-  }
-
-  // Flip guestMode on and persist it — unlocks the newspaper for users
-  // who choose not to connect GitHub. Used by the LocalRepoDialog's
-  // onSubmit AND by the explicit "Continue without signing in" link on
-  // the welcome screen (so users can get into the app without first
-  // completing a review).
-  function enterGuestMode() {
-    setGuestMode(true);
-    void window.electronAPI.loadPreferences().then((current) => {
-      void window.electronAPI.savePreferences({
-        ...current,
-        guestMode: true,
-        firstRunSeen: true,
-      });
-    });
-  }
-
-  // Resets every onboarding flag — the firstRunSeen pref, the
-  // hasEverHadPendingReviews localStorage key, the keyboardHint flag,
-  // and the dismissed-pending-prs list. Reopens the inline welcome
-  // hero immediately so the user can walk through it again. Used by
-  // the "Replay first-time welcome" link in the Settings dialog.
-  function replayOnboarding() {
-    void window.electronAPI.loadPreferences().then((current) => {
-      void window.electronAPI.savePreferences({ ...current, firstRunSeen: false });
-    });
-    setHasEverHadPendingReviews(false);
-    setKeyboardHintDismissed(false);
-    setDismissedPendingPrs(new Set());
-    try {
-      localStorage.removeItem('gnosis-has-ever-had-pending');
-      localStorage.removeItem('gnosis-keyboard-hint-dismissed');
-      localStorage.removeItem('dismissed-pending-prs');
-    } catch {
-      /* non-fatal */
-    }
-    setAboutOpen(false);
-    setRepoSetupOpen(true);
-    scrollToTop();
-  }
-
-  // Command palette commands for the home screen. Recently-used
-  // PRs from history are exposed so the user can re-open a review
-  // by typing a few characters of the title.
-  const paletteCommands = useMemo<Command[]>(() => {
-    const commands: Command[] = [
-      {
-        id: 'browse-prs',
-        label: 'Browse pull requests',
-        group: 'Actions',
-        keywords: 'pr search find',
-        perform: () => setPrPickerOpen(true),
-      },
-      {
-        id: 'local-repo',
-        label: 'Review a local git diff',
-        group: 'Actions',
-        keywords: 'local git diff branch commit offline',
-        perform: () => setLocalRepoOpen(true),
-      },
-      {
-        id: 'settings',
-        label: 'Open settings',
-        group: 'Actions',
-        keywords: 'preferences config theme',
-        perform: () => setSettingsOpen(true),
-      },
-      {
-        id: 'shortcuts',
-        label: 'Show keyboard shortcuts',
-        hint: '?',
-        group: 'Actions',
-        keywords: 'help cheatsheet keys',
-        perform: () => setShortcutsOpen(true),
-      },
-      {
-        id: 'sign-out',
-        label: 'Sign out',
-        group: 'Actions',
-        keywords: 'logout exit',
-        perform: () => void handleSignOut(),
-      },
-    ];
-
-    // Recent reviews — first 8 by group order (most recent first).
-    prGroups.slice(0, 8).forEach((group) => {
-      commands.push({
-        id: `recent-${group.prUrl}`,
-        label: group.prTitle,
-        hint: group.repoRef,
-        group: 'Recent reviews',
-        keywords: `${group.prTitle} ${group.repoRef} ${group.author}`,
-        perform: () => void handleLoadFromHistory(group.latestReview.id),
-      });
-    });
-
-    return commands;
-  }, [prGroups]);
-
-  // Listen for background review phase changes, completion, failure, and stats
-  useEffect(() => {
-    window.electronAPI.onReviewPhase((reviewId, phase) => {
-      setReviewPhases((prev) => new Map(prev).set(reviewId, phase));
-    });
-    window.electronAPI.onReviewProgress((reviewId, chunk, isThinking) => {
-      if (!isThinking) {
-        setReviewBytes((prev) => {
-          const next = new Map(prev);
-          const existing = next.get(reviewId) ?? { inputBytes: 0, outputBytes: 0 };
-          next.set(reviewId, { ...existing, outputBytes: existing.outputBytes + chunk.length });
-          return next;
-        });
+    window.electronAPI.onReviewFailed((id, message) => {
+      if (id === pending) {
+        setPending(null);
+        setError(message);
       }
-    });
-    window.electronAPI.onReviewStats((reviewId, inputBytes) => {
-      setReviewBytes((prev) => {
-        const next = new Map(prev);
-        const existing = next.get(reviewId) ?? { inputBytes: 0, outputBytes: 0 };
-        next.set(reviewId, { ...existing, inputBytes });
-        return next;
-      });
-    });
-    const clearReview = (reviewId: string) => {
-      setReviewPhases((prev) => {
-        const next = new Map(prev);
-        next.delete(reviewId);
-        return next;
-      });
-      setGenerationStartTimes((prev) => {
-        const next = new Map(prev);
-        next.delete(reviewId);
-        return next;
-      });
-      setElapsedSeconds((prev) => {
-        const next = new Map(prev);
-        next.delete(reviewId);
-        return next;
-      });
-    };
-    window.electronAPI.onReviewCompleted((reviewId) => {
-      clearReview(reviewId);
-      void window.electronAPI.listReviews().then(setHistory);
-    });
-    window.electronAPI.onReviewFailed((reviewId) => {
-      clearReview(reviewId);
-      void window.electronAPI.listReviews().then(setHistory);
+      void refresh();
     });
     return () => {
       window.electronAPI.offReviewPhase();
-      window.electronAPI.offReviewProgress();
-      window.electronAPI.offReviewStats();
       window.electronAPI.offReviewCompleted();
       window.electronAPI.offReviewFailed();
     };
-  }, []);
-
-  const fetchPendingReviews = useCallback(() => {
-    setPendingLoading(true);
-    void window.electronAPI
-      .searchPullRequests()
-      .then((results) => {
-        setPendingReviews(results.filter((r) => r.role === 'review-requested' && !r.isDraft));
-      })
-      .catch(() => {})
-      .finally(() => setPendingLoading(false));
-  }, []);
-
+  }, [pending, onReviewReady, refresh]);
   useEffect(() => {
-    if (typeof authStatus !== 'object') return;
-    fetchPendingReviews();
-  }, [authStatus, fetchPendingReviews]);
-
-  function dismissPendingPr(url: string) {
-    setDismissedPendingPrs((prev) => {
-      const next = new Set(prev);
-      next.add(url);
-      localStorage.setItem('dismissed-pending-prs', JSON.stringify([...next]));
-      return next;
-    });
-  }
-
-  const visiblePendingReviews = useMemo(
-    () => pendingReviews.filter((pr) => !dismissedPendingPrs.has(pr.url)),
-    [pendingReviews, dismissedPendingPrs]
-  );
-
-  // The first time GitHub returns a non-empty pending list, flip the
-  // localStorage flag so we stop showing the teaching placeholder
-  // for this user forever after.
-  useEffect(() => {
-    if (pendingReviews.length > 0 && !hasEverHadPendingReviews) {
-      setHasEverHadPendingReviews(true);
-      try {
-        localStorage.setItem('gnosis-has-ever-had-pending', '1');
-      } catch {
-        /* localStorage unavailable — non-fatal */
-      }
-    }
-  }, [pendingReviews, hasEverHadPendingReviews]);
-
-  // Auto-dismiss the keyboard hint the first time the user opens the
-  // shortcuts cheatsheet — they've discovered the keyboard layer.
-  useEffect(() => {
-    if (shortcutsOpen && !keyboardHintDismissed) {
-      setKeyboardHintDismissed(true);
-      try {
-        localStorage.setItem('gnosis-keyboard-hint-dismissed', '1');
-      } catch {
-        /* non-fatal */
-      }
-    }
-  }, [shortcutsOpen, keyboardHintDismissed]);
-
-  // Tick elapsed seconds for active generations
-  useEffect(() => {
-    if (generationStartTimes.size === 0) return;
-    const id = setInterval(() => {
-      setElapsedSeconds((prev) => {
-        const next = new Map(prev);
-        for (const [reviewId, startTime] of generationStartTimes) {
-          next.set(reviewId, Math.floor((Date.now() - startTime) / 1000));
-        }
-        return next;
+    if (selected) localStorage.setItem('gnosis-queue-selection', selected);
+    let cancelled = false;
+    setStatuses({});
+    if (selectedItem)
+      void Promise.allSettled(
+        selectedItem.subject.members.map(async (m) => ({
+          url: m.url,
+          status: await window.electronAPI.getPrStatus(m.url),
+        }))
+      ).then((results) => {
+        if (!cancelled)
+          setStatuses(
+            Object.fromEntries(
+              results.flatMap((r) => (r.status === 'fulfilled' ? [[r.value.url, r.value.status]] : []))
+            )
+          );
       });
-    }, 1000);
-    return () => clearInterval(id);
-  }, [generationStartTimes]);
-
-  // Fetch live PR state for each unique PR URL in history
-  useEffect(() => {
-    if (prGroups.length === 0) return;
-    for (const group of prGroups) {
-      void window.electronAPI
-        .getPrState(group.prUrl)
-        .then((live) => {
-          setLivePrStates((prev) => new Map(prev).set(group.prUrl, live));
-        })
-        .catch(() => {});
-    }
-  }, [prGroups]);
-
-  const savePrefs = useCallback(
-    (overrides?: Partial<Preferences>) => {
-      void window.electronAPI.loadPreferences().then((current) => {
-        void window.electronAPI.savePreferences({
-          ...current,
-          instructions,
-          provider,
-          model,
-          thinking,
-          smartImports,
-          reviewSuggestions,
-          enableWebResearch: webResearch,
-          educationMode,
-          claudeContext,
-          includeAllFiles,
-          ...overrides,
-        });
-      });
-    },
-    [
-      instructions,
-      provider,
-      model,
-      thinking,
-      smartImports,
-      reviewSuggestions,
-      webResearch,
-      educationMode,
-      claudeContext,
-      includeAllFiles,
-    ]
-  );
-
-  // Auto-save when toggles or model/provider change (skip initial load)
-  useEffect(() => {
-    if (prefsLoaded) savePrefs();
-  }, [
-    prefsLoaded,
-    provider,
-    model,
-    thinking,
-    smartImports,
-    reviewSuggestions,
-    webResearch,
-    educationMode,
-    claudeContext,
-    includeAllFiles,
-    savePrefs,
-  ]);
-
-  async function handleSignIn() {
-    setAuthError(null);
-    setAuthStatus('signing-in');
+    return () => {
+      cancelled = true;
+    };
+  }, [selected, selectedItem?.subject.id]);
+  const savePrefs = async (next: Preferences) => {
+    await window.electronAPI.savePreferences(next);
+    setPrefs(next);
+    void refresh();
+  };
+  const start = async (target: string, subject?: ReviewSubject, localTools?: boolean, standalone = false) => {
+    if (!prefs) return;
+    setError('');
+    setStarting(true);
     try {
-      await window.electronAPI.startOAuth();
-      const { login } = await window.electronAPI.getAuthState();
-      setAuthStatus(login ? { login } : 'unauthenticated');
-    } catch (err) {
-      setAuthError(err instanceof Error ? err.message : 'Sign-in failed.');
-      setAuthStatus('unauthenticated');
-    }
-  }
-
-  async function handleConnectPat() {
-    const trimmed = patToken.trim();
-    if (!trimmed || patConnecting) return;
-    setPatError(null);
-    setPatConnecting(true);
-    try {
-      const login = await window.electronAPI.savePat(trimmed);
-      setAuthStatus({ login });
-      setPatToken('');
-      setPatExpanded(false);
-    } catch (err) {
-      setPatError(err instanceof Error ? err.message : "Couldn't connect that token.");
-    } finally {
-      setPatConnecting(false);
-    }
-  }
-
-  async function handleSignOut() {
-    await window.electronAPI.signOut();
-    setAuthStatus('unauthenticated');
-  }
-
-  async function doStartReview(excludedFiles: string[], urlOverride?: string, extra?: { localTools?: boolean }) {
-    const targetUrl = (urlOverride ?? prUrl).trim();
-    if (!targetUrl) return;
-    setSubmitting(true);
-    try {
+      const cli = await window.electronAPI.checkCliInstalled(prefs.provider);
+      if (!cli.installed)
+        throw new Error(`${PROVIDERS[prefs.provider].label} CLI was not found. Configure its path in Settings.`);
       const result = await window.electronAPI.startReview({
-        prUrl: targetUrl,
-        provider,
-        model,
-        instructions: instructions.trim() || undefined,
-        thinking,
-        smartImports,
-        reviewSuggestions,
-        webResearch,
-        educationMode,
-        claudeContext,
-        excludedFiles: excludedFiles.length > 0 ? excludedFiles : undefined,
-        localTools: extra?.localTools,
+        prUrl: target,
+        subjectId: subject?.id,
+        standalone,
+        provider: prefs.provider,
+        model: prefs.model,
+        instructions: prefs.instructions,
+        thinking: prefs.thinking,
+        smartImports: prefs.smartImports,
+        reviewSuggestions: prefs.reviewSuggestions,
+        webResearch: prefs.enableWebResearch,
+        educationMode: prefs.educationMode,
+        claudeContext: prefs.claudeContext,
+        localTools,
       });
-      setGenerationStartTimes((prev) => new Map(prev).set(result.reviewId, Date.now()));
-      const updated = await window.electronAPI.listReviews();
-      setHistory(updated);
-      setPrUrl('');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't start the review. Check the URL and try again.");
+      setPending(result.reviewId);
+      setPhase('Preparing review');
+      setShowUrl(false);
+      setUrl('');
+      void refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setSubmitting(false);
+      setStarting(false);
     }
-  }
-
-  // Shared "validate and start" path used by both the compose form
-  // submit AND the inline "Generate review →" link in the suggested
-  // section. The latter passes a URL directly so the review starts
-  // without first writing to the input field.
-  async function startReviewForUrl(targetUrl: string, extra?: { localTools?: boolean }) {
-    if (!targetUrl.trim() || submitting) return;
-    savePrefs();
-    setError(null);
-
-    const { installed } = await window.electronAPI.checkCliInstalled(provider);
-    if (!installed) {
-      setCliNotFound({ provider });
-      return;
-    }
-
-    if (!includeAllFiles) {
-      // FilePickerDialog reads from prUrl, so populate it before opening.
-      setPrUrl(targetUrl);
-      setFilePickerOpen(true);
-      return;
-    }
-
-    void doStartReview([], targetUrl, extra);
-  }
-
-  async function handleSubmit(e: React.SyntheticEvent) {
-    e.preventDefault();
-    await startReviewForUrl(prUrl);
-  }
-
-  async function handleLoadFromHistory(id: string) {
+  };
+  const open = async (entry: ReviewHistoryEntry) => {
     try {
-      const [review] = await Promise.all([
-        window.electronAPI.loadReview(id),
-        window.electronAPI.markReviewRead(id),
-      ]);
-      setHistory((prev) => prev.map((e) => (e.id === id ? { ...e, unread: false, autoUpdated: false } : e)));
-      onReviewReady(review);
-    } catch {
-      setError("Couldn't load that review. The file may have been deleted.");
+      await window.electronAPI.markReviewRead(entry.id);
+      onReviewReady(await window.electronAPI.loadReview(entry.id));
+    } catch (e) {
+      setError(String(e));
     }
-  }
-
-  async function handleDeleteFromHistory(e: React.MouseEvent, id: string) {
-    e.stopPropagation();
-    await window.electronAPI.deleteReview(id);
-    setHistory((prev) => prev.filter((h) => h.id !== id));
-  }
-
-  async function handleExportReview(id: string) {
+  };
+  const login = async () => {
     try {
-      await window.electronAPI.exportReview(id);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't export this review.");
+      setError('');
+      if (pat) {
+        await window.electronAPI.savePat(pat);
+        setPat('');
+      } else await window.electronAPI.startOAuth();
+      setAuth(await window.electronAPI.getAuthState());
+      void refresh(true);
+    } catch (e) {
+      setError(String(e));
     }
-  }
-
-  async function handleImportReview() {
-    try {
-      const entry = await window.electronAPI.importReview();
-      if (entry) {
-        setHistory((prev) => [entry, ...prev.filter((h) => h.id !== entry.id)]);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't import that .gr file.");
-    }
-  }
-
-  async function handleDeleteAllHistory() {
-    await window.electronAPI.deleteAllReviews();
-    setHistory([]);
-    setExpandedPRs(new Set());
-  }
-
-  async function handleDeleteClosedPRs() {
-    const toDelete = history.filter((entry) => {
-      const live = livePrStates.get(entry.prUrl);
-      const state = live?.prState ?? entry.prState;
-      return state === 'merged' || state === 'closed';
-    });
-    await Promise.all(toDelete.map((entry) => window.electronAPI.deleteReview(entry.id)));
-    const deletedIds = new Set(toDelete.map((e) => e.id));
-    const deletedUrls = new Set(toDelete.map((e) => e.prUrl));
-    setHistory((prev) => prev.filter((e) => !deletedIds.has(e.id)));
-    setExpandedPRs((prev) => {
-      const next = new Set(prev);
-      for (const url of deletedUrls) next.delete(url);
-      return next;
-    });
-  }
-
-  // Scroll the second unread row in the history list into view. The
-  // first unread is shown in the pickup hero above, so the "+ N more
-  // unread" link should jump to the next one. Honors reduced motion.
-  function scrollToNextUnread() {
-    const target = unreadGroups.at(1);
-    if (!target) return;
-    const el = document.querySelector<HTMLElement>(`[data-pr-url="${CSS.escape(target.prUrl)}"]`);
-    if (!el) return;
-    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
-  }
-
-  const isAuthenticated = typeof authStatus === 'object';
-  const login = isAuthenticated ? (authStatus as { login: string }).login : '';
-
-  // Format today as a newspaper dateline
-  const today = new Date();
-  const dateline = today.toLocaleDateString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
+  };
+  const items = queue.items.filter((item) => {
+    const s = item.subject;
+    return (
+      (section === 'all' || section === item.attention) &&
+      (repo === 'all' || s.members.some((m) => m.repo === repo)) &&
+      `${s.title} ${s.members.map((m) => `${m.repo} ${m.title} #${m.number} ${m.author}`).join(' ')}`
+        .toLowerCase()
+        .includes(query.toLowerCase())
+    );
   });
-
-  // Newspaper edition number — days since an arbitrary epoch,
-  // normalized to local midnight so it doesn't drift with UTC.
-  const todayLocal = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const editionEpoch = new Date(2024, 0, 1);
-  const editionNumber = Math.floor(
-    (todayLocal.getTime() - editionEpoch.getTime()) / 86_400_000
+  const repos = [...new Set(queue.items.flatMap((i) => i.subject.members.map((m) => m.repo)))].sort();
+  const saved = useMemo(
+    () => history.filter((h) => `${h.prTitle} ${h.prUrl}`.toLowerCase().includes(query.toLowerCase())),
+    [history, query]
   );
-
-  return (
-    <main ref={mainRef} className="h-screen overflow-y-auto">
-      <ShortcutOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
-      <CommandPalette
-        open={paletteOpen}
-        onClose={() => setPaletteOpen(false)}
-        commands={paletteCommands}
-        placeholder="Jump to a review or run a command…"
-      />
-
-      {/* ── Pre-auth states ── */}
-      {authStatus === 'checking' && (
-        <div className="flex justify-center pt-[20vh]">
-          <span className="slide-meta animate-pulse">Loading…</span>
-        </div>
-      )}
-
-      {authStatus === 'unauthenticated' && !guestMode && (
-        <div className="newspaper">
-          <header className="newspaper-masthead">
-            <hr className="newspaper-rule--double" />
-            <h1>Gnosis</h1>
-            <p className="newspaper-tagline">Code Review, Narrated</p>
-            <hr className="newspaper-rule--double" />
-          </header>
-          <div className="max-w-[52ch] mx-auto w-full pt-8 flex flex-col gap-10">
-            {authError && (
-              <Alert variant="destructive">
-                <AlertDescription>{authError}</AlertDescription>
-              </Alert>
+  const correct = async (action: 'link' | 'unlink', parent = parentUrl, child = childUrl) => {
+    setGrouping(true);
+    setError('');
+    try {
+      setQueue(await window.electronAPI.workbenchGroup({ parent, child, action }));
+      setParentUrl('');
+      setChildUrl('');
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setGrouping(false);
+    }
+  };
+  function row(item: QueueItem) {
+    const s = item.subject,
+      active = selected === s.id;
+    return (
+      <div key={s.id} className={`queue-item ${active ? 'is-selected' : ''}`}>
+        <div className="queue-row">
+          <button
+            className="queue-disclosure"
+            aria-label={`${expanded.has(s.id) ? 'Collapse' : 'Expand'} ${s.title}`}
+            disabled={s.kind !== 'stack'}
+            onClick={() =>
+              setExpanded((prev) => {
+                const n = new Set(prev);
+                if (n.has(s.id)) n.delete(s.id);
+                else n.add(s.id);
+                return n;
+              })
+            }
+          >
+            {s.kind === 'stack' ? (
+              expanded.has(s.id) ? (
+                <ChevronDown size={15} />
+              ) : (
+                <ChevronRight size={15} />
+              )
+            ) : (
+              <GitPullRequest size={15} />
             )}
-
-            <p className="newspaper-lede">
-              Two ways in. Pick whichever fits the change you want to read.
-            </p>
-
-            {/* ── Path 1: GitHub ── */}
-            <section className="flex flex-col gap-3">
-              <h2 className="text-base font-semibold text-foreground">
-                With a GitHub account
-              </h2>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                Sign in and Gnosis fetches pull request diffs, remembers your reviews,
-                and can submit comments back. Uses your account only to talk to
-                GitHub — nothing leaves your machine otherwise.
+          </button>
+          <button
+            className="queue-row-main"
+            onClick={() => {
+              setSelected(s.id);
+              setStatuses({});
+            }}
+          >
+            <span className="queue-title">{s.title}</span>
+            <span className="queue-meta">
+              <span>{s.members[0].repo}</span>
+              <span>{s.kind === 'stack' ? `${s.members.length} PRs in stack` : `#${s.members[0].number}`}</span>
+              <span>{s.members[0].author}</span>
+              <span>{timeAgo(s.members[0].updatedAt)}</span>
+            </span>
+            {item.briefing?.summary && <span className="queue-summary">{item.briefing.summary}</span>}
+          </button>
+          <span className={`queue-state ${item.attention === 'updated' ? 'needs-attention' : ''}`}>
+            {item.review?.status === 'generating' ? (
+              <>
+                <Loader2 size={13} className="animate-spin" />
+                Generating
+              </>
+            ) : item.review?.status === 'completed' ? (
+              <>
+                <Check size={13} />
+                Reviewed
+              </>
+            ) : item.briefing?.status === 'generating' ? (
+              <>
+                <Loader2 size={13} className="animate-spin" />
+                Briefing
+              </>
+            ) : s.kind === 'stack' ? (
+              <>
+                <Layers size={13} />
+                Stack
+              </>
+            ) : (
+              'PR'
+            )}
+          </span>
+        </div>
+        {expanded.has(s.id) &&
+          s.members.map((m) => (
+            <button key={m.url} className="queue-member" onClick={() => setSelected(s.id)}>
+              <GitBranch size={13} />
+              <span>#{m.number}</span>
+              <span className="truncate">{m.title}</span>
+              <span className="ml-auto">{m.merged ? 'Merged' : m.isDraft ? 'Draft' : m.state}</span>
+            </button>
+          ))}
+      </div>
+    );
+  }
+  return (
+    <div className="workbench-home">
+      <header className="workbench-header">
+        <a
+          href="#"
+          className="workbench-brand"
+          onClick={(e) => {
+            e.preventDefault();
+            setSection('all');
+          }}
+        >
+          Gnosis
+        </a>
+        <span className="workbench-header-separator" />
+        <span className="text-sm text-muted-foreground">Review workbench</span>
+        <div className="ml-auto flex items-center gap-2">
+          {prefs && (
+            <select
+              aria-label="Review model"
+              className="workbench-select model-select"
+              value={`${prefs.provider}:${prefs.model}`}
+              onChange={(e) => {
+                const [provider, ...rest] = e.target.value.split(':');
+                void savePrefs({ ...prefs, provider: provider as Provider, model: rest.join(':') as ModelId });
+              }}
+            >
+              {Object.values(PROVIDERS).map((p) => (
+                <optgroup key={p.label} label={p.label}>
+                  {p.models.map((m) => (
+                    <option
+                      key={m.id}
+                      value={`${p.label.toLowerCase().includes('codex') ? 'codex' : 'claude'}:${m.id}`}
+                    >
+                      {p.label} · {m.label}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          )}
+          <button className="workbench-icon" title="Settings" aria-label="Settings" onClick={() => setSettings(true)}>
+            <Settings size={17} />
+          </button>
+          <span className="text-xs text-muted-foreground account-name">{auth?.login ?? 'Local workspace'}</span>
+        </div>
+      </header>
+      <UpdateBanner />
+      <div className="workbench-body">
+        <nav className="workbench-sidebar" aria-label="Workspace">
+          <p className="workbench-nav-heading">Reviews</p>
+          {[
+            ['all', 'Work queue', Inbox],
+            ['requested', 'Requested', GitPullRequest],
+            ['updated', 'Updated', RefreshCw],
+            ['blocking', 'Dependencies', GitBranch],
+            ['saved', 'Saved reviews', Clock],
+          ].map(([id, label, Icon]) => {
+            const I = Icon as typeof Inbox;
+            return (
+              <button
+                key={id as string}
+                aria-current={section === id ? 'page' : undefined}
+                className={section === id ? 'active' : ''}
+                onClick={() => {
+                  setSection(id as string);
+                  setSelected(null);
+                }}
+              >
+                <I size={16} />
+                <span>{label as string}</span>
+                <span className="nav-count">
+                  {id === 'saved'
+                    ? history.length
+                    : id === 'all'
+                      ? queue.items.length
+                      : queue.items.filter((i) => i.attention === id).length}
+                </span>
+              </button>
+            );
+          })}
+          <div className="mt-auto flex flex-col gap-1">
+            <button onClick={() => setLocalOpen(true)}>
+              <FolderGit2 size={16} />
+              Local changes
+            </button>
+            <button
+              onClick={() =>
+                void window.electronAPI
+                  .importReview()
+                  .then((entry) => {
+                    if (entry) void open(entry);
+                    void refresh();
+                  })
+                  .catch((e: unknown) => setError(String(e)))
+              }
+            >
+              <Upload size={16} />
+              Import review
+            </button>
+          </div>
+        </nav>
+        <main className="workbench-main">
+          <div className="queue-toolbar">
+            <div>
+              <h1>
+                {section === 'saved'
+                  ? 'Saved reviews'
+                  : section === 'all'
+                    ? 'Work queue'
+                    : labels[section as keyof typeof labels]}
+              </h1>
+              <p>
+                {section === 'saved'
+                  ? 'Your review history, ready to resume.'
+                  : 'Understand what is changing. Focus on what needs you.'}
               </p>
-              <Button onClick={handleSignIn} className="w-fit gap-2">
-                <GitHubIcon className="h-4 w-4" />
-                Sign in with GitHub
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                className="workbench-icon"
+                aria-label="Refresh queue"
+                disabled={refreshing}
+                onClick={() => void refresh(true)}
+              >
+                <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+              </button>
+              <Button size="sm" onClick={() => setShowUrl((v) => !v)}>
+                Open PR <ArrowRight size={14} />
+              </Button>
+            </div>
+          </div>
+          {showUrl && (
+            <form
+              className="queue-url"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void start(url);
+              }}
+            >
+              <input
+                autoFocus
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://github.com/owner/repo/pull/123"
+                aria-label="Pull request URL"
+              />
+              <Button size="sm" disabled={starting || !url.trim()} type="submit">
+                {starting ? 'Preparing…' : 'Review'}
               </Button>
               <button
                 type="button"
-                className="slide-meta hover:text-foreground transition-colors flex items-center gap-1.5 self-start"
+                className="workbench-icon"
+                aria-label="Close URL field"
+                onClick={() => setShowUrl(false)}
+              >
+                <X size={16} />
+              </button>
+            </form>
+          )}
+          {error && (
+            <div className="workbench-notice error" role="alert">
+              <AlertCircle size={16} />
+              <span>{error}</span>
+              <button aria-label="Dismiss error" onClick={() => setError('')}>
+                <X size={14} />
+              </button>
+            </div>
+          )}
+          {pending && (
+            <div className="workbench-notice" role="status">
+              <Loader2 size={16} className="animate-spin" />
+              <span>{phase}. You can keep browsing.</span>
+              <button
                 onClick={() => {
-                  setPatExpanded((v) => !v);
-                  setPatError(null);
+                  void window.electronAPI.cancelReview(pending);
+                  setPending(null);
                 }}
               >
-                {patExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                Use a Personal Access Token instead
+                Cancel
               </button>
-              {patExpanded && (
-                <div className="border-l border-border pl-4 flex flex-col gap-3 mt-1">
-                  <p className="slide-meta">
-                    Create a token with <code className="font-mono">repo</code> scope at{' '}
-                    <button
-                      type="button"
-                      className="underline hover:text-foreground"
-                      onClick={() =>
-                        void window.electronAPI.openExternal(
-                          'https://github.com/settings/tokens/new?scopes=repo&description=Gnosis'
-                        )
-                      }
-                    >
-                      github.com/settings/tokens
-                    </button>
-                    , then paste it below.
-                  </p>
+            </div>
+          )}
+          {auth && !auth.authenticated && !prefs?.guestMode && (
+            <section className="workbench-connect">
+              <h2>Connect your review queue</h2>
+              <p>Connect GitHub to see your PRs and stacks. You can also review a local repository.</p>
+              <Button size="sm" onClick={() => void login()}>
+                Connect GitHub
+              </Button>
+              <details>
+                <summary>Use a personal access token</summary>
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void login();
+                  }}
+                >
                   <input
                     type="password"
-                    placeholder="ghp_…"
-                    value={patToken}
-                    onChange={(e) => setPatToken(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') void handleConnectPat();
-                    }}
-                    className="w-full bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground/60 transition-colors"
+                    aria-label="GitHub token"
+                    value={pat}
+                    onChange={(e) => setPat(e.target.value)}
+                    autoComplete="off"
                   />
-                  {patError && (
-                    <Alert variant="destructive">
-                      <AlertDescription>{patError}</AlertDescription>
-                    </Alert>
-                  )}
-                  <Button
-                    onClick={() => void handleConnectPat()}
-                    disabled={!patToken.trim() || patConnecting}
-                    className="w-fit"
-                    size="sm"
-                  >
-                    {patConnecting ? 'Connecting…' : 'Connect'}
+                  <Button size="sm" type="submit">
+                    Connect
+                  </Button>
+                </form>
+              </details>
+              <button onClick={() => setLocalOpen(true)}>Review local changes</button>
+            </section>
+          )}
+          <div className="queue-filters">
+            <label className="queue-search">
+              <Search size={15} />
+              <input
+                aria-label="Search reviews"
+                placeholder="Find a change…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </label>
+            {section !== 'saved' && (
+              <select
+                aria-label="Filter repository"
+                className="workbench-select"
+                value={repo}
+                onChange={(e) => setRepo(e.target.value)}
+              >
+                <option value="all">All repositories</option>
+                {repos.map((r) => (
+                  <option key={r}>{r}</option>
+                ))}
+              </select>
+            )}
+            <span className="queue-count">
+              {section === 'saved' ? saved.length : items.length} {section === 'saved' ? 'reviews' : 'changes'}
+            </span>
+          </div>
+          <div className="queue-content">
+            <section className="queue-list" aria-label="Review queue">
+              {loading ? (
+                <div className="queue-empty">
+                  <Loader2 className="animate-spin" size={22} />
+                  <p>Loading your workspace…</p>
+                </div>
+              ) : section === 'saved' ? (
+                saved.length ? (
+                  saved.map((entry) => (
+                    <div className="saved-row" key={entry.id}>
+                      <button
+                        className="queue-row-main"
+                        disabled={entry.status === 'generating'}
+                        onClick={() => (entry.status === 'failed' ? void start(entry.prUrl) : void open(entry))}
+                      >
+                        <span className="queue-title">{entry.prTitle}</span>
+                        <span className="queue-meta">
+                          {entry.snapshot?.subject.kind === 'stack'
+                            ? `${entry.snapshot.subject.members.length} PR stack · `
+                            : ''}
+                          {entry.author} · {timeAgo(entry.savedAt)} · {entry.status ?? 'completed'}
+                        </span>
+                        {entry.error && <span className="text-xs text-destructive">{entry.error}</span>}
+                      </button>
+                      {entry.status !== 'generating' && (
+                        <button
+                          className="workbench-icon"
+                          aria-label={`Export ${entry.prTitle}`}
+                          onClick={() =>
+                            void window.electronAPI.exportReview(entry.id).catch((e: unknown) => setError(String(e)))
+                          }
+                        >
+                          <Download size={15} />
+                        </button>
+                      )}
+                      <button
+                        className="workbench-icon"
+                        aria-label={`Delete ${entry.prTitle}`}
+                        onClick={() => {
+                          if (confirm('Delete this saved review?'))
+                            void window.electronAPI.deleteReview(entry.id).then(() => refresh());
+                        }}
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <div className="queue-empty">
+                    <Clock size={24} />
+                    <h2>No saved reviews yet</h2>
+                    <p>Open a PR or local change to create your first review.</p>
+                  </div>
+                )
+              ) : items.length ? (
+                (['updated', 'requested', 'blocking', 'other'] as const).map((category) => {
+                  const group = items.filter((i) => i.attention === category);
+                  return group.length ? (
+                    <div key={category}>
+                      <h2 className="queue-section-title">
+                        {labels[category]} <span>{group.length}</span>
+                      </h2>
+                      {group.map(row)}
+                    </div>
+                  ) : null;
+                })
+              ) : (
+                <div className="queue-empty">
+                  <Inbox size={24} />
+                  <h2>{query ? 'No matching changes' : 'Your queue is clear'}</h2>
+                  <p>
+                    {query
+                      ? 'Try another title, author, or repository.'
+                      : 'Open a PR by URL or add watched repositories in Settings.'}
+                  </p>
+                  <Button variant="outline" size="sm" onClick={() => setSettings(true)}>
+                    Manage repositories
                   </Button>
                 </div>
               )}
-            </section>
-
-            <div className="relative flex items-center gap-3 text-muted-foreground/60">
-              <span className="flex-1 h-px bg-border" />
-              <span className="slide-meta">or</span>
-              <span className="flex-1 h-px bg-border" />
-            </div>
-
-            {/* ── Path 2: Local git ── */}
-            <section className="flex flex-col gap-3">
-              <h2 className="text-base font-semibold text-foreground">
-                With any local git repository
-              </h2>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                No account needed. Point Gnosis at a folder on your machine and two
-                commits — a branch against <code className="font-mono">main</code>, a
-                tag against HEAD, any two refs. Works fully offline, and with the
-                repo's own Claude skills and MCP servers if you want them.
-              </p>
-              <Button
-                variant="outline"
-                onClick={() => setLocalRepoOpen(true)}
-                className="w-fit gap-2"
-              >
-                <GitCompare className="h-4 w-4" />
-                Review a local git diff
-              </Button>
-            </section>
-
-            {/* Tertiary escape hatch — lets visitors enter the app
-                without starting a review. Connects them later via the
-                "Connect GitHub →" strip on the newspaper. */}
-            <p className="slide-meta text-center">
-              <button
-                type="button"
-                onClick={enterGuestMode}
-                className="pb-0.5 border-b border-transparent hover:text-foreground hover:border-[var(--ring)] transition-colors"
-              >
-                Continue without signing in →
-              </button>
-            </p>
-          </div>
-        </div>
-      )}
-
-      {authStatus === 'signing-in' && (
-        <div className="flex flex-col items-center gap-2 text-center pt-[20vh]">
-          <span className="slide-meta animate-pulse">
-            Waiting for GitHub… complete sign-in in your browser.
-          </span>
-        </div>
-      )}
-
-      {/* ══════════════════════════════════════════════════════════
-          ██  THE NEWSPAPER  ██
-          Broadsheet-style layout: masthead, above-the-fold lead
-          story, dispatches sidebar, classified submission form,
-          and a multi-column archives grid.
-          ══════════════════════════════════════════════════════════ */}
-      {(isAuthenticated || guestMode) && (
-        <div className="newspaper">
-          {/* ── Masthead ── */}
-          <header className="newspaper-masthead">
-            <hr className="newspaper-rule--double" />
-            <h1>Gnosis</h1>
-            <p className="newspaper-tagline">Code Review, Narrated</p>
-            <p className="newspaper-dateline">
-              No. {editionNumber} · {dateline} ·{' '}
-              {isAuthenticated ? (
-                <span className="inline-flex items-center gap-1.5">
-                  <Avatar className="h-3.5 w-3.5 inline-block align-middle">
-                    <AvatarImage
-                      src={`https://github.com/${login}.png`}
-                      alt={login}
-                    />
-                    <AvatarFallback className="text-[8px]">
-                      {login.slice(0, 2).toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
-                  @{login}
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleSignIn}
-                  className="inline-flex items-center gap-1 hover:text-foreground transition-colors"
-                  title="Connect a GitHub account to review pull requests"
-                >
-                  <GitHubIcon className="h-3 w-3" />
-                  Guest · connect GitHub
-                </button>
+              {queue.warnings.length > 0 && (
+                <details className="queue-warnings">
+                  <summary>
+                    <AlertCircle size={14} />
+                    Discovery needs attention ({queue.warnings.length})
+                  </summary>
+                  {queue.warnings.map((w, i) => (
+                    <p key={i}>{w}</p>
+                  ))}
+                </details>
               )}
-            </p>
-            <hr className="newspaper-rule--double" />
-          </header>
-
-          {/* ── EXTRA: Update available ── Rendered as a newspaper
-              "Extra" notice strip between the masthead and content.
-              Auto-update platforms show "will install on restart";
-              manual platforms show a download link. */}
-          {(() => {
-            const supportsAutoUpdate = window.electronAPI.platform !== 'linux' && window.electronAPI.isPackaged;
-            // Dev: allow GNOSIS_FAKE_UPDATE_READY to surface the banner even when unpackaged.
-            const showReadyBanner = window.electronAPI.platform !== 'linux' && readyVersion;
-            if (showReadyBanner) {
-              return (
-                <div className="newspaper-extra">
-                  <span className="newspaper-extra-label">Extra</span>
-                  <span className="newspaper-extra-text">
-                    Gnosis <strong>v{readyVersion}</strong> will install on next restart
-                  </span>
-                  <button
-                    onClick={() => setReadyVersion(null)}
-                    className="newspaper-extra-dismiss"
-                    aria-label="Dismiss"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              );
-            }
-            if (updateInfo && !supportsAutoUpdate) {
-              return (
-                <div className="newspaper-extra">
-                  <span className="newspaper-extra-label">Extra</span>
-                  <span className="newspaper-extra-text">
-                    Gnosis <strong>v{updateInfo.version}</strong> is available
-                  </span>
-                  <button
-                    onClick={() => void window.electronAPI.openExternal(updateInfo.releaseUrl)}
-                    className="text-xs text-[var(--ring)] hover:underline transition-colors"
-                  >
-                    Download →
-                  </button>
-                  <button
-                    onClick={() => {
-                      void window.electronAPI.dismissUpdate(updateInfo.version);
-                      setUpdateInfo(null);
-                    }}
-                    className="newspaper-extra-dismiss"
-                    aria-label="Dismiss"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              );
-            }
-            return null;
-          })()}
-
-          {/* ── Welcome / About ── Inline hero, newspaper style */}
-          {(firstRunOpen || aboutOpen) && (
-            <section className="py-6 border-b border-border max-w-[68ch] mx-auto text-center">
-              <p className="newspaper-section">
-                {firstRunOpen ? 'Welcome' : 'About Gnosis'}
-              </p>
-              <h2 className="newspaper-headline--lead !text-center">
-                A pull request is a story. Read it like one.
-              </h2>
-              <div className="newspaper-lede mx-auto mt-4 text-center max-w-[56ch]">
-                <p>
-                  Gnosis turns a GitHub pull request into an ordered walkthrough you can read like a chapter.
-                  Foundation changes first, then the features built on top, then the tests and config — each on
-                  its own slide, each with a short narrative explaining <em>why</em> the change is there.
-                </p>
-                <p className="mt-3">
-                  You'll still see every diff. Everything runs locally on your machine — nothing leaves except
-                  requests to GitHub.
-                </p>
-              </div>
-              <div className="flex items-center justify-center gap-6 pt-5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (firstRunOpen) dismissFirstRun();
-                    else setAboutOpen(false);
-                    // Focus the PR input so the user can paste immediately
-                    setTimeout(() => prInputRef.current?.focus(), 100);
-                  }}
-                  className="text-sm text-foreground underline underline-offset-4 hover:opacity-80 transition-opacity"
-                >
-                  {firstRunOpen ? 'Paste a PR URL to get started →' : 'Close'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (firstRunOpen) dismissFirstRun();
-                    setAboutOpen(false);
-                    setShortcutsOpen(true);
-                  }}
-                  className="slide-meta hover:text-foreground transition-colors"
-                >
-                  Keyboard shortcuts
-                </button>
-              </div>
             </section>
-          )}
-
-          {/* ── Above the fold: Lead story + Dispatches sidebar ──
-              Only show when there's actual content: an unread review
-              to feature OR pending dispatches to show. Skip entirely
-              for first-time users with no reviews — the newsroom
-              section handles that case. */}
-          {(latestUnreadGroup || visiblePendingReviews.length > 0) &&
-            !firstRunOpen &&
-            !aboutOpen && (
-            <div className="newspaper-above-fold">
-              {/* Lead story — latest unread review */}
-              <div className="newspaper-lead">
-                {latestUnreadGroup ? (
-                  <>
-                    <span className="newspaper-section">{(() => {
-                      const age = Date.now() - new Date(latestUnreadGroup.latestReview.savedAt).getTime();
-                      if (age < 3_600_000) return 'Breaking';
-                      if (age < 86_400_000) return 'New';
-                      return 'Unread';
-                    })()}</span>
-                    <button
-                      type="button"
-                      onClick={() => void handleLoadFromHistory(latestUnreadGroup.latestReview.id)}
-                      className="text-left"
-                    >
-                      <h2 className="newspaper-headline--lead">
-                        {latestUnreadGroup.prTitle}
-                      </h2>
-                    </button>
-                    <p className="newspaper-byline mt-2">
-                      By {latestUnreadGroup.author} · {latestUnreadGroup.repoRef} · {timeAgo(latestUnreadGroup.latestReview.savedAt)}
-                    </p>
-                    <p className="newspaper-lede">
-                      {latestUnreadGroup.latestReview.summary
-                        ?? (latestUnreadGroup.latestReview.riskLevel === 'high'
-                          ? 'Elevated risk — proceed with scrutiny.'
-                          : latestUnreadGroup.latestReview.riskLevel === 'medium'
-                            ? 'Moderate complexity. Worth a careful read.'
-                            : 'A straightforward set of changes.')}
-                    </p>
-                    <div className="flex items-center gap-5 mt-4">
-                      <button
-                        type="button"
-                        onClick={() => void handleLoadFromHistory(latestUnreadGroup.latestReview.id)}
-                        className="text-sm text-[var(--ring)] hover:underline transition-colors"
-                      >
-                        Read the full review →
-                      </button>
-                      {unreadGroups.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={scrollToNextUnread}
-                          className="slide-meta hover:text-foreground transition-colors"
-                        >
-                          + {unreadGroups.length - 1} more unread
-                        </button>
-                      )}
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <span className="newspaper-section">All Clear</span>
-                    <h2 className="newspaper-headline--secondary">
-                      Nothing unread.
-                    </h2>
-                    <p className="newspaper-lede">
-                      No unread reviews on file. Paste a pull request URL below to start a new one.
-                    </p>
-                  </>
-                )}
-              </div>
-
-              {/* Sidebar — dispatches (pending review requests) */}
-              <aside className="newspaper-sidebar">
-                <div className="flex items-baseline justify-between">
-                  <span className="newspaper-section mb-1">Dispatches</span>
-                  <button
-                    type="button"
-                    onClick={fetchPendingReviews}
-                    disabled={pendingLoading}
-                    className="slide-meta hover:text-foreground disabled:opacity-40 transition-colors"
-                    aria-label="Reload pending reviews"
-                  >
-                    <RefreshCw className={`h-3 w-3 ${pendingLoading ? 'animate-spin' : ''}`} />
+            {selectedItem && section !== 'saved' && (
+              <aside className="briefing-panel" aria-label="Change briefing">
+                <div className="briefing-top">
+                  <span>
+                    {selectedItem.subject.kind === 'stack' ? (
+                      <>
+                        <Layers size={15} />
+                        {selectedItem.subject.members.length} PR stack
+                      </>
+                    ) : (
+                      <>
+                        <GitPullRequest size={15} />
+                        Pull request
+                      </>
+                    )}
+                  </span>
+                  <button className="workbench-icon" aria-label="Close briefing" onClick={() => setSelected(null)}>
+                    <X size={16} />
                   </button>
                 </div>
-                {visiblePendingReviews.length === 0 ? (
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    {hasEverHadPendingReviews
-                      ? 'No pending reviews right now.'
-                      : 'When someone requests your review on GitHub, it will appear here.'}
-                  </p>
+                <h2>{selectedItem.subject.title}</h2>
+                <div className="briefing-actions">
+                  <Button
+                    size="sm"
+                    disabled={starting || selectedItem.review?.status === 'generating'}
+                    onClick={() => {
+                      const entry = selectedItem.review;
+                      if (
+                        entry?.status === 'completed' &&
+                        entry.snapshot?.fingerprint === fingerprint(selectedItem.subject)
+                      )
+                        void open(entry);
+                      else void start(selectedItem.subject.members[0].url, selectedItem.subject);
+                    }}
+                  >
+                    {selectedItem.review?.status === 'completed' &&
+                    selectedItem.review.snapshot?.fingerprint === fingerprint(selectedItem.subject)
+                      ? 'Continue review'
+                      : 'Start guided review'}
+                    <ArrowRight size={14} />
+                  </Button>
+                  {selectedItem.review?.status === 'completed' && (
+                    <button onClick={() => selectedItem.review && void open(selectedItem.review)}>Open saved</button>
+                  )}
+                </div>
+                {selectedItem.briefing?.status === 'ready' ? (
+                  <>
+                    <Markdown className="briefing-summary">{selectedItem.briefing.summary ?? ''}</Markdown>
+                    <h3>Affected systems</h3>
+                    <div className="briefing-tags">
+                      {selectedItem.briefing.systems?.map((s) => (
+                        <span key={s}>{s}</span>
+                      ))}
+                    </div>
+                    <h3>Where to focus</h3>
+                    <ul>
+                      {selectedItem.briefing.priorities?.map((p) => (
+                        <li key={p}>{p}</li>
+                      ))}
+                    </ul>
+                  </>
                 ) : (
-                  <div className="flex flex-col">
-                    {visiblePendingReviews.slice(0, 8).map((pr) => (
-                      <div key={pr.url} className="newspaper-sidebar-item group">
-                        <button
-                          type="button"
-                          onClick={() => void startReviewForUrl(pr.url)}
-                          className="text-left"
-                        >
-                          <span className="newspaper-sidebar-headline">
-                            {pr.title}
-                          </span>
-                        </button>
-                        <div className="flex items-center justify-between">
-                          <span className="slide-meta">
-                            {pr.repoName}#{pr.number} · {pr.author}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => dismissPendingPr(pr.url)}
-                            className="shrink-0 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-                            aria-label="Dismiss"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                    {visiblePendingReviews.length > 8 && (
+                  <div className="briefing-status">
+                    <p>
+                      {selectedItem.briefing?.status === 'generating'
+                        ? 'Preparing a short briefing…'
+                        : selectedItem.briefing?.status === 'failed'
+                          ? selectedItem.briefing.error
+                          : selectedItem.briefing?.status === 'paused'
+                            ? 'Automatic briefings are paused or the daily limit is reached.'
+                            : 'Briefing queued. You can start the detailed review now.'}
+                    </p>
+                    {selectedItem.briefing?.status === 'failed' && (
                       <button
-                        type="button"
-                        onClick={() => setPrPickerOpen(true)}
-                        className="slide-meta hover:text-foreground pt-2 text-left"
+                        onClick={() =>
+                          void window.electronAPI.workbenchBriefing(selectedItem.subject.id).then(setQueue)
+                        }
                       >
-                        + {visiblePendingReviews.length - 8} more dispatches…
+                        Retry briefing
                       </button>
                     )}
                   </div>
                 )}
-              </aside>
-            </div>
-          )}
-
-          <hr className="newspaper-rule--thin mt-6" />
-
-          {/* ── The Newsroom: compose form ── */}
-          <section className="newspaper-newsroom">
-            <span className="newspaper-section">
-              {prGroups.length === 0 ? 'Start Your First Review' : 'The Newsroom'}
-            </span>
-            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-              <div className="flex items-end gap-4 flex-wrap">
-                <input
-                  ref={prInputRef}
-                  id="pr-url"
-                  type="text"
-                  placeholder="Paste a pull request URL — github.com/owner/repo/pull/123"
-                  value={prUrl}
-                  onChange={(e) => setPrUrl(e.target.value)}
-                  className="flex-1 min-w-[280px] bg-transparent border-0 border-b border-border px-0 py-2.5 text-base placeholder:text-muted-foreground/60 transition-colors"
-                  required
-                />
-                <Button type="submit" className="gap-2 px-6 py-2.5 h-auto" disabled={submitting}>
-                  {submitting ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Starting review…
-                    </>
-                  ) : (
-                    <>
-                      <Play className="h-4 w-4" />
-                      Generate review
-                    </>
-                  )}
-                </Button>
-              </div>
-
-              {/* Alternative source pickers — framed as prose so they read
-                  as options, not as primary actions competing with the
-                  Generate review button. Guest-mode users only see the
-                  local option; browsing PRs requires a GitHub account. */}
-              <p className="slide-meta -mt-1">
-                or{' '}
-                {isAuthenticated && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setPrPickerOpen(true)}
-                      className="pb-0.5 border-b border-transparent hover:text-foreground hover:border-[var(--ring)] transition-colors"
-                    >
-                      browse your pull requests
-                    </button>
-                    {' · '}
-                  </>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setLocalRepoOpen(true)}
-                  className="pb-0.5 border-b border-transparent hover:text-foreground hover:border-[var(--ring)] transition-colors"
-                >
-                  review a local git diff
-                </button>
-              </p>
-
-              {/* Options row */}
-              <div className="flex items-center gap-6 slide-meta">
-                <button
-                  type="button"
-                  onClick={() => setModelMenuExpanded((v) => !v)}
-                  className={`pb-0.5 border-b transition-colors ${
-                    modelMenuExpanded
-                      ? 'text-foreground border-[var(--ring)]'
-                      : 'border-transparent hover:text-foreground'
-                  }`}
-                >
-                  {PROVIDERS[provider].label} ·{' '}
-                  {PROVIDERS[provider].models.find((m) => m.id === model)?.label ?? model}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setInstructionsExpanded((v) => !v)}
-                  className={`pb-0.5 border-b transition-colors ${
-                    instructionsExpanded || instructions
-                      ? 'text-foreground border-[var(--ring)]'
-                      : 'border-transparent hover:text-foreground'
-                  }`}
-                >
-                  {instructions ? 'Instructions' : 'Add instructions'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPrefsExpanded((v) => !v)}
-                  className={`pb-0.5 border-b transition-colors ${
-                    prefsExpanded
-                      ? 'text-foreground border-[var(--ring)]'
-                      : 'border-transparent hover:text-foreground'
-                  }`}
-                >
-                  Preferences
-                </button>
-              </div>
-
-              {!keyboardHintDismissed && (
-                <p className="slide-meta flex items-center gap-2 -mt-1">
-                  <span>
-                    <kbd className="kbd">n</kbd> to focus ·{' '}
-                    <kbd className="kbd">⌘ K</kbd> to search ·{' '}
-                    <kbd className="kbd">?</kbd> for shortcuts
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setKeyboardHintDismissed(true);
-                      try { localStorage.setItem('gnosis-keyboard-hint-dismissed', '1'); } catch { /* non-fatal */ }
-                    }}
-                    className="hover:text-foreground transition-colors"
-                    aria-label="Dismiss keyboard hint"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </p>
-              )}
-
-              {/* Model menu disclosure */}
-              <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${modelMenuExpanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
-                <div className="overflow-hidden">
-                  {PROVIDER_IDS.map((id) => (
-                    <div key={id} className="flex flex-wrap items-center gap-x-5 gap-y-2 slide-meta pt-1 pb-2">
-                      <span className="text-foreground/60">{PROVIDERS[id].label}</span>
-                      {PROVIDERS[id].models.map((m) => (
-                        <button
-                          key={m.id}
-                          type="button"
-                          aria-pressed={provider === id && model === m.id}
-                          onClick={() => { setProvider(id); setModel(m.id); }}
-                          className={`pb-0.5 border-b transition-colors ${model === m.id ? 'text-foreground border-[var(--ring)]' : 'border-transparent hover:text-foreground'}`}
+                <h3>{selectedItem.subject.kind === 'stack' ? 'Stack members' : 'Pull request'}</h3>
+                <div className="stack-members">
+                  {selectedItem.subject.members.map((m, i) => (
+                    <div key={m.url} className="stack-member">
+                      <span className="stack-step">{i + 1}</span>
+                      <div>
+                        <a
+                          href={m.url}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            void window.electronAPI.openExternal(m.url);
+                          }}
                         >
-                          {m.label}
-                        </button>
-                      ))}
+                          #{m.number} {m.title}
+                        </a>
+                        <p>
+                          {m.merged ? 'Merged' : m.isDraft ? 'Draft' : m.state} ·{' '}
+                          {statuses[m.url]
+                            ? `CI ${statuses[m.url]?.ciConclusion} · ${statuses[m.url]?.reviewSummary.approved} approvals`
+                            : 'Loading status…'}
+                        </p>
+                        {selectedItem.subject.kind === 'stack' && (
+                          <button onClick={() => void start(m.url, undefined, undefined, true)}>
+                            Review this PR only
+                          </button>
+                        )}
+                      </div>
                     </div>
                   ))}
-                  {provider === 'codex' && (
-                    <p className="slide-meta pb-2">Codex reviews the supplied diff and context. Web research and project tools are available with Claude.</p>
-                  )}
                 </div>
-              </div>
-
-              {/* Instructions disclosure */}
-              <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${instructionsExpanded || instructions ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
-                <div className="overflow-hidden">
-                  <textarea
-                    id="instructions"
-                    rows={4}
-                    placeholder="What should the reviewer pay special attention to?"
-                    value={instructions}
-                    onChange={(e) => setInstructions(e.target.value)}
-                    onBlur={() => savePrefs()}
-                    className="w-full bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground/60 transition-colors resize-none mt-1"
+                {selectedItem.subject.warnings.map((w) => (
+                  <p className="workbench-notice" key={w}>
+                    {w}
+                  </p>
+                ))}
+                <details className="grouping-controls">
+                  <summary>
+                    <Link2 size={14} />
+                    Correct stack grouping
+                  </summary>
+                  <p>Link a child PR to its parent. Use full GitHub PR URLs.</p>
+                  <input
+                    aria-label="Parent PR URL"
+                    placeholder="Parent PR URL"
+                    value={parentUrl}
+                    onChange={(e) => setParentUrl(e.target.value)}
                   />
-                </div>
-              </div>
-
-              {/* Preferences disclosure */}
-              <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${prefsExpanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
-                <div className="overflow-hidden">
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-x-10 gap-y-5 pt-2">
-                    <ToggleSwitch
-                      id="include-all-files"
-                      label="Include all files"
-                      description={includeAllFiles ? 'All changed files included in the review' : 'You will choose which files to include'}
-                      checked={includeAllFiles}
-                      onToggle={() => setIncludeAllFiles((v) => !v)}
-                    />
-                    <ToggleSwitch
-                      id="thinking"
-                      label="Deeper reasoning"
-                      description="Use more reasoning effort. Responses may take longer. Models can still reason with this off."
-                      checked={thinking}
-                      onToggle={() => setThinking((t) => !t)}
-                    />
-                    <ToggleSwitch
-                      id="smart-imports"
-                      label="Smart imports"
-                      description="Pull in related files across all languages, not just imports the parser sees"
-                      checked={smartImports}
-                      onToggle={() => setSmartImports((s) => !s)}
-                      badge="Experimental"
-                    />
-                    <ToggleSwitch
-                      id="review-suggestions"
-                      label="Review suggestions"
-                      description="Generate 'What to check' for each slide"
-                      checked={reviewSuggestions}
-                      onToggle={() => setReviewSuggestions((r) => !r)}
-                    />
-                    <ToggleSwitch
-                      id="education-mode"
-                      label="Education mode"
-                      description="Small explainer notes for concepts the code assumes knowledge of (e.g. Unit of Work)"
-                      checked={educationMode}
-                      onToggle={() => setEducationMode((e) => !e)}
-                    />
-                    <ToggleSwitch
-                      id="claude-context"
-                      label="Apply project's Claude conventions"
-                      description="Read CLAUDE.md and .claude/ in the PR repo so the review respects the team's Claude Code setup"
-                      checked={claudeContext}
-                      onToggle={() => setClaudeContext((c) => !c)}
-                    />
-                    {provider === 'claude' && <ToggleSwitch
-                      id="web-research"
-                      label="Web research"
-                      description="Search for framework docs and best practices (slower)"
-                      checked={webResearch}
-                      onToggle={() => setWebResearch((w) => !w)}
-                    />}
-                  </div>
-                </div>
-              </div>
-
-              {error && (
-                <Alert variant="destructive">
-                  <AlertDescription>{error}</AlertDescription>
-                </Alert>
-              )}
-            </form>
-          </section>
-
-          {/* Dialogs (unchanged — just mounted here). LocalRepoDialog
-              is lifted to the main root below so the pre-auth welcome
-              screen can open it too. */}
-          <PRPickerDialog open={prPickerOpen} onOpenChange={setPrPickerOpen} onSelect={setPrUrl} />
-          <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onReplayOnboarding={replayOnboarding} />
-          <FilePickerDialog
-            open={filePickerOpen}
-            onOpenChange={setFilePickerOpen}
-            prUrl={prUrl.trim()}
-            onConfirm={(excluded) => { setFilePickerOpen(false); void doStartReview(excluded); }}
-          />
-          <Dialog open={cliNotFound !== null} onOpenChange={() => setCliNotFound(null)}>
-            <DialogContent className="bg-card sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle>{PROVIDERS[cliNotFound?.provider ?? provider].label} CLI not found</DialogTitle>
-              </DialogHeader>
-              <div className="flex flex-col gap-3 text-sm text-muted-foreground">
-                <p>Gnosis couldn't find the {PROVIDERS[cliNotFound?.provider ?? provider].label} CLI on your machine.</p>
-                {(cliNotFound?.provider ?? provider) === 'codex' ? (
-                  <p>Install with <code>npm install -g @openai/codex</code>, then sign in with <code>codex login</code>.</p>
-                ) : <p>Install it from claude.ai/code and authenticate with <code>claude auth</code>.</p>}
-                <p>Already installed? Set the path manually in Settings.</p>
-              </div>
-              <div className="flex gap-2 justify-end pt-2">
-                <Button variant="outline" onClick={() => setCliNotFound(null)}>Dismiss</Button>
-                <Button onClick={() => { setCliNotFound(null); setSettingsOpen(true); }}>Open Settings</Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-
-          {/* ── Delete confirmation dialog ── */}
-          <Dialog open={confirmDelete !== null} onOpenChange={() => setConfirmDelete(null)}>
-            <DialogContent className="bg-card sm:max-w-sm">
-              <DialogHeader>
-                <DialogTitle>
-                  {confirmDelete === 'all' ? 'Delete all reviews?' : 'Delete closed PRs?'}
-                </DialogTitle>
-              </DialogHeader>
-              <p className="text-sm text-muted-foreground">
-                {confirmDelete === 'all'
-                  ? `This will permanently delete all ${prGroups.length} reviews. This cannot be undone.`
-                  : 'This will permanently remove reviews for merged and closed pull requests. Open PRs are not affected.'}
-              </p>
-              <div className="flex gap-2 justify-end pt-2">
-                <Button variant="outline" onClick={() => setConfirmDelete(null)}>Cancel</Button>
-                <Button
-                  variant="destructive"
-                  onClick={() => {
-                    if (confirmDelete === 'all') void handleDeleteAllHistory();
-                    else void handleDeleteClosedPRs();
-                    setConfirmDelete(null);
-                  }}
-                >
-                  {confirmDelete === 'all' ? 'Delete all' : 'Delete closed'}
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-
-          {/* ── Tray prompt dialog ── */}
-          <Dialog open={trayPromptOpen} onOpenChange={setTrayPromptOpen}>
-            <DialogContent
-              className="bg-card sm:max-w-sm"
-              showCloseButton={false}
-              onPointerDownOutside={(e) => e.preventDefault()}
-              onEscapeKeyDown={(e) => e.preventDefault()}
-            >
-              <DialogHeader>
-                <DialogTitle>Enable menu bar icon?</DialogTitle>
-              </DialogHeader>
-              <p className="text-sm text-muted-foreground">
-                Gnosis can show a menu bar icon for quick access to your reviews, CI status, and more.
-              </p>
-              <p className="text-xs text-muted-foreground">You can change this anytime in Settings.</p>
-              <div className="flex gap-2 justify-end pt-2">
-                <Button variant="outline" onClick={() => {
-                  setTrayPromptOpen(false);
-                  void window.electronAPI.loadPreferences().then((current) => {
-                    void window.electronAPI.savePreferences({ ...current, trayEnabled: false });
-                  });
-                }}>Not now</Button>
-                <Button onClick={() => {
-                  setTrayPromptOpen(false);
-                  void window.electronAPI.loadPreferences().then((current) => {
-                    void window.electronAPI.savePreferences({ ...current, trayEnabled: true });
-                  });
-                }}>Enable</Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-
-          {/* ── Onboarding repo setup ── */}
-          <OnboardingRepoSetup
-            open={repoSetupOpen}
-            onComplete={(repos) => {
-              setRepoSetupOpen(false);
-              void window.electronAPI.loadPreferences().then((current) => {
-                void window.electronAPI.savePreferences({
-                  ...current,
-                  firstRunSeen: true,
-                  proactiveMode: true,
-                  watchedRepos: repos,
-                });
-              });
-              setTimeout(() => prInputRef.current?.focus(), 100);
-            }}
-            onSkip={() => {
-              setRepoSetupOpen(false);
-              void window.electronAPI.loadPreferences().then((current) => {
-                void window.electronAPI.savePreferences({ ...current, firstRunSeen: true });
-              });
-              setTimeout(() => prInputRef.current?.focus(), 100);
-            }}
-          />
-
-          {/* ── Empty state ── Only shown for first-time users.
-              Explains what will appear here and sets expectations. */}
-          {prGroups.length === 0 && (
-            <section className="py-8 max-w-[56ch] mx-auto">
-              <p className="newspaper-section">The Archives</p>
-              <p className="text-sm text-muted-foreground">
-                Your reviews will appear here, grouped by pull request.
-                Each review takes 2–4 minutes to generate and is stored locally on your machine.
-              </p>
-              <p className="slide-meta mt-3">
-                Got a <span className="font-mono">.gr</span> file from a teammate?{' '}
-                <button
-                  onClick={() => void handleImportReview()}
-                  className="underline decoration-dotted underline-offset-2 hover:text-foreground transition-colors"
-                >
-                  Import it.
-                </button>
-              </p>
-            </section>
-          )}
-
-          {/* ═══════════════════════════════════════════════════════
-              ██  THE ARCHIVES  ██
-              Multi-column newspaper grid. The first article spans
-              full width as a secondary lead; the rest fill a 3-col
-              grid with vertical column rules.
-              ═══════════════════════════════════════════════════════ */}
-          {prGroups.length > 0 && (
-            <section>
-              <div className="flex items-baseline justify-between mb-3">
-                <h2 className="newspaper-section !mb-0">
-                  The Archives
-                  <span className="font-normal text-muted-foreground ml-2">
-                    {prGroups.length} {prGroups.length === 1 ? 'review' : 'reviews'}
-                    {unreadGroups.length > 0 && ` · ${unreadGroups.length} unread`}
-                  </span>
-                </h2>
-                <div className="flex items-center gap-3 slide-meta">
-                  {prGroups.some((g) => {
-                    const state = livePrStates.get(g.prUrl)?.prState ?? g.latestReview.prState;
-                    return state === 'merged' || state === 'closed';
-                  }) && (
-                    <button
-                      onClick={() => setConfirmDelete('closed')}
-                      className="hover:text-foreground transition-colors flex items-center gap-1"
-                      title="Remove merged & closed PRs"
-                    >
-                      <Eraser className="h-3.5 w-3.5" />
-                      <span>Clear closed</span>
+                  <select aria-label="Child PR" value={childUrl} onChange={(e) => setChildUrl(e.target.value)}>
+                    <option value="">Choose child PR</option>
+                    {selectedItem.subject.members.map((m) => (
+                      <option key={m.url} value={m.url}>
+                        #{m.number} {m.title}
+                      </option>
+                    ))}
+                  </select>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={grouping || !parentUrl || !childUrl}
+                    onClick={() => void correct('link')}
+                  >
+                    Link parent
+                  </Button>
+                  {selectedItem.subject.edges.map((e) => (
+                    <button key={e.child} disabled={grouping} onClick={() => void correct('unlink', e.parent, e.child)}>
+                      Separate #{e.child.split('/').at(-1)} from #{e.parent.split('/').at(-1)}
                     </button>
-                  )}
-                  <button
-                    onClick={() => void handleImportReview()}
-                    className="hover:text-foreground transition-colors flex items-center gap-1"
-                    title="Import a .gr review file"
-                  >
-                    <Upload className="h-3.5 w-3.5" />
-                    <span>Import</span>
-                  </button>
-                  <button
-                    onClick={() => setConfirmDelete('all')}
-                    className="hover:text-foreground transition-colors flex items-center gap-1"
-                    title="Delete all history"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    <span>Clear all</span>
-                  </button>
-                </div>
-              </div>
-
-              <hr className="newspaper-rule" />
-
-              <div className="newspaper-grid">
-                {prGroups.map((group, idx) => {
-                  const latestStatus = getEntryStatus(group.latestReview);
-                  const risk = safeConfigLookup(riskConfig, group.latestReview.riskLevel, riskConfig.low);
-                  const hasMultiple = group.reviews.length > 1;
-                  const isExpanded = expandedPRs.has(group.prUrl);
-                  const isClickable = latestStatus === 'completed';
-                  const latestId = group.latestReview.id;
-                  const elapsed = elapsedSeconds.get(latestId) ?? 0;
-                  const bytes = reviewBytes.get(latestId);
-                  const liveState = livePrStates.get(group.prUrl);
-                  const prState = liveState?.prState ?? group.latestReview.prState;
-                  const isOutdated =
-                    liveState?.prState === 'open' && liveState.headSha !== group.latestReview.prHeadSha;
-                  const isUnread = group.latestReview.unread;
-
-                  return (
-                    <article
-                      key={group.prUrl}
-                      data-pr-url={group.prUrl}
-                      className={`${idx === 0 ? 'newspaper-article--featured' : 'newspaper-article'} group`}
-                      role={isClickable ? 'button' : undefined}
-                      tabIndex={isClickable ? 0 : undefined}
-                      onClick={() => isClickable && handleLoadFromHistory(latestId)}
-                      onKeyDown={(e) => {
-                        if (isClickable && (e.key === 'Enter' || e.key === ' ')) {
-                          e.preventDefault();
-                          handleLoadFromHistory(latestId);
-                        }
-                      }}
-                      aria-label={isClickable ? `Open review: ${group.prTitle}` : undefined}
-                    >
-                      {/* Featured articles use a two-column layout:
-                          left = headline + meta + badges, right = lede.
-                          Regular articles keep the flat stack. */}
-                      {idx === 0 ? (
-                        <>
-                          <div className="newspaper-featured-left">
-                            <h3 className="newspaper-article-headline--featured">
-                              {group.prTitle}
-                            </h3>
-                            <p className="newspaper-article-meta">
-                              {group.repoRef} · {group.author}&nbsp;· <span className="whitespace-nowrap">{timeAgo(group.latestReview.savedAt)}</span>
-                              {hasMultiple && <>&nbsp;· <span className="whitespace-nowrap">{group.reviews.length} reviews</span></>}
-                            </p>
-                          </div>
-                          {group.latestReview.summary ? (
-                            <div className="newspaper-featured-right">
-                              <p className="newspaper-article-lede !mt-0">
-                                {group.latestReview.summary}
-                              </p>
-                            </div>
-                          ) : <div />}
-                        </>
-                      ) : (
-                        <>
-                          <h3
-                            className={`newspaper-article-headline ${isUnread ? 'newspaper-article-headline--unread' : ''}`}
-                          >
-                            {group.prTitle}
-                          </h3>
-                          <p className="newspaper-article-meta">
-                            {group.repoRef} · {group.author}&nbsp;· <span className="whitespace-nowrap">{timeAgo(group.latestReview.savedAt)}</span>
-                            {hasMultiple && <>&nbsp;· <span className="whitespace-nowrap">{group.reviews.length} reviews</span></>}
-                          </p>
-                          {group.latestReview.summary && (
-                            <p className="newspaper-article-lede">
-                              {group.latestReview.summary}
-                            </p>
-                          )}
-                        </>
-                      )}
-
-                      {/* Status badges — spans full width in featured layout */}
-                      <div className={`flex items-center gap-2 mt-2 flex-wrap ${idx === 0 ? 'newspaper-featured-footer' : ''}`}>
-                        {prState === 'open' && !isOutdated && (
-                          <Badge variant="outline" className="text-[10px] border-[var(--color-success)]/35 text-[var(--color-success)]">
-                            <GitPullRequest className="h-2.5 w-2.5 mr-0.5" /> Open
-                          </Badge>
-                        )}
-                        {prState === 'open' && isOutdated && (
-                          <Badge variant="outline" className="text-[10px] border-[var(--color-warning)]/35 text-[var(--color-warning)]">
-                            <AlertTriangle className="h-2.5 w-2.5 mr-0.5" /> Outdated
-                          </Badge>
-                        )}
-                        {prState === 'merged' && (
-                          <Badge variant="outline" className="text-[10px] border-[var(--color-info)]/35 text-[var(--color-info)]">
-                            <GitMerge className="h-2.5 w-2.5 mr-0.5" /> Merged
-                          </Badge>
-                        )}
-                        {prState === 'closed' && (
-                          <Badge variant="outline" className="text-[10px] border-[var(--color-danger)]/35 text-[var(--color-danger)]">
-                            <GitPullRequestClosed className="h-2.5 w-2.5 mr-0.5" /> Closed
-                          </Badge>
-                        )}
-                        {latestStatus === 'generating' && (
-                          <Badge variant="outline" className="text-[10px] border-[var(--ring)]/40 text-[var(--ring)]">
-                            <Loader2 className="h-2.5 w-2.5 animate-spin mr-0.5" />
-                            {reviewPhases.get(latestId) ?? 'Starting'}
-                            {elapsed > 0 && ` · ${formatDuration(elapsed * 1000)}`}
-                          </Badge>
-                        )}
-                        {latestStatus === 'failed' && (
-                          <Badge variant="outline" className="text-[10px] border-[var(--color-danger)]/35 text-[var(--color-danger)] max-w-[180px]">
-                            <CircleX className="h-2.5 w-2.5 mr-0.5 shrink-0" />
-                            <span className="truncate">{group.latestReview.error ?? 'Failed'}</span>
-                          </Badge>
-                        )}
-                        {latestStatus === 'completed' && (
-                          <Badge variant="outline" className={`text-[10px] ${risk.badgeClassName}`}>
-                            {risk.label}
-                          </Badge>
-                        )}
-                        {group.latestReview.autoUpdated && (
-                          <Badge variant="outline" className="text-[10px] border-[var(--color-warning)]/35 text-[var(--color-warning)]">
-                            Updated
-                          </Badge>
-                        )}
-                      </div>
-
-                      {/* Byte stats for generating reviews */}
-                      {latestStatus === 'generating' && bytes && bytes.inputBytes > 0 && (
-                        <p className={`slide-meta opacity-60 mt-1 ${idx === 0 ? 'newspaper-featured-footer' : ''}`}>
-                          ↑{formatBytes(bytes.inputBytes)} ↓{formatBytes(bytes.outputBytes)}
-                        </p>
-                      )}
-
-                      {/* Action row — visible on hover */}
-                      <div className={`flex items-center gap-1 mt-2 opacity-0 group-hover:opacity-100 transition-opacity ${idx === 0 ? 'newspaper-featured-footer' : ''}`}>
-                        {latestStatus === 'generating' && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); void window.electronAPI.cancelReview(latestId); }}
-                            className="slide-meta hover:text-destructive transition-colors"
-                            title="Cancel"
-                          >
-                            Cancel
-                          </button>
-                        )}
-                        {latestStatus !== 'generating' && (
-                          <>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); void window.electronAPI.openReviewPrompt(latestId); }}
-                              className="text-muted-foreground hover:text-foreground transition-colors p-1.5 -m-1.5"
-                              title="View prompt"
-                              aria-label="View prompt"
-                            >
-                              <FileText className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); void handleExportReview(latestId); }}
-                              className="text-muted-foreground hover:text-foreground transition-colors p-1.5 -m-1.5"
-                              title="Export as .gr file"
-                              aria-label="Export review"
-                            >
-                              <Share2 className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              onClick={(e) => handleDeleteFromHistory(e, latestId)}
-                              className="text-muted-foreground hover:text-destructive transition-colors p-1.5 -m-1.5"
-                              title="Delete"
-                              aria-label="Delete review"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </>
-                        )}
-                        {hasMultiple && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setExpandedPRs((prev) => {
-                                const next = new Set(prev);
-                                if (next.has(group.prUrl)) next.delete(group.prUrl);
-                                else next.add(group.prUrl);
-                                return next;
-                              });
-                            }}
-                            className="slide-meta hover:text-foreground transition-colors ml-auto"
-                            aria-expanded={isExpanded}
-                            aria-label={`${group.reviews.length} previous reviews`}
-                          >
-                            {isExpanded ? 'Hide' : `${group.reviews.length} reviews`}
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Expanded sub-reviews */}
-                      {hasMultiple && isExpanded && (
-                        <div className={`mt-2 pt-2 border-t border-border/40 flex flex-col gap-1 ${idx === 0 ? 'newspaper-featured-footer' : ''}`}>
-                          {group.reviews.map((review) => {
-                            const reviewStatus = getEntryStatus(review);
-                            const reviewRisk = safeConfigLookup(riskConfig, review.riskLevel, riskConfig.low);
-                            const reviewClickable = reviewStatus === 'completed';
-                            const reviewElapsed = elapsedSeconds.get(review.id) ?? 0;
-                            return (
-                              <button
-                                key={review.id}
-                                onClick={() => reviewClickable && handleLoadFromHistory(review.id)}
-                                className={`flex items-center justify-between gap-2 py-1 text-left group/review ${!reviewClickable ? 'cursor-default' : 'hover:text-foreground'}`}
-                                disabled={!reviewClickable}
-                              >
-                                <span className="slide-meta truncate">
-                                  {review.model ? (MODEL_LABELS[review.model] ?? review.model) : 'Unknown'}
-                                  {review.generationDurationMs != null && ` · ${formatDuration(review.generationDurationMs)}`}
-                                  {' · '}{timeAgo(review.savedAt)}
-                                </span>
-                                <div className="flex items-center gap-1 shrink-0">
-                                  {reviewStatus === 'generating' && (
-                                    <Badge variant="outline" className="text-[10px] border-[var(--ring)]/40 text-[var(--ring)]">
-                                      <Loader2 className="h-2.5 w-2.5 animate-spin mr-0.5" />
-                                      {reviewPhases.get(review.id) ?? 'Starting'}
-                                      {reviewElapsed > 0 && ` · ${formatDuration(reviewElapsed * 1000)}`}
-                                    </Badge>
-                                  )}
-                                  {reviewStatus === 'completed' && (
-                                    <Badge variant="outline" className={`text-[10px] ${reviewRisk.badgeClassName}`}>
-                                      {reviewRisk.label}
-                                    </Badge>
-                                  )}
-                                  {reviewStatus === 'failed' && (
-                                    <Badge variant="outline" className="text-[10px] border-[var(--color-danger)]/35 text-[var(--color-danger)]">
-                                      <CircleX className="h-2.5 w-2.5 mr-0.5" /> Failed
-                                    </Badge>
-                                  )}
-                                  <button
-                                    onClick={(e) => handleDeleteFromHistory(e, review.id)}
-                                    className="shrink-0 opacity-0 group-hover/review:opacity-100 text-muted-foreground hover:text-destructive transition-opacity p-1.5 -m-1.5"
-                                    aria-label="Delete review"
-                                  >
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  </button>
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </article>
-                  );
-                })}
-              </div>
-            </section>
-          )}
-
-          {/* ── Newspaper footer ── */}
-          <hr className="newspaper-rule--double mt-8" />
-          <div className="newspaper-footer">
-            <button onClick={() => { setAboutOpen(true); scrollToTop(); }}>
-              About
-            </button>
-            <button onClick={() => setShortcutsOpen(true)}>Shortcuts</button>
-            <button onClick={() => setSettingsOpen(true)}>Settings</button>
-            <button onClick={handleSignOut}>Sign Out</button>
+                  ))}
+                </details>
+              </aside>
+            )}
           </div>
-        </div>
-      )}
-
-      {/* Mounted outside the auth gate so the pre-auth welcome screen
-          can open it. On submit, flips guestMode when the user isn't
-          authenticated — unlocks the rest of the app for return visits. */}
-      <LocalRepoDialog
-        supportsTools={provider === 'claude'}
-        open={localRepoOpen}
-        onOpenChange={setLocalRepoOpen}
-        onSubmit={(localUrl, { localTools }) => {
-          if (!guestMode && !isAuthenticated) enterGuestMode();
-          setPrUrl(localUrl);
-          void startReviewForUrl(localUrl, { localTools });
+          <footer className="workbench-footer">
+            {prefs && (
+              <>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={prefs.autoBriefings !== false}
+                    onChange={(e) => void savePrefs({ ...prefs, autoBriefings: e.target.checked })}
+                  />
+                  Automatic briefings
+                </label>
+                <span>{queue.remaining} remaining today</span>
+                <label>
+                  Daily limit{' '}
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    aria-label="Daily briefing limit"
+                    value={prefs.briefingDailyLimit ?? 10}
+                    onChange={(e) =>
+                      void savePrefs({
+                        ...prefs,
+                        briefingDailyLimit: Math.max(0, Math.min(100, Number(e.target.value))),
+                      })
+                    }
+                  />
+                </label>
+              </>
+            )}
+            <span className="ml-auto">Detailed reviews on demand</span>
+          </footer>
+        </main>
+      </div>
+      <SettingsDialog
+        open={settings}
+        onOpenChange={(open) => {
+          setSettings(open);
+          if (!open)
+            void window.electronAPI.loadPreferences().then((p) => {
+              setPrefs(p);
+              void refresh(true);
+            });
         }}
       />
-    </main>
+      <LocalRepoDialog
+        open={localOpen}
+        onOpenChange={setLocalOpen}
+        onSubmit={(localUrl, localTools) => {
+          setLocalOpen(false);
+          void start(localUrl, undefined, localTools.localTools);
+        }}
+      />
+    </div>
   );
 }

@@ -38,6 +38,10 @@ export async function getPrMetadata(
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- GitHub API can return null
     author: data.user?.login ?? 'unknown',
     baseBranch: data.base.ref,
+    baseRepo: data.base.repo.full_name,
+    // GitHub can return null after a fork is deleted, despite the generated type.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+    headRepo: data.head.repo?.full_name ?? data.base.repo.full_name,
     headBranch: data.head.ref,
     baseSha: data.base.sha,
     headSha: data.head.sha,
@@ -655,6 +659,22 @@ export class GitHubDiffSource implements DiffSource {
     return this.metadataPromise;
   }
 
+  private comparisonBase: Promise<string> | null = null;
+  getComparisonBase(): Promise<string> {
+    this.comparisonBase ??= this.getMetadata().then(async meta => {
+      const { data } = await this.octokit.repos.compareCommits({ owner: this.owner, repo: this.repo, base: meta.baseSha, head: meta.headSha });
+      return data.merge_base_commit.sha;
+    });
+    return this.comparisonBase;
+  }
+  async assertCurrent(): Promise<void> {
+    const before = await this.getMetadata();
+    const after = await getPrMetadata(this.octokit, this.owner, this.repo, this.pullNumber);
+    if (before.headSha !== after.headSha || before.baseSha !== after.baseSha || before.baseBranch !== after.baseBranch) {
+      throw new Error('This PR changed during generation. Refresh and try again.');
+    }
+  }
+
   getDiff(changedFiles?: ChangedFile[]): Promise<string> {
     return getPrDiff(this.octokit, this.owner, this.repo, this.pullNumber, changedFiles);
   }
@@ -665,7 +685,7 @@ export class GitHubDiffSource implements DiffSource {
 
   async getFileContent(filePath: string, ref: 'base' | 'head'): Promise<string | null> {
     const meta = await this.getMetadata();
-    const gitRef = ref === 'base' ? meta.baseBranch : meta.headSha;
+    const gitRef = ref === 'base' ? await this.getComparisonBase() : meta.headSha;
     return getFileContent(this.octokit, this.owner, this.repo, filePath, gitRef);
   }
 
@@ -681,7 +701,7 @@ export class GitHubDiffSource implements DiffSource {
     smartImportsProvider?: Provider,
   ): Promise<Record<string, string>> {
     const meta = await this.getMetadata();
-    const gitRef = ref === 'base' ? meta.baseBranch : meta.headSha;
+    const gitRef = ref === 'base' ? await this.getComparisonBase() : meta.headSha;
     return getNeighborFiles(this.octokit, this.owner, this.repo, paths, contents, gitRef, smartImportsProvider);
   }
 

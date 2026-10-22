@@ -1,3 +1,6 @@
+import { sourceForPath } from '../lib/workbench';
+import { buildFileUrlBase } from '../lib/github-url';
+import type { ReviewGuide } from '../lib/types';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from 'react-resizable-panels';
@@ -22,6 +25,9 @@ import type { CommentCallbacks } from '@/components/shared-diff-utils';
 import type { Slide, DiffHunk, FileMetadata, PendingReviewComment, Preferences, ReviewCheck } from '@/lib/types';
 
 interface Props {
+  review?: ReviewGuide;
+  leftSlot?: ReactNode;
+  rightSlot?: ReactNode;
   slide: Slide;
   slideNumber: number;
   totalSlides: number;
@@ -70,11 +76,7 @@ const clickableCheckClass =
 function CopyPromptButton({ prompt, className = '' }: { prompt: string; className?: string }) {
   const { state, copy } = useCopyToClipboard();
   const label =
-    state === 'copied'
-      ? 'Copied'
-      : state === 'failed'
-        ? 'Copy failed — click to retry'
-        : 'Copy as agent prompt';
+    state === 'copied' ? 'Copied' : state === 'failed' ? 'Copy failed — click to retry' : 'Copy as agent prompt';
   return (
     <button
       type="button"
@@ -164,10 +166,7 @@ function renderReviewChecks(
     );
   };
   const copyFor = (text: string, filePath?: string | null, startLine?: number | null) => (
-    <CopyPromptButton
-      prompt={buildAgentPrompt(text, slideTitle, prUrl, filePath, startLine)}
-      className="ml-2"
-    />
+    <CopyPromptButton prompt={buildAgentPrompt(text, slideTitle, prUrl, filePath, startLine)} className="ml-2" />
   );
   // Multi-item structured: custom bulleted list, per-item click
   // affordance for anchored checks.
@@ -191,11 +190,7 @@ function renderReviewChecks(
                     {check.text}
                   </span>
                 )}
-                {copyFor(
-                  check.text,
-                  isClickable ? check.filePath : null,
-                  isClickable ? check.startLine : null
-                )}
+                {copyFor(check.text, isClickable ? check.filePath : null, isClickable ? check.startLine : null)}
               </li>
             );
           })}
@@ -235,11 +230,7 @@ function renderReviewChecks(
                     <Markdown className="review-focus-markdown">{sentence}</Markdown>
                   </span>
                 )}
-                {copyFor(
-                  sentence,
-                  isClickable ? check.filePath : null,
-                  isClickable ? check.startLine : null
-                )}
+                {copyFor(sentence, isClickable ? check.filePath : null, isClickable ? check.startLine : null)}
               </li>
             ))}
           </ul>
@@ -262,11 +253,7 @@ function renderReviewChecks(
                 <Markdown className="review-focus-markdown">{check.text}</Markdown>
               </span>
             )}
-            {copyFor(
-              check.text,
-              isClickable ? check.filePath : null,
-              isClickable ? check.startLine : null
-            )}
+            {copyFor(check.text, isClickable ? check.filePath : null, isClickable ? check.startLine : null)}
           </div>
         </>
       );
@@ -285,11 +272,7 @@ function renderReviewChecks(
             </span>
           )}
         </span>
-        {copyFor(
-          check.text,
-          isClickable ? check.filePath : null,
-          isClickable ? check.startLine : null
-        )}
+        {copyFor(check.text, isClickable ? check.filePath : null, isClickable ? check.startLine : null)}
       </p>
     );
   }
@@ -398,6 +381,9 @@ function DiffLayoutToggle({
 }
 
 export function SlideView({
+  review,
+  leftSlot,
+  rightSlot,
   slide,
   slideNumber,
   prUrl,
@@ -511,7 +497,7 @@ export function SlideView({
   // duplicating JSX. The layout wrapper changes; the content doesn't.
 
   const narrativeContent = (
-    <div className="px-8 py-10 flex flex-col gap-6">
+    <div className="review-narrative px-8 py-10 flex flex-col gap-6">
       <div className="slide-chapter select-text">
         <span>Section {chapterNumber}</span>
         <span aria-hidden="true">·</span>
@@ -527,16 +513,27 @@ export function SlideView({
 
       <Markdown className="slide-prose select-text">{slide.narrative}</Markdown>
 
-      {onExplore && (slide.explainerIdea || slide.explainer || (slide.explainerIdea === undefined && slide.diffHunks.length > 0)) && (
-        <div className="my-6 py-4 border-y border-border flex items-start justify-between gap-5">
-          <div>
-            <p className="editorial-label mb-1">Interactive explanation</p>
-            <p className="font-serif text-lg">{slide.explainerIdea?.title ?? slide.explainer?.title ?? 'Explore this change'}</p>
-            <p className="text-sm text-muted-foreground leading-relaxed mt-1">{slide.explainerIdea?.description ?? slide.explainer?.description ?? 'Build an interactive example from the code in this slide.'}</p>
+      {onExplore &&
+        (slide.explainerIdea ||
+          slide.explainer ||
+          (slide.explainerIdea === undefined && slide.diffHunks.length > 0)) && (
+          <div className="my-6 py-4 border-y border-border flex items-start justify-between gap-5">
+            <div>
+              <p className="editorial-label mb-1">Interactive explanation</p>
+              <p className="font-serif text-lg">
+                {slide.explainerIdea?.title ?? slide.explainer?.title ?? 'Explore this change'}
+              </p>
+              <p className="text-sm text-muted-foreground leading-relaxed mt-1">
+                {slide.explainerIdea?.description ??
+                  slide.explainer?.description ??
+                  'Build an interactive example from the code in this slide.'}
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={onExplore} className="mt-1">
+              Explore
+            </Button>
           </div>
-          <Button variant="outline" size="sm" onClick={onExplore} className="mt-1">Explore</Button>
-        </div>
-      )}
+        )}
 
       {slide.educationNotes && slide.educationNotes.length > 0 && (
         <aside className="education-notes select-text" aria-label="Background concepts">
@@ -544,8 +541,7 @@ export function SlideView({
             <div key={i} className="flex flex-col gap-1">
               <span className="slide-meta">Background</span>
               <p className="slide-prose">
-                <span className="editorial-label">{note.concept}.</span>{' '}
-                {note.explanation}
+                <span className="editorial-label">{note.concept}.</span> {note.explanation}
               </p>
             </div>
           ))}
@@ -554,15 +550,21 @@ export function SlideView({
 
       {slide.affectedFiles.length > 0 && (
         <ul className="slide-meta flex flex-col gap-1 select-text">
-          {slide.affectedFiles.map((f) => (
-            <li key={f} className="truncate">
-              {excludedFiles?.has(f) ? (
-                <span className="italic opacity-70">{f} (excluded)</span>
-              ) : (
-                <FilePathLink filePath={f} gitFileUrlBase={gitFileUrlBase} />
-              )}
-            </li>
-          ))}
+          {slide.affectedFiles.map((f) => {
+            const origin = review ? sourceForPath(review, f).member : undefined;
+            return (
+              <li key={f} className="truncate">
+                {excludedFiles?.has(f) ? (
+                  <span className="italic opacity-70">{f} (excluded)</span>
+                ) : (
+                  <FilePathLink
+                    filePath={f}
+                    gitFileUrlBase={origin ? buildFileUrlBase(origin.url, origin.headSha) : gitFileUrlBase}
+                  />
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
 
@@ -576,7 +578,7 @@ export function SlideView({
           slide.title,
           prUrl,
           checkedChecks,
-          onToggleCheck,
+          onToggleCheck
         )}
         {anchorMiss && (
           <p className="slide-meta mt-2" role="status" aria-live="polite">
@@ -610,11 +612,7 @@ export function SlideView({
               isReviewed ? 'text-[var(--ring)]' : ''
             }`}
           >
-            {isReviewed ? (
-              <>✓ Reviewed · press r to undo</>
-            ) : (
-              <>Mark reviewed and continue · r</>
-            )}
+            {isReviewed ? <>✓ Reviewed · press r to undo</> : <>Mark reviewed and continue · r</>}
           </button>
         )}
         {onAskQuestion && (
@@ -630,7 +628,7 @@ export function SlideView({
   const diffContent = (
     <div
       ref={rightPanelRef}
-      className="relative px-6 py-10 flex flex-col gap-5"
+      className="review-code relative px-6 py-10 flex flex-col gap-5"
       onMouseUp={handleDiffMouseUp}
       onMouseDown={handleDiffMouseDown}
     >
@@ -657,29 +655,31 @@ export function SlideView({
       {groupedHunks.length === 0 && (
         <div className="flex flex-col gap-1.5">
           <p className="editorial-label text-sm">Context section.</p>
-          <p className="slide-meta">
-            No code changes here — this section provides context for what follows.
-          </p>
+          <p className="slide-meta">No code changes here — this section provides context for what follows.</p>
         </div>
       )}
       {groupedHunks.map(({ filePath, hunks }) => {
+        const origin = review ? sourceForPath(review, filePath) : undefined;
+        const sourceUrl = origin?.member ? buildFileUrlBase(origin.member.url, origin.member.headSha) : gitFileUrlBase;
         const fm = fileMetadataMap?.get(filePath);
         const ageBadge = fm ? formatFileAge(fm.lastModified) : null;
         const churnBadge = fm && (fm.prCommitCount ?? 1) > 1 ? `${fm.prCommitCount}× in this PR` : null;
 
         return (
           <div key={filePath} className="flex flex-col gap-0">
+            {origin?.member && review?.snapshot?.subject.kind === 'stack' && (
+              <div className="source-attribution">
+                <span>PR #{origin.member.number}</span>
+                <span className="text-muted-foreground truncate">{origin.member.title}</span>
+              </div>
+            )}
             {/* File metadata badges — age + churn. Render as quiet
                 mono text above the file's diff header, only when
                 data is available. */}
             {(ageBadge || churnBadge) && (
               <div className="flex items-center gap-3 px-3 py-1 slide-meta">
-                {ageBadge && (
-                  <span className="statusPill-amber">{ageBadge}</span>
-                )}
-                {churnBadge && (
-                  <span className="statusPill-neutral">{churnBadge}</span>
-                )}
+                {ageBadge && <span className="statusPill-amber">{ageBadge}</span>}
+                {churnBadge && <span className="statusPill-neutral">{churnBadge}</span>}
               </div>
             )}
             {diffLayout === 'split' ? (
@@ -689,7 +689,7 @@ export function SlideView({
                 pendingComments={pendingComments}
                 slideIndex={slideNumber}
                 commentCallbacks={commentCallbacks}
-                gitFileUrlBase={gitFileUrlBase}
+                gitFileUrlBase={sourceUrl}
               />
             ) : commentCallbacks ? (
               <InteractiveDiffHunkGroup
@@ -700,10 +700,10 @@ export function SlideView({
                 onAddComment={commentCallbacks.onAddComment}
                 onRemoveComment={commentCallbacks.onRemoveComment}
                 onEditComment={commentCallbacks.onEditComment}
-                gitFileUrlBase={gitFileUrlBase}
+                gitFileUrlBase={sourceUrl}
               />
             ) : (
-              <DiffHunkGroup filePath={filePath} hunks={hunks} gitFileUrlBase={gitFileUrlBase} />
+              <DiffHunkGroup filePath={filePath} hunks={hunks} gitFileUrlBase={sourceUrl} />
             )}
           </div>
         );
@@ -712,15 +712,21 @@ export function SlideView({
   );
 
   // ── Split mode ── resizable narrative (left) + diff (right) panels
-  if (viewMode === 'split') {
+  if (viewMode === 'split' || leftSlot || rightSlot) {
     return (
       <PanelGroup orientation="horizontal" className="flex flex-1 overflow-hidden">
-        <Panel defaultSize={40} minSize={25} className="overflow-y-auto min-h-0">
-          {narrativeContent}
+        <Panel defaultSize={40} minSize={25} className="overflow-hidden min-h-0">
+          <div hidden={!!leftSlot} className="h-full overflow-y-auto">
+            {narrativeContent}
+          </div>
+          {leftSlot && <div className="review-tool-slot">{leftSlot}</div>}
         </Panel>
         <PanelResizeHandle className="w-px bg-border hover:bg-[var(--ring)]/40 transition-colors cursor-col-resize" />
-        <Panel defaultSize={60} minSize={30} className="overflow-y-auto min-h-0">
-          {diffContent}
+        <Panel defaultSize={60} minSize={30} className="overflow-hidden min-h-0">
+          <div hidden={!!rightSlot} className="h-full overflow-y-auto">
+            {diffContent}
+          </div>
+          {rightSlot && <div className="review-tool-slot">{rightSlot}</div>}
         </Panel>
       </PanelGroup>
     );
@@ -732,9 +738,7 @@ export function SlideView({
   return (
     <div className="flex-1 overflow-y-auto">
       {narrativeContent}
-      <div className="border-t border-border">
-        {diffContent}
-      </div>
+      <div className="border-t border-border">{diffContent}</div>
     </div>
   );
 }

@@ -38,10 +38,7 @@ export function StaleBanner({ freshness, onReReview }: Props) {
     return (
       <div className="staleBanner-warn border-b border-[var(--color-warning)]/28 px-6 py-1.5 text-xs flex items-center justify-between gap-2">
         <span>PR was force-pushed since this review was generated.</span>
-        <button
-          onClick={onReReview}
-          className="staleBanner-warn-btn px-2 py-0.5 rounded-sm text-xs transition-colors"
-        >
+        <button onClick={onReReview} className="staleBanner-warn-btn px-2 py-0.5 rounded-sm text-xs transition-colors">
           Re-review
         </button>
       </div>
@@ -61,12 +58,9 @@ export function StaleBanner({ freshness, onReReview }: Props) {
           className="staleBanner-warn-toggle inline-flex items-center gap-1.5 text-left transition-colors"
         >
           {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-          {aheadBy} commit{aheadBy !== 1 ? 's' : ''} behind
+          {freshness.reason ?? `${aheadBy} commit${aheadBy !== 1 ? 's' : ''} behind`}
         </button>
-        <button
-          onClick={onReReview}
-          className="staleBanner-warn-btn px-2 py-0.5 rounded-sm text-xs transition-colors"
-        >
+        <button onClick={onReReview} className="staleBanner-warn-btn px-2 py-0.5 rounded-sm text-xs transition-colors">
           Re-review
         </button>
       </div>

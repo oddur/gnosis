@@ -1,3 +1,4 @@
+import type { WorkbenchQueue, GroupingOverride, ReviewSnapshot } from '../lib/workbench';
 import type {
   ChangedFile,
   GenerateReviewRequest,
@@ -19,6 +20,10 @@ import type {
 declare global {
   interface Window {
     electronAPI: {
+      workbenchQueue: (force?: boolean) => Promise<WorkbenchQueue>;
+      workbenchGroup: (correction: GroupingOverride) => Promise<WorkbenchQueue>;
+      workbenchBriefing: (id: string) => Promise<WorkbenchQueue>;
+      workbenchFreshness: (snapshot: ReviewSnapshot) => Promise<FreshnessResult>;
       generateExplainer: (req: GenerateExplainerRequest) => Promise<InteractiveExplainer>;
       cancelExplainer: (req: GenerateExplainerRequest) => Promise<void>;
       startReview: (req: GenerateReviewRequest) => Promise<StartReviewResult>;
