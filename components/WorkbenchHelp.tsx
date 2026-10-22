@@ -102,7 +102,13 @@ export function WorkbenchHelp({ onGettingStarted }: { onGettingStarted?: () => v
             <summary>Queue filters and keyboard shortcuts</summary>
             <p>
               <strong>Requested</strong> means you were asked to review. <strong>Updated</strong> means code changed
-              since a saved review. <strong>Dependencies</strong> shows changes that other PRs build on.
+              since a saved review. <strong>PR dependencies</strong> shows changes that other PRs build on and that are
+              not merged yet.
+            </p>
+            <p>
+              For example, PR #42 adds an API and PR #43 uses it. #43 builds on #42; reviewing #42 helps the stack move
+              forward. “Other PRs depend on this” describes that relationship. It does not mean checks are failing or
+              work has stopped.
             </p>
             <p>
               In the queue: <kbd>↑</kbd>/<kbd>↓</kbd> or <kbd>j</kbd>/<kbd>k</kbd> select a change; <kbd>Enter</kbd>{' '}

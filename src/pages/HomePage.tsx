@@ -49,7 +49,7 @@ interface Props {
 const labels = {
   updated: 'Updated since review',
   requested: 'Review requested',
-  blocking: 'Blocking dependent work',
+  blocking: 'Other PRs depend on this',
   other: 'Following',
 };
 
@@ -460,8 +460,6 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
         >
           Gnosis
         </a>
-        <span className="workbench-header-separator" />
-        <span className="text-sm text-muted-foreground">Review workbench</span>
         <div className="ml-auto flex items-center gap-2">
           {prefs && (
             <select
@@ -516,14 +514,16 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
             ['all', 'Work queue', Inbox],
             ['requested', 'Requested', GitPullRequest],
             ['updated', 'Updated', RefreshCw],
-            ['blocking', 'Dependencies', GitBranch],
+            ['blocking', 'PR dependencies', GitBranch],
             ['saved', 'Saved reviews', Clock],
           ].map(([id, label, Icon]) => {
             const I = Icon as typeof Inbox;
             return (
               <button
                 key={id as string}
-                title={label as string}
+                title={
+                  id === 'blocking' ? 'Other PRs depend on this: changes that other PRs build on' : (label as string)
+                }
                 aria-current={section === id ? 'page' : undefined}
                 className={section === id ? 'active' : ''}
                 onClick={() => {
@@ -578,7 +578,9 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
               <p>
                 {section === 'saved'
                   ? 'Your review history, ready to resume.'
-                  : 'Select a PR or stack for a short briefing; start a guided review to inspect the code.'}
+                  : section === 'blocking'
+                    ? 'Other PRs build on changes here that are not merged yet. This does not mean checks are failing or work has stopped.'
+                    : 'Select a PR or stack for a short briefing; start a guided review to inspect the code.'}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -799,6 +801,12 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                       <h2 className="queue-section-title">
                         {labels[category]} <span>{group.length}</span>
                       </h2>
+                      {category === 'blocking' && section === 'all' && (
+                        <p className="queue-dependency-help">
+                          Other PRs build on these unmerged changes. This describes a code dependency, not a failed
+                          check.
+                        </p>
+                      )}
                       {group.map(row)}
                     </div>
                   ) : null;
@@ -814,7 +822,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                         : !auth?.authenticated
                           ? 'Your GitHub queue is not connected'
                           : section !== 'all'
-                            ? `No changes in ${labels[section as keyof typeof labels].toLowerCase()}`
+                            ? 'No changes in this queue filter'
                             : 'No pull requests in your queue'}
                   </h2>
                   <p>
@@ -1017,6 +1025,23 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                               ? 'Status unavailable'
                               : 'Loading status…'}
                         </p>
+                        {selectedItem.subject.edges
+                          .filter((edge) => edge.child === m.url)
+                          .map((edge) => (
+                            <p key={edge.parent} className="stack-dependency">
+                              Builds on{' '}
+                              <a
+                                href={edge.parent}
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  void window.electronAPI.openExternal(edge.parent);
+                                }}
+                              >
+                                #{edge.parent.split('/').at(-1)}
+                              </a>{' '}
+                              — this PR uses changes from that PR.
+                            </p>
+                          ))}
                         {statusErrors[m.url] && (
                           <div className="member-status-error" role="status">
                             <p>{githubFailureMessage(statusErrors[m.url])}</p>
