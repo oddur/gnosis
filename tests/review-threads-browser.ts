@@ -43,6 +43,18 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelectorAll('.review-diff .github-thread').length"), 3);
     assert.equal(await js("document.querySelectorAll('.github-unplaced-threads .github-thread').length"), 2);
     assert.equal(await js("document.querySelectorAll('.review-diff .github-thread[open]').length"), 2);
+    assert.equal(
+      await js("document.querySelectorAll('.github-unplaced-threads .github-thread[open]').length"),
+      2,
+      'Unresolved discussions stay expanded even when GitHub cannot anchor them to saved code'
+    );
+    await click('View 2 threads below diff');
+    assert.equal(
+      await js("document.activeElement.classList.contains('github-unplaced-threads')"),
+      true,
+      'The file toolbar takes keyboard focus to comments without matching lines'
+    );
+    await js("document.querySelector('.github-discussion-toolbar').scrollIntoView({block:'center'})");
     await capture('threads-light');
     await click('Split');
     await wait("document.querySelectorAll('.review-diff .github-thread').length===3");

@@ -34,7 +34,7 @@ export function GitHubReviewThread({ thread, reason, onAction }: Props) {
   }
   const first = thread.comments.length ? thread.comments[0] : undefined;
   return (
-    <details className="github-thread" open={!thread.isResolved && !reason}>
+    <details className="github-thread" open={!thread.isResolved}>
       <summary>
         <ChevronRight className="github-thread-chevron" size={12} aria-hidden="true" />
         {thread.isResolved ? <Check size={14} aria-hidden="true" /> : <MessageSquare size={14} aria-hidden="true" />}

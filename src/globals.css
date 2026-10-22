@@ -1893,7 +1893,8 @@ body:has(.activity-drawer) .app-toasts { bottom:auto; top:64px; }
 
 /* Published GitHub discussions remain distinct from local draft comments. */
 .github-discussion-toolbar { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; padding:5px 12px; font-size:var(--type-caption); background:var(--card); color:var(--muted-foreground); border-inline:1px solid var(--border); }
-.github-discussion-toolbar button { color:var(--ring); margin-left:auto; }
+.github-discussion-toolbar button { color:var(--ring); }
+.github-discussion-toolbar .github-discussion-refresh { margin-left:auto; }
 .github-discussion-toolbar button:disabled { opacity:.5; }
 .github-thread { margin:8px 12px; border:1px solid var(--border); border-radius:5px; background:var(--card); color:var(--foreground); font-family:var(--font-sans); font-size:var(--type-control); line-height:1.5; overflow-wrap:anywhere; white-space:normal; }
 .github-thread summary { display:flex; align-items:center; flex-wrap:wrap; gap:6px; padding:8px 10px; cursor:pointer; }
@@ -1919,3 +1920,4 @@ body:has(.activity-drawer) .app-toasts { bottom:auto; top:64px; }
 .github-comment-body ul,.github-comment-body ol { padding-left:20px; list-style:revert; }
 .github-comment-body blockquote { padding-left:12px; border-left:1px solid var(--border); color:var(--muted-foreground); }
 .github-unplaced-threads>p { padding:8px 12px 0; font-size:var(--type-caption); color:var(--muted-foreground); }
+.github-unplaced-threads { scroll-margin-top:100px; }

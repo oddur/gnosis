@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentProps } from 'react';
+import { useEffect, useId, useRef, useState, type ComponentProps } from 'react';
 import { ReviewDiff } from './ReviewDiff';
 import { GitHubReviewThread } from './GitHubReviewThread';
 import {
@@ -23,6 +23,8 @@ export function ReviewFileDiscussion({ review, ...diff }: Props) {
   const previousPr = useRef<string | undefined>(undefined);
   const [refresh, setRefresh] = useState(0);
   const root = useRef<HTMLDivElement>(null);
+  const unplacedSection = useRef<HTMLDivElement>(null);
+  const unplacedId = useId();
   const [notice, setNotice] = useState('');
   useEffect(() => {
     const version = ++request.current;
@@ -54,6 +56,8 @@ export function ReviewFileDiscussion({ review, ...diff }: Props) {
         ? threadPlacementReason(thread, data, source, diff.hunks, diff.fileStatus)
         : 'Revision unavailable.',
   }));
+  const unplaced = placed.filter((p) => p.reason);
+  const unresolved = threads.filter((thread) => !thread.isResolved).length;
   async function act(thread: Thread, action: ReviewThreadAction['action'], body?: string) {
     if (!prUrl) return;
     const updated = await window.electronAPI.reviewThreadAction({ prUrl, threadId: thread.id, action, body });
@@ -76,9 +80,21 @@ export function ReviewFileDiscussion({ review, ...diff }: Props) {
           <span>
             {busy
               ? 'Loading GitHub comments…'
-              : `${threads.length} GitHub ${threads.length === 1 ? 'thread' : 'threads'}`}
+              : `${threads.length} GitHub ${threads.length === 1 ? 'thread' : 'threads'} · ${unresolved} unresolved`}
           </span>
+          {unplaced.length > 0 && (
+            <button
+              aria-controls={unplacedId}
+              onClick={() => {
+                unplacedSection.current?.focus({ preventScroll: true });
+                unplacedSection.current?.scrollIntoView({ block: 'start' });
+              }}
+            >
+              View {unplaced.length} {unplaced.length === 1 ? 'thread' : 'threads'} below diff
+            </button>
+          )}
           <button
+            className="github-discussion-refresh"
             disabled={busy}
             onClick={() => {
               const draft = root.current?.querySelector('textarea');
@@ -110,10 +126,17 @@ export function ReviewFileDiscussion({ review, ...diff }: Props) {
         threads={placed.filter((p) => !p.reason).map((p) => p.thread)}
         renderThread={renderThread}
       />
-      {placed.some((p) => p.reason) && (
-        <div className="github-unplaced-threads">
-          <p>Threads outside this saved code</p>
-          {placed.filter((p) => p.reason).map(({ thread, reason }) => renderThread(thread, reason ?? undefined))}
+      {unplaced.length > 0 && (
+        <div
+          ref={unplacedSection}
+          id={unplacedId}
+          className="github-unplaced-threads"
+          tabIndex={-1}
+          role="region"
+          aria-label="GitHub comments without matching lines"
+        >
+          <p>GitHub comments without matching lines in this diff</p>
+          {unplaced.map(({ thread, reason }) => renderThread(thread, reason ?? undefined))}
         </div>
       )}
     </div>
