@@ -21,8 +21,7 @@ import type { CiCheck, FileMetadata, PrMetadata, PrSearchResult, PrStatus } from
 import {
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_FAST_CLAUDE_MODEL,
-  RETIRED_CLAUDE_MODELS,
-  isClaudeModel,
+  normalizeModelSelection,
 } from '../lib/models';
 import { buildContextPackage, buildPlannerContext, buildTopicContext } from '../lib/context-builder';
 import { generateReviewGuide, planReview, generateSlide } from '../lib/agent';
@@ -997,6 +996,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   codeTheme: 'aurora-x',
   codeFont: 'jetbrains-mono',
   claudePath: '',
+  codexPath: '',
   notifications: true,
   diffLayout: 'unified',
   includeAllFiles: true,
@@ -1018,6 +1018,7 @@ const DEFAULT_PREFERENCES: Preferences = {
 
 function applyBinaryOverrides(prefs: Preferences): void {
   setBinaryOverride('claude', prefs.claudePath);
+  setBinaryOverride('codex', prefs.codexPath);
 }
 
 function loadPreferences(): Preferences {
@@ -1028,22 +1029,12 @@ function loadPreferences(): Preferences {
       stored.proactiveMode = stored.autoReviewOnRequest;
       delete stored.autoReviewOnRequest;
     }
-    // Normalize stored model ids against the roster: retired models map
-    // to their successor, and anything else unknown (gemini leftovers,
-    // hand-edited prefs, a model retired without a table entry) falls
-    // back to the default rather than reaching the CLI as `--model`.
-    for (const key of ['model', 'proactiveModel'] as const) {
-      const value = stored[key];
-      if (typeof value !== 'string' || isClaudeModel(value)) continue;
-      stored[key] = Object.prototype.hasOwnProperty.call(RETIRED_CLAUDE_MODELS, value)
-        ? RETIRED_CLAUDE_MODELS[value].successor
-        : DEFAULT_PREFERENCES[key];
-    }
-    // Drop Gemini settings from stored prefs of users who previously
-    // selected it — provider reverts to claude, the orphaned geminiPath
-    // string is discarded (models are covered by the normalization above).
-    if (stored.provider === 'gemini') stored.provider = 'claude';
-    if (stored.proactiveProvider === 'gemini') stored.proactiveProvider = 'claude';
+    const selection = normalizeModelSelection(stored.provider, stored.model);
+    const proactive = normalizeModelSelection(stored.proactiveProvider, stored.proactiveModel, true);
+    Object.assign(stored, selection, {
+      proactiveProvider: proactive.provider,
+      proactiveModel: proactive.model,
+    });
     delete stored.geminiPath;
     return { ...DEFAULT_PREFERENCES, ...(stored as Partial<Preferences>) };
   } catch {
@@ -1205,12 +1196,14 @@ ipcMain.handle('save-preferences', (_event, prefs: Preferences) => {
 });
 
 ipcMain.handle('detect-binary-path', (_event, name: string) => {
-  const extra = name === 'claude' ? [`${os.homedir()}/.volta/bin/claude`, `${os.homedir()}/.local/bin/claude`] : [];
+  if (name !== 'claude' && name !== 'codex') throw new Error('Unknown CLI provider');
+  const extra = [`${os.homedir()}/.volta/bin/${name}`];
   return detectBinaryPath(name, extra);
 });
 
 ipcMain.handle('check-cli-installed', (_event, provider: string) => {
-  const extra = provider === 'claude' ? [`${os.homedir()}/.volta/bin/claude`, `${os.homedir()}/.local/bin/claude`] : [];
+  if (provider !== 'claude' && provider !== 'codex') throw new Error('Unknown CLI provider');
+  const extra = [`${os.homedir()}/.volta/bin/${provider}`];
   const resolved = resolveBinaryPath(provider, extra);
   const installed = path.isAbsolute(resolved) && fs.existsSync(resolved);
   return { installed, resolvedPath: resolved };
@@ -1839,7 +1832,7 @@ async function runBackgroundGeneration(
     // CLI with cwd = repo, stop writing the GitHub-specific MCP config, and
     // allow a read-only + test tool set. The repo's own `.mcp.json` and
     // `.claude/skills/` are auto-discovered from the cwd.
-    const localToolsOn = source.kind === 'local' && !!request.localTools && !!source.cwd;
+    const localToolsOn = provider === 'claude' && source.kind === 'local' && !!request.localTools && !!source.cwd;
     if (localToolsOn) {
       broadcastToAllWindows('review-phase', {
         reviewId,
@@ -1936,14 +1929,14 @@ async function runBackgroundGeneration(
         // Local-tool mode: the repo's own `.mcp.json` is discovered from cwd.
         // Don't write a GitHub-specific MCP config.
         allowedTools = LOCAL_REVIEW_TOOLS;
-      } else if (prefs.enableTools) {
+      } else if (provider === 'claude' && prefs.enableTools) {
         if (token) {
           mcpConfigPath = writeMcpConfig(token);
           allowedTools = ALLOWED_TOOLS;
         } else {
           allowedTools = WEB_ONLY_TOOLS;
         }
-      } else if (webResearch) {
+      } else if (provider === 'claude' && webResearch) {
         allowedTools = WEB_ONLY_TOOLS;
       }
 
@@ -1957,7 +1950,7 @@ async function runBackgroundGeneration(
           instructions,
           thinking,
           reviewSuggestions,
-          webResearch,
+          webResearch: provider === 'claude' && webResearch,
           educationMode,
           hasClaudeContext: !!projectClaudeContext,
           mcpConfigPath,
@@ -2207,7 +2200,7 @@ ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
   let mcpConfigPath: string | undefined;
   let allowedTools: string[] | undefined;
 
-  if (prefs.enableTools) {
+  if (req.provider === 'claude' && prefs.enableTools) {
     const token = getResolvedToken();
     if (token) {
       mcpConfigPath = writeMcpConfig(token);
@@ -2215,7 +2208,7 @@ ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
     } else {
       allowedTools = WEB_ONLY_TOOLS;
     }
-  } else if (prefs.enableWebResearch) {
+  } else if (req.provider === 'claude' && prefs.enableWebResearch) {
     allowedTools = WEB_ONLY_TOOLS;
   }
 

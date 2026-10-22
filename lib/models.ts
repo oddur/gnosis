@@ -35,3 +35,43 @@ export const RETIRED_CLAUDE_MODELS: Record<string, { label: string; successor: C
   'claude-opus-4-7': { label: 'Claude Opus 4.7', successor: 'claude-opus-5' },
   'claude-sonnet-4-6': { label: 'Claude Sonnet 4.6', successor: 'claude-sonnet-5' },
 };
+
+export const CODEX_MODELS = [
+  { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', quick: false },
+  { id: 'gpt-6-astra', label: 'GPT-6 Astra', quick: false },
+  { id: 'gpt-6-luna', label: 'GPT-6 Luna', quick: true },
+] as const;
+
+export type CodexModel = (typeof CODEX_MODELS)[number]['id'];
+export type Provider = 'claude' | 'codex';
+export type ModelId = ClaudeModel | CodexModel;
+
+export const PROVIDER_IDS: Provider[] = ['claude', 'codex'];
+export const PROVIDERS = {
+  claude: { label: 'Claude', models: CLAUDE_MODELS },
+  codex: { label: 'Codex', models: CODEX_MODELS },
+} as const;
+
+export const DEFAULT_CODEX_MODEL: CodexModel = 'gpt-6.1-sol';
+
+/** Keep provider and model together, including when loading older preferences. */
+export function normalizeModelSelection(
+  provider: unknown,
+  model: unknown,
+  proactive = false
+): { provider: Provider; model: ModelId } {
+  const selected = provider === 'codex' ? 'codex' : 'claude';
+  const match = PROVIDERS[selected].models.find((m) => m.id === model);
+  if (match) return { provider: selected, model: match.id };
+  if (
+    selected === 'claude' &&
+    typeof model === 'string' &&
+    Object.prototype.hasOwnProperty.call(RETIRED_CLAUDE_MODELS, model)
+  ) {
+    return { provider: selected, model: RETIRED_CLAUDE_MODELS[model].successor };
+  }
+  return {
+    provider: selected,
+    model: selected === 'codex' ? DEFAULT_CODEX_MODEL : proactive ? DEFAULT_FAST_CLAUDE_MODEL : DEFAULT_CLAUDE_MODEL,
+  };
+}

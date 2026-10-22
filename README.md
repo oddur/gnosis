@@ -8,12 +8,12 @@ Pull requests are still reviewed the same way they always have been — scrollin
 
 Gnosis is an experiment in changing that. Paste a PR URL and it reads the diff, groups related changes together, and presents them as an ordered slideshow — foundation changes first, then the features built on top, then tests and config. Each slide has a short explanation of _why_ the change is there, the relevant diff, and optionally a diagram. The goal is to walk the reviewer through the change the way the author understands it, not the way the filesystem happens to order it.
 
-It runs locally and uses the [Claude Code CLI](https://claude.ai/code) under the hood.
+It runs locally and uses the [Claude Code CLI](https://claude.ai/code) or [Codex CLI](https://learn.chatgpt.com/docs/cli).
 
 ## Features
 
 - **Guided slideshow** — changes are grouped by theme and ordered by dependency (foundations first, then implementations, then tests and config), not by filename
-- **Claude-native** — pick between Claude Fable 5, Opus 5, Sonnet 5, and Haiku 4.5
+- **Model choice** — use Claude or Codex for reviews, slide chat, and smart imports. Codex supports GPT-6.1 Sol, GPT-6 Astra, and GPT-6 Luna.
 - **Extended thinking** — enable deeper reasoning (slower, more thorough)
 - **Custom instructions** — steer the review with free-text prompts (e.g. _focus on security_, _explain the auth flow_)
 - **Inline review comments** — add comments on specific diff lines and submit directly to GitHub as an approval, request for changes, or comment
@@ -39,7 +39,24 @@ It runs locally and uses the [Claude Code CLI](https://claude.ai/code) under the
 
 ## Requirements
 
-- [Claude Code CLI](https://claude.ai/code) installed and authenticated with `claude auth`
+Install and authenticate at least one CLI:
+
+- [Claude Code CLI](https://claude.ai/code): authenticate with `claude auth`.
+- [Codex CLI](https://learn.chatgpt.com/docs/cli) 0.163.0 or later: install with `npm install -g @openai/codex`, then authenticate with `codex login`.
+
+Codex uses its saved CLI login. Gnosis does not require a separate OpenAI API key.
+Model access depends on your Codex account.
+
+In the model menu, select a model under **Codex**.
+If Gnosis cannot find the CLI, set **Codex CLI path** in Settings.
+
+Codex supports GitHub PRs, local Git diffs, background reviews, slide chat, and smart imports.
+Extended thinking selects high reasoning effort. With this option off, Codex uses low effort.
+Codex reviews the context supplied by Gnosis in a read-only session.
+Gnosis disables Codex shell tools, apps, plugins, hooks, and web search for these sessions.
+Gnosis does not load user CLI settings or project instructions automatically.
+The **Apply project's Claude conventions** option still adds those files to the supplied review context.
+Web research, GitHub MCP, and local project tools require Claude.
 
 ## Install
 
@@ -61,7 +78,7 @@ On first launch, click **Sign in with GitHub** to authenticate via OAuth.
 ## Usage
 
 1. Paste a GitHub PR URL — or click **Browse** to pick from your open PRs and review requests
-2. Choose a Claude model
+2. Choose a Claude or Codex model
 3. Optionally enable **Extended thinking** for deeper analysis (slower)
 4. Optionally add custom instructions — e.g. _focus on security_, _explain the auth flow_
 5. Hit **Generate Review** — the review generates in the background so you can submit more PRs or browse existing reviews while it runs

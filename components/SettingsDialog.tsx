@@ -3,15 +3,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { CODE_THEMES, CODE_FONTS } from '@/lib/constants';
 import type { CodeTheme, CodeFont } from '@/lib/constants';
 import { applyTheme, type ThemeChoice } from '@/lib/theme';
-import { CLAUDE_MODELS, DEFAULT_FAST_CLAUDE_MODEL } from '@/lib/models';
+import { PROVIDERS, PROVIDER_IDS, DEFAULT_FAST_CLAUDE_MODEL } from '@/lib/models';
 import type { ModelId, Preferences, Provider, RepoSearchResult } from '@/lib/types';
-
-const PROVIDER_MODELS: Record<Provider, { label: string; models: typeof CLAUDE_MODELS }> = {
-  claude: {
-    label: 'Claude',
-    models: CLAUDE_MODELS,
-  },
-};
 
 interface Props {
   open: boolean;
@@ -134,6 +127,9 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
   const [proactiveReviewOverrides, setProactiveReviewOverrides] = useState(false);
   const [proactiveModel, setProactiveModel] = useState<ModelId>(DEFAULT_FAST_CLAUDE_MODEL);
   const [proactiveThinking, setProactiveThinking] = useState(false);
+  const [proactiveProvider, setProactiveProvider] = useState<Provider>('claude');
+  const [codexPath, setCodexPath] = useState('');
+  const [codexDetected, setCodexDetected] = useState('');
   const [claudePath, setClaudePath] = useState('');
   const [claudeDetected, setClaudeDetected] = useState('');
 
@@ -157,11 +153,14 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
       setClaudeContext(prefs.claudeContext);
       setAnalytics(prefs.analytics);
       setProactiveReviewOverrides(prefs.proactiveReviewOverrides);
+      setProactiveProvider(prefs.proactiveProvider);
       setProactiveModel(prefs.proactiveModel);
+      setCodexPath(prefs.codexPath);
       setProactiveThinking(prefs.proactiveThinking);
       setClaudePath(prefs.claudePath || '');
     });
     void window.electronAPI.detectBinaryPath('claude').then(setClaudeDetected);
+    void window.electronAPI.detectBinaryPath('codex').then(setCodexDetected);
   }, [open]);
 
   function handleSelectAppTheme(theme: ThemeChoice) {
@@ -246,8 +245,8 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
 
           <section className="flex flex-col gap-3 border-t border-border pt-5">
             <SettingRow
-              label="Web search and context"
-              description="Let the model search the web and fetch GitHub context during generation. More thorough, but slower."
+              label="Web search and context (Claude only)"
+              description="Let Claude search the web and fetch GitHub context during generation. More thorough, but slower."
             >
               <Toggle
                 checked={enableTools}
@@ -443,26 +442,26 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
 
               {proactiveReviewOverrides && (
                 <div className="flex flex-col gap-3 mt-1">
-                  <div className="flex flex-wrap items-center gap-x-5 gap-y-2 slide-meta">
-                    <span className="text-foreground/60">Claude</span>
-                    {PROVIDER_MODELS.claude.models.map((m) => (
-                      <button
-                        key={m.id}
-                        type="button"
-                        onClick={() => {
-                          setProactiveModel(m.id);
-                          saveField({ proactiveModel: m.id });
-                        }}
-                        className={`pb-0.5 border-b transition-colors ${
-                          proactiveModel === m.id
-                            ? 'text-foreground border-[var(--ring)]'
-                            : 'border-transparent hover:text-foreground'
-                        }`}
-                      >
-                        {m.label}
-                      </button>
-                    ))}
-                  </div>
+                  {PROVIDER_IDS.map((id) => (
+                    <div key={id} className="flex flex-wrap items-center gap-x-5 gap-y-2 slide-meta">
+                      <span className="text-foreground/60">{PROVIDERS[id].label}</span>
+                      {PROVIDERS[id].models.map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          aria-pressed={proactiveProvider === id && proactiveModel === m.id}
+                          onClick={() => {
+                            setProactiveProvider(id);
+                            setProactiveModel(m.id);
+                            saveField({ proactiveProvider: id, proactiveModel: m.id });
+                          }}
+                          className={`pb-0.5 border-b transition-colors ${proactiveModel === m.id ? 'text-foreground border-[var(--ring)]' : 'border-transparent hover:text-foreground'}`}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                  ))}
                   <div className="flex items-center justify-between gap-4">
                     <div className="flex flex-col gap-0.5 min-w-0">
                       <span className="text-sm font-medium text-foreground">Extended thinking</span>
@@ -537,6 +536,22 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                 className="bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground/60 transition-colors"
               />
               <p className="slide-meta">Leave empty to auto-detect.</p>
+            </div>
+          </section>
+
+          <section className="flex flex-col gap-4 border-t border-border pt-5">
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="codex-path" className="text-sm font-medium text-foreground">Codex CLI path</label>
+              <input
+                id="codex-path"
+                type="text"
+                value={codexPath}
+                placeholder={codexDetected || 'auto-detect'}
+                onChange={(e) => setCodexPath(e.target.value)}
+                onBlur={() => saveField({ codexPath })}
+                className="bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground/60 transition-colors"
+              />
+              <p className="slide-meta">Leave empty to auto-detect. Sign in first with <code>codex login</code>.</p>
             </div>
           </section>
 

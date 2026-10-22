@@ -1,4 +1,5 @@
 import { claudeProvider } from './providers/claude';
+import { codexProvider } from './providers/codex';
 import type { ModelId, Provider } from './types';
 
 export interface GenerateOptions {
@@ -45,6 +46,7 @@ export interface LLMProvider {
 
 const providers: Record<Provider, LLMProvider> = {
   claude: claudeProvider,
+  codex: codexProvider,
 };
 
 export function getProvider(name: Provider): LLMProvider {

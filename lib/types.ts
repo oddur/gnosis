@@ -1,4 +1,4 @@
-import type { ClaudeModel } from './models';
+import type { ModelId, Provider } from './models';
 
 export type SlideType = 'foundation' | 'feature' | 'refactor' | 'bugfix' | 'test' | 'config' | 'docs';
 
@@ -237,11 +237,7 @@ export interface StartReviewResult {
   author: string;
 }
 
-export type Provider = 'claude';
-
-export type { ClaudeModel };
-
-export type ModelId = ClaudeModel;
+export type { ClaudeModel, CodexModel, ModelId, Provider } from './models';
 
 export interface Preferences {
   instructions: string;
@@ -257,6 +253,7 @@ export interface Preferences {
   codeTheme: string;
   codeFont: string;
   claudePath: string;
+  codexPath: string;
   notifications: boolean;
   diffLayout: 'unified' | 'split';
   includeAllFiles: boolean;

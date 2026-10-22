@@ -33,7 +33,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../componen
 import { OnboardingRepoSetup } from '../../components/OnboardingRepoSetup';
 import { Avatar, AvatarFallback, AvatarImage } from '../../components/ui/avatar';
 import { riskConfig, safeConfigLookup } from '../../lib/constants';
-import { CLAUDE_MODELS, DEFAULT_CLAUDE_MODEL, RETIRED_CLAUDE_MODELS } from '../../lib/models';
+import { PROVIDERS, PROVIDER_IDS, DEFAULT_CLAUDE_MODEL, RETIRED_CLAUDE_MODELS } from '../../lib/models';
 import type { ModelId, Preferences, Provider, PrSearchResult, ReviewGuide, ReviewHistoryEntry, UpdateInfo } from '../../lib/types';
 import { timeAgo, formatDuration, formatBytes, groupReviewsByPR } from '../../lib/utils';
 
@@ -43,13 +43,6 @@ interface Props {
 }
 
 type AuthStatus = 'checking' | 'unauthenticated' | 'signing-in' | { login: string };
-
-const PROVIDERS = {
-  claude: {
-    label: 'Claude',
-    models: CLAUDE_MODELS,
-  },
-} as const;
 
 // Current roster labels plus retired-model labels, so old history
 // entries still render a friendly name instead of the raw ID.
@@ -139,7 +132,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
   const [guestMode, setGuestMode] = useState(false);
   const [filePickerOpen, setFilePickerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [cliNotFound, setCliNotFound] = useState<{ provider: string } | null>(null);
+  const [cliNotFound, setCliNotFound] = useState<{ provider: Provider } | null>(null);
   const [expandedPRs, setExpandedPRs] = useState<Set<string>>(new Set());
   const [reviewPhases, setReviewPhases] = useState<Map<string, string>>(new Map());
   const [pendingReviews, setPendingReviews] = useState<PrSearchResult[]>([]);
@@ -1345,19 +1338,25 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
               {/* Model menu disclosure */}
               <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${modelMenuExpanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
                 <div className="overflow-hidden">
-                  <div className="flex flex-wrap items-center gap-x-5 gap-y-2 slide-meta pt-1 pb-2">
-                    <span className="text-foreground/60">Claude</span>
-                    {PROVIDERS.claude.models.map((m) => (
-                      <button
-                        key={m.id}
-                        type="button"
-                        onClick={() => setModel(m.id)}
-                        className={`pb-0.5 border-b transition-colors ${model === m.id ? 'text-foreground border-[var(--ring)]' : 'border-transparent hover:text-foreground'}`}
-                      >
-                        {m.label}
-                      </button>
-                    ))}
-                  </div>
+                  {PROVIDER_IDS.map((id) => (
+                    <div key={id} className="flex flex-wrap items-center gap-x-5 gap-y-2 slide-meta pt-1 pb-2">
+                      <span className="text-foreground/60">{PROVIDERS[id].label}</span>
+                      {PROVIDERS[id].models.map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          aria-pressed={provider === id && model === m.id}
+                          onClick={() => { setProvider(id); setModel(m.id); }}
+                          className={`pb-0.5 border-b transition-colors ${model === m.id ? 'text-foreground border-[var(--ring)]' : 'border-transparent hover:text-foreground'}`}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                  ))}
+                  {provider === 'codex' && (
+                    <p className="slide-meta pb-2">Codex reviews the supplied diff and context. Web research and project tools are available with Claude.</p>
+                  )}
                 </div>
               </div>
 
@@ -1423,13 +1422,13 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
                       checked={claudeContext}
                       onToggle={() => setClaudeContext((c) => !c)}
                     />
-                    <ToggleSwitch
+                    {provider === 'claude' && <ToggleSwitch
                       id="web-research"
                       label="Web research"
                       description="Search for framework docs and best practices (slower)"
                       checked={webResearch}
                       onToggle={() => setWebResearch((w) => !w)}
-                    />
+                    />}
                   </div>
                 </div>
               </div>
@@ -1456,11 +1455,13 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
           <Dialog open={cliNotFound !== null} onOpenChange={() => setCliNotFound(null)}>
             <DialogContent className="bg-card sm:max-w-md">
               <DialogHeader>
-                <DialogTitle>Claude CLI not found</DialogTitle>
+                <DialogTitle>{PROVIDERS[cliNotFound?.provider ?? provider].label} CLI not found</DialogTitle>
               </DialogHeader>
               <div className="flex flex-col gap-3 text-sm text-muted-foreground">
-                <p>Gnosis runs reviews against your local Claude CLI, but couldn't find it on your machine.</p>
-                <p>Install it from claude.ai/code and authenticate with `claude auth`.</p>
+                <p>Gnosis couldn't find the {PROVIDERS[cliNotFound?.provider ?? provider].label} CLI on your machine.</p>
+                {(cliNotFound?.provider ?? provider) === 'codex' ? (
+                  <p>Install with <code>npm install -g @openai/codex</code>, then sign in with <code>codex login</code>.</p>
+                ) : <p>Install it from claude.ai/code and authenticate with <code>claude auth</code>.</p>}
                 <p>Already installed? Set the path manually in Settings.</p>
               </div>
               <div className="flex gap-2 justify-end pt-2">
@@ -1888,6 +1889,7 @@ export function HomePage({ onReviewReady, prefillPrUrl }: Props) {
           can open it. On submit, flips guestMode when the user isn't
           authenticated — unlocks the rest of the app for return visits. */}
       <LocalRepoDialog
+        supportsTools={provider === 'claude'}
         open={localRepoOpen}
         onOpenChange={setLocalRepoOpen}
         onSubmit={(localUrl, { localTools }) => {

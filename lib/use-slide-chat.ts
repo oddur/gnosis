@@ -15,7 +15,7 @@ type Action =
   | { type: 'SEND'; slideIndex: number; userMessage: ChatMessage; assistantMessage: ChatMessage }
   | { type: 'APPEND_CHUNK'; slideIndex: number; assistantId: string; chunk: string }
   | { type: 'TOOL_USE'; slideIndex: number; assistantId: string; toolName: string }
-  | { type: 'FINALIZE'; slideIndex: number; assistantId: string }
+  | { type: 'FINALIZE'; slideIndex: number; assistantId: string; content: string }
   | { type: 'ERROR'; slideIndex: number; assistantId: string; error: string }
   | { type: 'CLEAR'; slideIndex: number };
 
@@ -56,7 +56,7 @@ function reducer(state: MessagesMap, action: Action): MessagesMap {
       if (!msgs) return state;
       next.set(
         action.slideIndex,
-        msgs.map((m) => (m.id === action.assistantId ? { ...m, isStreaming: false } : m))
+        msgs.map((m) => (m.id === action.assistantId ? { ...m, content: action.content, isStreaming: false } : m))
       );
       return next;
     }
@@ -147,8 +147,10 @@ export function useSlideChat(review: ReviewGuide, provider: Provider, model: Mod
       };
 
       try {
-        await window.electronAPI.sendSlideChat(req);
-        dispatch({ type: 'FINALIZE', slideIndex, assistantId: assistantMsg.id });
+        const content = await window.electronAPI.sendSlideChat(req);
+        // Progress may include commentary or omit the final text. The returned
+        // answer is authoritative for both rendering and subsequent history.
+        dispatch({ type: 'FINALIZE', slideIndex, assistantId: assistantMsg.id, content });
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : 'Failed to get response';
         dispatch({ type: 'ERROR', slideIndex, assistantId: assistantMsg.id, error: errorMsg });
