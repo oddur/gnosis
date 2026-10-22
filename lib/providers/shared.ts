@@ -1,4 +1,5 @@
-import { execFileSync, spawn } from 'child_process';
+import { execFile, execFileSync } from 'child_process';
+import { spawn } from 'cross-spawn';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -122,6 +123,8 @@ export interface StreamingCliOptions {
   handleExitError?: (stderr: string) => Error | undefined;
   /** When aborted, kills the child process and rejects with a cancellation error. */
   signal?: AbortSignal;
+  /** Disable persistent raw-response logging for ephemeral providers. */
+  debugLog?: boolean;
 }
 
 /**
@@ -136,20 +139,31 @@ function withBinDir(binPath: string, env: NodeJS.ProcessEnv | undefined): NodeJS
 
 export function spawnCliStreaming(opts: StreamingCliOptions): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (opts.signal?.aborted) {
+      reject(new Error('GNOSIS_CANCELLED'));
+      return;
+    }
     const proc = spawn(opts.binPath, opts.args, {
       env: withBinDir(opts.binPath, opts.env),
       cwd: opts.cwd,
     });
     const tag = `[${opts.cliName}]`;
 
-    if (opts.signal) {
-      const onAbort = () => {
+    const onAbort = () => {
+      // npm installs CLIs as .cmd shims on Windows. Stop the whole tree,
+      // including the Codex process behind the shim.
+      if (process.platform === 'win32' && proc.pid) {
+        execFile('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { windowsHide: true }, (err) => {
+          if (err) proc.kill();
+        });
+      } else {
         proc.kill();
-      };
-      opts.signal.addEventListener('abort', onAbort, { once: true });
-    }
+      }
+    };
+    opts.signal?.addEventListener('abort', onAbort, { once: true });
 
     proc.on('error', (err: NodeJS.ErrnoException) => {
+      opts.signal?.removeEventListener('abort', onAbort);
       if (err.code === 'ENOENT') {
         reject(new Error(`${opts.cliName} CLI not found at "${opts.binPath}". ${opts.installHint}`));
       } else {
@@ -158,7 +172,7 @@ export function spawnCliStreaming(opts: StreamingCliOptions): Promise<void> {
     });
 
     const debugPath = path.join(os.tmpdir(), `gnosis-${opts.cliName}-last-response.txt`);
-    const debugStream = fs.createWriteStream(debugPath, { flags: 'w' });
+    const debugStream = opts.debugLog === false ? undefined : fs.createWriteStream(debugPath, { flags: 'w' });
     const startMs = Date.now();
 
     let lineBuffer = '';
@@ -166,7 +180,7 @@ export function spawnCliStreaming(opts: StreamingCliOptions): Promise<void> {
 
     proc.stdout.on('data', (chunk: Buffer) => {
       const str = chunk.toString();
-      debugStream.write(str);
+      debugStream?.write(str);
       lineBuffer += str;
       const newlineIdx = lineBuffer.lastIndexOf('\n');
       if (newlineIdx === -1) return;
@@ -187,7 +201,8 @@ export function spawnCliStreaming(opts: StreamingCliOptions): Promise<void> {
     proc.stdin.end();
 
     proc.on('close', (code: number | null) => {
-      debugStream.end();
+      debugStream?.end();
+      opts.signal?.removeEventListener('abort', onAbort);
       if (lineBuffer.trim()) opts.processLine(lineBuffer);
       if (opts.signal?.aborted) {
         reject(new Error('GNOSIS_CANCELLED'));
@@ -195,11 +210,11 @@ export function spawnCliStreaming(opts: StreamingCliOptions): Promise<void> {
       }
       if (code === 0) {
         const elapsed = ((Date.now() - startMs) / 1000).toFixed(1);
-        console.log(`${tag} CLI finished in ${elapsed}s -> ${debugPath}`);
+        console.log(`${tag} CLI finished in ${elapsed}s${debugStream ? ` -> ${debugPath}` : ''}`);
         resolve();
       } else {
         console.error(`${tag} CLI exited with code ${String(code)}. stderr: ${stderr || '(empty)'}`);
-        console.error(`${tag} Raw stdout saved to: ${debugPath}`);
+        if (debugStream) console.error(`${tag} Raw stdout saved to: ${debugPath}`);
         const custom = opts.handleExitError?.(stderr);
         reject(custom ?? new Error(`${opts.cliName} CLI exited with code ${String(code)}: ${stderr.slice(0, 300)}`));
       }

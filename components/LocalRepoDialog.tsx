@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog';
 
 interface Props {
+  supportsTools?: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Called with a synthetic `local:…#base..head` URL and the tool-mode flag
@@ -44,7 +45,7 @@ function saveLastRepoPath(p: string): void {
   }
 }
 
-export function LocalRepoDialog({ open, onOpenChange, onSubmit }: Props) {
+export function LocalRepoDialog({ supportsTools = true, open, onOpenChange, onSubmit }: Props) {
   const [repoPath, setRepoPath] = useState('');
   const [baseRef, setBaseRef] = useState('HEAD~1');
   const [headRef, setHeadRef] = useState('HEAD');
@@ -184,13 +185,13 @@ export function LocalRepoDialog({ open, onOpenChange, onSubmit }: Props) {
         } catch {
           /* localStorage unavailable */
         }
-        onSubmit(buildUrl(rp, br, hr), { localTools });
+        onSubmit(buildUrl(rp, br, hr), { localTools: supportsTools && localTools });
         onOpenChange(false);
       } finally {
         setValidating(false);
       }
     },
-    [repoPath, baseRef, headRef, localTools, onSubmit, onOpenChange],
+    [repoPath, baseRef, headRef, localTools, supportsTools, onSubmit, onOpenChange],
   );
 
   const inputClass =
@@ -318,13 +319,14 @@ export function LocalRepoDialog({ open, onOpenChange, onSubmit }: Props) {
             <input
               id="local-tools"
               type="checkbox"
-              checked={localTools}
+              checked={supportsTools && localTools}
+              disabled={!supportsTools}
               onChange={(e) => setLocalTools(e.target.checked)}
               className="mt-1 h-4 w-4 rounded border-border bg-transparent accent-[var(--ring)] cursor-pointer"
             />
             <div className="flex flex-col gap-0.5">
               <span className="text-sm text-foreground/90 group-hover:text-foreground transition-colors">
-                Run project tools during review
+                Run project tools during review (Claude only)
               </span>
               <span className="slide-meta leading-relaxed">
                 Lets Claude run tests, read the whole tree, and use the repo's own MCP
