@@ -130,7 +130,7 @@ export function ExplainerView({ reviewId, slide, onClose, onSaved }: Props) {
             <span>
               {artifact
                 ? 'Refining the example and checking its controls…'
-                : 'Building the example and checking its controls…'}
+                : 'Building the example and checking its controls. This can take several minutes…'}
             </span>
             <Button variant="ghost" size="sm" onClick={() => void window.electronAPI.cancelExplainer(req)}>
               Cancel

@@ -177,3 +177,45 @@ void test('failed refinements leave the previous artifact intact', async (t) => 
   assert.equal(calls, 2);
   assert.equal(fs.readFileSync(file, 'utf8'), original);
 });
+
+void test('slow generation gets ten minutes and reports a timeout instead of provider cancellation', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-test-explainer-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, 'review-1.json'), JSON.stringify(review));
+  let signal: AbortSignal | undefined;
+  const provider: LLMProvider = {
+    name: 'codex',
+    models: [],
+    quick: () => Promise.resolve(''),
+    generate: (options) =>
+      new Promise((_, reject) => {
+        signal = options.signal;
+        signal?.addEventListener('abort', () => reject(new Error('GNOSIS_CANCELLED')));
+      }),
+  };
+  const service = createExplainerService({
+    reviewsDir: () => dir,
+    preferences: () => ({}) as Preferences,
+    provider: () => provider,
+    validate: async () => {},
+  });
+  const req = { reviewId: 'review-1', slideId: slide.id };
+  const pending = service.generate(req, 1);
+  t.mock.timers.tick(180000);
+  assert.equal(signal?.aborted, false, 'three minutes must not interrupt a slower model');
+  const timedOut = assert.rejects(pending, /Explainer generation timed out/);
+  t.mock.timers.tick(420000);
+  await timedOut;
+  assert.equal(fs.existsSync(path.join(dir, 'review-1.json')), true);
+  assert.equal(
+    (JSON.parse(fs.readFileSync(path.join(dir, 'review-1.json'), 'utf8')) as ReviewGuide).slides[0].explainer,
+    undefined
+  );
+
+  const retry = service.generate(req, 1);
+  assert.equal(signal.aborted, false, 'retry starts a fresh request');
+  const cancelled = assert.rejects(retry, /Explainer generation cancelled/);
+  service.cancel(req, 1);
+  await cancelled;
+});

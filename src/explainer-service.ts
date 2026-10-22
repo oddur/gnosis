@@ -118,13 +118,25 @@ export function createExplainerService(deps: Dependencies) {
       }
       const controller = new AbortController();
       const timeout = setTimeout(
-        () => controller.abort(new Error('Explainer generation timed out. Try a simpler example.')),
-        180000
+        () => controller.abort(new Error('Explainer generation timed out after 10 minutes. Please try again.')),
+        600000
       );
-      const promise = run(req, controller.signal).finally(() => {
-        clearTimeout(timeout);
-        if (running.get(key)?.controller === controller) running.delete(key);
-      });
+      const started = Date.now();
+      console.log(`[explainer] Starting ${key}`);
+      const promise = run(req, controller.signal)
+        .catch((error: unknown) => {
+          // CLI providers use a generic cancellation error. Keep the service's
+          // reason so a deadline is not reported as a user cancellation.
+          const failure: unknown = controller.signal.aborted ? controller.signal.reason : error;
+          console.error(
+            `[explainer] ${key} failed after ${Math.round((Date.now() - started) / 1000)}s: ${String(failure)}`
+          );
+          throw failure;
+        })
+        .finally(() => {
+          clearTimeout(timeout);
+          if (running.get(key)?.controller === controller) running.delete(key);
+        });
       running.set(key, { controller, owner, promise });
       return promise;
     },
