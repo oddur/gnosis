@@ -376,6 +376,12 @@ void app.whenReady().then(async () => {
     // First use: optional setup, terminology, recovery, and a real review entry point.
     window.setSize(1280, 800);
     await window.loadURL(fixtureUrl + '?onboarding');
+    await wait("!!document.querySelector('.workbench-connect')");
+    if (await js("!!document.querySelector('.github-auth-dialog')")) {
+      await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      await click('Continue with local reviews');
+      await wait("!document.querySelector('.github-auth-dialog')");
+    }
     await wait("document.querySelector('.getting-started')?.textContent.includes('was not found')");
     assert.equal(await js("document.querySelectorAll('.queue-empty').length"), 0, 'First use has one starting point');
     await capture('onboarding-light');
@@ -398,6 +404,12 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.electronAPI.loadPreferences().then(p=>p.firstRunSeen)'), true);
     await window.loadURL(fixtureUrl + '?onboarding');
     await wait("!!document.querySelector('.workbench-connect')");
+    if (await js("!!document.querySelector('.github-auth-dialog')")) {
+      await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      await click('Continue with local reviews');
+      await wait("!document.querySelector('.github-auth-dialog')");
+    }
+    await wait("!!document.querySelector('.workbench-connect')");
     assert.equal(await js("!!document.querySelector('.getting-started')"), false, 'Dismissal persists on reopening');
     await js('document.querySelector(\'[aria-label="Help and terminology"]\').click()');
     await wait("!!document.querySelector('.workbench-help')");
@@ -416,6 +428,8 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.getting-started') && !document.querySelector('.workbench-help')");
     await js("document.querySelector('.getting-started-connection summary').click()");
     await click('Sign in to GitHub');
+    await wait("!!document.querySelector('.github-auth-dialog')");
+    await click('Sign in through browser');
     await wait("!document.querySelector('.workbench-connect')");
     assert.ok(await js("document.body.textContent.includes('GitHub connected as oddur')"));
     await js(`(() => {

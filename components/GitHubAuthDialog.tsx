@@ -15,27 +15,35 @@ export function GitHubAuthDialog({
   open,
   onOpenChange,
   onConnected,
+  onSignedOut,
+  onContinueLocally,
+  connectionRequired = false,
   login,
   prUrl,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConnected: () => Promise<void>;
+  onSignedOut: () => Promise<void>;
+  onContinueLocally: () => Promise<void>;
+  connectionRequired?: boolean;
   login?: string | null;
   prUrl?: string;
 }) {
   const [web, setWeb] = useState<boolean>();
   const [method, setMethod] = useState<'web' | 'device' | 'token'>('web');
-  const [phase, setPhase] = useState<'idle' | 'starting' | 'waiting' | 'saving'>('idle');
+  const [phase, setPhase] = useState<'idle' | 'starting' | 'waiting' | 'saving' | 'signing-out' | 'local'>('idle');
   const [prompt, setPrompt] = useState<GitHubDevicePrompt>();
   const [error, setError] = useState('');
   const [token, setToken] = useState('');
   const [checkUrl, setCheckUrl] = useState(prUrl ?? '');
   const [copied, setCopied] = useState(false);
+  const title = useRef<HTMLHeadingElement>(null);
   const attempt = useRef(0);
   const flow = useRef<string | undefined>(undefined);
   const webPending = useRef(false);
-  const busy = phase === 'starting' || phase === 'saving';
+  const locked = phase === 'saving' || phase === 'signing-out' || phase === 'local';
+  const busy = phase === 'starting' || locked;
 
   const cancel = () => {
     attempt.current++;
@@ -101,6 +109,7 @@ export function GitHubAuthDialog({
   };
   useEffect(() => {
     if (!open) return;
+    title.current?.focus();
     setError('');
     setToken('');
     setPrompt(undefined);
@@ -124,18 +133,27 @@ export function GitHubAuthDialog({
       });
     return cancel;
     // The connection attempt belongs to this opening, not to queue polling renders.
-  }, [open]);
+  }, [open, login, connectionRequired]);
 
   const change = (next: boolean) => {
-    if (phase === 'saving') return;
+    if (locked || (!next && connectionRequired)) return;
     if (!next) cancel();
     onOpenChange(next);
   };
   return (
     <Dialog open={open} onOpenChange={change}>
-      <DialogContent className="github-auth-dialog" showCloseButton={phase !== 'saving'}>
+      <DialogContent
+        className="github-auth-dialog"
+        showCloseButton={!locked && !connectionRequired}
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          title.current?.focus();
+        }}
+      >
         <DialogHeader>
-          <DialogTitle>{login ? 'GitHub account' : 'Connect GitHub'}</DialogTitle>
+          <DialogTitle ref={title} tabIndex={-1} className="outline-none">
+            {login ? 'GitHub account' : 'Connect GitHub'}
+          </DialogTitle>
           <DialogDescription>
             {login
               ? `Connected as ${login}. Sign in again after changing GitHub permissions, or connect another account.`
@@ -326,19 +344,44 @@ export function GitHubAuthDialog({
             disabled={busy}
             onClick={() => {
               cancel();
+              setPhase('signing-out');
+              setError('');
               void window.electronAPI
                 .signOut()
-                .then(() => onConnected())
-                .then(() => onOpenChange(false))
-                .catch((e: unknown) => setError(message(e)));
+                .then(onSignedOut)
+                .catch((e: unknown) => {
+                  setPhase('idle');
+                  setError(message(e));
+                });
             }}
           >
-            Sign out of GitHub
+            {phase === 'signing-out' ? 'Signing out…' : 'Sign out of GitHub'}
           </button>
         )}
-        <Button size="sm" variant="ghost" disabled={phase === 'saving'} onClick={() => change(false)}>
-          {phase === 'starting' || phase === 'waiting' ? 'Cancel sign-in' : 'Close'}
-        </Button>
+        {!login && (
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={locked}
+            onClick={() => {
+              cancel();
+              setPrompt(undefined);
+              setPhase('local');
+              setError('');
+              void onContinueLocally().catch((e: unknown) => {
+                setPhase('idle');
+                setError(message(e));
+              });
+            }}
+          >
+            {phase === 'local' ? 'Opening local reviews…' : 'Continue with local reviews'}
+          </Button>
+        )}
+        {!connectionRequired && (
+          <Button size="sm" variant="ghost" disabled={locked} onClick={() => change(false)}>
+            {phase === 'starting' || phase === 'waiting' ? 'Cancel sign-in' : 'Close'}
+          </Button>
+        )}
       </DialogContent>
     </Dialog>
   );

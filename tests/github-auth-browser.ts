@@ -33,6 +33,15 @@ void app.whenReady().then(async () => {
     if (!url) throw new Error('Missing fixture URL');
     await win.loadURL(url + '?onboarding');
     win.webContents.setZoomFactor(1);
+    await wait("!!document.querySelector('.github-auth-dialog')");
+    await capture('welcome');
+    await js(
+      "document.querySelector('.github-auth-dialog').dispatchEvent(new KeyboardEvent('keydown', {key:'Escape',bubbles:true}))"
+    );
+    assert.equal(await js("!!document.querySelector('.github-auth-dialog')"), true);
+    await click('Continue with local reviews');
+    await wait("!document.querySelector('.github-auth-dialog')");
+    assert.equal(await js('window.electronAPI.loadPreferences().then(p=>p.guestMode)'), true);
     await wait("!!document.querySelector('.getting-started')");
     await js(`(()=>{
       window.authWeb=true;window.cancelledCodes=0;window.savedPat=null;
@@ -111,16 +120,45 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.github-auth-dialog')?.textContent.includes('Connected as oddur')");
     assert.equal(await js("document.querySelector('#github-auth-token')?.value ?? ''"), '');
     await capture('account');
+    await click('Sign out of GitHub');
+    await wait('window.electronAPI.getAuthState().then(a=>!a.authenticated)');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(
+      await js("document.querySelector('.github-auth-dialog')?.textContent.includes('Connect GitHub')"),
+      true,
+      'Signing out must leave the connection prompt visible'
+    );
+    assert.equal(await js('window.electronAPI.getAuthState().then(a=>a.authenticated)'), false);
+    await capture('signed-out');
+    await click('Continue with local reviews');
+    await wait("!document.querySelector('.github-auth-dialog')");
+    assert.equal(await js('window.electronAPI.loadPreferences().then(p=>p.guestMode)'), true);
+    await win.loadURL(url + '?onboarding');
+    await wait("!!document.querySelector('.workbench-connect')");
+    assert.equal(
+      await js("!!document.querySelector('.github-auth-dialog')"),
+      false,
+      'Explicit local mode must survive reopening'
+    );
+    await js(`document.querySelector('[aria-label="GitHub account"]').click()`);
+    await wait("!!document.querySelector('.github-auth-dialog')");
+    await click('Sign in through browser');
+    await wait("!document.querySelector('.github-auth-dialog')");
+    assert.equal(
+      await js('window.electronAPI.loadPreferences().then(p=>p.guestMode)'),
+      false,
+      'Connecting GitHub must leave local mode'
+    );
     console.log(
       'GitHub auth browser checks passed: web failure to device fallback, code approval, cancellation, PAT permission recovery, preview default, account management and laptop themes.'
     );
   } catch (error) {
     console.error(error);
-    await capture('failure');
     process.exitCode = 1;
+    await capture('failure').catch(() => {});
   } finally {
     win.webContents.setZoomFactor(1);
     win.destroy();
-    app.quit();
+    app.exit(process.exitCode ? 1 : 0);
   }
 });

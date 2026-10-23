@@ -26,6 +26,12 @@ void app.whenReady().then(async () => {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     if (!url) throw new Error('Missing fixture URL');
     await win.loadURL(url + '?onboarding');
+    await wait("!!document.querySelector('.workbench-connect')");
+    if (await js("!!document.querySelector('.github-auth-dialog')")) {
+      await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      await click('Continue with local reviews');
+      await wait("!document.querySelector('.github-auth-dialog')");
+    }
     win.webContents.setZoomFactor(1);
     await wait("document.querySelector('.getting-started')?.textContent.includes('needs setup')");
     assert.equal(await js("document.querySelectorAll('.queue-empty').length"), 0);
@@ -85,12 +91,21 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('#ai-setup-title') && document.activeElement.id === 'getting-started-title'");
     await js("document.querySelector('.getting-started-connection summary').click()");
     await click('Sign in to GitHub');
+    await wait("!!document.querySelector('.github-auth-dialog')");
+    await click('Sign in through browser');
     await wait("!!document.querySelector('.getting-started-connected')");
+    await wait("!document.querySelector('.github-auth-dialog')");
     assert.equal(await js("document.querySelectorAll('.queue-empty').length"), 0);
     await capture('connected');
     await click('I’ll explore on my own');
     await wait("!document.querySelector('.getting-started')");
     await win.loadURL(url + '?onboarding');
+    await wait("!!document.querySelector('.workbench-connect')");
+    if (await js("!!document.querySelector('.github-auth-dialog')")) {
+      await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      await click('Continue with local reviews');
+      await wait("!document.querySelector('.github-auth-dialog')");
+    }
     win.webContents.setZoomFactor(1);
     await wait("!!document.querySelector('.workbench-connect')");
     assert.equal(await js("!!document.querySelector('.getting-started')"), false);
@@ -119,11 +134,11 @@ void app.whenReady().then(async () => {
     );
   } catch (error) {
     console.error(error);
-    await capture('failure');
     process.exitCode = 1;
+    await capture('failure').catch(() => {});
   } finally {
     win.webContents.setZoomFactor(1);
     win.destroy();
-    app.quit();
+    app.exit(process.exitCode ? 1 : 0);
   }
 });

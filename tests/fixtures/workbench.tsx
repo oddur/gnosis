@@ -331,7 +331,7 @@ let prefs: Preferences = {
   proactiveThinking: false,
   educationMode: true,
   claudeContext: false,
-  guestMode: false,
+  guestMode: onboardingScenario && sessionStorage.getItem('fixture-guest-mode') === 'true',
 };
 let activities: ActivityTask[] = [
   {
@@ -428,11 +428,12 @@ const mocks = {
   detectBinaryPath: (name: string) => Promise.resolve('/fixture/' + name),
   getAuthState: () =>
     Promise.resolve({ authenticated: fixtureAuthenticated, login: fixtureAuthenticated ? 'oddur' : null }),
-  githubAuthOptions: () => Promise.resolve({ web: false }),
+  githubAuthOptions: () => Promise.resolve({ web: onboardingScenario }),
   beginGitHubSignIn: () => Promise.resolve({ id: 'fixture-auth', userCode: 'TEST-CODE', verificationUri: 'https://github.com/login/device', expiresAt: Date.now()+900000 }),
   completeGitHubSignIn: () => { fixtureAuthenticated = true; return Promise.resolve('oddur'); },
   cancelGitHubSignIn: () => Promise.resolve(),
   cancelOAuth: () => Promise.resolve(),
+  signOut: () => { fixtureAuthenticated = false; return Promise.resolve(); },
   startOAuth: () => {
     fixtureAuthenticated = true;
     return Promise.resolve();
@@ -445,7 +446,10 @@ const mocks = {
   loadPreferences: () => Promise.resolve(prefs),
   savePreferences: (next: Preferences) => {
     prefs = next;
-    if (onboardingScenario) sessionStorage.setItem('fixture-first-run-seen', String(next.firstRunSeen));
+    if (onboardingScenario) {
+      sessionStorage.setItem('fixture-first-run-seen', String(next.firstRunSeen));
+      sessionStorage.setItem('fixture-guest-mode', String(next.guestMode));
+    }
     return Promise.resolve();
   },
   workbenchViewAction: (action: QueueViewAction) => {

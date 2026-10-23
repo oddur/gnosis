@@ -162,6 +162,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('queue');
   const [showGettingStarted, setShowGettingStarted] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
+  const connectionRequired = !!auth && !!prefs && !auth.authenticated && !prefs.guestMode;
   const [localOpen, setLocalOpen] = useState(false);
   const [url, setUrl] = useState(prefillPrUrl ?? '');
   const [showUrl, setShowUrl] = useState(!!prefillPrUrl);
@@ -391,7 +392,13 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
     }
   };
   const syncAuth = async () => {
-    setAuth(await window.electronAPI.getAuthState());
+    const nextAuth = await window.electronAPI.getAuthState();
+    setAuth(nextAuth);
+    if (nextAuth.authenticated) {
+      const current = await window.electronAPI.loadPreferences();
+      await savePrefs({ ...current, guestMode: false });
+    }
+    setAuthOpen(false);
     setError('');
     void refresh(true);
   };
@@ -491,7 +498,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
         if (!(e.target instanceof HTMLElement) || !e.target.closest('.activity-shell')) moveSelection(-1);
       },
     },
-    { enabled: !settings && !localOpen && !openedItem && section !== 'saved' }
+    { enabled: !settings && !localOpen && !openedItem && !authOpen && !connectionRequired && section !== 'saved' }
   );
   const correct = async (action: 'link' | 'unlink', parent = parentUrl, child = childUrl) => {
     setGrouping(true);
@@ -629,7 +636,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
     filterCount === 0 &&
     (showGettingStarted || (!prefs.firstRunSeen && history.length === 0));
   const githubConnection =
-    !loading && section !== 'saved' && auth && !auth.authenticated && !prefs?.guestMode ? (
+    !loading && section !== 'saved' && auth && !auth.authenticated ? (
       <section className="workbench-connect">
         <h2>Connect GitHub</h2>
         <p>Sign in to load your GitHub review requests. Local reviews work without a GitHub connection.</p>
@@ -696,7 +703,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
         key={summaryItem.subject.id}
         item={summaryItem}
         positions={readingPositions.current}
-        shortcutsEnabled={!settings && !localOpen && !authOpen}
+        shortcutsEnabled={!settings && !localOpen && !authOpen && !connectionRequired}
         navigation={{ index: summaryIndex, total: orderedItems.length, viewName: activeQueueView?.name ?? 'Current filtered view',
           previous: summaryIndex > 0 ? orderedItems[summaryIndex - 1].subject.title : undefined,
           next: summaryIndex >= 0 ? orderedItems[summaryIndex + 1]?.subject.title : undefined, move: moveSummary }}
@@ -1389,8 +1396,32 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
           )}
         </main>
       </div>}
-      <GitHubAuthDialog open={authOpen} onOpenChange={setAuthOpen} onConnected={syncAuth} login={auth?.login}
-        prUrl={summaryItem?.subject.members[0].url ?? (url.trim() || undefined)} />
+      <GitHubAuthDialog
+        open={authOpen || connectionRequired}
+        connectionRequired={connectionRequired}
+        onOpenChange={setAuthOpen}
+        onConnected={syncAuth}
+        onSignedOut={async () => {
+          setAuth({ authenticated: false, login: null });
+          setOpenedItem(null);
+          setSelected(null);
+          setFiltersOpen(false);
+          setAuthOpen(true);
+          if (prefs) {
+            const next = { ...prefs, guestMode: false };
+            setPrefs(next);
+            await savePrefs(next);
+          }
+          void refresh();
+        }}
+        onContinueLocally={async () => {
+          const current = await window.electronAPI.loadPreferences();
+          await savePrefs({ ...current, guestMode: true });
+          setAuthOpen(false);
+        }}
+        login={auth?.login}
+        prUrl={summaryItem?.subject.members[0].url ?? (url.trim() || undefined)}
+      />
       <SettingsDialog
         initialSection={settingsSection}
         onReplayOnboarding={replayGettingStarted}
