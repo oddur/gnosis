@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, FileCode2, MessageSquare } from 'lucide-react';
+import { ChevronDown, ChevronRight, MessageSquare } from 'lucide-react';
 import { FilePathLink } from './FilePathLink';
 import { prepareReviewHunk } from '@/lib/review-diff';
 import type { DiffHunk, FileMetadata } from '@/lib/types';
@@ -77,7 +77,6 @@ export function ReviewFileHeader({
               {expanded ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
             </button>
           )}
-          <FileCode2 className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
           {source && (
             <span className="source-attribution" title={source.title}>
               PR #{source.number}

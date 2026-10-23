@@ -25,6 +25,7 @@
     "@base-ui/react": "^1.9.0",
     "@octokit/rest": "^22.0.1",
     "@pierre/diffs": "1.6.1",
+    "@pierre/vscode-icons": "0.0.9",
     "@shikijs/transformers": "4.5.0",
     "adm-zip": "^0.5.17",
     "class-variance-authority": "^0.7.1",
