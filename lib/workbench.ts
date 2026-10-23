@@ -1,3 +1,4 @@
+import type { QueueViewsSnapshot } from './saved-views';
 import type { QueueFilters } from './queue-filters';
 import type { Preferences, PrMetadata, PrSearchResult, ReviewGuide, ReviewHistoryEntry, Slide } from './types';
 
@@ -42,9 +43,10 @@ export interface QueueItem {
   subject: ReviewSubject;
   briefing?: Briefing;
   review?: ReviewHistoryEntry;
-  attention: 'updated' | 'requested' | 'blocking' | 'other';
+  attention: 'updated' | 'requested' | 'other';
 }
 export interface WorkbenchQueue {
+  savedViews?: QueueViewsSnapshot;
   filters?: QueueFilters;
   items: QueueItem[];
   warnings: string[];
@@ -188,7 +190,6 @@ export function subjectForReview(review: ReviewGuide): string {
 export function attentionFor(subject: ReviewSubject, review?: ReviewHistoryEntry): QueueItem['attention'] {
   if (review?.snapshot && review.snapshot.fingerprint !== fingerprint(subject)) return 'updated';
   if (subject.members.some((m) => m.role === 'review-requested' && !m.merged && m.state === 'open')) return 'requested';
-  if (subject.edges.some((e) => !subject.members.find((m) => m.url === e.parent)?.merged)) return 'blocking';
   return 'other';
 }
 export function memberPrefix(member: ReviewMember): string {

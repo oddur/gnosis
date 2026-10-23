@@ -45,8 +45,8 @@ typography:
   title: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 22px, fontWeight: 650, lineHeight: 1.35, letterSpacing: "-0.025em"}
   title-compact: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 18px, fontWeight: 650, lineHeight: 1.4, letterSpacing: "-0.02em"}
   body: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 14px, fontWeight: 400, lineHeight: 1.55}
-  prose: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 14px, fontWeight: 400, lineHeight: 1.65}
-  label-row: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 13px, fontWeight: 600, lineHeight: 1.5}
+  prose: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 15px, fontWeight: 400, lineHeight: 1.65}
+  label-row: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 14px, fontWeight: 600, lineHeight: 1.5}
   label-button: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 14px, fontWeight: 500, lineHeight: 20px}
   mono: {fontFamily: "'JetBrains Mono', ui-monospace, 'Cascadia Code', 'Fira Code', monospace"}
 rounded:
@@ -119,17 +119,18 @@ Sidecar tonal ramps are derived preview aids; they are not additional implementa
 ## Typography
 
 Plus Jakarta Sans supplies interface text, headings, and explanations. Display and serif aliases also resolve to this sans-serif family.
-JetBrains Mono is the default code family; settings offer other code fonts. Font loading is defined in [index.html](index.html).
+JetBrains Mono is the default code family; settings offer other code fonts. Default variable fonts are bundled through [src/fonts.css](src/fonts.css). Optional code families load when selected.
 
 - **Headline:** overview titles use the headline role.
-- **Title:** review titles use the title role; queue titles tighten line-height to 1.25.
+- **Title:** review and queue titles use the title role at 22px with 1.35 line-height.
 - **Compact title:** briefing headings use the compact title role.
 - **Body and prose:** interface text uses body; explanations use prose with a usual maximum width of 68ch.
-- **Labels:** queue titles use label-row. Metadata is typically 11px; controls use 12–14px text.
+- **Labels:** queue titles use label-row. Metadata uses 12px; compact controls use 13px.
 - **Code:** preserve selectable monospace text. Code themes are independent of the interface theme.
 
-Overview summaries use 1.7 line-height and a maximum width of 75ch. Briefing summaries use 13px text with 1.7 line-height.
-These are existing context-specific variants, not a new global type scale.
+Review and overview prose use 15px text. Briefing summaries and lists use 14px. Reading columns stay within 68ch; queue summaries use at most 75ch.
+Semantic `--type-*` tokens use rem units. Dense controls stay smaller than ordinary web body text to fit the laptop workspace.
+Dark prose uses weight 425, slightly wider tracking, and 1.7 line-height. Code size and the selected code family remain independent.
 
 **The Reading Rule.** Keep explanations readable within their pane. Use restrained headings and bounded prose widths.
 

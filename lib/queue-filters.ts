@@ -1,6 +1,7 @@
 import { fingerprint, type QueueItem, type ReviewMember } from './workbench';
 
 export interface QueueFilters {
+  involvement: 'all' | 'mine';
   query: string;
   repo: string;
   author: string;
@@ -14,6 +15,7 @@ export interface QueueFilters {
   briefingScope: 'matches' | 'all';
 }
 export const DEFAULT_QUEUE_FILTERS: QueueFilters = {
+  involvement: 'all',
   query: '',
   repo: 'all',
   author: 'all',
@@ -35,6 +37,7 @@ export function normalizeQueueFilters(value: unknown): QueueFilters {
   const days = (key: string) =>
     RECENCY_DAYS.includes(raw[key] as (typeof RECENCY_DAYS)[number]) ? Number(raw[key]) : 0;
   return {
+    involvement: choice('involvement', ['all', 'mine'], 'all'),
     query: text('query', ''),
     repo: text('repo', 'all'),
     author: text('author', 'all'),
@@ -42,13 +45,30 @@ export function normalizeQueueFilters(value: unknown): QueueFilters {
     status: choice('status', ['all', 'ready', 'draft'], 'all'),
     createdWithin: days('createdWithin'),
     updatedWithin: days('updatedWithin'),
-    kind: choice('kind', ['all', 'stack', 'pr'], 'all'),
+    // Migrate the retired dependency category to the stack filter.
+    kind: raw.attention === 'blocking' ? 'stack' : choice('kind', ['all', 'stack', 'pr'], 'all'),
     explanation: choice('explanation', ['all', 'none', 'ready', 'outdated', 'generating', 'failed'], 'all'),
-    attention: choice('attention', ['all', 'updated', 'requested', 'blocking', 'other'], 'all'),
+    attention: choice('attention', ['all', 'updated', 'requested', 'other'], 'all'),
     briefingScope: choice('briefingScope', ['matches', 'all'], 'matches'),
   };
 }
-export function matchesQueueFilters(item: QueueItem, filters: QueueFilters, now = Date.now()): boolean {
+export function isMyPr(member: ReviewMember, login?: string | null): boolean {
+  if (!login) return false;
+  const me = login.toLowerCase();
+  return (
+    member.author.toLowerCase() === me ||
+    member.assignees?.some((name) => name.toLowerCase() === me) === true ||
+    member.requestedReviewers.some((name) => name.toLowerCase() === me) ||
+    member.role === 'assigned' ||
+    member.role === 'review-requested'
+  );
+}
+export function matchesQueueFilters(
+  item: QueueItem,
+  filters: QueueFilters,
+  now = Date.now(),
+  login?: string | null
+): boolean {
   const { subject, review } = item;
   if (filters.attention !== 'all' && item.attention !== filters.attention) return false;
   if (filters.kind !== 'all' && subject.kind !== filters.kind) return false;
@@ -68,6 +88,7 @@ export function matchesQueueFilters(item: QueueItem, filters: QueueFilters, now 
     (m: ReviewMember) =>
       m.state === 'open' &&
       !m.merged &&
+      (filters.involvement !== 'mine' || isMyPr(m, login)) &&
       (filters.repo === 'all' || m.repo === filters.repo) &&
       (filters.author === 'all' || m.author === filters.author) &&
       (filters.status === 'all' || (filters.status === 'draft' ? m.isDraft : !m.isDraft)) &&
@@ -85,30 +106,44 @@ export function activeQueueFilterCount(filters: QueueFilters) {
   ).length;
 }
 /** Stable partition preserves the queue's review priority within each group. */
-export function prioritizeBriefings(items: QueueItem[], filters: QueueFilters, now = Date.now()): QueueItem[] {
-  const matching = items.filter((item) => matchesQueueFilters(item, filters, now));
+export function prioritizeBriefings(
+  items: QueueItem[],
+  filters: QueueFilters,
+  now = Date.now(),
+  login?: string | null
+): QueueItem[] {
+  const matching = items.filter((item) => matchesQueueFilters(item, filters, now, login));
   return filters.briefingScope === 'matches'
     ? matching
-    : [...matching, ...items.filter((item) => !matchesQueueFilters(item, filters, now))];
+    : [...matching, ...items.filter((item) => !matchesQueueFilters(item, filters, now, login))];
 }
 
 export function describeQueueFilters(filters: QueueFilters): { key: keyof QueueFilters; label: string }[] {
   const labels: Partial<Record<keyof QueueFilters, string>> = {
+    involvement: 'Involving me',
     query: `Search: ${filters.query}`,
     repo: filters.repo,
     author: `Author: ${filters.author}`,
-    status: filters.status === 'draft' ? 'Draft PRs' : 'Ready for review',
+    status: filters.status === 'draft' ? 'Draft PRs' : 'Open, not draft',
     createdWithin: `Created: last ${filters.createdWithin} days`,
     updatedWithin: `Updated: last ${filters.updatedWithin} days`,
     label: `Label: ${filters.label}`,
     kind: filters.kind === 'stack' ? 'Stacks' : 'Standalone PRs',
-    explanation: `Explanation: ${filters.explanation === 'none' ? 'not generated' : filters.explanation}`,
+    explanation: `AI explanation: ${
+      {
+        all: 'any state',
+        none: 'not generated',
+        ready: 'up to date',
+        outdated: 'needs regeneration',
+        generating: 'generating',
+        failed: 'generation failed',
+      }[filters.explanation]
+    }`,
     attention: {
       all: 'All changes',
       requested: 'Review requested',
-      updated: 'Updated since review',
-      blocking: 'Other PRs depend on this',
-      other: 'Other PRs',
+      updated: 'Changed since AI explanation',
+      other: 'Other changes',
     }[filters.attention],
   };
   return (Object.keys(labels) as (keyof QueueFilters)[])

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="160" viewBox="0 0 600 160">
+  <rect width="600" height="160" rx="6" fill="#eff3fa"/>
+  <g font-family="sans-serif" font-size="17" text-anchor="middle" fill="#192438">
+    <rect x="24" y="43" width="155" height="66" rx="4" fill="#d9e5fc" stroke="#637fae"/>
+    <text x="101" y="83">Pending messages</text>
+    <path d="M192 76h50m-8-7 8 7-8 7" fill="none" stroke="#3b5b8c" stroke-width="2"/>
+    <rect x="255" y="43" width="120" height="66" rx="4" fill="#d9e5fc" stroke="#637fae"/>
+    <text x="315" y="83">Outbox</text>
+    <path d="M389 76h46m-8-7 8 7-8 7" fill="none" stroke="#3b5b8c" stroke-width="2"/>
+    <rect x="450" y="43" width="126" height="66" rx="4" fill="#d9e5fc" stroke="#637fae"/>
+    <text x="513" y="83">New transport</text>
+    <text x="300" y="139" font-size="13" fill="#465a76">Messages survive reconnects and retain their order.</text>
+  </g>
+</svg>
