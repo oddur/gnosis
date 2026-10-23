@@ -361,7 +361,7 @@ export function SettingsDialog({
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription aria-live="polite">
-            {saving ? 'Saving changes…' : 'Changes save automatically.'}
+            {saving ? 'Saving changes…' : saveError ? 'You have unsaved changes.' : 'Changes save automatically.'}
           </DialogDescription>
         </DialogHeader>
         {saveError && (
