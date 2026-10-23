@@ -16,14 +16,17 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,json,css,md}\" \"lib/**/*.{ts,tsx}\" \"components/**/*.{ts,tsx}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,js,jsx,json,css,md}\" \"lib/**/*.{ts,tsx}\" \"components/**/*.{ts,tsx}\"",
     "pre-commit:run": "pre-commit run --all-files",
-    "test": "tsx --test tests/claude.test.ts tests/codex.test.ts tests/slide-chat.test.ts tests/explainer.test.ts tests/workbench.test.ts tests/workbench-service.test.ts tests/activity.test.ts tests/github-client.test.ts tests/queue-filters.test.ts",
+    "test": "tsx --test tests/claude.test.ts tests/codex.test.ts tests/slide-chat.test.ts tests/explainer.test.ts tests/workbench.test.ts tests/workbench-service.test.ts tests/activity.test.ts tests/github-client.test.ts tests/queue-filters.test.ts tests/saved-views.test.ts tests/review-diff.test.ts tests/file-summaries.test.ts tests/review-threads.test.ts tests/inline-explanations.test.ts tests/github-markdown.test.ts tests/pr-image.test.ts tests/pr-summary.test.ts tests/review-images.test.ts tests/github-auth.test.ts",
     "test:explainer": "node scripts/test-explainer.mjs",
-    "test:workbench": "node scripts/test-workbench.mjs"
+    "test:workbench": "node scripts/test-workbench.mjs && node scripts/test-workbench.mjs --split-diff && node scripts/test-workbench.mjs --threads && node scripts/test-workbench.mjs --pr-summary && node scripts/test-workbench.mjs --images && node scripts/test-workbench.mjs --onboarding && node scripts/test-workbench.mjs --auth"
   },
   "dependencies": {
     "@aptabase/electron": "^0.3.1",
+    "@base-ui/react": "^1.9.0",
     "@octokit/rest": "^22.0.1",
-    "@shikijs/transformers": "^3.22.0",
+    "@pierre/diffs": "1.6.1",
+    "@pierre/vscode-icons": "0.0.9",
+    "@shikijs/transformers": "4.5.0",
     "adm-zip": "^0.5.17",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -35,8 +38,10 @@
     "react-dom": "19.2.3",
     "react-markdown": "^10.1.0",
     "react-resizable-panels": "^4.6.4",
+    "rehype-raw": "^7.0.0",
+    "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
-    "shiki": "^3.22.0",
+    "shiki": "4.5.0",
     "tailwind-merge": "^3.5.0"
   },
   "devDependencies": {

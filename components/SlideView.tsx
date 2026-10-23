@@ -1,14 +1,20 @@
+import { ReviewImageDiff } from './ReviewImageDiff';
+import { imageMimeType } from '../lib/review-images';
 import { sourceForPath } from '../lib/workbench';
 import { buildFileUrlBase } from '../lib/github-url';
 import type { ReviewGuide } from '../lib/types';
 import type { ReactNode } from 'react';
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, useCallback } from 'react';
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from 'react-resizable-panels';
-import { Check, Copy, CopyX, MessageCircle, MessageSquarePlus } from 'lucide-react';
+import { Check, Copy, CopyX, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { DiffHunkGroup } from '@/components/DiffHunk';
-import { InteractiveDiffHunkGroup } from '@/components/InteractiveDiffHunk';
-import { SplitDiffHunkGroup } from '@/components/SplitDiffHunk';
+import { findReviewLine } from './ReviewDiff';
+import { ReviewSelectionActions } from './ReviewSelectionActions';
+import { ReviewFileDiscussion } from './ReviewFileDiscussion';
+import { DiffAppearanceMenu } from './DiffAppearanceMenu';
+import { DEFAULT_DIFF_APPEARANCE, type DiffAppearance } from '@/lib/review-diff';
+import { ReviewFileHeader } from './ReviewFileHeader';
+import { normalizeInlineExplanations } from '@/lib/inline-explanations';
 import { FilePathLink } from '@/components/FilePathLink';
 import { Markdown } from '@/components/Markdown';
 import { MermaidDiagram } from '@/components/MermaidDiagram';
@@ -38,6 +44,8 @@ interface Props {
   commentCallbacks?: CommentCallbacks;
   diffLayout: Preferences['diffLayout'];
   onDiffLayoutChange: (layout: Preferences['diffLayout']) => void;
+  diffAppearance?: DiffAppearance;
+  onDiffAppearanceChange?: (value: DiffAppearance) => void;
   onAskQuestion?: () => void;
   onExplore?: () => void;
   onAskAboutSelection?: (quotedCode: string) => void;
@@ -48,6 +56,10 @@ interface Props {
   isReviewed?: boolean;
   onMarkReviewed?: () => void;
   onToggleReviewed?: () => void;
+  viewedFiles?: Set<string>;
+  onFileViewedChange?: (filePath: string, viewed: boolean) => void;
+  showInlineExplanations?: boolean;
+  onShowInlineExplanationsChange?: (show: boolean) => void;
 }
 
 // Format a file's last-modified date as a human-readable age badge.
@@ -400,6 +412,8 @@ export function SlideView({
   commentCallbacks,
   diffLayout,
   onDiffLayoutChange,
+  diffAppearance = DEFAULT_DIFF_APPEARANCE,
+  onDiffAppearanceChange,
   onAskQuestion,
   onExplore,
   onAskAboutSelection,
@@ -410,11 +424,31 @@ export function SlideView({
   isReviewed,
   onMarkReviewed,
   onToggleReviewed,
+  viewedFiles,
+  onFileViewedChange,
+  showInlineExplanations = true,
+  onShowInlineExplanationsChange,
 }: Props) {
   const typeConfig = safeConfigLookup(slideTypeConfig, slide.slideType, slideTypeConfig.foundation);
   const Icon = typeConfig.icon;
   const groupedHunks = groupHunksByFile(slide.diffHunks);
+  for (const filePath of slide.affectedFiles) {
+    if (imageMimeType(filePath) && !groupedHunks.some((group) => group.filePath === filePath))
+      groupedHunks.push({ filePath, hunks: [] });
+  }
   const rightPanelRef = useRef<HTMLDivElement>(null);
+  const fileContentId = useId();
+  const [fileExpansion, setFileExpansion] = useState<Record<string, boolean>>({});
+  const [explanationNotice, setExplanationNotice] = useState('');
+  const inlineExplanations = useMemo(
+    () =>
+      normalizeInlineExplanations(
+        slide.inlineExplanations,
+        slide.diffHunks,
+        review?.changedFiles ?? (fileMetadataMap ? [...fileMetadataMap.values()] : undefined)
+      ),
+    [slide.inlineExplanations, slide.diffHunks, review?.changedFiles, fileMetadataMap]
+  );
   const [narrow, setNarrow] = useState(() => window.matchMedia('(max-width: 1000px)').matches);
   const [narrowPane, setNarrowPane] = useState<'explanation' | 'code'>('explanation');
   useEffect(() => {
@@ -431,39 +465,6 @@ export function SlideView({
   useEffect(() => {
     if (hasLeftSlot) setNarrowPane('explanation');
   }, [hasLeftSlot]);
-
-  // Selection-to-chat: when the user selects code in the diff panel,
-  // show a small floating "Ask about this" button near the selection.
-  const [selectionPopover, setSelectionPopover] = useState<{
-    text: string;
-    top: number;
-    left: number;
-  } | null>(null);
-
-  const handleDiffMouseUp = useCallback(() => {
-    if (!onAskAboutSelection) return;
-    const sel = window.getSelection();
-    const text = sel?.toString().trim();
-    if (!text || text.length < 3) {
-      setSelectionPopover(null);
-      return;
-    }
-    const range = sel?.getRangeAt(0);
-    if (!range) return;
-    const rect = range.getBoundingClientRect();
-    const container = rightPanelRef.current;
-    if (!container) return;
-    const containerRect = container.getBoundingClientRect();
-    setSelectionPopover({
-      text,
-      top: rect.bottom - containerRect.top + container.scrollTop + 4,
-      left: rect.left - containerRect.left + rect.width / 2,
-    });
-  }, [onAskAboutSelection]);
-
-  const handleDiffMouseDown = useCallback(() => {
-    setSelectionPopover(null);
-  }, []);
 
   const chapterNumber = slideNumber.toString().padStart(2, '0');
   const fileCount = slide.affectedFiles.length;
@@ -492,26 +493,23 @@ export function SlideView({
 
   const handleCheckClick = useCallback((check: ReviewCheck) => {
     if (!check.filePath || !check.startLine) return;
+    const filePath = check.filePath;
     const container = rightPanelRef.current;
     if (!container) return;
 
-    const escapedPath = CSS.escape(check.filePath);
-    // Primary: new-file line number (matches what the AI is told to emit).
-    // Fallback: old-file line number, in case the AI anchored at a
-    // removed line.
-    const target =
-      container.querySelector(`[data-file-path="${escapedPath}"][data-line-number="${check.startLine}"]`) ??
-      container.querySelector(`[data-file-path="${escapedPath}"][data-base-line="${check.startLine}"]`);
+    const target = findReviewLine(container, check.filePath, check.startLine);
 
     if (!target) {
       setAnchorMiss({ filePath: check.filePath, line: check.startLine, at: Date.now() });
       return;
     }
 
-    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setNarrowPane('code');
+    setFileExpansion((current) => ({ ...current, [filePath]: true }));
+    requestAnimationFrame(() => target.scrollIntoView({ behavior: 'smooth', block: 'center' }));
     target.classList.remove('check-highlight');
     // Force reflow to restart animation if clicking the same item again
-    void (target as HTMLElement).offsetWidth;
+    void target.offsetWidth;
     target.classList.add('check-highlight');
   }, []);
 
@@ -666,29 +664,45 @@ export function SlideView({
   );
 
   const diffContent = (
-    <div
-      ref={rightPanelRef}
-      className="review-code relative px-6 py-10 flex flex-col gap-5"
-      onMouseUp={handleDiffMouseUp}
-      onMouseDown={handleDiffMouseDown}
-    >
-      {selectionPopover && (
-        <button
-          className="absolute z-10 slide-meta bg-background border border-border rounded px-2 py-1 shadow-sm hover:text-foreground transition-colors flex items-center gap-1.5 -translate-x-1/2 animate-fade-in"
-          style={{ top: selectionPopover.top, left: selectionPopover.left }}
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={() => {
-            onAskAboutSelection?.(selectionPopover.text);
-            setSelectionPopover(null);
-          }}
-        >
-          <MessageSquarePlus className="h-3 w-3" />
-          Ask about this
-        </button>
+    <div ref={rightPanelRef} className="review-code relative px-6 py-10 flex flex-col gap-5">
+      {onAskAboutSelection && (
+        <ReviewSelectionActions
+          containerRef={rightPanelRef}
+          onAsk={onAskAboutSelection}
+          resetKey={JSON.stringify([slideNumber, diffLayout, fileExpansion, narrowPane, hasRightSlot])}
+        />
       )}
       <div className="flex items-center justify-end">
-        <DiffLayoutToggle value={diffLayout} onChange={onDiffLayoutChange} />
+        <div className="flex items-center gap-3 flex-wrap">
+          {inlineExplanations.length > 0 && onShowInlineExplanationsChange && (
+            <label className="inline-explanations-toggle">
+              <input
+                type="checkbox"
+                checked={showInlineExplanations}
+                onChange={(event) => {
+                  const draft = rightPanelRef.current?.querySelector('textarea');
+                  if (draft) {
+                    draft.focus();
+                    setExplanationNotice('Finish or cancel your comment before changing inline explanations.');
+                    return;
+                  }
+                  setExplanationNotice('');
+                  onShowInlineExplanationsChange(event.target.checked);
+                }}
+              />
+              Inline explanations
+            </label>
+          )}
+          <DiffLayoutToggle value={diffLayout} onChange={onDiffLayoutChange} />
+          {onDiffAppearanceChange && <DiffAppearanceMenu value={diffAppearance} onChange={onDiffAppearanceChange} />}
+        </div>
       </div>
+
+      {explanationNotice && (
+        <p className="text-xs text-muted-foreground" role="status">
+          {explanationNotice}
+        </p>
+      )}
 
       {slide.mermaidDiagram && <MermaidDiagram chart={slide.mermaidDiagram} />}
 
@@ -698,71 +712,78 @@ export function SlideView({
           <p className="slide-meta">No code changes here — this topic provides context for what follows.</p>
         </div>
       )}
-      {groupedHunks.map(({ filePath, hunks }) => {
+      {groupedHunks.map(({ filePath, hunks }, index) => {
         const origin = review ? sourceForPath(review, filePath) : undefined;
         const sourceUrl = origin?.member ? buildFileUrlBase(origin.member.url, origin.member.headSha) : gitFileUrlBase;
         const fm = fileMetadataMap?.get(filePath);
         const ageBadge = fm ? formatFileAge(fm.lastModified) : null;
-        const churnBadge = fm && (fm.prCommitCount ?? 1) > 1 ? `${fm.prCommitCount}× in this PR` : null;
+        const viewed = viewedFiles?.has(filePath) ?? false;
+        const expanded = fileExpansion[filePath] ?? !viewed;
+        const contentId = `${fileContentId}-${index}`;
+        const fileDiff = (
+          <ReviewFileDiscussion
+            inlineExplanations={
+              showInlineExplanations ? inlineExplanations.filter((note) => note.filePath === filePath) : []
+            }
+            review={review}
+            filePath={filePath}
+            pinnedLines={slide.reviewChecks
+              ?.filter((check) => check.filePath === filePath && check.startLine != null)
+              .map((check) => check.startLine as number)}
+            fileStatus={fm?.status}
+            hunks={hunks}
+            diffLayout={diffLayout}
+            appearance={diffAppearance}
+            pendingComments={pendingComments}
+            slideIndex={slideNumber}
+            commentCallbacks={commentCallbacks}
+          />
+        );
 
         return (
-          <div key={filePath} className="review-file-group flex flex-col gap-0">
-            <div className="review-file-context" aria-label="Current source">
-              <div className="flex items-center gap-2 min-w-0">
-                {origin?.member && review?.snapshot?.subject.kind === 'stack' && (
-                  <span className="source-attribution" title={origin.member.title}>
-                    PR #{origin.member.number}
-                  </span>
-                )}
-                <FilePathLink
-                  compact
-                  filePath={origin?.path ?? filePath}
-                  gitFileUrlBase={sourceUrl}
-                  className="font-mono text-xs min-w-0 flex-1"
+          <div key={filePath} className="review-file-group flex flex-col gap-0" data-file-path={filePath}>
+            <ReviewFileHeader
+              expanded={expanded}
+              contentId={contentId}
+              onToggleExpanded={() => {
+                setFileExpansion((current) => ({ ...current, [filePath]: !expanded }));
+              }}
+              viewed={viewed}
+              onViewedChange={
+                onFileViewedChange
+                  ? (next) => {
+                      setFileExpansion((current) => ({ ...current, [filePath]: !next }));
+                      onFileViewedChange(filePath, next);
+                    }
+                  : undefined
+              }
+              filePath={origin?.path ?? filePath}
+              hunks={hunks}
+              gitFileUrlBase={sourceUrl}
+              metadata={fm}
+              summary={slide.fileSummaries?.find((entry) => entry.filePath === filePath)?.summary}
+              source={review?.snapshot?.subject.kind === 'stack' ? origin?.member : undefined}
+              commentCount={pendingComments?.filter((c) => c.filePath === filePath).length ?? 0}
+              age={ageBadge}
+            />
+            <div id={contentId} className="review-file-content" hidden={!expanded}>
+              {imageMimeType(filePath) && (
+                <ReviewImageDiff
+                  key={`${review?.reviewId}:${filePath}`}
+                  reviewId={review?.reviewId}
+                  filePath={filePath}
+                  enabled={expanded}
                 />
-                {(pendingComments?.filter((c) => c.filePath === filePath).length ?? 0) > 0 && (
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">
-                    {pendingComments?.filter((c) => c.filePath === filePath).length} comments
-                  </span>
-                )}
-              </div>
+              )}
+              {imageMimeType(filePath) && hunks.length > 0 ? (
+                <details className="review-image-source">
+                  <summary>Source diff and comments</summary>
+                  {fileDiff}
+                </details>
+              ) : (
+                fileDiff
+              )}
             </div>
-
-            {/* File metadata badges — age + churn. Render as quiet
-                mono text above the file's diff header, only when
-                data is available. */}
-            {(ageBadge || churnBadge) && (
-              <div className="flex items-center gap-3 px-3 py-1 slide-meta">
-                {ageBadge && <span className="statusPill-amber">{ageBadge}</span>}
-                {churnBadge && <span className="statusPill-neutral">{churnBadge}</span>}
-              </div>
-            )}
-            {diffLayout === 'split' ? (
-              <SplitDiffHunkGroup
-                showFileHeader={false}
-                filePath={filePath}
-                fileStatus={fm?.status}
-                hunks={hunks}
-                pendingComments={pendingComments}
-                slideIndex={slideNumber}
-                commentCallbacks={commentCallbacks}
-                gitFileUrlBase={sourceUrl}
-              />
-            ) : commentCallbacks ? (
-              <InteractiveDiffHunkGroup
-                showFileHeader={false}
-                filePath={filePath}
-                hunks={hunks}
-                pendingComments={pendingComments ?? []}
-                slideIndex={slideNumber}
-                onAddComment={commentCallbacks.onAddComment}
-                onRemoveComment={commentCallbacks.onRemoveComment}
-                onEditComment={commentCallbacks.onEditComment}
-                gitFileUrlBase={sourceUrl}
-              />
-            ) : (
-              <DiffHunkGroup showFileHeader={false} filePath={filePath} hunks={hunks} gitFileUrlBase={sourceUrl} />
-            )}
           </div>
         );
       })}

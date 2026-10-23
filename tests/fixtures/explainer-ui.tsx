@@ -30,6 +30,7 @@ function Preview() {
       reviewId="review-1"
       slide={slide}
       onClose={() => setClosed(true)}
+      onShowActivity={() => {}}
       onSaved={() => {
         document.body.dataset.saved = 'true';
       }}

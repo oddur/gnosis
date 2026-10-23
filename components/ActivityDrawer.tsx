@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Activity, ChevronUp, X, Loader2, Check, AlertCircle } from 'lucide-react';
 import { isActiveTask, type ActivityAction, type ActivityTask } from '../lib/activity';
 import { PROVIDERS } from '../lib/models';
+import { createActivityCompletionTracker } from '../lib/activity-notifications';
+import { toast } from './ui/toast';
 
 const kindLabels = {
   review: 'Guided review',
@@ -42,9 +44,21 @@ function Progress({ task }: { task: ActivityTask }) {
     </div>
   );
 }
-export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Promise<void> }) {
+export function ActivityDrawer({
+  onOpen,
+  open,
+  onOpenChange: setOpen,
+}: {
+  onOpen: (task: ActivityTask) => Promise<void>;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const [tasks, setTasks] = useState<ActivityTask[]>([]);
-  const [open, setOpen] = useState(false);
+  const [newCompletions] = useState(createActivityCompletionTracker);
+  const onOpenRef = useRef(onOpen);
+  useEffect(() => {
+    onOpenRef.current = onOpen;
+  }, [onOpen]);
   const [error, setError] = useState('');
   const [pending, setPending] = useState<string | null>(null);
   const alive = useRef(true);
@@ -56,6 +70,30 @@ export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Pro
       const next = await window.electronAPI.listActivity();
       if (alive.current) {
         setTasks(next);
+        for (const task of newCompletions(next)) {
+          const id = toast.add({
+            title: task.kind === 'exploration' ? 'Interactive explanation ready' : 'Review ready',
+            description: task.kind === 'exploration' ? `${task.title} · ${task.detail}` : task.title,
+            type: 'success',
+            actionProps: {
+              children: task.kind === 'exploration' ? 'Open interactive explanation' : 'Open review',
+              onClick: () => {
+                toast.update(id, { actionProps: { children: 'Opening…', disabled: true } });
+                void onOpenRef
+                  .current(task)
+                  .then(() => toast.close(id))
+                  .catch((e: unknown) => {
+                    toast.update(id, {
+                      type: 'error',
+                      title: 'Could not open result',
+                      description: e instanceof Error ? e.message : String(e),
+                      actionProps: { children: undefined },
+                    });
+                  });
+              },
+            },
+          });
+        }
         if (refreshFailed.current) {
           setError('');
           refreshFailed.current = false;
@@ -67,7 +105,7 @@ export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Pro
         setError('Could not refresh activity. Retrying…');
       }
     }
-  }, []);
+  }, [newCompletions]);
   useEffect(() => {
     alive.current = true;
     void refresh();
