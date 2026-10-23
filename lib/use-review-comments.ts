@@ -1,4 +1,4 @@
-import { useReducer, useCallback } from 'react';
+import { useReducer, useCallback, useEffect } from 'react';
 import type { PendingReviewComment, DiffSide } from './types';
 
 type Action =
@@ -20,8 +20,24 @@ function reducer(state: PendingReviewComment[], action: Action): PendingReviewCo
   }
 }
 
-export function useReviewComments() {
-  const [comments, dispatch] = useReducer(reducer, []);
+export function useReviewComments(storageKey?: string) {
+  const [comments, dispatch] = useReducer(reducer, [], () => {
+    try {
+      const stored: unknown = storageKey ? JSON.parse(localStorage.getItem(storageKey) ?? '[]') : [];
+      return Array.isArray(stored) ? (stored as PendingReviewComment[]) : [];
+    } catch {
+      return [];
+    }
+  });
+  useEffect(() => {
+    if (storageKey) {
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(comments));
+      } catch {
+        /* optional */
+      }
+    }
+  }, [comments, storageKey]);
 
   const addComment = useCallback(
     (params: {

@@ -1,3 +1,4 @@
+import { createActivityService } from '../src/activity-service';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import fs from 'node:fs';
@@ -65,7 +66,9 @@ void test('generation repairs invalid output, saves once, and reuses the saved a
       return Promise.resolve(JSON.stringify(explainer));
     },
   };
+  const activity = createActivityService();
   const service = createExplainerService({
+    activity,
     reviewsDir: () => dir,
     preferences: () => ({ provider: 'codex', model: 'gpt-6.1-sol' }) as Preferences,
     provider: () => provider,
@@ -76,9 +79,11 @@ void test('generation repairs invalid output, saves once, and reuses the saved a
   });
   const req = { reviewId: 'review-1', slideId: slide.id };
   const first = service.generate(req, 1);
+  assert.equal(activity.list()[0].status, 'running');
   assert.equal(service.generate(req, 1), first, 'duplicate clicks share the same generation');
   assert.throws(() => service.generate(req, 2), /another window/);
   assert.deepEqual(await first, explainer);
+  assert.equal(activity.list()[0].status, 'completed');
   assert.equal(fs.existsSync(cwd), false);
   assert.deepEqual(await service.generate(req, 1), explainer);
   assert.equal(calls, 2);

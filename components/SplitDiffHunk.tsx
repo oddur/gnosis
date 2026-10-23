@@ -1,7 +1,9 @@
 import { useState, useMemo } from 'react';
+import { DiffHunkGroup } from './DiffHunk';
+import { InteractiveDiffHunkGroup } from './InteractiveDiffHunk';
 import { MessageSquarePlus } from 'lucide-react';
 import { parseDiffLines, buildSplitRows, type DiffLineInfo, type SplitRow } from '@/lib/diff-lines';
-import type { DiffHunk, DiffSide, PendingReviewComment } from '@/lib/types';
+import type { DiffHunk, DiffSide, FileMetadata, PendingReviewComment } from '@/lib/types';
 import { FilePathLink } from '@/components/FilePathLink';
 import {
   type CommentCallbacks,
@@ -13,7 +15,9 @@ import {
 } from '@/components/shared-diff-utils';
 
 interface SplitDiffHunkGroupProps {
+  showFileHeader?: boolean;
   filePath: string;
+  fileStatus?: FileMetadata['status'];
   hunks: DiffHunk[];
   pendingComments?: PendingReviewComment[];
   slideIndex?: number;
@@ -305,26 +309,50 @@ function SplitDiffRowFragment({
 }
 
 export function SplitDiffHunkGroup({
+  showFileHeader = true,
   filePath,
+  fileStatus,
   hunks,
   pendingComments = [],
   slideIndex = 0,
   commentCallbacks,
   gitFileUrlBase,
 }: SplitDiffHunkGroupProps) {
+  // Prefer file metadata: expanded/generated hunks can contain blank context
+  // and nonzero old ranges even for added files. Older reviews lack metadata.
+  const singleSide = fileStatus
+    ? fileStatus === 'added' || fileStatus === 'deleted'
+    : hunks.length > 0 &&
+      (hunks.every((h) => /^@@ -0,0 \+\d+(?:,\d+)? @@/.test(h.hunkHeader)) ||
+        hunks.every((h) => /^@@ -\d+(?:,\d+)? \+0,0 @@/.test(h.hunkHeader)));
+  if (singleSide) {
+    const props = { showFileHeader, filePath, hunks, gitFileUrlBase };
+    return commentCallbacks ? (
+      <InteractiveDiffHunkGroup
+        {...props}
+        pendingComments={pendingComments}
+        slideIndex={slideIndex}
+        {...commentCallbacks}
+      />
+    ) : (
+      <DiffHunkGroup {...props} />
+    );
+  }
   const fileCommentCount = pendingComments.filter((c) => c.filePath === filePath).length;
 
   return (
     <div className="rounded-md border overflow-x-auto">
-      <div className="bg-muted/50 px-3 py-2 font-mono text-xs text-muted-foreground border-b truncate flex items-center justify-between">
-        <FilePathLink filePath={filePath} gitFileUrlBase={gitFileUrlBase} />
-        {commentCallbacks && fileCommentCount > 0 && (
-          <span className="ml-2 inline-flex items-center gap-1 text-[var(--ring)]">
-            <MessageSquarePlus className="h-3 w-3" />
-            {fileCommentCount}
-          </span>
-        )}
-      </div>
+      {showFileHeader && (
+        <div className="bg-muted/50 px-3 py-2 font-mono text-xs text-muted-foreground border-b truncate flex items-center justify-between">
+          <FilePathLink filePath={filePath} gitFileUrlBase={gitFileUrlBase} />
+          {commentCallbacks && fileCommentCount > 0 && (
+            <span className="ml-2 inline-flex items-center gap-1 text-[var(--ring)]">
+              <MessageSquarePlus className="h-3 w-3" />
+              {fileCommentCount}
+            </span>
+          )}
+        </div>
+      )}
       {hunks.map((hunk, i) => (
         <div key={i}>
           {i > 0 && <div className="border-t border-dashed border-muted" />}

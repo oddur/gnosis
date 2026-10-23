@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowUpRight, LoaderCircle, Pause, Play, RotateCcw, SkipForward } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Pause, Play, RotateCcw, SkipForward } from 'lucide-react';
 import { Button } from './ui/button';
 import { buildExplainerDocument } from '../lib/explainer-document';
 import type { InteractiveExplainer, Slide } from '../lib/types';
@@ -9,9 +9,10 @@ interface Props {
   slide: Slide;
   onClose: () => void;
   onSaved: (artifact: InteractiveExplainer) => void;
+  onShowActivity: () => void;
 }
 
-export function ExplainerView({ reviewId, slide, onClose, onSaved }: Props) {
+export function ExplainerView({ reviewId, slide, onClose, onSaved, onShowActivity }: Props) {
   const [artifact, setArtifact] = useState(slide.explainer);
   const [busy, setBusy] = useState(!slide.explainer);
   const [error, setError] = useState('');
@@ -65,7 +66,7 @@ export function ExplainerView({ reviewId, slide, onClose, onSaved }: Props) {
     return () => {
       alive.current = false;
       observer.disconnect();
-      void window.electronAPI.cancelExplainer(req);
+      // Generation belongs to Activity and continues while this pane is closed.
     };
   }, []);
 
@@ -122,7 +123,7 @@ export function ExplainerView({ reviewId, slide, onClose, onSaved }: Props) {
           <ArrowLeft /> Back to explanation
         </Button>
         <p className="text-xs text-muted-foreground truncate" title={slide.title}>
-          Explore · {slide.title}
+          Interactive explanation · {slide.title}
         </p>
       </div>
       <div className="w-full max-w-[1600px] mx-auto flex-1 min-h-0 flex flex-col">
@@ -139,14 +140,16 @@ export function ExplainerView({ reviewId, slide, onClose, onSaved }: Props) {
             role="status"
             className="flex flex-wrap items-center gap-3 py-2 border-y border-border mb-2 text-sm shrink-0"
           >
-            <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" />
             <span>
               {artifact
-                ? 'Refining the example and checking its controls…'
-                : 'Building the example and checking its controls. This can take several minutes…'}
+                ? 'Refining in the background. We’ll notify you when it’s ready.'
+                : 'Building in the background. We’ll notify you when it’s ready.'}
             </span>
-            <Button variant="ghost" size="sm" onClick={() => void window.electronAPI.cancelExplainer(req)}>
-              Cancel
+            <Button variant="ghost" size="sm" onClick={onShowActivity}>
+              View activity
+            </Button>
+            <Button variant="outline" size="sm" onClick={onClose}>
+              Continue reviewing
             </Button>
           </div>
         )}

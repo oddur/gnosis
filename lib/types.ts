@@ -1,3 +1,4 @@
+import type { ReviewSnapshot } from './workbench';
 import type { ModelId, Provider } from './models';
 
 export type SlideType = 'foundation' | 'feature' | 'refactor' | 'bugfix' | 'test' | 'config' | 'docs';
@@ -58,6 +59,20 @@ export interface GenerateExplainerRequest {
   refinement?: string;
 }
 
+export interface FileChangeSummary {
+  filePath: string;
+  summary: string;
+}
+
+export interface InlineExplanation {
+  filePath: string;
+  line: number;
+  side: DiffSide;
+  /** Exact source line, used to verify the generated location before display. */
+  code: string;
+  text: string;
+}
+
 export interface Slide {
   id: string;
   slideNumber: number;
@@ -68,6 +83,9 @@ export interface Slide {
   diffHunks: DiffHunk[];
   contextSnippets: string[];
   affectedFiles: string[];
+  /** Short file header summaries scoped to the hunks in this topic. */
+  fileSummaries?: FileChangeSummary[];
+  inlineExplanations?: InlineExplanation[];
   dependsOn: string[];
   mermaidDiagram?: string | null;
   reviewChecks?: ReviewCheck[];
@@ -93,6 +111,9 @@ export interface AISlide {
   diffHunkIds: string[];
   contextSnippets: string[];
   affectedFiles: string[];
+  /** Short file header summaries scoped to the hunks in this topic. */
+  fileSummaries?: FileChangeSummary[];
+  inlineExplanations?: InlineExplanation[];
   dependsOn: string[];
   mermaidDiagram?: string | null;
   reviewChecks?: ReviewCheck[];
@@ -154,6 +175,8 @@ export interface PlannerOutput {
 
 // Writer output for a single slide in two-phase generation
 export interface WriterSlideOutput {
+  fileSummaries?: FileChangeSummary[];
+  inlineExplanations?: InlineExplanation[];
   narrative: string;
   reviewFocus: string | null;
   contextSnippets: string[];
@@ -165,6 +188,7 @@ export interface WriterSlideOutput {
 
 export interface FileMetadata {
   filename: string;
+  previousFilename?: string;
   status: 'added' | 'modified' | 'deleted' | 'renamed';
   additions: number;
   deletions: number;
@@ -176,6 +200,12 @@ export interface FileMetadata {
 }
 
 export interface ReviewGuide {
+  /** Immutable revisions and eligible image paths for on-demand previews. */
+  baseSha?: string;
+  baseRepo?: string;
+  headRepo?: string;
+  imageFiles?: string[];
+  snapshot?: ReviewSnapshot;
   /** Assigned by the local store when loading a saved review. */
   reviewId?: string;
   prTitle: string;
@@ -231,6 +261,8 @@ export interface PendingReviewComment {
 }
 
 export interface SubmitReviewRequest {
+  baseSha?: string;
+  baseBranch?: string;
   prUrl: string;
   headSha: string;
   event: ReviewEvent;
@@ -239,6 +271,7 @@ export interface SubmitReviewRequest {
 }
 
 export interface ReviewHistoryEntry {
+  snapshot?: ReviewSnapshot;
   id: string;
   prTitle: string;
   prUrl: string;
@@ -270,6 +303,9 @@ export interface StartReviewResult {
 export type { ClaudeModel, CodexModel, ModelId, Provider } from './models';
 
 export interface Preferences {
+  ignoreDependabotPrs?: boolean;
+  autoBriefings?: boolean;
+  briefingDailyLimit?: number;
   instructions: string;
   provider: Provider;
   model: ModelId;
@@ -286,6 +322,8 @@ export interface Preferences {
   codexPath: string;
   notifications: boolean;
   diffLayout: 'unified' | 'split';
+  diffAppearance?: import('./review-diff').DiffAppearance;
+  showInlineExplanations?: boolean;
   includeAllFiles: boolean;
   reviewSignature: boolean;
   firstRunSeen: boolean;
@@ -326,6 +364,9 @@ export interface SendSlideChatRequest {
 }
 
 export interface GenerateReviewRequest {
+  standalone?: boolean;
+  subjectId?: string;
+  memberUrls?: string[];
   prUrl: string;
   provider: Provider;
   model: ModelId;
@@ -365,7 +406,7 @@ export interface FreshnessCommit {
 
 export type FreshnessResult =
   | { status: 'current' }
-  | { status: 'stale'; aheadBy: number; commits: FreshnessCommit[] }
+  | { status: 'stale'; aheadBy: number; commits: FreshnessCommit[]; reason?: string }
   | { status: 'force-pushed' }
   | { status: 'unknown'; reason: string };
 
@@ -378,7 +419,7 @@ export interface PrSearchResult {
   author: string;
   updatedAt: string;
   isDraft: boolean;
-  role: 'author' | 'review-requested' | 'watched';
+  role: 'author' | 'assigned' | 'review-requested' | 'watched';
 }
 
 export interface RepoSearchResult {
@@ -391,10 +432,22 @@ export interface UpdateInfo {
   releaseUrl: string;
 }
 
+export interface PrLabel {
+  name: string;
+  color?: string;
+  description?: string;
+}
+
 export interface PrMetadata {
+  changedFileCount?: number;
+  additions?: number;
+  deletions?: number;
+  headRepo?: string;
+  baseRepo?: string;
   title: string;
   description: string;
   author: string;
+  assignees?: string[];
   baseBranch: string;
   headBranch: string;
   baseSha: string;
@@ -405,6 +458,7 @@ export interface PrMetadata {
   updatedAt: string;
   url: string;
   labels: string[];
+  labelDetails?: PrLabel[];
   mergeable: boolean | null;
   isDraft: boolean;
   commitCount: number;

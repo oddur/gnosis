@@ -1,3 +1,5 @@
+import { ActivityDrawer } from '../components/ActivityDrawer';
+import type { ActivityTask } from '../lib/activity';
 import { useState, useEffect, useCallback } from 'react';
 import { HomePage } from './pages/HomePage';
 import { ReviewPage } from './pages/ReviewPage';
@@ -5,11 +7,19 @@ import { UpdateBanner } from '../components/UpdateBanner';
 import { applyCodeFont } from '../components/SettingsDialog';
 import { applyTheme } from '../lib/theme';
 import type { ReviewGuide } from '../lib/types';
+import { Toaster } from '../components/ui/toast';
 
 type Page = 'home' | 'review';
 
 export function App() {
   const [page, setPage] = useState<Page>('home');
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [destination, setDestination] = useState<{
+    subjectId?: string;
+    slideId?: string;
+    explore?: boolean;
+    nonce: number;
+  }>({ nonce: 0 });
 
   useEffect(() => {
     void window.electronAPI.loadPreferences().then((prefs) => {
@@ -24,10 +34,27 @@ export function App() {
   const [prefillPrUrl, setPrefillPrUrl] = useState<string | undefined>();
 
   const handleReviewReady = useCallback((r: ReviewGuide) => {
+    setDestination((d) => ({ nonce: d.nonce + 1 }));
     setPrefillPrUrl(undefined);
     setReview(r);
     setPage('review');
   }, []);
+
+  async function openActivity(task: ActivityTask) {
+    if (task.kind === 'briefing') {
+      setDestination((d) => ({ subjectId: task.subjectId, nonce: d.nonce + 1 }));
+      setReview(null);
+      setPage('home');
+      setActivityOpen(false);
+      return;
+    }
+    if (!task.reviewId) throw new Error('This task has no saved review.');
+    const loaded = await window.electronAPI.loadReview(task.reviewId);
+    setReview(loaded);
+    setPage('review');
+    setDestination((d) => ({ slideId: task.slideId, explore: task.kind === 'exploration', nonce: d.nonce + 1 }));
+    setActivityOpen(false);
+  }
 
   function handleBack() {
     setReview(null);
@@ -67,11 +94,28 @@ export function App() {
           the newspaper "Extra" notice handles it instead. */}
       {page !== 'home' && <UpdateBanner />}
       <div id="main-content">
-        {page === 'home' && <HomePage onReviewReady={handleReviewReady} prefillPrUrl={prefillPrUrl} />}
+        {page === 'home' && (
+          <HomePage
+            key={destination.nonce}
+            onReviewReady={handleReviewReady}
+            prefillPrUrl={prefillPrUrl}
+            initialSubjectId={destination.subjectId}
+          />
+        )}
         {page === 'review' && review && (
-          <ReviewPage review={review} onBack={handleBack} onReReview={handleReReview} />
+          <ReviewPage
+            key={destination.nonce}
+            review={review}
+            onBack={handleBack}
+            onReReview={handleReReview}
+            initialSlideId={destination.slideId}
+            exploreInitially={destination.explore}
+            onShowActivity={() => setActivityOpen(true)}
+          />
         )}
       </div>
+      <ActivityDrawer onOpen={openActivity} open={activityOpen} onOpenChange={setActivityOpen} />
+      <Toaster />
     </>
   );
 }

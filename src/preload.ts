@@ -1,3 +1,9 @@
+import type { GitHubDevicePrompt } from '../lib/github-auth';
+import type { QueueViewAction } from '../lib/saved-views';
+import type { QueueFilters } from '../lib/queue-filters';
+import type { GitHubReviewThread, GitHubReviewThreads, ReviewThreadAction } from '../lib/review-threads';
+import type { ActivityTask, ActivityAction } from '../lib/activity';
+import type { WorkbenchQueue, GroupingOverride, ReviewSnapshot } from '../lib/workbench';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   ChangedFile,
@@ -5,6 +11,7 @@ import type {
   Preferences,
   PrSearchResult,
   PrStatus,
+  PrMetadata,
   ReviewGuide,
   ReviewHistoryEntry,
   SendSlideChatRequest,
@@ -18,15 +25,28 @@ import type {
 } from '../lib/types';
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  listActivity: (): Promise<ActivityTask[]> => ipcRenderer.invoke('list-activity'),
+  activityAction: (id:string, action:ActivityAction): Promise<void> => ipcRenderer.invoke('activity-action',id,action),
+  workbenchViewAction: (action: QueueViewAction): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-view-action', action),
+  workbenchSetFilters: (filters: QueueFilters): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-set-filters', filters),
+  workbenchQueue: (force = false): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-queue', force),
+  workbenchGroup: (correction: GroupingOverride): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-group', correction),
+  workbenchBriefing: (id: string): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-briefing', id),
+  workbenchFreshness: (snapshot: ReviewSnapshot): Promise<FreshnessResult> => ipcRenderer.invoke('workbench-freshness', snapshot),
   generateExplainer: (req: GenerateExplainerRequest): Promise<InteractiveExplainer> => ipcRenderer.invoke('generate-explainer', req),
   cancelExplainer: (req: GenerateExplainerRequest): Promise<void> => ipcRenderer.invoke('cancel-explainer', req),
   startReview: (req: GenerateReviewRequest): Promise<StartReviewResult> => ipcRenderer.invoke('start-review', req),
   cancelReview: (reviewId: string): Promise<void> => ipcRenderer.invoke('cancel-review', reviewId),
   getConfig: (): Promise<{ githubToken: string | null }> => ipcRenderer.invoke('get-config'),
+  githubAuthOptions: (): Promise<{ web: boolean }> => ipcRenderer.invoke('github-auth-options'),
   startOAuth: (): Promise<void> => ipcRenderer.invoke('start-oauth'),
+  cancelOAuth: (): Promise<void> => ipcRenderer.invoke('cancel-oauth'),
+  beginGitHubSignIn: (): Promise<GitHubDevicePrompt> => ipcRenderer.invoke('begin-github-sign-in'),
+  completeGitHubSignIn: (id: string): Promise<string> => ipcRenderer.invoke('complete-github-sign-in', id),
+  cancelGitHubSignIn: (id: string): Promise<void> => ipcRenderer.invoke('cancel-github-sign-in', id),
   getAuthState: (): Promise<{ authenticated: boolean; login: string | null }> => ipcRenderer.invoke('get-auth-state'),
   signOut: (): Promise<void> => ipcRenderer.invoke('sign-out'),
-  savePat: (token: string): Promise<string> => ipcRenderer.invoke('save-pat', token),
+  savePat: (token: string, prUrl?: string): Promise<string> => ipcRenderer.invoke('save-pat', token, prUrl),
   listReviews: (): Promise<ReviewHistoryEntry[]> => ipcRenderer.invoke('list-reviews'),
   loadReview: (id: string): Promise<ReviewGuide> => ipcRenderer.invoke('load-review', id),
   deleteReview: (id: string): Promise<void> => ipcRenderer.invoke('delete-review', id),
@@ -110,6 +130,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   searchRepos: (query: string): Promise<RepoSearchResult[]> => ipcRenderer.invoke('search-repos', query),
   reRenderHunks: (review: ReviewGuide): Promise<ReviewGuide> => ipcRenderer.invoke('re-render-hunks', review),
   getPrStatus: (prUrl: string): Promise<PrStatus> => ipcRenderer.invoke('get-pr-status', prUrl),
+  getPrMetadata: (prUrl: string): Promise<PrMetadata> => ipcRenderer.invoke('get-pr-metadata', prUrl),
+  loadReviewImages: (reviewId: string, filePath: string): Promise<import('../lib/review-images').ReviewImageComparison> => ipcRenderer.invoke('load-review-images', reviewId, filePath),
+  loadPrImage: (url: string): Promise<string> => ipcRenderer.invoke('load-pr-image', url),
+  getReviewThreads: (prUrl: string, refresh?: boolean): Promise<GitHubReviewThreads> => ipcRenderer.invoke('get-review-threads', prUrl, refresh),
+  reviewThreadAction: (req: ReviewThreadAction): Promise<GitHubReviewThread> => ipcRenderer.invoke('review-thread-action', req),
   onUpdateAvailable: (callback: (info: UpdateInfo) => void): void => {
     ipcRenderer.on('update-available', (_event, info: UpdateInfo) => callback(info));
   },

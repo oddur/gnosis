@@ -1,3 +1,4 @@
+import type { ActivityService } from './activity-service';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -8,6 +9,7 @@ import { buildExplainerPrompt, EXPLAINER_SYSTEM, parseExplainer } from '../lib/e
 import type { GenerateExplainerRequest, InteractiveExplainer, Preferences, ReviewGuide, Slide } from '../lib/types';
 
 interface Dependencies {
+  activity?: ActivityService;
   reviewsDir: () => string;
   preferences: () => Preferences;
   validate: (artifact: InteractiveExplainer, signal: AbortSignal) => Promise<void>;
@@ -42,7 +44,12 @@ export function createExplainerService(deps: Dependencies) {
     return `${req.reviewId}:${req.slideId}`;
   }
   const load = (file: string): ReviewGuide => JSON.parse(fs.readFileSync(file, 'utf8')) as ReviewGuide;
-  async function run(req: GenerateExplainerRequest, signal: AbortSignal): Promise<InteractiveExplainer> {
+  async function run(
+    req: GenerateExplainerRequest,
+    signal: AbortSignal,
+    owner: number,
+    taskId: string
+  ): Promise<InteractiveExplainer> {
     const file = path.join(deps.reviewsDir(), `${req.reviewId}.json`);
     const review = load(file);
     const slide = review.slides.find((s) => s.id === req.slideId);
@@ -58,6 +65,21 @@ export function createExplainerService(deps: Dependencies) {
     const revision = fingerprint(review, slide);
     const prefs = deps.preferences();
     const selection = normalizeModelSelection(prefs.provider, prefs.model);
+    deps.activity?.start(
+      {
+        id: taskId,
+        kind: 'exploration',
+        title: review.prTitle,
+        detail: `Generating: ${slide.title}`,
+        model: selection.model,
+        reviewId: req.reviewId,
+        slideId: slide.id,
+      },
+      {
+        cancel: () => service.cancel(req, owner),
+        retry: () => service.generate(req, owner),
+      }
+    );
     const provider = (deps.provider ?? getProvider)(selection.provider);
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-explainer-'));
     try {
@@ -76,11 +98,13 @@ export function createExplainerService(deps: Dependencies) {
         signal.throwIfAborted();
         let artifact: InteractiveExplainer;
         try {
+          deps.activity?.update(taskId, 'Validating the exploration');
           artifact = parseExplainer(raw, slide);
           await deps.validate(artifact, signal);
         } catch (error) {
           signal.throwIfAborted();
           if (attempt === 1) throw error;
+          deps.activity?.update(taskId, 'Repairing the exploration');
           repair =
             '\nThe previous artifact failed validation. Correct it and return the full JSON again.\nError: ' +
             String(error).slice(0, 1000) +
@@ -101,6 +125,7 @@ export function createExplainerService(deps: Dependencies) {
         } finally {
           if (fs.existsSync(temp)) fs.unlinkSync(temp);
         }
+        deps.activity?.finish(taskId, 'completed', slide.title);
         return artifact;
       }
       throw new Error('Could not generate an explainer.');
@@ -108,7 +133,7 @@ export function createExplainerService(deps: Dependencies) {
       fs.rmSync(cwd, { recursive: true, force: true });
     }
   }
-  return {
+  const service = {
     generate(req: GenerateExplainerRequest, owner: number): Promise<InteractiveExplainer> {
       const key = keyFor(req);
       const active = running.get(key);
@@ -123,13 +148,19 @@ export function createExplainerService(deps: Dependencies) {
       );
       const started = Date.now();
       console.log(`[explainer] Starting ${key}`);
-      const promise = run(req, controller.signal)
+      const taskId = `exploration:${key}:${randomUUID()}`;
+      const promise = run(req, controller.signal, owner, taskId)
         .catch((error: unknown) => {
           // CLI providers use a generic cancellation error. Keep the service's
           // reason so a deadline is not reported as a user cancellation.
           const failure: unknown = controller.signal.aborted ? controller.signal.reason : error;
           console.error(
             `[explainer] ${key} failed after ${Math.round((Date.now() - started) / 1000)}s: ${String(failure)}`
+          );
+          deps.activity?.finish(
+            taskId,
+            controller.signal.aborted && !String(failure).includes('timed out') ? 'cancelled' : 'failed',
+            failure instanceof Error ? failure.message : String(failure)
           );
           throw failure;
         })
@@ -149,4 +180,5 @@ export function createExplainerService(deps: Dependencies) {
         if (active.owner === owner) active.controller.abort(new Error('Explainer generation cancelled.'));
     },
   };
+  return service;
 }

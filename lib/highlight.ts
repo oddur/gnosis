@@ -140,6 +140,9 @@ export async function renderDiffHunk(
   return highlighter.codeToHtml(codeLines.join('\n'), {
     lang,
     theme,
+    // Aurora X's muted comment ink falls below AA on diff backgrounds.
+    // Apply at tokenization so unified/split views and saved exports agree.
+    colorReplacements: theme === 'aurora-x' ? { '#546e7a': '#91a7b2' } : undefined,
     transformers: [diffTransformer],
   });
 }

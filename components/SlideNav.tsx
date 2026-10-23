@@ -44,25 +44,23 @@ export function SlideNav({
   const showSubmitAsRight = atEnd && !!onSubmitReview;
   const showSubmitInCenter = !showSubmitAsRight && !!onSubmitReview;
 
-  const nextLeadIn = isOverview ? 'Start reading' : 'Next';
+  const nextLeadIn = isOverview ? 'Start review' : 'Next';
 
   return (
     <div className="border-t border-border bg-muted/30 shrink-0">
-      <div className="flex items-stretch justify-between gap-6 px-10 py-5">
+      <div className="review-bottom-nav grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-stretch gap-4 px-5 py-2">
         {/* ── Previous ── Quieter weight than Next so the eye is
             pulled forward. Disabled (faded) when on the overview. */}
         <button
           onClick={onPrev}
           disabled={isOverview}
-          className="group flex items-baseline gap-3 text-left max-w-[36%] min-w-0 disabled:opacity-30 disabled:cursor-default"
+          className="group flex items-baseline gap-3 text-left min-w-0 disabled:opacity-30 disabled:cursor-default"
           title="Previous (←)"
         >
-          <span className="slide-meta shrink-0 group-hover:text-foreground transition-colors">
-            ←
-          </span>
+          <span className="slide-meta shrink-0 group-hover:text-foreground transition-colors">←</span>
           <span className="flex flex-col gap-0.5 min-w-0">
             <span className="slide-meta">Previous</span>
-            <span className="font-serif text-base text-foreground/60 group-hover:text-foreground transition-colors truncate">
+            <span className="font-sans text-sm text-foreground/60 group-hover:text-foreground transition-colors truncate">
               {prevTitle ?? 'Start of review'}
             </span>
           </span>
@@ -76,10 +74,8 @@ export function SlideNav({
           <span className="slide-meta tabular-nums">
             {isOverview
               ? 'Overview'
-              : `Section ${current.toString().padStart(2, '0')} of ${total
-                  .toString()
-                  .padStart(2, '0')}`}
-            {reviewedCount > 0 && ` · ${reviewedCount} reviewed`}
+              : `Topic ${current.toString().padStart(2, '0')} of ${total.toString().padStart(2, '0')}`}
+            {reviewedCount > 0 && ` · ${reviewedCount} topics reviewed`}
           </span>
           {showSubmitInCenter && (
             <button
@@ -87,10 +83,8 @@ export function SlideNav({
               className="inline-flex items-center gap-1.5 slide-meta hover:text-foreground transition-colors"
             >
               <MessageSquarePlus className="h-3 w-3" />
-              Submit review
-              {commentCount > 0 && (
-                <span className="text-[var(--ring)] tabular-nums">({commentCount})</span>
-              )}
+              Submit to GitHub
+              {commentCount > 0 && <span className="text-[var(--ring)] tabular-nums">({commentCount})</span>}
             </button>
           )}
         </div>
@@ -103,38 +97,32 @@ export function SlideNav({
         {showSubmitAsRight ? (
           <button
             onClick={onSubmitReview}
-            className="group flex items-baseline gap-3 text-right max-w-[36%] min-w-0 justify-end"
-            title="Submit review"
+            className="group flex items-baseline gap-3 text-right min-w-0 justify-end"
+            title="Submit to GitHub"
           >
-            <span className="flex flex-col gap-0.5 min-w-0 items-end">
+            <span className="flex flex-col gap-0.5 min-w-0 items-end max-w-full">
               <span className="slide-meta">End of review</span>
-              <span className="font-serif text-base text-foreground group-hover:opacity-80 transition-opacity truncate">
-                Submit review
-                {commentCount > 0 && (
-                  <span className="text-[var(--ring)] tabular-nums"> ({commentCount})</span>
-                )}
+              <span className="font-sans text-sm text-foreground group-hover:opacity-80 transition-opacity truncate max-w-full">
+                Submit to GitHub
+                {commentCount > 0 && <span className="text-[var(--ring)] tabular-nums"> ({commentCount})</span>}
               </span>
             </span>
-            <span className="slide-meta shrink-0 text-foreground group-hover:opacity-80 transition-opacity">
-              →
-            </span>
+            <span className="slide-meta shrink-0 text-foreground group-hover:opacity-80 transition-opacity">→</span>
           </button>
         ) : (
           <button
             onClick={onNext}
             disabled={atEnd}
-            className="group flex items-baseline gap-3 text-right max-w-[36%] min-w-0 disabled:opacity-30 disabled:cursor-default justify-end"
+            className="group flex items-baseline gap-3 text-right min-w-0 disabled:opacity-30 disabled:cursor-default justify-end"
             title="Next (→)"
           >
-            <span className="flex flex-col gap-0.5 min-w-0 items-end">
+            <span className="flex flex-col gap-0.5 min-w-0 items-end max-w-full">
               <span className="slide-meta">{nextLeadIn}</span>
-              <span className="font-serif text-base text-foreground group-hover:opacity-80 transition-opacity truncate">
+              <span className="font-sans text-sm text-foreground group-hover:opacity-80 transition-opacity truncate max-w-full">
                 {nextTitle ?? '—'}
               </span>
             </span>
-            <span className="slide-meta shrink-0 text-foreground group-hover:opacity-80 transition-opacity">
-              →
-            </span>
+            <span className="slide-meta shrink-0 text-foreground group-hover:opacity-80 transition-opacity">→</span>
           </button>
         )}
       </div>

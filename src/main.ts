@@ -1,10 +1,23 @@
+import type { QueueViewAction } from '../lib/saved-views';
+import { createActivityService } from './activity-service';
+import { createReviewThreadService } from './review-thread-service';
+import type { ReviewThreadAction } from '../lib/review-threads';
+import type { ActivityAction } from '../lib/activity';
+import { createWorkbenchService } from './workbench-service';
+import { StackDiffSource } from '../lib/stack-source';
+import { snapshot, fingerprint, type ReviewSubject, type ReviewSnapshot, type GroupingOverride } from '../lib/workbench';
 import { app, autoUpdater, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import http from 'http';
 import crypto from 'crypto';
-import { Octokit } from '@octokit/rest';
+import { getGitHubClient, githubClients, fetchGitHubLogin, githubRateLimit } from '../lib/github-client';
+import { createGitHubWebAuth } from './github-web-auth';
+import { createGitHubAuthService } from './github-auth-service';
+import { checkGitHubPrAccess, githubAccessMessage } from '../lib/github-auth';
+import { createPrImageService } from './pr-image-service';
+import { createReviewImageService } from './review-image-service';
+import { imageMimeType, includeImageChanges } from '../lib/review-images';
 import {
   parsePrUrl,
   getPrMetadata,
@@ -26,6 +39,8 @@ import {
 import { buildContextPackage, buildPlannerContext, buildTopicContext } from '../lib/context-builder';
 import { generateReviewGuide, planReview, generateSlide } from '../lib/agent';
 import { buildArchive, parseArchive } from '../lib/review-archive';
+import { normalizeFileSummaries } from '../lib/file-summaries';
+import { normalizeInlineExplanations } from '../lib/inline-explanations';
 import { captureExplainerContext, normalizeExplainerIdea, parseExplainer } from '../lib/explainer';
 import { createExplainerService } from './explainer-service';
 import { protectExplainerFrames, validateExplainerInBrowser } from './explainer-validation';
@@ -144,147 +159,42 @@ function getResolvedToken(): string | null {
   return token;
 }
 
-// ── OAuth flow ──────────────────────────────────────────────────
-
-async function exchangeCodeForToken(code: string, codeVerifier: string, redirectUri: string): Promise<string> {
-  const body = new URLSearchParams({
-    client_id: GITHUB_CLIENT_ID,
-    client_secret: GITHUB_CLIENT_SECRET,
-    code,
-    code_verifier: codeVerifier,
-    redirect_uri: redirectUri,
-  });
-
-  const res = await fetch('https://github.com/login/oauth/access_token', {
-    method: 'POST',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
-  });
-
-  const data = (await res.json()) as { access_token?: string; error?: string; error_description?: string };
-  if (!data.access_token) {
-    throw new Error(data.error_description ?? data.error ?? 'OAuth token exchange failed');
+// Transient identity failures must not turn the renderer's polling into repeated /user requests.
+let loginFailure: { token: string; error: unknown; retryAt: number } | undefined;
+async function resolveGitHubLogin(token: string): Promise<string> {
+  if (loginFailure?.token === token && loginFailure.retryAt > Date.now()) throw loginFailure.error;
+  try {
+    const login = await fetchGitHubLogin(token);
+    if (getResolvedToken() !== token) throw new Error('GitHub account changed. Please try again.');
+    loginFailure = undefined;
+    return login;
+  } catch (error) {
+    loginFailure = { token, error, retryAt: githubRateLimit(error)?.retryAt ?? Date.now() + 60_000 };
+    throw error;
   }
-  return data.access_token;
 }
 
-async function fetchGitHubLogin(token: string): Promise<string> {
-  const res = await fetch('https://api.github.com/user', {
-    headers: {
-      Authorization: `token ${token}`,
-      'User-Agent': 'Gnosis-App',
-    },
-  });
-  const data = (await res.json()) as { login?: string };
-  return data.login ?? 'unknown';
-}
-
-async function validateAndFetchLogin(token: string): Promise<string> {
-  const res = await fetch('https://api.github.com/user', {
-    headers: { Authorization: `token ${token}`, 'User-Agent': 'Gnosis-App' },
-  });
-  if (!res.ok) throw new Error(`Invalid token (GitHub returned ${res.status})`);
-  const data = (await res.json()) as { login?: string };
-  if (!data.login) throw new Error('Token validated but could not retrieve GitHub username');
-  return data.login;
-}
-
-function generatePkce(): { verifier: string; challenge: string } {
-  const verifier = crypto.randomBytes(32).toString('base64url');
-  const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
-  return { verifier, challenge };
-}
-
-function runOAuthFlow(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const state = crypto.randomBytes(20).toString('hex');
-    const { verifier, challenge } = generatePkce();
-
-    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- async HTTP handler
-    const server = http.createServer(async (req, res) => {
-      const url = new URL(req.url ?? '/', `http://localhost`);
-      if (url.pathname !== '/callback') {
-        res.writeHead(404);
-        res.end();
-        return;
-      }
-
-      const returnedState = url.searchParams.get('state');
-      const code = url.searchParams.get('code');
-      const errorParam = url.searchParams.get('error');
-
-      if (returnedState !== state) {
-        res.writeHead(400, { 'Content-Type': 'text/html' });
-        res.end('<html><body><p>Invalid state parameter. Please try again.</p></body></html>');
-        server.close();
-        reject(new Error('OAuth state mismatch'));
-        return;
-      }
-
-      if (errorParam || !code) {
-        const desc = url.searchParams.get('error_description') ?? errorParam ?? 'Unknown error';
-        res.writeHead(400, { 'Content-Type': 'text/html' });
-        res.end(`<html><body><p>Sign-in failed: ${desc}</p></body></html>`);
-        server.close();
-        reject(new Error(desc));
-        return;
-      }
-
-      const addr = server.address();
-      const port = typeof addr === 'object' && addr ? addr.port : 0;
-      const redirectUri = `http://127.0.0.1:${port}/callback`;
-
-      try {
-        const token = await exchangeCodeForToken(code, verifier, redirectUri);
-        const login = await fetchGitHubLogin(token);
-        persistToken(token);
-        cachedToken = token;
-        cachedLogin = login;
-
-        res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end('<html><body><p>You are now signed in to Gnosis. You can close this tab.</p></body></html>');
-        server.close();
-        resolve();
-      } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'text/html' });
-        res.end('<html><body><p>Authentication failed. Please try again.</p></body></html>');
-        server.close();
-        reject(err instanceof Error ? err : new Error(String(err)));
-      }
-    });
-
-    server.listen(0, '127.0.0.1', () => {
-      const addr = server.address();
-      if (!addr || typeof addr === 'string') {
-        server.close();
-        reject(new Error('Failed to start OAuth callback server'));
-        return;
-      }
-
-      const port = addr.port;
-      const redirectUri = `http://127.0.0.1:${port}/callback`;
-      const params = new URLSearchParams({
-        client_id: GITHUB_CLIENT_ID,
-        redirect_uri: redirectUri,
-        scope: 'repo',
-        state,
-        code_challenge: challenge,
-        code_challenge_method: 'S256',
-      });
-      void shell.openExternal(`https://github.com/login/oauth/authorize?${params}`);
-    });
-
-    const timeout = setTimeout(
-      () => {
-        server.close();
-        reject(new Error('OAuth sign-in timed out after 5 minutes'));
-      },
-      5 * 60 * 1000
-    );
-
-    server.on('close', () => clearTimeout(timeout));
-  });
-}
+// Both sign-in flows keep credentials and cancellation in the main process.
+let authRevision = 0;
+const authStorage = {
+  identify: async (token: string) => {
+    try { return await fetchGitHubLogin(token); }
+    catch (error) { throw new Error(githubAccessMessage(error)); }
+  },
+  save: (token: string, login: string) => {
+    workbench.interrupt();
+    persistToken(token);
+    cachedToken = token;
+    cachedLogin = login;
+    loginFailure = undefined;
+  },
+};
+const githubAuth = createGitHubAuthService({ clientId: GITHUB_CLIENT_ID, ...authStorage });
+const githubWebAuth = createGitHubWebAuth({
+  clientId: GITHUB_CLIENT_ID, clientSecret: GITHUB_CLIENT_SECRET,
+  open: (url) => shell.openExternal(url), ...authStorage,
+});
+app.on('before-quit', () => { githubAuth.cancel(); githubWebAuth.cancel(); });
 
 // ── Persistent logging ───────────────────────────────────────────
 
@@ -315,7 +225,7 @@ function setupLogging() {
 
   function write(level: string, args: unknown[]) {
     const ts = new Date().toISOString();
-    const msg = args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
+    const msg = args.map((a) => a instanceof Error ? `${a.name}: ${a.message}` : typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
     stream.write(`${ts} [${level}] ${msg}\n`);
   }
 
@@ -414,24 +324,11 @@ function startUpdateChecks() {
 // ── GitHub rate-limit handling ──────────────────────────────────
 
 function isRateLimitError(err: unknown): boolean {
-  if (err instanceof Error) {
-    const msg = err.message.toLowerCase();
-    return msg.includes('rate limit') || msg.includes('api rate limit');
-  }
-  return false;
+  return !!githubRateLimit(err);
 }
 
-/** Extract the reset time from a GitHub rate-limit error, or return a default backoff. */
 function getRateLimitResetMs(err: unknown): number {
-  // Octokit errors sometimes carry response headers
-  const response = (err as Record<string, unknown>)?.response as Record<string, unknown> | undefined;
-  const headers = response?.headers as Record<string, string> | undefined;
-  const reset = headers?.['x-ratelimit-reset'];
-  if (reset) {
-    const resetMs = parseInt(reset, 10) * 1000 - Date.now();
-    if (resetMs > 0) return Math.min(resetMs, 60 * 60 * 1000); // cap at 1 hour
-  }
-  return 5 * 60 * 1000; // default: 5 min backoff
+  return Math.max(0, (githubRateLimit(err)?.retryAt ?? Date.now() + 60_000) - Date.now());
 }
 
 /** Rethrow with a friendly message if the error is a rate limit. */
@@ -546,10 +443,10 @@ async function runProactiveCheck() {
     return;
   }
   const prefs = loadPreferences();
-  if (!prefs.proactiveMode) return;
+  if (!prefs.proactiveMode || prefs.autoBriefings !== undefined) return;
 
   try {
-    const octokit = new Octokit({ auth: cachedToken });
+    const octokit = getGitHubClient(cachedToken);
 
     // ── Phase 1: Discover PRs from all three sources ──
 
@@ -730,6 +627,7 @@ function setupAutoUpdater() {
 
 void app.whenReady().then(() => {
   setupLogging();
+  githubClients.setStorage(path.join(app.getPath('userData'), 'github-budget.json'));
 
   // Expose packaged state to preload via env var (before creating windows)
   process.env.APP_IS_PACKAGED = app.isPackaged ? '1' : '0';
@@ -861,6 +759,7 @@ function backfillSummaries(): void {
 
 // ── Background generation tracking ──────────────────────────────
 
+const activities = createActivityService();
 const activeGenerations = new Map<string, { abortController?: AbortController; prUrl?: string }>();
 
 /** Cancel any in-flight generation for the same PR URL. */
@@ -918,6 +817,11 @@ function broadcastToAllWindows(channel: string, ...args: unknown[]): void {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send(channel, ...args);
   }
+}
+
+function reportReviewPhase(payload: {reviewId:string;phase:string;completed?:number;total?:number}): void {
+  activities.update(`review:${payload.reviewId}`,payload.phase,payload.total !== undefined ? {completed:payload.completed ?? 0,total:payload.total} : undefined);
+  broadcastToAllWindows('review-phase',payload);
 }
 
 function showOrCreateWindow(): void {
@@ -991,6 +895,7 @@ function getPreferencesPath() {
 }
 
 const DEFAULT_PREFERENCES: Preferences = {
+  ignoreDependabotPrs: true,
   instructions: '',
   provider: 'claude',
   model: DEFAULT_CLAUDE_MODEL,
@@ -1000,6 +905,8 @@ const DEFAULT_PREFERENCES: Preferences = {
   enableTools: false,
   enableWebResearch: false,
   proactiveMode: false,
+  autoBriefings: true,
+  briefingDailyLimit: 10,
   watchedRepos: [],
   codeTheme: 'aurora-x',
   codeFont: 'jetbrains-mono',
@@ -1037,6 +944,8 @@ function loadPreferences(): Preferences {
       stored.proactiveMode = stored.autoReviewOnRequest;
       delete stored.autoReviewOnRequest;
     }
+    // Preserve the existing choice about automatic generation during migration.
+    if (!('autoBriefings' in stored)) stored.autoBriefings = stored.proactiveMode === true;
     const selection = normalizeModelSelection(stored.provider, stored.model);
     const proactive = normalizeModelSelection(stored.proactiveProvider, stored.proactiveModel, true);
     Object.assign(stored, selection, {
@@ -1122,17 +1031,37 @@ ipcMain.handle('get-config', () => {
   return { githubToken: token };
 });
 
-ipcMain.handle('start-oauth', async () => {
-  await runOAuthFlow();
+ipcMain.handle('github-auth-options', () => ({ web: !!GITHUB_CLIENT_SECRET }));
+ipcMain.handle('start-oauth', () => {
+  authRevision++;
+  githubAuth.cancel();
+  return githubWebAuth.start();
 });
+ipcMain.handle('cancel-oauth', () => githubWebAuth.cancel());
+ipcMain.handle('begin-github-sign-in', () => {
+  authRevision++;
+  githubWebAuth.cancel();
+  return githubAuth.begin();
+});
+ipcMain.handle('complete-github-sign-in', (_event, id: string) => githubAuth.complete(id));
+ipcMain.handle('cancel-github-sign-in', (_event, id: string) => githubAuth.cancel(id));
 
-ipcMain.handle('save-pat', async (_event, token: string) => {
+ipcMain.handle('save-pat', async (_event, token: string, prUrl?: string) => {
+  if (typeof token !== 'string' || !token.trim()) throw new Error('Enter a GitHub personal access token.');
+  const revision = ++authRevision;
+  githubAuth.cancel();
+  githubWebAuth.cancel();
   const trimmed = token.trim();
-  if (!trimmed) throw new Error('Token must not be empty');
-  const login = await validateAndFetchLogin(trimmed);
+  let login: string;
+  try { login = await fetchGitHubLogin(trimmed); }
+  catch (error) { throw new Error(githubAccessMessage(error)); }
+  if (prUrl?.trim()) await checkGitHubPrAccess(getGitHubClient(trimmed), prUrl.trim());
+  if (revision !== authRevision) throw new Error('GitHub sign-in was cancelled.');
+  workbench.interrupt();
   persistToken(trimmed);
   cachedToken = trimmed;
   cachedLogin = login;
+  loginFailure = undefined;
   return login;
 });
 
@@ -1140,12 +1069,15 @@ ipcMain.handle('get-auth-state', async () => {
   const token = getResolvedToken();
   if (!token) return { authenticated: false, login: null };
 
+  cachedLogin ??= githubClients.savedLogin(token) ?? null;
   if (!cachedLogin) {
     try {
-      cachedLogin = await fetchGitHubLogin(token);
-    } catch {
-      // token may be invalid
-      return { authenticated: false, login: null };
+      cachedLogin = await resolveGitHubLogin(token);
+    } catch (error) {
+      if ((error as { status?: number }).status === 401) return { authenticated: false, login: null };
+      const login = githubClients.savedLogin(token);
+      if (login) cachedLogin = login;
+      else return { authenticated: true, login: null };
     }
   }
 
@@ -1153,6 +1085,14 @@ ipcMain.handle('get-auth-state', async () => {
 });
 
 ipcMain.handle('sign-out', () => {
+  authRevision++;
+  githubWebAuth.cancel();
+  githubAuth.cancel();
+  workbench.interrupt();
+  if (cachedToken) githubClients.forget(cachedToken);
+  loginFailure = undefined;
+  for (const task of activities.list())
+    if (task.kind === 'github' && (task.status === 'paused' || task.status === 'running')) activities.finish(task.id, 'cancelled', 'Signed out of GitHub.');
   cachedToken = null;
   cachedLogin = null;
   deleteStoredToken();
@@ -1162,7 +1102,7 @@ ipcMain.handle('search-pull-requests', async () => {
   const token = getResolvedToken();
   if (!token || !cachedLogin) throw new Error('Not authenticated');
   try {
-    const octokit = new Octokit({ auth: token });
+    const octokit = getGitHubClient(token);
     return await searchPullRequests(octokit, cachedLogin);
   } catch (err) {
     friendlyRateLimitError(err);
@@ -1173,7 +1113,7 @@ ipcMain.handle('search-repos', async (_event, query: string) => {
   const token = getResolvedToken();
   if (!token) throw new Error('Not authenticated');
   try {
-    const octokit = new Octokit({ auth: token });
+    const octokit = getGitHubClient(token);
     return await searchRepos(octokit, query);
   } catch (err) {
     if (isRateLimitError(err)) return []; // silently return empty for autocomplete
@@ -1225,7 +1165,10 @@ ipcMain.handle('load-review', async (_event, id: string) => {
   const reviewPath = path.join(getReviewsDir(), `${id}.json`);
   const review = JSON.parse(fs.readFileSync(reviewPath, 'utf-8')) as ReviewGuide;
   review.reviewId = id;
+  includeImageChanges(review);
   for (const slide of review.slides) {
+    slide.fileSummaries = normalizeFileSummaries(slide.fileSummaries, slide.diffHunks);
+    slide.inlineExplanations = normalizeInlineExplanations(slide.inlineExplanations, slide.diffHunks, review.changedFiles);
     if (slide.explainerIdea !== undefined) slide.explainerIdea = normalizeExplainerIdea(slide.explainerIdea);
     if (slide.explainer) {
       try { slide.explainer = parseExplainer(JSON.stringify(slide.explainer), slide); }
@@ -1236,6 +1179,13 @@ ipcMain.handle('load-review', async (_event, id: string) => {
   await reRenderAllHunks(review, prefs.codeTheme);
   return review;
 });
+
+const loadReviewImages = createReviewImageService({
+  loadReview: (id) => JSON.parse(fs.readFileSync(path.join(getReviewsDir(), `${id}.json`), 'utf8')) as ReviewGuide,
+  client: () => getGitHubClient(getResolvedToken()),
+  allowLocal: (id) => readReviewsIndex().some((entry) => entry.id === id && !entry.imported),
+});
+ipcMain.handle('load-review-images', (_event, reviewId: string, filePath: string) => loadReviewImages(reviewId, filePath));
 
 ipcMain.handle('re-render-hunks', async (_event, review: ReviewGuide) => {
   const prefs = loadPreferences();
@@ -1348,7 +1298,7 @@ ipcMain.handle(
 
     const token = getResolvedToken();
     if (!token) return { status: 'unknown', reason: 'Not signed in' };
-    const octokit = new Octokit({ auth: token });
+    const octokit = getGitHubClient(token);
     const { owner, repo, pullNumber } = parsePrUrl(prUrl);
 
     try {
@@ -1402,7 +1352,7 @@ async function fetchPrStatus(prUrl: string): Promise<PrStatus | null> {
   if (isLocalUrl(prUrl)) return null;
   const token = getResolvedToken();
   if (!token) return null;
-  const octokit = new Octokit({ auth: token });
+  const octokit = getGitHubClient(token);
   const { owner, repo, pullNumber } = parsePrUrl(prUrl);
 
   const [prData, reviewSummary] = await Promise.all([
@@ -1432,6 +1382,19 @@ async function fetchPrStatus(prUrl: string): Promise<PrStatus | null> {
   };
 }
 
+ipcMain.handle('get-pr-metadata', async (_event, prUrl: string): Promise<PrMetadata> => {
+  const { owner, repo, pullNumber } = parsePrUrl(prUrl);
+  try { return await getPrMetadata(getGitHubClient(getResolvedToken()), owner, repo, pullNumber); }
+  catch (error) { throw new Error(githubAccessMessage(error, `${owner}/${repo}`)); }
+});
+
+const loadPrImage = createPrImageService();
+ipcMain.handle('load-pr-image', (_event, url: string) => {
+  const token = getResolvedToken();
+  if (!token) throw new Error('Sign in to GitHub to view this image.');
+  return loadPrImage(getGitHubClient(token), url);
+});
+
 ipcMain.handle('get-pr-status', async (_event, prUrl: string): Promise<PrStatus> => {
   if (isLocalUrl(prUrl)) {
     throw new Error('Local review — no PR status available');
@@ -1453,7 +1416,7 @@ ipcMain.handle(
     }
     try {
       const token = getResolvedToken();
-      const octokit = new Octokit({ auth: token ?? undefined });
+      const octokit = getGitHubClient(token);
       const { owner, repo, pullNumber } = parsePrUrl(prUrl);
       const prData = await getPrMetadata(octokit, owner, repo, pullNumber);
       const prState = prData.merged ? 'merged' : prData.state === 'open' ? 'open' : 'closed';
@@ -1686,8 +1649,13 @@ async function runBackgroundGeneration(
   request: GenerateReviewRequest,
   source: DiffSource,
   prData: PrMetadata,
-  signal: AbortSignal
+  signal: AbortSignal,
+  reviewSnapshot?: ReviewSnapshot
 ): Promise<void> {
+  activities.start({id:`review:${reviewId}`,kind:'review',title:prData.title,detail:'Preparing review',model:request.model,reviewId}, {
+    cancel:()=>activeGenerations.get(reviewId)?.abortController?.abort('User cancelled'),
+    retry:()=>startReview(request),
+  });
   const {
     prUrl,
     provider,
@@ -1704,7 +1672,7 @@ async function runBackgroundGeneration(
   try {
     const token = getResolvedToken();
 
-    broadcastToAllWindows('review-phase', { reviewId, phase: 'Fetching PR data' });
+    reportReviewPhase( { reviewId, phase: 'Fetching PR data' });
 
     // Surface non-fatal source-level warnings (e.g. dirty working tree on
     // a local review). Fire-and-forget — never block the pipeline on this.
@@ -1712,7 +1680,7 @@ async function runBackgroundGeneration(
       try {
         const warnings = await source.checkRuntimeWarnings();
         for (const phase of warnings) {
-          broadcastToAllWindows('review-phase', { reviewId, phase });
+          reportReviewPhase( { reviewId, phase });
         }
       } catch {
         // Warnings are best-effort.
@@ -1733,6 +1701,7 @@ async function runBackgroundGeneration(
       console.warn('[main] File metadata fetch failed, proceeding without:', err);
       return allChangedFiles.map((f) => ({
         filename: f.filename,
+        previousFilename: f.previous_filename,
         status: f.status,
         additions: f.additions,
         deletions: f.deletions,
@@ -1762,13 +1731,16 @@ async function runBackgroundGeneration(
       );
     }
 
-    broadcastToAllWindows('review-phase', { reviewId, phase: 'Fetching file contents' });
+    reportReviewPhase( { reviewId, phase: 'Fetching file contents' });
 
     const fileContents: Record<string, string> = {};
     const headFileContents: Record<string, string> = {};
     const concurrency = 5;
-    const filesToFetch = normalFiles.filter((f) => f.status !== 'deleted');
-    const filesToFetchBase = normalFiles.filter((f) => f.status !== 'added');
+    const textFiles = normalFiles.filter(
+      (f) => !imageMimeType(f.filename) || imageMimeType(f.filename) === 'image/svg+xml'
+    );
+    const filesToFetch = textFiles.filter((f) => f.status !== 'deleted');
+    const filesToFetchBase = textFiles.filter((f) => f.status !== 'added');
 
     for (let i = 0; i < Math.max(filesToFetch.length, filesToFetchBase.length); i += concurrency) {
       const headBatch = filesToFetch.slice(i, i + concurrency);
@@ -1779,13 +1751,13 @@ async function runBackgroundGeneration(
           if (content !== null) headFileContents[f.filename] = content;
         }),
         ...baseBatch.map(async (f) => {
-          const content = await source.getFileContent(f.filename, 'base');
+          const content = await source.getFileContent(f.previous_filename ?? f.filename, 'base');
           if (content !== null) fileContents[f.filename] = content;
         }),
       ]);
     }
 
-    broadcastToAllWindows('review-phase', { reviewId, phase: 'Resolving imports' });
+    reportReviewPhase( { reviewId, phase: 'Resolving imports' });
 
     const allFileContents = { ...fileContents, ...headFileContents };
     // Fire the Claude-context probe in parallel with the neighbour
@@ -1793,7 +1765,7 @@ async function runBackgroundGeneration(
     // independent of the import graph we're walking in neighbours.
     const [neighborFiles, projectClaudeContext] = await Promise.all([
       source.getNeighborFiles(
-        normalFiles.map((f) => f.filename),
+        textFiles.map((f) => f.filename),
         allFileContents,
         'base',
         smartImports ? provider : undefined,
@@ -1809,7 +1781,7 @@ async function runBackgroundGeneration(
       );
     }
 
-    broadcastToAllWindows('review-phase', { reviewId, phase: 'Building context' });
+    reportReviewPhase( { reviewId, phase: 'Building context' });
 
     const prefs = loadPreferences();
 
@@ -1850,7 +1822,7 @@ async function runBackgroundGeneration(
     // `.claude/skills/` are auto-discovered from the cwd.
     const localToolsOn = provider === 'claude' && source.kind === 'local' && !!request.localTools && !!source.cwd;
     if (localToolsOn) {
-      broadcastToAllWindows('review-phase', {
+      reportReviewPhase( {
         reviewId,
         phase: 'Tool mode: project skills, MCP, and tests enabled',
       });
@@ -1861,7 +1833,7 @@ async function runBackgroundGeneration(
 
     if (prefs.parallelReview) {
       // ── Two-phase: planner → parallel writers ──
-      broadcastToAllWindows('review-phase', { reviewId, phase: 'Planning review structure' });
+      reportReviewPhase( { reviewId, phase: 'Planning review structure' });
 
       const plannerContext = buildPlannerContext(prData, changedFiles, hunkIndex, excludedFilesSummary, projectClaudeContext);
       plan = await planReview(
@@ -1880,15 +1852,14 @@ async function runBackgroundGeneration(
       // Sort topics by planner's order
       const sortedTopics = [...plan.topics].sort((a, b) => a.order - b.order);
       const storyArc = plan.storyArc;
+      let completedSections = 0;
+      reportReviewPhase({reviewId,phase:'Writing topics',completed:0,total:sortedTopics.length});
 
       // Fire all writers in parallel — the CLI/API handles its own rate limiting
       const slideResults: Slide[] = await Promise.all(
         sortedTopics.map(async (topic, idx) => {
             const slideNum = idx + 1;
-            broadcastToAllWindows('review-phase', {
-              reviewId,
-              phase: `Writing slide ${slideNum}/${sortedTopics.length}: ${topic.title}`,
-            });
+
 
             const topicCtx = buildTopicContext(
               topic, hunkMap, fileContents, headFileContents, neighborFiles,
@@ -1913,6 +1884,8 @@ async function runBackgroundGeneration(
               signal,
             });
 
+            completedSections++;
+            reportReviewPhase({reviewId,phase:'Writing topics',completed:completedSections,total:sortedTopics.length});
             const diffHunks = resolveDiffHunks(topic.hunkIds ?? [], hunkMap, assignedIds);
 
             return {
@@ -1928,6 +1901,8 @@ async function runBackgroundGeneration(
               dependsOn: topic.dependsOn,
               mermaidDiagram: writerOutput.mermaidDiagram,
               explainerIdea: normalizeExplainerIdea(writerOutput.explainerIdea),
+              fileSummaries: normalizeFileSummaries(writerOutput.fileSummaries, diffHunks),
+              inlineExplanations: writerOutput.inlineExplanations,
               reviewChecks: writerOutput.reviewChecks,
               educationNotes: writerOutput.educationNotes,
               importance: topic.importance,
@@ -1938,7 +1913,7 @@ async function runBackgroundGeneration(
       resolvedSlides = slideResults;
     } else {
       // ── Single-shot: existing approach ──
-      broadcastToAllWindows('review-phase', { reviewId, phase: 'Generating review' });
+      reportReviewPhase( { reviewId, phase: 'Generating review' });
 
       let mcpConfigPath: string | undefined;
       let allowedTools: string[] | undefined;
@@ -1978,7 +1953,7 @@ async function runBackgroundGeneration(
             const phase = isThinking ? 'Thinking' : 'Generating review';
             if (phase !== lastStreamPhase) {
               lastStreamPhase = phase;
-              broadcastToAllWindows('review-phase', { reviewId, phase });
+              reportReviewPhase( { reviewId, phase });
             }
             broadcastToAllWindows('review-progress', { reviewId, chunk, isThinking });
           },
@@ -2025,6 +2000,8 @@ async function runBackgroundGeneration(
           dependsOn: aiSlide.dependsOn ?? [],
           mermaidDiagram: aiSlide.mermaidDiagram,
           explainerIdea: normalizeExplainerIdea(aiSlide.explainerIdea),
+          fileSummaries: normalizeFileSummaries(aiSlide.fileSummaries, diffHunks),
+          inlineExplanations: aiSlide.inlineExplanations,
           reviewChecks: aiSlide.reviewChecks,
           educationNotes: aiSlide.educationNotes,
           importance: aiSlide.importance ?? 'important',
@@ -2073,7 +2050,7 @@ async function runBackgroundGeneration(
         slideNumber: resolvedSlides.length + 1,
         title: 'Other changes',
         slideType: 'refactor',
-        narrative: 'Additional changes not covered in previous slides.',
+        narrative: 'Additional changes not covered in previous topics.',
         reviewFocus: null,
         diffHunks: sortDiffHunks(otherHunks),
         contextSnippets: [],
@@ -2085,8 +2062,12 @@ async function runBackgroundGeneration(
 
     // Await the file metadata that was kicked off in parallel earlier.
     const fileMetadata = await fileMetadataPromise;
+    for (const slide of resolvedSlides) {
+      slide.inlineExplanations = normalizeInlineExplanations(slide.inlineExplanations, slide.diffHunks, fileMetadata);
+    }
 
     const reviewGuide: ReviewGuide = {
+      snapshot: reviewSnapshot,
       prTitle: aiResult?.prTitle || prData.title,
       prDescription: aiResult?.prDescription || prData.description,
       prUrl,
@@ -2101,12 +2082,17 @@ async function runBackgroundGeneration(
       generationDurationMs,
       slides: resolvedSlides,
       headSha: prData.headSha,
+      baseSha: prData.baseSha,
+      headRepo: prData.headRepo,
+      baseRepo: prData.baseRepo,
+      imageFiles: changedFiles.filter((f) => imageMimeType(f.filename)).map((f) => f.filename),
       webSources: aiResult?.webSources,
       projectClaudeContext: projectClaudeContext ?? undefined,
       changedFiles: fileMetadata,
     };
 
-    broadcastToAllWindows('review-phase', { reviewId, phase: 'Rendering' });
+    includeImageChanges(reviewGuide);
+    reportReviewPhase( { reviewId, phase: 'Rendering' });
 
     // Render syntax-highlighted HTML for each hunk
     const codeTheme = loadPreferences().codeTheme;
@@ -2125,20 +2111,24 @@ async function runBackgroundGeneration(
     for (const slide of reviewGuide.slides) {
       if (slide.explainerIdea) slide.explainerContext = captureExplainerContext(slide, fileContents, headFileContents);
     }
+    signal.throwIfAborted();
+    await source.assertCurrent?.();
     fs.writeFileSync(path.join(getReviewsDir(), `${reviewId}.json`), JSON.stringify(reviewGuide));
     updateHistoryEntry(reviewId, {
       status: 'completed',
       riskLevel: reviewGuide.riskLevel,
       generationDurationMs,
       summary: reviewGuide.summary,
+      snapshot: reviewSnapshot,
     });
 
+    activities.finish(`review:${reviewId}`, 'completed', 'Explanation ready');
     broadcastToAllWindows('review-completed', { reviewId });
 
     // Desktop notification
     if (loadPreferences().notifications) {
       const notif = new Notification({
-        title: 'Review ready',
+        title: 'Explanation ready',
         body: prData.title,
         silent: true,
       });
@@ -2148,7 +2138,7 @@ async function runBackgroundGeneration(
 
     console.log(`[main] Review ${reviewId} completed in ${formatMs(generationDurationMs)}`);
   } catch (err) {
-    const isCancelled = err instanceof Error && err.message === 'GNOSIS_CANCELLED';
+    const isCancelled = signal.aborted || (err instanceof Error && err.message === 'GNOSIS_CANCELLED');
     const errorMessage = isCancelled ? 'Cancelled' : err instanceof Error ? err.message : 'Unknown error';
     if (!isCancelled) console.error(`[main] Review ${reviewId} failed:`, errorMessage);
 
@@ -2157,6 +2147,7 @@ async function runBackgroundGeneration(
       error: errorMessage,
     });
 
+    activities.finish(`review:${reviewId}`, isCancelled ? 'cancelled' : 'failed', errorMessage);
     broadcastToAllWindows('review-failed', { reviewId, error: errorMessage });
   } finally {
     activeGenerations.delete(reviewId);
@@ -2168,12 +2159,88 @@ function formatMs(ms: number): string {
   return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
 }
 
-ipcMain.handle('start-review', async (_event, request: GenerateReviewRequest): Promise<StartReviewResult> => {
+const workbench = createWorkbenchService({
+  activities,
+  directory: () => app.getPath('userData'),
+  auth: () => ({ token: getResolvedToken(), login: cachedLogin }),
+  preferences: loadPreferences,
+  history: readReviewsIndex,
+  busy: () => activeGenerations.size > 0 || activeForegroundChats > 0 || activities.list().some(t=>t.kind==='exploration' && t.status==='running'),
+});
+let activeForegroundChats = 0;
+const dismissedBriefings = new Map<string,string>();
+ipcMain.handle('list-activity', () => {
+  return [...activities.list(), ...workbench.activity().filter(t=>dismissedBriefings.get(t.id)!==t.updatedAt)];
+});
+ipcMain.handle('activity-action', async (_event, id:string, action:ActivityAction) => {
+  if (!['cancel','retry','dismiss'].includes(action)) throw new Error('Invalid task action.');
+  const briefing=workbench.activity().find(t=>t.id===id);
+  if (briefing) {
+    if (action==='dismiss' && !briefing.canCancel) {dismissedBriefings.set(id,briefing.updatedAt);return;}
+    if (action==='cancel' && briefing.canCancel && briefing.subjectId) {workbench.cancel(briefing.subjectId);return;}
+    if (action==='retry' && briefing.canRetry && briefing.subjectId) {workbench.retry(briefing.subjectId);return;}
+    throw new Error('This briefing action is no longer available.');
+  }
+  await activities.act(id,action);
+});
+ipcMain.handle('workbench-queue', async (_event, force: boolean) => {
   const token = getResolvedToken();
-  const source = await createDiffSource(request.prUrl, { token });
+  if (token && !cachedLogin) {
+    try {
+      cachedLogin = await resolveGitHubLogin(token);
+    } catch (error) {
+      const limited = githubRateLimit(error);
+      if (limited) {
+        const id = 'github:sign-in';
+        activities.start({ id, kind: 'github', title: 'Checking your GitHub account', detail: limited.message }, {});
+        activities.pause(id, limited.message + ' The account check will resume automatically while the queue is open.');
+      }
+      throw error;
+    }
+    activities.finish('github:sign-in', 'completed', 'GitHub account verified');
+  }
+  return workbench.queue(force);
+});
+ipcMain.handle('workbench-view-action', (_event, action: QueueViewAction) => workbench.viewAction(action));
+ipcMain.handle('workbench-set-filters', (_event, filters: unknown) => workbench.setFilters(filters));
+ipcMain.handle('workbench-group', (_event, correction: GroupingOverride) => workbench.correct(correction));
+ipcMain.handle('workbench-briefing', (_event, id: string) => workbench.retry(id));
+ipcMain.handle('workbench-freshness', async (_event, old: ReviewSnapshot) => {
+  try {
+    // Refresh stack relationships, then revalidate only the PRs in this review.
+    await workbench.queue(true, false);
+    const current = await workbench.fresh(old.subject);
+    const changed = fingerprint(current) !== old.fingerprint;
+    return changed ? { status: 'stale', aheadBy: 0, commits: [], reason: 'A PR, parent revision, or stack member changed. Refresh the review to inspect the affected work.' } : {status: 'current'};
+  } catch(error) {return {status:'unknown',reason: error instanceof Error ? error.message : String(error)};}
+});
 
-  // Fetch PR metadata (fast, single API call / git command)
+async function startReview(request: GenerateReviewRequest): Promise<StartReviewResult> {
+  const token = getResolvedToken();
+  workbench.interrupt();
+  let subject: ReviewSubject | undefined;
+  if (!isLocalUrl(request.prUrl)) {
+    // Verify the requested PR before queue discovery or creating a generation/history entry.
+    await checkGitHubPrAccess(getGitHubClient(token), request.prUrl);
+    await workbench.queue();
+    subject = request.subjectId ? workbench.subject(request.subjectId) : !request.standalone ? (await workbench.queue()).items.find(i=>i.subject.members.some(m=>m.url===request.prUrl))?.subject : undefined;
+    if (request.subjectId && !subject) throw new Error('This stack is no longer in the queue. Refresh and try again.');
+    if (subject) {
+      for (const member of subject.members) {
+        if (member.url !== request.prUrl) await checkGitHubPrAccess(getGitHubClient(token), member.url);
+      }
+      subject = await workbench.fresh(subject);
+    }
+  }
+  const source = subject && subject.members.length > 1 ? new StackDiffSource(subject, token) : await createDiffSource(request.prUrl, { token });
   const prData = await source.getMetadata();
+  if (!subject && !isLocalUrl(request.prUrl)) {
+    const parsed=parsePrUrl(request.prUrl);
+    const repo=parsed.owner+'/'+parsed.repo;
+    subject={scope:request.standalone ? 'single' : undefined,id:request.prUrl,kind:'pr',title:prData.title,members:[{...prData,repo,headRepo:prData.headRepo??repo,baseRepo:prData.baseRepo??repo,number:parsed.pullNumber,role:'watched'}],edges:[],warnings:[]};
+  }
+  if (subject?.members.length === 1) subject.members[0] = {...subject.members[0],...prData,headRepo:prData.headRepo??subject.members[0].headRepo,baseRepo:prData.baseRepo??subject.members[0].baseRepo};
+  const reviewSnapshot = subject ? snapshot(subject) : undefined;
 
   const reviewId = crypto.randomUUID();
   const prState = prData.merged ? 'merged' : prData.state === 'open' ? 'open' : 'closed';
@@ -2189,13 +2256,15 @@ ipcMain.handle('start-review', async (_event, request: GenerateReviewRequest): P
     prData.headSha
   );
 
+  if (reviewSnapshot) updateHistoryEntry(reviewId, {snapshot:reviewSnapshot});
+
   // Cancel any in-flight generation for this PR
   cancelExistingGenerationForPr(request.prUrl);
 
   // Track and fire off background generation (no await)
   const abortController = new AbortController();
   activeGenerations.set(reviewId, { abortController, prUrl: request.prUrl });
-  void runBackgroundGeneration(reviewId, request, source, prData, abortController.signal);
+  void runBackgroundGeneration(reviewId, request, source, prData, abortController.signal, reviewSnapshot);
 
   return {
     reviewId,
@@ -2203,7 +2272,8 @@ ipcMain.handle('start-review', async (_event, request: GenerateReviewRequest): P
     prUrl: request.prUrl,
     author: prData.author,
   };
-});
+}
+ipcMain.handle('start-review', (_event, request:GenerateReviewRequest)=>startReview(request));
 
 ipcMain.handle('cancel-review', (_event, reviewId: string) => {
   const gen = activeGenerations.get(reviewId);
@@ -2216,11 +2286,13 @@ const explainerService = createExplainerService({
   reviewsDir: getReviewsDir,
   preferences: loadPreferences,
   validate: validateExplainerInBrowser,
+  activity: activities,
 });
 
-ipcMain.handle('generate-explainer', (event, req: GenerateExplainerRequest) => {
+ipcMain.handle('generate-explainer', async (event, req: GenerateExplainerRequest) => {
   if (event.senderFrame !== event.sender.mainFrame) throw new Error('Explainers can only be requested by the review window.');
-  return explainerService.generate(req, event.sender.id);
+  workbench.interrupt(); activeForegroundChats++;
+  try {return await explainerService.generate(req, event.sender.id);} finally {activeForegroundChats--;}
 });
 ipcMain.handle('cancel-explainer', (event, req: GenerateExplainerRequest) => {
   if (event.senderFrame !== event.sender.mainFrame) return;
@@ -2228,6 +2300,8 @@ ipcMain.handle('cancel-explainer', (event, req: GenerateExplainerRequest) => {
 });
 
 ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
+  workbench.interrupt();
+  activeForegroundChats++;
   const chatProvider = getProvider(req.provider);
   const systemPrompt = buildSlideChatSystemPrompt();
   const userMessage = buildSlideChatUserMessage(req);
@@ -2265,17 +2339,35 @@ ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
     });
     return result;
   } finally {
+    activeForegroundChats--;
     if (mcpConfigPath) cleanupMcpConfig(mcpConfigPath);
   }
 });
+
+const reviewThreads = createReviewThreadService();
+function discussionClient() {
+  const token = getResolvedToken();
+  if (!token) throw new Error('Sign in to GitHub to load review comments.');
+  return getGitHubClient(token);
+}
+ipcMain.handle('get-review-threads', (_event, prUrl: string, refresh: boolean) =>
+  reviewThreads.list(discussionClient(), prUrl, refresh));
+ipcMain.handle('review-thread-action', (_event, req: ReviewThreadAction) =>
+  reviewThreads.act(discussionClient(), req));
 
 ipcMain.handle('submit-review', async (_event, req: SubmitReviewRequest) => {
   if (isLocalUrl(req.prUrl)) {
     throw new Error('Local reviews cannot be submitted back to GitHub — there is no remote PR to comment on.');
   }
   const token = getResolvedToken();
-  const octokit = new Octokit({ auth: token ?? undefined });
+  const octokit = getGitHubClient(token);
   const { owner, repo, pullNumber } = parsePrUrl(req.prUrl);
+
+  const current = await getPrMetadata(octokit, owner, repo, pullNumber);
+  if (current.headSha !== req.headSha || (req.baseSha && current.baseSha !== req.baseSha) || (req.baseBranch && current.baseBranch !== req.baseBranch)) {
+    throw new Error('This PR or its parent changed. Refresh the review before submitting comments or approval.');
+  }
+  if (current.merged || current.state !== 'open') throw new Error('This PR is no longer open for review.');
 
   // Fetch actual PR file patches to validate line numbers.
   // The AI-generated hunks have expanded context (10 lines vs GitHub's 3),
