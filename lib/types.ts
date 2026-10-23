@@ -426,6 +426,12 @@ export interface UpdateInfo {
   releaseUrl: string;
 }
 
+export interface PrLabel {
+  name: string;
+  color?: string;
+  description?: string;
+}
+
 export interface PrMetadata {
   headRepo?: string;
   baseRepo?: string;
@@ -443,6 +449,7 @@ export interface PrMetadata {
   updatedAt: string;
   url: string;
   labels: string[];
+  labelDetails?: PrLabel[];
   mergeable: boolean | null;
   isDraft: boolean;
   commitCount: number;

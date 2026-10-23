@@ -1973,3 +1973,13 @@ body:has(.activity-drawer) .app-toasts { bottom:auto; top:64px; }
 }
 
 @media(max-width:1100px) { .save-view-controls:has(.view-modified) { flex-basis:100%; order:2; } }
+
+/* GitHub-provided colors are data; label text always has a contrasting foreground. */
+.queue-title-line { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 8px; max-width:100%; }
+.queue-title-line>.queue-title { min-width:0; }
+.pr-labels { display:inline-flex; flex-wrap:wrap; align-items:center; gap:4px; max-width:100%; vertical-align:middle; }
+.pr-label { display:inline-block; max-width:100%; padding:0 7px; border:1px solid var(--border); border-radius:999px; background:var(--secondary); color:var(--foreground); font-size:var(--type-caption); font-weight:600; line-height:1.6; overflow-wrap:anywhere; }
+.pr-label-more { color:var(--muted-foreground); font-size:var(--type-caption); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.queue-member-content { display:flex; flex-direction:column; gap:4px; min-width:0; flex:1; }
+.queue-member>.ml-auto { flex-shrink:0; }
+.stack-member .pr-labels { margin-top:6px; }

@@ -1,3 +1,4 @@
+import { PrLabels } from '../../components/PrLabels';
 import { SavedViewsNav, SaveViewControls } from '../../components/SavedQueueViews';
 import type { QueueViewAction } from '../../lib/saved-views';
 import { Popover } from 'radix-ui';
@@ -514,7 +515,10 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
               setStatuses({});
             }}
           >
-            <span className="queue-title">{s.title}</span>
+            <span className="queue-title-line">
+              <span className="queue-title">{s.title}</span>
+              <PrLabels members={s.members} limit={3} />
+            </span>
             <span className="queue-meta">
               <span>{s.members[0].repo}</span>
               <span>{s.kind === 'stack' ? `${s.members.length} PRs in stack` : `#${s.members[0].number}`}</span>
@@ -555,7 +559,10 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
               <button key={m.url} className="queue-member" onClick={() => setSelected(s.id)}>
                 <GitBranch size={13} />
                 <span>#{m.number}</span>
-                <span className="truncate">{m.title}</span>
+                <span className="queue-member-content">
+                  <span className="truncate">{m.title}</span>
+                  <PrLabels members={[m]} />
+                </span>
                 <span className="ml-auto">{m.merged ? 'Merged' : m.isDraft ? 'Draft' : m.state}</span>
               </button>
             ))}
@@ -1199,6 +1206,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                         >
                           #{m.number} {m.title}
                         </a>
+                        <PrLabels members={[m]} />
                         <p>
                           {m.merged ? 'Merged' : m.isDraft ? 'Draft' : m.state} ·{' '}
                           {statuses[m.url]

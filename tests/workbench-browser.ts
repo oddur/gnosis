@@ -589,6 +589,53 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('.queue-filter-toggle').click()");
     await selectFilter('Show', 'all');
     await wait("document.querySelectorAll('.queue-item').length === 7");
+    await window.loadURL(fixtureUrl + '?labels');
+    window.setSize(1280, 800);
+    await wait("document.querySelectorAll('.queue-item').length === 7");
+    await js("document.querySelector('.queue-disclosure:not(:disabled)').click()");
+    await wait("document.querySelectorAll('.queue-member').length === 3");
+    assert.equal(await js("document.querySelector('.pr-label-more [aria-hidden]').textContent"), '+2');
+    assert.equal(
+      await js(
+        "Array.from(document.querySelectorAll('.queue-member')[0].querySelectorAll('.pr-label')).map(l=>l.textContent).join(',')"
+      ),
+      'bug,needs-review'
+    );
+    assert.equal(
+      await js(
+        "Array.from(document.querySelectorAll('.queue-member')[2].querySelectorAll('.pr-label')).map(l=>l.textContent).join(',')"
+      ),
+      'legacy-label'
+    );
+    assert.ok(
+      await js(
+        "document.querySelector('.queue-title-line .pr-label[title*=\"Something is not working\"]').title.includes('#120')"
+      )
+    );
+    await js(
+      "document.querySelector('.queue-disclosure:not(:disabled)').closest('.queue-item').querySelector('.queue-row-main').click()"
+    );
+    await wait("!!document.querySelector('.briefing-panel .pr-label')");
+    const badgeContrast = async () => {
+      assert.equal(
+        await js(`Array.from(document.querySelectorAll('.pr-label')).every(label => {
+        const style = getComputedStyle(label);
+        const lum = color => color.match(/[0-9.]+/g).slice(0,3).map(Number).map(c => { c /= 255; return c <= .04045 ? c/12.92 : ((c+.055)/1.055)**2.4; }).reduce((s,c,i) => s+c*[.2126,.7152,.0722][i],0);
+        const a=lum(style.color), b=lum(style.backgroundColor);
+        return (Math.max(a,b)+.05)/(Math.min(a,b)+.05) >= 4.5;
+      })`),
+        true
+      );
+    };
+    await badgeContrast();
+    await capture('pr-labels-light');
+    window.setSize(1024, 700);
+    await js("document.documentElement.classList.add('dark')");
+    await badgeContrast();
+    await capture('pr-labels-dark-laptop');
+    window.setSize(800, 700);
+    await capture('pr-labels-dark-narrow');
+    assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
     await window.loadURL(fixtureUrl + '?views');
     window.setSize(1280, 800);
     await wait("document.querySelectorAll('.queue-item').length === 7");

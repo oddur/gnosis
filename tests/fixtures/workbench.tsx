@@ -204,6 +204,19 @@ if (new URLSearchParams(location.search).has('stacks')) {
     items[index].attention = attention;
   }
 }
+if (new URLSearchParams(location.search).has('labels')) {
+  const stack = items[0].subject.members;
+  stack[0].labels = ['bug', 'needs-review'];
+  stack[0].labelDetails = [{ name: 'bug', color: 'd73a4a', description: 'Something is not working' }, { name: 'needs-review', color: 'fbca04' }];
+  stack[1].labels = ['bug', 'performance', 'documentation'];
+  stack[1].labelDetails = [{ name: 'bug', color: 'd73a4a' }, { name: 'performance', color: '0052cc' }, { name: 'documentation', color: '0075ca' }];
+  stack[2].labels = ['legacy-label'];
+  items[1].subject.members[0].labels = ['old-cache-label'];
+  items[2].subject.members[0].labels = ['a-very-long-label-name-for-layout-validation'];
+  items[2].subject.members[0].labelDetails = [{ name: 'a-very-long-label-name-for-layout-validation', color: 'ffffff' }];
+  items[3].subject.members[0].labels = ['critical'];
+  items[3].subject.members[0].labelDetails = [{ name: 'critical', color: '000000' }];
+}
 if (new URLSearchParams(location.search).has('mine')) {
   for (const item of items.slice(1)) {
     item.subject.members[0].role = 'watched';

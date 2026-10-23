@@ -1327,3 +1327,36 @@ void test('a fresh shared full queue covers switching into and out of a personal
     s.cleanup();
   }
 });
+
+void test('PR label colors and descriptions persist alongside filter-compatible names without extra reads', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  Object.assign(s.pr, {
+    labels: [
+      { name: 'bug', color: 'd73a4a', description: 'Something is not working' },
+      { name: 'unsafe-color', color: 'url(example)', description: null },
+      'legacy',
+    ],
+  });
+  let reads = 0;
+  const original = s.deps.client().pulls.get;
+  Object.assign(s.deps.client().pulls, {
+    get: (...args: Parameters<typeof original>) => {
+      reads++;
+      return original(...args);
+    },
+  });
+  try {
+    const q = await s.service.queue();
+    const member = q.items[0].subject.members[0];
+    assert.deepEqual(member.labels, ['bug', 'unsafe-color', 'legacy']);
+    assert.equal(member.labelDetails?.[0].color, 'd73a4a');
+    assert.equal(member.labelDetails?.[0].description, 'Something is not working');
+    assert.equal(member.labelDetails?.[1].color, undefined);
+    assert.equal(member.labelDetails?.[2].color, undefined);
+    const restarted = createWorkbenchService(s.deps);
+    assert.equal((await restarted.queue()).items[0].subject.members[0].labelDetails?.[0].color, 'd73a4a');
+    assert.equal(reads, 1);
+  } finally {
+    s.cleanup();
+  }
+});
