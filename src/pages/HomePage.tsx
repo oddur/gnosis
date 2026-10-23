@@ -64,7 +64,7 @@ interface Props {
   initialSubjectId?: string;
 }
 const labels = {
-  updated: 'Updated since review',
+  updated: 'Changed since AI explanation',
   requested: 'Review requested',
   other: 'Other changes',
 };
@@ -579,7 +579,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
             {item.review?.status === 'generating' ? (
               <>
                 <Loader2 size={13} className="animate-spin" />
-                Generating
+                Generating explanation
               </>
             ) : item.review?.status === 'completed' ? (
               <>
@@ -589,7 +589,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
             ) : item.briefing?.status === 'generating' ? (
               <>
                 <Loader2 size={13} className="animate-spin" />
-                Briefing
+                Generating briefing
               </>
             ) : s.kind === 'stack' ? (
               <>
@@ -723,8 +723,8 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
           <p className="workbench-nav-heading">Reviews</p>
           {[
             ['all', 'Work queue', Inbox],
-            ['requested', 'Requested', GitPullRequest],
-            ['updated', 'Updated', RefreshCw],
+            ['requested', 'Review requests', GitPullRequest],
+            ['updated', 'Updated PRs', RefreshCw],
             ['stacks', 'Stacks', Layers],
             ['saved', 'Saved reviews', Clock],
           ].map(([id, label, Icon]) => {
@@ -732,7 +732,15 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
             return (
               <button
                 key={id as string}
-                title={id === 'stacks' ? 'All stacks, including requested and updated changes' : (label as string)}
+                title={
+                  id === 'stacks'
+                    ? 'Stacks of PRs that build on each other'
+                    : id === 'requested'
+                      ? 'Your review requests; changes since a saved AI explanation appear under Updated PRs'
+                      : id === 'updated'
+                        ? 'PR content or stack changes since a saved AI explanation'
+                        : (label as string)
+                }
                 aria-current={section === id && (id === 'saved' || !activeQueueView) ? 'page' : undefined}
                 className={section === id && (id === 'saved' || !activeQueueView) ? 'active' : ''}
                 disabled={viewBusy}
@@ -805,16 +813,21 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
               </h1>
               <p>
                 {section === 'saved'
-                  ? 'Your review history, ready to resume.'
+                  ? 'AI explanations saved on this computer. Reopen one to continue reviewing.'
                   : section === 'stacks'
-                    ? 'PRs that build on one another, grouped for review. Includes requested and updated stacks; your other filters still apply.'
-                    : 'Select a PR or stack for an AI briefing. Open its overview to read the author description.'}
+                    ? 'PRs that build on one another, grouped for review. All your other filters still apply.'
+                    : section === 'requested'
+                      ? 'PRs you were asked to review. Those changed since a saved AI explanation appear under Updated PRs.'
+                      : section === 'updated'
+                        ? 'PR content or stack changes since your saved AI explanation. This does not track when you last reviewed on GitHub.'
+                        : 'Select a PR or stack for its briefing. Double-click to read its description and GitHub status.'}
               </p>
             </div>
             <div className="flex items-center gap-2">
               <button
                 className="workbench-icon"
                 aria-label="Refresh queue"
+                title="Update the queue from GitHub. Follow progress in Activity."
                 disabled={refreshing}
                 onClick={() => void refresh(true)}
               >
@@ -871,7 +884,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
               <Search size={15} />
               <input
                 ref={searchInput}
-                aria-label="Search reviews"
+                aria-label={section === 'saved' ? 'Search saved reviews' : 'Search PRs and stacks'}
                 onKeyDown={(e) => {
                   if (e.key === 'ArrowDown' || e.key === 'Enter') {
                     e.preventDefault();
@@ -885,7 +898,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                     searchInput.current?.blur();
                   }
                 }}
-                placeholder="Find a change…"
+                placeholder={section === 'saved' ? 'Search saved reviews…' : 'Title, #number, author, or repo…'}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
@@ -919,7 +932,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                     aria-label="Queue filters"
                   >
                     <div className="queue-filter-heading">
-                      <strong>Filter changes</strong>
+                      <strong>Filter PRs and stacks</strong>
                       <Popover.Close className="workbench-icon" aria-label="Close filters">
                         <X size={16} />
                       </Popover.Close>
@@ -932,8 +945,14 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
             {section !== 'saved' && auth?.authenticated && queue.savedViews && (
               <SaveViewControls view={activeQueueView} filters={filters} busy={viewBusy} onAction={viewAction} />
             )}
-            <span className="queue-count" aria-live="polite">
-              {section === 'saved' ? `${saved.length} reviews` : `${items.length} of ${queue.items.length} changes`}
+            <span
+              className="queue-count"
+              aria-live="polite"
+              title={section === 'saved'
+                ? 'AI explanations saved on this computer'
+                : 'Each stack counts as one item. Counts use loaded GitHub data; built-in sidebar totals do not apply your other filters.'}
+            >
+              {section === 'saved' ? `${saved.length} reviews` : `${items.length} of ${queue.items.length} items`}
             </span>
           </div>
           {section !== 'saved' && filterCount > 0 && (
@@ -950,9 +969,11 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                 </button>
               ))}
               <span>
-                {filters.briefingScope === 'matches'
-                  ? 'Automatic briefings use this filter.'
-                  : 'Automatic briefings prioritize this filter.'}
+                {prefs?.autoBriefings === false
+                  ? 'Automatic briefings are off.'
+                  : filters.briefingScope === 'matches'
+                    ? 'Brief matching PRs and stacks only.'
+                    : 'Brief matches first, then the rest.'}
               </span>
               <button onClick={resetFilters}>Clear filters</button>
             </div>
@@ -1065,18 +1086,18 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                     {queueFailed
                       ? 'Queue could not be loaded'
                       : filterCount > 0
-                        ? 'No matching changes'
+                        ? 'No PRs match these filters'
                         : !auth?.authenticated
                           ? 'Your GitHub queue is not connected'
                           : section !== 'all'
-                            ? 'No changes in this queue filter'
+                            ? 'No PRs in this view'
                             : 'No pull requests in your queue'}
                   </h2>
                   <p>
                     {queueFailed
                       ? 'Try loading the queue again. You can still open a PR by URL or a saved review.'
                       : filterCount > 0
-                        ? 'Clear filters to see more changes. All filters must match the same open PR; stacks stay together.'
+                        ? 'Try fewer filters or a wider date range. One open PR must match every filter; its whole stack stays visible.'
                         : !auth?.authenticated
                           ? prefs?.guestMode
                             ? 'You are using local mode. Review a repository on this computer.'
@@ -1212,9 +1233,9 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                   <div className="briefing-status">
                     <p>
                       {selectedItem.briefing?.status === 'generating'
-                        ? 'Preparing a short briefing…'
+                        ? 'Generating an AI briefing… Track progress in Activity; you can keep browsing.'
                         : selectedItem.briefing?.status === 'failed'
-                          ? 'The briefing could not be generated. Retry it or open the guided review.'
+                          ? 'The AI briefing failed. Retry below, or open the PR overview to read its description.'
                           : selectedItem.briefing?.status === 'cancelled'
                             ? 'Briefing cancelled. Retry it from Activity.'
                             : selectedItem.briefing?.status === 'paused'
@@ -1223,9 +1244,9 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                                 : prefs?.autoBriefings === false
                                   ? 'Automatic briefings are off.'
                                   : queue.remaining <= 0
-                                    ? 'Daily briefing limit reached.'
-                                    : 'Briefing is paused while other work runs.'
-                              : 'Briefing queued. You can start the detailed review now.'}
+                                    ? 'Daily briefing attempt limit reached. Increase it in Settings or wait until tomorrow.'
+                                    : 'Briefing is paused. Check Activity or briefing settings for details.'
+                              : 'Waiting to generate an AI briefing. You can open the PR overview or generate an AI explanation now.'}
                     </p>
                     {selectedItem.briefing?.status === 'failed' && selectedItem.briefing.error && (
                       <details className="status-diagnostics">
@@ -1369,7 +1390,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                   />
                   Automatic briefings
                 </label>
-                <span>{queue.remaining} automatic briefings remaining today</span>
+                <span>{queue.remaining} briefing attempts left today</span>
                 <label>
                   Daily briefing limit{' '}
                   <input
@@ -1388,7 +1409,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                 </label>
               </>
             )}
-            <span className="ml-auto">Detailed reviews on demand</span>
+            <span className="ml-auto">AI explanations start when you request them</span>
           </footer>
         </main>
       </div>}

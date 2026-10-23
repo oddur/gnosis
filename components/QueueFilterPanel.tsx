@@ -25,19 +25,19 @@ export function QueueFilterPanel({
       label: 'PR status',
       options: [
         ['all', 'All open PRs'],
-        ['ready', 'Ready for review'],
+        ['ready', 'Open, not draft'],
         ['draft', 'Draft'],
       ],
     },
     { key: 'author', label: 'Author', options: [['all', 'Anyone'], ...authors.map((a) => [a, a] as [string, string])] },
     {
       key: 'createdWithin',
-      label: 'Created',
+      label: 'PR created',
       options: RECENCY_DAYS.map((d) => [String(d), d ? `Last ${d} days` : 'Any time']),
     },
     {
       key: 'updatedWithin',
-      label: 'Last updated',
+      label: 'PR last updated',
       options: RECENCY_DAYS.map((d) => [String(d), d ? `Last ${d} days` : 'Any time']),
     },
     {
@@ -47,21 +47,21 @@ export function QueueFilterPanel({
     },
     {
       key: 'kind',
-      label: 'Grouping',
+      label: 'PRs or stacks',
       options: [
-        ['all', 'Stacks and standalone PRs'],
+        ['all', 'PRs and stacks'],
         ['stack', 'Stacks only'],
         ['pr', 'Standalone PRs only'],
       ],
     },
     {
       key: 'explanation',
-      label: 'Guided explanation',
+      label: 'AI explanation',
       options: [
         ['all', 'Any state'],
         ['none', 'Not generated'],
-        ['ready', 'Ready'],
-        ['outdated', 'Outdated'],
+        ['ready', 'Up to date'],
+        ['outdated', 'Needs regeneration'],
         ['generating', 'Generating'],
         ['failed', 'Generation failed'],
       ],
@@ -79,13 +79,14 @@ export function QueueFilterPanel({
             aria-describedby={`${id}-involvement-help`}
             onChange={(e) => onChange({ involvement: e.target.value as QueueFilters['involvement'] })}
           >
-            <option value="all">All PRs</option>
-            <option value="mine">Assigned to or authored by me</option>
+            <option value="all">All PRs in your queue</option>
+            <option value="mine">Involving me</option>
           </select>
         </label>
         <p id={`${id}-involvement-help`}>
-          Includes your PRs, assignments, and review requests. Fetches fewer PR details while keeping their stacks
-          intact.
+          {filters.involvement === 'mine'
+            ? 'PRs you authored, are assigned to, or were asked to review. Loads fewer PR details from GitHub; keeps related stack PRs.'
+            : 'PRs involving you and from repositories added in Settings. This does not search all of GitHub.'}
         </p>
       </div>
       <div className="queue-filter-fields">
@@ -116,22 +117,28 @@ export function QueueFilterPanel({
       </div>
       <div className="queue-filter-policy">
         <label htmlFor={`${id}-briefings`}>
-          Automatic briefings
+          Automatically brief
           <select
             id={`${id}-briefings`}
             className="workbench-select"
             value={filters.briefingScope}
+            aria-describedby={`${id}-briefings-help`}
             onChange={(e) => onChange({ briefingScope: e.target.value as QueueFilters['briefingScope'] })}
           >
-            <option value="matches">Only matching changes</option>
-            <option value="all">Matching changes first, then the rest</option>
+            <option value="matches">Matching PRs and stacks only</option>
+            <option value="all">Matches first, then the rest</option>
           </select>
         </label>
-        <p>A briefing already running will finish. Your daily allowance still applies.</p>
+        <p id={`${id}-briefings-help`}>
+          Applies when Automatic briefings is on. Uses your daily attempt limit. Changing filters lets the current
+          briefing finish.
+          {filters.involvement === 'mine' && ' Both options stay within your PRs, assignments, and review requests.'}
+        </p>
       </div>
       <p className="queue-filter-hint">
-        Filters match open PRs. A matching PR keeps its whole stack visible, including merged parents. “Created” hides
-        old PRs even if they were updated recently.
+        Filters apply together to the same open PR. If it matches, its whole stack stays visible. Use “PR created” to
+        exclude old PRs, even if they were updated recently. “Up to date” means the AI explanation matches the latest
+        loaded PR data.
       </p>
     </section>
   );

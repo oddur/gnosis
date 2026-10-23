@@ -74,7 +74,7 @@ export function SavedViewsNav({
     <section className="saved-views-nav" aria-label="Saved views">
       <p className="workbench-nav-heading">Saved views</p>
       {!state.views.length && (
-        <p className="saved-views-empty">Use “Save view…” beside the filters to add a shortcut.</p>
+        <p className="saved-views-empty">Save your current filters with “Save view…” to reuse them here.</p>
       )}
       {state.views.map((view, index) => (
         <Popover.Root
@@ -114,7 +114,7 @@ export function SavedViewsNav({
               <button
                 className={`saved-view-link${active && state.activeId === view.id ? ' active' : ''}`}
                 aria-current={active && state.activeId === view.id ? 'page' : undefined}
-                title={`${view.name} — ${state.counts[view.id] ?? 0} cached changes`}
+                title={`${view.name} — ${state.counts[view.id] ?? 0} PRs and stacks matching the saved filters, using cached GitHub data`}
                 disabled={busy}
                 onClick={() => act({ type: 'activate', id: view.id })}
               >
@@ -225,8 +225,12 @@ export function SaveViewControls({
     <div className="save-view-controls">
       {modified && (
         <>
-          <span className="view-modified" role="status">
-            Modified
+          <span
+            className="view-modified"
+            role="status"
+            title="These filters differ from the saved view. Save changes to update it, or restore its saved filters."
+          >
+            Filters changed
           </span>
           <button
             disabled={busy}
@@ -234,7 +238,7 @@ export function SaveViewControls({
               void onAction({ type: 'update', id: view.id }).catch(() => {});
             }}
           >
-            Update view
+            Save changes
           </button>
           <button
             disabled={busy}
@@ -242,7 +246,7 @@ export function SaveViewControls({
               void onAction({ type: 'reset', id: view.id }).catch(() => {});
             }}
           >
-            Reset changes
+            Restore saved filters
           </button>
         </>
       )}
@@ -264,6 +268,10 @@ export function SaveViewControls({
                 <X size={16} />
               </Popover.Close>
             </div>
+            <p className="queue-filter-hint">
+              Save these filters and the automatic briefing scope on this computer. Views share cached GitHub data;
+              switching views does not refresh it.
+            </p>
             <ViewNameForm
               submitLabel="Save view"
               onCancel={() => setOpen(false)}

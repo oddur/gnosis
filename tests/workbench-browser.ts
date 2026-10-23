@@ -259,7 +259,7 @@ void app.whenReady().then(async () => {
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
     await wait("document.querySelector('.saved-briefing')?.textContent.includes('Cancellation must release')");
-    match(await js("document.querySelector('.briefing-status').textContent"), /Daily briefing limit reached/);
+    match(await js("document.querySelector('.briefing-status').textContent"), /Daily briefing attempt limit reached/);
     match(await js("document.querySelector('.saved-briefing').textContent"), /latest changes are not verified/);
     assert.equal(await js("[...document.querySelectorAll('button')].some(b=>b.textContent==='Open saved')"), false);
     await wait("document.querySelectorAll('.member-status-error').length === 3");
@@ -301,9 +301,9 @@ void app.whenReady().then(async () => {
     await press('Up');
     match(await js("document.querySelector('.briefing-panel h2').textContent"), /Introduce a bounded/);
     await press('/');
-    assert.equal(await js("document.activeElement?.getAttribute('aria-label')"), 'Search reviews');
+    assert.equal(await js("document.activeElement?.getAttribute('aria-label')"), 'Search PRs and stacks');
     await window.webContents.insertText('queue');
-    assert.equal(await js('document.querySelector(\'[aria-label="Search reviews"]\').value'), 'queue');
+    assert.equal(await js('document.querySelector(\'[aria-label="Search PRs and stacks"]\').value'), 'queue');
     await press('Down');
     assert.equal(await js("document.activeElement?.getAttribute('aria-pressed')"), 'true');
     await press('Enter');
@@ -406,13 +406,13 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('.workbench-connect')");
     assert.ok(await js("document.body.textContent.includes('GitHub connected as oddur')"));
     await js(`(() => {
-      const input = document.querySelector('[aria-label="Search reviews"]');
+      const input = document.querySelector('[aria-label="Search PRs and stacks"]');
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'absent');
       input.dispatchEvent(new Event('input', {bubbles:true}));
     })()`);
-    await wait("document.body.textContent.includes('No matching changes')");
+    await wait("document.body.textContent.includes('No PRs match these filters')");
     await click('Clear filters');
-    await wait("document.querySelector('[aria-label=\"Search reviews\"]').value === ''");
+    await wait("document.querySelector('[aria-label=\"Search PRs and stacks\"]').value === ''");
     await js('document.querySelector(\'[title="Saved reviews"]\').click()');
     await wait("document.body.textContent.includes('No saved reviews yet')");
     await js('document.querySelector(\'[title="Work queue"]\').click()');
@@ -528,13 +528,13 @@ void app.whenReady().then(async () => {
     };
     await selectFilter('PR status', 'draft');
     await wait("document.querySelectorAll('.queue-item').length === 1");
-    await selectFilter('Created', '30');
-    await wait("document.body.textContent.includes('No matching changes')");
-    await selectFilter('Created', '0');
-    await selectFilter('Last updated', '7');
+    await selectFilter('PR created', '30');
+    await wait("document.body.textContent.includes('No PRs match these filters')");
+    await selectFilter('PR created', '0');
+    await selectFilter('PR last updated', '7');
     await wait("document.querySelectorAll('.queue-item').length === 1");
     await selectFilter('Author', 'sam');
-    await wait("document.body.textContent.includes('No matching changes')");
+    await wait("document.body.textContent.includes('No PRs match these filters')");
     await selectFilter('Author', 'lena');
     await selectFilter('GitHub label', 'bug');
     await wait("document.querySelectorAll('.queue-item').length === 1");
@@ -549,13 +549,13 @@ void app.whenReady().then(async () => {
       "document.querySelectorAll('.queue-item').length === 1 && document.querySelector('.queue-filter-toggle').textContent.includes('(4)')"
     );
     await js("document.querySelector('.queue-filter-toggle').click()");
-    await selectFilter('Automatic briefings', 'all');
+    await selectFilter('Automatically brief', 'all');
     await wait("window.electronAPI.workbenchQueue().then(q=>q.filters.briefingScope==='all')");
     await js('document.querySelector(\'[aria-label="Close filters"]\').click()');
     await click('Clear filters');
     await wait("document.querySelectorAll('.queue-item').length === 7");
     await js("document.querySelector('.queue-filter-toggle').click()");
-    await selectFilter('Grouping', 'stack');
+    await selectFilter('PRs or stacks', 'stack');
     await selectFilter('Author', 'maya');
     await wait("document.querySelectorAll('.queue-item').length === 1");
     await js(
@@ -573,10 +573,7 @@ void app.whenReady().then(async () => {
     await selectFilter('Show', 'mine');
     await wait("document.querySelectorAll('.queue-item').length === 3");
     await wait("window.electronAPI.workbenchQueue().then(q=>q.filters.involvement==='mine')");
-    assert.equal(
-      await js("document.querySelector('.queue-filter-chip').textContent.includes('Assigned to or authored by me')"),
-      true
-    );
+    assert.equal(await js("document.querySelector('.queue-filter-chip').textContent.includes('Involving me')"), true);
     await capture('queue-mine-light');
     window.setSize(1024, 700);
     await js("document.documentElement.classList.add('dark')");
@@ -584,6 +581,15 @@ void app.whenReady().then(async () => {
     assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
     window.setSize(800, 700);
     await capture('queue-mine-dark-narrow');
+    window.webContents.setZoomFactor(2);
+    await capture('queue-filters-zoom');
+    assert.equal(
+      await js(
+        "document.querySelector('.queue-filter-popover').scrollWidth <= document.querySelector('.queue-filter-popover').clientWidth + 1"
+      ),
+      true
+    );
+    window.webContents.setZoomFactor(1);
     assert.equal(
       await js(
         "document.querySelector('.queue-filter-popover').scrollWidth <= document.querySelector('.queue-filter-popover').clientWidth"
@@ -679,12 +685,12 @@ void app.whenReady().then(async () => {
     await enterViewName('Lena');
     await pickView('All work');
     await wait("!!document.querySelector('.view-modified') && document.querySelectorAll('.queue-item').length === 2");
-    await click('Reset changes');
+    await click('Restore saved filters');
     await wait("!document.querySelector('.view-modified') && document.querySelectorAll('.queue-item').length === 7");
     await js("document.querySelector('.queue-filter-toggle').click()");
     await selectFilter('Author', 'sam');
     await js('document.querySelector(\'[aria-label="Close filters"]\').click()');
-    await click('Update view');
+    await click('Save changes');
     await wait(
       "!document.querySelector('.view-modified') && document.querySelector('.saved-view-count').textContent === '2'"
     );
@@ -742,12 +748,12 @@ void app.whenReady().then(async () => {
         `Array.from(document.querySelectorAll('.workbench-sidebar button')).find(b=>b.querySelector('span')?.textContent===${JSON.stringify(name)}).click()`
       );
     };
-    await navigate('Requested');
+    await navigate('Review requests');
     await navigate('Stacks');
     await wait("document.querySelectorAll('.queue-item').length === 3");
     assert.deepEqual(
       await js("Array.from(document.querySelectorAll('.queue-section-title')).map(h=>h.childNodes[0].textContent)"),
-      ['Updated since review', 'Review requested', 'Other changes']
+      ['Changed since AI explanation', 'Review requested', 'Other changes']
     );
     assert.equal(await js("document.body.textContent.includes('Other PRs depend on this')"), false);
     await wait("window.electronAPI.workbenchQueue().then(q=>q.filters.kind==='stack' && q.filters.attention==='all')");

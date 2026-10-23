@@ -120,20 +120,29 @@ export function prioritizeBriefings(
 
 export function describeQueueFilters(filters: QueueFilters): { key: keyof QueueFilters; label: string }[] {
   const labels: Partial<Record<keyof QueueFilters, string>> = {
-    involvement: 'Assigned to or authored by me',
+    involvement: 'Involving me',
     query: `Search: ${filters.query}`,
     repo: filters.repo,
     author: `Author: ${filters.author}`,
-    status: filters.status === 'draft' ? 'Draft PRs' : 'Ready for review',
+    status: filters.status === 'draft' ? 'Draft PRs' : 'Open, not draft',
     createdWithin: `Created: last ${filters.createdWithin} days`,
     updatedWithin: `Updated: last ${filters.updatedWithin} days`,
     label: `Label: ${filters.label}`,
     kind: filters.kind === 'stack' ? 'Stacks' : 'Standalone PRs',
-    explanation: `Explanation: ${filters.explanation === 'none' ? 'not generated' : filters.explanation}`,
+    explanation: `AI explanation: ${
+      {
+        all: 'any state',
+        none: 'not generated',
+        ready: 'up to date',
+        outdated: 'needs regeneration',
+        generating: 'generating',
+        failed: 'generation failed',
+      }[filters.explanation]
+    }`,
     attention: {
       all: 'All changes',
       requested: 'Review requested',
-      updated: 'Updated since review',
+      updated: 'Changed since AI explanation',
       other: 'Other changes',
     }[filters.attention],
   };

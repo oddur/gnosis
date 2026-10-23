@@ -268,7 +268,7 @@ export function SettingsDialog({
           <Tabs.Content value="queue" className="settings-panel">
             <SettingRow
               label="Ignore Dependabot PRs"
-              description="Hide Dependabot changes from the queue and automatic briefings. Keep required parents in human-authored stacks."
+              description="Hide Dependabot PRs from the queue and automatic briefings. Keep them visible when a PR by a person builds on them."
             >
               <Toggle
                 checked={ignoreDependabotPrs}
@@ -282,7 +282,7 @@ export function SettingsDialog({
             </SettingRow>
             <SettingRow
               label="Automatic briefings"
-              description="Generate short queue summaries within your daily limit. Open a detailed review when you need it."
+              description="Generate short AI summaries in the background. Queue filters control which PRs and stacks are included; the daily attempt limit still applies."
             >
               <Toggle
                 checked={autoBriefings}
@@ -383,7 +383,7 @@ export function SettingsDialog({
                     Daily briefing limit
                   </label>
                   <p className="text-xs text-muted-foreground">
-                    Maximum automatic briefing attempts per day, including retries. Guided reviews do not count toward
+                    Maximum automatic briefing attempts per day, including retries. AI explanations do not count toward
                     this limit.
                   </p>
                 </div>

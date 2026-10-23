@@ -13,7 +13,7 @@ const terms = [
   ],
   [
     'Saved view',
-    'A named set of queue filters, such as your review requests or one author’s recent PRs. Save a view from the filter bar and switch in the sidebar. Views share the cached queue; they do not copy PRs or reviews.',
+    'A named set of queue filters, such as your review requests or one author’s recent PRs. Save a view from the filter bar and switch in the sidebar. Views are stored on this computer and share cached GitHub data. Switching views does not refresh GitHub. “Filters changed” means your current filters differ from the saved version; choose Save changes or Restore saved filters.',
   ],
   [
     'PR overview',
@@ -44,7 +44,7 @@ const terms = [
     'Daily briefing limit',
     'The number of automatic briefing attempts allowed each day, including retries. AI explanations do not use this allowance.',
   ],
-  ['Other changes', 'PRs and stacks that are not in Review requested or Updated since review.'],
+  ['Other changes', 'PRs and stacks that are not in Review requested or Changed since AI explanation.'],
   ['Topic', 'One part of an AI explanation. Topics follow the explanation of the change, rather than the file order.'],
   [
     'Interactive explanation',
@@ -169,9 +169,19 @@ export function WorkbenchHelp({ onGettingStarted }: { onGettingStarted?: () => v
           <details className="workbench-help-shortcuts">
             <summary>Queue filters and keyboard shortcuts</summary>
             <p>
-              <strong>Requested</strong> means you were asked to review. <strong>Updated</strong> means code changed
-              since a saved review. <strong>Stacks</strong> shows all stacks, including requested and updated ones.
-              Author, date, and other filters still apply.
+              <strong>Review requests</strong> shows PRs you were asked to review. If PR content or stack membership
+              changed since a saved AI explanation, they appear under <strong>Updated PRs</strong> instead.
+              <strong> Stacks</strong> shows PRs that build on each other. Other filters still apply to each section.
+            </p>
+            <p>
+              All PR filters must match the same open PR. A matching PR keeps its whole stack visible, including merged
+              PRs. Each stack counts as one queue item. Built-in sidebar counts use cached data before your other
+              filters.
+            </p>
+            <p>
+              <strong>Involving me</strong> includes PRs you authored, are assigned to, or were asked to review. It also
+              reduces the PR details fetched from GitHub. Other filters narrow the loaded queue. Automatic briefings
+              follow the scope selected in Filters.
             </p>
             <p>
               For example, PR #42 adds an API and PR #43 uses it. #43 builds on #42; reviewing #42 helps the stack move
