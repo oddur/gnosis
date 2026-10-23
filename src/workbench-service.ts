@@ -1,3 +1,12 @@
+import { createSavedViewStore } from './saved-view-store';
+import { activeViewFilters, type QueueViewAction } from '../lib/saved-views';
+import {
+  normalizeQueueFilters,
+  matchesQueueFilters,
+  isMyPr,
+  prioritizeBriefings,
+  type QueueFilters,
+} from '../lib/queue-filters';
 import { ACTIVITY_RETENTION_MS, type ActivityTask } from '../lib/activity';
 import type { ActivityService } from './activity-service';
 import fs from 'node:fs';
@@ -5,8 +14,15 @@ import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
 import type { Octokit } from '@octokit/rest';
-import { getGitHubClient, githubClients, githubRateLimit, type GitHubBackoffError } from '../lib/github-client';
-import { getPrMetadata, parsePrUrl, searchPullRequests, getChangedFiles } from '../lib/github';
+import {
+  getGitHubClient,
+  githubClients,
+  githubCacheFor,
+  githubRateLimit,
+  type GitHubBackoffError,
+} from '../lib/github-client';
+import { getPrMetadata, parsePrUrl, getChangedFiles } from '../lib/github';
+import { createDiscoveryListings, type DiscoveryListings, type ListedPull } from '../lib/github-discovery';
 import { getProvider } from '../lib/provider';
 import {
   groupSubjects,
@@ -30,6 +46,16 @@ interface State {
   day: string;
   used: number;
   checkedAt?: Record<string, number>;
+  filters?: QueueFilters;
+  discoveredAt?: number;
+  discoveryKey?: string;
+  discoveryWarnings?: string[];
+  discoveryProgress?: {
+    key: string;
+    members: ReviewMember[];
+    checkedAt: Record<string, number>;
+    listings?: DiscoveryListings;
+  };
 }
 export type WorkbenchPreferences = Pick<
   Preferences,
@@ -47,6 +73,7 @@ interface Deps {
   provider?: typeof getProvider;
   now?: () => number;
 }
+class DiscoverySuperseded extends Error {}
 class BriefingCancelled extends Error {
   constructor() {
     super('Briefing cancelled.');
@@ -59,16 +86,29 @@ class BriefingPaused extends Error {
 }
 export function createWorkbenchService(deps: Deps) {
   const now = deps.now ?? Date.now;
+  const savedViews = createSavedViewStore(deps.directory);
   let cooldown: { account: string; error: GitHubBackoffError } | undefined;
   let state: State | undefined;
   let refresh: Promise<WorkbenchQueue> | undefined;
   let lastRefresh = 0;
   let lastAccount: string | null = null;
+  let lastDiscoveryKey: string | undefined;
   let warnings: string[] = [];
   let running: AbortController | undefined;
   let runningKey: string | undefined;
   let pumping = false;
   const cachePath = () => path.join(deps.directory(), 'workbench.json');
+  const discoveryKey = (involvement = normalizeQueueFilters(load().filters).involvement) =>
+    createHash('sha256')
+      .update(
+        JSON.stringify([
+          deps.auth().token,
+          [...deps.preferences().watchedRepos].sort(),
+          deps.preferences().ignoreDependabotPrs !== false,
+          involvement,
+        ])
+      )
+      .digest('hex');
   function load(): State {
     const account = deps.auth().login ?? 'guest';
     if (!state || state.account !== account) {
@@ -85,6 +125,7 @@ export function createWorkbenchService(deps: Deps) {
     }
     if (!state || state.account !== account)
       state = { account, subjects: [], overrides: [], briefs: {}, day: '', used: 0 };
+    state.filters = activeViewFilters(savedViews.load(account, state.filters));
     const day = new Date().toISOString().slice(0, 10);
     if (state.day !== day) {
       state.day = day;
@@ -114,6 +155,7 @@ export function createWorkbenchService(deps: Deps) {
   function view(): WorkbenchQueue {
     const s = load();
     const history = deps.history();
+    const filters = normalizeQueueFilters(s.filters);
     const selection = modelSettings();
     const items = s.subjects.filter(includeSubject).map((subject) => {
       const review =
@@ -127,16 +169,39 @@ export function createWorkbenchService(deps: Deps) {
           deps.preferences().autoBriefings !== false && s.used < limit() ? ('queued' as const) : ('paused' as const),
         updatedAt: new Date().toISOString(),
       };
-      return { subject, review, briefing, attention: attentionFor(subject, review) };
+      const item = { subject, review, briefing, attention: attentionFor(subject, review) };
+      if (
+        (!cached || briefing.status === 'paused') &&
+        ((filters.involvement === 'mine' &&
+          !subject.members.some(
+            (member) => member.state === 'open' && !member.merged && isMyPr(member, deps.auth().login)
+          )) ||
+          (filters.briefingScope === 'matches' && !matchesQueueFilters(item, filters, now(), deps.auth().login)))
+      )
+        return { ...item, briefing: { ...briefing, status: 'paused' as const, pauseReason: 'filter' as const } };
+      return item;
     });
-    const order = { updated: 0, requested: 1, blocking: 2, other: 3 };
+    const order = { updated: 0, requested: 1, other: 2 };
     items.sort(
       (a, b) =>
         order[a.attention] - order[b.attention] ||
         Math.max(...b.subject.members.map((m) => Date.parse(m.updatedAt))) -
           Math.max(...a.subject.members.map((m) => Date.parse(m.updatedAt)))
     );
-    return { items, warnings, remaining: Math.max(0, limit() - s.used) };
+    const views = savedViews.load(s.account, filters);
+    const counts = Object.fromEntries(
+      views.views.map((view) => [
+        view.id,
+        items.filter((item) => matchesQueueFilters(item, view.filters, now(), deps.auth().login)).length,
+      ])
+    );
+    return {
+      items,
+      warnings,
+      remaining: Math.max(0, limit() - s.used),
+      filters,
+      savedViews: { ...structuredClone(views), counts },
+    };
   }
   async function fetchMember(
     octokit: Octokit,
@@ -165,212 +230,289 @@ export function createWorkbenchService(deps: Deps) {
     }
     const s = load();
     const octokit = deps.client?.() ?? getGitHubClient(token);
+    const discoverySettings = discoveryKey();
+    const mineOnly = normalizeQueueFilters(s.filters).involvement === 'mine';
+    const pending = s.discoveryProgress?.key === discoverySettings ? s.discoveryProgress : undefined;
+    // Retry continues an interrupted discovery; a completed refresh starts fresh.
+    if (force && !pending) githubCacheFor(octokit)?.revalidate();
     warnings = [];
-    const checkedAt = { ...s.checkedAt };
-    let reads = 0;
+    const checkedAt = { ...s.checkedAt, ...pending?.checkedAt };
     const checkAllowance = () => {
+      if (discoveryKey() !== discoverySettings || deps.auth().login !== login) throw new DiscoverySuperseded();
       const paused = githubClients.backoff(token, true);
       if (paused) throw paused;
     };
-    const repoLists = new Map<string, ReturnType<typeof octokit.pulls.list>>();
-    const listRepo = (fullName: string) => {
-      let result = repoLists.get(fullName);
-      if (!result) {
-        checkAllowance();
-        const [owner, repo] = fullName.split('/');
-        result = octokit.pulls.list({ owner, repo, state: 'open', per_page: 100, sort: 'updated', direction: 'desc' });
-        repoLists.set(fullName, result);
-      }
-      return result;
-    };
     const prefs = deps.preferences();
-    const previousMembers = new Map(s.subjects.flatMap((sub) => sub.members.map((m) => [m.url, m] as const)));
-    progress('Finding your pull requests');
-    const found = await searchPullRequests(octokit, login, 100);
-    if (found.length === 100)
-      warnings.push('Your personal queue reached its search limit. Some changes may be missing.');
-    const seeds = new Map<string, Pick<PrSearchResult, 'url' | 'role' | 'updatedAt'>>(
-      found.filter((m) => prefs.ignoreDependabotPrs === false || !isDependabot(m.author)).map((m) => [m.url, m])
-    );
-    for (const [index, fullName] of prefs.watchedRepos.entries()) {
-      progress(`Checking ${fullName}`, { completed: index, total: prefs.watchedRepos.length, unit: 'repositories' });
-      const [owner, repo] = fullName.split('/');
-      if (!owner || !repo) continue;
-      try {
-        for (const pr of (await listRepo(fullName)).data)
-          if (
-            !seeds.has(pr.html_url) &&
-            (prefs.ignoreDependabotPrs === false || !isDependabot(pr.user?.login ?? 'unknown'))
-          )
-            seeds.set(pr.html_url, { url: pr.html_url, role: 'watched', updatedAt: pr.updated_at });
-      } catch (error) {
-        if (githubRateLimit(error, now())) throw error;
-        for (const m of previousMembers.values())
-          if (
-            m.repo === fullName &&
-            m.state === 'open' &&
-            !seeds.has(m.url) &&
-            (prefs.ignoreDependabotPrs === false || !isDependabot(m.author))
-          )
-            seeds.set(m.url, { ...m, role: 'watched' });
-        warnings.push(`Could not refresh ${fullName}. Some changes may be missing.`);
-      }
-    }
+    const previousMembers = new Map([
+      ...s.subjects.flatMap((sub) => sub.members.map((m) => [m.url, m] as const)),
+      ...(pending?.members ?? []).map((m) => [m.url, m] as const),
+    ]);
     const members = new Map<string, ReviewMember>();
-    const add = async (
-      url: string,
-      role?: ReviewMember['role'],
-      listed?: { updated_at: string; head: { sha: string }; base: { sha: string; ref: string } }
-    ) => {
-      const current = members.get(url);
-      if (
-        current &&
-        (!listed ||
-          (current.updatedAt === listed.updated_at &&
-            current.headSha === listed.head.sha &&
-            current.baseSha === listed.base.sha &&
-            current.baseBranch === listed.base.ref))
-      )
-        return;
-      const cached = previousMembers.get(url);
-      const updatedAt = listed?.updated_at ?? seeds.get(url)?.updatedAt;
-      if (
-        !force &&
-        cached &&
-        updatedAt === cached.updatedAt &&
-        now() - (checkedAt[url] ?? 0) < 15 * 60_000 &&
-        (!listed ||
-          (cached.headSha === listed.head.sha &&
-            cached.baseSha === listed.base.sha &&
-            cached.baseBranch === listed.base.ref))
-      ) {
-        members.set(url, { ...cached, role: role ?? current?.role ?? 'watched' });
-        return;
-      }
-      if (reads >= 150) {
-        if (cached) members.set(url, { ...cached, role: role ?? 'watched' });
-        const warning = 'Only 150 PR details can be updated at once. Choose fewer repositories in Settings.';
-        if (!warnings.includes(warning)) warnings.push(warning);
-        return;
-      }
-      checkAllowance();
-      reads++;
-      try {
-        members.set(url, await fetchMember(octokit, url, role ?? current?.role));
-        checkedAt[url] = now();
-      } catch (error) {
-        if (githubRateLimit(error, now())) throw error;
-        const cached = previousMembers.get(url);
-        if (cached) members.set(url, { ...cached, role: role ?? 'watched' });
-        warnings.push(`Could not read ${url}. Some PRs may be missing from their stacks.`);
-      }
+    const completed = new Map((pending?.members ?? []).map((m) => [m.url, m] as const));
+    const listingState = pending?.listings ?? { searches: {}, repos: {} };
+    let finished = false;
+    const checkpoint = () => {
+      if (finished || discoveryKey() !== discoverySettings || deps.auth().login !== login) return;
+      s.discoveryProgress = {
+        key: discoverySettings,
+        listings: listingState,
+        members: [...completed.values()],
+        checkedAt: Object.fromEntries([...completed.keys()].map((url) => [url, checkedAt[url]])),
+      };
+      save();
     };
-    // Include previous parents to preserve lineage after retargeting and merging.
-    const urls = new Map([...seeds.values()].map((p) => [p.url, p.role]));
-    // Keep lineage only for subjects still represented in the configured queue.
-    for (const old of s.subjects)
-      if (old.members.some((m) => urls.has(m.url)))
-        for (const m of old.members) if (!urls.has(m.url)) urls.set(m.url, 'watched');
-    for (const override of s.overrides)
-      for (const url of [override.parent, override.child]) if (!urls.has(url)) urls.set(url, 'watched');
-    const entries = [...urls];
-    if (entries.length > 150)
-      warnings.push('Only 150 known PRs can be updated at once. Choose fewer repositories in Settings.');
-    const total = Math.min(entries.length, 150);
-    progress('Updating pull request details', { completed: 0, total, unit: 'PRs' });
-    for (let i = 0; i < total; i += 5) {
-      await Promise.all(entries.slice(i, i + 5).map(([url, role]) => add(url, role)));
-      progress('Updating pull request details', { completed: Math.min(i + 5, total), total, unit: 'PRs' });
-    }
-    for (const [url, role] of entries.slice(150)) {
-      const cached = previousMembers.get(url);
-      if (cached) members.set(url, { ...cached, role });
-    }
-    // Fetch repository siblings once, including parents omitted by review-request filters.
-    const repos = [...new Set([...members.values()].map((m) => m.repo))];
-    for (const [index, fullName] of repos.entries()) {
-      progress(`Checking PR stacks in ${fullName}`, { completed: index, total: repos.length, unit: 'repositories' });
-      const [owner, repo] = fullName.split('/');
-      try {
-        const { data } = await listRepo(fullName);
-        if (data.length === 100)
-          warnings.push(`${fullName} has at least 100 open PRs. Some PRs may be missing from their stacks.`);
-        // Only add connected siblings, not every PR in the repository.
-        const connected = new Set([...members.values()].filter((m) => m.repo === fullName).map((m) => m.url));
-        for (let changed = true; changed; ) {
-          changed = false;
-          for (const p of data)
+    const listings = createDiscoveryListings(octokit, listingState, {
+      login,
+      includeAssigned: true,
+      now: now(),
+      beforeRead: checkAllowance,
+      save: checkpoint,
+      progress,
+    });
+    const listRepo = (fullName: string) => listings.repository(fullName);
+    try {
+      progress('Finding your pull requests');
+      const found = await listings.personal();
+      const seeds = new Map<string, Pick<PrSearchResult, 'url' | 'role' | 'updatedAt'>>(
+        found.filter((m) => prefs.ignoreDependabotPrs === false || !isDependabot(m.author)).map((m) => [m.url, m])
+      );
+      for (const [index, fullName] of (mineOnly ? [] : prefs.watchedRepos).entries()) {
+        progress(`Checking ${fullName}`, { completed: index, total: prefs.watchedRepos.length, unit: 'repositories' });
+        const [owner, repo] = fullName.split('/');
+        if (!owner || !repo) continue;
+        try {
+          for (const pr of (await listRepo(fullName)).data)
             if (
-              !connected.has(p.html_url) &&
-              data.some(
-                (q) =>
-                  connected.has(q.html_url) && // Deleted fork repositories can be null despite Octokit's response type.
-                  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-                  ((p.base.repo.full_name === q.head.repo?.full_name && p.base.ref === q.head.ref) ||
-                    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-                    (q.base.repo.full_name === p.head.repo?.full_name && q.base.ref === p.head.ref))
-              )
-            ) {
-              connected.add(p.html_url);
+              !seeds.has(pr.html_url) &&
+              (prefs.ignoreDependabotPrs === false || !isDependabot(pr.user?.login ?? 'unknown'))
+            )
+              seeds.set(pr.html_url, { url: pr.html_url, role: 'watched', updatedAt: pr.updated_at });
+        } catch (error) {
+          if (error instanceof DiscoverySuperseded || githubRateLimit(error, now())) throw error;
+          for (const m of previousMembers.values())
+            if (
+              m.repo === fullName &&
+              m.state === 'open' &&
+              !seeds.has(m.url) &&
+              (prefs.ignoreDependabotPrs === false || !isDependabot(m.author))
+            )
+              seeds.set(m.url, { ...m, role: 'watched' });
+          warnings.push(`Could not refresh ${fullName}. Some changes may be missing.`);
+        }
+      }
+      const add = async (
+        url: string,
+        role?: ReviewMember['role'],
+        listed?: Pick<ListedPull, 'updated_at' | 'labelDetails'> & {
+          head: { sha: string };
+          base: { sha: string; ref: string };
+        }
+      ) => {
+        const withListedLabels = (member: ReviewMember): ReviewMember => {
+          // A reused PR can predate label-color support or a repository label
+          // edit. Enrich it from the listing we already need for stack discovery.
+          // Preserve freshly fetched details and tolerate old listing checkpoints.
+          if (!listed?.labelDetails || (completed.has(url) && member.labelDetails !== undefined)) return member;
+          return {
+            ...member,
+            labels: listed.labelDetails.map((label) => label.name),
+            labelDetails: listed.labelDetails,
+          };
+        };
+        const current = members.get(url);
+        if (
+          current &&
+          (!listed ||
+            (current.updatedAt === listed.updated_at &&
+              current.headSha === listed.head.sha &&
+              current.baseSha === listed.base.sha &&
+              current.baseBranch === listed.base.ref))
+        ) {
+          members.set(url, withListedLabels(current));
+          return;
+        }
+        const cached = previousMembers.get(url);
+        const updatedAt = listed?.updated_at ?? seeds.get(url)?.updatedAt;
+        if (
+          (!force || completed.has(url)) &&
+          cached &&
+          updatedAt === cached.updatedAt &&
+          (completed.has(url) || now() - (checkedAt[url] ?? 0) < 15 * 60_000) &&
+          (!listed ||
+            (cached.headSha === listed.head.sha &&
+              cached.baseSha === listed.base.sha &&
+              cached.baseBranch === listed.base.ref))
+        ) {
+          members.set(url, withListedLabels({ ...cached, role: role ?? current?.role ?? 'watched' }));
+          return;
+        }
+        checkAllowance();
+        try {
+          const member = await fetchMember(octokit, url, role ?? current?.role);
+          members.set(url, member);
+          checkedAt[url] = now();
+          completed.set(url, member);
+        } catch (error) {
+          if (error instanceof DiscoverySuperseded || githubRateLimit(error, now())) throw error;
+          const cached = previousMembers.get(url);
+          if (cached) members.set(url, { ...cached, role: role ?? 'watched' });
+          warnings.push(`Could not read ${url}. Some PRs may be missing from their stacks.`);
+        }
+      };
+      // Include previous parents to preserve lineage after retargeting and merging.
+      const urls = new Map([...seeds.values()].map((p) => [p.url, p.role]));
+      // Keep lineage only for subjects still represented in the configured queue.
+      for (const old of s.subjects)
+        if (old.members.some((m) => urls.has(m.url)))
+          for (const m of old.members) if (!urls.has(m.url)) urls.set(m.url, 'watched');
+      // A personal queue follows only corrections connected to its seed PRs.
+      for (let changed = true; changed; ) {
+        changed = false;
+        for (const override of s.overrides) {
+          if (mineOnly && !urls.has(override.parent) && !urls.has(override.child)) continue;
+          for (const url of [override.parent, override.child])
+            if (!urls.has(url)) {
+              urls.set(url, 'watched');
               changed = true;
             }
         }
-        for (const url of connected)
-          await add(
-            url,
-            undefined,
-            data.find((pr) => pr.html_url === url)
-          );
-        // A base can still point at a closed/merged parent.
-        const refs = [...new Set([...members.values()].filter((m) => m.repo === fullName).map((m) => m.baseBranch))];
-        for (const ref of refs) {
-          if (ref === data[0]?.base.repo.default_branch) continue;
-          if ([...members.values()].some((m) => m.headRepo === fullName && m.headBranch === ref)) continue;
-          checkAllowance();
-          const { data: parents } = await octokit.pulls.list({
-            owner,
-            repo,
-            state: 'all',
-            head: `${owner}:${ref}`,
-            per_page: 10,
-          });
-          if (parents.length === 1) await add(parents[0].html_url);
-          else if (parents.length > 1)
-            warnings.push(`More than one earlier PR matches ${fullName}:${ref}. Check which PRs belong together.`);
-        }
-      } catch (error) {
-        if (githubRateLimit(error, now())) throw error;
-        warnings.push(`Could not check which PRs depend on others in ${fullName}. Showing saved relationships.`);
       }
+      // On a long cooldown, resume with the oldest/unread details first so a large
+      // queue can make progress even when previously completed details have expired.
+      const entries = [...urls].sort((a, b) => (checkedAt[a[0]] ?? 0) - (checkedAt[b[0]] ?? 0));
+      const total = entries.length;
+      progress('Updating pull request details', { completed: 0, total, unit: 'PRs' });
+      for (let i = 0; i < total; i += 5) {
+        // Drain the batch before saving or pausing; Promise.all can reject while
+        // other requests are still completing and updating the checkpoint.
+        const results = await Promise.allSettled(entries.slice(i, i + 5).map(([url, role]) => add(url, role)));
+        checkpoint();
+        for (const result of results) if (result.status === 'rejected') throw result.reason;
+        progress('Updating pull request details', { completed: Math.min(i + 5, total), total, unit: 'PRs' });
+      }
+      // Fetch repository siblings once, including parents omitted by review-request filters.
+      const repos = [...new Set([...members.values()].map((m) => m.repo))];
+      for (const [index, fullName] of repos.entries()) {
+        progress(`Checking PR stacks in ${fullName}`, { completed: index, total: repos.length, unit: 'repositories' });
+        const [owner, repo] = fullName.split('/');
+        try {
+          const { data } = await listRepo(fullName);
+          // Index branch relationships once. Scanning every pair of PRs becomes
+          // expensive now that repository discovery includes every page.
+          const byUrl = new Map(data.map((pr) => [pr.html_url, pr]));
+          const byHead = new Map<string, string[]>();
+          const byBase = new Map<string, string[]>();
+          const branchKey = (repo: string, ref: string) => JSON.stringify([repo, ref]);
+          for (const pr of data) {
+            const base = branchKey(pr.base.repo.full_name, pr.base.ref);
+            byBase.set(base, [...(byBase.get(base) ?? []), pr.html_url]);
+            if (pr.head.repo) {
+              const head = branchKey(pr.head.repo.full_name, pr.head.ref);
+              byHead.set(head, [...(byHead.get(head) ?? []), pr.html_url]);
+            }
+          }
+          // Only add connected siblings, not every PR in an unwatched repository.
+          const connected = new Set([...members.values()].filter((m) => m.repo === fullName).map((m) => m.url));
+          const pendingUrls = [...connected];
+          for (let i = 0; i < pendingUrls.length; i++) {
+            const pr = byUrl.get(pendingUrls[i]);
+            if (!pr) continue;
+            const parents = byHead.get(branchKey(pr.base.repo.full_name, pr.base.ref)) ?? [];
+            const children = pr.head.repo ? (byBase.get(branchKey(pr.head.repo.full_name, pr.head.ref)) ?? []) : [];
+            for (const url of [...parents, ...children])
+              if (!connected.has(url)) {
+                connected.add(url);
+                pendingUrls.push(url);
+              }
+          }
+          for (const url of connected) await add(url, undefined, byUrl.get(url));
+          // A base can still point at a closed/merged parent.
+          const refs = [...new Set([...members.values()].filter((m) => m.repo === fullName).map((m) => m.baseBranch))];
+          for (const ref of refs) {
+            if (ref === data[0]?.base.repo.default_branch) continue;
+            if ([...members.values()].some((m) => m.headRepo === fullName && m.headBranch === ref)) continue;
+            checkAllowance();
+            const { data: parents } = await octokit.pulls.list({
+              owner,
+              repo,
+              state: 'all',
+              head: `${owner}:${ref}`,
+              per_page: 10,
+            });
+            if (parents.length === 1) await add(parents[0].html_url);
+            else if (parents.length > 1)
+              warnings.push(`More than one earlier PR matches ${fullName}:${ref}. Check which PRs belong together.`);
+          }
+        } catch (error) {
+          if (error instanceof DiscoverySuperseded || githubRateLimit(error, now())) throw error;
+          warnings.push(`Could not check which PRs depend on others in ${fullName}. Showing saved relationships.`);
+        }
+      }
+      if (deps.auth().login !== login || discoveryKey() !== discoverySettings)
+        return { items: [], warnings: [], remaining: 0 };
+      progress('Updating your queue');
+      const updatedSubjects = groupSubjects([...members.values()], s.overrides, s.subjects);
+      // Keep unrelated saved subjects for an instant return to the full queue.
+      // Previously personal subjects absent from the new result may have closed
+      // or been unassigned, so do not retain those as current personal work.
+      const untouched = mineOnly
+        ? s.subjects.filter(
+            (subject) => !subject.members.some((member) => members.has(member.url) || isMyPr(member, login))
+          )
+        : [];
+      s.subjects = [...updatedSubjects, ...untouched];
+      for (const subject of updatedSubjects)
+        if (warnings.length)
+          subject.warnings = [...subject.warnings, 'Some repositories or relationships could not be fully refreshed.'];
+      const recent = Object.values(s.briefs)
+        .filter((b): b is Briefing => !!b)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+        .slice(0, 200);
+      s.briefs = Object.fromEntries(recent.map((b) => [b.key, b]));
+      lastRefresh = now();
+      s.discoveredAt = lastRefresh;
+      s.discoveryKey = discoverySettings;
+      s.discoveryWarnings = warnings;
+      s.checkedAt = Object.fromEntries(
+        s.subjects
+          .flatMap((subject) => subject.members.map((member) => member.url))
+          .filter((url) => checkedAt[url])
+          .map((url) => [url, checkedAt[url]])
+      );
+      delete s.discoveryProgress;
+      completed.clear();
+      finished = true;
+      save();
+      void pump();
+      return view();
+    } finally {
+      checkpoint();
     }
-    if (deps.auth().login !== login) return { items: [], warnings: [], remaining: 0 };
-    progress('Updating your queue');
-    s.subjects = groupSubjects([...members.values()], s.overrides, s.subjects);
-    for (const subject of s.subjects)
-      if (warnings.length)
-        subject.warnings = [...subject.warnings, 'Some repositories or relationships could not be fully refreshed.'];
-    const recent = Object.values(s.briefs)
-      .filter((b): b is Briefing => !!b)
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-      .slice(0, 200);
-    s.briefs = Object.fromEntries(recent.map((b) => [b.key, b]));
-    lastRefresh = now();
-    s.checkedAt = Object.fromEntries(
-      [...members.keys()].filter((url) => checkedAt[url]).map((url) => [url, checkedAt[url]])
-    );
-    save();
-    void pump();
-    return view();
   }
   async function queue(force = false, revalidate = force): Promise<WorkbenchQueue> {
     if (refresh) return !force && load().subjects.length ? view() : refresh;
     const { token, login } = deps.auth();
     if (!token || !login) return { items: [], warnings: [], remaining: 0 };
-    if (lastAccount !== login) {
+    const settings = discoveryKey();
+    if (lastAccount !== login || lastDiscoveryKey !== settings) {
       lastAccount = login;
-      lastRefresh = 0;
+      lastDiscoveryKey = settings;
+      const saved = load();
+      // A fresh full discovery also covers the personal subset. Switching saved
+      // views must not re-fetch data that the shared queue already contains.
+      const covered =
+        saved.discoveryKey === settings ||
+        (normalizeQueueFilters(saved.filters).involvement === 'mine' && saved.discoveryKey === discoveryKey('all'));
+      lastRefresh =
+        covered &&
+        saved.discoveryProgress?.key !== settings &&
+        typeof saved.discoveredAt === 'number' &&
+        Number.isFinite(saved.discoveredAt) &&
+        saved.discoveredAt <= now()
+          ? saved.discoveredAt
+          : 0;
       cooldown = undefined;
-      warnings = [];
+      warnings = lastRefresh && Array.isArray(saved.discoveryWarnings) ? saved.discoveryWarnings : [];
     }
     const id = `github:${login}`;
     const paused =
@@ -413,6 +555,14 @@ export function createWorkbenchService(deps: Deps) {
         return result;
       })
       .catch((error: unknown) => {
+        if (error instanceof DiscoverySuperseded) {
+          deps.activities?.finish(
+            id,
+            'cancelled',
+            'Queue scope changed. The next update will use your current filters.'
+          );
+          return view();
+        }
         const limited = githubRateLimit(error, now());
         if (limited) {
           cooldown = { account: login, error: limited };
@@ -452,7 +602,17 @@ export function createWorkbenchService(deps: Deps) {
     pumping = true;
     try {
       const s = load();
-      const item = view().items.find((i) => !s.briefs[key(i.subject)] || s.briefs[key(i.subject)]?.status === 'paused');
+      const filters = normalizeQueueFilters(s.filters);
+      const candidates = view().items.filter(
+        (item) =>
+          filters.involvement !== 'mine' ||
+          item.subject.members.some(
+            (member) => member.state === 'open' && !member.merged && isMyPr(member, deps.auth().login)
+          )
+      );
+      const item = prioritizeBriefings(candidates, filters, now(), deps.auth().login).find(
+        (i) => !s.briefs[key(i.subject)] || s.briefs[key(i.subject)]?.status === 'paused'
+      );
       if (!item || s.used >= limit()) return;
       const p = modelSettings();
       const subject = item.subject,
@@ -566,6 +726,21 @@ export function createWorkbenchService(deps: Deps) {
   }
   return {
     queue,
+    viewAction(action: QueueViewAction) {
+      if (!deps.auth().login || !deps.auth().token) throw new Error('Connect GitHub to manage saved views.');
+      const s = load();
+      savedViews.act(s.account, action);
+      save();
+      return view();
+    },
+    setFilters(value: unknown) {
+      if (!deps.auth().login || !deps.auth().token) throw new Error('Connect GitHub to save queue filters.');
+      const s = load();
+      savedViews.edit(s.account, value);
+      save();
+      void pump();
+      return view();
+    },
     activity(): ActivityTask[] {
       // The drawer mounts before GitHub authentication finishes restoring.
       if (!deps.auth().login || !deps.auth().token) return [];
@@ -574,7 +749,7 @@ export function createWorkbenchService(deps: Deps) {
       return view().items.flatMap(({ subject, briefing }) => {
         if (!briefing) return [];
         const cached = load().briefs[briefing.key];
-        if (!cached && briefing.status === 'paused') return [];
+        if ((!cached && briefing.status === 'paused') || briefing.pauseReason === 'filter') return [];
         if (
           (briefing.status === 'ready' || briefing.status === 'cancelled') &&
           Date.now() - Date.parse(briefing.updatedAt) > ACTIVITY_RETENTION_MS
