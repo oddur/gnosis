@@ -15,7 +15,7 @@ export function QueueFilterPanel({
   const members = items.flatMap((i) => i.subject.members).filter((m) => m.state === 'open' && !m.merged);
   const authors = [
     ...new Set([...members.map((m) => m.author), ...(filters.author === 'all' ? [] : [filters.author])]),
-  ].sort();
+  ].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }));
   const labels = [
     ...new Set([...members.flatMap((m) => m.labels), ...(filters.label === 'all' ? [] : [filters.label])]),
   ].sort();
