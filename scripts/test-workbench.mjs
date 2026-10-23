@@ -7,7 +7,12 @@ import path from 'node:path';
 import process from 'node:process';
 import electron from 'electron';
 import { setTimeout, clearTimeout } from 'node:timers';
+const auth = process.argv.includes('--auth');
+const onboarding = process.argv.includes('--onboarding');
+const images = process.argv.includes('--images');
 const splitDiff = process.argv.includes('--split-diff');
+const threads = process.argv.includes('--threads');
+const prSummary = process.argv.includes('--pr-summary');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-workbench-test-'));
 const server = await createServer({ configFile: 'vite.renderer.config.ts', server: { host: '127.0.0.1', port: 0 } });
 try {
@@ -15,7 +20,21 @@ try {
   const address = server.httpServer.address();
   const outfile = path.join(dir, 'test.cjs');
   await build({
-    entryPoints: [splitDiff ? 'tests/split-diff-browser.ts' : 'tests/workbench-browser.ts'],
+    entryPoints: [
+      auth
+        ? 'tests/github-auth-browser.ts'
+        : onboarding
+          ? 'tests/onboarding-browser.ts'
+          : images
+            ? 'tests/review-images-browser.ts'
+            : prSummary
+              ? 'tests/pr-summary-browser.ts'
+              : threads
+                ? 'tests/review-threads-browser.ts'
+                : splitDiff
+                  ? 'tests/split-diff-browser.ts'
+                  : 'tests/workbench-browser.ts',
+    ],
     outfile,
     bundle: true,
     platform: 'node',
@@ -29,10 +48,13 @@ try {
   delete env.ELECTRON_RUN_AS_NODE;
   const code = await new Promise((resolve, reject) => {
     const child = spawn(electron, [outfile], { env, stdio: 'inherit' });
-    const timer = setTimeout(() => {
-      child.kill();
-      reject(new Error('Workbench browser checks timed out'));
-    }, 90000);
+    const timer = setTimeout(
+      () => {
+        child.kill();
+        reject(new Error('Workbench browser checks timed out'));
+      },
+      splitDiff || threads ? 90000 : prSummary ? 180000 : 300000
+    );
     child.on('error', (error) => {
       clearTimeout(timer);
       reject(error);

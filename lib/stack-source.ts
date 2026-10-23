@@ -65,9 +65,17 @@ export class StackDiffSource implements DiffSource {
             await s.getFileMetadata(
               files
                 .filter((f) => f.filename.startsWith(prefix))
-                .map((f) => ({ ...f, filename: f.filename.slice(prefix.length) }))
+                .map((f) => ({
+                  ...f,
+                  filename: f.filename.slice(prefix.length),
+                  previous_filename: f.previous_filename?.slice(prefix.length),
+                }))
             )
-          ).map((f) => ({ ...f, filename: prefix + f.filename }))
+          ).map((f) => ({
+            ...f,
+            filename: prefix + f.filename,
+            previousFilename: f.previousFilename ? prefix + f.previousFilename : undefined,
+          }))
         )
       )
     ).flat();

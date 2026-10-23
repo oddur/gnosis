@@ -97,3 +97,36 @@ void test('invalid or older saved filters normalize to supported defaults', () =
     DEFAULT_QUEUE_FILTERS
   );
 });
+
+void test('retired dependency filters migrate to all stacks, preserving other constraints', () => {
+  assert.deepEqual(normalizeQueueFilters({ attention: 'blocking', author: 'alice', createdWithin: 30 }), {
+    ...DEFAULT_QUEUE_FILTERS,
+    kind: 'stack',
+    author: 'alice',
+    createdWithin: 30,
+  });
+  const stack = item([member(1), member(2, { baseBranch: 'pr-1' })]);
+  for (const attention of ['requested', 'updated', 'other'] as const) {
+    assert.equal(matchesQueueFilters({ ...stack, attention }, { ...DEFAULT_QUEUE_FILTERS, kind: 'stack' }), true);
+  }
+});
+
+void test('my PRs includes authorship, assignments, and review requests on the same matching open member', () => {
+  const filters = { ...DEFAULT_QUEUE_FILTERS, involvement: 'mine' as const };
+  for (const patch of [
+    { author: 'Alice' },
+    { author: 'bob', assignees: ['ALICE'] },
+    { author: 'bob', requestedReviewers: ['alice'] },
+    { author: 'bob', role: 'review-requested' as const },
+  ]) {
+    assert.equal(matchesQueueFilters(item([member(1, patch)]), filters, now, 'alice'), true);
+  }
+  assert.equal(matchesQueueFilters(item([member(1, { author: 'bob' })]), filters, now, 'alice'), false);
+  assert.equal(matchesQueueFilters(item([member(1)]), filters, now, null), false);
+  assert.equal(matchesQueueFilters(item([member(1, { merged: true, state: 'closed' })]), filters, now, 'alice'), false);
+  const stack = item([member(1), member(2, { baseBranch: 'pr-1', author: 'bob', labels: ['bug'] })]);
+  assert.equal(matchesQueueFilters(stack, { ...filters, label: 'bug' }, now, 'alice'), false);
+  assert.equal(matchesQueueFilters(stack, filters, now, 'alice'), true);
+  assert.equal(stack.subject.members.length, 2);
+  assert.deepEqual(prioritizeBriefings([item([member(3, { author: 'bob' })]), stack], filters, now, 'alice'), [stack]);
+});
