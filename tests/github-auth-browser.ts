@@ -113,15 +113,15 @@ void app.whenReady().then(async () => {
     );
     await capture('device-narrow');
     assert.equal(
-      await js('document.querySelector(\'[aria-label="GitHub account"]\').getBoundingClientRect().width > 20'),
+      await js('document.querySelector(\'[data-github-account]\').getBoundingClientRect().width > 20'),
       true
     );
     await js('window.approveDevice()');
     await wait(
-      "!document.querySelector('.github-auth-dialog') && document.querySelector('[aria-label=\"GitHub account\"]').textContent==='oddur'"
+      "!document.querySelector('.github-auth-dialog') && document.querySelector('[data-github-account]').textContent==='oddur'"
     );
     assert.equal(await js("!!document.querySelector('.workbench-connect')"), false);
-    await js('document.querySelector(\'[aria-label="GitHub account"]\').click()');
+    await js('document.querySelector(\'[data-github-account]\').click()');
     await wait("document.querySelector('.github-auth-dialog')?.textContent.includes('Connected as oddur')");
     assert.equal(await js("document.querySelector('#github-auth-token')?.value ?? ''"), '');
     await capture('account');
@@ -145,7 +145,7 @@ void app.whenReady().then(async () => {
       false,
       'Explicit local mode must survive reopening'
     );
-    await js(`document.querySelector('[aria-label="GitHub account"]').click()`);
+    await js(`document.querySelector('[data-github-account]').click()`);
     await wait("!!document.querySelector('.github-auth-dialog')");
     await click('Sign in through browser');
     await wait("!document.querySelector('.github-auth-dialog')");
