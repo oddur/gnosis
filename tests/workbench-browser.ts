@@ -165,7 +165,7 @@ void app.whenReady().then(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(field, ${JSON.stringify('Why must cleanup wait?\n\n```\nreturn worker.run(command);\n```')});
       field.dispatchEvent(new Event('input', {bubbles:true}));
     })()`);
-    await js("document.querySelector('.chat-sheet [aria-label=Send]').click()");
+    await js('document.querySelector(\'.chat-sheet [aria-label="Send question"]\').click()');
     await wait("document.querySelectorAll('.chat-sheet pre code').length === 2");
     assert.equal(
       await js("document.querySelector('.chat-sheet pre code').textContent"),

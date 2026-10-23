@@ -36,7 +36,8 @@ export function DiffAppearanceMenu({
         <Popover.Content
           align="end"
           sideOffset={8}
-          className="z-50 w-72 max-w-[calc(100vw-2rem)] rounded-md border bg-popover p-4 text-popover-foreground shadow-md"
+          aria-label="Diff appearance"
+          className="z-50 w-72 max-w-[calc(100vw-2rem)] max-h-[var(--radix-popover-content-available-height)] overflow-y-auto rounded-md border bg-popover p-4 text-popover-foreground shadow-md"
         >
           <h3 className="font-semibold text-sm mb-1">Diff appearance</h3>
           <p className="text-xs text-muted-foreground mb-4">Applies to all reviews. Saved automatically.</p>

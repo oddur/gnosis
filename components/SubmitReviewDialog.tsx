@@ -186,10 +186,11 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, prUrl, headSh
         {/* Review body */}
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-foreground">
+            <label htmlFor="review-summary" className="text-sm font-medium text-foreground">
               Review summary <span className="slide-meta">(optional)</span>
             </label>
             <textarea
+              id="review-summary"
               value={body}
               onChange={(e) => setBody(e.target.value)}
               placeholder="Overall feedback…"
