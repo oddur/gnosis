@@ -2,15 +2,25 @@ import { prepareReviewHunk } from './review-diff';
 import type { DiffHunk, FileMetadata, InlineExplanation } from './types';
 
 export const INLINE_EXPLANATION_DIRECTIVE = `
-SELECTIVE INLINE EXPLANATIONS: Write sparse inlineExplanations where a short note beside the code saves the reviewer real reasoning.
-- First identify any mechanism a competent reviewer could misread from the local syntax. If there is no such mechanism, return an empty array. If there is a clear high-value mechanism, explain it at the decisive line instead of burying all implementation detail in the narrative.
-- Most topics need zero or one note. Never fill a quota or annotate every file/function.
-- Include a note ONLY for a non-obvious invariant, algorithm step, state transition, ordering constraint, failure/recovery path, or cross-file contract supported by the supplied code.
-- Apply this test: would a competent developer learn something beyond what the nearby code, its existing comments, and the file summary already say? If not, omit it.
-- Explain the mechanism and its consequence, not the syntax. Do not narrate assignments, imports, accessors, obvious guards, ordinary loops, straightforward CRUD, formatting, or test boilerplate.
-- Divide the explanation between surfaces: the narrative covers overall purpose and flow; inline notes explain the local mechanism at the exact statement where a reader needs it. Do not suppress a useful local explanation merely because the narrative discusses the broader behavior.
-- Do not copy sentences from the narrative or paraphrase the file summary, existing code comments, or another annotation. Review concerns/questions belong in reviewChecks, not here. Do not invent intent or guarantees.
-- Useful: "Recording the generation before awaiting prevents a late response from replacing newer results." Noise: "This stores the generation number." A subtle language/runtime interaction deserves a local note; an obvious operation does not.
+SELECTIVE INLINE INSIGHTS: Use inlineExplanations to save the reader from reconstructing a meaningful relationship in the code.
+READER: A developer who knows the language and ordinary programming patterns but is new to this subsystem. Explain local algorithms, ownership, ordering, state transitions, and contracts; do not teach syntax or hunt for obscure trivia.
+
+Select the useful local insights before drafting the narrative, then substantiate, write, and prune them. Return only the final notes, not candidate questions or your selection process:
+1. SELECT: Identify concrete questions a reader would need to trace code to answer: Why are there two ownership checks? What does this early return establish? Where does the next partial write resume? Which work falls inside the measured interval? Keep only questions whose answers materially improve understanding. These are examples, not a checklist; most topics need zero or one note, and an empty array is a successful result.
+2. SUBSTANTIATE: Trace the answer through the supplied source, including callers or consumers when the claim depends on them. Distinguish a condition for taking a fast path from a guarantee that the input is valid. Scope claims to the relevant branch, ownership state, or measurement interval. Do not infer author intent, speedups, safety, or end-to-end guarantees from a local operation. If evidence is missing, omit the claim; an actionable unresolved risk belongs in reviewChecks.
+3. WRITE: Connect the local mechanism to its consequence in concrete terms. Name the operation and the state, data, or behavior it affects. Explain the surprising choice or relationship, not each statement. A small example or comparison can help, but do not invent a failure merely to make a note sound important.
+4. PRUNE AND PLACE: Read each note beside its anchor. Remove it if nearby code/comments already explain the same relationship, or if it repeats another note. Different wording is not a new insight. Keep a useful connection between facts even when each fact is already documented. Place the note immediately below the statement or completed expression that establishes the mechanism it explains; do not interrupt an expression to describe a result established later.
+
+COORDINATE THE SURFACES: Plan these together. File summaries say what changed; the narrative explains overall purpose and flow; inline notes explain a specific local mechanism; reviewChecks identify unresolved risks; educationNotes define general concepts. A narrative may introduce an ownership rule while an inline note explains the exact check enforcing it. If the narrative repeats a selected local insight, shorten that part of the narrative and keep the detail beside the code. Do not write every mechanism into the narrative and then discard useful notes as duplicates.
+
+Selection examples (only use an explanation when the supplied code supports it):
+- KEEP: "A unique record can still hold shared component bytes. The second ownership check prevents an in-place update from changing a value retained by another reader." This connects two ownership layers.
+- KEEP: "This early return rejects the fast path before the remaining fields are checked. The fallback merge must still validate them before updating storage." This explains the limited meaning of the result.
+- OMIT: "The loop advances after a partial write so already-sent bytes are not sent again" when the adjacent comment already explains that exact behavior. Correctness alone does not justify another note.
+- OMIT: "This avoids allocation and makes requests faster" when the code establishes only that one temporary allocation is removed. Do not turn an unmeasured benefit into a guarantee.
+- OMIT: A straightforward rename, accessor, or test setup with no meaningful hidden relationship. Do not manufacture a question to fill the field.
+
+OUTPUT AND ANCHOR RULES:
 - At most 3 notes per topic and 2 per file. One note per conceptual block; keep notes at least 8 lines apart on the same side. Choose only the highest-value insights.
 - text: 1–2 short sentences, at most 45 words and 320 characters. Inline backticks for symbols are allowed; no headings, lists, links, or images.
 - filePath: the exact provided diff path, including any PR prefix. Never mix stack members.

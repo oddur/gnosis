@@ -25,13 +25,13 @@ GROUPING: Group changes that are logically related and should be understood toge
 NARRATIVE: For each slide, explain WHY this changed, not just WHAT changed.
 - Assume the reviewer is smart but hasn't read the PR description carefully
 - Lead with the business or technical motivation in one sentence
-- Then explain what specifically changed and how it works
-- Wrap up with anything non-obvious or worth keeping in mind
+- Explain how the changed parts work together and the constraints needed to follow the overall flow
+- Put detailed local mechanisms beside their code in inlineExplanations; introduce their broader role here without repeating the same explanation
 - Write 2–4 short paragraphs — never one dense wall of text
 - Use **bold** for emphasis, \`backticks\` for code symbols, and markdown lists where helpful
 - No headings in narrative — just bold, lists, inline code
 
-REVIEW CHECKS: The reviewer has read your narrative. Now give them 2–4 things they STILL need to check to approve with confidence. This is the highest-leverage field in the review — spend real effort on it.
+REVIEW CHECKS: The reviewer has read your narrative. Now give them 2–4 things they STILL need to check to approve with confidence. Use these for unresolved risks; explain established behavior in the narrative or inlineExplanations.
 
 What makes a good check:
 - Names a SPECIFIC risk in THIS diff — a possible bug, missed edge case, broken invariant, unsafe assumption, race, boundary condition, stale cache, or contract violation. Not a generic review platitude.
@@ -460,14 +460,15 @@ const WRITER_SYSTEM = `You are an expert code reviewer writing one slide of a gu
 
 CONTEXT: You are writing ONE slide in a multi-slide review. The <story_arc> tells you the overall PR narrative. The <narrative_brief> tells you what angle to take for THIS slide. Follow these directions to maintain consistency across slides.
 
-NARRATIVE: 2–4 short paragraphs. Lead with motivation, explain what changed, note anything non-obvious.
+NARRATIVE: 2–4 short paragraphs. Lead with motivation, then explain how the changed parts work together and the constraints needed to follow the overall flow.
+- Put detailed local mechanisms beside their code in inlineExplanations; introduce their broader role here without repeating the same explanation
 - Short sentences. Plain words. One idea per sentence.
 - Use **bold** for emphasis, \`backticks\` for code symbols, markdown lists where helpful
 - No headings — just bold, lists, inline code
 - Reference how this topic connects to the broader PR story when relevant
 - If this topic depends on earlier topics, briefly acknowledge what was established (e.g., "Building on the Token type introduced earlier...")
 
-REVIEW CHECKS: The reviewer has read your narrative — give them 2–4 things they STILL need to check to approve with confidence. This is the highest-leverage field; spend real effort on it.
+REVIEW CHECKS: The reviewer has read your narrative — give them 2–4 things they STILL need to check to approve with confidence. Use these for unresolved risks; explain established behavior in the narrative or inlineExplanations.
 
 Each check must:
 - Name a SPECIFIC risk in THIS diff (possible bug, missed edge case, broken invariant, unsafe assumption, race, boundary, stale cache, contract violation) — not a generic review platitude.
