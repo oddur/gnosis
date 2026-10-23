@@ -1,3 +1,4 @@
+import type { QueueViewAction } from '../lib/saved-views';
 import type { QueueFilters } from '../lib/queue-filters';
 import type { GitHubReviewThread, GitHubReviewThreads, ReviewThreadAction } from '../lib/review-threads';
 import type { ActivityTask, ActivityAction } from '../lib/activity';
@@ -24,6 +25,7 @@ import type {
 contextBridge.exposeInMainWorld('electronAPI', {
   listActivity: (): Promise<ActivityTask[]> => ipcRenderer.invoke('list-activity'),
   activityAction: (id:string, action:ActivityAction): Promise<void> => ipcRenderer.invoke('activity-action',id,action),
+  workbenchViewAction: (action: QueueViewAction): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-view-action', action),
   workbenchSetFilters: (filters: QueueFilters): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-set-filters', filters),
   workbenchQueue: (force = false): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-queue', force),
   workbenchGroup: (correction: GroupingOverride): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-group', correction),

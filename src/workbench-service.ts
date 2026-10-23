@@ -1,3 +1,5 @@
+import { createSavedViewStore } from './saved-view-store';
+import { activeViewFilters, type QueueViewAction } from '../lib/saved-views';
 import {
   normalizeQueueFilters,
   matchesQueueFilters,
@@ -84,6 +86,7 @@ class BriefingPaused extends Error {
 }
 export function createWorkbenchService(deps: Deps) {
   const now = deps.now ?? Date.now;
+  const savedViews = createSavedViewStore(deps.directory);
   let cooldown: { account: string; error: GitHubBackoffError } | undefined;
   let state: State | undefined;
   let refresh: Promise<WorkbenchQueue> | undefined;
@@ -95,14 +98,14 @@ export function createWorkbenchService(deps: Deps) {
   let runningKey: string | undefined;
   let pumping = false;
   const cachePath = () => path.join(deps.directory(), 'workbench.json');
-  const discoveryKey = () =>
+  const discoveryKey = (involvement = normalizeQueueFilters(load().filters).involvement) =>
     createHash('sha256')
       .update(
         JSON.stringify([
           deps.auth().token,
           [...deps.preferences().watchedRepos].sort(),
           deps.preferences().ignoreDependabotPrs !== false,
-          normalizeQueueFilters(load().filters).involvement,
+          involvement,
         ])
       )
       .digest('hex');
@@ -122,6 +125,7 @@ export function createWorkbenchService(deps: Deps) {
     }
     if (!state || state.account !== account)
       state = { account, subjects: [], overrides: [], briefs: {}, day: '', used: 0 };
+    state.filters = activeViewFilters(savedViews.load(account, state.filters));
     const day = new Date().toISOString().slice(0, 10);
     if (state.day !== day) {
       state.day = day;
@@ -184,7 +188,20 @@ export function createWorkbenchService(deps: Deps) {
         Math.max(...b.subject.members.map((m) => Date.parse(m.updatedAt))) -
           Math.max(...a.subject.members.map((m) => Date.parse(m.updatedAt)))
     );
-    return { items, warnings, remaining: Math.max(0, limit() - s.used), filters };
+    const views = savedViews.load(s.account, filters);
+    const counts = Object.fromEntries(
+      views.views.map((view) => [
+        view.id,
+        items.filter((item) => matchesQueueFilters(item, view.filters, now(), deps.auth().login)).length,
+      ])
+    );
+    return {
+      items,
+      warnings,
+      remaining: Math.max(0, limit() - s.used),
+      filters,
+      savedViews: { ...structuredClone(views), counts },
+    };
   }
   async function fetchMember(
     octokit: Octokit,
@@ -465,8 +482,13 @@ export function createWorkbenchService(deps: Deps) {
       lastAccount = login;
       lastDiscoveryKey = settings;
       const saved = load();
+      // A fresh full discovery also covers the personal subset. Switching saved
+      // views must not re-fetch data that the shared queue already contains.
+      const covered =
+        saved.discoveryKey === settings ||
+        (normalizeQueueFilters(saved.filters).involvement === 'mine' && saved.discoveryKey === discoveryKey('all'));
       lastRefresh =
-        saved.discoveryKey === settings &&
+        covered &&
         saved.discoveryProgress?.key !== settings &&
         typeof saved.discoveredAt === 'number' &&
         Number.isFinite(saved.discoveredAt) &&
@@ -688,9 +710,17 @@ export function createWorkbenchService(deps: Deps) {
   }
   return {
     queue,
+    viewAction(action: QueueViewAction) {
+      if (!deps.auth().login || !deps.auth().token) throw new Error('Connect GitHub to manage saved views.');
+      const s = load();
+      savedViews.act(s.account, action);
+      save();
+      return view();
+    },
     setFilters(value: unknown) {
       if (!deps.auth().login || !deps.auth().token) throw new Error('Connect GitHub to save queue filters.');
-      load().filters = normalizeQueueFilters(value);
+      const s = load();
+      savedViews.edit(s.account, value);
       save();
       void pump();
       return view();

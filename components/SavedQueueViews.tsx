@@ -1,0 +1,280 @@
+import { useState } from 'react';
+import { DropdownMenu, Popover } from 'radix-ui';
+import { Bookmark, MoreHorizontal, GripVertical, X } from 'lucide-react';
+import { viewIsModified, type QueueViewAction, type QueueViewsSnapshot, type SavedQueueView } from '../lib/saved-views';
+import type { QueueFilters } from '../lib/queue-filters';
+
+type Action = (action: QueueViewAction) => Promise<void>;
+function ViewNameForm({
+  initial = '',
+  submitLabel,
+  onSubmit,
+  onCancel,
+}: {
+  initial?: string;
+  submitLabel: string;
+  onSubmit: (name: string) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(initial),
+    [error, setError] = useState(''),
+    [busy, setBusy] = useState(false);
+  return (
+    <form
+      className="view-name-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        setBusy(true);
+        setError('');
+        void onSubmit(name)
+          .catch((error: unknown) => setError(error instanceof Error ? error.message : String(error)))
+          .finally(() => setBusy(false));
+      }}
+    >
+      <label>
+        View name
+        <input
+          autoFocus
+          required
+          maxLength={60}
+          value={name}
+          disabled={busy}
+          onChange={(event) => setName(event.target.value)}
+        />
+      </label>
+      {error && <p role="alert">{error}</p>}
+      <div>
+        <button type="submit" disabled={busy || !name.trim()}>
+          {busy ? 'Saving…' : submitLabel}
+        </button>
+        <button type="button" disabled={busy} onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+export function SavedViewsNav({
+  state,
+  active,
+  busy,
+  onAction,
+}: {
+  state: QueueViewsSnapshot;
+  active: boolean;
+  busy: boolean;
+  onAction: Action;
+}) {
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
+  const act = (action: QueueViewAction) => {
+    void onAction(action).catch(() => {});
+  };
+  return (
+    <section className="saved-views-nav" aria-label="Saved views">
+      <p className="workbench-nav-heading">Saved views</p>
+      {!state.views.length && (
+        <p className="saved-views-empty">Use “Save view…” beside the filters to add a shortcut.</p>
+      )}
+      {state.views.map((view, index) => (
+        <Popover.Root
+          key={view.id}
+          open={renaming === view.id}
+          onOpenChange={(open) => {
+            if (!open) setRenaming(null);
+          }}
+        >
+          <Popover.Anchor asChild>
+            <div
+              className={`saved-view-row${dragging === view.id ? ' dragging' : ''}`}
+              onDragOver={(event) => {
+                if (dragging && !busy) event.preventDefault();
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                if (dragging && !busy) act({ type: 'move', id: dragging, beforeId: view.id });
+                setDragging(null);
+              }}
+            >
+              <button
+                className="saved-view-drag"
+                draggable={!busy}
+                aria-label={`Drag ${view.name} to reorder`}
+                title="Drag to reorder; the view menu also has Move up and Move down"
+                disabled={busy}
+                onDragStart={(event) => {
+                  event.dataTransfer.setData('text/plain', view.id);
+                  event.dataTransfer.effectAllowed = 'move';
+                  setDragging(view.id);
+                }}
+                onDragEnd={() => setDragging(null)}
+              >
+                <GripVertical size={12} />
+              </button>
+              <button
+                className={`saved-view-link${active && state.activeId === view.id ? ' active' : ''}`}
+                aria-current={active && state.activeId === view.id ? 'page' : undefined}
+                title={`${view.name} — ${state.counts[view.id] ?? 0} cached changes`}
+                disabled={busy}
+                onClick={() => act({ type: 'activate', id: view.id })}
+              >
+                <Bookmark size={15} />
+                <span className="saved-view-name">{view.name}</span>
+                <span className="saved-view-count">{state.counts[view.id] ?? 0}</span>
+              </button>
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <button className="saved-view-menu-trigger" disabled={busy} aria-label={`Manage ${view.name}`}>
+                    <MoreHorizontal size={15} />
+                  </button>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content
+                    className="saved-view-menu"
+                    side="right"
+                    align="start"
+                    sideOffset={6}
+                    collisionPadding={12}
+                    onCloseAutoFocus={(event) => {
+                      if (renaming === view.id) event.preventDefault();
+                    }}
+                  >
+                    <DropdownMenu.Item onSelect={() => setRenaming(view.id)}>Rename</DropdownMenu.Item>
+                    <DropdownMenu.Item onSelect={() => act({ type: 'duplicate', id: view.id })}>
+                      Duplicate
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item
+                      disabled={index === 0}
+                      onSelect={() => act({ type: 'move', id: view.id, beforeId: state.views[index - 1].id })}
+                    >
+                      Move up
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item
+                      disabled={index === state.views.length - 1}
+                      onSelect={() => act({ type: 'move', id: view.id, beforeId: state.views[index + 2]?.id ?? null })}
+                    >
+                      Move down
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Separator />
+                    <DropdownMenu.Item onSelect={() => act({ type: 'delete', id: view.id })}>
+                      Delete view
+                    </DropdownMenu.Item>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
+            </div>
+          </Popover.Anchor>
+          <Popover.Portal>
+            <Popover.Content
+              className="save-view-popover"
+              side="right"
+              align="start"
+              sideOffset={8}
+              collisionPadding={16}
+              aria-label="Rename saved view"
+            >
+              <div className="save-view-heading">
+                <strong>Rename view</strong>
+                <Popover.Close aria-label="Close rename view">
+                  <X size={16} />
+                </Popover.Close>
+              </div>
+              <ViewNameForm
+                initial={view.name}
+                submitLabel="Rename"
+                onCancel={() => setRenaming(null)}
+                onSubmit={async (name) => {
+                  await onAction({ type: 'rename', id: view.id, name });
+                  setRenaming(null);
+                }}
+              />
+            </Popover.Content>
+          </Popover.Portal>
+        </Popover.Root>
+      ))}
+      {dragging && (
+        <div
+          className="saved-view-drop-end"
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => {
+            event.preventDefault();
+            if (!busy) act({ type: 'move', id: dragging, beforeId: null });
+            setDragging(null);
+          }}
+        >
+          Move to end
+        </div>
+      )}
+    </section>
+  );
+}
+export function SaveViewControls({
+  view,
+  filters,
+  busy,
+  onAction,
+}: {
+  view?: SavedQueueView;
+  filters: QueueFilters;
+  busy: boolean;
+  onAction: Action;
+}) {
+  const [open, setOpen] = useState(false);
+  const modified = view && viewIsModified(view, filters);
+  return (
+    <div className="save-view-controls">
+      {modified && (
+        <>
+          <span className="view-modified" role="status">
+            Modified
+          </span>
+          <button
+            disabled={busy}
+            onClick={() => {
+              void onAction({ type: 'update', id: view.id }).catch(() => {});
+            }}
+          >
+            Update view
+          </button>
+          <button
+            disabled={busy}
+            onClick={() => {
+              void onAction({ type: 'reset', id: view.id }).catch(() => {});
+            }}
+          >
+            Reset changes
+          </button>
+        </>
+      )}
+      <Popover.Root open={open} onOpenChange={setOpen}>
+        <Popover.Trigger asChild>
+          <button disabled={busy}>{view ? 'Save as new view…' : 'Save view…'}</button>
+        </Popover.Trigger>
+        <Popover.Portal>
+          <Popover.Content
+            className="save-view-popover"
+            sideOffset={8}
+            collisionPadding={16}
+            align="start"
+            aria-label="Save queue view"
+          >
+            <div className="save-view-heading">
+              <strong>{view ? 'Save as new view' : 'Save view'}</strong>
+              <Popover.Close aria-label="Close save view">
+                <X size={16} />
+              </Popover.Close>
+            </div>
+            <ViewNameForm
+              submitLabel="Save view"
+              onCancel={() => setOpen(false)}
+              onSubmit={async (name) => {
+                await onAction({ type: 'create', name });
+                setOpen(false);
+              }}
+            />
+          </Popover.Content>
+        </Popover.Portal>
+      </Popover.Root>
+    </div>
+  );
+}

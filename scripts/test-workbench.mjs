@@ -39,7 +39,7 @@ try {
     const timer = setTimeout(() => {
       child.kill();
       reject(new Error('Workbench browser checks timed out'));
-    }, 90000);
+    }, splitDiff || threads ? 90000 : 180000);
     child.on('error', (error) => {
       clearTimeout(timer);
       reject(error);

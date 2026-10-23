@@ -1,3 +1,4 @@
+import type { QueueViewAction } from '../lib/saved-views';
 import type { QueueFilters } from '../lib/queue-filters';
 import type { GitHubReviewThread, GitHubReviewThreads, ReviewThreadAction } from '../lib/review-threads';
 import type { ActivityTask, ActivityAction } from '../lib/activity';
@@ -25,6 +26,7 @@ declare global {
     electronAPI: {
       listActivity: () => Promise<ActivityTask[]>;
       activityAction: (id:string, action:ActivityAction) => Promise<void>;
+      workbenchViewAction: (action: QueueViewAction) => Promise<WorkbenchQueue>;
       workbenchSetFilters: (filters: QueueFilters) => Promise<WorkbenchQueue>;
       workbenchQueue: (force?: boolean) => Promise<WorkbenchQueue>;
       workbenchGroup: (correction: GroupingOverride) => Promise<WorkbenchQueue>;

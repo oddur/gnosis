@@ -1,3 +1,4 @@
+import type { QueueViewsSnapshot } from './saved-views';
 import type { QueueFilters } from './queue-filters';
 import type { Preferences, PrMetadata, PrSearchResult, ReviewGuide, ReviewHistoryEntry, Slide } from './types';
 
@@ -45,6 +46,7 @@ export interface QueueItem {
   attention: 'updated' | 'requested' | 'other';
 }
 export interface WorkbenchQueue {
+  savedViews?: QueueViewsSnapshot;
   filters?: QueueFilters;
   items: QueueItem[];
   warnings: string[];

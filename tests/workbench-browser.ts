@@ -589,6 +589,99 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('.queue-filter-toggle').click()");
     await selectFilter('Show', 'all');
     await wait("document.querySelectorAll('.queue-item').length === 7");
+    await window.loadURL(fixtureUrl + '?views');
+    window.setSize(1280, 800);
+    await wait("document.querySelectorAll('.queue-item').length === 7");
+    const enterViewName = async (name: string) => {
+      await js(`(() => { const input = document.querySelector('.view-name-form input');
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, ${JSON.stringify(name)});
+        input.dispatchEvent(new Event('input', {bubbles:true})); })()`);
+      await js("document.querySelector('.view-name-form').requestSubmit()");
+      await wait("!document.querySelector('.view-name-form')");
+    };
+    const pickView = async (name: string) => {
+      await js(
+        `Array.from(document.querySelectorAll('.saved-view-link')).find(b=>b.querySelector('.saved-view-name').textContent===${JSON.stringify(name)}).click()`
+      );
+      await wait(`document.querySelector('.queue-toolbar h1').textContent === ${JSON.stringify(name)}`);
+    };
+    const manageView = async (name: string, action: string) => {
+      await js(
+        `(() => { const trigger = document.querySelector('[aria-label="Manage '+${JSON.stringify(name)}+'"]'); trigger.focus(); trigger.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); })()`
+      );
+      await wait("!!document.querySelector('[role=menu]')");
+      await js(
+        `Array.from(document.querySelectorAll('[role=menuitem]')).find(b=>b.textContent===${JSON.stringify(action)}).click()`
+      );
+    };
+    await click('Save view…');
+    await enterViewName('All work');
+    await wait("document.querySelector('.queue-toolbar h1').textContent === 'All work'");
+    await js("document.querySelector('.queue-filter-toggle').click()");
+    await selectFilter('Author', 'lena');
+    await js('document.querySelector(\'[aria-label="Close filters"]\').click()');
+    await wait("!!document.querySelector('.view-modified') && document.querySelectorAll('.queue-item').length === 2");
+    assert.equal(await js("document.querySelector('.saved-view-count').textContent"), '7');
+    await click('Save as new view…');
+    await enterViewName('Lena');
+    await pickView('All work');
+    await wait("!!document.querySelector('.view-modified') && document.querySelectorAll('.queue-item').length === 2");
+    await click('Reset changes');
+    await wait("!document.querySelector('.view-modified') && document.querySelectorAll('.queue-item').length === 7");
+    await js("document.querySelector('.queue-filter-toggle').click()");
+    await selectFilter('Author', 'sam');
+    await js('document.querySelector(\'[aria-label="Close filters"]\').click()');
+    await click('Update view');
+    await wait(
+      "!document.querySelector('.view-modified') && document.querySelector('.saved-view-count').textContent === '2'"
+    );
+    await manageView('Lena', 'Rename');
+    await enterViewName('Lena PRs');
+    await manageView('All work', 'Duplicate');
+    await wait("document.querySelectorAll('.saved-view-row').length === 3");
+    await wait("document.querySelector('.queue-toolbar h1').textContent === 'All work copy'");
+    await js(`(() => { window.viewDragData = new DataTransfer();
+      document.querySelectorAll('.saved-view-drag')[2].dispatchEvent(new DragEvent('dragstart', {bubbles:true, dataTransfer:window.viewDragData})); })()`);
+    await js(
+      "document.querySelectorAll('.saved-view-row')[0].dispatchEvent(new DragEvent('drop', {bubbles:true, dataTransfer:window.viewDragData}))"
+    );
+    await wait("document.querySelector('.saved-view-name').textContent === 'All work copy'");
+    await manageView('All work copy', 'Move down');
+    await wait("document.querySelectorAll('.saved-view-name')[1].textContent === 'All work copy'");
+    await js("document.querySelector('.queue-filter-toggle').click()");
+    await selectFilter('Author', 'owen');
+    await js('document.querySelector(\'[aria-label="Close filters"]\').click()');
+    await pickView('Lena PRs');
+    await pickView('All work copy');
+    await wait("!!document.querySelector('.view-modified')");
+    await wait("window.electronAPI.workbenchQueue().then(q=>q.filters.author==='owen')");
+    window.reload();
+    await wait(
+      "document.querySelector('.queue-toolbar h1')?.textContent === 'All work copy' && !!document.querySelector('.view-modified')"
+    );
+    await capture('saved-views-light');
+    window.setSize(1024, 700);
+    await js("document.documentElement.classList.add('dark')");
+    await capture('saved-views-dark-laptop');
+    assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
+    window.setSize(800, 700);
+    await capture('saved-views-dark-narrow');
+    assert.ok(await js("document.querySelector('.queue-search').getBoundingClientRect().width >= 160"));
+    await manageView('Lena PRs', 'Rename');
+    await wait("!!document.querySelector('.view-name-form input')");
+    await capture('saved-views-rename-narrow');
+    assert.equal(
+      await js(
+        '(() => { const r = document.querySelector(\'[aria-label="Rename saved view"]\').getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; })()'
+      ),
+      true
+    );
+    await click('Cancel');
+    assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
+    await manageView('All work copy', 'Delete view');
+    await wait(
+      "document.querySelectorAll('.saved-view-row').length === 2 && document.querySelectorAll('.queue-item').length === 7"
+    );
     await window.loadURL(fixtureUrl + '?stacks');
     await wait("document.querySelectorAll('.queue-item').length === 7");
     const navigate = async (name: string) => {

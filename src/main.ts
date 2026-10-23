@@ -1,3 +1,4 @@
+import type { QueueViewAction } from '../lib/saved-views';
 import { createActivityService } from './activity-service';
 import { createReviewThreadService } from './review-thread-service';
 import type { ReviewThreadAction } from '../lib/review-threads';
@@ -2240,6 +2241,7 @@ ipcMain.handle('workbench-queue', async (_event, force: boolean) => {
   }
   return workbench.queue(force);
 });
+ipcMain.handle('workbench-view-action', (_event, action: QueueViewAction) => workbench.viewAction(action));
 ipcMain.handle('workbench-set-filters', (_event, filters: unknown) => workbench.setFilters(filters));
 ipcMain.handle('workbench-group', (_event, correction: GroupingOverride) => workbench.correct(correction));
 ipcMain.handle('workbench-briefing', (_event, id: string) => workbench.retry(id));

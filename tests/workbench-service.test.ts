@@ -1260,3 +1260,70 @@ void test('switching to my PRs stops an in-flight full discovery before it reads
     s.cleanup();
   }
 });
+
+void test('saved-view counts use saved filters and switching views shares discovery without extra GitHub reads', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  let reads = 0;
+  const original = s.deps.client().pulls.get;
+  Object.assign(s.deps.client().pulls, {
+    get: (...args: Parameters<typeof original>) => {
+      reads++;
+      return original(...args);
+    },
+  });
+  try {
+    await s.service.queue();
+    const initial = reads;
+    const created = s.service.viewAction({ type: 'create', name: 'All PRs' });
+    const id = created.savedViews?.activeId;
+    assert.ok(id);
+    const modified = s.service.setFilters({ author: 'nobody' });
+    assert.equal(modified.savedViews?.counts[id], 1, 'Count uses the saved filters, not the empty draft');
+    const second = s.service.viewAction({ type: 'create', name: 'Nobody' });
+    assert.equal(second.savedViews?.counts[second.savedViews.activeId ?? ''], 0);
+    s.service.viewAction({ type: 'activate', id });
+    assert.equal((await s.service.queue()).filters?.author, 'nobody');
+    const restarted = createWorkbenchService(s.deps);
+    const restored = await restarted.queue();
+    assert.equal(restored.savedViews?.activeId, id);
+    assert.equal(restored.filters?.author, 'nobody');
+    assert.equal(reads, initial, 'Managing/counting/switching same-scope views must not refetch GitHub');
+    const reset = restarted.viewAction({ type: 'reset', id });
+    assert.equal(reset.filters?.author, 'all');
+    restarted.viewAction({ type: 'delete', id });
+    assert.equal((await restarted.queue()).items.length, 1, 'Deleting a view preserves cached PRs');
+  } finally {
+    s.cleanup();
+  }
+});
+
+void test('a fresh shared full queue covers switching into and out of a personal saved view', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  let searches = 0;
+  const original = s.deps.client().search.issuesAndPullRequests;
+  Object.assign(s.deps.client().search, {
+    issuesAndPullRequests: (...args: Parameters<typeof original>) => {
+      searches++;
+      return original(...args);
+    },
+  });
+  try {
+    await s.service.queue();
+    const full = s.service.viewAction({ type: 'create', name: 'Everything' }).savedViews?.activeId;
+    assert.ok(full);
+    s.service.setFilters({ involvement: 'mine' });
+    const mine = s.service.viewAction({ type: 'create', name: 'My PRs' }).savedViews?.activeId;
+    assert.ok(mine);
+    // Restore the full view's saved definition, preserving the personal view.
+    s.service.viewAction({ type: 'reset', id: full });
+    const initial = searches;
+    await s.service.queue();
+    s.service.viewAction({ type: 'activate', id: full });
+    await s.service.queue();
+    s.service.viewAction({ type: 'activate', id: mine });
+    await s.service.queue();
+    assert.equal(searches, initial, 'Personal/full switching reuses the shared fresh discovery');
+  } finally {
+    s.cleanup();
+  }
+});

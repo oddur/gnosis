@@ -1,3 +1,5 @@
+import { SavedViewsNav, SaveViewControls } from '../../components/SavedQueueViews';
+import type { QueueViewAction } from '../../lib/saved-views';
 import { Popover } from 'radix-ui';
 import { QueueFilterPanel } from '../../components/QueueFilterPanel';
 import {
@@ -75,6 +77,15 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   const [filters, setFilters] = useState<QueueFilters>(DEFAULT_QUEUE_FILTERS);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [savedQuery, setSavedQuery] = useState('');
+  const [viewBusy, setViewBusy] = useState(false);
+  const viewBusyRef = useRef(false);
+  const writes = useRef<Promise<unknown>>(Promise.resolve());
+  const enqueueWrite = <T,>(task: () => Promise<T>): Promise<T> => {
+    const result = writes.current.then(task);
+    writes.current = result.catch(() => {});
+    return result;
+  };
+  const activeQueueView = queue.savedViews?.views.find((view) => view.id === queue.savedViews?.activeId);
   const filtersLoaded = useRef(false);
   const pendingFilters = useRef<QueueFilters | null>(null);
   const filterVersion = useRef(0);
@@ -90,6 +101,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   const repo = filters.repo;
   const filterCount = activeQueueFilterCount(filters);
   const updateFilters = (patch: Partial<QueueFilters>) => {
+    if (viewBusyRef.current) return;
     filterVersion.current++;
     filtersLoaded.current = true;
     setFilters((current) => {
@@ -97,6 +109,40 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
       pendingFilters.current = next;
       return next;
     });
+  };
+  const viewAction = async (action: QueueViewAction) => {
+    if (viewBusyRef.current) return;
+    viewBusyRef.current = true;
+    setViewBusy(true);
+    filterVersion.current++;
+    const pending = pendingFilters.current;
+    pendingFilters.current = null;
+    try {
+      const result = await enqueueWrite(async () => {
+        if (pending) await window.electronAPI.workbenchSetFilters(pending);
+        return window.electronAPI.workbenchViewAction(action);
+      });
+      setQueue(result);
+      setFilters(normalizeQueueFilters(result.filters));
+      filtersLoaded.current = true;
+      if (
+        action.type === 'activate' ||
+        action.type === 'create' ||
+        action.type === 'duplicate' ||
+        (action.type === 'delete' && action.id === queue.savedViews?.activeId)
+      ) {
+        setSavedView(false);
+        setSelected(null);
+      }
+      setError('');
+    } catch (error) {
+      if (pending) pendingFilters.current = pending;
+      setError(error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      viewBusyRef.current = false;
+      setViewBusy(false);
+    }
   };
   const setQuery = (value: string) => (section === 'saved' ? setSavedQuery(value) : updateFilters({ query: value }));
   const setRepo = (value: string) => updateFilters({ repo: value });
@@ -127,20 +173,23 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   const rowButtons = useRef(new Map<string, HTMLButtonElement>());
   const [statuses, setStatuses] = useState<Partial<Record<string, PrStatus>>>({});
   const alive = useRef(true);
-  const selectedItem = queue.items.find((i) => i.subject.id === selected && matchesQueueFilters(i, filters, Date.now(), auth?.login));
+  const selectedItem = queue.items.find(
+    (i) => i.subject.id === selected && matchesQueueFilters(i, filters, Date.now(), auth?.login)
+  );
   const briefingSelection = prefs ? briefingModel(prefs) : undefined;
   const briefingModelLabel = briefingSelection
     ? `${PROVIDERS[briefingSelection.provider].label} · ${PROVIDERS[briefingSelection.provider].models.find((m) => m.id === briefingSelection.model)?.label ?? briefingSelection.model}`
     : '';
 
   const refresh = useCallback(async (force = false) => {
+    const version = filterVersion.current;
     if (force) setRefreshing(true);
     try {
       await Promise.all([
         window.electronAPI.workbenchQueue(force).then((next) => {
-          if (alive.current) {
+          if (alive.current && version === filterVersion.current && !viewBusyRef.current && !pendingFilters.current) {
             setQueue(next);
-            if (!filtersLoaded.current && !pendingFilters.current) {
+            if (!filtersLoaded.current) {
               const restored = normalizeQueueFilters(next.filters);
               setFilters(restored);
               filtersLoaded.current = true;
@@ -190,8 +239,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
     const timer = setTimeout(() => {
       const next = pendingFilters.current;
       if (!next) return;
-      void window.electronAPI
-        .workbenchSetFilters(next)
+      void enqueueWrite(() => window.electronAPI.workbenchSetFilters(next))
         .then((result) => {
           if (version !== filterVersion.current) return;
           pendingFilters.current = null;
@@ -205,7 +253,11 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   }, [filters, auth?.authenticated]);
   useEffect(
     () => () => {
-      if (pendingFilters.current) void window.electronAPI.workbenchSetFilters(pendingFilters.current).catch(() => {});
+      if (pendingFilters.current) {
+        const pending = pendingFilters.current;
+        pendingFilters.current = null;
+        void enqueueWrite(() => window.electronAPI.workbenchSetFilters(pending)).catch(() => {});
+      }
     },
     []
   );
@@ -586,15 +638,20 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
               <button
                 key={id as string}
                 title={id === 'stacks' ? 'All stacks, including requested and updated changes' : (label as string)}
-                aria-current={section === id ? 'page' : undefined}
-                className={section === id ? 'active' : ''}
+                aria-current={section === id && (id === 'saved' || !activeQueueView) ? 'page' : undefined}
+                className={section === id && (id === 'saved' || !activeQueueView) ? 'active' : ''}
+                disabled={viewBusy}
                 onClick={() => {
                   setSavedView(id === 'saved');
-                  if (id !== 'saved')
-                    updateFilters({
+                  if (id !== 'saved') {
+                    const patch: Partial<QueueFilters> = {
                       attention: id === 'stacks' ? 'all' : (id as QueueFilters['attention']),
                       kind: id === 'stacks' ? 'stack' : 'all',
-                    });
+                    };
+                    if (activeQueueView)
+                      void viewAction({ type: 'activate', id: null, filters: patch }).catch(() => {});
+                    else updateFilters(patch);
+                  }
                   setSelected(null);
                 }}
               >
@@ -612,6 +669,9 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
               </button>
             );
           })}
+          {auth?.authenticated && queue.savedViews && (
+            <SavedViewsNav state={queue.savedViews} active={!savedView} busy={viewBusy} onAction={viewAction} />
+          )}
           <div className="mt-auto flex flex-col gap-1">
             <button title="Local changes" onClick={() => setLocalOpen(true)}>
               <FolderGit2 size={16} />
@@ -640,11 +700,13 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
               <h1>
                 {section === 'saved'
                   ? 'Saved reviews'
-                  : section === 'all'
-                    ? 'Work queue'
-                    : section === 'stacks'
-                      ? 'Stacks'
-                      : labels[section]}
+                  : activeQueueView
+                    ? activeQueueView.name
+                    : section === 'all'
+                      ? 'Work queue'
+                      : section === 'stacks'
+                        ? 'Stacks'
+                        : labels[section]}
               </h1>
               <p>
                 {section === 'saved'
@@ -770,6 +832,9 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                   </Popover.Content>
                 </Popover.Portal>
               </Popover.Root>
+            )}
+            {section !== 'saved' && auth?.authenticated && queue.savedViews && (
+              <SaveViewControls view={activeQueueView} filters={filters} busy={viewBusy} onAction={viewAction} />
             )}
             <span className="queue-count" aria-live="polite">
               {section === 'saved' ? `${saved.length} reviews` : `${items.length} of ${queue.items.length} changes`}

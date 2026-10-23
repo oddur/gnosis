@@ -1,3 +1,5 @@
+import { normalizeViews, editViewFilters, applyViewAction, activeViewFilters, type QueueViewAction } from '../../lib/saved-views';
+import { matchesQueueFilters } from '../../lib/queue-filters';
 import { normalizeQueueFilters, type QueueFilters } from '../../lib/queue-filters';
 import type { ActivityTask, ActivityAction } from '../../lib/activity';
 import { createRoot } from 'react-dom/client';
@@ -9,6 +11,14 @@ import { DEFAULT_CLAUDE_MODEL, DEFAULT_FAST_CLAUDE_MODEL } from '../../lib/model
 import { review as example, slide, explainer } from './explainer';
 const filterStorageKey = 'fixture-queue-filters' + location.search;
 let queueFilters = normalizeQueueFilters(JSON.parse(sessionStorage.getItem(filterStorageKey) ?? 'null'));
+const viewsStorageKey = 'fixture-views' + location.search;
+let savedViews = normalizeViews(JSON.parse(sessionStorage.getItem(viewsStorageKey) ?? 'null'), queueFilters);
+queueFilters = activeViewFilters(savedViews);
+const saveViews = () => {
+  sessionStorage.setItem(viewsStorageKey, JSON.stringify(savedViews));
+  queueFilters = activeViewFilters(savedViews);
+  sessionStorage.setItem(filterStorageKey, JSON.stringify(queueFilters));
+};
 const onboardingScenario = new URLSearchParams(location.search).has('onboarding');
 let fixtureAuthenticated = !onboardingScenario;
 let fixtureStarted = false;
@@ -369,14 +379,22 @@ const mocks = {
     if (onboardingScenario) sessionStorage.setItem('fixture-first-run-seen', String(next.firstRunSeen));
     return Promise.resolve();
   },
+  workbenchViewAction: (action: QueueViewAction) => {
+    savedViews = applyViewAction(savedViews, action, () => crypto.randomUUID());
+    saveViews();
+    return Promise.resolve(mocks.workbenchQueue());
+  },
   workbenchSetFilters: (filters: QueueFilters) => {
+    savedViews = editViewFilters(savedViews, filters);
+    saveViews();
     queueFilters = normalizeQueueFilters(filters);
     sessionStorage.setItem(filterStorageKey, JSON.stringify(queueFilters));
-    return Promise.resolve({ items, warnings: [], remaining: 7, filters: queueFilters });
+    return Promise.resolve(mocks.workbenchQueue());
   },
   workbenchQueue: () =>
     Promise.resolve({
       filters: queueFilters,
+      savedViews: { ...savedViews, counts: Object.fromEntries(savedViews.views.map(view => [view.id, items.filter(item => matchesQueueFilters(item, view.filters, Date.now(), 'oddur')).length])) },
       items: onboardingScenario && !fixtureStarted ? [] : items,
       warnings: [],
       remaining: polishScenario ? 0 : 7,
