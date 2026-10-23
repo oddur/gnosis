@@ -2187,3 +2187,10 @@ body:has(.activity-drawer) .app-toasts { bottom:auto; top:64px; }
 .review-selection-actions button:hover { background:var(--accent); color:var(--accent-foreground); }
 .review-selection-actions .review-selection-ask { background:var(--primary); color:var(--primary-foreground); }
 .review-selection-actions .review-selection-ask:hover { background:var(--primary); color:var(--primary-foreground); filter:brightness(.93); }
+
+/* Failed settings writes retain their draft and expose a local recovery action. */
+.settings-save-error,.settings-load-error { border:1px solid var(--border); border-radius:5px; padding:12px; font-size:var(--type-control); line-height:1.6; overflow-wrap:anywhere; }
+.settings-save-error>div { display:flex; flex-wrap:wrap; gap:8px 16px; margin-top:8px; }
+.settings-save-error button,.settings-load-error button { color:var(--ring); text-decoration:underline; text-underline-offset:3px; }
+.settings-load-error button { margin-top:8px; }
+.settings-search-error { margin-top:6px; font-size:var(--type-control); line-height:1.6; color:var(--color-danger); }

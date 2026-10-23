@@ -529,4 +529,9 @@ for (const topic of review.slides)
     );
 const { App } = await import('../../src/App');
 const root = document.getElementById('root');
-if (root) createRoot(root).render(<App />);
+if (root) {
+  if (new URLSearchParams(location.search).has('hardening')) {
+    const { HardeningFixture } = await import('./hardening');
+    createRoot(root).render(<HardeningFixture />);
+  } else createRoot(root).render(<App />);
+}
