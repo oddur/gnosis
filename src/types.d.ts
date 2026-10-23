@@ -9,6 +9,7 @@ import type {
   Preferences,
   PrSearchResult,
   PrStatus,
+  PrMetadata,
   ReviewGuide,
   ReviewHistoryEntry,
   SendSlideChatRequest,
@@ -74,6 +75,8 @@ declare global {
       searchRepos: (query: string) => Promise<RepoSearchResult[]>;
       reRenderHunks: (review: ReviewGuide) => Promise<ReviewGuide>;
       getPrStatus: (prUrl: string) => Promise<PrStatus>;
+      getPrMetadata: (prUrl: string) => Promise<PrMetadata>;
+      loadPrImage: (url: string) => Promise<string>;
       getReviewThreads: (prUrl: string, refresh?: boolean) => Promise<GitHubReviewThreads>;
       reviewThreadAction: (req: ReviewThreadAction) => Promise<GitHubReviewThread>;
       onUpdateAvailable: (callback: (info: UpdateInfo) => void) => void;

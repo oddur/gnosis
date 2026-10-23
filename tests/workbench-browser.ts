@@ -447,7 +447,11 @@ void app.whenReady().then(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'https://github.com/klang/engine/pull/120');
       input.dispatchEvent(new Event('input', {bubbles:true}));
     })()`);
-    await click('Start guided review');
+    await click('Open summary');
+    await wait("!!document.querySelector('.pr-summary-page')");
+    await click('Generate explanation');
+    await wait("window.electronAPI.loadPreferences().then(p => p.firstRunSeen)");
+    await click('Work queue');
     await wait("document.querySelectorAll('.queue-item').length === 7 && !document.querySelector('.getting-started')");
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"

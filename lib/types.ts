@@ -433,6 +433,9 @@ export interface PrLabel {
 }
 
 export interface PrMetadata {
+  changedFileCount?: number;
+  additions?: number;
+  deletions?: number;
   headRepo?: string;
   baseRepo?: string;
   title: string;

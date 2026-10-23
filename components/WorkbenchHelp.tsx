@@ -121,7 +121,8 @@ export function WorkbenchHelp({ onGettingStarted }: { onGettingStarted?: () => v
             </p>
             <p>
               In the queue: <kbd>↑</kbd>/<kbd>↓</kbd> or <kbd>j</kbd>/<kbd>k</kbd> select a change; <kbd>Enter</kbd>{' '}
-              opens its guided review; <kbd>/</kbd> searches.
+              opens the summary or a ready explanation; <kbd>/</kbd> searches. Double-click a change to read its PR
+              description and details. Generate an explanation from its summary when you are ready.
             </p>
             <p>
               In a review, press <kbd>?</kbd> for its keyboard shortcuts.

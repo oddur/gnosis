@@ -13,6 +13,7 @@ import os from 'os';
 import http from 'http';
 import crypto from 'crypto';
 import { getGitHubClient, githubClients, fetchGitHubLogin, githubRateLimit } from '../lib/github-client';
+import { createPrImageService } from './pr-image-service';
 import {
   parsePrUrl,
   getPrMetadata,
@@ -1443,6 +1444,18 @@ async function fetchPrStatus(prUrl: string): Promise<PrStatus | null> {
     milestone: prData.milestone,
   };
 }
+
+ipcMain.handle('get-pr-metadata', async (_event, prUrl: string): Promise<PrMetadata> => {
+  const { owner, repo, pullNumber } = parsePrUrl(prUrl);
+  return getPrMetadata(getGitHubClient(getResolvedToken()), owner, repo, pullNumber);
+});
+
+const loadPrImage = createPrImageService();
+ipcMain.handle('load-pr-image', (_event, url: string) => {
+  const token = getResolvedToken();
+  if (!token) throw new Error('Sign in to GitHub to view this image.');
+  return loadPrImage(getGitHubClient(token), url);
+});
 
 ipcMain.handle('get-pr-status', async (_event, prUrl: string): Promise<PrStatus> => {
   if (isLocalUrl(prUrl)) {

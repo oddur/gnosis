@@ -62,6 +62,9 @@ export async function getPrMetadata(
     mergeable: data.mergeable ?? null,
     isDraft: data.draft ?? false,
     commitCount: data.commits,
+    changedFileCount: data.changed_files,
+    additions: data.additions,
+    deletions: data.deletions,
     requestedReviewers: (data.requested_reviewers ?? []).map((u) => u.login),
     requestedTeams: (data.requested_teams ?? []).map((t) => t.name),
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- GitHub API can return null

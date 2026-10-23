@@ -210,6 +210,8 @@ export function createGitHubClientPool(options: Options = {}) {
         const graph = new URL(endpoint.url).pathname === '/graphql';
         const resource = graph ? 'graphql' : endpoint.url.includes('/search/') ? 'search' : 'core';
         const get = endpoint.method === 'GET';
+        // Binary images use a separate bounded memory cache, never the JSON disk cache.
+        const cacheable = get && requestOptions.request.cache !== 'no-store';
         const graphRead =
           graph && typeof requestOptions.query === 'string' && /^\s*(query\b|\{)/.test(requestOptions.query);
         const requestKey = JSON.stringify([
@@ -222,7 +224,7 @@ export function createGitHubClientPool(options: Options = {}) {
         const shared = deduplicate ? inflight.get(requestKey) : undefined;
         if (shared) return shared.then((result) => structuredClone(result));
         const run = async () => {
-          const stored = get ? cache.get(requestKey, isCachedResponse) : undefined;
+          const stored = cacheable ? cache.get(requestKey, isCachedResponse) : undefined;
           const cached = stored?.value;
           if (
             cached &&
@@ -261,7 +263,7 @@ export function createGitHubClientPool(options: Options = {}) {
             ) {
               throw Object.assign(new Error('GitHub API rate limit exceeded'), { status: 403, response });
             }
-            if (get && version === cache.version()) {
+            if (cacheable && version === cache.version()) {
               if (response.status === 200 && !/\bno-store\b/i.test(response.headers['cache-control'] ?? '')) {
                 // Persist response data and validators, never authorization or request configuration.
                 const headers = Object.fromEntries(

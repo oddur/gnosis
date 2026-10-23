@@ -204,6 +204,49 @@ if (new URLSearchParams(location.search).has('stacks')) {
     items[index].attention = attention;
   }
 }
+if (new URLSearchParams(location.search).has('pr-summary')) {
+  const pr = items[1].subject.members[0];
+  pr.description = `## Preserve queued messages across reconnects
+
+Messages waiting for a connection now stay in the **outbox** until the replacement transport is ready. The old transport can close without losing work.
+
+![Reconnect flow](${location.origin}/tests/fixtures/pr-description.svg)
+
+### Verification
+
+- [x] Disconnect while messages are queued
+- [ ] Exercise a slow reconnect
+
+| Before | After |
+| --- | --- |
+| Pending messages are dropped | Pending messages are replayed in order |
+
+\`\`\`ts
+await transport.reconnect();
+await outbox.flush();
+\`\`\`
+
+<details><summary>Implementation notes</summary>
+
+The outbox owns the pending messages, so replacing the socket does not clear them.
+
+<img src="${location.origin}/tests/fixtures/pr-description.svg" width="360" alt="HTML reconnect screenshot" onerror="window.unsafeDescription = true">
+
+</details>
+
+[Source](src/outbox.ts) · ![Relative image](docs/reconnect.png)
+
+![Private attachment](https://github.com/user-attachments/assets/01234567-89ab-cdef-0123-456789abcdef)
+
+<script>window.unsafeDescription = true</script><iframe src="https://example.com"></iframe>
+<a href="javascript:alert(1)">Unsafe link</a>
+`;
+  pr.assignees = ['lena'];
+  pr.labels = ['bug'];
+  pr.labelDetails = [{ name: 'bug', color: 'd73a4a' }];
+  items[1].briefing = undefined;
+  items[2].subject.members[0].description = '';
+}
 if (new URLSearchParams(location.search).has('labels')) {
   const stack = items[0].subject.members;
   stack[0].labels = ['bug', 'needs-review'];
@@ -384,8 +427,9 @@ const mocks = {
   },
   startReview: () => {
     fixtureStarted = true;
-    return Promise.resolve('workbench-review');
+    return Promise.resolve({ reviewId: 'workbench-review', prUrl: review.prUrl, prTitle: review.prTitle, author: review.author });
   },
+  getPrMetadata: (url: string) => Promise.resolve(items.flatMap((item) => item.subject.members).find((member) => member.url === url) ?? { ...members[0], url, title: 'A PR outside the queue' }),
   loadPreferences: () => Promise.resolve(prefs),
   savePreferences: (next: Preferences) => {
     prefs = next;

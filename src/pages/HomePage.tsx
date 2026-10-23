@@ -1,4 +1,5 @@
 import { PrLabels } from '../../components/PrLabels';
+import { PrSummary } from '../../components/PrSummary';
 import { SavedViewsNav, SaveViewControls } from '../../components/SavedQueueViews';
 import type { QueueViewAction } from '../../lib/saved-views';
 import { Popover } from 'radix-ui';
@@ -163,6 +164,9 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   const [url, setUrl] = useState(prefillPrUrl ?? '');
   const [showUrl, setShowUrl] = useState(!!prefillPrUrl);
   const [starting, setStarting] = useState(false);
+  const [openingPr, setOpeningPr] = useState(false);
+  const [openedItem, setOpenedItem] = useState<QueueItem | null>(null);
+  const [requestedReviews, setRequestedReviews] = useState<Record<string, string>>({});
   const [pat, setPat] = useState('');
   const [parentUrl, setParentUrl] = useState('');
   const [childUrl, setChildUrl] = useState('');
@@ -177,6 +181,14 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   const selectedItem = queue.items.find(
     (i) => i.subject.id === selected && matchesQueueFilters(i, filters, Date.now(), auth?.login)
   );
+  const summarySource = openedItem && (queue.items.find((item) => item.subject.id === openedItem.subject.id) ?? openedItem);
+  const summaryItem = summarySource && {
+    ...summarySource,
+    review: history.find((entry) => entry.id === requestedReviews[summarySource.subject.id]) ??
+      history.find((entry) => entry.snapshot?.subject.id === summarySource.subject.id ||
+      (!entry.snapshot && entry.prUrl === summarySource.subject.members[0].url)) ?? summarySource.review,
+  };
+  const statusSubject = summaryItem?.subject ?? selectedItem?.subject;
   const briefingSelection = prefs ? briefingModel(prefs) : undefined;
   const briefingModelLabel = briefingSelection
     ? `${PROVIDERS[briefingSelection.provider].label} · ${PROVIDERS[briefingSelection.provider].models.find((m) => m.id === briefingSelection.model)?.label ?? briefingSelection.model}`
@@ -268,9 +280,9 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
     setStatuses({});
     setStatusErrors({});
     const refreshStatuses = () => {
-      if (selectedItem)
+      if (statusSubject)
         void Promise.allSettled(
-          selectedItem.subject.members.map(async (m) => ({
+          statusSubject.members.map(async (m) => ({
             url: m.url,
             status: await window.electronAPI.getPrStatus(m.url),
           }))
@@ -279,7 +291,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
             setStatusErrors(
               Object.fromEntries(
                 results.flatMap((r, i) =>
-                  r.status === 'rejected' ? [[selectedItem.subject.members[i].url, String(r.reason)]] : []
+                  r.status === 'rejected' ? [[statusSubject.members[i].url, String(r.reason)]] : []
                 )
               )
             );
@@ -297,7 +309,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
       cancelled = true;
       clearInterval(timer);
     };
-  }, [selected, selectedItem?.subject.id, selectedItem?.subject.members.map((m) => m.url).join(','), statusAttempt]);
+  }, [selected, statusSubject?.id, statusSubject?.members.map((m) => m.url).join(','), statusAttempt]);
   const fallbackReview =
     selectedItem?.review?.status === 'completed' && selectedItem.briefing?.status !== 'ready'
       ? selectedItem.review
@@ -336,7 +348,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
       const cli = await window.electronAPI.checkCliInstalled(prefs.provider);
       if (!cli.installed)
         throw new Error(`${PROVIDERS[prefs.provider].label} was not found. Open Settings → Integrations for AI setup.`);
-      await window.electronAPI.startReview({
+      const result = await window.electronAPI.startReview({
         prUrl: target,
         subjectId: subject?.id,
         standalone,
@@ -351,10 +363,11 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
         claudeContext: prefs.claudeContext,
         localTools,
       });
+      if (openedItem) setRequestedReviews((previous) => ({ ...previous, [openedItem.subject.id]: result.reviewId }));
       if (!prefs.firstRunSeen || showGettingStarted) void dismissGettingStarted();
       setShowUrl(false);
       setUrl('');
-      void refresh();
+      await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -417,9 +430,38 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   };
   const activate = (item: QueueItem) => {
     const entry = item.review;
-    if (entry?.status === 'generating' || starting) return;
     if (entry?.status === 'completed' && entry.snapshot?.fingerprint === fingerprint(item.subject)) void open(entry);
-    else void start(item.subject.members[0].url, item.subject);
+    else {
+      setError('');
+      setOpenedItem(item);
+    }
+  };
+  const openPrUrl = async () => {
+    setError('');
+    setOpeningPr(true);
+    try {
+      const match = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:[/?#].*)?$/.exec(url.trim());
+      if (!match) throw new Error('Enter a GitHub PR URL, such as https://github.com/owner/repo/pull/123.');
+      const canonical = `https://github.com/${match[1]}/${match[2]}/pull/${match[3]}`;
+      const cached = queue.items.find((item) => item.subject.members.some((m) => m.url.toLowerCase() === canonical.toLowerCase()));
+      if (cached) {
+        setOpenedItem(cached);
+        setSelected(cached.subject.id);
+      } else {
+        const meta = await window.electronAPI.getPrMetadata(canonical);
+        const repo = `${match[1]}/${match[2]}`;
+        setOpenedItem({ attention: 'other', subject: {
+          id: canonical, kind: 'pr', title: meta.title, edges: [], warnings: [],
+          members: [{ ...meta, number: Number(match[3]), repo, headRepo: meta.headRepo ?? repo, baseRepo: meta.baseRepo ?? repo, role: 'watched' }],
+        } });
+      }
+      setShowUrl(false);
+      setUrl('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOpeningPr(false);
+    }
   };
   const moveSelection = (direction: number) => {
     const index = orderedItems.findIndex((item) => item.subject.id === selected);
@@ -444,7 +486,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
         if (!(e.target instanceof HTMLElement) || !e.target.closest('.activity-shell')) moveSelection(-1);
       },
     },
-    { enabled: !settings && !localOpen && section !== 'saved' }
+    { enabled: !settings && !localOpen && !openedItem && section !== 'saved' }
   );
   const correct = async (action: 'link' | 'unlink', parent = parentUrl, child = childUrl) => {
     setGrouping(true);
@@ -514,6 +556,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
               setSelected(s.id);
               setStatuses({});
             }}
+            onDoubleClick={() => { setError(''); setOpenedItem(item); }}
           >
             <span className="queue-title-line">
               <span className="queue-title">{s.title}</span>
@@ -579,6 +622,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
           className="workbench-brand"
           onClick={(e) => {
             e.preventDefault();
+            setOpenedItem(null);
             setSavedView(false);
             updateFilters({ attention: 'all', kind: 'all' });
           }}
@@ -630,7 +674,22 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
         </div>
       </header>
       <UpdateBanner />
-      <div className="workbench-body">
+      {summaryItem ? <PrSummary
+        item={summaryItem}
+        starting={starting}
+        error={error}
+        statuses={statuses}
+        statusErrors={statusErrors}
+        onBack={() => {
+          setOpenedItem(null);
+          requestAnimationFrame(() => rowButtons.current.get(selected ?? '')?.focus({ preventScroll: true }));
+        }}
+        onGenerate={() => void start(summaryItem.subject.members[0].url,
+          queue.items.some((item) => item.subject.id === summaryItem.subject.id) ? summaryItem.subject : undefined,
+          undefined, summaryItem.subject.scope === 'single')}
+        onOpenReview={() => { if (summaryItem.review) void open(summaryItem.review); }}
+        onRetryStatus={() => setStatusAttempt((n) => n + 1)}
+      /> : <div className="workbench-body">
         <nav className="workbench-sidebar" aria-label="Workspace">
           <p className="workbench-nav-heading">Reviews</p>
           {[
@@ -742,7 +801,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
               className="queue-url"
               onSubmit={(e) => {
                 e.preventDefault();
-                void start(url);
+                void openPrUrl();
               }}
             >
               <label className="queue-url-field">
@@ -755,8 +814,8 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                   aria-label="Pull request URL"
                 />
               </label>
-              <Button size="sm" disabled={starting || !url.trim()} type="submit">
-                {starting ? 'Preparing…' : 'Start guided review'}
+              <Button size="sm" disabled={openingPr || !url.trim()} type="submit">
+                {openingPr ? 'Opening…' : 'Open summary'}
               </Button>
               <button
                 type="button"
@@ -870,7 +929,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
           )}
           {section !== 'saved' && (
             <p className="queue-keyboard-help" id="queue-keyboard-help">
-              <kbd>↑</kbd> <kbd>↓</kbd> or <kbd>j</kbd> <kbd>k</kbd> select · <kbd>Enter</kbd> guided review ·{' '}
+              <kbd>↑</kbd> <kbd>↓</kbd> or <kbd>j</kbd> <kbd>k</kbd> select · <kbd>Enter</kbd> open ·{' '}
               <kbd>/</kbd> search
             </p>
           )}
@@ -1095,15 +1154,15 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                 <div className="briefing-actions">
                   <Button
                     size="sm"
-                    disabled={starting || selectedItem.review?.status === 'generating'}
                     onClick={() => activate(selectedItem)}
                   >
                     {selectedItem.review?.status === 'completed' &&
                     selectedItem.review.snapshot?.fingerprint === fingerprint(selectedItem.subject)
                       ? 'Continue review'
-                      : 'Start guided review'}
+                      : 'Open summary'}
                     <ArrowRight size={14} />
                   </Button>
+                  {selectedItem.review?.status === 'completed' && <button onClick={() => { setError(''); setOpenedItem(selectedItem); }}>PR description & details</button>}
                   {selectedItem.review?.status === 'completed' &&
                     selectedItem.review.snapshot?.fingerprint !== fingerprint(selectedItem.subject) && (
                       <button onClick={() => selectedItem.review && void open(selectedItem.review)}>
@@ -1243,8 +1302,11 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                           </div>
                         )}
                         {selectedItem.subject.kind === 'stack' && (
-                          <button onClick={() => void start(m.url, undefined, undefined, true)}>
-                            Review this PR only
+                          <button onClick={() => {
+                            setError('');
+                            setOpenedItem({ attention: selectedItem.attention, subject: { id: m.url, kind: 'pr', scope: 'single', title: m.title, members: [m], edges: [], warnings: [] } });
+                          }}>
+                            Open this PR
                           </button>
                         )}
                       </div>
@@ -1329,7 +1391,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
             <span className="ml-auto">Detailed reviews on demand</span>
           </footer>
         </main>
-      </div>
+      </div>}
       <SettingsDialog
         initialSection={settingsSection}
         onReplayOnboarding={() => {

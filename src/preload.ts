@@ -10,6 +10,7 @@ import type {
   Preferences,
   PrSearchResult,
   PrStatus,
+  PrMetadata,
   ReviewGuide,
   ReviewHistoryEntry,
   SendSlideChatRequest,
@@ -123,6 +124,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   searchRepos: (query: string): Promise<RepoSearchResult[]> => ipcRenderer.invoke('search-repos', query),
   reRenderHunks: (review: ReviewGuide): Promise<ReviewGuide> => ipcRenderer.invoke('re-render-hunks', review),
   getPrStatus: (prUrl: string): Promise<PrStatus> => ipcRenderer.invoke('get-pr-status', prUrl),
+  getPrMetadata: (prUrl: string): Promise<PrMetadata> => ipcRenderer.invoke('get-pr-metadata', prUrl),
+  loadPrImage: (url: string): Promise<string> => ipcRenderer.invoke('load-pr-image', url),
   getReviewThreads: (prUrl: string, refresh?: boolean): Promise<GitHubReviewThreads> => ipcRenderer.invoke('get-review-threads', prUrl, refresh),
   reviewThreadAction: (req: ReviewThreadAction): Promise<GitHubReviewThread> => ipcRenderer.invoke('review-thread-action', req),
   onUpdateAvailable: (callback: (info: UpdateInfo) => void): void => {
