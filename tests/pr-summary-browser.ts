@@ -225,7 +225,7 @@ void app.whenReady().then(async () => {
     assert.match(await js<string>("document.querySelector('.pr-member-relationship').textContent"), /Builds on #121/);
     await capture('pr-summary-stack');
     window.setSize(980, 700);
-    assert.equal(await js("getComputedStyle(document.querySelector('.pr-stack-select')).display"), 'flex');
+    await wait("getComputedStyle(document.querySelector('.pr-stack-select')).display === 'flex'");
     await js(
       "(()=>{const s=document.querySelector('.pr-stack-select select');s.selectedIndex=1;s.dispatchEvent(new Event('change',{bubbles:true}));})()"
     );

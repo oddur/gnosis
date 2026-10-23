@@ -177,34 +177,42 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.review-selection-actions').textContent.includes('Copied')");
     assert.equal(await js('window.copiedCode'), 'export const ready = true;');
     await js("document.documentElement.classList.remove('dark')");
-    await new Promise((r) => setTimeout(r, 150));
-    assert.ok(
-      await js(`(() => {
-      const anchor = window.diffRoot('metadata-added').querySelector('[data-line-number="1"]').getBoundingClientRect();
-      const menu = document.querySelector('.review-selection-actions').getBoundingClientRect();
-      return Math.min(Math.abs(menu.top-anchor.bottom),Math.abs(menu.bottom-anchor.top)) < 12;
-    })()`),
-      'The menu must remain beside the selection after a theme/layout change'
-    );
+    const waitForAnchoredMenu = async () => {
+      try {
+        await wait(`(() => {
+          const anchor = window.diffRoot('metadata-added').querySelector('[data-line-number="1"]').getBoundingClientRect();
+          const menu = document.querySelector('.review-selection-actions').getBoundingClientRect();
+          return Math.min(Math.abs(menu.top-anchor.bottom),Math.abs(menu.bottom-anchor.top)) < 12;
+        })()`);
+      } catch (error) {
+        const geometry = await js(`(() => ({
+          menu: document.querySelector('.review-selection-actions')?.getBoundingClientRect().toJSON(),
+          anchor: window.diffRoot('metadata-added').querySelector('[data-line-number="1"]').getBoundingClientRect().toJSON(),
+          styles: document.querySelector('.review-selection-actions')?.getAttribute('style'),
+          scroll: window.scrollY,
+        }))()`);
+        throw new Error(`Selection menu detached from code: ${JSON.stringify(geometry)}\n${String(error)}`);
+      }
+    };
+    await waitForAnchoredMenu();
     // The page can scroll independently of the nested diff pane.
     const previousScroll = await js<number>('window.scrollY');
     await js('window.scrollBy(0, 40)');
-    await new Promise((r) => setTimeout(r, 100));
-    assert.equal(await js('window.scrollY'), previousScroll + 40);
-    assert.ok(
-      await js(`(() => {
-        const anchor = window.diffRoot('metadata-added').querySelector('[data-line-number="1"]').getBoundingClientRect();
-        const menu = document.querySelector('.review-selection-actions').getBoundingClientRect();
-        return Math.min(Math.abs(menu.top-anchor.bottom),Math.abs(menu.bottom-anchor.top)) < 12;
-      })()`),
-      'Outer-page scrolling must move the menu with the selected code'
-    );
+    await wait(`window.scrollY === ${previousScroll + 40}`);
+    await waitForAnchoredMenu();
     await js(`window.scrollTo(0, ${previousScroll})`);
-    await new Promise((r) => setTimeout(r, 100));
-    fs.writeFileSync('/tmp/gnosis-selection-actions-light.png', (await window.webContents.capturePage()).toPNG());
+    await wait(`window.scrollY === ${previousScroll}`);
+    await waitForAnchoredMenu();
+    fs.writeFileSync(
+      path.join(os.tmpdir(), 'gnosis-selection-actions-light.png'),
+      (await window.webContents.capturePage()).toPNG()
+    );
     await js("document.documentElement.classList.add('dark')");
-    await new Promise((r) => setTimeout(r, 150));
-    fs.writeFileSync('/tmp/gnosis-selection-actions-dark.png', (await window.webContents.capturePage()).toPNG());
+    await waitForAnchoredMenu();
+    fs.writeFileSync(
+      path.join(os.tmpdir(), 'gnosis-selection-actions-dark.png'),
+      (await window.webContents.capturePage()).toPNG()
+    );
     await js("document.documentElement.classList.remove('dark')");
     await js(
       `Array.from(document.querySelectorAll('.review-selection-actions button')).find(b=>b.textContent.includes('Ask about this')).click()`

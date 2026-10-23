@@ -200,7 +200,10 @@ void test('fresh responses survive restart; stale responses revalidate and refre
     const content = fs.readFileSync(path.join(dir, 'github-cache.json'), 'utf8');
     assert.equal(content.includes('secret-token'), false);
     assert.equal(content.includes('authorization'), false);
-    assert.equal(fs.statSync(path.join(dir, 'github-cache.json')).mode & 0o777, 0o600);
+    // Windows exposes only the writable bit, not POSIX owner/group permissions.
+    if (process.platform !== 'win32') {
+      assert.equal(fs.statSync(path.join(dir, 'github-cache.json')).mode & 0o777, 0o600);
+    }
     const restart = harness(respond);
     restart.pool.setStorage(file);
     const client = restart.pool.client('secret-token');
