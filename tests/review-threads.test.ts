@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createGitHubClientPool } from '../lib/github-client';
 import { createReviewThreadService } from '../src/review-thread-service';
 import { threadPlacementReason, threadSource, type GitHubReviewThread } from '../lib/review-threads';
@@ -209,4 +212,75 @@ void test('stack paths select the owning PR even when two PRs change the same fi
   assert.equal(threadSource(stack, memberPrefix(second) + 'queue.ts')?.headSha, 'head-2');
   assert.equal(threadSource(stack, 'unknown/queue.ts'), null);
   assert.equal(threadSource({ ...review, prUrl: 'local://repo' }, 'queue.ts'), null);
+});
+
+void test('complete discussion snapshots survive restart, expire, and respect explicit refresh and mutations', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-thread-cache-'));
+  const file = path.join(dir, 'budget.json');
+  let now = 1000;
+  let resolved = false;
+  const handler = (query: string) =>
+    query.startsWith('mutation')
+      ? response({
+          data: {
+            resolveReviewThread: {
+              thread: { isResolved: (resolved = true), viewerCanResolve: false, viewerCanUnresolve: true },
+            },
+          },
+        })
+      : response(pr(page([{ ...thread, isResolved: resolved, comments: page([comment]) }])));
+  try {
+    const first = harness(handler);
+    first.pool.setStorage(file);
+    await createReviewThreadService(() => now).list(first.pool.client('one'), review.prUrl);
+    const restarted = harness(handler);
+    restarted.pool.setStorage(file);
+    const service = createReviewThreadService(() => now);
+    const client = restarted.pool.client('one');
+    assert.equal((await service.list(client, review.prUrl)).threads.length, 1);
+    assert.equal(restarted.calls.length, 0);
+    await service.list(client, review.prUrl, true);
+    assert.equal(restarted.calls.length, 1);
+    now += 60_001;
+    await service.list(client, review.prUrl);
+    assert.equal(restarted.calls.length, 2);
+    await service.list(restarted.pool.client('two'), review.prUrl);
+    assert.equal(restarted.calls.length, 3, 'A different credential must fetch its own discussions');
+    await service.act(client, { prUrl: review.prUrl, threadId: 'T1', action: 'resolve' });
+    const afterWrite = harness(handler);
+    afterWrite.pool.setStorage(file);
+    assert.equal(
+      (await createReviewThreadService(() => now).list(afterWrite.pool.client('one'), review.prUrl)).threads[0]
+        .isResolved,
+      true
+    );
+    assert.equal(afterWrite.calls.length, 1, 'The pre-mutation snapshot was removed from disk');
+    afterWrite.pool.forget('one');
+    const afterLogout = harness(handler);
+    afterLogout.pool.setStorage(file);
+    await createReviewThreadService(() => now).list(afterLogout.pool.client('one'), review.prUrl);
+    assert.equal(afterLogout.calls.length, 1);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+void test('a failed discussion page never persists an incomplete thread snapshot', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-thread-partial-'));
+  const file = path.join(dir, 'budget.json');
+  try {
+    const first = harness((_query, vars) =>
+      vars.cursor
+        ? response({ errors: [{ message: 'Unavailable page' }] })
+        : response(pr(page([{ ...thread, comments: page([comment]) }], 'next')))
+    );
+    first.pool.setStorage(file);
+    await assert.rejects(createReviewThreadService().list(first.pool.client('one'), review.prUrl), /Unavailable page/);
+    const restart = harness(() => response(pr(page([{ ...thread, comments: page([comment]) }]))));
+    restart.pool.setStorage(file);
+    await createReviewThreadService().list(restart.pool.client('one'), review.prUrl);
+    assert.equal(restart.calls.length, 1);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

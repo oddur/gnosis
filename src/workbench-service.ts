@@ -11,7 +11,13 @@ import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
 import type { Octokit } from '@octokit/rest';
-import { getGitHubClient, githubClients, githubRateLimit, type GitHubBackoffError } from '../lib/github-client';
+import {
+  getGitHubClient,
+  githubClients,
+  githubCacheFor,
+  githubRateLimit,
+  type GitHubBackoffError,
+} from '../lib/github-client';
 import { getPrMetadata, parsePrUrl, searchPullRequests, getChangedFiles } from '../lib/github';
 import { getProvider } from '../lib/provider';
 import {
@@ -37,6 +43,9 @@ interface State {
   used: number;
   checkedAt?: Record<string, number>;
   filters?: QueueFilters;
+  discoveredAt?: number;
+  discoveryKey?: string;
+  discoveryWarnings?: string[];
 }
 export type WorkbenchPreferences = Pick<
   Preferences,
@@ -71,11 +80,22 @@ export function createWorkbenchService(deps: Deps) {
   let refresh: Promise<WorkbenchQueue> | undefined;
   let lastRefresh = 0;
   let lastAccount: string | null = null;
+  let lastDiscoveryKey: string | undefined;
   let warnings: string[] = [];
   let running: AbortController | undefined;
   let runningKey: string | undefined;
   let pumping = false;
   const cachePath = () => path.join(deps.directory(), 'workbench.json');
+  const discoveryKey = () =>
+    createHash('sha256')
+      .update(
+        JSON.stringify([
+          deps.auth().token,
+          [...deps.preferences().watchedRepos].sort(),
+          deps.preferences().ignoreDependabotPrs !== false,
+        ])
+      )
+      .digest('hex');
   function load(): State {
     const account = deps.auth().login ?? 'guest';
     if (!state || state.account !== account) {
@@ -180,6 +200,8 @@ export function createWorkbenchService(deps: Deps) {
     }
     const s = load();
     const octokit = deps.client?.() ?? getGitHubClient(token);
+    const discoverySettings = discoveryKey();
+    if (force) githubCacheFor(octokit)?.revalidate();
     warnings = [];
     const checkedAt = { ...s.checkedAt };
     let reads = 0;
@@ -370,6 +392,9 @@ export function createWorkbenchService(deps: Deps) {
       .slice(0, 200);
     s.briefs = Object.fromEntries(recent.map((b) => [b.key, b]));
     lastRefresh = now();
+    s.discoveredAt = lastRefresh;
+    s.discoveryKey = discoverySettings;
+    s.discoveryWarnings = warnings;
     s.checkedAt = Object.fromEntries(
       [...members.keys()].filter((url) => checkedAt[url]).map((url) => [url, checkedAt[url]])
     );
@@ -381,11 +406,20 @@ export function createWorkbenchService(deps: Deps) {
     if (refresh) return !force && load().subjects.length ? view() : refresh;
     const { token, login } = deps.auth();
     if (!token || !login) return { items: [], warnings: [], remaining: 0 };
-    if (lastAccount !== login) {
+    const settings = discoveryKey();
+    if (lastAccount !== login || lastDiscoveryKey !== settings) {
       lastAccount = login;
-      lastRefresh = 0;
+      lastDiscoveryKey = settings;
+      const saved = load();
+      lastRefresh =
+        saved.discoveryKey === settings &&
+        typeof saved.discoveredAt === 'number' &&
+        Number.isFinite(saved.discoveredAt) &&
+        saved.discoveredAt <= now()
+          ? saved.discoveredAt
+          : 0;
       cooldown = undefined;
-      warnings = [];
+      warnings = lastRefresh && Array.isArray(saved.discoveryWarnings) ? saved.discoveryWarnings : [];
     }
     const id = `github:${login}`;
     const paused =

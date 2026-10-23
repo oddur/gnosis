@@ -3,6 +3,34 @@ import type { OctokitResponse } from '@octokit/types';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { createGitHubCache, isCacheRecord, type GitHubCache } from './github-cache';
+
+const clientCaches = new WeakMap<Octokit, GitHubCache>();
+export const githubCacheFor = (client: Octokit) => clientCaches.get(client);
+interface CachedResponse {
+  response: OctokitResponse<unknown>;
+  freshUntil: number;
+}
+function isCachedResponse(value: unknown): value is CachedResponse {
+  return (
+    isCacheRecord(value) &&
+    typeof value.freshUntil === 'number' &&
+    Number.isFinite(value.freshUntil) &&
+    isCacheRecord(value.response) &&
+    value.response.status === 200 &&
+    typeof value.response.url === 'string' &&
+    isCacheRecord(value.response.headers) &&
+    Object.values(value.response.headers).every((header) => typeof header === 'string') &&
+    'data' in value.response
+  );
+}
+function freshness(headers: Headers, now: number) {
+  const control = String(headers['cache-control'] ?? '');
+  if (/\b(no-cache|no-store)\b/i.test(control)) return now;
+  const seconds = /(?:^|,)\s*max-age=(\d+)/i.exec(control)?.[1];
+  const age = Number(headers.age) || 0;
+  return now + Math.max(0, Math.min(60, seconds === undefined ? 60 : Number(seconds)) - age) * 1000;
+}
 
 interface Budget {
   remaining: number;
@@ -56,6 +84,7 @@ export function createGitHubClientPool(options: Options = {}) {
   const sleep = options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const states = new Map<string, AccountState>();
   const clients = new Map<string, Octokit>();
+  const snapshots = createGitHubCache(now);
   let storage: string | undefined;
   const keyFor = (token?: string | null) =>
     createHash('sha256')
@@ -98,6 +127,7 @@ export function createGitHubClientPool(options: Options = {}) {
     backoff,
     setStorage(file: string) {
       storage = file;
+      snapshots.setStorage(path.join(path.dirname(file), 'github-cache.json'));
       try {
         const record = (value: unknown): Record<string, unknown> | undefined =>
           value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -147,6 +177,7 @@ export function createGitHubClientPool(options: Options = {}) {
       // Keep the cooldown: signing out and back in must not bypass GitHub's deadline.
       delete stateFor(keyFor(token)).login;
       clients.delete(keyFor(token));
+      snapshots.scope(keyFor(token)).clear();
       persist();
     },
     client(token?: string | null): Octokit {
@@ -161,9 +192,8 @@ export function createGitHubClientPool(options: Options = {}) {
       });
       let tail = Promise.resolve();
       let lastRequest = 0;
-      let generation = 0;
-      const cache = new Map<string, { response: OctokitResponse<unknown>; bytes: number }>();
-      let cacheBytes = 0;
+      const cache = snapshots.scope(key);
+      clientCaches.set(client, cache);
       const inflight = new Map<string, Promise<OctokitResponse<unknown>>>();
       const observe = (headers: Headers) => {
         const resource = String(headers['x-ratelimit-resource'] ?? 'core');
@@ -187,10 +217,23 @@ export function createGitHubClientPool(options: Options = {}) {
           endpoint.headers.accept,
           endpoint.headers['x-github-api-version'],
         ]);
-        const deduplicate = get && !requestOptions.request.signal;
+        const force = /\b(no-cache|no-store)\b/i.test(String(endpoint.headers['cache-control'] ?? ''));
+        const deduplicate = get && !force && !requestOptions.request.signal;
         const shared = deduplicate ? inflight.get(requestKey) : undefined;
         if (shared) return shared.then((result) => structuredClone(result));
         const run = async () => {
+          const stored = get ? cache.get(requestKey, isCachedResponse) : undefined;
+          const cached = stored?.value;
+          if (
+            cached &&
+            !force &&
+            !stored.revalidate &&
+            cached.freshUntil > now() &&
+            cached.freshUntil <= stored.savedAt + 60_000
+          ) {
+            if (requestOptions.request.signal?.aborted) throw new Error('GitHub request was aborted');
+            return structuredClone(cached.response);
+          }
           const gate = () => {
             const deadline = Math.max(
               state.blockedUntil,
@@ -203,9 +246,12 @@ export function createGitHubClientPool(options: Options = {}) {
           if (spacing > 0) await sleep(spacing);
           gate();
           lastRequest = now();
-          const cached = get ? cache.get(requestKey) : undefined;
-          const version = generation;
+          // A failed write may still have reached GitHub. Invalidate without replaying it.
+          if (!get && !graphRead) cache.clear();
+          const version = cache.version();
           if (cached?.response.headers.etag) requestOptions.headers['if-none-match'] = cached.response.headers.etag;
+          else if (cached?.response.headers['last-modified'])
+            requestOptions.headers['if-modified-since'] = cached.response.headers['last-modified'];
           try {
             const response = await request(requestOptions);
             observe(response.headers);
@@ -215,36 +261,51 @@ export function createGitHubClientPool(options: Options = {}) {
             ) {
               throw Object.assign(new Error('GitHub API rate limit exceeded'), { status: 403, response });
             }
-            if (!get && !graphRead) {
-              cache.clear();
-              cacheBytes = 0;
-              generation++;
-            }
-            if (get && response.headers.etag && version === generation) {
-              const bytes = Buffer.byteLength(JSON.stringify(response.data));
-              if (bytes <= 1_000_000) {
-                cacheBytes -= cache.get(requestKey)?.bytes ?? 0;
-                cache.delete(requestKey);
-                cache.set(requestKey, { response: structuredClone(response), bytes });
-                cacheBytes += bytes;
-                while (cache.size > 200 || cacheBytes > 8_000_000) {
-                  const oldest = cache.keys().next().value;
-                  if (oldest === undefined) break;
-                  cacheBytes -= cache.get(oldest)?.bytes ?? 0;
-                  cache.delete(oldest);
-                }
-              }
+            if (get && version === cache.version()) {
+              if (response.status === 200 && !/\bno-store\b/i.test(response.headers['cache-control'] ?? '')) {
+                // Persist response data and validators, never authorization or request configuration.
+                const headers = Object.fromEntries(
+                  Object.entries(response.headers).filter(([name]) =>
+                    ['etag', 'last-modified', 'cache-control', 'content-type', 'link', 'x-github-media-type'].includes(
+                      name
+                    )
+                  )
+                );
+                const data: unknown = response.data;
+                cache.set(requestKey, {
+                  response: { status: response.status, url: response.url, headers, data },
+                  freshUntil: freshness(response.headers, now()),
+                });
+              } else cache.delete(requestKey);
             }
             return response;
           } catch (error) {
             const e = error as { status?: number; response?: { headers?: Headers } };
             observe(e.response?.headers ?? {});
             if (e.status === 304 && cached) {
-              return {
+              const response = {
                 ...structuredClone(cached.response),
                 headers: { ...cached.response.headers, ...e.response?.headers },
               } as OctokitResponse<unknown>;
+              if (/\bno-store\b/i.test(response.headers['cache-control'] ?? '')) cache.delete(requestKey);
+              else if (version === cache.version())
+                cache.set(requestKey, {
+                  response: {
+                    ...cached.response,
+                    headers: {
+                      ...cached.response.headers,
+                      ...(response.headers.etag ? { etag: response.headers.etag } : {}),
+                      ...(response.headers['cache-control']
+                        ? { 'cache-control': response.headers['cache-control'] }
+                        : {}),
+                    },
+                  },
+                  freshUntil: freshness(response.headers, now()),
+                });
+              return response;
             }
+            if (get && [401, 403, 404].includes(e.status ?? 0) && !githubRateLimit(error, now()))
+              cache.delete(requestKey);
             const limited = githubRateLimit(error, now());
             if (limited) {
               if (String(e.response?.headers?.['x-ratelimit-remaining']) === '0') {

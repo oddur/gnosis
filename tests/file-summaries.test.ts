@@ -4,6 +4,7 @@ import { normalizeFileSummaries } from '../lib/file-summaries';
 import { generateReviewGuide, generateSlide } from '../lib/agent';
 import { getProvider, type GenerateOptions } from '../lib/provider';
 import { DEFAULT_CODEX_MODEL } from '../lib/models';
+import { INLINE_EXPLANATION_DIRECTIVE } from '../lib/inline-explanations';
 
 void test('file summaries keep exact stack source identity and tolerate old or malformed reviews', () => {
   const hunks = [{ filePath: 'PR-121/src/queue.ts' }, { filePath: 'PR-122/src/queue.ts' }];
@@ -60,8 +61,7 @@ void test('both review generation paths request and retain file header summaries
     assert.match(options.systemPrompt, /FILE HEADER SUMMARIES/);
     assert.match(options.systemPrompt, /THIS topic/);
     assert.match(options.content, /"fileSummaries"/);
-    assert.match(options.systemPrompt, /If there is no such mechanism, return an empty array/);
-    assert.match(options.systemPrompt, /Never fill a quota/);
+    assert.ok(options.systemPrompt.includes(INLINE_EXPLANATION_DIRECTIVE));
     assert.match(options.content, /"inlineExplanations"/);
     return Promise.resolve(JSON.stringify(responses.shift()));
   });

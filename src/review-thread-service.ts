@@ -1,4 +1,6 @@
 import type { Octokit } from '@octokit/rest';
+import { githubCacheFor } from '../lib/github-client';
+import { isCacheRecord } from '../lib/github-cache';
 import type {
   GitHubReviewComment,
   GitHubReviewThread,
@@ -23,6 +25,46 @@ interface Entry {
   value?: GitHubReviewThreads;
   expires: number;
   pending?: Promise<GitHubReviewThreads>;
+  version?: number;
+}
+interface SavedThreads {
+  value: GitHubReviewThreads;
+  expires: number;
+}
+function isSavedThreads(value: unknown): value is SavedThreads {
+  return (
+    isCacheRecord(value) &&
+    typeof value.expires === 'number' &&
+    Number.isFinite(value.expires) &&
+    isCacheRecord(value.value) &&
+    typeof value.value.headSha === 'string' &&
+    typeof value.value.baseSha === 'string' &&
+    Array.isArray(value.value.threads) &&
+    value.value.threads.every(
+      (t: unknown) =>
+        isCacheRecord(t) &&
+        typeof t.id === 'string' &&
+        typeof t.path === 'string' &&
+        (t.line === null || (typeof t.line === 'number' && Number.isSafeInteger(t.line))) &&
+        (t.startLine === null || (typeof t.startLine === 'number' && Number.isSafeInteger(t.startLine))) &&
+        (t.diffSide === 'LEFT' || t.diffSide === 'RIGHT') &&
+        typeof t.isResolved === 'boolean' &&
+        typeof t.isOutdated === 'boolean' &&
+        typeof t.viewerCanResolve === 'boolean' &&
+        typeof t.viewerCanUnresolve === 'boolean' &&
+        Array.isArray(t.comments) &&
+        t.comments.every(
+          (c: unknown) =>
+            isCacheRecord(c) &&
+            typeof c.id === 'string' &&
+            typeof c.body === 'string' &&
+            typeof c.url === 'string' &&
+            typeof c.createdAt === 'string' &&
+            (c.author === null ||
+              (isCacheRecord(c.author) && typeof c.author.login === 'string' && typeof c.author.avatarUrl === 'string'))
+        )
+    )
+  );
 }
 
 function parseUrl(url: string) {
@@ -98,7 +140,20 @@ export function createReviewThreadService(now = Date.now) {
       const cache = cacheFor(client);
       let entry = cache.get(prUrl);
       if (entry?.pending) return structuredClone(await entry.pending);
-      if (!refresh && entry?.value && entry.expires > now()) return structuredClone(entry.value);
+      const persistent = githubCacheFor(client);
+      const version = persistent?.version();
+      const key = `review-threads:${prUrl}`;
+      const saved = persistent?.get(key, isSavedThreads);
+      if (
+        !refresh &&
+        saved &&
+        !saved.revalidate &&
+        saved.value.expires > now() &&
+        saved.value.expires <= now() + 60_000
+      )
+        return saved.value.value;
+      if (!refresh && entry?.value && entry.expires > now() && (!persistent || entry.version === version))
+        return structuredClone(entry.value);
       entry = { expires: 0 };
       cache.set(prUrl, entry);
       const current = entry;
@@ -108,6 +163,8 @@ export function createReviewThreadService(now = Date.now) {
         if (cache.get(prUrl) === current) {
           current.value = result;
           current.expires = now() + 60_000;
+          current.version = version;
+          if (persistent?.version() === version) persistent?.set(key, { value: result, expires: current.expires });
           while (cache.size > 50) {
             const oldest = cache.keys().next().value;
             if (oldest === undefined) break;
@@ -149,6 +206,7 @@ export function createReviewThreadService(now = Date.now) {
         Object.assign(thread, result[field].thread);
       }
       cacheFor(client).delete(req.prUrl);
+      githubCacheFor(client)?.delete(`review-threads:${req.prUrl}`);
       return thread;
     },
   };

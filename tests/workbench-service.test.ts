@@ -719,3 +719,90 @@ void test('filter changes preserve a running briefing and apply to the next auto
     s.cleanup();
   }
 });
+
+void test('recent successful discovery survives restart, including empty queues, and stale data refreshes in background', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  let now = 1_000_000;
+  let searches = 0;
+  let empty = false;
+  let release: (() => void) | undefined;
+  let gate: Promise<void> | undefined;
+  const search = s.deps.client().search.issuesAndPullRequests;
+  Object.assign(s.deps.client().search, {
+    issuesAndPullRequests: async (...args: Parameters<typeof search>) => {
+      searches++;
+      await gate;
+      return empty ? { data: { items: [] } } : search(...args);
+    },
+  });
+  const deps = { ...s.deps, now: () => now };
+  try {
+    await createWorkbenchService(deps).queue();
+    const count = searches;
+    await s.deps.activities.act('github:reviewer', 'dismiss');
+    const restart = createWorkbenchService(deps);
+    assert.equal((await restart.queue()).items.length, 1);
+    assert.equal(searches, count);
+    assert.equal(s.deps.activities.list().length, 0, 'A fresh restart creates no GitHub refresh activity');
+    now += 5 * 60_000 + 1;
+    gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const updated = createWorkbenchService(deps);
+    assert.equal((await updated.queue()).items.length, 1);
+    assert.equal(s.deps.activities.list()[0].status, 'running');
+    release?.();
+    gate = undefined;
+    await updated.queue(true);
+    assert.ok(searches > count);
+    empty = true;
+    await updated.queue(true);
+    const emptyCount = searches;
+    assert.equal((await createWorkbenchService(deps).queue()).items.length, 0);
+    assert.equal(searches, emptyCount, 'An empty but fresh queue also survives restart');
+  } finally {
+    release?.();
+    s.cleanup();
+  }
+});
+
+void test('changed discovery settings and explicit refresh bypass saved freshness', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  let calls = 0;
+  const search = s.deps.client().search.issuesAndPullRequests;
+  Object.assign(s.deps.client().search, {
+    issuesAndPullRequests: (...args: Parameters<typeof search>) => {
+      calls++;
+      return search(...args);
+    },
+  });
+  try {
+    await s.service.queue();
+    const initial = calls;
+    const restart = createWorkbenchService(s.deps);
+    await restart.queue(true);
+    assert.ok(calls > initial);
+    let previous = calls;
+    s.prefs.watchedRepos = ['owner/repo'];
+    const watched = createWorkbenchService(s.deps);
+    await watched.queue();
+    assert.ok(calls > previous);
+    await watched.queue(true);
+    previous = calls;
+    s.prefs.ignoreDependabotPrs = false;
+    const changed = createWorkbenchService(s.deps);
+    await changed.queue();
+    assert.ok(calls > previous);
+    await changed.queue(true);
+    previous = calls;
+    const credentialChange = createWorkbenchService({
+      ...s.deps,
+      auth: () => ({ token: 'new-credential', login: 'reviewer' }),
+    });
+    await credentialChange.queue();
+    assert.ok(calls > previous);
+    await credentialChange.queue(true);
+  } finally {
+    s.cleanup();
+  }
+});
