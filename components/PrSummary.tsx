@@ -22,6 +22,7 @@ export function PrSummary({
   onGenerate,
   onOpenReview,
   onRetryStatus,
+  onAiSetup,
   navigation,
   positions,
   shortcutsEnabled = true,
@@ -35,6 +36,7 @@ export function PrSummary({
   onGenerate: () => void;
   onOpenReview: () => void;
   onRetryStatus: () => void;
+  onAiSetup?: () => void;
   navigation: {
     index: number;
     total: number;
@@ -217,6 +219,11 @@ export function PrSummary({
         </div>
         <div className="pr-explanation-help">
           <span>AI explanations walk through the changes alongside the code.</span>
+          {!current && !running && onAiSetup && (
+            <button className="workbench-help-link" onClick={onAiSetup}>
+              AI setup
+            </button>
+          )}
           <span className="pr-summary-shortcuts">
             <kbd>j</kbd>/<kbd>k</kbd> next/previous · <kbd>Esc</kbd> queue
           </span>

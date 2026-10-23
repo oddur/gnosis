@@ -1919,7 +1919,20 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .getting-started-heading,.workbench-help-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .getting-started h2,.workbench-help h2 { font-size:16px; font-weight:650; line-height:1.4; }
 .getting-started p { font-size:var(--type-body); line-height:1.6; max-width:70ch; }
-.getting-started-setup { margin:12px 0; }
+.getting-started-connections { margin:20px 0 16px; max-width:70ch; }
+.getting-started-connection,.getting-started-setup { border-top:1px solid var(--border); padding:12px 0; }
+.getting-started-connections summary { cursor:pointer; font-size:var(--type-body); font-weight:600; }
+.getting-started-connections summary>span { margin-left:8px; font-size:var(--type-control); color:var(--muted-foreground); font-weight:400; }
+.getting-started-setup[open] summary { margin-bottom:10px; }
+.getting-started-connected { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; padding:12px 0; font-size:var(--type-control); }
+.getting-started-connected>span { display:inline-flex; align-items:center; gap:6px; }
+.getting-started-connected button,.getting-started-skip { color:var(--ring); font-size:var(--type-control); text-decoration:underline; text-underline-offset:3px; }
+.getting-started-skip { margin-top:12px; }
+.getting-started .workbench-connect { margin:10px 0 0; padding:0; border:0; }
+.getting-started .workbench-connect h2 { display:none; }
+.getting-started .workbench-connect p { font-size:var(--type-control); }
+.getting-started-heading { margin-bottom:8px; }
+@media(max-width:620px) { .getting-started-connections summary>span { display:block; margin:4px 0 0 16px; } }
 .getting-started-setup p { margin-bottom:6px; color:var(--muted-foreground); }
 .getting-started-setup button+button { margin-left:12px; }
 .getting-started-setup button,.workbench-help-link,.ai-setup-links button { color:var(--ring); text-decoration:underline; text-underline-offset:3px; font-size:var(--type-control); }

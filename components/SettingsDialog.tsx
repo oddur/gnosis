@@ -151,6 +151,7 @@ export function SettingsDialog({
   const [repoSuggestions, setRepoSuggestions] = useState<RepoSearchResult[]>([]);
   const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
   const showSuggestions = repoSuggestions.length > 0 && !suggestionsDismissed;
+  const replayingOnboarding = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [notifications, setNotifications] = useState(true);
   const [trayEnabled, setTrayEnabled] = useState(true);
@@ -242,7 +243,13 @@ export function SettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="settings-dialog bg-card sm:max-w-2xl">
+      <DialogContent className="settings-dialog bg-card sm:max-w-2xl" onCloseAutoFocus={(event) => {
+        if (replayingOnboarding.current) {
+          event.preventDefault();
+          replayingOnboarding.current = false;
+          document.getElementById('getting-started-title')?.focus();
+        }
+      }}>
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>Changes save automatically.</DialogDescription>
@@ -692,6 +699,7 @@ export function SettingsDialog({
               <button
                 type="button"
                 onClick={() => {
+                  replayingOnboarding.current = true;
                   onReplayOnboarding();
                   onOpenChange(false);
                 }}

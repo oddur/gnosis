@@ -364,10 +364,11 @@ void app.whenReady().then(async () => {
     window.setSize(1280, 800);
     await window.loadURL(fixtureUrl + '?onboarding');
     await wait("document.querySelector('.getting-started')?.textContent.includes('was not found')");
-    assert.ok(await js("document.body.textContent.includes('Your GitHub queue is not connected')"));
+    assert.equal(await js("document.querySelectorAll('.queue-empty').length"), 0, 'First use has one starting point');
     await capture('onboarding-light');
     await js("document.documentElement.classList.add('dark')");
     await capture('onboarding-dark');
+    await js("document.querySelector('.getting-started-setup summary').click()");
     await click('AI setup');
     await wait("!!document.querySelector('#ai-setup-title')");
     assert.equal(await js("document.querySelector('[data-state=active][role=tab]').textContent"), 'Integrations');
@@ -400,9 +401,10 @@ void app.whenReady().then(async () => {
     await js('document.querySelector(\'[aria-label="Help and terminology"]\').click()');
     await click('Show getting started');
     await wait("!!document.querySelector('.getting-started') && !document.querySelector('.workbench-help')");
+    await js("document.querySelector('.getting-started-connection summary').click()");
     await click('Sign in to GitHub');
     await wait("!document.querySelector('.workbench-connect')");
-    assert.ok(await js("document.body.textContent.includes('No pull requests in your queue')"));
+    assert.ok(await js("document.body.textContent.includes('GitHub connected as oddur')"));
     await js(`(() => {
       const input = document.querySelector('[aria-label="Search reviews"]');
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'absent');

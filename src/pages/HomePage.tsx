@@ -630,6 +630,51 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
       </div>
     );
   }
+  const replayGettingStarted = () => {
+    setOpenedItem(null);
+    resetFilters();
+    setSelected(null);
+    setShowGettingStarted(true);
+  };
+  const gettingStartedVisible =
+    !loading &&
+    !!prefs &&
+    section === 'all' &&
+    filterCount === 0 &&
+    (showGettingStarted || (!prefs.firstRunSeen && history.length === 0));
+  const githubConnection =
+    !loading && section !== 'saved' && auth && !auth.authenticated && !prefs?.guestMode ? (
+      <section className="workbench-connect">
+        <h2>Connect GitHub</h2>
+        <p>Sign in to load your GitHub review requests. Local reviews work without a GitHub connection.</p>
+        <Button size="sm" disabled={connecting} onClick={() => void login()}>
+          {connecting ? 'Connecting…' : 'Sign in to GitHub'}
+        </Button>
+        <details>
+          <summary>Use a personal access token</summary>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void login();
+            }}
+          >
+            <label htmlFor="github-token">GitHub personal access token</label>
+            <input
+              id="github-token"
+              type="password"
+              aria-label="GitHub personal access token"
+              value={pat}
+              onChange={(e) => setPat(e.target.value)}
+              autoComplete="off"
+            />
+            <Button size="sm" disabled={connecting || !pat.trim()} type="submit">
+              Connect
+            </Button>
+          </form>
+        </details>
+      </section>
+    ) : null;
+
   return (
     <div className="workbench-home">
       <header className="workbench-header">
@@ -676,13 +721,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
               ))}
             </select>
           )}
-          <WorkbenchHelp
-            onGettingStarted={() => {
-              resetFilters();
-              setSelected(null);
-              setShowGettingStarted(true);
-            }}
-          />
+          <WorkbenchHelp onGettingStarted={replayGettingStarted} />
           <button className="workbench-icon" title="Settings" aria-label="Settings" onClick={() => openSettings()}>
             <Settings size={17} />
           </button>
@@ -711,6 +750,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
           undefined, summaryItem.subject.scope === 'single')}
         onOpenReview={() => { if (summaryItem.review) void open(summaryItem.review); }}
         onRetryStatus={() => setStatusAttempt((n) => n + 1)}
+        onAiSetup={() => openSettings('integrations')}
       /> : <div className="workbench-body">
         <nav className="workbench-sidebar" aria-label="Workspace">
           <p className="workbench-nav-heading">Reviews</p>
@@ -957,52 +997,22 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
           )}
           <div className="queue-content">
             <section className="queue-list" aria-label="Review queue">
-              {!loading && section !== 'saved' && auth && !auth.authenticated && !prefs?.guestMode && (
-                <section className="workbench-connect">
-                  <h2>Connect GitHub</h2>
-                  <p>Sign in to load your GitHub review requests. Local reviews work without a GitHub connection.</p>
-                  <Button size="sm" disabled={connecting} onClick={() => void login()}>
-                    {connecting ? 'Connecting…' : 'Sign in to GitHub'}
-                  </Button>
-                  <details>
-                    <summary>Use a personal access token</summary>
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        void login();
-                      }}
-                    >
-                      <label htmlFor="github-token">GitHub personal access token</label>
-                      <input
-                        id="github-token"
-                        type="password"
-                        aria-label="GitHub personal access token"
-                        value={pat}
-                        onChange={(e) => setPat(e.target.value)}
-                        autoComplete="off"
-                      />
-                      <Button size="sm" disabled={connecting || !pat.trim()} type="submit">
-                        Connect
-                      </Button>
-                    </form>
-                  </details>
-                  <button onClick={() => setLocalOpen(true)}>Review local changes</button>
-                </section>
+              {!gettingStartedVisible && githubConnection}
+              {gettingStartedVisible && (
+                <GettingStarted
+                  provider={prefs.provider}
+                  focusOnMount={showGettingStarted}
+                  settingsOpen={settings}
+                  githubConnection={githubConnection}
+                  githubLogin={auth?.authenticated ? auth.login : null}
+                  hasQueueItems={queue.items.length > 0}
+                  onSettings={() => openSettings('integrations')}
+                  onRepositories={() => openSettings('queue')}
+                  onOpenPr={() => setShowUrl(true)}
+                  onLocal={() => setLocalOpen(true)}
+                  onDismiss={() => void dismissGettingStarted()}
+                />
               )}
-              {!loading &&
-                prefs &&
-                section === 'all' &&
-                filterCount === 0 &&
-                (showGettingStarted || (!prefs.firstRunSeen && history.length === 0)) && (
-                  <GettingStarted
-                    provider={prefs.provider}
-                    settingsOpen={settings}
-                    onSettings={() => openSettings('integrations')}
-                    onOpenPr={() => setShowUrl(true)}
-                    onLocal={() => setLocalOpen(true)}
-                    onDismiss={() => void dismissGettingStarted()}
-                  />
-                )}
               {loading ? (
                 <div className="queue-empty">
                   <Loader2 className="animate-spin" size={22} />
@@ -1080,7 +1090,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                     </div>
                   ) : null;
                 })
-              ) : (
+              ) : gettingStartedVisible && !queueFailed ? null : (
                 <div className="queue-empty">
                   <Inbox size={24} />
                   <h2>
@@ -1416,11 +1426,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
       </div>}
       <SettingsDialog
         initialSection={settingsSection}
-        onReplayOnboarding={() => {
-          resetFilters();
-          setSelected(null);
-          setShowGettingStarted(true);
-        }}
+        onReplayOnboarding={replayGettingStarted}
         open={settings}
         onOpenChange={(open) => {
           setSettings(open);
