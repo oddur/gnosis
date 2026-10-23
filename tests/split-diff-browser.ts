@@ -163,12 +163,96 @@ void app.whenReady().then(async () => {
       line.dispatchEvent(new MouseEvent('mouseup', {bubbles:true, composed:true}));
     })()`);
     await wait(
-      `Array.from(document.querySelectorAll('[data-case=metadata-added] button')).some(b=>b.textContent.includes('Ask about this'))`
+      `Array.from(document.querySelectorAll('.review-selection-actions button')).some(b=>b.textContent.includes('Ask about this'))`
     );
+    await wait("document.querySelector('.review-selection-actions')?.style.visibility === 'visible'");
+    const menuBounds = await js<{ left: number; right: number; top: number; bottom: number }>(
+      "JSON.parse(JSON.stringify(document.querySelector('.review-selection-actions').getBoundingClientRect()))"
+    );
+    assert.ok(menuBounds.left >= 0 && menuBounds.right <= 1280 && menuBounds.top >= 0 && menuBounds.bottom <= 900);
     await js(
-      `Array.from(document.querySelectorAll('[data-case=metadata-added] button')).find(b=>b.textContent.includes('Ask about this')).click()`
+      "Object.defineProperty(navigator, 'clipboard', {configurable:true,value:{writeText:async(text)=>{window.copiedCode=text;}}})"
+    );
+    await js("document.querySelector('.review-selection-actions button:last-child').click()");
+    await wait("document.querySelector('.review-selection-actions').textContent.includes('Copied')");
+    assert.equal(await js('window.copiedCode'), 'export const ready = true;');
+    await js("document.documentElement.classList.remove('dark')");
+    await new Promise((r) => setTimeout(r, 150));
+    assert.ok(
+      await js(`(() => {
+      const anchor = window.diffRoot('metadata-added').querySelector('[data-line-number="1"]').getBoundingClientRect();
+      const menu = document.querySelector('.review-selection-actions').getBoundingClientRect();
+      return Math.min(Math.abs(menu.top-anchor.bottom),Math.abs(menu.bottom-anchor.top)) < 12;
+    })()`),
+      'The menu must remain beside the selection after a theme/layout change'
+    );
+    // The page can scroll independently of the nested diff pane.
+    const previousScroll = await js<number>('window.scrollY');
+    await js('window.scrollBy(0, 40)');
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(await js('window.scrollY'), previousScroll + 40);
+    assert.ok(
+      await js(`(() => {
+        const anchor = window.diffRoot('metadata-added').querySelector('[data-line-number="1"]').getBoundingClientRect();
+        const menu = document.querySelector('.review-selection-actions').getBoundingClientRect();
+        return Math.min(Math.abs(menu.top-anchor.bottom),Math.abs(menu.bottom-anchor.top)) < 12;
+      })()`),
+      'Outer-page scrolling must move the menu with the selected code'
+    );
+    await js(`window.scrollTo(0, ${previousScroll})`);
+    await new Promise((r) => setTimeout(r, 100));
+    fs.writeFileSync('/tmp/gnosis-selection-actions-light.png', (await window.webContents.capturePage()).toPNG());
+    await js("document.documentElement.classList.add('dark')");
+    await new Promise((r) => setTimeout(r, 150));
+    fs.writeFileSync('/tmp/gnosis-selection-actions-dark.png', (await window.webContents.capturePage()).toPNG());
+    await js("document.documentElement.classList.remove('dark')");
+    await js(
+      `Array.from(document.querySelectorAll('.review-selection-actions button')).find(b=>b.textContent.includes('Ask about this')).click()`
     );
     assert.equal(await js(`document.querySelector('#selected-code').textContent`), 'export const ready = true;');
+
+    await wait("!document.querySelector('.review-selection-actions')");
+    // Keyboard-driven selection changes preserve partial lines without gutter numbers.
+    await js(`(() => {
+      const line = window.diffRoot('metadata-added').querySelector('[data-line-number="2"]');
+      const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+      const start = walker.nextNode(); const range = document.createRange();
+      range.setStart(start, 2); range.setEnd(start, 5);
+      const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+    })()`);
+    await wait("!!document.querySelector('.review-selection-actions')");
+    await js("document.querySelector('.review-selection-actions button:first-child').click()");
+    assert.equal(await js("document.querySelector('#selected-code').textContent"), 'por');
+    // Selecting headings or discussion text must not attach it as code.
+    await js(`(() => {
+      const range = document.createRange(); range.selectNodeContents(document.querySelector('[data-case=metadata-added] h2'));
+      const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+    })()`);
+    await new Promise((r) => setTimeout(r, 80));
+    assert.equal(await js("!!document.querySelector('.review-selection-actions')"), false);
+    // Deleted code uses the same read-only action and disappears when its file collapses.
+    await js(`(() => {
+      const line = window.diffRoot('metadata-deleted').querySelector('[data-base-line="1"]');
+      line.scrollIntoView({block:'center'});
+      const range = document.createRange(); range.selectNodeContents(line);
+      const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+    })()`);
+    await wait("document.querySelector('.review-selection-actions')?.style.visibility === 'visible'");
+    await js("document.querySelector('.review-selection-actions button:first-child').click()");
+    assert.equal(await js("document.querySelector('#selected-code').textContent"), 'export const ready = true;');
+    await js(`(() => {
+      const line = window.diffRoot('metadata-deleted').querySelector('[data-base-line="2"]');
+      const range = document.createRange(); range.selectNodeContents(line);
+      const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+    })()`);
+    await wait("!!document.querySelector('.review-selection-actions')");
+    await js("document.querySelector('[data-case=metadata-deleted] .review-file-expand').click()");
+    await wait("!document.querySelector('.review-selection-actions')");
+    assert.equal(await js("window.diffRoot('metadata-added').querySelector('[contenteditable=true]') !== null"), false);
 
     await js(`Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='Diff appearance').click()`);
     await wait(`!!document.querySelector('[role=dialog] select')`);

@@ -2160,3 +2160,11 @@ body:has(.activity-drawer) .app-toasts { bottom:auto; top:64px; }
 .github-auth-dialog .workbench-help-link { display:inline-flex; align-items:center; gap:5px; }
 .github-token-help summary { cursor:pointer; color:var(--ring); }
 .github-token-help p { margin:8px 0; color:var(--muted-foreground); }
+
+/* Selection actions use Pierre's public popover coordinates with the workbench palette. */
+.review-selection-actions { position:fixed; z-index:60; visibility:hidden; display:flex; flex-wrap:wrap; gap:4px; padding:4px; max-width:min(calc(100vw - 16px),calc(var(--popover-viewport-right,100vw) - var(--popover-viewport-left,8px))); border:1px solid var(--border); border-radius:6px; background:var(--popover); color:var(--popover-foreground); font-size:var(--type-control); left:clamp(var(--popover-viewport-left,8px),var(--popover-x),calc(var(--popover-viewport-right,100vw) - var(--selection-action-width))); top:var(--popover-y); transform:translateY(var(--popover-y-shift)); }
+.review-selection-actions[hidden] { display:none; }
+.review-selection-actions button { display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:5px 8px; border-radius:4px; min-width:0; }
+.review-selection-actions button:hover { background:var(--accent); color:var(--accent-foreground); }
+.review-selection-actions .review-selection-ask { background:var(--primary); color:var(--primary-foreground); }
+.review-selection-actions .review-selection-ask:hover { background:var(--primary); color:var(--primary-foreground); filter:brightness(.93); }

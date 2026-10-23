@@ -6,9 +6,10 @@ import type { ReviewGuide } from '../lib/types';
 import type { ReactNode } from 'react';
 import { useEffect, useId, useMemo, useRef, useState, useCallback } from 'react';
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from 'react-resizable-panels';
-import { Check, Copy, CopyX, MessageCircle, MessageSquarePlus } from 'lucide-react';
+import { Check, Copy, CopyX, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { findReviewLine, reviewCodeSelection } from './ReviewDiff';
+import { findReviewLine } from './ReviewDiff';
+import { ReviewSelectionActions } from './ReviewSelectionActions';
 import { ReviewFileDiscussion } from './ReviewFileDiscussion';
 import { DiffAppearanceMenu } from './DiffAppearanceMenu';
 import { DEFAULT_DIFF_APPEARANCE, type DiffAppearance } from '@/lib/review-diff';
@@ -465,39 +466,6 @@ export function SlideView({
     if (hasLeftSlot) setNarrowPane('explanation');
   }, [hasLeftSlot]);
 
-  // Selection-to-chat: when the user selects code in the diff panel,
-  // show a small floating "Ask about this" button near the selection.
-  const [selectionPopover, setSelectionPopover] = useState<{
-    text: string;
-    top: number;
-    left: number;
-  } | null>(null);
-
-  const handleDiffMouseUp = useCallback(() => {
-    if (!onAskAboutSelection) return;
-    const sel = rightPanelRef.current ? reviewCodeSelection(rightPanelRef.current) : null;
-    const text = sel?.toString().trim();
-    if (!text || text.length < 3) {
-      setSelectionPopover(null);
-      return;
-    }
-    const range = sel?.getRangeAt(0);
-    if (!range) return;
-    const rect = range.getBoundingClientRect();
-    const container = rightPanelRef.current;
-    if (!container) return;
-    const containerRect = container.getBoundingClientRect();
-    setSelectionPopover({
-      text,
-      top: rect.bottom - containerRect.top + container.scrollTop + 4,
-      left: rect.left - containerRect.left + rect.width / 2,
-    });
-  }, [onAskAboutSelection]);
-
-  const handleDiffMouseDown = useCallback(() => {
-    setSelectionPopover(null);
-  }, []);
-
   const chapterNumber = slideNumber.toString().padStart(2, '0');
   const fileCount = slide.affectedFiles.length;
   const fileCountLabel = fileCount === 0 ? 'no files' : `${fileCount} ${fileCount === 1 ? 'file' : 'files'}`;
@@ -696,25 +664,13 @@ export function SlideView({
   );
 
   const diffContent = (
-    <div
-      ref={rightPanelRef}
-      className="review-code relative px-6 py-10 flex flex-col gap-5"
-      onMouseUp={handleDiffMouseUp}
-      onMouseDown={handleDiffMouseDown}
-    >
-      {selectionPopover && (
-        <button
-          className="absolute z-10 slide-meta bg-background border border-border rounded px-2 py-1 shadow-sm hover:text-foreground transition-colors flex items-center gap-1.5 -translate-x-1/2 animate-fade-in"
-          style={{ top: selectionPopover.top, left: selectionPopover.left }}
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={() => {
-            onAskAboutSelection?.(selectionPopover.text);
-            setSelectionPopover(null);
-          }}
-        >
-          <MessageSquarePlus className="h-3 w-3" />
-          Ask about this
-        </button>
+    <div ref={rightPanelRef} className="review-code relative px-6 py-10 flex flex-col gap-5">
+      {onAskAboutSelection && (
+        <ReviewSelectionActions
+          containerRef={rightPanelRef}
+          onAsk={onAskAboutSelection}
+          resetKey={JSON.stringify([slideNumber, diffLayout, fileExpansion, narrowPane, hasRightSlot])}
+        />
       )}
       <div className="flex items-center justify-end">
         <div className="flex items-center gap-3 flex-wrap">
@@ -791,7 +747,6 @@ export function SlideView({
               contentId={contentId}
               onToggleExpanded={() => {
                 setFileExpansion((current) => ({ ...current, [filePath]: !expanded }));
-                setSelectionPopover(null);
               }}
               viewed={viewed}
               onViewedChange={
@@ -799,7 +754,6 @@ export function SlideView({
                   ? (next) => {
                       setFileExpansion((current) => ({ ...current, [filePath]: !next }));
                       onFileViewedChange(filePath, next);
-                      setSelectionPopover(null);
                     }
                   : undefined
               }
