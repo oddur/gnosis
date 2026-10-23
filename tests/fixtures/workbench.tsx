@@ -226,6 +226,12 @@ await transport.reconnect();
 await outbox.flush();
 \`\`\`
 
+\`\`\`mermaid
+flowchart LR
+  A[Queued messages] --> B[Outbox]
+  B --> C[New transport]
+\`\`\`
+
 <details><summary>Implementation notes</summary>
 
 The outbox owns the pending messages, so replacing the socket does not clear them.

@@ -1004,6 +1004,14 @@ ul.review-focus-content > li::before {
 
 /* ─── Mermaid fullscreen dialog ───────────────────────────────── */
 
+.mermaid-diagram { min-width:0; margin:12px 0; }
+.mermaid-preview svg { display:block; width:100%; height:auto; }
+.mermaid-source { font-size:var(--type-caption); margin-top:6px; }
+.mermaid-source summary { cursor:pointer; color:var(--muted-foreground); }
+.mermaid-diagram pre { overflow:auto; max-width:100%; white-space:pre; }
+.mermaid-diagram pre code { font-family:var(--font-mono); font-size:var(--type-control); }
+.pr-markdown .mermaid-source { border:0; padding:0; margin:6px 0; }
+
 .mermaid-fullscreen svg {
   width: auto !important;
   max-width: 100% !important;

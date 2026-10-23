@@ -95,7 +95,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelectorAll('.pr-description input[type=checkbox]').length"), 2);
     assert.match(await js<string>("document.querySelector('.pr-description pre').textContent"), /outbox.flush/);
     await wait('document.querySelector(\'img[alt="Reconnect flow"]\')?.naturalWidth === 600');
-    await js("document.querySelector('.pr-description details').open = true");
+    await js("document.querySelector('.pr-description details:not(.mermaid-source)').open = true");
     await wait('document.querySelector(\'img[alt="HTML reconnect screenshot"]\')?.naturalWidth === 600');
     assert.equal(
       await js("document.querySelector('img[alt=\"HTML reconnect screenshot\"]').hasAttribute('onerror')"),
@@ -114,8 +114,23 @@ void app.whenReady().then(async () => {
     await new Promise((resolve) => setTimeout(resolve, 4200));
     assert.equal(await js('window.privateImageReads'), 1, 'Background queue polls preserve authenticated images');
     await js("document.querySelector('.pr-summary-page').scrollTop = 0");
+    await wait("!!document.querySelector('.pr-description .mermaid-preview svg')");
+    assert.equal(await js("!!document.querySelector('.pr-description pre .mermaid-diagram')"), false);
+    assert.match(await js<string>("document.querySelector('.mermaid-preview').textContent"), /Outbox/);
+    const lightDiagram = await js<string>("document.querySelector('.mermaid-preview svg').outerHTML");
+    await js("document.querySelector('.mermaid-preview').click()");
+    await wait("!!document.querySelector('[role=dialog] .mermaid-fullscreen svg')");
+    await js("document.querySelector('[data-slot=dialog-close]').click()");
+    await wait("!document.querySelector('[role=dialog]')");
+    await wait("document.activeElement === document.querySelector('.mermaid-preview')");
+    await js("document.querySelector('.pr-summary-page').scrollTop = 0");
     await capture('pr-summary-light');
     await js("document.documentElement.classList.add('dark')");
+    await wait("!!document.querySelector('.mermaid-diagram[data-theme=dark] .mermaid-preview svg')");
+    assert.notEqual(await js<string>("document.querySelector('.mermaid-preview svg').outerHTML"), lightDiagram);
+    await js("document.querySelector('.mermaid-diagram').scrollIntoView({block:'center'})");
+    await capture('pr-summary-mermaid-dark');
+    await js("document.querySelector('.pr-summary-page').scrollTop = 0");
     await capture('pr-summary-dark');
     window.setSize(980, 700);
     await capture('pr-summary-laptop');
@@ -133,6 +148,38 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('.pr-checks').open = false");
     assert.equal(await js("document.querySelector('.pr-summary-page').scrollWidth <= innerWidth"), true);
     window.setSize(1280, 800);
+    await js(`(async()=>{
+      const q=await window.electronAPI.workbenchQueue();
+      const member=q.items.find(i=>i.subject.title.includes('Fix reconnect')).subject.members[0];
+      window.originalDescription=member.description;
+      const fence=String.fromCharCode(96).repeat(3);
+      member.description += '\\n\\n'+fence+'mermaid\\nflowchart LR\\n  A[broken\\n'+fence;
+      member.description += '\\n\\n'+fence+'mermaid\\n%%{init: {"securityLevel":"loose"}}%%\\nflowchart LR\\n  A[Safe label] --> B[Still renders]\\n  click A "javascript:window.unsafeMermaid=true"\\n'+fence;
+    })()`);
+    await wait("document.querySelectorAll('.pr-description .mermaid-diagram').length===3");
+    await wait("document.querySelectorAll('.pr-description .mermaid-preview svg').length===2");
+    assert.match(
+      await js<string>("document.querySelectorAll('.mermaid-diagram')[1].textContent"),
+      /Could not render this diagram/
+    );
+    assert.match(
+      await js<string>("document.querySelectorAll('.mermaid-diagram')[1].querySelector('pre').textContent"),
+      /A\[broken/
+    );
+    assert.equal(
+      await js(
+        "!!document.querySelector('.mermaid-preview a[href^=javascript], .mermaid-preview [onclick], .mermaid-preview script')"
+      ),
+      false
+    );
+    assert.equal(await js('window.unsafeMermaid'), undefined);
+    await js("document.querySelectorAll('.mermaid-diagram')[1].scrollIntoView({block:'center'})");
+    await capture('pr-summary-mermaid-fallback');
+    await js(`(async()=>{
+      const q=await window.electronAPI.workbenchQueue();
+      q.items.find(i=>i.subject.title.includes('Fix reconnect')).subject.members[0].description=window.originalDescription;
+    })()`);
+    await wait("document.querySelectorAll('.pr-description .mermaid-diagram').length===1");
     await js("document.querySelector('.pr-summary-page').scrollTop = 420");
     await js('document.querySelector(\'[aria-label="Next change"]\').click()');
     await wait("document.querySelector('.pr-summary-content h1')?.textContent.includes('Reduce allocations')");

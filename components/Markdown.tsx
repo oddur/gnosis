@@ -1,13 +1,14 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
-import { useState } from 'react';
+import { Children, isValidElement, useState, type ComponentProps } from 'react';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize from 'rehype-sanitize';
 import { githubMarkdownUrl, type GitHubMarkdownSource } from '../lib/github-markdown';
 import { isGitHubImageUrl } from '../lib/github-image';
 import { cn } from '@/lib/utils';
 import { scopeMarkdownHeadings } from '../lib/markdown-headings';
+import { MermaidDiagram } from './MermaidDiagram';
 
 interface Props {
   children: string;
@@ -140,11 +141,23 @@ const components: Components = {
   img: ({ src, ...props }) => <MarkdownImage key={src} src={src} {...props} />,
 };
 
+function GitHubCodeBlock({ children }: ComponentProps<'pre'>) {
+  const code = Children.toArray(children)[0];
+  if (
+    isValidElement<ComponentProps<'code'>>(code) &&
+    code.props.className?.split(/\s+/).includes('language-mermaid') &&
+    typeof code.props.children === 'string'
+  ) {
+    return <MermaidDiagram chart={code.props.children.trimEnd()} />;
+  }
+  return <pre>{children}</pre>;
+}
+
 // Stable component identities preserve authenticated image state across queue polls.
 const githubComponents: Components = {
   ...components,
   img: ({ src, ...props }) => <MarkdownImage key={src} src={src} {...props} authenticate />,
-  pre: ({ children }) => <pre>{children}</pre>,
+  pre: GitHubCodeBlock,
   code: ({ children, className }) => <code className={className}>{children}</code>,
   h4: ({ children }) => <h4 className="pr-author-heading">{children}</h4>,
   h5: ({ children }) => <h5 className="pr-author-heading">{children}</h5>,
