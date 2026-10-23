@@ -806,3 +806,122 @@ void test('changed discovery settings and explicit refresh bypass saved freshnes
     s.cleanup();
   }
 });
+
+void test('large discoveries eventually update PRs beyond the first 150 without rereading completed details', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  const prs = Array.from({ length: 151 }, (_, i) => ({
+    ...structuredClone(s.pr),
+    html_url: `https://github.com/owner/${i < 80 ? 'repo' : 'second'}/pull/${i + 1}`,
+    head: { ...s.pr.head, ref: `branch-${i}`, repo: { full_name: `owner/${i < 80 ? 'repo' : 'second'}` } },
+    base: { ...s.pr.base, repo: { full_name: `owner/${i < 80 ? 'repo' : 'second'}`, default_branch: 'main' } },
+  }));
+  const reads: number[] = [];
+  s.prefs.watchedRepos = ['owner/repo', 'owner/second'];
+  Object.assign(s.deps.client().pulls, {
+    get: ({ pull_number }: { pull_number: number }) => {
+      reads.push(pull_number);
+      return Promise.resolve({ data: prs[pull_number - 1] });
+    },
+    list: ({ repo }: { repo: string }) =>
+      Promise.resolve({ data: prs.filter((pr) => pr.base.repo.full_name === `owner/${repo}`) }),
+  });
+  try {
+    await s.service.queue();
+    await s.service.queue(true, false);
+    const q = await s.service.queue(true, false);
+    assert.equal(q.items.length, 151);
+    assert.equal(reads.filter((n) => n === 1).length, 1);
+    assert.equal(reads.filter((n) => n === 151).length, 1);
+    assert.ok(!q.warnings.some((w) => /150/.test(w)));
+  } finally {
+    s.cleanup();
+  }
+});
+
+void test('rate-limited discovery retains completed details across restart and resumes unfinished PRs', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  let now = Date.now();
+  let limited = true;
+  const reads: number[] = [];
+  const prs = Array.from({ length: 6 }, (_, i) => ({
+    ...structuredClone(s.pr),
+    html_url: `https://github.com/owner/repo/pull/${i + 1}`,
+    head: { ...s.pr.head, ref: `branch-${i}` },
+    base: { ...s.pr.base, repo: { ...s.pr.base.repo, default_branch: 'main' } },
+  }));
+  s.prefs.watchedRepos = ['owner/repo'];
+  Object.assign(s.deps.client().pulls, {
+    get: ({ pull_number }: { pull_number: number }) => {
+      reads.push(pull_number);
+      if (limited && pull_number === 6)
+        return Promise.reject(
+          Object.assign(new Error('Secondary rate limit'), {
+            status: 429,
+            response: { headers: { 'retry-after': '120' } },
+          })
+        );
+      return Promise.resolve({ data: prs[pull_number - 1] });
+    },
+    list: () => Promise.resolve({ data: prs }),
+  });
+  try {
+    const service = createWorkbenchService({ ...s.deps, now: () => now });
+    await service.queue();
+    assert.equal(s.deps.activities.list()[0].status, 'paused');
+    limited = false;
+    now += 121_001;
+    const restarted = createWorkbenchService({ ...s.deps, now: () => now });
+    const q = await restarted.queue();
+    assert.equal(q.items.length, 6);
+    assert.deepEqual(reads, [1, 2, 3, 4, 5, 6, 6]);
+    assert.equal(s.deps.activities.list()[0].status, 'completed');
+  } finally {
+    s.cleanup();
+  }
+});
+
+void test('a failed batch drains its successful reads before checkpointing and cannot reuse progress for another credential', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  let now = Date.now();
+  let limited = true;
+  let token = 'checkpoint-first-token';
+  const reads: number[] = [];
+  const prs = Array.from({ length: 2 }, (_, i) => ({
+    ...structuredClone(s.pr),
+    html_url: `https://github.com/owner/repo/pull/${i + 1}`,
+    head: { ...s.pr.head, ref: `branch-${i}` },
+    base: { ...s.pr.base, repo: { ...s.pr.base.repo, default_branch: 'main' } },
+  }));
+  s.prefs.watchedRepos = ['owner/repo'];
+  Object.assign(s.deps.client().pulls, {
+    get: async ({ pull_number }: { pull_number: number }) => {
+      reads.push(pull_number);
+      if (limited && pull_number === 1)
+        throw Object.assign(new Error('Secondary rate limit'), {
+          status: 429,
+          response: { headers: { 'retry-after': '120' } },
+        });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return { data: prs[pull_number - 1] };
+    },
+    list: () => Promise.resolve({ data: prs }),
+  });
+  const deps = { ...s.deps, now: () => now, auth: () => ({ token, login: 'reviewer' }) };
+  try {
+    await createWorkbenchService(deps).queue();
+    const file = path.join(s.deps.directory(), 'workbench.json');
+    const saved = fs.readFileSync(file, 'utf8');
+    limited = false;
+    now += 121_001;
+    const q = await createWorkbenchService(deps).queue();
+    assert.equal(q.items.length, 2);
+    assert.deepEqual(reads, [1, 2, 1], 'A successful read in the failed batch must be retained');
+    fs.writeFileSync(file, saved);
+    token = 'checkpoint-other-token';
+    reads.length = 0;
+    await createWorkbenchService(deps).queue();
+    assert.deepEqual(reads, [1, 2], 'Another credential must not reuse the checkpoint');
+  } finally {
+    s.cleanup();
+  }
+});
