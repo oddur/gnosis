@@ -16,18 +16,30 @@ interface SearchWindow {
   page: number;
 }
 export interface DiscoveryListings {
-  searches: Partial<Record<'author' | 'review-requested', { windows: SearchWindow[]; items: PrSearchResult[] }>>;
+  searches: Partial<
+    Record<'author' | 'assignee' | 'review-requested', { windows: SearchWindow[]; items: PrSearchResult[] }>
+  >;
   repos: Record<string, { page: number; done: boolean; items: ListedPull[] }>;
 }
 export function createDiscoveryListings(
   client: Octokit,
   state: DiscoveryListings,
-  options: { login: string; now: number; beforeRead: () => void; save: () => void; progress: (detail: string) => void }
+  options: {
+    login: string;
+    now: number;
+    includeAssigned?: boolean;
+    beforeRead: () => void;
+    save: () => void;
+    progress: (detail: string) => void;
+  }
 ) {
   return {
     async personal(): Promise<PrSearchResult[]> {
       const seen = new Map<string, PrSearchResult>();
-      for (const role of ['author', 'review-requested'] as const) {
+      const roles = options.includeAssigned
+        ? (['author', 'assignee', 'review-requested'] as const)
+        : (['author', 'review-requested'] as const);
+      for (const role of roles) {
         const search = (state.searches[role] ??= {
           windows: [{ from: 0, to: Math.floor(options.now / 1000), page: 1 }],
           items: [],
@@ -74,7 +86,7 @@ export function createDiscoveryListings(
               author: item.user?.login ?? 'unknown',
               updatedAt: item.updated_at,
               isDraft: item.draft ?? false,
-              role,
+              role: role === 'assignee' ? 'assigned' : role,
             });
           }
           if (data.items.length < 100 || window.page * 100 >= data.total_count) search.windows.shift();

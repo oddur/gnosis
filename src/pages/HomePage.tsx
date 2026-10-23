@@ -127,7 +127,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   const rowButtons = useRef(new Map<string, HTMLButtonElement>());
   const [statuses, setStatuses] = useState<Partial<Record<string, PrStatus>>>({});
   const alive = useRef(true);
-  const selectedItem = queue.items.find((i) => i.subject.id === selected && matchesQueueFilters(i, filters));
+  const selectedItem = queue.items.find((i) => i.subject.id === selected && matchesQueueFilters(i, filters, Date.now(), auth?.login));
   const briefingSelection = prefs ? briefingModel(prefs) : undefined;
   const briefingModelLabel = briefingSelection
     ? `${PROVIDERS[briefingSelection.provider].label} · ${PROVIDERS[briefingSelection.provider].models.find((m) => m.id === briefingSelection.model)?.label ?? briefingSelection.model}`
@@ -333,7 +333,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
       setConnecting(false);
     }
   };
-  const items = queue.items.filter((item) => matchesQueueFilters(item, filters));
+  const items = queue.items.filter((item) => matchesQueueFilters(item, filters, Date.now(), auth?.login));
   const repos = [
     ...new Set([
       ...queue.items.flatMap((i) => i.subject.members.filter((m) => m.state === 'open').map((m) => m.repo)),

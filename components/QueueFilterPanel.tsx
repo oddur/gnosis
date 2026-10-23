@@ -69,6 +69,25 @@ export function QueueFilterPanel({
   ];
   return (
     <section id="queue-filter-panel" className="queue-filter-panel" aria-label="Queue filters">
+      <div className="queue-filter-policy queue-filter-scope">
+        <label htmlFor={`${id}-involvement`}>
+          Show
+          <select
+            id={`${id}-involvement`}
+            className="workbench-select"
+            value={filters.involvement}
+            aria-describedby={`${id}-involvement-help`}
+            onChange={(e) => onChange({ involvement: e.target.value as QueueFilters['involvement'] })}
+          >
+            <option value="all">All PRs</option>
+            <option value="mine">Assigned to or authored by me</option>
+          </select>
+        </label>
+        <p id={`${id}-involvement-help`}>
+          Includes your PRs, assignments, and review requests. Fetches fewer PR details while keeping their stacks
+          intact.
+        </p>
+      </div>
       <div className="queue-filter-fields">
         {fields.map((field) => (
           <label key={field.key} htmlFor={`${id}-${field.key}`}>

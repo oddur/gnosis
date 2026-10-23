@@ -1,6 +1,7 @@
 import {
   normalizeQueueFilters,
   matchesQueueFilters,
+  isMyPr,
   prioritizeBriefings,
   type QueueFilters,
 } from '../lib/queue-filters';
@@ -70,6 +71,7 @@ interface Deps {
   provider?: typeof getProvider;
   now?: () => number;
 }
+class DiscoverySuperseded extends Error {}
 class BriefingCancelled extends Error {
   constructor() {
     super('Briefing cancelled.');
@@ -100,6 +102,7 @@ export function createWorkbenchService(deps: Deps) {
           deps.auth().token,
           [...deps.preferences().watchedRepos].sort(),
           deps.preferences().ignoreDependabotPrs !== false,
+          normalizeQueueFilters(load().filters).involvement,
         ])
       )
       .digest('hex');
@@ -165,8 +168,11 @@ export function createWorkbenchService(deps: Deps) {
       const item = { subject, review, briefing, attention: attentionFor(subject, review) };
       if (
         (!cached || briefing.status === 'paused') &&
-        filters.briefingScope === 'matches' &&
-        !matchesQueueFilters(item, filters, now())
+        ((filters.involvement === 'mine' &&
+          !subject.members.some(
+            (member) => member.state === 'open' && !member.merged && isMyPr(member, deps.auth().login)
+          )) ||
+          (filters.briefingScope === 'matches' && !matchesQueueFilters(item, filters, now(), deps.auth().login)))
       )
         return { ...item, briefing: { ...briefing, status: 'paused' as const, pauseReason: 'filter' as const } };
       return item;
@@ -208,12 +214,14 @@ export function createWorkbenchService(deps: Deps) {
     const s = load();
     const octokit = deps.client?.() ?? getGitHubClient(token);
     const discoverySettings = discoveryKey();
+    const mineOnly = normalizeQueueFilters(s.filters).involvement === 'mine';
     const pending = s.discoveryProgress?.key === discoverySettings ? s.discoveryProgress : undefined;
     // Retry continues an interrupted discovery; a completed refresh starts fresh.
     if (force && !pending) githubCacheFor(octokit)?.revalidate();
     warnings = [];
     const checkedAt = { ...s.checkedAt, ...pending?.checkedAt };
     const checkAllowance = () => {
+      if (discoveryKey() !== discoverySettings || deps.auth().login !== login) throw new DiscoverySuperseded();
       const paused = githubClients.backoff(token, true);
       if (paused) throw paused;
     };
@@ -238,6 +246,7 @@ export function createWorkbenchService(deps: Deps) {
     };
     const listings = createDiscoveryListings(octokit, listingState, {
       login,
+      includeAssigned: true,
       now: now(),
       beforeRead: checkAllowance,
       save: checkpoint,
@@ -250,7 +259,7 @@ export function createWorkbenchService(deps: Deps) {
       const seeds = new Map<string, Pick<PrSearchResult, 'url' | 'role' | 'updatedAt'>>(
         found.filter((m) => prefs.ignoreDependabotPrs === false || !isDependabot(m.author)).map((m) => [m.url, m])
       );
-      for (const [index, fullName] of prefs.watchedRepos.entries()) {
+      for (const [index, fullName] of (mineOnly ? [] : prefs.watchedRepos).entries()) {
         progress(`Checking ${fullName}`, { completed: index, total: prefs.watchedRepos.length, unit: 'repositories' });
         const [owner, repo] = fullName.split('/');
         if (!owner || !repo) continue;
@@ -262,7 +271,7 @@ export function createWorkbenchService(deps: Deps) {
             )
               seeds.set(pr.html_url, { url: pr.html_url, role: 'watched', updatedAt: pr.updated_at });
         } catch (error) {
-          if (githubRateLimit(error, now())) throw error;
+          if (error instanceof DiscoverySuperseded || githubRateLimit(error, now())) throw error;
           for (const m of previousMembers.values())
             if (
               m.repo === fullName &&
@@ -311,7 +320,7 @@ export function createWorkbenchService(deps: Deps) {
           checkedAt[url] = now();
           completed.set(url, member);
         } catch (error) {
-          if (githubRateLimit(error, now())) throw error;
+          if (error instanceof DiscoverySuperseded || githubRateLimit(error, now())) throw error;
           const cached = previousMembers.get(url);
           if (cached) members.set(url, { ...cached, role: role ?? 'watched' });
           warnings.push(`Could not read ${url}. Some PRs may be missing from their stacks.`);
@@ -323,8 +332,18 @@ export function createWorkbenchService(deps: Deps) {
       for (const old of s.subjects)
         if (old.members.some((m) => urls.has(m.url)))
           for (const m of old.members) if (!urls.has(m.url)) urls.set(m.url, 'watched');
-      for (const override of s.overrides)
-        for (const url of [override.parent, override.child]) if (!urls.has(url)) urls.set(url, 'watched');
+      // A personal queue follows only corrections connected to its seed PRs.
+      for (let changed = true; changed; ) {
+        changed = false;
+        for (const override of s.overrides) {
+          if (mineOnly && !urls.has(override.parent) && !urls.has(override.child)) continue;
+          for (const url of [override.parent, override.child])
+            if (!urls.has(url)) {
+              urls.set(url, 'watched');
+              changed = true;
+            }
+        }
+      }
       // On a long cooldown, resume with the oldest/unread details first so a large
       // queue can make progress even when previously completed details have expired.
       const entries = [...urls].sort((a, b) => (checkedAt[a[0]] ?? 0) - (checkedAt[b[0]] ?? 0));
@@ -392,15 +411,24 @@ export function createWorkbenchService(deps: Deps) {
               warnings.push(`More than one earlier PR matches ${fullName}:${ref}. Check which PRs belong together.`);
           }
         } catch (error) {
-          if (githubRateLimit(error, now())) throw error;
+          if (error instanceof DiscoverySuperseded || githubRateLimit(error, now())) throw error;
           warnings.push(`Could not check which PRs depend on others in ${fullName}. Showing saved relationships.`);
         }
       }
       if (deps.auth().login !== login || discoveryKey() !== discoverySettings)
         return { items: [], warnings: [], remaining: 0 };
       progress('Updating your queue');
-      s.subjects = groupSubjects([...members.values()], s.overrides, s.subjects);
-      for (const subject of s.subjects)
+      const updatedSubjects = groupSubjects([...members.values()], s.overrides, s.subjects);
+      // Keep unrelated saved subjects for an instant return to the full queue.
+      // Previously personal subjects absent from the new result may have closed
+      // or been unassigned, so do not retain those as current personal work.
+      const untouched = mineOnly
+        ? s.subjects.filter(
+            (subject) => !subject.members.some((member) => members.has(member.url) || isMyPr(member, login))
+          )
+        : [];
+      s.subjects = [...updatedSubjects, ...untouched];
+      for (const subject of updatedSubjects)
         if (warnings.length)
           subject.warnings = [...subject.warnings, 'Some repositories or relationships could not be fully refreshed.'];
       const recent = Object.values(s.briefs)
@@ -413,7 +441,10 @@ export function createWorkbenchService(deps: Deps) {
       s.discoveryKey = discoverySettings;
       s.discoveryWarnings = warnings;
       s.checkedAt = Object.fromEntries(
-        [...members.keys()].filter((url) => checkedAt[url]).map((url) => [url, checkedAt[url]])
+        s.subjects
+          .flatMap((subject) => subject.members.map((member) => member.url))
+          .filter((url) => checkedAt[url])
+          .map((url) => [url, checkedAt[url]])
       );
       delete s.discoveryProgress;
       completed.clear();
@@ -486,6 +517,14 @@ export function createWorkbenchService(deps: Deps) {
         return result;
       })
       .catch((error: unknown) => {
+        if (error instanceof DiscoverySuperseded) {
+          deps.activities?.finish(
+            id,
+            'cancelled',
+            'Queue scope changed. The next update will use your current filters.'
+          );
+          return view();
+        }
         const limited = githubRateLimit(error, now());
         if (limited) {
           cooldown = { account: login, error: limited };
@@ -525,7 +564,15 @@ export function createWorkbenchService(deps: Deps) {
     pumping = true;
     try {
       const s = load();
-      const item = prioritizeBriefings(view().items, normalizeQueueFilters(s.filters), now()).find(
+      const filters = normalizeQueueFilters(s.filters);
+      const candidates = view().items.filter(
+        (item) =>
+          filters.involvement !== 'mine' ||
+          item.subject.members.some(
+            (member) => member.state === 'open' && !member.merged && isMyPr(member, deps.auth().login)
+          )
+      );
+      const item = prioritizeBriefings(candidates, filters, now(), deps.auth().login).find(
         (i) => !s.briefs[key(i.subject)] || s.briefs[key(i.subject)]?.status === 'paused'
       );
       if (!item || s.used >= limit()) return;

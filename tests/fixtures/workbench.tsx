@@ -194,6 +194,14 @@ if (new URLSearchParams(location.search).has('stacks')) {
     items[index].attention = attention;
   }
 }
+if (new URLSearchParams(location.search).has('mine')) {
+  for (const item of items.slice(1)) {
+    item.subject.members[0].role = 'watched';
+    item.subject.members[0].requestedReviewers = [];
+  }
+  items[1].subject.members[0].assignees = ['oddur'];
+  items[2].subject.members[0].author = 'oddur';
+}
 if (new URLSearchParams(location.search).has('filters')) {
   items[1].subject.members[0].isDraft = true;
   items[1].subject.members[0].labels = ['bug'];

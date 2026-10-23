@@ -990,7 +990,8 @@ void test('search and repository pagination resume saved pages after rate limits
   s.prefs.watchedRepos = ['owner/repo'];
   Object.assign(s.deps.client().search, {
     issuesAndPullRequests: ({ page = 1, q }: { page?: number; q: string }) => {
-      if (q.includes('review-requested:')) return Promise.resolve({ data: { items: [], total_count: 0 } });
+      if (q.includes('review-requested:') || q.includes('assignee:'))
+        return Promise.resolve({ data: { items: [], total_count: 0 } });
       calls.push(`search:${page}`);
       if (phase === 0 && page === 2) return Promise.reject(limited());
       return Promise.resolve({
@@ -1130,6 +1131,132 @@ void test('incomplete GitHub search pages remain retryable instead of being save
     assert.deepEqual(await createDiscoveryListings(s.deps.client(), state, options).personal(), []);
     assert.deepEqual(pages, [1, 1, 1]);
   } finally {
+    s.cleanup();
+  }
+});
+
+void test('my PR filter reduces discovery reads, retains connected stacks and cached full-queue results, and persists', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  let now = Date.now();
+  const prs = Array.from({ length: 105 }, (_, i) => ({
+    ...structuredClone(s.pr),
+    html_url: `https://github.com/owner/repo/pull/${i + 1}`,
+    user: { login: i === 0 ? 'reviewer' : 'someone-else' },
+    assignees: i === 1 ? [{ login: 'reviewer' }] : [],
+    requested_reviewers: i === 2 ? [{ login: 'reviewer' }] : [],
+    head: { ...s.pr.head, ref: `branch-${i}` },
+    base: { ...s.pr.base, ref: i === 3 ? 'branch-0' : 'main', repo: { ...s.pr.base.repo, default_branch: 'main' } },
+  }));
+  const reads: number[] = [],
+    repos: string[] = [],
+    searches: string[] = [];
+  s.prefs.watchedRepos = ['owner/repo', 'owner/unrelated'];
+  Object.assign(s.deps.client().search, {
+    issuesAndPullRequests: ({ q }: { q: string }) => {
+      searches.push(q);
+      const pr = prs[q.includes('assignee:') ? 1 : q.includes('review-requested:') ? 2 : 0];
+      return Promise.resolve({
+        data: {
+          total_count: 1,
+          items: [
+            {
+              number: Number(pr.html_url.split('/').at(-1)),
+              title: pr.title,
+              html_url: pr.html_url,
+              repository_url: 'https://api.github.com/repos/owner/repo',
+              user: pr.user,
+              updated_at: pr.updated_at,
+            },
+          ],
+        },
+      });
+    },
+  });
+  Object.assign(s.deps.client().pulls, {
+    get: ({ pull_number }: { pull_number: number }) => {
+      reads.push(pull_number);
+      return Promise.resolve({ data: prs[pull_number - 1] });
+    },
+    list: ({ repo, page = 1 }: { repo: string; page?: number }) => {
+      repos.push(repo);
+      return Promise.resolve({ data: repo === 'unrelated' ? [] : prs.slice((page - 1) * 100, page * 100) });
+    },
+  });
+  const deps = { ...s.deps, now: () => now };
+  const service = createWorkbenchService(deps);
+  try {
+    const full = await service.queue();
+    assert.equal(reads.length, 105);
+    reads.length = repos.length = searches.length = 0;
+    now += 16 * 60_000;
+    service.setFilters({ involvement: 'mine' });
+    const focused = await service.queue(true, false);
+    const { matchesQueueFilters } = await import('../lib/queue-filters');
+    const { DEFAULT_QUEUE_FILTERS } = await import('../lib/queue-filters');
+    const mine = focused.items.filter((item) =>
+      matchesQueueFilters(item, { ...DEFAULT_QUEUE_FILTERS, involvement: 'mine' }, now, 'reviewer')
+    );
+    assert.deepEqual(
+      [...reads].sort((a, b) => a - b),
+      [1, 2, 3, 4]
+    );
+    assert.ok(!repos.includes('unrelated'));
+    assert.ok(searches.some((q) => q.includes('assignee:reviewer')));
+    assert.equal(mine.length, 3);
+    assert.equal(mine.find((item) => item.subject.kind === 'stack')?.subject.members.length, 2);
+    assert.equal(focused.items.length, full.items.length, 'Unrelated cached subjects remain available');
+    const restarted = createWorkbenchService(deps);
+    assert.equal((await restarted.queue()).filters?.involvement, 'mine');
+    assert.equal(reads.length, 4, 'A fresh personal discovery survives restart');
+    restarted.setFilters({ involvement: 'all' });
+    const restored = await restarted.queue(true, false);
+    assert.equal(restored.items.length, full.items.length);
+    assert.ok(repos.includes('unrelated'), 'Clearing the filter resumes full discovery');
+    assert.equal(new Set(reads).size, 105);
+  } finally {
+    s.cleanup();
+  }
+});
+
+void test('switching to my PRs stops an in-flight full discovery before it reads further pages', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  let release = () => {},
+    entered = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const reading = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let first = true;
+  const repos: string[] = [];
+  s.pr.user.login = 'reviewer';
+  Object.assign(s.pr.base.repo, { default_branch: 'main' });
+  s.prefs.watchedRepos = ['owner/unrelated', 'owner/another'];
+  Object.assign(s.deps.client().pulls, {
+    list: async ({ repo }: { repo: string }) => {
+      repos.push(repo);
+      if (first) {
+        first = false;
+        entered();
+        await gate;
+      }
+      return { data: repo === 'repo' ? [s.pr] : [] };
+    },
+  });
+  try {
+    const old = s.service.queue();
+    await reading;
+    s.service.setFilters({ involvement: 'mine' });
+    release();
+    await old;
+    assert.deepEqual(repos, ['unrelated']);
+    const q = await s.service.queue(true, false);
+    assert.equal(q.items.length, 1);
+    assert.deepEqual(repos, ['unrelated', 'repo']);
+    assert.deepEqual(q.warnings, []);
+  } finally {
+    release();
     s.cleanup();
   }
 });

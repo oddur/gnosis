@@ -560,6 +560,35 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('.queue-disclosure').click()");
     assert.equal(await js("document.querySelectorAll('.queue-member').length"), 3);
     await capture('queue-filters-stack');
+    await window.loadURL(fixtureUrl + '?mine');
+    window.setSize(1280, 800);
+    await wait("document.querySelectorAll('.queue-item').length === 7");
+    await js("document.querySelector('.queue-filter-toggle').click()");
+    await selectFilter('Show', 'mine');
+    await wait("document.querySelectorAll('.queue-item').length === 3");
+    await wait("window.electronAPI.workbenchQueue().then(q=>q.filters.involvement==='mine')");
+    assert.equal(
+      await js("document.querySelector('.queue-filter-chip').textContent.includes('Assigned to or authored by me')"),
+      true
+    );
+    await capture('queue-mine-light');
+    window.setSize(1024, 700);
+    await js("document.documentElement.classList.add('dark')");
+    await capture('queue-mine-dark-laptop');
+    assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
+    window.setSize(800, 700);
+    await capture('queue-mine-dark-narrow');
+    assert.equal(
+      await js(
+        "document.querySelector('.queue-filter-popover').scrollWidth <= document.querySelector('.queue-filter-popover').clientWidth"
+      ),
+      true
+    );
+    window.reload();
+    await wait("document.querySelectorAll('.queue-item').length === 3");
+    await js("document.querySelector('.queue-filter-toggle').click()");
+    await selectFilter('Show', 'all');
+    await wait("document.querySelectorAll('.queue-item').length === 7");
     await window.loadURL(fixtureUrl + '?stacks');
     await wait("document.querySelectorAll('.queue-item').length === 7");
     const navigate = async (name: string) => {

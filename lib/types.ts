@@ -413,7 +413,7 @@ export interface PrSearchResult {
   author: string;
   updatedAt: string;
   isDraft: boolean;
-  role: 'author' | 'review-requested' | 'watched';
+  role: 'author' | 'assigned' | 'review-requested' | 'watched';
 }
 
 export interface RepoSearchResult {
@@ -432,6 +432,7 @@ export interface PrMetadata {
   title: string;
   description: string;
   author: string;
+  assignees?: string[];
   baseBranch: string;
   headBranch: string;
   baseSha: string;

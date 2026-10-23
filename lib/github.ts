@@ -38,6 +38,7 @@ export async function getPrMetadata(
     description: data.body ?? '',
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- GitHub API can return null
     author: data.user?.login ?? 'unknown',
+    assignees: (data.assignees ?? []).map((user) => user.login),
     baseBranch: data.base.ref,
     baseRepo: data.base.repo.full_name,
     // GitHub can return null after a fork is deleted, despite the generated type.
