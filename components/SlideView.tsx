@@ -1,3 +1,5 @@
+import { ReviewImageDiff } from './ReviewImageDiff';
+import { imageMimeType } from '../lib/review-images';
 import { sourceForPath } from '../lib/workbench';
 import { buildFileUrlBase } from '../lib/github-url';
 import type { ReviewGuide } from '../lib/types';
@@ -429,6 +431,10 @@ export function SlideView({
   const typeConfig = safeConfigLookup(slideTypeConfig, slide.slideType, slideTypeConfig.foundation);
   const Icon = typeConfig.icon;
   const groupedHunks = groupHunksByFile(slide.diffHunks);
+  for (const filePath of slide.affectedFiles) {
+    if (imageMimeType(filePath) && !groupedHunks.some((group) => group.filePath === filePath))
+      groupedHunks.push({ filePath, hunks: [] });
+  }
   const rightPanelRef = useRef<HTMLDivElement>(null);
   const fileContentId = useId();
   const [fileExpansion, setFileExpansion] = useState<Record<string, boolean>>({});
@@ -758,6 +764,25 @@ export function SlideView({
         const viewed = viewedFiles?.has(filePath) ?? false;
         const expanded = fileExpansion[filePath] ?? !viewed;
         const contentId = `${fileContentId}-${index}`;
+        const fileDiff = (
+          <ReviewFileDiscussion
+            inlineExplanations={
+              showInlineExplanations ? inlineExplanations.filter((note) => note.filePath === filePath) : []
+            }
+            review={review}
+            filePath={filePath}
+            pinnedLines={slide.reviewChecks
+              ?.filter((check) => check.filePath === filePath && check.startLine != null)
+              .map((check) => check.startLine as number)}
+            fileStatus={fm?.status}
+            hunks={hunks}
+            diffLayout={diffLayout}
+            appearance={diffAppearance}
+            pendingComments={pendingComments}
+            slideIndex={slideNumber}
+            commentCallbacks={commentCallbacks}
+          />
+        );
 
         return (
           <div key={filePath} className="review-file-group flex flex-col gap-0" data-file-path={filePath}>
@@ -788,23 +813,22 @@ export function SlideView({
               age={ageBadge}
             />
             <div id={contentId} className="review-file-content" hidden={!expanded}>
-              <ReviewFileDiscussion
-                inlineExplanations={
-                  showInlineExplanations ? inlineExplanations.filter((note) => note.filePath === filePath) : []
-                }
-                review={review}
-                filePath={filePath}
-                pinnedLines={slide.reviewChecks
-                  ?.filter((check) => check.filePath === filePath && check.startLine != null)
-                  .map((check) => check.startLine as number)}
-                fileStatus={fm?.status}
-                hunks={hunks}
-                diffLayout={diffLayout}
-                appearance={diffAppearance}
-                pendingComments={pendingComments}
-                slideIndex={slideNumber}
-                commentCallbacks={commentCallbacks}
-              />
+              {imageMimeType(filePath) && (
+                <ReviewImageDiff
+                  key={`${review?.reviewId}:${filePath}`}
+                  reviewId={review?.reviewId}
+                  filePath={filePath}
+                  enabled={expanded}
+                />
+              )}
+              {imageMimeType(filePath) && hunks.length > 0 ? (
+                <details className="review-image-source">
+                  <summary>Source diff and comments</summary>
+                  {fileDiff}
+                </details>
+              ) : (
+                fileDiff
+              )}
             </div>
           </div>
         );

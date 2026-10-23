@@ -583,6 +583,7 @@ export async function getFileMetadata(
   // stay well under GitHub's rate limit.
   const metadata: FileMetadata[] = changedFiles.map((f) => ({
     filename: f.filename,
+    previousFilename: f.previous_filename,
     status: f.status,
     additions: f.additions,
     deletions: f.deletions,

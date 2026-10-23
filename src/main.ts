@@ -14,6 +14,8 @@ import http from 'http';
 import crypto from 'crypto';
 import { getGitHubClient, githubClients, fetchGitHubLogin, githubRateLimit } from '../lib/github-client';
 import { createPrImageService } from './pr-image-service';
+import { createReviewImageService } from './review-image-service';
+import { imageMimeType, includeImageChanges } from '../lib/review-images';
 import {
   parsePrUrl,
   getPrMetadata,
@@ -1236,6 +1238,7 @@ ipcMain.handle('load-review', async (_event, id: string) => {
   const reviewPath = path.join(getReviewsDir(), `${id}.json`);
   const review = JSON.parse(fs.readFileSync(reviewPath, 'utf-8')) as ReviewGuide;
   review.reviewId = id;
+  includeImageChanges(review);
   for (const slide of review.slides) {
     slide.fileSummaries = normalizeFileSummaries(slide.fileSummaries, slide.diffHunks);
     slide.inlineExplanations = normalizeInlineExplanations(slide.inlineExplanations, slide.diffHunks, review.changedFiles);
@@ -1249,6 +1252,13 @@ ipcMain.handle('load-review', async (_event, id: string) => {
   await reRenderAllHunks(review, prefs.codeTheme);
   return review;
 });
+
+const loadReviewImages = createReviewImageService({
+  loadReview: (id) => JSON.parse(fs.readFileSync(path.join(getReviewsDir(), `${id}.json`), 'utf8')) as ReviewGuide,
+  client: () => getGitHubClient(getResolvedToken()),
+  allowLocal: (id) => readReviewsIndex().some((entry) => entry.id === id && !entry.imported),
+});
+ipcMain.handle('load-review-images', (_event, reviewId: string, filePath: string) => loadReviewImages(reviewId, filePath));
 
 ipcMain.handle('re-render-hunks', async (_event, review: ReviewGuide) => {
   const prefs = loadPreferences();
@@ -1763,6 +1773,7 @@ async function runBackgroundGeneration(
       console.warn('[main] File metadata fetch failed, proceeding without:', err);
       return allChangedFiles.map((f) => ({
         filename: f.filename,
+        previousFilename: f.previous_filename,
         status: f.status,
         additions: f.additions,
         deletions: f.deletions,
@@ -1797,8 +1808,11 @@ async function runBackgroundGeneration(
     const fileContents: Record<string, string> = {};
     const headFileContents: Record<string, string> = {};
     const concurrency = 5;
-    const filesToFetch = normalFiles.filter((f) => f.status !== 'deleted');
-    const filesToFetchBase = normalFiles.filter((f) => f.status !== 'added');
+    const textFiles = normalFiles.filter(
+      (f) => !imageMimeType(f.filename) || imageMimeType(f.filename) === 'image/svg+xml'
+    );
+    const filesToFetch = textFiles.filter((f) => f.status !== 'deleted');
+    const filesToFetchBase = textFiles.filter((f) => f.status !== 'added');
 
     for (let i = 0; i < Math.max(filesToFetch.length, filesToFetchBase.length); i += concurrency) {
       const headBatch = filesToFetch.slice(i, i + concurrency);
@@ -1809,7 +1823,7 @@ async function runBackgroundGeneration(
           if (content !== null) headFileContents[f.filename] = content;
         }),
         ...baseBatch.map(async (f) => {
-          const content = await source.getFileContent(f.filename, 'base');
+          const content = await source.getFileContent(f.previous_filename ?? f.filename, 'base');
           if (content !== null) fileContents[f.filename] = content;
         }),
       ]);
@@ -1823,7 +1837,7 @@ async function runBackgroundGeneration(
     // independent of the import graph we're walking in neighbours.
     const [neighborFiles, projectClaudeContext] = await Promise.all([
       source.getNeighborFiles(
-        normalFiles.map((f) => f.filename),
+        textFiles.map((f) => f.filename),
         allFileContents,
         'base',
         smartImports ? provider : undefined,
@@ -2140,11 +2154,16 @@ async function runBackgroundGeneration(
       generationDurationMs,
       slides: resolvedSlides,
       headSha: prData.headSha,
+      baseSha: prData.baseSha,
+      headRepo: prData.headRepo,
+      baseRepo: prData.baseRepo,
+      imageFiles: changedFiles.filter((f) => imageMimeType(f.filename)).map((f) => f.filename),
       webSources: aiResult?.webSources,
       projectClaudeContext: projectClaudeContext ?? undefined,
       changedFiles: fileMetadata,
     };
 
+    includeImageChanges(reviewGuide);
     reportReviewPhase( { reviewId, phase: 'Rendering' });
 
     // Render syntax-highlighted HTML for each hunk

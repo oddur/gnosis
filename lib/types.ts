@@ -188,6 +188,7 @@ export interface WriterSlideOutput {
 
 export interface FileMetadata {
   filename: string;
+  previousFilename?: string;
   status: 'added' | 'modified' | 'deleted' | 'renamed';
   additions: number;
   deletions: number;
@@ -199,6 +200,11 @@ export interface FileMetadata {
 }
 
 export interface ReviewGuide {
+  /** Immutable revisions and eligible image paths for on-demand previews. */
+  baseSha?: string;
+  baseRepo?: string;
+  headRepo?: string;
+  imageFiles?: string[];
   snapshot?: ReviewSnapshot;
   /** Assigned by the local store when loading a saved review. */
   reviewId?: string;
