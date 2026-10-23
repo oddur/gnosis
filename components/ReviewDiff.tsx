@@ -183,8 +183,8 @@ function ReviewHunk({
       style={
         {
           '--diffs-font-family': 'var(--font-mono)',
-          '--diffs-font-size': '13px',
-          '--diffs-line-height': '20px',
+          '--diffs-font-size': 'var(--type-code)',
+          '--diffs-line-height': 'var(--leading-code)',
         } as CSSProperties
       }
       renderAnnotation={({ metadata: location }) => (

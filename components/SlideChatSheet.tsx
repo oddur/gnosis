@@ -25,9 +25,7 @@ interface Props {
   onQuotedCodeConsumed?: () => void;
 }
 
-// Suggested questions on first open. No bordered cards, no bg fills —
-// just a quiet list of italic prompts under a small label, like the
-// "you might also like" footer of a printed essay.
+// Suggested questions remain compact, readable actions.
 function SuggestedQuestions({ reviewFocus, onSelect }: { reviewFocus: string | null; onSelect: (q: string) => void }) {
   const suggestions = buildSuggestions(reviewFocus);
   if (suggestions.length === 0) return null;
@@ -38,11 +36,8 @@ function SuggestedQuestions({ reviewFocus, onSelect }: { reviewFocus: string | n
       <ul className="flex flex-col gap-3 w-full">
         {suggestions.map((q, i) => (
           <li key={i}>
-            <button
-              onClick={() => onSelect(q)}
-              className="text-left font-serif text-base leading-snug text-foreground/75 hover:text-foreground italic transition-colors"
-            >
-              &ldquo;{q}&rdquo;
+            <button onClick={() => onSelect(q)} className="chat-suggestion transition-colors">
+              {q}
             </button>
           </li>
         ))}
@@ -73,16 +68,13 @@ function buildSuggestions(reviewFocus: string | null): string[] {
   return suggestions.slice(0, 3);
 }
 
-// Message — no bubble, no bg fill. User questions are a small mono
-// "You · " label followed by the question as quoted serif italic.
-// Assistant replies are plain prose. Tool calls are quiet inline
-// margin notes, not glowing pills.
+// Role labels distinguish participants; both messages use the shared reading style.
 function Message({ message }: { message: ChatMessage }) {
   if (message.role === 'user') {
     return (
       <div className="flex flex-col gap-1.5">
         <span className="slide-meta">You</span>
-        <p className="font-serif text-base leading-snug text-foreground italic">&ldquo;{message.content}&rdquo;</p>
+        <Markdown className="reading-prose">{message.content}</Markdown>
       </div>
     );
   }
@@ -93,14 +85,14 @@ function Message({ message }: { message: ChatMessage }) {
       {message.toolCalls && message.toolCalls.length > 0 && (
         <ul className="flex flex-col gap-0.5">
           {message.toolCalls.map((tool) => (
-            <li key={tool} className="slide-meta opacity-70">
+            <li key={tool} className="slide-meta">
               · {tool}
             </li>
           ))}
         </ul>
       )}
       {message.content ? (
-        <Markdown className="text-sm text-foreground/85 leading-relaxed">{message.content}</Markdown>
+        <Markdown className="reading-prose">{message.content}</Markdown>
       ) : message.isStreaming ? (
         <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
       ) : null}
@@ -231,10 +223,9 @@ export function SlideChatSheet({
         style={{ width: embedded ? '100%' : open ? width : 0 }}
       >
         <div className="h-full flex flex-col bg-background" style={{ minWidth: embedded ? 0 : width }}>
-          {/* Header — editorial heading + slide context as
-              meta. Reads like the running header of an essay. */}
+          {/* Topic context stays separate from the conversation. */}
           <div className="border-b border-border px-6 py-4">
-            <h3 className="editorial-heading text-base">Ask about this topic</h3>
+            <h3 className="editorial-heading">Ask about this topic</h3>
             <p className="slide-meta truncate mt-0.5">{slideTitle}</p>
           </div>
 
@@ -280,7 +271,7 @@ export function SlideChatSheet({
                 onKeyDown={handleKeyDown}
                 placeholder="Ask a question about this slide…"
                 rows={2}
-                className="flex-1 resize-none bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground/60 transition-colors"
+                className="flex-1 resize-none bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground transition-colors"
               />
               <button
                 onClick={handleSend}

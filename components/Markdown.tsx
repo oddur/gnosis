@@ -96,9 +96,7 @@ const components: Components = {
   ),
   li: ({ children }) => <li>{children}</li>,
   blockquote: ({ children }) => (
-    <blockquote className="border-l border-border pl-4 italic text-muted-foreground my-3 last:mb-0">
-      {children}
-    </blockquote>
+    <blockquote className="border-l border-border pl-4 text-foreground my-3 last:mb-0">{children}</blockquote>
   ),
   a: ({ href, children }) => (
     <a
@@ -110,24 +108,20 @@ const components: Components = {
       {children}
     </a>
   ),
-  code: ({ className, children }) => {
-    const isBlock = className?.startsWith('language-');
-    if (isBlock) {
-      return (
-        <code
-          className={`block bg-muted/50 rounded-md p-3 text-xs font-mono overflow-x-auto whitespace-pre mb-3 last:mb-0 ${className ?? ''}`}
-        >
-          {children}
-        </code>
-      );
-    }
-    return (
-      <code className="font-mono text-[0.9em] font-medium bg-muted/50 border border-border/60 rounded-[3px] px-[0.35em] py-[0.05em] text-foreground">
-        {children}
-      </code>
-    );
-  },
-  pre: ({ children }) => <>{children}</>,
+  code: ({ className, children }) => (
+    <code
+      className={cn(
+        'font-mono text-[0.9em] font-medium bg-muted/50 border border-border/60 rounded-[3px] px-[0.35em] py-[0.05em] text-foreground',
+        className
+      )}
+    >
+      {children}
+    </code>
+  ),
+  pre: ({ children }) => <pre className="markdown-code-block">{children}</pre>,
+  h4: ({ children }) => <h4 className="markdown-subheading">{children}</h4>,
+  h5: ({ children }) => <h5 className="markdown-subheading">{children}</h5>,
+  h6: ({ children }) => <h6 className="markdown-subheading">{children}</h6>,
   table: ({ children }) => (
     <div className="overflow-x-auto my-3 last:mb-0">
       <table className="min-w-full text-sm border-collapse">{children}</table>
@@ -171,7 +165,7 @@ const githubComponents: Components = {
 
 export function Markdown({ children, className, githubSource, headingLevel }: Props) {
   return (
-    <div className={cn('select-text', className)}>
+    <div className={cn('markdown-body select-text', className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={

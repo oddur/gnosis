@@ -127,7 +127,7 @@ export function ExplainerView({ reviewId, slide, onClose, onSaved, onShowActivit
         </p>
       </div>
       <div className="w-full max-w-[1600px] mx-auto flex-1 min-h-0 flex flex-col">
-        <h1 className="font-serif text-xl leading-tight mb-1 shrink-0">
+        <h1 className="explainer-section-title mb-1 shrink-0">
           {artifact?.title ?? slide.explainerIdea?.title ?? slide.title}
         </h1>
         <p className="text-muted-foreground text-sm leading-snug mb-3 shrink-0">
@@ -292,15 +292,15 @@ export function ExplainerView({ reviewId, slide, onClose, onSaved, onShowActivit
                 </form>
                 <aside className="min-w-0 grid gap-5 md:grid-cols-2" aria-label="Explanation evidence">
                   <div>
-                    <h2 className="font-serif text-xl mb-3">Assumptions</h2>
-                    <ul className="list-disc pl-4 text-sm leading-relaxed space-y-2 text-muted-foreground">
+                    <h2 className="explainer-section-title mb-3">Assumptions</h2>
+                    <ul className="explainer-reading list-disc pl-4 space-y-2">
                       {artifact.assumptions.map((a, i) => (
                         <li key={i}>{a}</li>
                       ))}
                     </ul>
                   </div>
                   <div>
-                    <h2 className="font-serif text-xl mb-3">In the code</h2>
+                    <h2 className="explainer-section-title mb-3">In the code</h2>
                     <div className="space-y-4">
                       {artifact.sources.map((s, i) => (
                         <div key={i}>
@@ -308,18 +308,18 @@ export function ExplainerView({ reviewId, slide, onClose, onSaved, onShowActivit
                             type="button"
                             onClick={() => setSource(source === s.filePath ? null : s.filePath)}
                             aria-expanded={source === s.filePath}
-                            className="text-left font-mono text-xs break-all underline decoration-dotted underline-offset-4 hover:text-primary focus-visible:outline-[var(--ring)]"
+                            className="text-left font-mono text-xs [overflow-wrap:anywhere] underline decoration-dotted underline-offset-4 hover:text-primary focus-visible:outline-[var(--ring)]"
                           >
                             {s.filePath}
                           </button>
-                          <p className="text-sm text-muted-foreground leading-relaxed mt-1">{s.explanation}</p>
+                          <p className="explainer-reading mt-1">{s.explanation}</p>
                         </div>
                       ))}
                     </div>
                   </div>
                   {source && (
                     <div>
-                      <h3 className="font-mono text-xs break-all mb-2">{source}</h3>
+                      <h3 className="font-mono text-xs [overflow-wrap:anywhere] mb-2">{source}</h3>
                       <pre
                         tabIndex={0}
                         className="max-h-[480px] overflow-auto text-xs bg-muted/30 p-3 rounded border border-border"

@@ -50,7 +50,7 @@ export function PRSummaryBanner({ review, onBack, onOpenSettings }: Props) {
             </button>
           )}
           <h1 className="text-sm font-semibold tracking-tight truncate text-foreground/90">{review.prTitle}</h1>
-          <span className={`${risk.badgeClassName} shrink-0 text-[10px] px-1.5 py-0.5 rounded-sm leading-none`}>
+          <span className={`${risk.badgeClassName} shrink-0 text-xs px-1.5 py-0.5 rounded-sm leading-normal`}>
             {risk.label}
           </span>
         </div>
@@ -64,11 +64,7 @@ export function PRSummaryBanner({ review, onBack, onOpenSettings }: Props) {
           {review.generationDurationMs != null && <span>{formatDuration(review.generationDurationMs)}</span>}
           <CopyAllChecksButton review={review} variant="compact" />
           {onOpenSettings && (
-            <button
-              onClick={onOpenSettings}
-              className="hover:text-foreground transition-colors"
-              aria-label="Settings"
-            >
+            <button onClick={onOpenSettings} className="hover:text-foreground transition-colors" aria-label="Settings">
               <Settings className="h-3.5 w-3.5" />
             </button>
           )}
