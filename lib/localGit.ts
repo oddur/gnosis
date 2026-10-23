@@ -294,6 +294,7 @@ export class LocalGitDiffSource implements DiffSource {
       changedFiles.map(async (f) => {
         const meta: FileMetadata = {
           filename: f.filename,
+          previousFilename: f.previous_filename,
           status: f.status,
           additions: f.additions,
           deletions: f.deletions,

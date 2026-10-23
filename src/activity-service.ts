@@ -1,7 +1,7 @@
 import { ACTIVITY_RETENTION_MS, isActiveTask, type ActivityAction, type ActivityTask } from '../lib/activity';
 
 interface Actions {
-  cancel: () => void;
+  cancel?: () => void;
   retry?: () => Promise<unknown>;
 }
 export function createActivityService(now = () => Date.now()) {
@@ -10,7 +10,7 @@ export function createActivityService(now = () => Date.now()) {
   return {
     start(task: Omit<ActivityTask, 'status' | 'updatedAt' | 'canCancel' | 'canRetry'>, actions: Actions) {
       tasks.set(task.id, {
-        task: { ...task, status: 'running', updatedAt: stamp(), canCancel: true, canRetry: false },
+        task: { ...task, status: 'running', updatedAt: stamp(), canCancel: !!actions.cancel, canRetry: false },
         actions,
       });
     },
@@ -18,16 +18,29 @@ export function createActivityService(now = () => Date.now()) {
       const entry = tasks.get(id);
       if (entry?.task.status === 'running') Object.assign(entry.task, { detail, progress, updatedAt: stamp() });
     },
-    finish(id: string, status: 'completed' | 'failed' | 'cancelled', detail: string) {
+    finish(id: string, status: 'completed' | 'failed' | 'cancelled', detail: string, warnings?: string[]) {
       const entry = tasks.get(id);
       if (entry)
         Object.assign(entry.task, {
           status,
           detail,
+          warnings,
           progress: undefined,
           updatedAt: stamp(),
           canCancel: false,
-          canRetry: status !== 'completed' && !!entry.actions.retry,
+          canRetry: (status !== 'completed' || !!warnings?.length) && !!entry.actions.retry,
+        });
+    },
+    pause(id: string, detail: string) {
+      const entry = tasks.get(id);
+      if (entry)
+        Object.assign(entry.task, {
+          status: 'paused',
+          detail,
+          progress: undefined,
+          updatedAt: stamp(),
+          canCancel: false,
+          canRetry: false,
         });
     },
     list(): ActivityTask[] {
@@ -47,7 +60,7 @@ export function createActivityService(now = () => Date.now()) {
         return;
       }
       if (action === 'cancel' && entry.task.canCancel) {
-        entry.actions.cancel();
+        entry.actions.cancel?.();
         return;
       }
       if (action === 'retry' && entry.task.canRetry && entry.actions.retry) {
