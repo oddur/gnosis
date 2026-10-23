@@ -18,10 +18,36 @@ interface Props {
   onReplayOnboarding?: () => void;
 }
 
+// Default faces ship locally. Fetch optional code families only when selected.
+const optionalFontStyles: Record<string, string[]> = {
+  'fira-code': ['https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&display=swap'],
+  hack: ['https://cdn.jsdelivr.net/npm/hack-font@3/build/web/hack.css'],
+  'monaspace-neon': [
+    'https://cdn.jsdelivr.net/npm/@fontsource/monaspace-neon@5/400.css',
+    'https://cdn.jsdelivr.net/npm/@fontsource/monaspace-neon@5/700.css',
+  ],
+  iosevka: [
+    'https://cdn.jsdelivr.net/npm/@fontsource/iosevka@5/400.css',
+    'https://cdn.jsdelivr.net/npm/@fontsource/iosevka@5/700.css',
+  ],
+};
+
 export function applyCodeFont(fontId: string) {
   const font = CODE_FONTS.find((f) => f.id === fontId);
   if (font) {
-    document.documentElement.style.setProperty('--font-mono', `${font.family}, ui-monospace, monospace`);
+    for (const [index, href] of (optionalFontStyles[font.id] ?? []).entries()) {
+      const id = `code-font-${font.id}-${index}`;
+      if (document.getElementById(id)) continue;
+      const link = document.createElement('link');
+      link.id = id;
+      link.rel = 'stylesheet';
+      link.href = href;
+      document.head.append(link);
+    }
+    document.documentElement.style.setProperty(
+      '--font-mono',
+      `${font.family}, 'JetBrains Mono', ui-monospace, monospace`
+    );
   }
 }
 
@@ -125,6 +151,7 @@ export function SettingsDialog({
   const [repoSuggestions, setRepoSuggestions] = useState<RepoSearchResult[]>([]);
   const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
   const showSuggestions = repoSuggestions.length > 0 && !suggestionsDismissed;
+  const replayingOnboarding = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [notifications, setNotifications] = useState(true);
   const [trayEnabled, setTrayEnabled] = useState(true);
@@ -216,7 +243,13 @@ export function SettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="settings-dialog bg-card sm:max-w-2xl">
+      <DialogContent className="settings-dialog bg-card sm:max-w-2xl" onCloseAutoFocus={(event) => {
+        if (replayingOnboarding.current) {
+          event.preventDefault();
+          replayingOnboarding.current = false;
+          document.getElementById('getting-started-title')?.focus();
+        }
+      }}>
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>Changes save automatically.</DialogDescription>
@@ -235,7 +268,7 @@ export function SettingsDialog({
           <Tabs.Content value="queue" className="settings-panel">
             <SettingRow
               label="Ignore Dependabot PRs"
-              description="Hide Dependabot changes from the queue and automatic briefings. Keep required parents in human-authored stacks."
+              description="Hide Dependabot PRs from the queue and automatic briefings. Keep them visible when a PR by a person builds on them."
             >
               <Toggle
                 checked={ignoreDependabotPrs}
@@ -249,7 +282,7 @@ export function SettingsDialog({
             </SettingRow>
             <SettingRow
               label="Automatic briefings"
-              description="Generate short queue summaries within your daily limit. Open a detailed review when you need it."
+              description="Generate short AI summaries in the background. Queue filters control which PRs and stacks are included; the daily attempt limit still applies."
             >
               <Toggle
                 checked={autoBriefings}
@@ -350,7 +383,7 @@ export function SettingsDialog({
                     Daily briefing limit
                   </label>
                   <p className="text-xs text-muted-foreground">
-                    Maximum automatic briefing attempts per day, including retries. Guided reviews do not count toward
+                    Maximum automatic briefing attempts per day, including retries. AI explanations do not count toward
                     this limit.
                   </p>
                 </div>
@@ -666,6 +699,7 @@ export function SettingsDialog({
               <button
                 type="button"
                 onClick={() => {
+                  replayingOnboarding.current = true;
                   onReplayOnboarding();
                   onOpenChange(false);
                 }}

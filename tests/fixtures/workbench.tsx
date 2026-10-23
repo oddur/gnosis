@@ -1,6 +1,10 @@
+import { normalizeViews, editViewFilters, applyViewAction, activeViewFilters, type QueueViewAction } from '../../lib/saved-views';
+import { matchesQueueFilters } from '../../lib/queue-filters';
 import { normalizeQueueFilters, type QueueFilters } from '../../lib/queue-filters';
 import type { ActivityTask, ActivityAction } from '../../lib/activity';
 import { createRoot } from 'react-dom/client';
+import { imageMocks } from './review-images';
+import { threadMocks } from './review-threads';
 import '../../src/globals.css';
 import { groupSubjects, snapshot, memberPrefix, type ReviewMember, type QueueItem } from '../../lib/workbench';
 import type { Preferences, ReviewGuide, ReviewHistoryEntry } from '../../lib/types';
@@ -8,6 +12,14 @@ import { DEFAULT_CLAUDE_MODEL, DEFAULT_FAST_CLAUDE_MODEL } from '../../lib/model
 import { review as example, slide, explainer } from './explainer';
 const filterStorageKey = 'fixture-queue-filters' + location.search;
 let queueFilters = normalizeQueueFilters(JSON.parse(sessionStorage.getItem(filterStorageKey) ?? 'null'));
+const viewsStorageKey = 'fixture-views' + location.search;
+let savedViews = normalizeViews(JSON.parse(sessionStorage.getItem(viewsStorageKey) ?? 'null'), queueFilters);
+queueFilters = activeViewFilters(savedViews);
+const saveViews = () => {
+  sessionStorage.setItem(viewsStorageKey, JSON.stringify(savedViews));
+  queueFilters = activeViewFilters(savedViews);
+  sessionStorage.setItem(filterStorageKey, JSON.stringify(queueFilters));
+};
 const onboardingScenario = new URLSearchParams(location.search).has('onboarding');
 let fixtureAuthenticated = !onboardingScenario;
 let fixtureStarted = false;
@@ -59,6 +71,7 @@ const review: ReviewGuide = {
   riskLevel: 'medium',
   riskRationale:
     'Review the backpressure path and command ordering across worker handoffs. Cancellation must release the queue slot even when a batch is only partially processed.',
+  changedFiles: [{ filename: prefix + 'src/command-queue.ts', status: 'modified', additions: 6, deletions: 1 }],
   totalFilesChanged: 12,
   totalLinesChanged: 386,
   slides: [
@@ -75,6 +88,21 @@ const review: ReviewGuide = {
           ' export async function dispatch(command) {\n-  return worker.run(command);\n+  const slot = await queue.acquire();\n+  try {\n+    return await worker.run(command);\n+  } finally {\n+    slot.release();\n+  }\n }',
       })),
       affectedFiles: [prefix + 'src/command-queue.ts'],
+      fileSummaries: [
+        {
+          filePath: prefix + 'src/command-queue.ts',
+          summary: 'Limits pending commands and releases queue slots when work finishes or fails.',
+        },
+      ],
+      inlineExplanations: [
+        {
+          filePath: prefix + 'src/command-queue.ts',
+          line: 4,
+          side: 'RIGHT',
+          code: 'return await worker.run(command);',
+          text: 'Awaiting dispatch inside `try` keeps the slot occupied until work finishes. Returning the promise directly would run `finally` before that work completes.',
+        },
+      ],
       explainer: { ...explainer },
       reviewChecks: [{ text: 'Does cancellation release the slot before the next producer waits?' }],
     },
@@ -177,6 +205,76 @@ if (new URLSearchParams(location.search).has('stacks')) {
     items[index].attention = attention;
   }
 }
+if (new URLSearchParams(location.search).has('pr-summary')) {
+  const pr = items[1].subject.members[0];
+  pr.description = `## Preserve queued messages across reconnects
+
+Messages waiting for a connection now stay in the **outbox** until the replacement transport is ready. The old transport can close without losing work.
+
+![Reconnect flow](${location.origin}/tests/fixtures/pr-description.svg)
+
+### Verification
+
+- [x] Disconnect while messages are queued
+- [ ] Exercise a slow reconnect
+
+| Before | After |
+| --- | --- |
+| Pending messages are dropped | Pending messages are replayed in order |
+
+\`\`\`ts
+await transport.reconnect();
+await outbox.flush();
+\`\`\`
+
+\`\`\`mermaid
+flowchart LR
+  A[Queued messages] --> B[Outbox]
+  B --> C[New transport]
+\`\`\`
+
+<details><summary>Implementation notes</summary>
+
+The outbox owns the pending messages, so replacing the socket does not clear them.
+
+<img src="${location.origin}/tests/fixtures/pr-description.svg" width="360" alt="HTML reconnect screenshot" onerror="window.unsafeDescription = true">
+
+</details>
+
+[Source](src/outbox.ts) · ![Relative image](docs/reconnect.png)
+
+![Private attachment](https://github.com/user-attachments/assets/01234567-89ab-cdef-0123-456789abcdef)
+
+<script>window.unsafeDescription = true</script><iframe src="https://example.com"></iframe>
+<a href="javascript:alert(1)">Unsafe link</a>
+`;
+  pr.assignees = ['lena'];
+  pr.labels = ['bug'];
+  pr.labelDetails = [{ name: 'bug', color: 'd73a4a' }];
+  items[1].briefing = undefined;
+  items[2].subject.members[0].description = '';
+}
+if (new URLSearchParams(location.search).has('labels')) {
+  const stack = items[0].subject.members;
+  stack[0].labels = ['bug', 'needs-review'];
+  stack[0].labelDetails = [{ name: 'bug', color: 'd73a4a', description: 'Something is not working' }, { name: 'needs-review', color: 'fbca04' }];
+  stack[1].labels = ['bug', 'performance', 'documentation'];
+  stack[1].labelDetails = [{ name: 'bug', color: 'd73a4a' }, { name: 'performance', color: '0052cc' }, { name: 'documentation', color: '0075ca' }];
+  stack[2].labels = ['legacy-label'];
+  items[1].subject.members[0].labels = ['old-cache-label'];
+  items[2].subject.members[0].labels = ['a-very-long-label-name-for-layout-validation'];
+  items[2].subject.members[0].labelDetails = [{ name: 'a-very-long-label-name-for-layout-validation', color: 'ffffff' }];
+  items[3].subject.members[0].labels = ['critical'];
+  items[3].subject.members[0].labelDetails = [{ name: 'critical', color: '000000' }];
+}
+if (new URLSearchParams(location.search).has('mine')) {
+  for (const item of items.slice(1)) {
+    item.subject.members[0].role = 'watched';
+    item.subject.members[0].requestedReviewers = [];
+  }
+  items[1].subject.members[0].assignees = ['oddur'];
+  items[2].subject.members[0].author = 'oddur';
+}
 if (new URLSearchParams(location.search).has('filters')) {
   items[1].subject.members[0].isDraft = true;
   items[1].subject.members[0].labels = ['bug'];
@@ -233,7 +331,7 @@ let prefs: Preferences = {
   proactiveThinking: false,
   educationMode: true,
   claudeContext: false,
-  guestMode: false,
+  guestMode: onboardingScenario && sessionStorage.getItem('fixture-guest-mode') === 'true',
 };
 let activities: ActivityTask[] = [
   {
@@ -330,28 +428,46 @@ const mocks = {
   detectBinaryPath: (name: string) => Promise.resolve('/fixture/' + name),
   getAuthState: () =>
     Promise.resolve({ authenticated: fixtureAuthenticated, login: fixtureAuthenticated ? 'oddur' : null }),
+  githubAuthOptions: () => Promise.resolve({ web: onboardingScenario }),
+  beginGitHubSignIn: () => Promise.resolve({ id: 'fixture-auth', userCode: 'TEST-CODE', verificationUri: 'https://github.com/login/device', expiresAt: Date.now()+900000 }),
+  completeGitHubSignIn: () => { fixtureAuthenticated = true; return Promise.resolve('oddur'); },
+  cancelGitHubSignIn: () => Promise.resolve(),
+  cancelOAuth: () => Promise.resolve(),
+  signOut: () => { fixtureAuthenticated = false; return Promise.resolve(); },
   startOAuth: () => {
     fixtureAuthenticated = true;
     return Promise.resolve();
   },
   startReview: () => {
     fixtureStarted = true;
-    return Promise.resolve('workbench-review');
+    return Promise.resolve({ reviewId: 'workbench-review', prUrl: review.prUrl, prTitle: review.prTitle, author: review.author });
   },
+  getPrMetadata: (url: string) => Promise.resolve(items.flatMap((item) => item.subject.members).find((member) => member.url === url) ?? { ...members[0], url, title: 'A PR outside the queue' }),
   loadPreferences: () => Promise.resolve(prefs),
   savePreferences: (next: Preferences) => {
     prefs = next;
-    if (onboardingScenario) sessionStorage.setItem('fixture-first-run-seen', String(next.firstRunSeen));
+    if (onboardingScenario) {
+      sessionStorage.setItem('fixture-first-run-seen', String(next.firstRunSeen));
+      sessionStorage.setItem('fixture-guest-mode', String(next.guestMode));
+    }
     return Promise.resolve();
   },
+  workbenchViewAction: (action: QueueViewAction) => {
+    savedViews = applyViewAction(savedViews, action, () => crypto.randomUUID());
+    saveViews();
+    return Promise.resolve(mocks.workbenchQueue());
+  },
   workbenchSetFilters: (filters: QueueFilters) => {
+    savedViews = editViewFilters(savedViews, filters);
+    saveViews();
     queueFilters = normalizeQueueFilters(filters);
     sessionStorage.setItem(filterStorageKey, JSON.stringify(queueFilters));
-    return Promise.resolve({ items, warnings: [], remaining: 7, filters: queueFilters });
+    return Promise.resolve(mocks.workbenchQueue());
   },
   workbenchQueue: () =>
     Promise.resolve({
       filters: queueFilters,
+      savedViews: { ...savedViews, counts: Object.fromEntries(savedViews.views.map(view => [view.id, items.filter(item => matchesQueueFilters(item, view.filters, Date.now(), 'oddur')).length])) },
       items: onboardingScenario && !fixtureStarted ? [] : items,
       warnings: [],
       remaining: polishScenario ? 0 : 7,
@@ -359,6 +475,7 @@ const mocks = {
   listReviews: () => Promise.resolve(onboardingScenario && !fixtureStarted ? [] : history),
   loadReview: () => Promise.resolve(review),
   reRenderHunks: (r: ReviewGuide) => Promise.resolve(r),
+  getReviewThreads: () => Promise.resolve({ headSha: 'fixture-head', baseSha: 'fixture-base', threads: [] }),
   getPrStatus: () =>
     statusFailures-- > 0
       ? Promise.reject(new Error('API rate limit exceeded. Request ID fixture-request. Retry after the limit resets.'))
@@ -393,12 +510,14 @@ const mocks = {
   platform: 'darwin',
   isPackaged: false,
 };
+if (new URLSearchParams(location.search).has('threads')) Object.assign(mocks, threadMocks());
+if (new URLSearchParams(location.search).has('images')) Object.assign(mocks, imageMocks(review));
 Object.defineProperty(window, 'electronAPI', {
   value: new Proxy(mocks, {
     get: (target, key) => (key in target ? target[key as keyof typeof target] : () => Promise.resolve()),
   }),
 });
-localStorage.clear();
+if (!new URLSearchParams(location.search).has('keep-progress')) localStorage.clear();
 const { renderDiffHunk } = await import('../../lib/highlight');
 for (const topic of review.slides)
   for (const hunk of topic.diffHunks)

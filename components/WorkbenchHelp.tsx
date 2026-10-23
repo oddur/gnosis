@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useId, useRef } from 'react';
 import { Popover } from 'radix-ui';
 import { CircleHelp, X } from 'lucide-react';
 
@@ -12,24 +12,40 @@ const terms = [
     'Related PRs that build on one another. Gnosis groups them into one review, in dependency order. A standalone PR works the same way.',
   ],
   [
-    'Briefing',
+    'Saved view',
+    'A named set of queue filters, such as your review requests or one author’s recent PRs. Save a view from the filter bar and switch in the sidebar. Views are stored on this computer and share cached GitHub data. Switching views does not refresh GitHub. “Filters changed” means your current filters differ from the saved version; choose Save changes or Restore saved filters.',
+  ],
+  [
+    'PR overview',
+    'The author’s description, labels, checks, and review status. You can read it before generating anything with AI. A stack overview lets you switch between its PRs.',
+  ],
+  [
+    'AI briefing',
     'A short AI summary of a PR or stack: what changes, which systems it affects, and where to focus. Automatic briefings use your selected AI tool, within a daily limit.',
   ],
   [
-    'Guided review',
+    'AI explanation',
     'An AI walkthrough organized into topics, with explanations beside the relevant code changes. Starting one does not submit a review to GitHub.',
   ],
   [
     'Explanation ready',
-    'The AI has finished generating a guided review. This does not mean a person has reviewed or approved the PR.',
+    'The AI has finished generating an explanation alongside the code. This does not mean a person has reviewed or approved the PR.',
+  ],
+  [
+    'Viewed file',
+    'Your file-level progress in Gnosis. Marking Viewed collapses the file to its header; the arrow opens it again. This does not mark the file viewed on GitHub.',
+  ],
+  [
+    'Inline explanation',
+    'AI-generated context on a blue background beside the code. It explains non-obvious behavior; it is not a GitHub comment. Hide or show these with Inline explanations.',
   ],
   ['Topic reviewed', 'Your reading progress in Gnosis. It does not approve the PR or send feedback to GitHub.'],
   [
     'Daily briefing limit',
-    'The number of automatic briefing attempts allowed each day, including retries. Guided reviews do not use this allowance.',
+    'The number of automatic briefing attempts allowed each day, including retries. AI explanations do not use this allowance.',
   ],
-  ['Other changes', 'PRs and stacks that are not in Review requested or Updated since review.'],
-  ['Topic', 'One part of a guided review. Topics follow the explanation of the change, rather than the file order.'],
+  ['Other changes', 'PRs and stacks that are not in Review requested or Changed since AI explanation.'],
+  ['Topic', 'One part of an AI explanation. Topics follow the explanation of the change, rather than the file order.'],
   [
     'Interactive explanation',
     'An interactive diagram that explains a concept in a topic. Create interactive explanation generates one. Open interactive explanation reopens the saved result.',
@@ -62,8 +78,13 @@ const terms = [
 
 export function WorkbenchHelp({ onGettingStarted }: { onGettingStarted?: () => void }) {
   const titleId = useId();
+  const replaying = useRef(false);
   return (
-    <Popover.Root>
+    <Popover.Root
+      onOpenChange={(open) => {
+        if (open) replaying.current = false;
+      }}
+    >
       <Popover.Trigger asChild>
         <button className="workbench-help-trigger" title="Help and terminology" aria-label="Help and terminology">
           <CircleHelp size={16} /> <span>Help</span>
@@ -77,6 +98,12 @@ export function WorkbenchHelp({ onGettingStarted }: { onGettingStarted?: () => v
           collisionPadding={12}
           aria-labelledby={titleId}
           onKeyDown={(event) => event.stopPropagation()}
+          onCloseAutoFocus={(event) => {
+            if (replaying.current) {
+              event.preventDefault();
+              document.getElementById('getting-started-title')?.focus();
+            }
+          }}
         >
           <div className="workbench-help-heading">
             <h2 id={titleId}>Using Gnosis</h2>
@@ -86,19 +113,50 @@ export function WorkbenchHelp({ onGettingStarted }: { onGettingStarted?: () => v
           </div>
           <p>Choose a change, understand its intent, then inspect the code.</p>
           <ol className="workbench-help-steps">
-            <li>Select a PR or stack to read its short briefing.</li>
             <li>
-              Start a guided review for an explanation beside the code. Ask questions or explore a concept as needed.
+              Open a PR overview to read the author’s description and GitHub status. No AI setup is needed for this
+              step. PRs that build on each other appear as a stack.
             </li>
-            <li>Track your progress by topic. Submit feedback to GitHub when you are ready.</li>
+            <li>
+              Generate an AI explanation for a walkthrough beside the code. Ask questions or explore a concept as
+              needed.
+            </li>
+            <li>
+              Mark files Viewed and topics reviewed to keep your place. Submit feedback to GitHub when you are ready.
+            </li>
           </ol>
           {onGettingStarted && (
             <Popover.Close asChild>
-              <button className="workbench-help-link" onClick={onGettingStarted}>
+              <button
+                className="workbench-help-link"
+                onClick={() => {
+                  replaying.current = true;
+                  onGettingStarted();
+                }}
+              >
                 Show getting started
               </button>
             </Popover.Close>
           )}
+          <details className="workbench-help-shortcuts">
+            <summary>Get more from a review</summary>
+            <p>
+              <strong>Follow the evidence.</strong> Read the file summary, inspect its diff, then use blue inline
+              explanations for extra context. GitHub discussions show their author and replies separately.
+            </p>
+            <p>
+              <strong>Reveal what you need.</strong> Diffs start with a few surrounding lines. Reveal more context,
+              switch Unified or Split, or use Diff appearance to adjust how code changes are shown.
+            </p>
+            <p>
+              <strong>Compare images.</strong> Before and After show the saved image revisions, including SVG. Expand an
+              image for a closer look; SVG source and comments are below the preview.
+            </p>
+            <p>
+              <strong>Keep moving.</strong> Ask a question or create an interactive explanation for a tricky concept.
+              Generation continues in Activity; the result is saved so you can return to it.
+            </p>
+          </details>
           <h3>Terms you’ll see</h3>
           <div className="workbench-glossary">
             {terms.map(([term, definition]) => (
@@ -111,9 +169,19 @@ export function WorkbenchHelp({ onGettingStarted }: { onGettingStarted?: () => v
           <details className="workbench-help-shortcuts">
             <summary>Queue filters and keyboard shortcuts</summary>
             <p>
-              <strong>Requested</strong> means you were asked to review. <strong>Updated</strong> means code changed
-              since a saved review. <strong>Stacks</strong> shows all stacks, including requested and updated ones.
-              Author, date, and other filters still apply.
+              <strong>Review requests</strong> shows PRs you were asked to review. If PR content or stack membership
+              changed since a saved AI explanation, they appear under <strong>Updated PRs</strong> instead.
+              <strong> Stacks</strong> shows PRs that build on each other. Other filters still apply to each section.
+            </p>
+            <p>
+              All PR filters must match the same open PR. A matching PR keeps its whole stack visible, including merged
+              PRs. Each stack counts as one queue item. Built-in sidebar counts use cached data before your other
+              filters.
+            </p>
+            <p>
+              <strong>Involving me</strong> includes PRs you authored, are assigned to, or were asked to review. It also
+              reduces the PR details fetched from GitHub. Other filters narrow the loaded queue. Automatic briefings
+              follow the scope selected in Filters.
             </p>
             <p>
               For example, PR #42 adds an API and PR #43 uses it. #43 builds on #42; reviewing #42 helps the stack move
@@ -121,7 +189,9 @@ export function WorkbenchHelp({ onGettingStarted }: { onGettingStarted?: () => v
             </p>
             <p>
               In the queue: <kbd>↑</kbd>/<kbd>↓</kbd> or <kbd>j</kbd>/<kbd>k</kbd> select a change; <kbd>Enter</kbd>{' '}
-              opens its guided review; <kbd>/</kbd> searches.
+              opens the PR overview or a ready AI explanation; <kbd>/</kbd> searches. Double-click a change to read its
+              author description. In the PR overview, <kbd>j</kbd>/<kbd>k</kbd> move through your filtered queue and
+              <kbd>Esc</kbd> returns to it. Generate an AI explanation for a walkthrough alongside the code.
             </p>
             <p>
               In a review, press <kbd>?</kbd> for its keyboard shortcuts.
