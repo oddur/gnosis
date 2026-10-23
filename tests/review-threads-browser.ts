@@ -35,7 +35,7 @@ void app.whenReady().then(async () => {
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
-    await click('Continue review');
+    await click('Open AI explanation');
     await wait("!!document.querySelector('.workbench-overview')");
     await click('Continue review');
     await wait("document.querySelectorAll('.github-thread').length===5");
@@ -59,7 +59,7 @@ void app.whenReady().then(async () => {
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
-    await click('Continue review');
+    await click('Open AI explanation');
     await wait("document.querySelectorAll('.github-thread').length===5");
     assert.equal(await js("document.querySelector('.review-file-viewed input').checked"), true);
     assert.equal(await js("document.querySelector('.review-file-content').hidden"), true);
@@ -81,7 +81,7 @@ void app.whenReady().then(async () => {
     );
     await click('Back');
     await wait("!!document.querySelector('.queue-list')");
-    await click('Continue review');
+    await click('Open AI explanation');
     await wait("!!document.querySelector('.inline-explanations-toggle input')");
     assert.equal(
       await js("document.querySelector('.inline-explanations-toggle input').checked"),
@@ -209,7 +209,7 @@ void app.whenReady().then(async () => {
     })()`);
     await click('Back');
     await wait("!!document.querySelector('.queue-list')");
-    await click('Continue review');
+    await click('Open AI explanation');
     await wait("document.querySelectorAll('.review-diff .github-thread').length===3");
     assert.equal(await js("!!document.querySelector('.diff-context-gap')"), true);
     assert.equal(
@@ -255,7 +255,7 @@ void app.whenReady().then(async () => {
     })()`);
     await click('Back');
     await wait("!!document.querySelector('.queue-list')");
-    await click('Continue review');
+    await click('Open AI explanation');
     await wait("!!document.querySelector('.review-file-viewed input')");
     assert.equal(
       await js("document.querySelector('.review-file-viewed input').checked"),

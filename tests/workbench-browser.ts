@@ -111,7 +111,7 @@ void app.whenReady().then(async () => {
 
     await js("document.documentElement.classList.add('dark')");
     await capture('queue-dark');
-    await click('Continue review');
+    await click('Open AI explanation');
     await wait("!!document.querySelector('.workbench-overview')");
     await capture('overview-dark');
     assert.ok(await js("document.querySelector('.activity-summary')?.textContent.includes('2 running')"));
@@ -447,17 +447,17 @@ void app.whenReady().then(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'https://github.com/klang/engine/pull/120');
       input.dispatchEvent(new Event('input', {bubbles:true}));
     })()`);
-    await click('Open summary');
+    await click('Open PR overview');
     await wait("!!document.querySelector('.pr-summary-page')");
-    await click('Generate explanation');
-    await wait("window.electronAPI.loadPreferences().then(p => p.firstRunSeen)");
+    await click('Generate AI explanation');
+    await wait('window.electronAPI.loadPreferences().then(p => p.firstRunSeen)');
     await click('Work queue');
     await wait("document.querySelectorAll('.queue-item').length === 7 && !document.querySelector('.getting-started')");
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
     await wait("!!document.querySelector('.briefing-panel')");
-    await click('Continue review');
+    await click('Open AI explanation');
     await wait("!!document.querySelector('.workbench-review')");
     await js('document.querySelector(\'[aria-label="Help and terminology"]\').click()');
     await wait("!!document.querySelector('.workbench-help')");
@@ -792,7 +792,7 @@ void app.whenReady().then(async () => {
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
-    await click('Continue review');
+    await click('Open AI explanation');
     await wait("!!document.querySelector('.workbench-overview')");
     await click('Continue review');
     await wait("!!document.querySelector('.review-narrative')");

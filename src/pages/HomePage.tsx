@@ -1,5 +1,5 @@
 import { PrLabels } from '../../components/PrLabels';
-import { PrSummary } from '../../components/PrSummary';
+import { PrSummary, type PrReadingPosition } from '../../components/PrSummary';
 import { SavedViewsNav, SaveViewControls } from '../../components/SavedQueueViews';
 import type { QueueViewAction } from '../../lib/saved-views';
 import { Popover } from 'radix-ui';
@@ -163,9 +163,11 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   const [localOpen, setLocalOpen] = useState(false);
   const [url, setUrl] = useState(prefillPrUrl ?? '');
   const [showUrl, setShowUrl] = useState(!!prefillPrUrl);
-  const [starting, setStarting] = useState(false);
+  const [pendingStarts, setPendingStarts] = useState<Set<string>>(new Set());
+  const [summaryErrors, setSummaryErrors] = useState<Record<string, string>>({});
   const [openingPr, setOpeningPr] = useState(false);
   const [openedItem, setOpenedItem] = useState<QueueItem | null>(null);
+  const readingPositions = useRef(new Map<string, PrReadingPosition>());
   const [requestedReviews, setRequestedReviews] = useState<Record<string, string>>({});
   const [pat, setPat] = useState('');
   const [parentUrl, setParentUrl] = useState('');
@@ -342,8 +344,11 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   };
   const start = async (target: string, subject?: ReviewSubject, localTools?: boolean, standalone = false) => {
     if (!prefs) return;
+    const requestKey = subject?.id ?? openedItem?.subject.id ?? target;
+    if (pendingStarts.has(requestKey)) return;
     setError('');
-    setStarting(true);
+    setSummaryErrors((previous) => ({ ...previous, [requestKey]: '' }));
+    setPendingStarts((previous) => new Set(previous).add(requestKey));
     try {
       const cli = await window.electronAPI.checkCliInstalled(prefs.provider);
       if (!cli.installed)
@@ -369,9 +374,11 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
       setUrl('');
       await refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      if (openedItem) setSummaryErrors((previous) => ({ ...previous, [requestKey]: message }));
+      else setError(message);
     } finally {
-      setStarting(false);
+      setPendingStarts((previous) => { const next = new Set(previous); next.delete(requestKey); return next; });
     }
   };
   const open = async (entry: ReviewHistoryEntry) => {
@@ -413,6 +420,15 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   const orderedItems = (['updated', 'requested', 'other'] as const).flatMap((category) =>
     items.filter((item) => item.attention === category)
   );
+  const summaryIndex = orderedItems.findIndex((item) => item.subject.id === summaryItem?.subject.id);
+  const moveSummary = (direction: number) => {
+    const nextIndex = summaryIndex + direction;
+    if (summaryIndex < 0 || nextIndex < 0 || nextIndex >= orderedItems.length) return;
+    const item = orderedItems[nextIndex];
+    setSelected(item.subject.id);
+    setOpenedItem(item);
+    setError('');
+  };
   const openSettings = (next: SettingsSection = 'queue') => {
     setSettingsSection(next);
     setSettings(true);
@@ -675,9 +691,15 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
       </header>
       <UpdateBanner />
       {summaryItem ? <PrSummary
+        key={summaryItem.subject.id}
         item={summaryItem}
-        starting={starting}
-        error={error}
+        positions={readingPositions.current}
+        shortcutsEnabled={!settings && !localOpen}
+        navigation={{ index: summaryIndex, total: orderedItems.length, viewName: activeQueueView?.name ?? 'Current filtered view',
+          previous: summaryIndex > 0 ? orderedItems[summaryIndex - 1].subject.title : undefined,
+          next: summaryIndex >= 0 ? orderedItems[summaryIndex + 1]?.subject.title : undefined, move: moveSummary }}
+        starting={pendingStarts.has(summaryItem.subject.id)}
+        error={summaryErrors[summaryItem.subject.id] || error}
         statuses={statuses}
         statusErrors={statusErrors}
         onBack={() => {
@@ -779,7 +801,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                   ? 'Your review history, ready to resume.'
                   : section === 'stacks'
                     ? 'PRs that build on one another, grouped for review. Includes requested and updated stacks; your other filters still apply.'
-                    : 'Select a PR or stack for a short briefing; start a guided review to inspect the code.'}
+                    : 'Select a PR or stack for an AI briefing. Open its overview to read the author description.'}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -815,7 +837,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                 />
               </label>
               <Button size="sm" disabled={openingPr || !url.trim()} type="submit">
-                {openingPr ? 'Opening…' : 'Open summary'}
+                {openingPr ? 'Opening…' : 'Open PR overview'}
               </Button>
               <button
                 type="button"
@@ -1143,7 +1165,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                 </div>
                 <h2>{selectedItem.subject.title}</h2>
                 <p className="briefing-definition">
-                  A briefing is a short summary. Start a guided review for explanations beside the code.
+                  An AI briefing is a short summary. Open the PR overview to read the author description, or generate an AI explanation alongside the code.
                 </p>
                 {briefingSelection && (
                   <p className="text-xs text-muted-foreground mb-3" aria-label="Briefing model">
@@ -1158,11 +1180,11 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                   >
                     {selectedItem.review?.status === 'completed' &&
                     selectedItem.review.snapshot?.fingerprint === fingerprint(selectedItem.subject)
-                      ? 'Continue review'
-                      : 'Open summary'}
+                      ? 'Open AI explanation'
+                      : 'Open PR overview'}
                     <ArrowRight size={14} />
                   </Button>
-                  {selectedItem.review?.status === 'completed' && <button onClick={() => { setError(''); setOpenedItem(selectedItem); }}>PR description & details</button>}
+                  {selectedItem.review?.status === 'completed' && <button onClick={() => { setError(''); setOpenedItem(selectedItem); }}>Author description</button>}
                   {selectedItem.review?.status === 'completed' &&
                     selectedItem.review.snapshot?.fingerprint !== fingerprint(selectedItem.subject) && (
                       <button onClick={() => selectedItem.review && void open(selectedItem.review)}>

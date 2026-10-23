@@ -1,6 +1,6 @@
 import { sourceForPath } from '../lib/workbench';
 import { useState } from 'react';
-import { PrDetails } from './PrDetails';
+import { PrSubjectDetails } from './PrSubjectDetails';
 import { ArrowRight, GitPullRequest, Layers, Check, ExternalLink } from 'lucide-react';
 import { Markdown } from './Markdown';
 import { Button } from './ui/button';
@@ -20,6 +20,7 @@ export function WorkbenchOverview({
 }) {
   const subject = review.snapshot?.subject;
   const [showDetails, setShowDetails] = useState(false);
+  const [memberUrl, setMemberUrl] = useState(subject?.members[0].url ?? '');
   const legacyRepo = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\//.exec(review.prUrl)?.[1];
   return (
     <div className="workbench-overview">
@@ -43,10 +44,10 @@ export function WorkbenchOverview({
       {(subject || review.prDescription) && (
         <div className="pr-overview-switch" aria-label="Overview content">
           <button aria-pressed={!showDetails} onClick={() => setShowDetails(false)}>
-            Explanation
+            AI explanation
           </button>
           <button aria-pressed={showDetails} onClick={() => setShowDetails(true)}>
-            PR description & details
+            Author description
           </button>
         </div>
       )}
@@ -54,10 +55,11 @@ export function WorkbenchOverview({
         <>
           <p className="text-xs text-muted-foreground mt-3">GitHub information saved with this review.</p>
           {subject ? (
-            subject.members.map((member) => <PrDetails key={member.url} member={member} />)
+            <PrSubjectDetails subject={subject} activeUrl={memberUrl} onSelect={setMemberUrl} />
           ) : (
             <Markdown
               className="pr-markdown mt-4"
+              headingLevel={2}
               githubSource={legacyRepo ? { repo: legacyRepo, ref: review.headSha ?? 'HEAD' } : undefined}
             >
               {review.prDescription || 'No description provided.'}

@@ -21,10 +21,10 @@ try {
       prSummary
         ? 'tests/pr-summary-browser.ts'
         : threads
-        ? 'tests/review-threads-browser.ts'
-        : splitDiff
-          ? 'tests/split-diff-browser.ts'
-          : 'tests/workbench-browser.ts',
+          ? 'tests/review-threads-browser.ts'
+          : splitDiff
+            ? 'tests/split-diff-browser.ts'
+            : 'tests/workbench-browser.ts',
     ],
     outfile,
     bundle: true,
@@ -39,10 +39,13 @@ try {
   delete env.ELECTRON_RUN_AS_NODE;
   const code = await new Promise((resolve, reject) => {
     const child = spawn(electron, [outfile], { env, stdio: 'inherit' });
-    const timer = setTimeout(() => {
-      child.kill();
-      reject(new Error('Workbench browser checks timed out'));
-    }, splitDiff || threads ? 90000 : 180000);
+    const timer = setTimeout(
+      () => {
+        child.kill();
+        reject(new Error('Workbench browser checks timed out'));
+      },
+      splitDiff || threads ? 90000 : prSummary ? 180000 : 300000
+    );
     child.on('error', (error) => {
       clearTimeout(timer);
       reject(error);

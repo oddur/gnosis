@@ -7,11 +7,13 @@ import rehypeSanitize from 'rehype-sanitize';
 import { githubMarkdownUrl, type GitHubMarkdownSource } from '../lib/github-markdown';
 import { isGitHubImageUrl } from '../lib/github-image';
 import { cn } from '@/lib/utils';
+import { scopeMarkdownHeadings } from '../lib/markdown-headings';
 
 interface Props {
   children: string;
   className?: string;
   githubSource?: GitHubMarkdownSource;
+  headingLevel?: number;
 }
 
 function MarkdownImage({
@@ -144,14 +146,37 @@ const githubComponents: Components = {
   img: ({ src, ...props }) => <MarkdownImage key={src} src={src} {...props} authenticate />,
   pre: ({ children }) => <pre>{children}</pre>,
   code: ({ children, className }) => <code className={className}>{children}</code>,
+  h4: ({ children }) => <h4 className="pr-author-heading">{children}</h4>,
+  h5: ({ children }) => <h5 className="pr-author-heading">{children}</h5>,
+  h6: ({ children }) => <h6 className="pr-author-heading">{children}</h6>,
+  table: ({ children }) => (
+    <div className="pr-table-scroll" role="region" aria-label="Scrollable PR table" tabIndex={0}>
+      <table>{children}</table>
+    </div>
+  ),
 };
 
-export function Markdown({ children, className, githubSource }: Props) {
+export function Markdown({ children, className, githubSource, headingLevel }: Props) {
   return (
     <div className={cn('select-text', className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={githubSource ? [rehypeRaw, rehypeSanitize] : []}
+        rehypePlugins={
+          githubSource
+            ? [
+                rehypeRaw,
+                rehypeSanitize,
+                ...(headingLevel
+                  ? [
+                      [scopeMarkdownHeadings, { startLevel: headingLevel }] as [
+                        typeof scopeMarkdownHeadings,
+                        { startLevel: number },
+                      ],
+                    ]
+                  : []),
+              ]
+            : []
+        }
         urlTransform={githubSource ? (url, key) => githubMarkdownUrl(url, key === 'src', githubSource) : undefined}
         components={githubSource ? githubComponents : components}
       >

@@ -12,24 +12,24 @@ const terms = [
     'Related PRs that build on one another. Gnosis groups them into one review, in dependency order. A standalone PR works the same way.',
   ],
   [
-    'Briefing',
+    'AI briefing',
     'A short AI summary of a PR or stack: what changes, which systems it affects, and where to focus. Automatic briefings use your selected AI tool, within a daily limit.',
   ],
   [
-    'Guided review',
+    'AI explanation',
     'An AI walkthrough organized into topics, with explanations beside the relevant code changes. Starting one does not submit a review to GitHub.',
   ],
   [
     'Explanation ready',
-    'The AI has finished generating a guided review. This does not mean a person has reviewed or approved the PR.',
+    'The AI has finished generating an explanation alongside the code. This does not mean a person has reviewed or approved the PR.',
   ],
   ['Topic reviewed', 'Your reading progress in Gnosis. It does not approve the PR or send feedback to GitHub.'],
   [
     'Daily briefing limit',
-    'The number of automatic briefing attempts allowed each day, including retries. Guided reviews do not use this allowance.',
+    'The number of automatic briefing attempts allowed each day, including retries. AI explanations do not use this allowance.',
   ],
   ['Other changes', 'PRs and stacks that are not in Review requested or Updated since review.'],
-  ['Topic', 'One part of a guided review. Topics follow the explanation of the change, rather than the file order.'],
+  ['Topic', 'One part of an AI explanation. Topics follow the explanation of the change, rather than the file order.'],
   [
     'Interactive explanation',
     'An interactive diagram that explains a concept in a topic. Create interactive explanation generates one. Open interactive explanation reopens the saved result.',
@@ -86,9 +86,13 @@ export function WorkbenchHelp({ onGettingStarted }: { onGettingStarted?: () => v
           </div>
           <p>Choose a change, understand its intent, then inspect the code.</p>
           <ol className="workbench-help-steps">
-            <li>Select a PR or stack to read its short briefing.</li>
             <li>
-              Start a guided review for an explanation beside the code. Ask questions or explore a concept as needed.
+              Select a PR or stack to read its AI briefing. Open its PR overview for the author description and GitHub
+              status.
+            </li>
+            <li>
+              Generate an AI explanation for a walkthrough beside the code. Ask questions or explore a concept as
+              needed.
             </li>
             <li>Track your progress by topic. Submit feedback to GitHub when you are ready.</li>
           </ol>
@@ -121,8 +125,9 @@ export function WorkbenchHelp({ onGettingStarted }: { onGettingStarted?: () => v
             </p>
             <p>
               In the queue: <kbd>↑</kbd>/<kbd>↓</kbd> or <kbd>j</kbd>/<kbd>k</kbd> select a change; <kbd>Enter</kbd>{' '}
-              opens the summary or a ready explanation; <kbd>/</kbd> searches. Double-click a change to read its PR
-              description and details. Generate an explanation from its summary when you are ready.
+              opens the PR overview or a ready AI explanation; <kbd>/</kbd> searches. Double-click a change to read its
+              author description. In the PR overview, <kbd>j</kbd>/<kbd>k</kbd> move through your filtered queue and
+              <kbd>Esc</kbd> returns to it. Generate an AI explanation for a walkthrough alongside the code.
             </p>
             <p>
               In a review, press <kbd>?</kbd> for its keyboard shortcuts.
