@@ -44,9 +44,9 @@ typography:
   headline: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 25px, fontWeight: 650, lineHeight: 1.4, letterSpacing: "-0.02em"}
   title: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 22px, fontWeight: 650, lineHeight: 1.35, letterSpacing: "-0.025em"}
   title-compact: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 18px, fontWeight: 650, lineHeight: 1.4, letterSpacing: "-0.02em"}
-  body: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 14px, fontWeight: 400, lineHeight: 1.55}
-  prose: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 15px, fontWeight: 400, lineHeight: 1.65}
-  label-row: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 14px, fontWeight: 600, lineHeight: 1.5}
+  body: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 15px, fontWeight: 400, lineHeight: 1.55}
+  prose: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 16px, fontWeight: 400, lineHeight: 1.65}
+  label-row: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 15px, fontWeight: 600, lineHeight: 1.5}
   label-button: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 14px, fontWeight: 500, lineHeight: 20px}
   mono: {fontFamily: "'JetBrains Mono', ui-monospace, 'Cascadia Code', 'Fira Code', monospace"}
 rounded:
@@ -123,14 +123,15 @@ JetBrains Mono is the default code family; settings offer other code fonts. Defa
 
 - **Headline:** overview titles use the headline role.
 - **Title:** review and queue titles use the title role at 22px with 1.35 line-height.
-- **Compact title:** briefing headings use the compact title role.
+- **Compact title:** briefing, dialog, chat, and explainer headings use the 18px compact title role with comfortable multiline leading.
 - **Body and prose:** interface text uses body; explanations use prose with a usual maximum width of 68ch.
 - **Labels:** queue titles use label-row. Metadata uses 12px; compact controls use 13px.
 - **Code:** preserve selectable monospace text. Code themes are independent of the interface theme.
 
-Review and overview prose use 15px text. Briefing summaries and lists use 14px. Reading columns stay within 68ch; queue summaries use at most 75ch.
-Semantic `--type-*` tokens use rem units. Dense controls stay smaller than ordinary web body text to fit the laptop workspace.
-Dark prose uses weight 425, slightly wider tracking, and 1.7 line-height. Code size and the selected code family remain independent.
+Review narratives, PR descriptions, overview summaries, and chat messages use 16px text. Queue titles, briefing summaries, inline explanations, GitHub comment bodies, and file summaries use 15px. Controls remain 13px and metadata 12px; descriptions of settings use 13px with 1.6 line-height. Reading columns stay within 68ch; PR descriptions also retain their 34rem cap. Queue summaries use at most 75ch.
+Semantic `--type-*` tokens use rem units. Dense controls stay smaller than reading text to fit the laptop workspace. Keep badges in sentence case at 12px or above.
+Shared reading roles use 1.65 line-height. Dark prose uses weight 425, slightly wider tracking, and 1.7 line-height across narratives, PR descriptions, chat, discussions, and inline notes. Use upright, full-contrast text for chat questions and answers; role labels identify the speaker.
+Code uses the selected monospace family. Pierre diffs and Markdown blocks share a 13px size and 20px line-height through rem tokens, so text scaling works in both renderers. Fenced code remains a scrollable block even without a language label. Inline code follows its surrounding prose.
 
 **The Reading Rule.** Keep explanations readable within their pane. Use restrained headings and bounded prose widths.
 

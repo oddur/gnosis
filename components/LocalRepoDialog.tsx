@@ -291,9 +291,9 @@ export function LocalRepoDialog({ supportsTools = true, open, onOpenChange, onSu
             {error ? (
               <div className="text-destructive">
                 <p className="text-sm font-medium">{error.title}</p>
-                <p className="text-xs opacity-80 break-words mt-0.5">{error.hint}</p>
+                <p className="text-sm break-words mt-0.5">{error.hint}</p>
                 {error.detail && (
-                  <p className="text-[11px] font-mono opacity-60 break-words mt-1">{error.detail}</p>
+                  <p className="text-xs font-mono text-muted-foreground break-words mt-1">{error.detail}</p>
                 )}
               </div>
             ) : loadingRefs ? (
@@ -388,7 +388,7 @@ function DiffPreview({ count, mergeBase, loading }: DiffPreviewProps) {
         {loading && '…'}
       </p>
       {huge && (
-        <p className="text-xs opacity-80 mt-0.5">
+        <p className="text-sm mt-0.5">
           That's a lot — often means the base branch is stale. Try{' '}
           <code>git fetch</code> and pick <code>origin/main</code>, or choose a more
           recent base.

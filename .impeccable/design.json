@@ -548,15 +548,15 @@
       },
       "title-compact": {
         "displayName": "title-compact",
-        "purpose": "Briefing heading."
+        "purpose": "Briefing, dialog, chat, and explainer headings; 18px with multiline leading."
       },
       "body": {
         "displayName": "body",
-        "purpose": "Interface text."
+        "purpose": "15px supporting prose and queue titles; controls and metadata keep separate compact roles."
       },
       "prose": {
         "displayName": "prose",
-        "purpose": "Review explanations."
+        "purpose": "16px review narratives, PR descriptions, overview summaries, and chat; 68ch measure with shared dark-mode tuning."
       },
       "label-row": {
         "displayName": "label-row",
@@ -568,7 +568,7 @@
       },
       "mono": {
         "displayName": "mono",
-        "purpose": "Default code font family; size is set by code settings."
+        "purpose": "Selected code family; diffs and Markdown blocks share 13px/20px rem tokens."
       }
     },
     "shadows": [
@@ -703,7 +703,7 @@
       "refersTo": "card",
       "description": "The library card primitive; queue rows remain flat and compact.",
       "html": "<section class=\"ds-card\"><div class=\"ds-card-header\"><h3 class=\"ds-card-title\">Review settings</h3><p class=\"ds-card-description\">Choose how code appears.</p></div></section>",
-      "css": ".ds-card { display:flex; flex-direction:column; gap:24px; padding:24px 0; border:1px solid var(--border, #e1e5ec); border-radius:calc(var(--radius, .4rem) + 4px); background:var(--card, #fff); color:var(--foreground, #242a35); font-family:var(--font-sans, 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif); box-shadow:0 1px 3px 0 rgb(0 0 0 / .1), 0 1px 2px -1px rgb(0 0 0 / .1); } .ds-card-header { display:grid; gap:8px; padding:0 24px; } .ds-card-title { margin:0; font-size:14px; font-weight:600; line-height:1; } .ds-card-description { margin:0; color:var(--muted-foreground, #626b7b); font-size:14px; line-height:1.5; }"
+      "css": ".ds-card { display:flex; flex-direction:column; gap:24px; padding:24px 0; border:1px solid var(--border, #e1e5ec); border-radius:calc(var(--radius, .4rem) + 4px); background:var(--card, #fff); color:var(--foreground, #242a35); font-family:var(--font-sans, 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif); box-shadow:0 1px 3px 0 rgb(0 0 0 / .1), 0 1px 2px -1px rgb(0 0 0 / .1); } .ds-card-header { display:grid; gap:8px; padding:0 24px; } .ds-card-title { margin:0; font-size:15px; font-weight:600; line-height:1.375; } .ds-card-description { margin:0; color:var(--muted-foreground, #626b7b); font-size:14px; line-height:1.5; }"
     }
   ],
   "narrative": {

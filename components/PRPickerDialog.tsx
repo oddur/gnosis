@@ -161,8 +161,8 @@ export function PRPickerDialog({ open, onOpenChange, onSelect }: Props) {
                 <>
                   <p className="editorial-label text-sm">Nothing to review yet.</p>
                   <p className="slide-meta">
-                    Once you open a PR or get added as a reviewer on GitHub, it'll show up here. You can also paste a
-                    PR URL directly into the box on the home screen.
+                    Once you open a PR or get added as a reviewer on GitHub, it'll show up here. You can also paste a PR
+                    URL directly into the box on the home screen.
                   </p>
                 </>
               ) : (
@@ -187,9 +187,9 @@ export function PRPickerDialog({ open, onOpenChange, onSelect }: Props) {
                       <span className="shrink-0">
                         {pr.repoOwner}/{pr.repoName}#{pr.number}
                       </span>
-                      {pr.isDraft && <span className="statusPill-neutral text-[10px] px-1.5 py-0">Draft</span>}
+                      {pr.isDraft && <span className="statusPill-neutral text-xs px-1.5 py-0">Draft</span>}
                       {pr.role === 'review-requested' && (
-                        <span className="statusPill-amber text-[10px] px-1.5 py-0">Review requested</span>
+                        <span className="statusPill-amber text-xs px-1.5 py-0">Review requested</span>
                       )}
                     </div>
                     <span className="font-serif text-base leading-snug text-foreground/85 group-hover:text-foreground transition-colors truncate">

@@ -156,6 +156,27 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.review-tool-slot .chat-sheet')");
     assert.equal(await js("document.querySelector('.review-code').getBoundingClientRect().width > 350"), true);
     await capture('chat-dark');
+    // Chat must preserve fenced code in both questions and answers, including fences without a language.
+    await js(
+      `void (window.electronAPI.sendSlideChat = async () => ${JSON.stringify('### Keep cleanup tied to completion\n\nAwaiting the worker keeps the queue slot occupied until the operation completes. Returning the promise directly would run cleanup too early.\n\n```ts\ntry {\n  return await worker.run(command);\n} finally {\n  slot.release();\n}\n```')})`
+    );
+    await js(`(() => {
+      const field = document.querySelector('.chat-sheet textarea');
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(field, ${JSON.stringify('Why must cleanup wait?\n\n```\nreturn worker.run(command);\n```')});
+      field.dispatchEvent(new Event('input', {bubbles:true}));
+    })()`);
+    await js("document.querySelector('.chat-sheet [aria-label=Send]').click()");
+    await wait("document.querySelectorAll('.chat-sheet pre code').length === 2");
+    assert.equal(
+      await js("document.querySelector('.chat-sheet pre code').textContent"),
+      'return worker.run(command);\n',
+      'An unlabelled code fence remains a real code block in the question'
+    );
+    assert.ok(await js("document.querySelectorAll('.chat-sheet pre code')[1].textContent.includes('slot.release();')"));
+    await capture('chat-reading-dark');
+    await js("document.documentElement.classList.remove('dark')");
+    await capture('chat-reading-light');
+    await js("document.documentElement.classList.add('dark')");
     await click('Close chat');
     await click('Open interactive explanation');
     await wait("!!document.querySelector('.review-tool-slot iframe')");

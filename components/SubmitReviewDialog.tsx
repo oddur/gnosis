@@ -170,7 +170,7 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, prUrl, headSh
                     <div key={c.id} className="flex flex-col gap-1">
                       <div className="flex items-center gap-2 slide-meta">
                         <span>Line {c.line}</span>
-                        <code className="text-[10px] truncate max-w-[200px] opacity-70">{c.codeSnippet}</code>
+                        <code className="text-xs truncate max-w-[200px] text-muted-foreground">{c.codeSnippet}</code>
                       </div>
                       <pre className="text-xs whitespace-pre-wrap break-words font-mono text-foreground/80">
                         {c.body}

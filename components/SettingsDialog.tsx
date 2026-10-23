@@ -116,10 +116,10 @@ function SettingRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 py-1">
+    <div className="settings-row flex items-center justify-between gap-4 py-1">
       <div className="flex flex-col gap-0.5 min-w-0">
         <span className="text-sm font-medium text-foreground">{label}</span>
-        {description && <span className="slide-meta">{description}</span>}
+        {description && <span className="settings-description">{description}</span>}
       </div>
       <div className="shrink-0">{children}</div>
     </div>
@@ -243,13 +243,16 @@ export function SettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="settings-dialog bg-card sm:max-w-2xl" onCloseAutoFocus={(event) => {
-        if (replayingOnboarding.current) {
-          event.preventDefault();
-          replayingOnboarding.current = false;
-          document.getElementById('getting-started-title')?.focus();
-        }
-      }}>
+      <DialogContent
+        className="settings-dialog bg-card sm:max-w-2xl"
+        onCloseAutoFocus={(event) => {
+          if (replayingOnboarding.current) {
+            event.preventDefault();
+            replayingOnboarding.current = false;
+            document.getElementById('getting-started-title')?.focus();
+          }
+        }}
+      >
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>Changes save automatically.</DialogDescription>
@@ -299,7 +302,7 @@ export function SettingsDialog({
               <label htmlFor="watched-repos" className="text-sm font-medium text-foreground">
                 Repositories in your queue
               </label>
-              <p className="text-xs text-muted-foreground">
+              <p className="settings-description">
                 Add open PRs from these repositories. This does not change your GitHub Watch subscriptions.
               </p>
               <div className="relative">
@@ -334,7 +337,7 @@ export function SettingsDialog({
                     }}
                     onFocus={() => setSuggestionsDismissed(false)}
                     onBlur={() => setTimeout(() => setSuggestionsDismissed(true), 200)}
-                    className="flex-1 bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground/60 transition-colors"
+                    className="flex-1 bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground transition-colors"
                   />
                 </div>
                 {showSuggestions && (
@@ -382,7 +385,7 @@ export function SettingsDialog({
                   <label htmlFor="settings-briefing-limit" className="text-sm font-medium text-foreground">
                     Daily briefing limit
                   </label>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="settings-description">
                     Maximum automatic briefing attempts per day, including retries. AI explanations do not count toward
                     this limit.
                   </p>
@@ -672,7 +675,7 @@ export function SettingsDialog({
                 placeholder={claudeDetected || 'auto-detect'}
                 onChange={(e) => setClaudePath(e.target.value)}
                 onBlur={() => saveField({ claudePath })}
-                className="bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground/60 transition-colors"
+                className="bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground transition-colors"
               />
               <p className="slide-meta">Leave empty to auto-detect.</p>
             </div>
@@ -688,7 +691,7 @@ export function SettingsDialog({
                 placeholder={codexDetected || 'auto-detect'}
                 onChange={(e) => setCodexPath(e.target.value)}
                 onBlur={() => saveField({ codexPath })}
-                className="bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground/60 transition-colors"
+                className="bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground transition-colors"
               />
               <p className="slide-meta">
                 Leave empty to auto-detect. Sign in first with <code>codex login</code>.

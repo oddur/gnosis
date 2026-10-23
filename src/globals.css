@@ -62,14 +62,18 @@
   /* Compact task UI; prose has its own reading size. Relative units preserve text scaling. */
   --type-caption: .75rem;
   --type-control: .8125rem;
-  --type-body: .875rem;
-  --type-prose: .9375rem;
+  --type-body: .9375rem;
+  --type-prose: 1rem;
+  --type-code: .8125rem;
+  --leading-code: 1.25rem;
+  --leading-prose: 1.65;
+  --weight-prose: 400;
+  --tracking-prose: 0;
   --type-panel-title: 1.125rem;
   --type-page-title: 1.375rem;
   --type-overview-title: 1.5625rem;
 
-  /* Reading column width — 65–75ch is the editorial sweet spot.
-     Used by .slide-prose and .editorial-measure helper classes. */
+  /* Bounded reading columns for explanations, descriptions, and chat. */
   --measure-prose: 68ch;
   --measure-prose-narrow: 56ch;
 
@@ -323,20 +327,16 @@
   text-wrap: balance;
 }
 
-/* Smaller serif heading used inside narrative blocks (callouts,
-   sub-sections, dialog titles that should still feel editorial).
-   Weight 540 — clearly heavier than slide-title's 440 so the
-   hierarchy reads at a glance. The previous 460 was only 40 units
-   off the display title and barely registered as different. */
+/* Shared dialog and panel heading; retained class name for existing callers. */
 .editorial-heading {
-  font-family: var(--font-serif);
-  font-size: 1.375rem; /* 22px */
-  font-weight: 540;
-  line-height: 1.25;
-  letter-spacing: -0.008em;
-  font-variation-settings: 'opsz' 36;
+  font-family: var(--font-sans);
+  font-size: var(--type-panel-title);
+  font-weight: 650;
+  line-height: 1.4;
+  letter-spacing: -0.015em;
   color: var(--foreground);
   text-wrap: balance;
+  overflow-wrap: anywhere;
 }
 
 /* Chapter chip that sits ABOVE the slide title.
@@ -1758,7 +1758,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .pr-details-columns { display:grid; grid-template-columns:minmax(0,1fr) 200px; gap:28px; align-items:start; }
 .pr-description,.pr-metadata { min-width:0; }
 .pr-description>h2,.pr-description>h3,.pr-metadata>h2,.pr-metadata>h3 { font-size:var(--type-control); font-weight:650; margin:0 0 12px; }
-.pr-markdown { font-size:var(--type-prose); line-height:1.7; max-width:34rem; overflow-wrap:anywhere; text-wrap:pretty; }
+.pr-markdown { font-size:var(--type-prose); line-height:var(--leading-prose); max-width:min(34rem,var(--measure-prose)); overflow-wrap:anywhere; text-wrap:pretty; }
 .pr-markdown>:first-child { margin-top:0; }
 .pr-author-heading { font-size:1em; font-weight:600; margin:16px 0 8px; text-wrap:balance; }
 .pr-markdown pre { max-width:100%; white-space:pre; overflow-x:auto; padding:12px; border:1px solid var(--border); border-radius:5px; background:var(--muted); margin:12px 0; }
@@ -1786,7 +1786,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .pr-branches { display:flex; align-items:flex-start; gap:6px; }
 .pr-branches svg { flex-shrink:0; margin-top:3px; }
 .pr-branches code { font-size:var(--type-caption); }
-.pr-briefing { border-block:1px solid var(--border); padding:10px 0; font-size:var(--type-control); margin:12px 0; max-width:75ch; }
+.pr-briefing { border-block:1px solid var(--border); padding:10px 0; font-size:var(--type-body); line-height:1.65; margin:12px 0; max-width:75ch; }
 .pr-briefing>summary { cursor:pointer; font-weight:600; }
 .pr-briefing[open]>summary { margin-bottom:8px; }
 .pr-subject-details { min-width:0; }
@@ -1882,7 +1882,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .review-context-action { color:var(--ring); }
 .review-context-action:hover { color:var(--accent-foreground); }
 .review-file-counts { display:inline-flex; gap:8px; font-family:var(--font-mono); font-variant-numeric:tabular-nums; }
-.review-file-summary { margin-top:6px; font-size:var(--type-control); line-height:1.45; overflow-wrap:anywhere; }
+.review-file-summary { margin-top:6px; font-size:var(--type-body); line-height:1.55; overflow-wrap:anywhere; }
 .review-file-history { display:flex; flex-wrap:wrap; gap:4px 12px; margin-top:5px; font-size:var(--type-caption); color:var(--muted-foreground); }
 .review-file-context .source-attribution { padding:0; border:0; background:transparent; color:var(--foreground); font-weight:600; white-space:nowrap; }
 .review-file-context + div { border-top-left-radius:0; border-top-right-radius:0; }
@@ -1914,7 +1914,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 /* Optional onboarding and contextual help share the workbench's compact surfaces. */
 .getting-started { padding:16px 24px; border-bottom:1px solid var(--border); background:var(--card); }
 .getting-started-heading,.workbench-help-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; }
-.getting-started h2,.workbench-help h2 { font-size:16px; font-weight:650; line-height:1.4; }
+.getting-started h2,.workbench-help h2 { font-size:var(--type-panel-title); font-weight:650; line-height:1.4; }
 .getting-started p { font-size:var(--type-body); line-height:1.6; max-width:70ch; }
 .getting-started-connections { margin:20px 0 16px; max-width:70ch; }
 .getting-started-connection,.getting-started-setup { border-top:1px solid var(--border); padding:12px 0; }
@@ -1941,7 +1941,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .workbench-help { z-index:55; width:min(440px,calc(100vw - 24px)); max-height:min(680px,var(--radix-popover-content-available-height)); overflow:auto; padding:16px 20px; background:var(--popover); color:var(--popover-foreground); border:1px solid var(--border); border-radius:5px; font-size:var(--type-body); line-height:1.6; }
 .workbench-help-heading { margin-bottom:8px; }
 .workbench-help>p { color:var(--muted-foreground); }
-.workbench-help h3 { margin:20px 0 8px; font-size:var(--type-control); font-weight:650; }
+.workbench-help h3 { margin:20px 0 8px; font-size:var(--type-body); font-weight:650; }
 .workbench-help-steps { list-style:decimal; padding-left:20px; margin:12px 0; }
 .workbench-help-steps li+li { margin-top:8px; }
 .workbench-glossary details { border-top:1px solid var(--border); padding:8px 0; }
@@ -2002,8 +2002,25 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 /* Reading hierarchy: stable titles, bounded prose, and aligned status numerals. */
 .briefing-panel h2,.workbench-overview h1,.slide-title { text-wrap:balance; overflow-wrap:anywhere; }
 .briefing-summary,.briefing-panel ul,.overview-summary,.slide-prose { max-width:var(--measure-prose); text-wrap:pretty; overflow-wrap:anywhere; }
-.slide-prose { line-height:1.65; }
-.dark .slide-prose,.dark .overview-summary,.dark .briefing-summary { font-weight:425; letter-spacing:.002em; line-height:1.7; }
+.dark { --weight-prose:425; --tracking-prose:.002em; --leading-prose:1.7; }
+.reading-prose { font-size:var(--type-prose); color:var(--foreground); max-width:var(--measure-prose); }
+.reading-prose,.slide-prose,.overview-summary,.briefing-summary,.pr-markdown,.github-comment-body,.inline-code-explanation {
+  font-weight:var(--weight-prose); letter-spacing:var(--tracking-prose); line-height:var(--leading-prose); text-wrap:pretty; overflow-wrap:anywhere;
+}
+.markdown-body { min-width:0; }
+.markdown-body>:first-child { margin-top:0; }
+.markdown-subheading { font-size:1em; font-weight:650; line-height:1.5; margin:1.25em 0 .5em; text-wrap:balance; }
+.markdown-code-block { max-width:100%; overflow:auto; white-space:pre; margin:1em 0; padding:12px; background:var(--muted); border:1px solid var(--border); border-radius:5px; font-family:var(--font-mono); font-size:var(--type-code); line-height:var(--leading-code); }
+.markdown-code-block>code { display:block; font:inherit; white-space:pre; text-wrap:nowrap; background:none; border:0; padding:0; }
+.chat-suggestion { font-size:var(--type-body); line-height:1.6; color:var(--foreground); text-align:left; text-wrap:pretty; }
+.chat-suggestion:hover { color:var(--ring); text-decoration:underline; text-underline-offset:3px; }
+.chat-sheet textarea { font-size:var(--type-prose); line-height:1.5; }
+.settings-description { font-size:var(--type-control); line-height:1.6; color:var(--muted-foreground); max-width:60ch; text-wrap:pretty; }
+.settings-row { align-items:flex-start; }
+.settings-row>div:last-child { padding-top:2px; }
+.explainer-reading { font-size:var(--type-body); line-height:1.65; max-width:var(--measure-prose); }
+.explainer-section-title { font-size:var(--type-panel-title); font-weight:650; line-height:1.4; text-wrap:balance; }
+
 .queue-meta,.queue-count,.queue-state,.workbench-footer,.activity-task-meta { font-variant-numeric:tabular-nums; }
 .queue-meta>span { overflow-wrap:anywhere; }
 
@@ -2048,6 +2065,8 @@ body:has(.activity-drawer) .app-toasts { bottom:auto; top:64px; }
 .github-thread textarea { display:block; width:100%; resize:vertical; padding:8px; border:1px solid var(--input); border-radius:4px; background:var(--background); color:var(--foreground); }
 .github-thread form .github-thread-actions { padding-inline:0; }
 .github-thread-error { padding:8px 12px; color:var(--color-danger); font-size:var(--type-control); overflow-wrap:anywhere; }
+.github-comment-body { font-size:var(--type-body); line-height:var(--leading-prose); max-width:var(--measure-prose); }
+.github-thread textarea { font-size:var(--type-body); line-height:1.6; }
 .github-comment-body p+p,.github-comment-body pre { margin-top:8px; }
 .github-comment-body pre { overflow:auto; background:var(--muted); padding:8px; border-radius:4px; }
 .github-comment-body code { font-family:var(--font-mono); font-size:.9em; }
@@ -2059,8 +2078,8 @@ body:has(.activity-drawer) .app-toasts { bottom:auto; top:64px; }
 /* Generated explanations are quiet reading notes, separate from GitHub discussions. */
 .inline-explanations-toggle { display:inline-flex; align-items:center; gap:6px; font-size:var(--type-control); color:var(--muted-foreground); cursor:pointer; }
 .inline-explanations-toggle input { accent-color:var(--primary); }
-.inline-code-explanation { padding:8px 12px; border-block:1px solid var(--border); background:var(--accent); color:var(--accent-foreground); font-family:var(--font-sans); font-size:var(--type-control); line-height:1.5; white-space:normal; overflow-wrap:anywhere; }
-.inline-code-explanation p { margin:0; max-width:75ch; }
+.inline-code-explanation { padding:10px 14px; border-block:1px solid var(--border); background:var(--accent); color:var(--accent-foreground); font-family:var(--font-sans); font-size:var(--type-body); line-height:var(--leading-prose); white-space:normal; overflow-wrap:anywhere; }
+.inline-code-explanation p { margin:0; max-width:var(--measure-prose); }
 .inline-code-explanation code { font-family:var(--font-mono); font-size:.95em; }
 
 /* Saved views share the queue cache; names and local counts stay compact. */
@@ -2144,10 +2163,10 @@ body:has(.activity-drawer) .app-toasts { bottom:auto; top:64px; }
 
 /* Authentication stays in one bounded dialog, with a visible alternative to browser sign-in. */
 .github-auth-dialog { max-height:85dvh; overflow:auto; width:min(520px,calc(100vw - 24px)); }
-.github-auth-dialog p,.github-token-form { font-size:var(--type-control); line-height:1.6; }
+.github-auth-dialog p,.github-token-form { font-size:var(--type-body); line-height:1.6; }
 .github-auth-error { padding:10px 12px; border:1px solid var(--border); color:var(--color-danger); overflow-wrap:anywhere; }
 .github-device-prompt { display:flex; flex-direction:column; gap:12px; }
-.github-device-prompt>code { font-size:26px; font-weight:600; letter-spacing:.06em; align-self:flex-start; padding:8px 12px; background:var(--secondary); border:1px solid var(--border); user-select:all; }
+.github-device-prompt>code { font-size:1.625rem; font-weight:600; letter-spacing:.06em; align-self:flex-start; padding:8px 12px; background:var(--secondary); border:1px solid var(--border); user-select:all; }
 .github-auth-actions { display:flex; flex-wrap:wrap; gap:8px; }
 .github-device-prompt [role=status] { display:flex; align-items:flex-start; gap:8px; }
 .github-device-prompt [role=status] svg { flex-shrink:0; margin-top:3px; }
