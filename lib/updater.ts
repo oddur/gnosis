@@ -1,9 +1,5 @@
 import type { UpdateInfo } from './types';
-
-interface GitHubRelease {
-  tag_name: string;
-  html_url: string;
-}
+import { getGitHubClient } from './github-client';
 
 /** Compare two semver strings. Returns true if remote > local. */
 function isNewer(remote: string, local: string): boolean {
@@ -20,12 +16,7 @@ function isNewer(remote: string, local: string): boolean {
 
 export async function checkForUpdate(currentVersion: string, token?: string): Promise<UpdateInfo | null> {
   try {
-    const headers: Record<string, string> = { 'User-Agent': 'Gnosis-App' };
-    if (token) headers['Authorization'] = `token ${token}`;
-    const res = await fetch('https://api.github.com/repos/oddur/gnosis/releases/latest', { headers });
-    if (!res.ok) return null;
-
-    const data = (await res.json()) as GitHubRelease;
+    const { data } = await getGitHubClient(token).repos.getLatestRelease({ owner: 'oddur', repo: 'gnosis' });
     const remoteVersion = data.tag_name.replace(/^v/, '');
 
     if (!isNewer(remoteVersion, currentVersion)) return null;

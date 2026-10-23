@@ -31,6 +31,18 @@ export function createActivityService(now = () => Date.now()) {
           canRetry: (status !== 'completed' || !!warnings?.length) && !!entry.actions.retry,
         });
     },
+    pause(id: string, detail: string) {
+      const entry = tasks.get(id);
+      if (entry)
+        Object.assign(entry.task, {
+          status: 'paused',
+          detail,
+          progress: undefined,
+          updatedAt: stamp(),
+          canCancel: false,
+          canRetry: false,
+        });
+    },
     list(): ActivityTask[] {
       for (const [id, { task }] of tasks)
         if (

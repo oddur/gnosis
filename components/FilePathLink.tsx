@@ -1,3 +1,5 @@
+import { FileTypeIcon } from './FileTypeIcon';
+
 interface Props {
   compact?: boolean;
   filePath: string;
@@ -15,12 +17,15 @@ export function FilePathLink({ filePath, gitFileUrlBase, className, compact = fa
         <span className="truncate text-muted-foreground">{displayPath.slice(0, slash)}</span>
       </>
     ) : (
-      displayPath
+      <span className="truncate">{displayPath}</span>
     );
-  const layout = compact ? 'flex items-center gap-2 min-w-0' : 'truncate';
+  const layout = compact
+    ? 'flex items-center gap-2 min-w-0'
+    : 'inline-flex items-center gap-2 min-w-0 max-w-full align-middle';
   if (!gitFileUrlBase) {
     return (
       <span title={displayPath} className={`${layout} ${className ?? ''}`}>
+        <FileTypeIcon filePath={displayPath} />
         {content}
       </span>
     );
@@ -36,6 +41,7 @@ export function FilePathLink({ filePath, gitFileUrlBase, className, compact = fa
       aria-label={`Open ${displayPath} on GitHub`}
       title={`Open ${displayPath} on GitHub`}
     >
+      <FileTypeIcon filePath={displayPath} />
       {content}
     </button>
   );
