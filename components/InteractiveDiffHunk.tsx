@@ -13,6 +13,7 @@ import {
 } from '@/components/shared-diff-utils';
 
 interface InteractiveDiffHunkGroupProps extends CommentCallbacks {
+  showFileHeader?: boolean;
   filePath: string;
   hunks: DiffHunk[];
   pendingComments: PendingReviewComment[];
@@ -89,8 +90,7 @@ function InteractiveHunk({
           const lineComments = pendingComments.filter(
             (c) => c.line === line.info.lineNumber && c.filePath === filePath && c.side === line.info.side
           );
-          const isFormActive =
-            activeFormLine?.line === line.info.lineNumber && activeFormLine.side === line.info.side;
+          const isFormActive = activeFormLine?.line === line.info.lineNumber && activeFormLine.side === line.info.side;
 
           const diffClass = line.info.type === 'add' ? 'diff add' : line.info.type === 'remove' ? 'diff remove' : '';
 
@@ -185,6 +185,7 @@ function InteractiveHunk({
 }
 
 export function InteractiveDiffHunkGroup({
+  showFileHeader = true,
   filePath,
   hunks,
   pendingComments,
@@ -199,15 +200,17 @@ export function InteractiveDiffHunkGroup({
 
   return (
     <div className="rounded-md border overflow-x-auto">
-      <div className="bg-muted/50 px-3 py-2 font-mono text-xs text-muted-foreground border-b truncate flex items-center justify-between">
-        <FilePathLink filePath={filePath} gitFileUrlBase={gitFileUrlBase} />
-        {fileCommentCount > 0 && (
-          <span className="ml-2 inline-flex items-center gap-1 text-[var(--ring)]">
-            <MessageSquarePlus className="h-3 w-3" />
-            {fileCommentCount}
-          </span>
-        )}
-      </div>
+      {showFileHeader && (
+        <div className="bg-muted/50 px-3 py-2 font-mono text-xs text-muted-foreground border-b truncate flex items-center justify-between">
+          <FilePathLink filePath={filePath} gitFileUrlBase={gitFileUrlBase} />
+          {fileCommentCount > 0 && (
+            <span className="ml-2 inline-flex items-center gap-1 text-[var(--ring)]">
+              <MessageSquarePlus className="h-3 w-3" />
+              {fileCommentCount}
+            </span>
+          )}
+        </div>
+      )}
       {hunks.map((hunk, i) => (
         <div key={i}>
           {i > 0 && <div className="border-t border-dashed border-muted" />}

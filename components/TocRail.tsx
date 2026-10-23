@@ -49,14 +49,14 @@ export function TocRail({ slides, currentSlide, reviewed, hideReviewed, onToggle
         <p className="slide-meta uppercase tracking-wider">Contents</p>
         {hasAnyReviewed && (
           <button onClick={onToggleHideReviewed} className="slide-meta hover:text-foreground transition-colors">
-            {hideReviewed ? 'Show all' : 'Hide reviewed'}
+            {hideReviewed ? 'Show all' : 'Hide reviewed topics'}
           </button>
         )}
       </div>
 
       {hasAnyReviewed && (
         <p className="slide-meta mb-3 tabular-nums">
-          {reviewedCount} of {slides.length} reviewed
+          {reviewedCount} of {slides.length} topics reviewed
         </p>
       )}
 

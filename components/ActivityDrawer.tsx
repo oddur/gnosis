@@ -2,8 +2,25 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Activity, ChevronUp, X, Loader2, Check, AlertCircle } from 'lucide-react';
 import { isActiveTask, type ActivityAction, type ActivityTask } from '../lib/activity';
 import { PROVIDERS } from '../lib/models';
+import { createActivityCompletionTracker } from '../lib/activity-notifications';
+import { toast } from './ui/toast';
 
-const kindLabels = { review: 'Review', briefing: 'Briefing', exploration: 'Exploration' };
+const kindLabels = {
+  review: 'Guided review',
+  briefing: 'Briefing',
+  exploration: 'Interactive explanation',
+  github: 'GitHub update',
+};
+const completedLabels = {
+  review: 'Explanation ready',
+  briefing: 'Briefing ready',
+  exploration: 'Interactive explanation ready',
+};
+const openLabels = {
+  review: 'Open guided review',
+  briefing: 'Open briefing',
+  exploration: 'Open interactive explanation',
+};
 const order = { running: 0, failed: 1, paused: 2, queued: 3, completed: 4, cancelled: 5 };
 function Progress({ task }: { task: ActivityTask }) {
   const progress = task.progress;
@@ -19,15 +36,29 @@ function Progress({ task }: { task: ActivityTask }) {
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={percent}
-      aria-valuetext={progress ? `${progress.completed} of ${progress.total} sections complete` : task.detail}
+      aria-valuetext={
+        progress ? `${progress.completed} of ${progress.total} ${progress.unit ?? 'topics'} complete` : task.detail
+      }
     >
       <span style={percent === undefined ? undefined : { width: `${percent}%` }} />
     </div>
   );
 }
-export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Promise<void> }) {
+export function ActivityDrawer({
+  onOpen,
+  open,
+  onOpenChange: setOpen,
+}: {
+  onOpen: (task: ActivityTask) => Promise<void>;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const [tasks, setTasks] = useState<ActivityTask[]>([]);
-  const [open, setOpen] = useState(false);
+  const [newCompletions] = useState(createActivityCompletionTracker);
+  const onOpenRef = useRef(onOpen);
+  useEffect(() => {
+    onOpenRef.current = onOpen;
+  }, [onOpen]);
   const [error, setError] = useState('');
   const [pending, setPending] = useState<string | null>(null);
   const alive = useRef(true);
@@ -39,6 +70,30 @@ export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Pro
       const next = await window.electronAPI.listActivity();
       if (alive.current) {
         setTasks(next);
+        for (const task of newCompletions(next)) {
+          const id = toast.add({
+            title: task.kind === 'exploration' ? 'Interactive explanation ready' : 'Review ready',
+            description: task.kind === 'exploration' ? `${task.title} · ${task.detail}` : task.title,
+            type: 'success',
+            actionProps: {
+              children: task.kind === 'exploration' ? 'Open interactive explanation' : 'Open review',
+              onClick: () => {
+                toast.update(id, { actionProps: { children: 'Opening…', disabled: true } });
+                void onOpenRef
+                  .current(task)
+                  .then(() => toast.close(id))
+                  .catch((e: unknown) => {
+                    toast.update(id, {
+                      type: 'error',
+                      title: 'Could not open result',
+                      description: e instanceof Error ? e.message : String(e),
+                      actionProps: { children: undefined },
+                    });
+                  });
+              },
+            },
+          });
+        }
         if (refreshFailed.current) {
           setError('');
           refreshFailed.current = false;
@@ -50,7 +105,7 @@ export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Pro
         setError('Could not refresh activity. Retrying…');
       }
     }
-  }, []);
+  }, [newCompletions]);
   useEffect(() => {
     alive.current = true;
     void refresh();
@@ -87,7 +142,9 @@ export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Pro
   const running = tasks.filter((t) => t.status === 'running');
   const queued = tasks.filter((t) => t.status === 'queued').length;
   const failed = tasks.filter((t) => t.status === 'failed').length;
-  const ready = tasks.filter((t) => t.status === 'completed').length;
+  const ready = tasks.filter((t) => t.status === 'completed' && t.kind !== 'github').length;
+  const updated = tasks.filter((t) => t.status === 'completed' && t.kind === 'github' && !t.warnings?.length).length;
+  const warnings = tasks.filter((t) => !!t.warnings?.length).length;
   const paused = tasks.filter((t) => t.status === 'paused').length;
   const summary =
     [
@@ -96,6 +153,8 @@ export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Pro
       paused && `${paused} paused`,
       failed && `${failed} failed`,
       ready && `${ready} ready`,
+      updated && `GitHub updated`,
+      warnings && `${warnings} with warnings`,
     ]
       .filter(Boolean)
       .join(' · ') || 'No active tasks';
@@ -147,7 +206,8 @@ export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Pro
           <div className="activity-list">
             {!tasks.length && (
               <p className="activity-empty">
-                Reviews, briefings, and explorations appear here while they work. You can keep browsing.
+                GitHub updates, guided reviews, briefings, and interactive explanations appear here. You can keep
+                browsing while they run.
               </p>
             )}
             {[...tasks]
@@ -158,7 +218,11 @@ export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Pro
                     .flatMap((p) => p.models.map((m) => ({ id: m.id, label: `${p.label} · ${m.label}` })))
                     .find((m) => m.id === task.model)?.label ?? task.model;
                 return (
-                  <article className="activity-task" key={task.id} data-status={task.status}>
+                  <article
+                    className="activity-task"
+                    key={task.id}
+                    data-status={task.warnings?.length ? 'warning' : task.status}
+                  >
                     <div className="activity-task-meta">
                       <span>{kindLabels[task.kind]}</span>
                       {label && <span>{label}</span>}
@@ -177,15 +241,21 @@ export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Pro
                     <div className="activity-task-status">
                       {task.status === 'running' ? (
                         <Loader2 size={13} className="animate-spin" />
+                      ) : task.warnings?.length ? (
+                        <AlertCircle size={13} />
                       ) : task.status === 'completed' ? (
                         <Check size={13} />
                       ) : task.status === 'failed' ? (
                         <AlertCircle size={13} />
                       ) : null}
                       <span>
-                        {task.status === 'failed' ? 'Failed' : task.detail}
+                        {task.status === 'failed'
+                          ? 'Failed'
+                          : task.status === 'completed' && task.kind !== 'github'
+                            ? completedLabels[task.kind]
+                            : task.detail}
                         {task.status === 'running' && task.progress
-                          ? ` · ${task.progress.completed} of ${task.progress.total} complete`
+                          ? ` · ${task.progress.completed} of ${task.progress.total} ${task.progress.unit ?? 'topics'} complete`
                           : ''}
                       </span>
                     </div>
@@ -193,6 +263,14 @@ export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Pro
                       <details className="activity-failure">
                         <summary>Error details</summary>
                         <p>{task.detail}</p>
+                      </details>
+                    )}
+                    {!!task.warnings?.length && (
+                      <details className="activity-failure">
+                        <summary>What could not be updated</summary>
+                        {task.warnings.map((warning) => (
+                          <p key={warning}>{warning}</p>
+                        ))}
                       </details>
                     )}
                     {task.status === 'running' && <Progress task={task} />}
@@ -207,9 +285,9 @@ export function ActivityDrawer({ onOpen }: { onOpen: (task: ActivityTask) => Pro
                           Retry
                         </button>
                       )}
-                      {task.status === 'completed' && (
+                      {task.status === 'completed' && task.kind !== 'github' && (
                         <button disabled={pending === task.id} onClick={() => void act(task, 'open')}>
-                          Open {task.kind === 'exploration' ? 'exploration' : task.kind}
+                          {openLabels[task.kind]}
                         </button>
                       )}
                       {pending === task.id && <Loader2 size={12} className="animate-spin" />}

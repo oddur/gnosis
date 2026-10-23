@@ -2,8 +2,44 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createActivityService } from '../src/activity-service';
 import { ACTIVITY_RETENTION_MS } from '../lib/activity';
+import { createActivityCompletionTracker } from '../lib/activity-notifications';
 
 const task = { id: 'review:1', kind: 'review' as const, title: 'A review', detail: 'Planning', reviewId: '1' };
+void test('ready notifications ignore history, deduplicate polls, and include fast background completions', () => {
+  const service = createActivityService();
+  const completions = createActivityCompletionTracker();
+  service.start(task, {});
+  service.finish(task.id, 'completed', 'Ready before launch');
+  assert.deepEqual(completions(service.list()), []);
+  service.start({ ...task, id: 'exploration:2', kind: 'exploration', slideId: 'topic-2' }, {});
+  service.finish('exploration:2', 'completed', 'A second topic');
+  assert.deepEqual(
+    completions(service.list()).map((t) => [t.id, t.slideId]),
+    [['exploration:2', 'topic-2']]
+  );
+  assert.deepEqual(completions(service.list()), []);
+  service.start({ ...task, id: 'review:3' }, {});
+  assert.deepEqual(completions(service.list()), []);
+  service.finish('review:3', 'completed', 'Ready now');
+  assert.deepEqual(
+    completions(service.list()).map((t) => t.id),
+    ['review:3']
+  );
+});
+void test('ready notifications exclude cancellation, failures, briefings, and GitHub refreshes', () => {
+  const service = createActivityService();
+  const completions = createActivityCompletionTracker();
+  completions([]);
+  for (const status of ['cancelled', 'failed'] as const) {
+    service.start({ ...task, id: status }, {});
+    service.finish(status, status, status);
+  }
+  for (const kind of ['briefing', 'github'] as const) {
+    service.start({ ...task, id: kind, kind }, {});
+    service.finish(kind, 'completed', 'Done');
+  }
+  assert.deepEqual(completions(service.list()), []);
+});
 void test('parallel tasks keep separate progress and cancellation actions', async () => {
   const service = createActivityService();
   let cancelled = '';

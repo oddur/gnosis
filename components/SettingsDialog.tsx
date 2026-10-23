@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { Tabs } from 'radix-ui';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { CODE_THEMES, CODE_FONTS } from '@/lib/constants';
 import type { CodeTheme, CodeFont } from '@/lib/constants';
@@ -6,22 +7,47 @@ import { applyTheme, type ThemeChoice } from '@/lib/theme';
 import { PROVIDERS, PROVIDER_IDS, DEFAULT_FAST_CLAUDE_MODEL } from '@/lib/models';
 import type { ModelId, Preferences, Provider, RepoSearchResult } from '@/lib/types';
 
+export type SettingsSection = 'queue' | 'review' | 'appearance' | 'integrations';
+
 interface Props {
+  initialSection?: SettingsSection;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onThemeChange?: (theme: string) => void;
-  // Resets the first-run welcome, the keyboard hint, and any
-  // localStorage onboarding flags so the user can re-experience the
-  // first-time path. Owned by HomePage because HomePage holds the
-  // firstRunOpen / hasEverHadPendingReviews / keyboardHintDismissed
-  // state slots that need to be reset together.
+  // Reopens the optional setup panel in the work queue.
   onReplayOnboarding?: () => void;
 }
+
+// Default faces ship locally. Fetch optional code families only when selected.
+const optionalFontStyles: Record<string, string[]> = {
+  'fira-code': ['https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&display=swap'],
+  hack: ['https://cdn.jsdelivr.net/npm/hack-font@3/build/web/hack.css'],
+  'monaspace-neon': [
+    'https://cdn.jsdelivr.net/npm/@fontsource/monaspace-neon@5/400.css',
+    'https://cdn.jsdelivr.net/npm/@fontsource/monaspace-neon@5/700.css',
+  ],
+  iosevka: [
+    'https://cdn.jsdelivr.net/npm/@fontsource/iosevka@5/400.css',
+    'https://cdn.jsdelivr.net/npm/@fontsource/iosevka@5/700.css',
+  ],
+};
 
 export function applyCodeFont(fontId: string) {
   const font = CODE_FONTS.find((f) => f.id === fontId);
   if (font) {
-    document.documentElement.style.setProperty('--font-mono', `${font.family}, ui-monospace, monospace`);
+    for (const [index, href] of (optionalFontStyles[font.id] ?? []).entries()) {
+      const id = `code-font-${font.id}-${index}`;
+      if (document.getElementById(id)) continue;
+      const link = document.createElement('link');
+      link.id = id;
+      link.rel = 'stylesheet';
+      link.href = href;
+      document.head.append(link);
+    }
+    document.documentElement.style.setProperty(
+      '--font-mono',
+      `${font.family}, 'JetBrains Mono', ui-monospace, monospace`
+    );
   }
 }
 
@@ -66,6 +92,7 @@ function Chip({
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={active}
       style={style}
       className={`text-sm pb-0.5 border-b transition-colors ${
         active
@@ -99,7 +126,17 @@ function SettingRow({
   );
 }
 
-export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnboarding }: Props) {
+export function SettingsDialog({
+  open,
+  onOpenChange,
+  onThemeChange,
+  onReplayOnboarding,
+  initialSection = 'queue',
+}: Props) {
+  const [section, setSection] = useState<SettingsSection>(initialSection);
+  useEffect(() => {
+    if (open) setSection(initialSection);
+  }, [open, initialSection]);
   const [appTheme, setAppTheme] = useState<ThemeChoice>('system');
   const [codeTheme, setCodeTheme] = useState<CodeTheme>('aurora-x');
   const [codeFont, setCodeFont] = useState<CodeFont>('jetbrains-mono');
@@ -114,6 +151,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
   const [repoSuggestions, setRepoSuggestions] = useState<RepoSearchResult[]>([]);
   const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
   const showSuggestions = repoSuggestions.length > 0 && !suggestionsDismissed;
+  const replayingOnboarding = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [notifications, setNotifications] = useState(true);
   const [trayEnabled, setTrayEnabled] = useState(true);
@@ -205,146 +243,32 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-card sm:max-w-md max-h-[80vh] overflow-y-auto">
+      <DialogContent className="settings-dialog bg-card sm:max-w-2xl" onCloseAutoFocus={(event) => {
+        if (replayingOnboarding.current) {
+          event.preventDefault();
+          replayingOnboarding.current = false;
+          document.getElementById('getting-started-title')?.focus();
+        }
+      }}>
         <DialogHeader>
-          <DialogTitle className="editorial-heading">Settings</DialogTitle>
-          <DialogDescription className="slide-meta">Configure your preferences</DialogDescription>
+          <DialogTitle>Settings</DialogTitle>
+          <DialogDescription>Changes save automatically.</DialogDescription>
         </DialogHeader>
-
-        <div className="flex flex-col gap-6 mt-2">
-          <section className="flex flex-col gap-3">
-            <label className="text-sm font-medium text-foreground">Theme</label>
-            <div className="flex flex-wrap gap-x-4 gap-y-2">
-              {(['light', 'dark', 'system'] as const).map((t) => (
-                <Chip key={t} active={appTheme === t} onClick={() => handleSelectAppTheme(t)}>
-                  {t === 'light' ? 'Paper' : t === 'dark' ? 'Study' : 'Match system'}
-                </Chip>
-              ))}
-            </div>
-          </section>
-
-          <section className="flex flex-col gap-3">
-            <label className="text-sm font-medium text-foreground">Code font</label>
-            <div className="flex flex-wrap gap-x-4 gap-y-2">
-              {CODE_FONTS.map((f) => (
-                <Chip
-                  key={f.id}
-                  active={codeFont === f.id}
-                  onClick={() => handleSelectFont(f.id)}
-                  style={{ fontFamily: `${f.family}, monospace` }}
-                >
-                  {f.label}
-                </Chip>
-              ))}
-            </div>
-          </section>
-
-          <section className="flex flex-col gap-3">
-            <label className="text-sm font-medium text-foreground">Code theme</label>
-            <div className="flex flex-wrap gap-x-4 gap-y-2">
-              {CODE_THEMES.map((t) => (
-                <Chip key={t.id} active={codeTheme === t.id} onClick={() => handleSelectTheme(t.id)}>
-                  {t.label}
-                </Chip>
-              ))}
-            </div>
-          </section>
-
-          <section className="flex flex-col gap-3 border-t border-border pt-5">
-            <SettingRow
-              label="Web search and context (Claude only)"
-              description="Let Claude search the web and fetch GitHub context during generation. More thorough, but slower."
-            >
-              <Toggle
-                checked={enableTools}
-                ariaLabel="Enable AI tools"
-                onChange={() => {
-                  const next = !enableTools;
-                  setEnableTools(next);
-                  saveField({ enableTools: next });
-                }}
-              />
-            </SettingRow>
-
-            <SettingRow
-              label="Parallel review"
-              description="Split generation into a planner step then parallel writers per topic. Faster for large PRs."
-            >
-              <Toggle
-                checked={parallelReview}
-                ariaLabel="Parallel review"
-                onChange={() => {
-                  const next = !parallelReview;
-                  setParallelReview(next);
-                  saveField({ parallelReview: next });
-                }}
-              />
-            </SettingRow>
-
-            <SettingRow
-              label="Education mode"
-              description="Add short explainer notes inside slides for concepts the code assumes knowledge of (e.g. Unit of Work). Helpful for reviewers less familiar with the area."
-            >
-              <Toggle
-                checked={educationMode}
-                ariaLabel="Education mode"
-                onChange={() => {
-                  const next = !educationMode;
-                  setEducationMode(next);
-                  saveField({ educationMode: next });
-                }}
-              />
-            </SettingRow>
-
-            <SettingRow
-              label="Apply project's Claude conventions"
-              description="When reviewing a PR, read the repo's CLAUDE.md and .claude/ (commands, agents, skills) and feed them into the prompt so the review respects the team's Claude Code setup."
-            >
-              <Toggle
-                checked={claudeContext}
-                ariaLabel="Apply project's Claude conventions"
-                onChange={() => {
-                  const next = !claudeContext;
-                  setClaudeContext(next);
-                  saveField({ claudeContext: next });
-                }}
-              />
-            </SettingRow>
-
-            <SettingRow label="Deeper review reasoning" description="Give detailed reviews more reasoning time.">
-              <Toggle
-                checked={thinking}
-                ariaLabel="Deeper review reasoning"
-                onChange={() => {
-                  setThinking(!thinking);
-                  saveField({ thinking: !thinking });
-                }}
-              />
-            </SettingRow>
-            <SettingRow label="Simplify import changes" description="Condense import-only changes in the walkthrough.">
-              <Toggle
-                checked={smartImports}
-                ariaLabel="Simplify import changes"
-                onChange={() => {
-                  setSmartImports(!smartImports);
-                  saveField({ smartImports: !smartImports });
-                }}
-              />
-            </SettingRow>
-            <label className="flex flex-col gap-2 text-sm">
-              Review instructions
-              <textarea
-                value={instructions}
-                rows={3}
-                placeholder="What should reviews focus on?"
-                onChange={(e) => setInstructions(e.target.value)}
-                onBlur={() => saveField({ instructions })}
-                className="rounded-md border border-border bg-background p-2 text-sm"
-              />
-            </label>
+        <Tabs.Root
+          className="settings-tabs"
+          value={section}
+          onValueChange={(value) => setSection(value as SettingsSection)}
+        >
+          <Tabs.List className="settings-sections" aria-label="Settings sections">
+            <Tabs.Trigger value="queue">Queue &amp; briefings</Tabs.Trigger>
+            <Tabs.Trigger value="review">Review</Tabs.Trigger>
+            <Tabs.Trigger value="appearance">Appearance</Tabs.Trigger>
+            <Tabs.Trigger value="integrations">Integrations</Tabs.Trigger>
+          </Tabs.List>
+          <Tabs.Content value="queue" className="settings-panel">
             <SettingRow
               label="Ignore Dependabot PRs"
-              description="Hide Dependabot changes from the queue and automatic briefings. Keep required parents in human-authored stacks."
+              description="Hide Dependabot PRs from the queue and automatic briefings. Keep them visible when a PR by a person builds on them."
             >
               <Toggle
                 checked={ignoreDependabotPrs}
@@ -358,7 +282,7 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
             </SettingRow>
             <SettingRow
               label="Automatic briefings"
-              description="Generate short queue summaries within your daily limit. Open a detailed review when you need it."
+              description="Generate short AI summaries in the background. Queue filters control which PRs and stacks are included; the daily attempt limit still applies."
             >
               <Toggle
                 checked={autoBriefings}
@@ -372,11 +296,16 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
             </SettingRow>
 
             <div className="flex flex-col gap-2 ml-0.5">
-              <label className="text-sm font-medium text-foreground">Watched repos</label>
-              <p className="text-xs text-muted-foreground">Add open PRs from these repositories to your queue.</p>
+              <label htmlFor="watched-repos" className="text-sm font-medium text-foreground">
+                Repositories in your queue
+              </label>
+              <p className="text-xs text-muted-foreground">
+                Add open PRs from these repositories. This does not change your GitHub Watch subscriptions.
+              </p>
               <div className="relative">
                 <div className="flex items-end gap-2">
                   <input
+                    id="watched-repos"
                     type="text"
                     value={watchedRepoInput}
                     placeholder="Search for a repo…"
@@ -415,10 +344,8 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                         <button
                           type="button"
                           className="w-full text-left px-3 py-2 text-sm hover:bg-accent transition-colors flex flex-col gap-0.5"
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            addWatchedRepo(repo.fullName);
-                          }}
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => addWatchedRepo(repo.fullName)}
                         >
                           <span className="font-mono text-xs text-foreground">{repo.fullName}</span>
                           {repo.description && (
@@ -452,34 +379,35 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
               )}
               <div className="flex items-center justify-between gap-4 mt-2">
                 <div className="flex flex-col gap-0.5">
-                  <label className="text-sm font-medium text-foreground">Daily briefing limit</label>
+                  <label htmlFor="settings-briefing-limit" className="text-sm font-medium text-foreground">
+                    Daily briefing limit
+                  </label>
                   <p className="text-xs text-muted-foreground">
-                    Maximum generation attempts per day, including retries.
+                    Maximum automatic briefing attempts per day, including retries. AI explanations do not count toward
+                    this limit.
                   </p>
                 </div>
-                <select
+                <input
+                  id="settings-briefing-limit"
+                  type="number"
+                  min={0}
+                  max={100}
                   value={briefingDailyLimit}
                   onChange={(e) => {
-                    const next = Number(e.target.value);
+                    const next = Math.max(0, Math.min(100, Math.trunc(Number(e.target.value))));
                     setBriefingDailyLimit(next);
                     saveField({ briefingDailyLimit: next });
                   }}
-                  className="bg-transparent border border-border rounded-md px-2 py-1 text-sm text-foreground"
-                >
-                  {[0, 1, 5, 10, 15, 20, 30, 50].map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
-                  ))}
-                </select>
+                  className="w-20 bg-background border border-border rounded-md px-2 py-1 text-sm text-foreground"
+                />
               </div>
 
               <div className="mt-2 pt-3 border-t border-border flex items-center justify-between gap-4">
                 <div className="flex flex-col gap-0.5 min-w-0">
                   <span className="text-sm font-medium text-foreground">Use a different model for briefings</span>
                   <span className="slide-meta">
-                    Override the workbench model for queue summaries. Choosing a model in the workbench clears this
-                    override.
+                    Choose a separate AI model for automatic briefings. Selecting a model in the queue makes reviews and
+                    briefings use that model again.
                   </span>
                 </div>
                 <div className="shrink-0">
@@ -537,7 +465,163 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                 </div>
               )}
             </div>
+          </Tabs.Content>
+          <Tabs.Content value="review" className="settings-panel">
+            <SettingRow
+              label="Web search and context (Claude only)"
+              description="Let Claude search the web and fetch GitHub context during generation. More thorough, but slower."
+            >
+              <Toggle
+                checked={enableTools}
+                ariaLabel="Enable AI tools"
+                onChange={() => {
+                  const next = !enableTools;
+                  setEnableTools(next);
+                  saveField({ enableTools: next });
+                }}
+              />
+            </SettingRow>
 
+            <SettingRow
+              label="Parallel review"
+              description="Generate several review topics at once. This can speed up large reviews and uses concurrent AI requests."
+            >
+              <Toggle
+                checked={parallelReview}
+                ariaLabel="Parallel review"
+                onChange={() => {
+                  const next = !parallelReview;
+                  setParallelReview(next);
+                  saveField({ parallelReview: next });
+                }}
+              />
+            </SettingRow>
+
+            <SettingRow
+              label="Explain background concepts"
+              description="Include short notes about concepts used by the code, alongside the relevant review topic."
+            >
+              <Toggle
+                checked={educationMode}
+                ariaLabel="Explain background concepts"
+                onChange={() => {
+                  const next = !educationMode;
+                  setEducationMode(next);
+                  saveField({ educationMode: next });
+                }}
+              />
+            </SettingRow>
+
+            <SettingRow
+              label="Apply project's Claude conventions"
+              description="Use guidance from the repository’s CLAUDE.md and .claude/ files when generating the review."
+            >
+              <Toggle
+                checked={claudeContext}
+                ariaLabel="Apply project's Claude conventions"
+                onChange={() => {
+                  const next = !claudeContext;
+                  setClaudeContext(next);
+                  saveField({ claudeContext: next });
+                }}
+              />
+            </SettingRow>
+
+            <SettingRow label="Deeper review reasoning" description="Give detailed reviews more reasoning time.">
+              <Toggle
+                checked={thinking}
+                ariaLabel="Deeper review reasoning"
+                onChange={() => {
+                  setThinking(!thinking);
+                  saveField({ thinking: !thinking });
+                }}
+              />
+            </SettingRow>
+            <SettingRow
+              label="Simplify import changes"
+              description="Condense import-only changes in the guided review."
+            >
+              <Toggle
+                checked={smartImports}
+                ariaLabel="Simplify import changes"
+                onChange={() => {
+                  setSmartImports(!smartImports);
+                  saveField({ smartImports: !smartImports });
+                }}
+              />
+            </SettingRow>
+            <label className="flex flex-col gap-2 text-sm">
+              Review instructions
+              <textarea
+                value={instructions}
+                rows={3}
+                placeholder="What should reviews focus on?"
+                onChange={(e) => setInstructions(e.target.value)}
+                onBlur={() => saveField({ instructions })}
+                className="rounded-md border border-border bg-background p-2 text-sm"
+              />
+            </label>
+          </Tabs.Content>
+          <Tabs.Content value="appearance" className="settings-panel">
+            <section className="flex flex-col gap-3">
+              <label className="text-sm font-medium text-foreground">Theme</label>
+              <div className="flex flex-wrap gap-x-4 gap-y-2">
+                {(['light', 'dark', 'system'] as const).map((t) => (
+                  <Chip key={t} active={appTheme === t} onClick={() => handleSelectAppTheme(t)}>
+                    {t === 'light' ? 'Light' : t === 'dark' ? 'Dark' : 'Match system'}
+                  </Chip>
+                ))}
+              </div>
+            </section>
+
+            <label className="settings-field">
+              Code font
+              <select value={codeFont} onChange={(e) => handleSelectFont(e.target.value as CodeFont)}>
+                {CODE_FONTS.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="settings-field">
+              Code theme
+              <select value={codeTheme} onChange={(e) => handleSelectTheme(e.target.value as CodeTheme)}>
+                {CODE_THEMES.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs text-muted-foreground">Code colors are independent of the app theme.</span>
+            </label>
+          </Tabs.Content>
+          <Tabs.Content value="integrations" className="settings-panel">
+            <section className="ai-setup-guide" aria-labelledby="ai-setup-title">
+              <h3 id="ai-setup-title">Set up an AI tool</h3>
+              <p>
+                Gnosis uses Claude Code or Codex on your computer to generate explanations. Install one and sign in to
+                it in your terminal.
+              </p>
+              <p>
+                Choose its model at the top of the work queue. GitHub sign-in connects your PRs; it does not sign you in
+                to the AI tool.
+              </p>
+              <div className="ai-setup-links">
+                <button onClick={() => void window.electronAPI.openExternal('https://code.claude.com/docs/en/setup')}>
+                  Claude Code setup ↗
+                </button>
+                <button
+                  onClick={() => void window.electronAPI.openExternal('https://developers.openai.com/codex/cli/')}
+                >
+                  Codex setup ↗
+                </button>
+              </div>
+              <p>
+                The paths below locate the command-line programs (CLIs). Leave them empty unless automatic detection
+                fails.
+              </p>
+            </section>
             <SettingRow label="Desktop notifications" description="Notify when a review completes">
               <Toggle
                 checked={notifications}
@@ -576,13 +660,14 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                 }}
               />
             </SettingRow>
-          </section>
 
-          <section className="flex flex-col gap-4 border-t border-border pt-5">
             <div className="flex flex-col gap-1.5">
-              <label className="text-sm font-medium text-foreground">Claude CLI path</label>
+              <label htmlFor="claude-path" className="text-sm font-medium text-foreground">
+                Claude Code program path
+              </label>
               <input
                 type="text"
+                id="claude-path"
                 value={claudePath}
                 placeholder={claudeDetected || 'auto-detect'}
                 onChange={(e) => setClaudePath(e.target.value)}
@@ -591,12 +676,10 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
               />
               <p className="slide-meta">Leave empty to auto-detect.</p>
             </div>
-          </section>
 
-          <section className="flex flex-col gap-4 border-t border-border pt-5">
             <div className="flex flex-col gap-1.5">
               <label htmlFor="codex-path" className="text-sm font-medium text-foreground">
-                Codex CLI path
+                Codex program path
               </label>
               <input
                 id="codex-path"
@@ -611,19 +694,18 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
                 Leave empty to auto-detect. Sign in first with <code>codex login</code>.
               </p>
             </div>
-          </section>
 
-          <section className="border-t border-border pt-5 flex flex-col gap-2 items-start">
             {onReplayOnboarding && (
               <button
                 type="button"
                 onClick={() => {
+                  replayingOnboarding.current = true;
                   onReplayOnboarding();
                   onOpenChange(false);
                 }}
                 className="slide-meta hover:text-foreground transition-colors"
               >
-                Replay first-time welcome →
+                Show getting started →
               </button>
             )}
             <button
@@ -633,8 +715,8 @@ export function SettingsDialog({ open, onOpenChange, onThemeChange, onReplayOnbo
             >
               Open logs directory →
             </button>
-          </section>
-        </div>
+          </Tabs.Content>
+        </Tabs.Root>
       </DialogContent>
     </Dialog>
   );

@@ -1,4 +1,6 @@
-import { Octokit } from '@octokit/rest';
+import type { Octokit } from '@octokit/rest';
+import { parseGitHubLabels } from './github-labels';
+import { getGitHubClient } from './github-client';
 import { getProvider } from './provider';
 import type { DiffSource } from './diffSource';
 import type {
@@ -37,6 +39,7 @@ export async function getPrMetadata(
     description: data.body ?? '',
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- GitHub API can return null
     author: data.user?.login ?? 'unknown',
+    assignees: (data.assignees ?? []).map((user) => user.login),
     baseBranch: data.base.ref,
     baseRepo: data.base.repo.full_name,
     // GitHub can return null after a fork is deleted, despite the generated type.
@@ -53,9 +56,15 @@ export async function getPrMetadata(
     url: data.html_url,
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- GitHub API can return null
     labels: (data.labels ?? []).map((l) => (typeof l === 'string' ? l : (l.name ?? ''))).filter(Boolean),
+    // Keep names compatible with older filters and snapshots; details are optional.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- GitHub can omit labels
+    labelDetails: parseGitHubLabels(data.labels ?? []),
     mergeable: data.mergeable ?? null,
     isDraft: data.draft ?? false,
     commitCount: data.commits,
+    changedFileCount: data.changed_files,
+    additions: data.additions,
+    deletions: data.deletions,
     requestedReviewers: (data.requested_reviewers ?? []).map((u) => u.login),
     requestedTeams: (data.requested_teams ?? []).map((t) => t.name),
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- GitHub API can return null
@@ -574,6 +583,7 @@ export async function getFileMetadata(
   // stay well under GitHub's rate limit.
   const metadata: FileMetadata[] = changedFiles.map((f) => ({
     filename: f.filename,
+    previousFilename: f.previous_filename,
     status: f.status,
     additions: f.additions,
     deletions: f.deletions,
@@ -647,7 +657,7 @@ export class GitHubDiffSource implements DiffSource {
 
   constructor(url: string, token: string | null) {
     this.key = url;
-    this.octokit = new Octokit({ auth: token ?? undefined });
+    this.octokit = getGitHubClient(token);
     const parsed = parsePrUrl(url);
     this.owner = parsed.owner;
     this.repo = parsed.repo;

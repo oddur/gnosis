@@ -1,11 +1,7 @@
 import { useMemo } from 'react';
 import { parseDiffLines } from '@/lib/diff-lines';
 import { FilePathLink } from '@/components/FilePathLink';
-import {
-  parseShikiLines,
-  extractShikiStyles,
-  lineAnchorAttrs,
-} from '@/components/shared-diff-utils';
+import { parseShikiLines, extractShikiStyles, lineAnchorAttrs } from '@/components/shared-diff-utils';
 import type { DiffHunk as DiffHunkType } from '@/lib/types';
 
 interface Props {
@@ -31,17 +27,20 @@ export function DiffHunk({ hunk, showFileHeader = true, gitFileUrlBase }: Props)
 }
 
 interface GroupedProps {
+  showFileHeader?: boolean;
   filePath: string;
   hunks: DiffHunkType[];
   gitFileUrlBase?: string | null;
 }
 
-export function DiffHunkGroup({ filePath, hunks, gitFileUrlBase }: GroupedProps) {
+export function DiffHunkGroup({ filePath, hunks, gitFileUrlBase, showFileHeader = true }: GroupedProps) {
   return (
     <div className="rounded-md border overflow-x-auto">
-      <div className="bg-muted/50 px-3 py-2 font-mono text-xs text-muted-foreground border-b truncate">
-        <FilePathLink filePath={filePath} gitFileUrlBase={gitFileUrlBase} />
-      </div>
+      {showFileHeader && (
+        <div className="bg-muted/50 px-3 py-2 font-mono text-xs text-muted-foreground border-b truncate">
+          <FilePathLink filePath={filePath} gitFileUrlBase={gitFileUrlBase} />
+        </div>
+      )}
       {hunks.map((hunk, i) => (
         <div key={i}>
           {i > 0 && <div className="border-t border-dashed border-muted" />}
@@ -114,8 +113,7 @@ function PlainHunk({ hunk, filePath }: { hunk: DiffHunkType; filePath: string })
                     marginRight: '1ch',
                     userSelect: 'none',
                     flexShrink: 0,
-                    color:
-                      info.type === 'add' ? '#3fb950' : info.type === 'remove' ? '#f85149' : 'transparent',
+                    color: info.type === 'add' ? '#3fb950' : info.type === 'remove' ? '#f85149' : 'transparent',
                   }}
                 >
                   {info.type === 'add' ? '+' : info.type === 'remove' ? '-' : ' '}

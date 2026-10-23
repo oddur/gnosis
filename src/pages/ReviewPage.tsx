@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { DEFAULT_DIFF_APPEARANCE, type DiffAppearance } from '../../lib/review-diff';
 import { ArrowLeft, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react';
 import { PRSummaryBanner } from '../../components/PRSummaryBanner';
 import { StaleBanner } from '../../components/StaleBanner';
@@ -6,14 +7,17 @@ import { WorkbenchOverview } from '../../components/WorkbenchOverview';
 import { coverageKey, sourceForPath, subjectForReview } from '../../lib/workbench';
 import { SlideView } from '../../components/SlideView';
 import { ExplainerView } from '../../components/ExplainerView';
+import { toast } from '../../components/ui/toast';
 import { SlideNav } from '../../components/SlideNav';
 import { TocRail } from '../../components/TocRail';
 import { SlideChatSheet } from '../../components/SlideChatSheet';
 import { SubmitReviewDialog } from '../../components/SubmitReviewDialog';
+import { WorkbenchHelp } from '../../components/WorkbenchHelp';
 import { SettingsDialog } from '../../components/SettingsDialog';
 import { ShortcutOverlay } from '../../components/ShortcutOverlay';
 import { CommandPalette, type Command } from '../../components/CommandPalette';
 import { useReviewComments } from '../../lib/use-review-comments';
+import { useViewedFiles } from '../../lib/use-viewed-files';
 import { useSlideChat } from '../../lib/use-slide-chat';
 import { useKeyboardShortcuts, type ShortcutMap } from '../../lib/use-keyboard-shortcuts';
 import { buildFileUrlBase } from '../../lib/github-url';
@@ -27,6 +31,7 @@ interface Props {
   onReReview: (prUrl: string) => void;
   initialSlideId?: string;
   exploreInitially?: boolean;
+  onShowActivity: () => void;
 }
 
 // localStorage key for review progress. Keyed by prUrl + headSha so
@@ -86,8 +91,16 @@ function saveChecks(review: ReviewGuide, checked: Set<string>) {
   }
 }
 
-export function ReviewPage({ review: initialReview, onBack, onReReview, initialSlideId, exploreInitially }: Props) {
+export function ReviewPage({
+  review: initialReview,
+  onBack,
+  onReReview,
+  initialSlideId,
+  exploreInitially,
+  onShowActivity,
+}: Props) {
   const [review, setReview] = useState(initialReview);
+  const { viewedFiles, setFileViewed } = useViewedFiles(review);
   const [currentSlide, setCurrentSlide] = useState(() => {
     if (initialSlideId) return initialReview.slides.find((s) => s.id === initialSlideId)?.slideNumber ?? 0;
     const saved = Number(
@@ -121,9 +134,64 @@ export function ReviewPage({ review: initialReview, onBack, onReReview, initialS
   const [diffLayout, setDiffLayout] = useState<Preferences['diffLayout']>('unified');
   const [slideViewMode, setSlideViewMode] = useState<'split' | 'focus'>('split');
   const [prefs, setPrefs] = useState<Preferences | null>(null);
+  const diffAppearance = useMemo(
+    () => ({ ...DEFAULT_DIFF_APPEARANCE, ...prefs?.diffAppearance }),
+    [prefs?.diffAppearance]
+  );
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [exploreOpen, setExploreOpen] = useState(exploreInitially ?? false);
+  const generatingExplainers = useRef(new Set<string>());
+
+  function openExplainer() {
+    const slide = review.slides[currentSlide - 1];
+    if (!review.reviewId) return;
+    if (slide.explainer) {
+      setChatOpen(false);
+      setExploreOpen(true);
+      return;
+    }
+    if (generatingExplainers.current.has(slide.id)) {
+      onShowActivity();
+      return;
+    }
+    generatingExplainers.current.add(slide.id);
+    const notification = toast.add({
+      title: 'Building interactive explanation',
+      description: 'Keep reviewing. We’ll notify you when it’s ready.',
+      actionProps: {
+        children: 'View activity',
+        onClick: () => {
+          onShowActivity();
+          toast.close(notification);
+        },
+      },
+    });
+    void window.electronAPI
+      .generateExplainer({ reviewId: review.reviewId, slideId: slide.id })
+      .then((artifact) => {
+        setReview((previous) => ({
+          ...previous,
+          slides: previous.slides.map((s) => (s.id === slide.id ? { ...s, explainer: artifact } : s)),
+        }));
+        toast.close(notification);
+      })
+      .catch(() => {
+        toast.close(notification);
+        const failed = toast.add({
+          title: 'Interactive explanation stopped',
+          description: 'View Activity for details and retry options.',
+          actionProps: {
+            children: 'View activity',
+            onClick: () => {
+              onShowActivity();
+              toast.close(failed);
+            },
+          },
+        });
+      })
+      .finally(() => generatingExplainers.current.delete(slide.id));
+  }
 
   // Per-section "mark reviewed" progress. Persisted to localStorage
   // keyed by prUrl + headSha so each review generation is tracked
@@ -339,6 +407,21 @@ export function ReviewPage({ review: initialReview, onBack, onReReview, initialS
     [prefs]
   );
 
+  const handleDiffAppearanceChange = useCallback((value: DiffAppearance) => {
+    setPrefs((current) => (current ? { ...current, diffAppearance: value } : current));
+    // Read current settings so appearance changes cannot revert unrelated preferences.
+    void window.electronAPI
+      .loadPreferences()
+      .then((current) => window.electronAPI.savePreferences({ ...current, diffAppearance: value }));
+  }, []);
+
+  const handleShowInlineExplanationsChange = useCallback((show: boolean) => {
+    setPrefs((current) => (current ? { ...current, showInlineExplanations: show } : current));
+    void window.electronAPI
+      .loadPreferences()
+      .then((current) => window.electronAPI.savePreferences({ ...current, showInlineExplanations: show }));
+  }, []);
+
   // Build the keyboard shortcut map. The hook handles input
   // suppression, modifier signatures, and two-key sequences.
   // Declared after handleDiffLayoutChange so the closures land
@@ -443,7 +526,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview, initialS
         },
         {
           id: 'chat',
-          label: 'Ask about this slide',
+          label: 'Ask about this topic',
           hint: 'c',
           group: 'Reviewing',
           keywords: 'chat question follow up',
@@ -455,7 +538,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview, initialS
     commands.push(
       {
         id: 'submit',
-        label: comments.length > 0 ? `Submit review (${comments.length} comments)` : 'Submit review',
+        label: comments.length > 0 ? `Submit to GitHub (${comments.length} comments)` : 'Submit to GitHub',
         group: 'Reviewing',
         keywords: 'send post approve',
         perform: () => setShowSubmitDialog(true),
@@ -524,7 +607,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview, initialS
           <div className="slide-chapter">
             <span>Empty review</span>
           </div>
-          <h1 className="slide-title">No slides were generated for this PR.</h1>
+          <h1 className="slide-title">No review topics were generated for this PR.</h1>
           <p className="slide-prose">
             This happens when the diff is empty, every file was filtered as boilerplate, or the model couldn't parse the
             change structure. Try re-running with different settings or a different model.
@@ -574,6 +657,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview, initialS
       {freshness && <StaleBanner freshness={freshness} onReReview={() => onReReview(review.prUrl)} />}
 
       <div className="review-toolbar">
+        <WorkbenchHelp />
         <button onClick={() => setNavOpen((v) => !v)} aria-pressed={navOpen} title="Toggle topic navigation">
           {navOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}Topics
         </button>
@@ -595,12 +679,12 @@ export function ReviewPage({ review: initialReview, onBack, onReReview, initialS
         {exploreOpen && (
           <button onClick={() => setExploreOpen(false)}>
             <X size={13} />
-            Close exploration
+            Close interactive explanation
           </button>
         )}
         {review.snapshot?.subject.kind === 'stack' && (
           <label className="ml-auto flex items-center gap-2 text-xs">
-            Review action for
+            Send feedback to
             <select
               aria-label="PR for review submission"
               value={submitUrl}
@@ -641,7 +725,12 @@ export function ReviewPage({ review: initialReview, onBack, onReReview, initialS
             />
           ) : (
             <SlideView
+              key={review.snapshot?.fingerprint ?? review.headSha ?? review.reviewId}
               review={review}
+              viewedFiles={viewedFiles}
+              onFileViewedChange={setFileViewed}
+              showInlineExplanations={prefs?.showInlineExplanations !== false}
+              onShowInlineExplanationsChange={handleShowInlineExplanationsChange}
               slide={review.slides[currentSlide - 1]}
               slideNumber={currentSlide}
               totalSlides={review.slides.length}
@@ -651,19 +740,14 @@ export function ReviewPage({ review: initialReview, onBack, onReReview, initialS
               pendingComments={comments}
               commentCallbacks={commentCallbacks}
               diffLayout={diffLayout}
+              diffAppearance={diffAppearance}
+              onDiffAppearanceChange={handleDiffAppearanceChange}
               onDiffLayoutChange={handleDiffLayoutChange}
               onAskQuestion={() => {
                 setExploreOpen(false);
                 setChatOpen(true);
               }}
-              onExplore={
-                review.reviewId
-                  ? () => {
-                      setChatOpen(false);
-                      setExploreOpen(true);
-                    }
-                  : undefined
-              }
+              onExplore={review.reviewId ? openExplainer : undefined}
               onAskAboutSelection={(code) => {
                 setExploreOpen(false);
                 setChatQuotedCode(code);
@@ -699,6 +783,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview, initialS
                     reviewId={review.reviewId}
                     slide={review.slides[currentSlide - 1]}
                     onClose={() => setExploreOpen(false)}
+                    onShowActivity={onShowActivity}
                     onSaved={(artifact) =>
                       setReview((prev) => ({
                         ...prev,
@@ -740,6 +825,7 @@ export function ReviewPage({ review: initialReview, onBack, onReReview, initialS
       )}
 
       <SettingsDialog
+        initialSection="review"
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         onThemeChange={async () => {

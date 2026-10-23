@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { FreshnessResult } from '../lib/types';
 import { timeAgo } from '../lib/utils';
+import { githubFailureMessage } from '../lib/github-feedback';
 
 interface Props {
   freshness: FreshnessResult;
@@ -21,7 +22,7 @@ export function StaleBanner({ freshness, onReReview }: Props) {
   if (freshness.status === 'current') {
     return (
       <div className="staleBanner-current border-b border-[var(--color-success)]/24 px-6 py-1.5 text-xs">
-        Up to date
+        Explanation includes the latest changes
       </div>
     );
   }
@@ -29,7 +30,13 @@ export function StaleBanner({ freshness, onReReview }: Props) {
   if (freshness.status === 'unknown') {
     return (
       <div className="staleBanner-unknown border-b border-border px-6 py-1.5 text-xs">
-        Couldn't check freshness: {freshness.reason}
+        <p>Couldn’t check for newer changes. {githubFailureMessage(freshness.reason)}</p>
+        {freshness.reason && (
+          <details className="status-diagnostics">
+            <summary>Technical details</summary>
+            <p>{freshness.reason}</p>
+          </details>
+        )}
       </div>
     );
   }
@@ -37,9 +44,9 @@ export function StaleBanner({ freshness, onReReview }: Props) {
   if (freshness.status === 'force-pushed') {
     return (
       <div className="staleBanner-warn border-b border-[var(--color-warning)]/28 px-6 py-1.5 text-xs flex items-center justify-between gap-2">
-        <span>PR was force-pushed since this review was generated.</span>
+        <span>PR history was rewritten after this explanation was generated.</span>
         <button onClick={onReReview} className="staleBanner-warn-btn px-2 py-0.5 rounded-sm text-xs transition-colors">
-          Re-review
+          Generate updated explanation
         </button>
       </div>
     );
@@ -58,10 +65,10 @@ export function StaleBanner({ freshness, onReReview }: Props) {
           className="staleBanner-warn-toggle inline-flex items-center gap-1.5 text-left transition-colors"
         >
           {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-          {freshness.reason ?? `${aheadBy} commit${aheadBy !== 1 ? 's' : ''} behind`}
+          {freshness.reason ?? `${aheadBy} new commit${aheadBy !== 1 ? 's' : ''} since this explanation was generated`}
         </button>
         <button onClick={onReReview} className="staleBanner-warn-btn px-2 py-0.5 rounded-sm text-xs transition-colors">
-          Re-review
+          Generate updated explanation
         </button>
       </div>
 
