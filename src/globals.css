@@ -1715,8 +1715,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .overview-summary { max-width:75ch; font-size:var(--type-prose); line-height:1.7; margin-top:16px; }
 .overview-columns { display:grid;grid-template-columns:minmax(0,1.4fr) minmax(240px,1fr);gap:32px; }
 /* PR overview: readiness first, bounded reading, shared queue navigation. */
-.pr-summary-page { --pr-frame-width:900px; flex:1; min-height:0; overflow:auto; }
-.pr-summary-page.is-stack { --pr-frame-width:1160px; }
+.pr-summary-page { --pr-frame-width:1160px; flex:1; min-height:0; overflow:auto; scrollbar-gutter:stable; }
 .pr-summary-toolbar { border-bottom:1px solid var(--border); background:var(--background); position:sticky; top:0; z-index:5; }
 .pr-summary-toolbar-inner { max-width:var(--pr-frame-width); margin:auto; padding:10px 24px; display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
 .pr-back,.pr-summary-actions,.pr-github-link { display:inline-flex; align-items:center; gap:8px; font-size:var(--type-control); }
