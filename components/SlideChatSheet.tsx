@@ -119,7 +119,7 @@ export function SlideChatSheet({
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const dragging = useRef(false);
+  const dragging = useRef<{ id: number; target: HTMLButtonElement; cursor: string; select: string } | null>(null);
   const didDrag = useRef(false);
 
   const scrollToBottom = useCallback(() => {
@@ -137,33 +137,59 @@ export function SlideChatSheet({
     }
   }, [open]);
 
-  // Drag-to-resize: attach to window so dragging works even if cursor leaves the handle
-  useEffect(() => {
-    function onMouseMove(e: MouseEvent) {
-      if (!dragging.current) return;
-      didDrag.current = true;
-      const newWidth = window.innerWidth - e.clientX;
-      setWidth(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, newWidth)));
-    }
-    function onMouseUp() {
-      if (dragging.current) {
-        dragging.current = false;
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-      }
-    }
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
-    return () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-    };
+  const finishResize = useCallback(() => {
+    const drag = dragging.current;
+    if (!drag) return;
+    dragging.current = null;
+    document.body.style.cursor = drag.cursor;
+    document.body.style.userSelect = drag.select;
+    if (drag.target.hasPointerCapture(drag.id)) drag.target.releasePointerCapture(drag.id);
   }, []);
 
-  function handleHandleMouseDown(e: React.MouseEvent) {
-    if (!open) return; // only resize when open
-    e.preventDefault();
-    dragging.current = true;
+  const cancelResize = useCallback(() => {
+    if (dragging.current) didDrag.current = true;
+    finishResize();
+  }, [finishResize]);
+
+  useEffect(() => {
+    const move = (event: PointerEvent) => {
+      if (!dragging.current || event.pointerId !== dragging.current.id) return;
+      if (event.pointerType === 'mouse' && !(event.buttons & 1)) {
+        cancelResize();
+        return;
+      }
+      didDrag.current = true;
+      setWidth(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, window.innerWidth - event.clientX)));
+    };
+    const end = (event: PointerEvent) => {
+      if (event.pointerId === dragging.current?.id) finishResize();
+    };
+    const cancel = (event: PointerEvent) => {
+      if (event.pointerId === dragging.current?.id) cancelResize();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', cancel);
+    window.addEventListener('blur', cancelResize);
+    return () => {
+      finishResize();
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', cancel);
+      window.removeEventListener('blur', cancelResize);
+    };
+  }, [finishResize, cancelResize]);
+
+  function handleHandlePointerDown(event: React.PointerEvent<HTMLButtonElement>) {
+    if (!open || !event.isPrimary || event.button !== 0 || dragging.current) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragging.current = {
+      id: event.pointerId,
+      target: event.currentTarget,
+      cursor: document.body.style.cursor,
+      select: document.body.style.userSelect,
+    };
     didDrag.current = false;
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
@@ -190,6 +216,7 @@ export function SlideChatSheet({
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.nativeEvent.isComposing) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -201,7 +228,18 @@ export function SlideChatSheet({
       {/* Handle / toggle bar — hairline divider, no fill. */}
       <button
         type="button"
-        onMouseDown={handleHandleMouseDown}
+        onPointerDown={handleHandlePointerDown}
+        onLostPointerCapture={cancelResize}
+        onKeyDown={(event) => {
+          if (!open || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+          event.preventDefault();
+          setWidth((current) =>
+            Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, current + (event.key === 'ArrowLeft' ? 40 : -40)))
+          );
+        }}
+        aria-expanded={open}
+        aria-description="Drag to resize, or use Left and Right arrow keys. Activate to collapse or expand."
+        style={{ touchAction: 'none' }}
         onClick={handleHandleClick}
         className={`${embedded ? 'hidden' : ''} group relative flex items-center justify-center w-4 border-l border-border hover:bg-muted/30 transition-colors ${open ? 'cursor-col-resize' : 'cursor-pointer'}`}
         aria-label={open ? 'Collapse chat panel' : 'Expand chat panel'}
@@ -220,9 +258,12 @@ export function SlideChatSheet({
       {/* Panel content */}
       <div
         className="overflow-hidden transition-[width] duration-300 ease-out"
-        style={{ width: embedded ? '100%' : open ? width : 0 }}
+        style={{ width: embedded ? '100%' : open ? width : 0, maxWidth: 'calc(100vw - 1rem)' }}
       >
-        <div className="h-full flex flex-col bg-background" style={{ minWidth: embedded ? 0 : width }}>
+        <div
+          className="h-full flex flex-col bg-background"
+          style={{ minWidth: 0, width: embedded ? '100%' : width, maxWidth: '100%' }}
+        >
           {/* Topic context stays separate from the conversation. */}
           <div className="border-b border-border px-6 py-4">
             <h3 className="editorial-heading">Ask about this topic</h3>
@@ -269,6 +310,8 @@ export function SlideChatSheet({
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
+                aria-label="Question about this topic"
+                dir="auto"
                 placeholder="Ask a question about this slide…"
                 rows={2}
                 className="flex-1 resize-none bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground transition-colors"
