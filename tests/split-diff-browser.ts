@@ -156,8 +156,11 @@ void app.whenReady().then(async () => {
       false,
       'A review check reveals its target inside a collapsed file'
     );
+    await js('document.fonts.ready');
     await js(`(() => {
       const line = window.diffRoot('metadata-added').querySelector('[data-line-number="1"]');
+      // Stop the check-link's smooth scroll before testing independent selection scrolling.
+      line.scrollIntoView({behavior:'instant', block:'center'});
       const range = document.createRange(); range.selectNodeContents(line);
       const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
       line.dispatchEvent(new MouseEvent('mouseup', {bubbles:true, composed:true}));
@@ -197,10 +200,10 @@ void app.whenReady().then(async () => {
     await waitForAnchoredMenu();
     // The page can scroll independently of the nested diff pane.
     const previousScroll = await js<number>('window.scrollY');
-    await js('window.scrollBy(0, 40)');
+    await js('window.scrollBy({top:40, behavior:"instant"})');
     await wait(`window.scrollY === ${previousScroll + 40}`);
     await waitForAnchoredMenu();
-    await js(`window.scrollTo(0, ${previousScroll})`);
+    await js(`window.scrollTo({top:${previousScroll}, behavior:"instant"})`);
     await wait(`window.scrollY === ${previousScroll}`);
     await waitForAnchoredMenu();
     fs.writeFileSync(

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { githubAccessMessage } from '../lib/github-auth';
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({
@@ -26,7 +28,10 @@ void app.whenReady().then(async () => {
   const capture = async (name: string) => {
     await js('document.fonts.ready');
     await new Promise((r) => setTimeout(r, 150));
-    fs.writeFileSync('/tmp/gnosis-auth-' + name + '.png', (await win.webContents.capturePage()).toPNG());
+    fs.writeFileSync(
+      path.join(os.tmpdir(), 'gnosis-auth-' + name + '.png'),
+      (await win.webContents.capturePage()).toPNG()
+    );
   };
   try {
     const url = process.env.GNOSIS_WORKBENCH_URL;

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({
     width: 1280,
@@ -20,7 +22,10 @@ void app.whenReady().then(async () => {
     js(`[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(label)}).click()`);
   const capture = async (name: string) => {
     await js('document.fonts.ready');
-    fs.writeFileSync(`/tmp/gnosis-onboarding-${name}.png`, (await win.webContents.capturePage()).toPNG());
+    fs.writeFileSync(
+      path.join(os.tmpdir(), `gnosis-onboarding-${name}.png`),
+      (await win.webContents.capturePage()).toPNG()
+    );
   };
   try {
     const url = process.env.GNOSIS_WORKBENCH_URL;
