@@ -925,3 +925,211 @@ void test('a failed batch drains its successful reads before checkpointing and c
     s.cleanup();
   }
 });
+
+void test('discovery exhausts personal search and watched repository pages without truncation warnings', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  const prs = Array.from({ length: 205 }, (_, i) => ({
+    ...structuredClone(s.pr),
+    html_url: `https://github.com/owner/repo/pull/${i + 1}`,
+    head: { ...s.pr.head, ref: `branch-${i}` },
+    base: { ...s.pr.base, repo: { ...s.pr.base.repo, default_branch: 'main' } },
+  }));
+  const pages: number[] = [];
+  s.prefs.watchedRepos = ['owner/repo'];
+  Object.assign(s.deps.client().search, {
+    issuesAndPullRequests: ({ page = 1 }: { page?: number }) =>
+      Promise.resolve({
+        data: {
+          total_count: 105,
+          incomplete_results: false,
+          items: prs.slice((page - 1) * 100, Math.min(page * 100, 105)).map((pr, i) => ({
+            number: (page - 1) * 100 + i + 1,
+            title: pr.title,
+            html_url: pr.html_url,
+            repository_url: 'https://api.github.com/repos/owner/repo',
+            user: pr.user,
+            updated_at: pr.updated_at,
+          })),
+        },
+      }),
+  });
+  Object.assign(s.deps.client().pulls, {
+    get: ({ pull_number }: { pull_number: number }) => Promise.resolve({ data: prs[pull_number - 1] }),
+    list: ({ page = 1 }: { page?: number }) => {
+      pages.push(page);
+      return Promise.resolve({ data: prs.slice((page - 1) * 100, page * 100) });
+    },
+  });
+  try {
+    const q = await s.service.queue();
+    assert.equal(q.items.length, 205);
+    assert.deepEqual(pages, [1, 2, 3], 'Stack discovery must reuse the complete repository listing');
+    assert.deepEqual(q.warnings, []);
+  } finally {
+    s.cleanup();
+  }
+});
+
+void test('search and repository pagination resume saved pages after rate limits and restarts', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  let now = Date.now();
+  const deps = { ...s.deps, now: () => now };
+  const prs = Array.from({ length: 101 }, (_, i) => ({
+    ...structuredClone(s.pr),
+    html_url: `https://github.com/owner/repo/pull/${i + 1}`,
+    head: { ...s.pr.head, ref: `branch-${i}` },
+    base: { ...s.pr.base, repo: { ...s.pr.base.repo, default_branch: 'main' } },
+  }));
+  let phase = 0;
+  const calls: string[] = [];
+  const limited = () =>
+    Object.assign(new Error('Secondary rate limit'), {
+      status: 429,
+      response: { headers: { 'retry-after': '120' } },
+    });
+  s.prefs.watchedRepos = ['owner/repo'];
+  Object.assign(s.deps.client().search, {
+    issuesAndPullRequests: ({ page = 1, q }: { page?: number; q: string }) => {
+      if (q.includes('review-requested:')) return Promise.resolve({ data: { items: [], total_count: 0 } });
+      calls.push(`search:${page}`);
+      if (phase === 0 && page === 2) return Promise.reject(limited());
+      return Promise.resolve({
+        data: {
+          total_count: 101,
+          items: prs.slice((page - 1) * 100, page * 100).map((pr) => ({
+            number: Number(pr.html_url.split('/').at(-1)),
+            title: pr.title,
+            html_url: pr.html_url,
+            repository_url: 'https://api.github.com/repos/owner/repo',
+            user: pr.user,
+            updated_at: pr.updated_at,
+          })),
+        },
+      });
+    },
+  });
+  Object.assign(s.deps.client().pulls, {
+    get: ({ pull_number }: { pull_number: number }) => Promise.resolve({ data: prs[pull_number - 1] }),
+    list: ({ page = 1 }: { page?: number }) => {
+      calls.push(`repo:${page}`);
+      if (phase === 1 && page === 2) return Promise.reject(limited());
+      return Promise.resolve({ data: prs.slice((page - 1) * 100, page * 100) });
+    },
+  });
+  try {
+    await createWorkbenchService(deps).queue();
+    assert.equal(s.deps.activities.list()[0].status, 'paused');
+    phase = 1;
+    now += 121_001;
+    await createWorkbenchService(deps).queue();
+    assert.equal(s.deps.activities.list()[0].status, 'paused');
+    phase = 2;
+    now += 121_001;
+    const q = await createWorkbenchService(deps).queue();
+    assert.equal(q.items.length, 101);
+    assert.deepEqual(q.warnings, []);
+    assert.deepEqual(calls, ['search:1', 'search:2', 'search:2', 'repo:1', 'repo:2', 'repo:2']);
+  } finally {
+    s.cleanup();
+  }
+});
+
+void test('personal discovery splits searches above GitHub’s 1000-result ceiling and drains every window', async () => {
+  const { createDiscoveryListings } = await import('../lib/github-discovery');
+  const s = setup(() => Promise.resolve(''), false);
+  const calls: string[] = [];
+  const prs = Array.from({ length: 1001 }, (_, i) => ({
+    number: i + 1,
+    title: 'A change',
+    html_url: `https://github.com/owner/repo/pull/${i + 1}`,
+    repository_url: 'https://api.github.com/repos/owner/repo',
+    user: { login: 'author' },
+    updated_at: new Date((i + 1) * 1000).toISOString(),
+  }));
+  Object.assign(s.deps.client().search, {
+    issuesAndPullRequests: ({ page, q }: { page: number; q: string }) => {
+      calls.push(q);
+      if (q.includes('review-requested:')) return Promise.resolve({ data: { items: [], total_count: 0 } });
+      const range = /created:(\S+)\.\.(\S+)/.exec(q);
+      assert.ok(range);
+      const from = Date.parse(range[1]) / 1000,
+        to = Date.parse(range[2]) / 1000;
+      const matches = prs.filter((pr) => pr.number >= from && pr.number <= to);
+      assert.ok(page <= 10, 'Never request an inaccessible search page');
+      return Promise.resolve({
+        data: {
+          total_count: matches.length,
+          incomplete_results: false,
+          items: matches.slice((page - 1) * 100, page * 100),
+        },
+      });
+    },
+  });
+  try {
+    const listing = createDiscoveryListings(
+      s.deps.client(),
+      { searches: {}, repos: {} },
+      {
+        login: 'reviewer',
+        now: 2000_000,
+        beforeRead: () => {},
+        save: () => {},
+        progress: () => {},
+      }
+    );
+    const found = await listing.personal();
+    assert.equal(found.length, 1001);
+    assert.equal(new Set(found.map((pr) => pr.url)).size, 1001);
+    assert.ok(calls.some((q) => q.includes('1970-01-01T00:16:41Z')));
+  } finally {
+    s.cleanup();
+  }
+});
+
+void test('stack discovery finds a connected PR on later pages without adding unrelated PRs', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  const prs = Array.from({ length: 101 }, (_, i) => ({
+    ...structuredClone(s.pr),
+    html_url: `https://github.com/owner/repo/pull/${i + 1}`,
+    head: { ...s.pr.head, ref: i === 0 ? 'queue' : `branch-${i}` },
+    base: { ...s.pr.base, ref: i === 100 ? 'queue' : 'main', repo: { ...s.pr.base.repo, default_branch: 'main' } },
+  }));
+  Object.assign(s.deps.client().pulls, {
+    get: ({ pull_number }: { pull_number: number }) => Promise.resolve({ data: prs[pull_number - 1] }),
+    list: ({ page = 1 }: { page?: number }) => Promise.resolve({ data: prs.slice((page - 1) * 100, page * 100) }),
+  });
+  try {
+    const q = await s.service.queue();
+    assert.equal(q.items.length, 1);
+    assert.deepEqual(
+      q.items[0].subject.members.map((m) => m.number),
+      [1, 101]
+    );
+    assert.deepEqual(q.warnings, []);
+  } finally {
+    s.cleanup();
+  }
+});
+
+void test('incomplete GitHub search pages remain retryable instead of being saved as complete', async () => {
+  const { createDiscoveryListings } = await import('../lib/github-discovery');
+  const state = { searches: {}, repos: {} };
+  const s = setup(() => Promise.resolve(''), false);
+  let incomplete = true;
+  const pages: number[] = [];
+  Object.assign(s.deps.client().search, {
+    issuesAndPullRequests: ({ page }: { page: number }) => {
+      pages.push(page);
+      return Promise.resolve({ data: { items: [], total_count: 0, incomplete_results: incomplete } });
+    },
+  });
+  const options = { login: 'reviewer', now: Date.now(), beforeRead: () => {}, save: () => {}, progress: () => {} };
+  try {
+    await assert.rejects(createDiscoveryListings(s.deps.client(), state, options).personal(), /incomplete search/);
+    incomplete = false;
+    assert.deepEqual(await createDiscoveryListings(s.deps.client(), state, options).personal(), []);
+    assert.deepEqual(pages, [1, 1, 1]);
+  } finally {
+    s.cleanup();
+  }
+});

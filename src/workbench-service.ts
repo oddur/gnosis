@@ -18,7 +18,8 @@ import {
   githubRateLimit,
   type GitHubBackoffError,
 } from '../lib/github-client';
-import { getPrMetadata, parsePrUrl, searchPullRequests, getChangedFiles } from '../lib/github';
+import { getPrMetadata, parsePrUrl, getChangedFiles } from '../lib/github';
+import { createDiscoveryListings, type DiscoveryListings } from '../lib/github-discovery';
 import { getProvider } from '../lib/provider';
 import {
   groupSubjects,
@@ -50,6 +51,7 @@ interface State {
     key: string;
     members: ReviewMember[];
     checkedAt: Record<string, number>;
+    listings?: DiscoveryListings;
   };
 }
 export type WorkbenchPreferences = Pick<
@@ -206,24 +208,14 @@ export function createWorkbenchService(deps: Deps) {
     const s = load();
     const octokit = deps.client?.() ?? getGitHubClient(token);
     const discoverySettings = discoveryKey();
-    if (force) githubCacheFor(octokit)?.revalidate();
-    warnings = [];
     const pending = s.discoveryProgress?.key === discoverySettings ? s.discoveryProgress : undefined;
+    // Retry continues an interrupted discovery; a completed refresh starts fresh.
+    if (force && !pending) githubCacheFor(octokit)?.revalidate();
+    warnings = [];
     const checkedAt = { ...s.checkedAt, ...pending?.checkedAt };
     const checkAllowance = () => {
       const paused = githubClients.backoff(token, true);
       if (paused) throw paused;
-    };
-    const repoLists = new Map<string, ReturnType<typeof octokit.pulls.list>>();
-    const listRepo = (fullName: string) => {
-      let result = repoLists.get(fullName);
-      if (!result) {
-        checkAllowance();
-        const [owner, repo] = fullName.split('/');
-        result = octokit.pulls.list({ owner, repo, state: 'open', per_page: 100, sort: 'updated', direction: 'desc' });
-        repoLists.set(fullName, result);
-      }
-      return result;
     };
     const prefs = deps.preferences();
     const previousMembers = new Map([
@@ -232,20 +224,29 @@ export function createWorkbenchService(deps: Deps) {
     ]);
     const members = new Map<string, ReviewMember>();
     const completed = new Map((pending?.members ?? []).map((m) => [m.url, m] as const));
+    const listingState = pending?.listings ?? { searches: {}, repos: {} };
+    let finished = false;
     const checkpoint = () => {
-      if (discoveryKey() !== discoverySettings || deps.auth().login !== login || !completed.size) return;
+      if (finished || discoveryKey() !== discoverySettings || deps.auth().login !== login) return;
       s.discoveryProgress = {
         key: discoverySettings,
+        listings: listingState,
         members: [...completed.values()],
         checkedAt: Object.fromEntries([...completed.keys()].map((url) => [url, checkedAt[url]])),
       };
       save();
     };
+    const listings = createDiscoveryListings(octokit, listingState, {
+      login,
+      now: now(),
+      beforeRead: checkAllowance,
+      save: checkpoint,
+      progress,
+    });
+    const listRepo = (fullName: string) => listings.repository(fullName);
     try {
       progress('Finding your pull requests');
-      const found = await searchPullRequests(octokit, login, 100);
-      if (found.length === 100)
-        warnings.push('Your personal queue reached its search limit. Some changes may be missing.');
+      const found = await listings.personal();
       const seeds = new Map<string, Pick<PrSearchResult, 'url' | 'role' | 'updatedAt'>>(
         found.filter((m) => prefs.ignoreDependabotPrs === false || !isDependabot(m.author)).map((m) => [m.url, m])
       );
@@ -291,10 +292,10 @@ export function createWorkbenchService(deps: Deps) {
         const cached = previousMembers.get(url);
         const updatedAt = listed?.updated_at ?? seeds.get(url)?.updatedAt;
         if (
-          !force &&
+          (!force || completed.has(url)) &&
           cached &&
           updatedAt === cached.updatedAt &&
-          now() - (checkedAt[url] ?? 0) < 15 * 60_000 &&
+          (completed.has(url) || now() - (checkedAt[url] ?? 0) < 15 * 60_000) &&
           (!listed ||
             (cached.headSha === listed.head.sha &&
               cached.baseSha === listed.base.sha &&
@@ -344,34 +345,35 @@ export function createWorkbenchService(deps: Deps) {
         const [owner, repo] = fullName.split('/');
         try {
           const { data } = await listRepo(fullName);
-          if (data.length === 100)
-            warnings.push(`${fullName} has at least 100 open PRs. Some PRs may be missing from their stacks.`);
-          // Only add connected siblings, not every PR in the repository.
+          // Index branch relationships once. Scanning every pair of PRs becomes
+          // expensive now that repository discovery includes every page.
+          const byUrl = new Map(data.map((pr) => [pr.html_url, pr]));
+          const byHead = new Map<string, string[]>();
+          const byBase = new Map<string, string[]>();
+          const branchKey = (repo: string, ref: string) => JSON.stringify([repo, ref]);
+          for (const pr of data) {
+            const base = branchKey(pr.base.repo.full_name, pr.base.ref);
+            byBase.set(base, [...(byBase.get(base) ?? []), pr.html_url]);
+            if (pr.head.repo) {
+              const head = branchKey(pr.head.repo.full_name, pr.head.ref);
+              byHead.set(head, [...(byHead.get(head) ?? []), pr.html_url]);
+            }
+          }
+          // Only add connected siblings, not every PR in an unwatched repository.
           const connected = new Set([...members.values()].filter((m) => m.repo === fullName).map((m) => m.url));
-          for (let changed = true; changed; ) {
-            changed = false;
-            for (const p of data)
-              if (
-                !connected.has(p.html_url) &&
-                data.some(
-                  (q) =>
-                    connected.has(q.html_url) && // Deleted fork repositories can be null despite Octokit's response type.
-                    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-                    ((p.base.repo.full_name === q.head.repo?.full_name && p.base.ref === q.head.ref) ||
-                      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-                      (q.base.repo.full_name === p.head.repo?.full_name && q.base.ref === p.head.ref))
-                )
-              ) {
-                connected.add(p.html_url);
-                changed = true;
+          const pendingUrls = [...connected];
+          for (let i = 0; i < pendingUrls.length; i++) {
+            const pr = byUrl.get(pendingUrls[i]);
+            if (!pr) continue;
+            const parents = byHead.get(branchKey(pr.base.repo.full_name, pr.base.ref)) ?? [];
+            const children = pr.head.repo ? (byBase.get(branchKey(pr.head.repo.full_name, pr.head.ref)) ?? []) : [];
+            for (const url of [...parents, ...children])
+              if (!connected.has(url)) {
+                connected.add(url);
+                pendingUrls.push(url);
               }
           }
-          for (const url of connected)
-            await add(
-              url,
-              undefined,
-              data.find((pr) => pr.html_url === url)
-            );
+          for (const url of connected) await add(url, undefined, byUrl.get(url));
           // A base can still point at a closed/merged parent.
           const refs = [...new Set([...members.values()].filter((m) => m.repo === fullName).map((m) => m.baseBranch))];
           for (const ref of refs) {
@@ -415,6 +417,7 @@ export function createWorkbenchService(deps: Deps) {
       );
       delete s.discoveryProgress;
       completed.clear();
+      finished = true;
       save();
       void pump();
       return view();
