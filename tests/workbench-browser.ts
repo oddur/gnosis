@@ -80,6 +80,12 @@ void app.whenReady().then(async () => {
     await js('document.querySelector(\'.queue-disclosure[aria-label*="Introduce"]\').click()');
     assert.equal(await js("document.querySelectorAll('.queue-member').length"), 3);
     await capture('queue-light');
+    await click('Briefing settings');
+    await wait("!!document.querySelector('#settings-briefing-limit')");
+    assert.equal(await js("document.querySelector('#settings-briefing-limit').value"), '10');
+    await js("document.querySelector('[data-slot=dialog-close]').click()");
+    await wait("!document.querySelector('[role=dialog]')");
+
     await wait("document.querySelector('.activity-summary')?.textContent.includes('2 running')");
     const toolbarY = await js("document.querySelector('.queue-toolbar').getBoundingClientRect().y");
     await js("document.querySelector('.activity-trigger').click()");
@@ -275,13 +281,20 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('[data-slot=dialog-close]').click()");
     await wait("document.querySelector('.briefing-status')?.textContent.includes('Automatic briefings are off')");
     await click('Manage briefings');
-    await js("[...document.querySelectorAll('[role=tab]')].find(b=>b.textContent==='Appearance').focus()");
+    await wait("!!document.querySelector('[role=tab][aria-selected=true]')");
+    await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    await js(
+      "[...document.querySelectorAll('[role=tab]')].find(b=>b.textContent==='Appearance').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}))"
+    );
     await wait("document.querySelector('[role=tabpanel][data-state=active]')?.textContent.includes('Code font')");
     assert.equal(await js("document.querySelectorAll('[role=tabpanel][data-state=active] select').length"), 2);
     match(await js("document.querySelector('[role=tabpanel][data-state=active]').textContent"), /Light/);
     window.setSize(800, 700);
     await capture('settings-appearance-narrow');
-    await js("[...document.querySelectorAll('[role=tab]')].find(b=>b.textContent.includes('Queue')).focus()");
+    await js(
+      "[...document.querySelectorAll('[role=tab]')].find(b=>b.textContent.includes('Queue')).dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}))"
+    );
+    await wait("document.querySelector('[role=tab][aria-selected=true]')?.textContent.includes('Queue')");
     await capture('settings-queue-narrow');
     assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
     await js("document.querySelector('[data-slot=dialog-close]').click()");
@@ -540,6 +553,14 @@ void app.whenReady().then(async () => {
     await wait("document.querySelectorAll('.queue-item').length === 1");
     await wait("window.electronAPI.workbenchQueue().then(q=>q.filters.author==='lena' && q.filters.label==='bug')");
     await capture('queue-filters-light');
+    await js("document.querySelector('.queue-filter-help summary').focus()");
+    assert.equal(await js("document.activeElement === document.querySelector('.queue-filter-help summary')"), true);
+    window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
+    window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
+    await wait("document.querySelector('.queue-filter-help').open");
+    await capture('queue-filter-help');
+    await js("document.querySelector('.queue-filter-help summary').click()");
+
     window.setSize(1024, 700);
     await js("document.documentElement.classList.add('dark')");
     await capture('queue-filters-dark-laptop');

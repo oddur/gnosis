@@ -85,8 +85,8 @@ export function QueueFilterPanel({
         </label>
         <p id={`${id}-involvement-help`}>
           {filters.involvement === 'mine'
-            ? 'PRs you authored, are assigned to, or were asked to review. Loads fewer PR details from GitHub; keeps related stack PRs.'
-            : 'PRs involving you and from repositories added in Settings. This does not search all of GitHub.'}
+            ? 'PRs you authored, are assigned to, or were asked to review.'
+            : 'PRs involving you and from repositories added in Settings.'}
         </p>
       </div>
       <div className="queue-filter-fields">
@@ -130,16 +130,22 @@ export function QueueFilterPanel({
           </select>
         </label>
         <p id={`${id}-briefings-help`}>
-          Applies when Automatic briefings is on. Uses your daily attempt limit. Changing filters lets the current
-          briefing finish.
-          {filters.involvement === 'mine' && ' Both options stay within your PRs, assignments, and review requests.'}
+          {filters.involvement === 'mine'
+            ? 'Both options stay within PRs involving you.'
+            : 'Applies when Automatic briefings is on.'}
         </p>
       </div>
-      <p className="queue-filter-hint">
-        Filters apply together to the same open PR. If it matches, its whole stack stays visible. Use “PR created” to
-        exclude old PRs, even if they were updated recently. “Up to date” means the AI explanation matches the latest
-        loaded PR data.
-      </p>
+      <p className="queue-filter-hint">One open PR must match all filters. Its whole stack stays visible.</p>
+      <details className="queue-filter-help">
+        <summary>How filters work</summary>
+        <p>Use “PR created” to exclude old PRs, even if they were updated recently.</p>
+        <p>“Up to date” means the AI explanation matches the latest loaded PR data.</p>
+        <p>“Involving me” also reduces PR details fetched from GitHub. Related stack PRs stay included.</p>
+        <p>
+          Automatic briefings use your daily attempt limit. Changing filters lets the current briefing finish. Saved
+          views share cached GitHub data.
+        </p>
+      </details>
     </section>
   );
 }

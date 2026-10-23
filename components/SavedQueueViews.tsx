@@ -73,9 +73,7 @@ export function SavedViewsNav({
   return (
     <section className="saved-views-nav" aria-label="Saved views">
       <p className="workbench-nav-heading">Saved views</p>
-      {!state.views.length && (
-        <p className="saved-views-empty">Save your current filters with “Save view…” to reuse them here.</p>
-      )}
+      {!state.views.length && <p className="saved-views-empty">Choose “Save view…” to reuse your filters.</p>}
       {state.views.map((view, index) => (
         <Popover.Root
           key={view.id}
@@ -269,8 +267,7 @@ export function SaveViewControls({
               </Popover.Close>
             </div>
             <p className="queue-filter-hint">
-              Save these filters and the automatic briefing scope on this computer. Views share cached GitHub data;
-              switching views does not refresh it.
+              Saves filters and briefing scope on this computer. Uses the shared GitHub cache.
             </p>
             <ViewNameForm
               submitLabel="Save view"

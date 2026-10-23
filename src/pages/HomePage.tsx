@@ -575,31 +575,28 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
             </span>
             {item.briefing?.summary && <span className="queue-summary">{item.briefing.summary}</span>}
           </button>
-          <span className={`queue-state ${item.attention === 'updated' ? 'needs-attention' : ''}`}>
-            {item.review?.status === 'generating' ? (
-              <>
-                <Loader2 size={13} className="animate-spin" />
-                Generating explanation
-              </>
-            ) : item.review?.status === 'completed' ? (
-              <>
-                <Check size={13} />
-                Explanation ready
-              </>
-            ) : item.briefing?.status === 'generating' ? (
-              <>
-                <Loader2 size={13} className="animate-spin" />
-                Generating briefing
-              </>
-            ) : s.kind === 'stack' ? (
-              <>
-                <Layers size={13} />
-                Stack
-              </>
-            ) : (
-              'PR'
-            )}
-          </span>
+          {(item.review?.status === 'generating' ||
+            item.review?.status === 'completed' ||
+            item.briefing?.status === 'generating') && (
+            <span className={`queue-state ${item.attention === 'updated' ? 'needs-attention' : ''}`}>
+              {item.review?.status === 'generating' ? (
+                <>
+                  <Loader2 size={13} className="animate-spin" />
+                  Generating explanation
+                </>
+              ) : item.review?.status === 'completed' ? (
+                <>
+                  <Check size={13} />
+                  Explanation ready
+                </>
+              ) : item.briefing?.status === 'generating' ? (
+                <>
+                  <Loader2 size={13} className="animate-spin" />
+                  Generating briefing
+                </>
+              ) : null}
+            </span>
+          )}
         </div>
         {expanded.has(s.id) && (
           <div id={`members-${s.id}`}>
@@ -811,17 +808,17 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                         ? 'Stacks'
                         : labels[section]}
               </h1>
-              <p>
-                {section === 'saved'
-                  ? 'AI explanations saved on this computer. Reopen one to continue reviewing.'
-                  : section === 'stacks'
-                    ? 'PRs that build on one another, grouped for review. All your other filters still apply.'
-                    : section === 'requested'
-                      ? 'PRs you were asked to review. Those changed since a saved AI explanation appear under Updated PRs.'
-                      : section === 'updated'
-                        ? 'PR content or stack changes since your saved AI explanation. This does not track when you last reviewed on GitHub.'
-                        : 'Select a PR or stack for its briefing. Double-click to read its description and GitHub status.'}
-              </p>
+              {section !== 'all' && (
+                <p>
+                  {section === 'saved'
+                    ? 'Saved AI explanations, ready to resume.'
+                    : section === 'stacks'
+                      ? 'PRs that build on each other.'
+                      : section === 'requested'
+                        ? 'Your review requests. Changed PRs appear under Updated PRs.'
+                        : 'PR content or stack changes since your saved AI explanation.'}
+                </p>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -968,18 +965,11 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                   <X size={12} />
                 </button>
               ))}
-              <span>
-                {prefs?.autoBriefings === false
-                  ? 'Automatic briefings are off.'
-                  : filters.briefingScope === 'matches'
-                    ? 'Brief matching PRs and stacks only.'
-                    : 'Brief matches first, then the rest.'}
-              </span>
               <button onClick={resetFilters}>Clear filters</button>
             </div>
           )}
           {section !== 'saved' && (
-            <p className="queue-keyboard-help" id="queue-keyboard-help">
+            <p className="sr-only" id="queue-keyboard-help">
               <kbd>↑</kbd> <kbd>↓</kbd> or <kbd>j</kbd> <kbd>k</kbd> select · <kbd>Enter</kbd> open ·{' '}
               <kbd>/</kbd> search
             </p>
@@ -1163,9 +1153,6 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                   </button>
                 </div>
                 <h2>{selectedItem.subject.title}</h2>
-                <p className="briefing-definition">
-                  An AI briefing is a short summary. Open the PR overview to read the author description, or generate an AI explanation alongside the code.
-                </p>
                 {briefingSelection && (
                   <p className="text-xs text-muted-foreground mb-3" aria-label="Briefing model">
                     Briefing model: {briefingModelLabel}
@@ -1379,38 +1366,27 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
               </aside>
             )}
           </div>
-          <footer className="workbench-footer">
-            {prefs && (
-              <>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={prefs.autoBriefings !== false}
-                    onChange={(e) => void savePrefs({ ...prefs, autoBriefings: e.target.checked })}
-                  />
-                  Automatic briefings
-                </label>
-                <span>{queue.remaining} briefing attempts left today</span>
-                <label>
-                  Daily briefing limit{' '}
-                  <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    aria-label="Daily briefing limit"
-                    value={prefs.briefingDailyLimit ?? 10}
-                    onChange={(e) =>
-                      void savePrefs({
-                        ...prefs,
-                        briefingDailyLimit: Math.max(0, Math.min(100, Number(e.target.value))),
-                      })
-                    }
-                  />
-                </label>
-              </>
-            )}
-            <span className="ml-auto">AI explanations start when you request them</span>
-          </footer>
+          {prefs && (
+            <footer className="workbench-footer">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={prefs.autoBriefings !== false}
+                  onChange={(e) => void savePrefs({ ...prefs, autoBriefings: e.target.checked })}
+                />
+                Automatic briefings
+              </label>
+              {prefs.autoBriefings !== false && (
+                <span>
+                  {filters.briefingScope === 'matches' ? 'Matches only' : 'Matches first'}
+                  {' · '}{queue.remaining} attempts left today
+                </span>
+              )}
+              <button className="workbench-help-link ml-auto" onClick={() => openSettings('queue')}>
+                Briefing settings
+              </button>
+            </footer>
+          )}
         </main>
       </div>}
       <GitHubAuthDialog open={authOpen} onOpenChange={setAuthOpen} onConnected={syncAuth} login={auth?.login}
