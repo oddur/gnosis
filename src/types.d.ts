@@ -1,3 +1,4 @@
+import type { GitHubDevicePrompt } from '../lib/github-auth';
 import type { QueueViewAction } from '../lib/saved-views';
 import type { QueueFilters } from '../lib/queue-filters';
 import type { GitHubReviewThread, GitHubReviewThreads, ReviewThreadAction } from '../lib/review-threads';
@@ -38,10 +39,15 @@ declare global {
       startReview: (req: GenerateReviewRequest) => Promise<StartReviewResult>;
       cancelReview: (reviewId: string) => Promise<void>;
       getConfig: () => Promise<{ githubToken: string | null }>;
+      githubAuthOptions: () => Promise<{ web: boolean }>;
       startOAuth: () => Promise<void>;
+      cancelOAuth: () => Promise<void>;
+      beginGitHubSignIn: () => Promise<GitHubDevicePrompt>;
+      completeGitHubSignIn: (id: string) => Promise<string>;
+      cancelGitHubSignIn: (id: string) => Promise<void>;
       getAuthState: () => Promise<{ authenticated: boolean; login: string | null }>;
       signOut: () => Promise<void>;
-      savePat: (token: string) => Promise<string>;
+      savePat: (token: string, prUrl?: string) => Promise<string>;
       listReviews: () => Promise<ReviewHistoryEntry[]>;
       loadReview: (id: string) => Promise<ReviewGuide>;
       deleteReview: (id: string) => Promise<void>;

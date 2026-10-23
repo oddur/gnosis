@@ -23,6 +23,7 @@ export function PrSummary({
   onOpenReview,
   onRetryStatus,
   onAiSetup,
+  onGitHubAuth,
   navigation,
   positions,
   shortcutsEnabled = true,
@@ -37,6 +38,7 @@ export function PrSummary({
   onOpenReview: () => void;
   onRetryStatus: () => void;
   onAiSetup?: () => void;
+  onGitHubAuth?: () => void;
   navigation: {
     index: number;
     total: number;
@@ -241,10 +243,21 @@ export function PrSummary({
         {error && (
           <div role="alert" className="workbench-notice error">
             <p>Could not open or generate the AI explanation. Your PR description is still available.</p>
-            <details>
-              <summary>Error details</summary>
-              <p>{error}</p>
-            </details>
+            {/GitHub.*(?:access|sign.in)|token|Resource not accessible/i.test(error) ? (
+              <>
+                <p>{error}</p>
+                {onGitHubAuth && (
+                  <button className="workbench-help-link" onClick={onGitHubAuth}>
+                    Check GitHub access
+                  </button>
+                )}
+              </>
+            ) : (
+              <details>
+                <summary>Error details</summary>
+                <p>{error}</p>
+              </details>
+            )}
           </div>
         )}
         {item.review?.status === 'failed' && (

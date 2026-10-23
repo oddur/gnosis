@@ -1,3 +1,4 @@
+import type { GitHubDevicePrompt } from '../lib/github-auth';
 import type { QueueViewAction } from '../lib/saved-views';
 import type { QueueFilters } from '../lib/queue-filters';
 import type { GitHubReviewThread, GitHubReviewThreads, ReviewThreadAction } from '../lib/review-threads';
@@ -37,10 +38,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startReview: (req: GenerateReviewRequest): Promise<StartReviewResult> => ipcRenderer.invoke('start-review', req),
   cancelReview: (reviewId: string): Promise<void> => ipcRenderer.invoke('cancel-review', reviewId),
   getConfig: (): Promise<{ githubToken: string | null }> => ipcRenderer.invoke('get-config'),
+  githubAuthOptions: (): Promise<{ web: boolean }> => ipcRenderer.invoke('github-auth-options'),
   startOAuth: (): Promise<void> => ipcRenderer.invoke('start-oauth'),
+  cancelOAuth: (): Promise<void> => ipcRenderer.invoke('cancel-oauth'),
+  beginGitHubSignIn: (): Promise<GitHubDevicePrompt> => ipcRenderer.invoke('begin-github-sign-in'),
+  completeGitHubSignIn: (id: string): Promise<string> => ipcRenderer.invoke('complete-github-sign-in', id),
+  cancelGitHubSignIn: (id: string): Promise<void> => ipcRenderer.invoke('cancel-github-sign-in', id),
   getAuthState: (): Promise<{ authenticated: boolean; login: string | null }> => ipcRenderer.invoke('get-auth-state'),
   signOut: (): Promise<void> => ipcRenderer.invoke('sign-out'),
-  savePat: (token: string): Promise<string> => ipcRenderer.invoke('save-pat', token),
+  savePat: (token: string, prUrl?: string): Promise<string> => ipcRenderer.invoke('save-pat', token, prUrl),
   listReviews: (): Promise<ReviewHistoryEntry[]> => ipcRenderer.invoke('list-reviews'),
   loadReview: (id: string): Promise<ReviewGuide> => ipcRenderer.invoke('load-review', id),
   deleteReview: (id: string): Promise<void> => ipcRenderer.invoke('delete-review', id),

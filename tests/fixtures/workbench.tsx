@@ -428,6 +428,11 @@ const mocks = {
   detectBinaryPath: (name: string) => Promise.resolve('/fixture/' + name),
   getAuthState: () =>
     Promise.resolve({ authenticated: fixtureAuthenticated, login: fixtureAuthenticated ? 'oddur' : null }),
+  githubAuthOptions: () => Promise.resolve({ web: false }),
+  beginGitHubSignIn: () => Promise.resolve({ id: 'fixture-auth', userCode: 'TEST-CODE', verificationUri: 'https://github.com/login/device', expiresAt: Date.now()+900000 }),
+  completeGitHubSignIn: () => { fixtureAuthenticated = true; return Promise.resolve('oddur'); },
+  cancelGitHubSignIn: () => Promise.resolve(),
+  cancelOAuth: () => Promise.resolve(),
   startOAuth: () => {
     fixtureAuthenticated = true;
     return Promise.resolve();

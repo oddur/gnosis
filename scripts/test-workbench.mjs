@@ -7,6 +7,7 @@ import path from 'node:path';
 import process from 'node:process';
 import electron from 'electron';
 import { setTimeout, clearTimeout } from 'node:timers';
+const auth = process.argv.includes('--auth');
 const onboarding = process.argv.includes('--onboarding');
 const images = process.argv.includes('--images');
 const splitDiff = process.argv.includes('--split-diff');
@@ -20,17 +21,19 @@ try {
   const outfile = path.join(dir, 'test.cjs');
   await build({
     entryPoints: [
-      onboarding
-        ? 'tests/onboarding-browser.ts'
-        : images
-          ? 'tests/review-images-browser.ts'
-          : prSummary
-            ? 'tests/pr-summary-browser.ts'
-            : threads
-              ? 'tests/review-threads-browser.ts'
-              : splitDiff
-                ? 'tests/split-diff-browser.ts'
-                : 'tests/workbench-browser.ts',
+      auth
+        ? 'tests/github-auth-browser.ts'
+        : onboarding
+          ? 'tests/onboarding-browser.ts'
+          : images
+            ? 'tests/review-images-browser.ts'
+            : prSummary
+              ? 'tests/pr-summary-browser.ts'
+              : threads
+                ? 'tests/review-threads-browser.ts'
+                : splitDiff
+                  ? 'tests/split-diff-browser.ts'
+                  : 'tests/workbench-browser.ts',
     ],
     outfile,
     bundle: true,

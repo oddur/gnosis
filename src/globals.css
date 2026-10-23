@@ -2142,3 +2142,22 @@ body:has(.activity-drawer) .app-toasts { bottom:auto; top:64px; }
 .review-image-full img { display:block; margin:auto; max-width:100%; max-height:65vh; object-fit:contain; }
 .review-image-full[data-actual-size=true] img { max-width:none; max-height:none; margin:0; }
 @media(max-width:620px) { .review-image-stage { height:220px; } }
+
+/* Authentication stays in one bounded dialog, with a visible alternative to browser sign-in. */
+.github-auth-dialog { max-height:85dvh; overflow:auto; width:min(520px,calc(100vw - 24px)); }
+.github-auth-dialog p,.github-token-form { font-size:var(--type-control); line-height:1.6; }
+.github-auth-error { padding:10px 12px; border:1px solid var(--border); color:var(--color-danger); overflow-wrap:anywhere; }
+.github-device-prompt { display:flex; flex-direction:column; gap:12px; }
+.github-device-prompt>code { font-size:26px; font-weight:600; letter-spacing:.06em; align-self:flex-start; padding:8px 12px; background:var(--secondary); border:1px solid var(--border); user-select:all; }
+.github-auth-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.github-device-prompt [role=status] { display:flex; align-items:flex-start; gap:8px; }
+.github-device-prompt [role=status] svg { flex-shrink:0; margin-top:3px; }
+.github-auth-hint,.github-token-form label span { color:var(--muted-foreground); font-size:var(--type-caption); }
+.github-token-form { display:flex; flex-direction:column; gap:10px; }
+.github-token-form ul { list-style:disc; padding-left:18px; }
+.github-token-form label { font-weight:600; }
+.github-token-form input { width:100%; min-width:0; padding:8px; border:1px solid var(--input); border-radius:4px; background:var(--background); color:var(--foreground); }
+.github-auth-dialog .workbench-help-link { text-align:left; }
+.github-auth-dialog .workbench-help-link { display:inline-flex; align-items:center; gap:5px; }
+.github-token-help summary { cursor:pointer; color:var(--ring); }
+.github-token-help p { margin:8px 0; color:var(--muted-foreground); }

@@ -10,9 +10,11 @@ import { app, autoUpdater, BrowserWindow, dialog, ipcMain, Notification, safeSto
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import http from 'http';
 import crypto from 'crypto';
 import { getGitHubClient, githubClients, fetchGitHubLogin, githubRateLimit } from '../lib/github-client';
+import { createGitHubWebAuth } from './github-web-auth';
+import { createGitHubAuthService } from './github-auth-service';
+import { checkGitHubPrAccess, githubAccessMessage } from '../lib/github-auth';
 import { createPrImageService } from './pr-image-service';
 import { createReviewImageService } from './review-image-service';
 import { imageMimeType, includeImageChanges } from '../lib/review-images';
@@ -172,126 +174,27 @@ async function resolveGitHubLogin(token: string): Promise<string> {
   }
 }
 
-// ── OAuth flow ──────────────────────────────────────────────────
-
-async function exchangeCodeForToken(code: string, codeVerifier: string, redirectUri: string): Promise<string> {
-  const body = new URLSearchParams({
-    client_id: GITHUB_CLIENT_ID,
-    client_secret: GITHUB_CLIENT_SECRET,
-    code,
-    code_verifier: codeVerifier,
-    redirect_uri: redirectUri,
-  });
-
-  const res = await fetch('https://github.com/login/oauth/access_token', {
-    method: 'POST',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
-  });
-
-  const data = (await res.json()) as { access_token?: string; error?: string; error_description?: string };
-  if (!data.access_token) {
-    throw new Error(data.error_description ?? data.error ?? 'OAuth token exchange failed');
-  }
-  return data.access_token;
-}
-
-function generatePkce(): { verifier: string; challenge: string } {
-  const verifier = crypto.randomBytes(32).toString('base64url');
-  const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
-  return { verifier, challenge };
-}
-
-function runOAuthFlow(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const state = crypto.randomBytes(20).toString('hex');
-    const { verifier, challenge } = generatePkce();
-
-    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- async HTTP handler
-    const server = http.createServer(async (req, res) => {
-      const url = new URL(req.url ?? '/', `http://localhost`);
-      if (url.pathname !== '/callback') {
-        res.writeHead(404);
-        res.end();
-        return;
-      }
-
-      const returnedState = url.searchParams.get('state');
-      const code = url.searchParams.get('code');
-      const errorParam = url.searchParams.get('error');
-
-      if (returnedState !== state) {
-        res.writeHead(400, { 'Content-Type': 'text/html' });
-        res.end('<html><body><p>Invalid state parameter. Please try again.</p></body></html>');
-        server.close();
-        reject(new Error('OAuth state mismatch'));
-        return;
-      }
-
-      if (errorParam || !code) {
-        const desc = url.searchParams.get('error_description') ?? errorParam ?? 'Unknown error';
-        res.writeHead(400, { 'Content-Type': 'text/html' });
-        res.end(`<html><body><p>Sign-in failed: ${desc}</p></body></html>`);
-        server.close();
-        reject(new Error(desc));
-        return;
-      }
-
-      const addr = server.address();
-      const port = typeof addr === 'object' && addr ? addr.port : 0;
-      const redirectUri = `http://127.0.0.1:${port}/callback`;
-
-      try {
-        const token = await exchangeCodeForToken(code, verifier, redirectUri);
-        const login = await fetchGitHubLogin(token);
-        persistToken(token);
-        cachedToken = token;
-        cachedLogin = login;
-
-        res.writeHead(200, { 'Content-Type': 'text/html' });
-        res.end('<html><body><p>You are now signed in to Gnosis. You can close this tab.</p></body></html>');
-        server.close();
-        resolve();
-      } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'text/html' });
-        res.end('<html><body><p>Authentication failed. Please try again.</p></body></html>');
-        server.close();
-        reject(err instanceof Error ? err : new Error(String(err)));
-      }
-    });
-
-    server.listen(0, '127.0.0.1', () => {
-      const addr = server.address();
-      if (!addr || typeof addr === 'string') {
-        server.close();
-        reject(new Error('Failed to start OAuth callback server'));
-        return;
-      }
-
-      const port = addr.port;
-      const redirectUri = `http://127.0.0.1:${port}/callback`;
-      const params = new URLSearchParams({
-        client_id: GITHUB_CLIENT_ID,
-        redirect_uri: redirectUri,
-        scope: 'repo',
-        state,
-        code_challenge: challenge,
-        code_challenge_method: 'S256',
-      });
-      void shell.openExternal(`https://github.com/login/oauth/authorize?${params}`);
-    });
-
-    const timeout = setTimeout(
-      () => {
-        server.close();
-        reject(new Error('OAuth sign-in timed out after 5 minutes'));
-      },
-      5 * 60 * 1000
-    );
-
-    server.on('close', () => clearTimeout(timeout));
-  });
-}
+// Both sign-in flows keep credentials and cancellation in the main process.
+let authRevision = 0;
+const authStorage = {
+  identify: async (token: string) => {
+    try { return await fetchGitHubLogin(token); }
+    catch (error) { throw new Error(githubAccessMessage(error)); }
+  },
+  save: (token: string, login: string) => {
+    workbench.interrupt();
+    persistToken(token);
+    cachedToken = token;
+    cachedLogin = login;
+    loginFailure = undefined;
+  },
+};
+const githubAuth = createGitHubAuthService({ clientId: GITHUB_CLIENT_ID, ...authStorage });
+const githubWebAuth = createGitHubWebAuth({
+  clientId: GITHUB_CLIENT_ID, clientSecret: GITHUB_CLIENT_SECRET,
+  open: (url) => shell.openExternal(url), ...authStorage,
+});
+app.on('before-quit', () => { githubAuth.cancel(); githubWebAuth.cancel(); });
 
 // ── Persistent logging ───────────────────────────────────────────
 
@@ -322,7 +225,7 @@ function setupLogging() {
 
   function write(level: string, args: unknown[]) {
     const ts = new Date().toISOString();
-    const msg = args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
+    const msg = args.map((a) => a instanceof Error ? `${a.name}: ${a.message}` : typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
     stream.write(`${ts} [${level}] ${msg}\n`);
   }
 
@@ -1128,17 +1031,37 @@ ipcMain.handle('get-config', () => {
   return { githubToken: token };
 });
 
-ipcMain.handle('start-oauth', async () => {
-  await runOAuthFlow();
+ipcMain.handle('github-auth-options', () => ({ web: !!GITHUB_CLIENT_SECRET }));
+ipcMain.handle('start-oauth', () => {
+  authRevision++;
+  githubAuth.cancel();
+  return githubWebAuth.start();
 });
+ipcMain.handle('cancel-oauth', () => githubWebAuth.cancel());
+ipcMain.handle('begin-github-sign-in', () => {
+  authRevision++;
+  githubWebAuth.cancel();
+  return githubAuth.begin();
+});
+ipcMain.handle('complete-github-sign-in', (_event, id: string) => githubAuth.complete(id));
+ipcMain.handle('cancel-github-sign-in', (_event, id: string) => githubAuth.cancel(id));
 
-ipcMain.handle('save-pat', async (_event, token: string) => {
+ipcMain.handle('save-pat', async (_event, token: string, prUrl?: string) => {
+  if (typeof token !== 'string' || !token.trim()) throw new Error('Enter a GitHub personal access token.');
+  const revision = ++authRevision;
+  githubAuth.cancel();
+  githubWebAuth.cancel();
   const trimmed = token.trim();
-  if (!trimmed) throw new Error('Token must not be empty');
-  const login = await fetchGitHubLogin(trimmed);
+  let login: string;
+  try { login = await fetchGitHubLogin(trimmed); }
+  catch (error) { throw new Error(githubAccessMessage(error)); }
+  if (prUrl?.trim()) await checkGitHubPrAccess(getGitHubClient(trimmed), prUrl.trim());
+  if (revision !== authRevision) throw new Error('GitHub sign-in was cancelled.');
+  workbench.interrupt();
   persistToken(trimmed);
   cachedToken = trimmed;
   cachedLogin = login;
+  loginFailure = undefined;
   return login;
 });
 
@@ -1162,6 +1085,10 @@ ipcMain.handle('get-auth-state', async () => {
 });
 
 ipcMain.handle('sign-out', () => {
+  authRevision++;
+  githubWebAuth.cancel();
+  githubAuth.cancel();
+  workbench.interrupt();
   if (cachedToken) githubClients.forget(cachedToken);
   loginFailure = undefined;
   for (const task of activities.list())
@@ -1457,7 +1384,8 @@ async function fetchPrStatus(prUrl: string): Promise<PrStatus | null> {
 
 ipcMain.handle('get-pr-metadata', async (_event, prUrl: string): Promise<PrMetadata> => {
   const { owner, repo, pullNumber } = parsePrUrl(prUrl);
-  return getPrMetadata(getGitHubClient(getResolvedToken()), owner, repo, pullNumber);
+  try { return await getPrMetadata(getGitHubClient(getResolvedToken()), owner, repo, pullNumber); }
+  catch (error) { throw new Error(githubAccessMessage(error, `${owner}/${repo}`)); }
 });
 
 const loadPrImage = createPrImageService();
@@ -2292,10 +2220,17 @@ async function startReview(request: GenerateReviewRequest): Promise<StartReviewR
   workbench.interrupt();
   let subject: ReviewSubject | undefined;
   if (!isLocalUrl(request.prUrl)) {
+    // Verify the requested PR before queue discovery or creating a generation/history entry.
+    await checkGitHubPrAccess(getGitHubClient(token), request.prUrl);
     await workbench.queue();
     subject = request.subjectId ? workbench.subject(request.subjectId) : !request.standalone ? (await workbench.queue()).items.find(i=>i.subject.members.some(m=>m.url===request.prUrl))?.subject : undefined;
     if (request.subjectId && !subject) throw new Error('This stack is no longer in the queue. Refresh and try again.');
-    if (subject) subject = await workbench.fresh(subject);
+    if (subject) {
+      for (const member of subject.members) {
+        if (member.url !== request.prUrl) await checkGitHubPrAccess(getGitHubClient(token), member.url);
+      }
+      subject = await workbench.fresh(subject);
+    }
   }
   const source = subject && subject.members.length > 1 ? new StackDiffSource(subject, token) : await createDiffSource(request.prUrl, { token });
   const prData = await source.getMetadata();

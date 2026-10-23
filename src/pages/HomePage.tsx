@@ -19,6 +19,7 @@ import {
   ChevronDown,
   ChevronRight,
   GitBranch,
+  Github,
   GitPullRequest,
   Layers,
   Loader2,
@@ -36,6 +37,7 @@ import {
   Link2,
   SlidersHorizontal,
 } from 'lucide-react';
+import { GitHubAuthDialog } from '../../components/GitHubAuthDialog';
 import { GettingStarted } from '../../components/GettingStarted';
 import { WorkbenchHelp } from '../../components/WorkbenchHelp';
 import { SettingsDialog, type SettingsSection } from '../../components/SettingsDialog';
@@ -159,7 +161,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   const [settings, setSettings] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('queue');
   const [showGettingStarted, setShowGettingStarted] = useState(false);
-  const [connecting, setConnecting] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
   const [localOpen, setLocalOpen] = useState(false);
   const [url, setUrl] = useState(prefillPrUrl ?? '');
   const [showUrl, setShowUrl] = useState(!!prefillPrUrl);
@@ -169,7 +171,6 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   const [openedItem, setOpenedItem] = useState<QueueItem | null>(null);
   const readingPositions = useRef(new Map<string, PrReadingPosition>());
   const [requestedReviews, setRequestedReviews] = useState<Record<string, string>>({});
-  const [pat, setPat] = useState('');
   const [parentUrl, setParentUrl] = useState('');
   const [childUrl, setChildUrl] = useState('');
   const [grouping, setGrouping] = useState(false);
@@ -389,22 +390,10 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
       setError(String(e));
     }
   };
-  const login = async () => {
-    if (connecting) return;
-    setConnecting(true);
-    try {
-      setError('');
-      if (pat) {
-        await window.electronAPI.savePat(pat);
-        setPat('');
-      } else await window.electronAPI.startOAuth();
-      setAuth(await window.electronAPI.getAuthState());
-      void refresh(true);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setConnecting(false);
-    }
+  const syncAuth = async () => {
+    setAuth(await window.electronAPI.getAuthState());
+    setError('');
+    void refresh(true);
   };
   const items = queue.items.filter((item) => matchesQueueFilters(item, filters, Date.now(), auth?.login));
   const repos = [
@@ -647,31 +636,8 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
       <section className="workbench-connect">
         <h2>Connect GitHub</h2>
         <p>Sign in to load your GitHub review requests. Local reviews work without a GitHub connection.</p>
-        <Button size="sm" disabled={connecting} onClick={() => void login()}>
-          {connecting ? 'Connecting…' : 'Sign in to GitHub'}
-        </Button>
-        <details>
-          <summary>Use a personal access token</summary>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void login();
-            }}
-          >
-            <label htmlFor="github-token">GitHub personal access token</label>
-            <input
-              id="github-token"
-              type="password"
-              aria-label="GitHub personal access token"
-              value={pat}
-              onChange={(e) => setPat(e.target.value)}
-              autoComplete="off"
-            />
-            <Button size="sm" disabled={connecting || !pat.trim()} type="submit">
-              Connect
-            </Button>
-          </form>
-        </details>
+        <Button size="sm" onClick={() => setAuthOpen(true)}>Sign in to GitHub</Button>
+        <p>Use browser sign-in, a sign-in code, or a personal access token.</p>
       </section>
     ) : null;
 
@@ -725,7 +691,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
           <button className="workbench-icon" title="Settings" aria-label="Settings" onClick={() => openSettings()}>
             <Settings size={17} />
           </button>
-          <span className="text-xs text-muted-foreground account-name">{auth?.login ?? 'Local workspace'}</span>
+          <button className="workbench-help-trigger" aria-label="GitHub account" title={auth?.login ? `GitHub: ${auth.login}` : 'Connect GitHub'} onClick={() => setAuthOpen(true)}><Github size={16} /><span className="account-name">{auth?.login ?? 'Connect GitHub'}</span></button>
         </div>
       </header>
       <UpdateBanner />
@@ -733,7 +699,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
         key={summaryItem.subject.id}
         item={summaryItem}
         positions={readingPositions.current}
-        shortcutsEnabled={!settings && !localOpen}
+        shortcutsEnabled={!settings && !localOpen && !authOpen}
         navigation={{ index: summaryIndex, total: orderedItems.length, viewName: activeQueueView?.name ?? 'Current filtered view',
           previous: summaryIndex > 0 ? orderedItems[summaryIndex - 1].subject.title : undefined,
           next: summaryIndex >= 0 ? orderedItems[summaryIndex + 1]?.subject.title : undefined, move: moveSummary }}
@@ -751,6 +717,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
         onOpenReview={() => { if (summaryItem.review) void open(summaryItem.review); }}
         onRetryStatus={() => setStatusAttempt((n) => n + 1)}
         onAiSetup={() => openSettings('integrations')}
+        onGitHubAuth={() => setAuthOpen(true)}
       /> : <div className="workbench-body">
         <nav className="workbench-sidebar" aria-label="Workspace">
           <p className="workbench-nav-heading">Reviews</p>
@@ -893,6 +860,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
             <div className="workbench-notice error" role="alert">
               <AlertCircle size={16} />
               <span>{error}</span>
+              {/GitHub.*(?:access|sign.in)|token|Resource not accessible/i.test(error) && <button onClick={() => setAuthOpen(true)}>Check GitHub access</button>}
               <button aria-label="Dismiss error" onClick={() => setError('')}>
                 <X size={14} />
               </button>
@@ -1424,6 +1392,8 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
           </footer>
         </main>
       </div>}
+      <GitHubAuthDialog open={authOpen} onOpenChange={setAuthOpen} onConnected={syncAuth} login={auth?.login}
+        prUrl={summaryItem?.subject.members[0].url ?? (url.trim() || undefined)} />
       <SettingsDialog
         initialSection={settingsSection}
         onReplayOnboarding={replayGettingStarted}
