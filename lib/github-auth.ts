@@ -20,7 +20,11 @@ export function githubAccessMessage(error: unknown, repository?: string): string
     e?.status === 404 ||
     /Resource not accessible by personal access token/i.test(e?.message ?? '')
   ) {
-    return `GitHub could not grant access${repository ? ` to ${repository}` : ''}. Connect GitHub again, or update your token: select this repository and allow Pull requests: Read and Contents: Read. Your organization may also require approval or SSO authorization. A 404 can also mean the PR or revision no longer exists.`;
+    const problem =
+      e?.status === 404
+        ? `GitHub could not find the PR or code revision${repository ? ` in ${repository}` : ''}. It may no longer exist, or your account may not have access. Check the PR URL and GitHub access.`
+        : `GitHub denied access${repository ? ` to ${repository}` : ''}. Check GitHub access for your account.`;
+    return `${problem} If you use a token, include the repository and allow Pull requests: Read and Contents: Read. Your organization may require administrator approval or single sign-on (SSO) authorization.`;
   }
   return 'GitHub could not verify access. Check your connection and try again.';
 }

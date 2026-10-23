@@ -8,7 +8,7 @@ const failureMessages: Record<string, string> = {
   access_denied: 'GitHub sign-in was declined. Try again or use a personal access token.',
   expired_token: expiredMessage,
   incorrect_device_code: expiredMessage,
-  device_flow_disabled: 'Browser sign-in is unavailable for this build. Use a personal access token instead.',
+  device_flow_disabled: 'Sign-in codes are unavailable for Gnosis. Use a personal access token instead.',
 };
 interface DeviceResponse {
   device_code?: string;
@@ -78,7 +78,9 @@ export function createGitHubAuthService(io: {
         const data = result.data;
         if (!data) throw new Error('GitHub is busy. Wait a moment and try signing in again.');
         if (data.error)
-          throw new Error(failureMessages[data.error] ?? 'Could not start GitHub sign-in. Try again or use a token.');
+          throw new Error(
+            failureMessages[data.error] ?? 'Could not start GitHub sign-in. Try again or use a personal access token.'
+          );
         if (
           !data.device_code ||
           !data.user_code ||
@@ -138,7 +140,9 @@ export function createGitHubAuthService(io: {
               continue;
             }
             if (data.error)
-              throw new Error(failureMessages[data.error] ?? 'GitHub sign-in failed. Start again or use a token.');
+              throw new Error(
+                failureMessages[data.error] ?? 'GitHub sign-in failed. Try again or use a personal access token.'
+              );
             if (!data.access_token) throw new Error('GitHub did not return an access token. Start sign-in again.');
             const login = await io.identify(data.access_token);
             if (isCancelled()) throw new Error(cancelledMessage);

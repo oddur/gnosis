@@ -138,8 +138,8 @@ export function GitHubAuthDialog({
           <DialogTitle>{login ? 'GitHub account' : 'Connect GitHub'}</DialogTitle>
           <DialogDescription>
             {login
-              ? `Connected as ${login}. Reconnect to update access or use another account.`
-              : 'Connect your account to read private PRs and load your review queue. AI tool sign-in is separate.'}
+              ? `Connected as ${login}. Sign in again after changing GitHub permissions, or connect another account.`
+              : 'Sign in to load your PR queue and access private repositories. Connect your AI tool separately to generate explanations.'}
           </DialogDescription>
         </DialogHeader>
         {error && (
@@ -155,7 +155,7 @@ export function GitHubAuthDialog({
               <>
                 {prompt ? (
                   <div className="github-device-prompt">
-                    <p>Enter this code on GitHub to approve Gnosis:</p>
+                    <p>Copy this code, open GitHub, then enter it to authorize Gnosis:</p>
                     <code aria-label="GitHub sign-in code">{prompt.userCode}</code>
                     <div className="github-auth-actions">
                       <Button
@@ -183,8 +183,8 @@ export function GitHubAuthDialog({
                       </Button>
                     </div>
                     <p role="status">
-                      <Loader2 size={14} className="animate-spin" /> Waiting for approval on GitHub. This window will
-                      finish automatically.
+                      <Loader2 size={14} className="animate-spin" /> Waiting for you to authorize Gnosis on GitHub.
+                      Return here afterward; sign-in completes automatically.
                     </p>
                     <p className="github-auth-hint">
                       Code expires at{' '}
@@ -195,7 +195,9 @@ export function GitHubAuthDialog({
                   <>
                     {web && (
                       <Button disabled={busy || phase === 'waiting'} onClick={() => void browser()}>
-                        {phase === 'waiting' && method === 'web' ? 'Waiting for your browser…' : 'Continue in browser'}{' '}
+                        {phase === 'waiting' && method === 'web'
+                          ? 'Waiting for GitHub authorization…'
+                          : 'Sign in through browser'}{' '}
                         <ExternalLink size={14} />
                       </Button>
                     )}
@@ -207,11 +209,7 @@ export function GitHubAuthDialog({
                         Finish signing in in your browser. If it does not work, use a sign-in code instead.
                       </p>
                     )}
-                    {!web && (
-                      <p className="github-auth-hint">
-                        This build uses a sign-in code to connect securely through GitHub.
-                      </p>
-                    )}
+                    {!web && <p className="github-auth-hint">Get a code to enter on GitHub in your browser.</p>}
                   </>
                 )}
                 <button
@@ -256,8 +254,9 @@ export function GitHubAuthDialog({
                 <details className="github-token-help">
                   <summary>Token setup and additional permissions</summary>
                   <p>
-                    Select your organization as the resource owner and include the repositories you review. Your
-                    organization may require approval or SSO authorization.
+                    Under Resource owner, select the account or organization that owns the repositories, then include
+                    the repositories you review. Your organization may require administrator approval or single sign-on
+                    (SSO) authorization.
                   </p>
                   <p>
                     Allow <strong>Checks: Read</strong> and <strong>Commit statuses: Read</strong> for CI status. To
@@ -287,9 +286,10 @@ export function GitHubAuthDialog({
                   disabled={busy}
                 />
                 <label htmlFor="github-auth-pr">
-                  PR URL to check <span>(recommended)</span>
+                  PR URL to check <span>(optional)</span>
                 </label>
                 <input
+                  aria-describedby="github-auth-pr-help"
                   id="github-auth-pr"
                   type="url"
                   value={checkUrl}
@@ -297,9 +297,9 @@ export function GitHubAuthDialog({
                   placeholder="https://github.com/owner/repo/pull/123"
                   disabled={busy}
                 />
-                <p className="github-auth-hint">
-                  With a PR URL, we check repository access before saving the token. Otherwise, we verify your account
-                  and check access when you start an explanation.
+                <p className="github-auth-hint" id="github-auth-pr-help">
+                  Recommended: add a PR URL to check access to that PR and its code before saving. Leave it blank to
+                  verify only your account; repository access is checked when you generate an explanation.
                 </p>
                 <Button disabled={busy || !token.trim()} type="submit">
                   {busy ? 'Checking access…' : 'Check and connect'}
@@ -337,7 +337,7 @@ export function GitHubAuthDialog({
           </button>
         )}
         <Button size="sm" variant="ghost" disabled={phase === 'saving'} onClick={() => change(false)}>
-          Cancel
+          {phase === 'starting' || phase === 'waiting' ? 'Cancel sign-in' : 'Close'}
         </Button>
       </DialogContent>
     </Dialog>

@@ -238,6 +238,8 @@ void test('PR access checks require contents on both source repositories and reu
   await checkGitHubPrAccess(client, 'https://github.com/o/r/pull/1');
   assert.equal(reads.length, count);
   assert.match(githubAccessMessage({ status: 404 }, 'o/private'), /o\/private.*Pull requests: Read/);
+  assert.match(githubAccessMessage({ status: 404 }), /no longer exist.*may not have access/);
+  assert.doesNotMatch(githubAccessMessage({ status: 403 }), /no longer exist|404/);
   assert.match(githubAccessMessage({ status: 401 }), /expired|invalid/);
 });
 

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
+import { githubAccessMessage } from '../lib/github-auth';
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({
     width: 1100,
@@ -42,12 +43,12 @@ void app.whenReady().then(async () => {
       window.electronAPI.completeGitHubSignIn=async()=>{await new Promise(r=>{window.approveDevice=r;});return originalComplete();};
       window.electronAPI.cancelGitHubSignIn=()=>{window.cancelledCodes++;return Promise.resolve();};
       window.electronAPI.openExternal=(url)=>{window.openedAuthUrl=url;return Promise.resolve();};
-      window.electronAPI.savePat=(token,pr)=>{window.savedPat={token,pr};return Promise.reject(new Error('GitHub could not grant access to o/r. Allow Pull requests: Read and Contents: Read.'));};
+      window.electronAPI.savePat=(token,pr)=>{window.savedPat={token,pr};return Promise.reject(new Error(${JSON.stringify(githubAccessMessage({ status: 403 }, 'example-organization/repository-with-a-long-name'))}));};
     })()`);
     await js("document.querySelector('.getting-started-connection summary').click()");
     await click('Sign in to GitHub');
     await wait("!!document.querySelector('.github-auth-dialog')");
-    await click('Continue in browser');
+    await click('Sign in through browser');
     await wait("document.querySelector('.github-auth-error')?.textContent.includes('sign-in code')");
     await click('Sign in with a code');
     await wait("document.querySelector('.github-device-prompt code')?.textContent==='TEST-CODE'");
@@ -69,7 +70,16 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.electronAPI.getAuthState().then(a=>a.authenticated)'), false);
     assert.equal(await js("document.querySelector('#github-auth-token').type"), 'password');
     await capture('token-error');
-    await click('Cancel');
+    win.webContents.setZoomFactor(2);
+    await capture('token-zoom');
+    assert.equal(
+      await js(
+        "document.querySelector('.github-auth-dialog').scrollWidth <= document.querySelector('.github-auth-dialog').clientWidth + 1"
+      ),
+      true
+    );
+    win.webContents.setZoomFactor(1);
+    await click('Close');
     await wait("!document.querySelector('.github-auth-dialog')");
     // A preview build immediately offers the device flow, never the broken web action.
     await js('window.authWeb=false');
@@ -77,7 +87,7 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.github-device-prompt code')");
     assert.equal(
       await js(
-        "[...document.querySelectorAll('.github-auth-dialog button')].some(b=>b.textContent.includes('Continue in browser'))"
+        "[...document.querySelectorAll('.github-auth-dialog button')].some(b=>b.textContent.includes('Sign in through browser'))"
       ),
       false
     );
@@ -88,7 +98,10 @@ void app.whenReady().then(async () => {
       true
     );
     await capture('device-narrow');
-    assert.equal(await js("document.querySelector('[aria-label=\"GitHub account\"]').getBoundingClientRect().width > 20"), true);
+    assert.equal(
+      await js('document.querySelector(\'[aria-label="GitHub account"]\').getBoundingClientRect().width > 20'),
+      true
+    );
     await js('window.approveDevice()');
     await wait(
       "!document.querySelector('.github-auth-dialog') && document.querySelector('[aria-label=\"GitHub account\"]').textContent==='oddur'"

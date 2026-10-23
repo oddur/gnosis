@@ -17,7 +17,7 @@ export function createGitHubWebAuth(io: {
     start(): Promise<void> {
       stop?.();
       if (!io.clientSecret)
-        return Promise.reject(new Error('Browser sign-in is unavailable in this build. Use a sign-in code instead.'));
+        return Promise.reject(new Error('Browser sign-in is unavailable. Use a sign-in code instead.'));
       return new Promise((resolve, reject) => {
         const controller = new AbortController();
         const state = crypto.randomBytes(24).toString('hex');
