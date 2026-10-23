@@ -1,11 +1,14 @@
 import type { Octokit } from '@octokit/rest';
-import type { PrSearchResult } from './types';
+import type { PrLabel, PrSearchResult } from './types';
+import { parseGitHubLabels } from './github-labels';
 
 // Keep only the fields needed for queue discovery and stack matching. Raw GitHub
 // list responses repeat large repository/user payloads for every PR.
 export interface ListedPull {
   html_url: string;
   updated_at: string;
+  // Optional so discovery checkpoints written before label support still load.
+  labelDetails?: PrLabel[];
   user: { login: string } | null;
   base: { ref: string; sha: string; repo: { full_name: string; default_branch?: string } };
   head: { ref: string; sha: string; repo: { full_name: string } | null };
@@ -117,6 +120,7 @@ export function createDiscoveryListings(
           listing.items.push({
             html_url: pr.html_url,
             updated_at: pr.updated_at,
+            labelDetails: parseGitHubLabels(pr.labels),
             user: pr.user ? { login: pr.user.login } : null,
             base: {
               ref: pr.base.ref,

@@ -22,7 +22,7 @@ import {
   type GitHubBackoffError,
 } from '../lib/github-client';
 import { getPrMetadata, parsePrUrl, getChangedFiles } from '../lib/github';
-import { createDiscoveryListings, type DiscoveryListings } from '../lib/github-discovery';
+import { createDiscoveryListings, type DiscoveryListings, type ListedPull } from '../lib/github-discovery';
 import { getProvider } from '../lib/provider';
 import {
   groupSubjects,
@@ -303,8 +303,22 @@ export function createWorkbenchService(deps: Deps) {
       const add = async (
         url: string,
         role?: ReviewMember['role'],
-        listed?: { updated_at: string; head: { sha: string }; base: { sha: string; ref: string } }
+        listed?: Pick<ListedPull, 'updated_at' | 'labelDetails'> & {
+          head: { sha: string };
+          base: { sha: string; ref: string };
+        }
       ) => {
+        const withListedLabels = (member: ReviewMember): ReviewMember => {
+          // A reused PR can predate label-color support or a repository label
+          // edit. Enrich it from the listing we already need for stack discovery.
+          // Preserve freshly fetched details and tolerate old listing checkpoints.
+          if (!listed?.labelDetails || (completed.has(url) && member.labelDetails !== undefined)) return member;
+          return {
+            ...member,
+            labels: listed.labelDetails.map((label) => label.name),
+            labelDetails: listed.labelDetails,
+          };
+        };
         const current = members.get(url);
         if (
           current &&
@@ -313,8 +327,10 @@ export function createWorkbenchService(deps: Deps) {
               current.headSha === listed.head.sha &&
               current.baseSha === listed.base.sha &&
               current.baseBranch === listed.base.ref))
-        )
+        ) {
+          members.set(url, withListedLabels(current));
           return;
+        }
         const cached = previousMembers.get(url);
         const updatedAt = listed?.updated_at ?? seeds.get(url)?.updatedAt;
         if (
@@ -327,7 +343,7 @@ export function createWorkbenchService(deps: Deps) {
               cached.baseSha === listed.base.sha &&
               cached.baseBranch === listed.base.ref))
         ) {
-          members.set(url, { ...cached, role: role ?? current?.role ?? 'watched' });
+          members.set(url, withListedLabels({ ...cached, role: role ?? current?.role ?? 'watched' }));
           return;
         }
         checkAllowance();

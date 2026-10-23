@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { Octokit } from '@octokit/rest';
+import type { ReviewMember } from '../lib/workbench';
 import { createWorkbenchService } from '../src/workbench-service';
 import type { WorkbenchPreferences } from '../src/workbench-service';
 import { createActivityService } from '../src/activity-service';
@@ -1356,6 +1357,48 @@ void test('PR label colors and descriptions persist alongside filter-compatible 
     const restarted = createWorkbenchService(s.deps);
     assert.equal((await restarted.queue()).items[0].subject.members[0].labelDetails?.[0].color, 'd73a4a');
     assert.equal(reads, 1);
+  } finally {
+    s.cleanup();
+  }
+});
+
+void test('repository listings hydrate legacy label badges without refetching cached PR details', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  let now = Date.now();
+  const deps = { ...s.deps, now: () => now };
+  try {
+    await createWorkbenchService(deps).queue();
+    const filename = path.join(s.deps.directory(), 'workbench.json');
+    const saved = JSON.parse(fs.readFileSync(filename, 'utf8')) as { subjects: { members: ReviewMember[] }[] };
+    const legacy = saved.subjects[0].members[0];
+    legacy.labels = ['visual-proof-done'];
+    delete legacy.labelDetails;
+    fs.writeFileSync(filename, JSON.stringify(saved));
+    Object.assign(s.pr, {
+      labels: [{ name: 'visual-proof-done', color: '3E2CC5', description: 'Visual proof recorded' }],
+    });
+    let reads = 0;
+    Object.assign(s.deps.client().pulls, {
+      get: () => {
+        reads++;
+        return Promise.resolve({ data: s.pr });
+      },
+    });
+    now += 6 * 60_000;
+    const service = createWorkbenchService(deps);
+    const q = await service.queue(true, false);
+    assert.deepEqual(q.items[0].subject.members[0].labelDetails, [
+      { name: 'visual-proof-done', color: '3E2CC5', description: 'Visual proof recorded' },
+    ]);
+    assert.equal(reads, 0, 'The already-required repository listing supplies label details');
+    const restarted = createWorkbenchService(deps);
+    assert.equal((await restarted.queue()).items[0].subject.members[0].labelDetails?.[0].color, '3E2CC5');
+    Object.assign(s.pr, { labels: [] });
+    now += 6 * 60_000;
+    const cleared = await restarted.queue(true, false);
+    assert.deepEqual(cleared.items[0].subject.members[0].labels, []);
+    assert.deepEqual(cleared.items[0].subject.members[0].labelDetails, []);
+    assert.equal(reads, 0);
   } finally {
     s.cleanup();
   }

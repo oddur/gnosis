@@ -1,4 +1,5 @@
 import type { Octokit } from '@octokit/rest';
+import { parseGitHubLabels } from './github-labels';
 import { getGitHubClient } from './github-client';
 import { getProvider } from './provider';
 import type { DiffSource } from './diffSource';
@@ -57,15 +58,7 @@ export async function getPrMetadata(
     labels: (data.labels ?? []).map((l) => (typeof l === 'string' ? l : (l.name ?? ''))).filter(Boolean),
     // Keep names compatible with older filters and snapshots; details are optional.
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- GitHub can omit labels
-    labelDetails: (data.labels ?? []).flatMap((label) => {
-      const name = typeof label === 'string' ? label : label.name;
-      if (!name) return [];
-      return [{
-        name,
-        color: typeof label !== 'string' && label.color && /^[0-9a-f]{6}$/i.test(label.color) ? label.color : undefined,
-        description: typeof label !== 'string' ? label.description ?? undefined : undefined,
-      }];
-    }),
+    labelDetails: parseGitHubLabels(data.labels ?? []),
     mergeable: data.mergeable ?? null,
     isDraft: data.draft ?? false,
     commitCount: data.commits,
