@@ -150,7 +150,7 @@ export function createReviewImageService(io: {
               path: imagePath,
               ref: revision,
               headers: { accept: 'application/vnd.github.raw+json' },
-              request: { cache: 'no-store' },
+              request: { cache: 'no-store', responseType: 'arraybuffer' },
             });
             return dataUrl(response.data, mime);
           }

@@ -211,13 +211,15 @@ export function createGitHubClientPool(options: Options = {}) {
         const resource = graph ? 'graphql' : endpoint.url.includes('/search/') ? 'search' : 'core';
         const get = endpoint.method === 'GET';
         // Binary images use a separate bounded memory cache, never the JSON disk cache.
-        const cacheable = get && requestOptions.request.cache !== 'no-store';
+        const binary = requestOptions.request.responseType === 'arraybuffer';
+        const cacheable = get && !binary && requestOptions.request.cache !== 'no-store';
         const graphRead =
           graph && typeof requestOptions.query === 'string' && /^\s*(query\b|\{)/.test(requestOptions.query);
         const requestKey = JSON.stringify([
           endpoint.url,
           endpoint.headers.accept,
           endpoint.headers['x-github-api-version'],
+          ...(binary ? ['arraybuffer'] : []),
         ]);
         const force = /\b(no-cache|no-store)\b/i.test(String(endpoint.headers['cache-control'] ?? ''));
         const deduplicate = get && !force && !requestOptions.request.signal;
@@ -255,7 +257,14 @@ export function createGitHubClientPool(options: Options = {}) {
           else if (cached?.response.headers['last-modified'])
             requestOptions.headers['if-modified-since'] = cached.response.headers['last-modified'];
           try {
+            // Hooks share the original options object, including auth and request logging.
+            if (binary) requestOptions.request.parseSuccessResponseBody = false;
             const response = await request(requestOptions);
+            if (binary) {
+              // GitHub raw images can carry charset=utf-8. Bypass Octokit's text decoding,
+              // then consume the stream before cloning/coalescing the response for callers.
+              response.data = await new Response(response.data as ReadableStream<Uint8Array>).arrayBuffer();
+            }
             observe(response.headers);
             if (
               graph &&

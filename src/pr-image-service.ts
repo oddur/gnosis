@@ -31,7 +31,7 @@ export function createPrImageService() {
         method: 'GET',
         url,
         headers: { accept: 'application/octet-stream' },
-        request: { cache: 'no-store' },
+        request: { cache: 'no-store', responseType: 'arraybuffer' },
       });
       const type = response.headers['content-type']?.split(';')[0].toLowerCase();
       if (!type || !/^image\/(?:png|jpeg|gif|webp|avif|svg\+xml)$/.test(type))

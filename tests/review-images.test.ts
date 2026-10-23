@@ -220,7 +220,7 @@ void test('GitHub raw media preserves binary bytes and a missing side does not h
         );
       if (fail && url.searchParams.get('ref') === head)
         return Promise.resolve(new Response('missing', { status: 404 }));
-      return Promise.resolve(new Response(bytes, { headers: { 'content-type': 'application/vnd.github.raw+json' } }));
+      return Promise.resolve(new Response(bytes, { headers: { 'content-type': 'application/vnd.github.raw+json; charset=utf-8' } }));
     }) as typeof fetch,
   });
   const saved = review();

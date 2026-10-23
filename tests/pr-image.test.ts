@@ -13,7 +13,7 @@ void test('authenticated images coalesce, reuse memory, isolate credentials, and
       calls++;
       assert.ok(new Headers(init.headers).get('authorization'));
       return Promise.resolve(
-        new Response(new Uint8Array([137, 80, 78, 71]), { headers: { 'content-type': 'image/png' } })
+        new Response(new Uint8Array([137, 80, 78, 71]), { headers: { 'content-type': 'image/png; charset=utf-8' } })
       );
     }) as typeof fetch,
   });
