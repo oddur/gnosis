@@ -192,7 +192,7 @@ function ReviewHunk({
           {inlineExplanations
             .filter((note) => note.line === location.line && note.side === location.side)
             .map((note) => (
-              <InlineCodeExplanation key={`${note.side}:${note.line}`} explanation={note} />
+              <InlineCodeExplanation key={`${note.side}:${note.line}:${note.text}`} explanation={note} />
             ))}
           {commentCallbacks && active?.line === location.line && active.side === location.side && (
             <InlineCommentForm

@@ -104,6 +104,13 @@ function Fixture() {
                         code: 'export const ready = true;',
                         text: 'Callers can now proceed without waiting.',
                       },
+                      {
+                        filePath: hunk.filePath,
+                        line: 1,
+                        side: 'RIGHT',
+                        code: 'export const ready = true;',
+                        text: 'The flag is initialized before importers use the module.',
+                      },
                     ]
                   : undefined
               }

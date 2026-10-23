@@ -59,6 +59,13 @@ void app.whenReady().then(async () => {
         `Generated notes render on the ${side} side`
       );
     }
+    assert.deepEqual(
+      await js(
+        `[...document.querySelectorAll('[data-case=modify] [slot="annotation-additions-1"] .inline-code-explanation')].map(note => note.textContent)`
+      ),
+      ['Callers can now proceed without waiting.', 'The flag is initialized before importers use the module.'],
+      'Distinct insights anchored to the same statement both remain visible'
+    );
     for (const [name, side] of [
       ['added', 'RIGHT'],
       ['deleted', 'LEFT'],

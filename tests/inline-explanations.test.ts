@@ -49,7 +49,7 @@ void test('explanations require exact file, side, line, and source text, includi
   assert.deepEqual(normalizeInlineExplanations([removed], [hunk]), [removed]);
 });
 
-void test('noise limits reject duplicate, nearby, excess-per-file, and excess-per-topic notes', () => {
+void test('distinct explanations survive close anchors and large counts; exact duplicate text is removed', () => {
   const at = (line: number, path = filePath) => ({
     ...note,
     filePath: path,
@@ -59,11 +59,13 @@ void test('noise limits reject duplicate, nearby, excess-per-file, and excess-pe
   });
   const second = filePath.replace('-12/', '-13/');
   const third = filePath.replace('-12/', '-14/');
+  const sameLine = { ...note, text: 'The finally block releases the slot on rejection as well as success.' };
   const notes = normalizeInlineExplanations(
     [
       note,
       { ...note },
       { ...at(20), text: note.text.toUpperCase() },
+      sameLine,
       at(5),
       at(12),
       at(24),
@@ -72,7 +74,7 @@ void test('noise limits reject duplicate, nearby, excess-per-file, and excess-pe
     ],
     [hunk, { ...hunk, filePath: second }, { ...hunk, filePath: third }]
   );
-  assert.deepEqual(notes, [note, at(12), at(1, second)]);
+  assert.deepEqual(notes, [note, sameLine, at(5), at(12), at(24), at(1, second), at(1, third)]);
 });
 
 void test('saved notes are dropped when their source changes; file status prevents wrong-side anchors', () => {
