@@ -1,0 +1,383 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {
+  createGitHubClientPool,
+  githubRateLimit,
+  GitHubBackoffError,
+  fetchGitHubLogin,
+  githubCacheFor,
+} from '../lib/github-client';
+
+function harness(respond: (url: string, headers: Headers) => Response) {
+  let now = 1_000_000;
+  const calls: string[] = [];
+  const pool = createGitHubClientPool({
+    now: () => now,
+    minSpacingMs: 0,
+    fetch: ((url: string, init: RequestInit) => {
+      calls.push(url);
+      return Promise.resolve(respond(url, new Headers(init.headers)));
+    }) as typeof fetch,
+  });
+  return {
+    pool,
+    calls,
+    advance: (ms: number) => {
+      now += ms;
+    },
+  };
+}
+const json = (data: unknown, status = 200, headers: Record<string, string> = {}) =>
+  new Response(JSON.stringify(data), {
+    status,
+    headers: { 'content-type': 'application/json', ...headers },
+  });
+
+void test('all consumers share authenticated requests and a primary cooldown, including queued requests', async () => {
+  let limited = true;
+  const h = harness((_url, headers) => {
+    assert.equal(headers.get('authorization'), 'token fixture');
+    return limited
+      ? json({ message: 'API rate limit exceeded' }, 403, {
+          'x-ratelimit-remaining': '0',
+          'x-ratelimit-limit': '5000',
+          'x-ratelimit-reset': '1100',
+        })
+      : json({ login: 'reviewer' });
+  });
+  const a = h.pool.client('fixture'),
+    b = h.pool.client('fixture');
+  assert.equal(a, b);
+  const results = await Promise.allSettled([a.users.getAuthenticated(), b.repos.get({ owner: 'o', repo: 'r' })]);
+  assert.ok(results.every((r) => r.status === 'rejected' && r.reason instanceof GitHubBackoffError));
+  assert.equal(h.calls.length, 1);
+  await assert.rejects(b.users.getAuthenticated(), GitHubBackoffError);
+  assert.equal(h.calls.length, 1);
+  h.advance(101_001);
+  limited = false;
+  assert.equal((await b.users.getAuthenticated()).data.login, 'reviewer');
+  assert.equal(h.calls.length, 2);
+});
+
+void test('secondary limits honor Retry-After and escalate repeated throttling without replaying writes', async () => {
+  const h = harness(() => json({ message: 'You have exceeded a secondary rate limit' }, 429, { 'retry-after': '120' }));
+  const client = h.pool.client('fixture');
+  await assert.rejects(
+    client.issues.createComment({ owner: 'o', repo: 'r', issue_number: 1, body: 'Comment' }),
+    GitHubBackoffError
+  );
+  assert.equal(h.calls.length, 1);
+  h.advance(120_000);
+  await assert.rejects(client.users.getAuthenticated(), GitHubBackoffError);
+  assert.equal(h.calls.length, 1, 'The server deadline includes a clock-skew cushion');
+  h.advance(1001);
+  await assert.rejects(client.users.getAuthenticated(), GitHubBackoffError);
+  assert.equal(h.calls.length, 2);
+  assert.ok((h.pool.backoff('fixture')?.retryAt ?? 0) >= 1_241_001);
+});
+
+void test('plain permission errors are not cooldowns, and HTTP-date Retry-After is respected', async () => {
+  const h = harness(() => json({ message: 'Resource not accessible' }, 403));
+  await assert.rejects(h.pool.client('fixture').users.getAuthenticated(), /Resource not accessible/);
+  assert.equal(h.pool.backoff('fixture'), undefined);
+  const error = { status: 429, response: { headers: { 'retry-after': new Date(1_120_000).toUTCString() } } };
+  assert.equal(githubRateLimit(error, 1_000_000)?.retryAt, 1_121_000);
+});
+
+void test('conditional reads reuse 304 bodies, coalesce callers, and isolate accounts and representations', async () => {
+  const h = harness((_url, headers) =>
+    headers.has('if-none-match')
+      ? new Response(null, { status: 304, headers: { etag: '"v1"' } })
+      : json({ value: headers.get('authorization'), accept: headers.get('accept') }, 200, { etag: '"v1"' })
+  );
+  const client = h.pool.client('one');
+  const [a, b] = await Promise.all([client.request('GET /test'), client.request('GET /test')]);
+  assert.equal(h.calls.length, 1);
+  assert.deepEqual(a.data, b.data);
+  h.advance(60_001);
+  assert.deepEqual((await client.request('GET /test')).data, a.data);
+  await h.pool.client('two').request('GET /test');
+  const diff = await client.request('GET /test', { headers: { accept: 'application/vnd.github.diff' } });
+  assert.equal((diff.data as { accept: string }).accept, 'application/vnd.github.diff');
+  assert.equal(h.calls.length, 4);
+  await client.request('POST /test', { data: {} });
+  const reread = await client.request('GET /test');
+  assert.deepEqual(reread.data, a.data);
+  assert.equal(h.calls.length, 6);
+});
+
+void test('successful last-quota responses stop later requests; background refresh reserves foreground budget', async () => {
+  const h = harness(() =>
+    json({}, 200, { 'x-ratelimit-remaining': '50', 'x-ratelimit-limit': '5000', 'x-ratelimit-reset': '1100' })
+  );
+  await h.pool.client('fixture').request('GET /test');
+  assert.ok(h.pool.backoff('fixture', true));
+  assert.equal(h.pool.backoff('fixture'), undefined);
+  const empty = harness(() =>
+    json({}, 200, { 'x-ratelimit-remaining': '0', 'x-ratelimit-limit': '5000', 'x-ratelimit-reset': '1100' })
+  );
+  await empty.pool.client('fixture').request('GET /test');
+  await assert.rejects(empty.pool.client('fixture').request('GET /another'), GitHubBackoffError);
+  assert.equal(empty.calls.length, 1);
+});
+
+void test('cooldowns and verified usernames survive restart without storing credentials', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-github-budget-'));
+  const file = path.join(dir, 'budget.json');
+  try {
+    const h = harness(() =>
+      json({ message: 'API rate limit exceeded' }, 403, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1100' })
+    );
+    h.pool.setStorage(file);
+    h.pool.rememberLogin('secret-token', 'reviewer');
+    await assert.rejects(h.pool.client('secret-token').users.getAuthenticated(), GitHubBackoffError);
+    assert.equal(fs.readFileSync(file, 'utf8').includes('secret-token'), false);
+    const restart = harness(() => json({ login: 'reviewer' }));
+    restart.pool.setStorage(file);
+    assert.equal(restart.pool.savedLogin('secret-token'), 'reviewer');
+    await assert.rejects(restart.pool.client('secret-token').users.getAuthenticated(), GitHubBackoffError);
+    assert.equal(restart.calls.length, 0);
+    assert.equal(restart.pool.savedLogin('different-token'), undefined);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+void test('failed username lookups never become an authenticated unknown account', async () => {
+  const h = harness(() =>
+    json({ message: 'API rate limit exceeded' }, 403, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1100' })
+  );
+  await assert.rejects(fetchGitHubLogin('fixture', h.pool), GitHubBackoffError);
+  assert.equal(h.pool.savedLogin('fixture'), undefined);
+  const invalid = harness(() => json({ message: 'Bad credentials' }, 401));
+  await assert.rejects(fetchGitHubLogin('fixture', invalid.pool), /Bad credentials/);
+  assert.equal(invalid.pool.savedLogin('fixture'), undefined);
+  const valid = harness(() => json({ login: 'reviewer' }));
+  assert.equal(await fetchGitHubLogin('fixture', valid.pool), 'reviewer');
+  assert.equal(valid.pool.savedLogin('fixture'), 'reviewer');
+});
+
+void test('GraphQL reads retain REST cache and HTTP-200 rate limits enter the shared cooldown', async () => {
+  let limited = false;
+  const h = harness((url, headers) => {
+    if (url.endsWith('/graphql'))
+      return limited
+        ? json({ errors: [{ type: 'RATE_LIMITED', message: 'API rate limit exceeded' }] }, 200, {
+            'x-ratelimit-resource': 'graphql',
+            'x-ratelimit-remaining': '0',
+            'x-ratelimit-reset': '1100',
+          })
+        : json({ data: { viewer: { login: 'me' } } });
+    return headers.has('if-none-match')
+      ? new Response(null, { status: 304 })
+      : json({ value: 'cached' }, 200, { etag: '"v1"' });
+  });
+  const client = h.pool.client('one');
+  await client.request('GET /test');
+  await client.request('POST /graphql', { query: 'query { viewer { login } }' });
+  assert.deepEqual((await client.request('GET /test')).data, { value: 'cached' });
+  limited = true;
+  await assert.rejects(client.request('POST /graphql', { query: 'query { viewer { login } }' }), GitHubBackoffError);
+  const count = h.calls.length;
+  await assert.rejects(client.request('POST /graphql', { query: 'query { viewer { login } }' }), GitHubBackoffError);
+  assert.equal(h.calls.length, count);
+});
+
+void test('fresh responses survive restart; stale responses revalidate and refresh their saved age', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-github-cache-'));
+  const file = path.join(dir, 'budget.json');
+  const respond = (_url: string, headers: Headers) =>
+    headers.has('if-none-match')
+      ? new Response(null, { status: 304, headers: { etag: '"v1"', 'cache-control': 'private, max-age=60' } })
+      : json({ value: 'saved' }, 200, { etag: '"v1"', 'cache-control': 'private, max-age=60' });
+  try {
+    const original = harness(respond);
+    original.pool.setStorage(file);
+    await original.pool.client('secret-token').request('GET /test');
+    const content = fs.readFileSync(path.join(dir, 'github-cache.json'), 'utf8');
+    assert.equal(content.includes('secret-token'), false);
+    assert.equal(content.includes('authorization'), false);
+    // Windows exposes only the writable bit, not POSIX owner/group permissions.
+    if (process.platform !== 'win32') {
+      assert.equal(fs.statSync(path.join(dir, 'github-cache.json')).mode & 0o777, 0o600);
+    }
+    const restart = harness(respond);
+    restart.pool.setStorage(file);
+    const client = restart.pool.client('secret-token');
+    const first = await client.request('GET /test');
+    assert.deepEqual(first.data, { value: 'saved' });
+    assert.equal(restart.calls.length, 0);
+    (first.data as { value: string }).value = 'modified';
+    assert.deepEqual((await client.request('GET /test')).data, { value: 'saved' });
+    restart.advance(60_001);
+    assert.deepEqual((await client.request('GET /test')).data, { value: 'saved' });
+    assert.equal(restart.calls.length, 1);
+    const again = harness(respond);
+    again.advance(60_001);
+    again.pool.setStorage(file);
+    await again.pool.client('secret-token').request('GET /test');
+    assert.equal(again.calls.length, 0, 'A 304 refreshes the persisted freshness window');
+    await again.pool.client('another-token').request('GET /test');
+    assert.equal(again.calls.length, 1, 'Credentials never share saved response data');
+    await again.pool
+      .client('secret-token')
+      .request('GET /test', { headers: { accept: 'application/vnd.github.diff' } });
+    await again.pool.client('secret-token').request('GET /test', { headers: { 'x-github-api-version': '2099-01-01' } });
+    assert.equal(again.calls.length, 3, 'Representations and API versions have separate cache entries');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+void test('explicit refresh bypasses fresh reads and writes and sign-out invalidate persisted responses', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-github-invalidate-'));
+  const file = path.join(dir, 'budget.json');
+  try {
+    let value = 1;
+    const h = harness(() => json({ value }, 200, { etag: '"v1"' }));
+    h.pool.setStorage(file);
+    const client = h.pool.client('one');
+    await client.request('GET /test');
+    value = 2;
+    assert.deepEqual((await client.request('GET /test', { headers: { 'cache-control': 'no-cache' } })).data, {
+      value: 2,
+    });
+    assert.equal(h.calls.length, 2);
+    value = 3;
+    githubCacheFor(client)?.revalidate();
+    assert.deepEqual((await client.request('GET /test')).data, { value: 3 });
+    assert.equal(h.calls.length, 3, 'Queue refresh can invalidate freshness while retaining validators');
+    await client.request('POST /test', { data: {} });
+    const restart = harness(() => json({ value: 3 }, 200, { etag: '"v2"' }));
+    restart.pool.setStorage(file);
+    assert.deepEqual((await restart.pool.client('one').request('GET /test')).data, { value: 3 });
+    assert.equal(restart.calls.length, 1);
+    restart.pool.forget('one');
+    const signedIn = harness(() => json({ value: 4 }));
+    signedIn.pool.setStorage(file);
+    assert.deepEqual((await signedIn.pool.client('one').request('GET /test')).data, { value: 4 });
+    assert.equal(signedIn.calls.length, 1);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+void test('cache respects no-store, revalidation, expiry, and permissions errors without stale fallback', async () => {
+  const noStore = harness(() => json({}, 200, { etag: '"private"', 'cache-control': 'no-store' }));
+  await noStore.pool.client('one').request('GET /test');
+  await noStore.pool.client('one').request('GET /test');
+  assert.equal(noStore.calls.length, 2);
+  let allowed = true;
+  const h = harness(() =>
+    allowed ? json({}, 200, { etag: '"v1"', 'cache-control': 'no-cache' }) : json({ message: 'Forbidden' }, 403)
+  );
+  const client = h.pool.client('one');
+  await client.request('GET /test');
+  await client.request('GET /test');
+  assert.equal(h.calls.length, 2);
+  allowed = false;
+  await assert.rejects(client.request('GET /test'), /Forbidden/);
+  await assert.rejects(client.request('GET /test'), /Forbidden/);
+});
+
+void test('fresh cached data remains readable during backoff without sending requests', async () => {
+  const h = harness((url) =>
+    url.endsWith('/limited')
+      ? json({ message: 'Rate limit exceeded' }, 429, { 'retry-after': '120' })
+      : json({ value: 'saved' }, 200, { etag: '"v1"' })
+  );
+  const client = h.pool.client('one');
+  await client.request('GET /test');
+  await assert.rejects(client.request('GET /limited'), GitHubBackoffError);
+  assert.deepEqual((await client.request('GET /test')).data, { value: 'saved' });
+  assert.equal(h.calls.length, 2);
+  await assert.rejects(client.request('GET /test', { headers: { 'cache-control': 'no-cache' } }), GitHubBackoffError);
+  assert.equal(h.calls.length, 2);
+});
+
+void test('corrupt persisted responses are ignored and oversized responses are not retained', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-github-corrupt-'));
+  const file = path.join(dir, 'budget.json');
+  try {
+    fs.writeFileSync(path.join(dir, 'github-cache.json'), '{invalid');
+    const h = harness(() => json({ value: 'x'.repeat(1_000_001) }, 200, { etag: '"large"' }));
+    h.pool.setStorage(file);
+    await h.pool.client('one').request('GET /test');
+    await h.pool.client('one').request('GET /test');
+    assert.equal(h.calls.length, 2);
+    assert.deepEqual(
+      (JSON.parse(fs.readFileSync(path.join(dir, 'github-cache.json'), 'utf8')) as { entries: unknown[] }).entries,
+      []
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+void test('cache entry count is bounded and validators expire after a week', async () => {
+  const h = harness((_url, headers) => {
+    assert.equal(headers.has('if-none-match'), false);
+    return json({ value: 'saved' }, 200, { etag: '"v1"' });
+  });
+  const client = h.pool.client('one');
+  for (let i = 0; i < 201; i++) await client.request(`GET /entry/${i}`);
+  await client.request('GET /entry/200');
+  assert.equal(h.calls.length, 201);
+  await client.request('GET /entry/0');
+  assert.equal(h.calls.length, 202, 'The oldest entry was evicted');
+  h.advance(7 * 24 * 60 * 60_000);
+  await client.request('GET /entry/200');
+  assert.equal(h.calls.length, 203, 'Old validators are not retained indefinitely');
+});
+
+void test('sign-out prevents an already-running read from repopulating the persisted cache', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-github-inflight-'));
+  const file = path.join(dir, 'budget.json');
+  let release!: () => void;
+  let started!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const entered = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const pool = createGitHubClientPool({
+    minSpacingMs: 0,
+    fetch: (async () => {
+      started();
+      await gate;
+      return json({ value: 'old' }, 200, { etag: '"v1"' });
+    }) as typeof fetch,
+  });
+  try {
+    pool.setStorage(file);
+    const pending = pool.client('one').request('GET /test');
+    await entered;
+    pool.forget('one');
+    release();
+    await pending;
+    const restart = harness(() => json({ value: 'new' }));
+    restart.pool.setStorage(file);
+    assert.deepEqual((await restart.pool.client('one').request('GET /test')).data, { value: 'new' });
+    assert.equal(restart.calls.length, 1);
+  } finally {
+    release();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+void test('failed writes invalidate cached reads without being replayed', async () => {
+  let value = 1;
+  const h = harness((url) =>
+    url.endsWith('/write') ? json({ message: 'Service unavailable' }, 503) : json({ value }, 200, { etag: '"v1"' })
+  );
+  const client = h.pool.client('one');
+  await client.request('GET /test');
+  value = 2;
+  await assert.rejects(client.request('POST /write', { data: {} }), /Service unavailable/);
+  assert.deepEqual((await client.request('GET /test')).data, { value: 2 });
+  assert.equal(h.calls.length, 3);
+});

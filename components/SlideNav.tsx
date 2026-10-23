@@ -74,8 +74,8 @@ export function SlideNav({
           <span className="slide-meta tabular-nums">
             {isOverview
               ? 'Overview'
-              : `Section ${current.toString().padStart(2, '0')} of ${total.toString().padStart(2, '0')}`}
-            {reviewedCount > 0 && ` · ${reviewedCount} reviewed`}
+              : `Topic ${current.toString().padStart(2, '0')} of ${total.toString().padStart(2, '0')}`}
+            {reviewedCount > 0 && ` · ${reviewedCount} topics reviewed`}
           </span>
           {showSubmitInCenter && (
             <button
@@ -83,7 +83,7 @@ export function SlideNav({
               className="inline-flex items-center gap-1.5 slide-meta hover:text-foreground transition-colors"
             >
               <MessageSquarePlus className="h-3 w-3" />
-              Submit review
+              Submit to GitHub
               {commentCount > 0 && <span className="text-[var(--ring)] tabular-nums">({commentCount})</span>}
             </button>
           )}
@@ -98,12 +98,12 @@ export function SlideNav({
           <button
             onClick={onSubmitReview}
             className="group flex items-baseline gap-3 text-right min-w-0 justify-end"
-            title="Submit review"
+            title="Submit to GitHub"
           >
             <span className="flex flex-col gap-0.5 min-w-0 items-end max-w-full">
               <span className="slide-meta">End of review</span>
               <span className="font-sans text-sm text-foreground group-hover:opacity-80 transition-opacity truncate max-w-full">
-                Submit review
+                Submit to GitHub
                 {commentCount > 0 && <span className="text-[var(--ring)] tabular-nums"> ({commentCount})</span>}
               </span>
             </span>

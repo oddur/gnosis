@@ -1,3 +1,7 @@
+import type { GitHubDevicePrompt } from '../lib/github-auth';
+import type { QueueViewAction } from '../lib/saved-views';
+import type { QueueFilters } from '../lib/queue-filters';
+import type { GitHubReviewThread, GitHubReviewThreads, ReviewThreadAction } from '../lib/review-threads';
 import type { ActivityTask, ActivityAction } from '../lib/activity';
 import type { WorkbenchQueue, GroupingOverride, ReviewSnapshot } from '../lib/workbench';
 import type {
@@ -6,6 +10,7 @@ import type {
   Preferences,
   PrSearchResult,
   PrStatus,
+  PrMetadata,
   ReviewGuide,
   ReviewHistoryEntry,
   SendSlideChatRequest,
@@ -23,6 +28,8 @@ declare global {
     electronAPI: {
       listActivity: () => Promise<ActivityTask[]>;
       activityAction: (id:string, action:ActivityAction) => Promise<void>;
+      workbenchViewAction: (action: QueueViewAction) => Promise<WorkbenchQueue>;
+      workbenchSetFilters: (filters: QueueFilters) => Promise<WorkbenchQueue>;
       workbenchQueue: (force?: boolean) => Promise<WorkbenchQueue>;
       workbenchGroup: (correction: GroupingOverride) => Promise<WorkbenchQueue>;
       workbenchBriefing: (id: string) => Promise<WorkbenchQueue>;
@@ -32,10 +39,15 @@ declare global {
       startReview: (req: GenerateReviewRequest) => Promise<StartReviewResult>;
       cancelReview: (reviewId: string) => Promise<void>;
       getConfig: () => Promise<{ githubToken: string | null }>;
+      githubAuthOptions: () => Promise<{ web: boolean }>;
       startOAuth: () => Promise<void>;
+      cancelOAuth: () => Promise<void>;
+      beginGitHubSignIn: () => Promise<GitHubDevicePrompt>;
+      completeGitHubSignIn: (id: string) => Promise<string>;
+      cancelGitHubSignIn: (id: string) => Promise<void>;
       getAuthState: () => Promise<{ authenticated: boolean; login: string | null }>;
       signOut: () => Promise<void>;
-      savePat: (token: string) => Promise<string>;
+      savePat: (token: string, prUrl?: string) => Promise<string>;
       listReviews: () => Promise<ReviewHistoryEntry[]>;
       loadReview: (id: string) => Promise<ReviewGuide>;
       deleteReview: (id: string) => Promise<void>;
@@ -69,6 +81,11 @@ declare global {
       searchRepos: (query: string) => Promise<RepoSearchResult[]>;
       reRenderHunks: (review: ReviewGuide) => Promise<ReviewGuide>;
       getPrStatus: (prUrl: string) => Promise<PrStatus>;
+      getPrMetadata: (prUrl: string) => Promise<PrMetadata>;
+      loadReviewImages: (reviewId: string, filePath: string) => Promise<import('../lib/review-images').ReviewImageComparison>;
+      loadPrImage: (url: string) => Promise<string>;
+      getReviewThreads: (prUrl: string, refresh?: boolean) => Promise<GitHubReviewThreads>;
+      reviewThreadAction: (req: ReviewThreadAction) => Promise<GitHubReviewThread>;
       onUpdateAvailable: (callback: (info: UpdateInfo) => void) => void;
       offUpdateAvailable: () => void;
       onUpdateReady: (callback: (version: string) => void) => void;

@@ -29,19 +29,19 @@ const groups: ShortcutGroup[] = [
   {
     heading: 'Reading',
     shortcuts: [
-      { keys: '←  →', label: 'Previous / next slide' },
-      { keys: 'j  k', label: 'Next / previous slide (vim)' },
+      { keys: '←  →', label: 'Previous / next topic' },
+      { keys: 'j  k', label: 'Next / previous topic (vim)' },
       { keys: 'g g', label: 'Jump to overview' },
-      { keys: 'G', label: 'Jump to last slide' },
-      { keys: '1 – 9', label: 'Jump to slide by number' },
+      { keys: 'G', label: 'Jump to last topic' },
+      { keys: '1 – 9', label: 'Jump to topic by number' },
     ],
   },
   {
     heading: 'Reviewing',
     shortcuts: [
-      { keys: 'r', label: 'Mark reviewed and advance' },
+      { keys: 'r', label: 'Mark topic reviewed and advance' },
       { keys: 'n', label: 'Jump to next unreviewed' },
-      { keys: 'c', label: 'Open chat for current slide' },
+      { keys: 'c', label: 'Open chat for current topic' },
       { keys: 'f', label: 'Toggle focus / split view' },
       { keys: 'u', label: 'Switch to unified diff' },
       { keys: 's', label: 'Switch to split diff' },
@@ -50,9 +50,7 @@ const groups: ShortcutGroup[] = [
   },
   {
     heading: 'Home',
-    shortcuts: [
-      { keys: 'n', label: 'Focus the new-review input' },
-    ],
+    shortcuts: [{ keys: 'n', label: 'Focus the new-review input' }],
   },
   {
     heading: 'Anywhere',
@@ -97,10 +95,7 @@ export function ShortcutOverlay({ open, onClose }: Props) {
       className="fixed inset-0 z-50 flex items-start justify-center px-8 pt-[12vh] pb-12 bg-background/85 backdrop-blur-[2px]"
       onClick={onClose}
     >
-      <div
-        className="w-full max-w-2xl flex flex-col gap-8"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="w-full max-w-2xl flex flex-col gap-8" onClick={(e) => e.stopPropagation()}>
         <div className="flex flex-col gap-3">
           <div className="slide-chapter">
             <span>Keyboard shortcuts</span>

@@ -14,18 +14,40 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onThemeChange?: (theme: string) => void;
-  // Resets the first-run welcome, the keyboard hint, and any
-  // localStorage onboarding flags so the user can re-experience the
-  // first-time path. Owned by HomePage because HomePage holds the
-  // firstRunOpen / hasEverHadPendingReviews / keyboardHintDismissed
-  // state slots that need to be reset together.
+  // Reopens the optional setup panel in the work queue.
   onReplayOnboarding?: () => void;
 }
+
+// Default faces ship locally. Fetch optional code families only when selected.
+const optionalFontStyles: Record<string, string[]> = {
+  'fira-code': ['https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&display=swap'],
+  hack: ['https://cdn.jsdelivr.net/npm/hack-font@3/build/web/hack.css'],
+  'monaspace-neon': [
+    'https://cdn.jsdelivr.net/npm/@fontsource/monaspace-neon@5/400.css',
+    'https://cdn.jsdelivr.net/npm/@fontsource/monaspace-neon@5/700.css',
+  ],
+  iosevka: [
+    'https://cdn.jsdelivr.net/npm/@fontsource/iosevka@5/400.css',
+    'https://cdn.jsdelivr.net/npm/@fontsource/iosevka@5/700.css',
+  ],
+};
 
 export function applyCodeFont(fontId: string) {
   const font = CODE_FONTS.find((f) => f.id === fontId);
   if (font) {
-    document.documentElement.style.setProperty('--font-mono', `${font.family}, ui-monospace, monospace`);
+    for (const [index, href] of (optionalFontStyles[font.id] ?? []).entries()) {
+      const id = `code-font-${font.id}-${index}`;
+      if (document.getElementById(id)) continue;
+      const link = document.createElement('link');
+      link.id = id;
+      link.rel = 'stylesheet';
+      link.href = href;
+      document.head.append(link);
+    }
+    document.documentElement.style.setProperty(
+      '--font-mono',
+      `${font.family}, 'JetBrains Mono', ui-monospace, monospace`
+    );
   }
 }
 
@@ -129,6 +151,7 @@ export function SettingsDialog({
   const [repoSuggestions, setRepoSuggestions] = useState<RepoSearchResult[]>([]);
   const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
   const showSuggestions = repoSuggestions.length > 0 && !suggestionsDismissed;
+  const replayingOnboarding = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [notifications, setNotifications] = useState(true);
   const [trayEnabled, setTrayEnabled] = useState(true);
@@ -220,7 +243,13 @@ export function SettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="settings-dialog bg-card sm:max-w-2xl">
+      <DialogContent className="settings-dialog bg-card sm:max-w-2xl" onCloseAutoFocus={(event) => {
+        if (replayingOnboarding.current) {
+          event.preventDefault();
+          replayingOnboarding.current = false;
+          document.getElementById('getting-started-title')?.focus();
+        }
+      }}>
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>Changes save automatically.</DialogDescription>
@@ -239,7 +268,7 @@ export function SettingsDialog({
           <Tabs.Content value="queue" className="settings-panel">
             <SettingRow
               label="Ignore Dependabot PRs"
-              description="Hide Dependabot changes from the queue and automatic briefings. Keep required parents in human-authored stacks."
+              description="Hide Dependabot PRs from the queue and automatic briefings. Keep them visible when a PR by a person builds on them."
             >
               <Toggle
                 checked={ignoreDependabotPrs}
@@ -253,7 +282,7 @@ export function SettingsDialog({
             </SettingRow>
             <SettingRow
               label="Automatic briefings"
-              description="Generate short queue summaries within your daily limit. Open a detailed review when you need it."
+              description="Generate short AI summaries in the background. Queue filters control which PRs and stacks are included; the daily attempt limit still applies."
             >
               <Toggle
                 checked={autoBriefings}
@@ -268,9 +297,11 @@ export function SettingsDialog({
 
             <div className="flex flex-col gap-2 ml-0.5">
               <label htmlFor="watched-repos" className="text-sm font-medium text-foreground">
-                Watched repositories
+                Repositories in your queue
               </label>
-              <p className="text-xs text-muted-foreground">Add open PRs from these repositories to your queue.</p>
+              <p className="text-xs text-muted-foreground">
+                Add open PRs from these repositories. This does not change your GitHub Watch subscriptions.
+              </p>
               <div className="relative">
                 <div className="flex items-end gap-2">
                   <input
@@ -352,7 +383,8 @@ export function SettingsDialog({
                     Daily briefing limit
                   </label>
                   <p className="text-xs text-muted-foreground">
-                    Maximum generation attempts per day, including retries.
+                    Maximum automatic briefing attempts per day, including retries. AI explanations do not count toward
+                    this limit.
                   </p>
                 </div>
                 <input
@@ -374,8 +406,8 @@ export function SettingsDialog({
                 <div className="flex flex-col gap-0.5 min-w-0">
                   <span className="text-sm font-medium text-foreground">Use a different model for briefings</span>
                   <span className="slide-meta">
-                    Override the workbench model for queue summaries. Choosing a model in the workbench clears this
-                    override.
+                    Choose a separate AI model for automatic briefings. Selecting a model in the queue makes reviews and
+                    briefings use that model again.
                   </span>
                 </div>
                 <div className="shrink-0">
@@ -452,7 +484,7 @@ export function SettingsDialog({
 
             <SettingRow
               label="Parallel review"
-              description="Split generation into a planner step then parallel writers per topic. Faster for large PRs."
+              description="Generate several review topics at once. This can speed up large reviews and uses concurrent AI requests."
             >
               <Toggle
                 checked={parallelReview}
@@ -466,12 +498,12 @@ export function SettingsDialog({
             </SettingRow>
 
             <SettingRow
-              label="Education mode"
-              description="Add short explainer notes inside slides for concepts the code assumes knowledge of (e.g. Unit of Work). Helpful for reviewers less familiar with the area."
+              label="Explain background concepts"
+              description="Include short notes about concepts used by the code, alongside the relevant review topic."
             >
               <Toggle
                 checked={educationMode}
-                ariaLabel="Education mode"
+                ariaLabel="Explain background concepts"
                 onChange={() => {
                   const next = !educationMode;
                   setEducationMode(next);
@@ -482,7 +514,7 @@ export function SettingsDialog({
 
             <SettingRow
               label="Apply project's Claude conventions"
-              description="When reviewing a PR, read the repo's CLAUDE.md and .claude/ (commands, agents, skills) and feed them into the prompt so the review respects the team's Claude Code setup."
+              description="Use guidance from the repository’s CLAUDE.md and .claude/ files when generating the review."
             >
               <Toggle
                 checked={claudeContext}
@@ -505,7 +537,10 @@ export function SettingsDialog({
                 }}
               />
             </SettingRow>
-            <SettingRow label="Simplify import changes" description="Condense import-only changes in the walkthrough.">
+            <SettingRow
+              label="Simplify import changes"
+              description="Condense import-only changes in the guided review."
+            >
               <Toggle
                 checked={smartImports}
                 ariaLabel="Simplify import changes"
@@ -562,6 +597,31 @@ export function SettingsDialog({
             </label>
           </Tabs.Content>
           <Tabs.Content value="integrations" className="settings-panel">
+            <section className="ai-setup-guide" aria-labelledby="ai-setup-title">
+              <h3 id="ai-setup-title">Set up an AI tool</h3>
+              <p>
+                Gnosis uses Claude Code or Codex on your computer to generate explanations. Install one and sign in to
+                it in your terminal.
+              </p>
+              <p>
+                Choose its model at the top of the work queue. GitHub sign-in connects your PRs; it does not sign you in
+                to the AI tool.
+              </p>
+              <div className="ai-setup-links">
+                <button onClick={() => void window.electronAPI.openExternal('https://code.claude.com/docs/en/setup')}>
+                  Claude Code setup ↗
+                </button>
+                <button
+                  onClick={() => void window.electronAPI.openExternal('https://developers.openai.com/codex/cli/')}
+                >
+                  Codex setup ↗
+                </button>
+              </div>
+              <p>
+                The paths below locate the command-line programs (CLIs). Leave them empty unless automatic detection
+                fails.
+              </p>
+            </section>
             <SettingRow label="Desktop notifications" description="Notify when a review completes">
               <Toggle
                 checked={notifications}
@@ -603,7 +663,7 @@ export function SettingsDialog({
 
             <div className="flex flex-col gap-1.5">
               <label htmlFor="claude-path" className="text-sm font-medium text-foreground">
-                Claude CLI path
+                Claude Code program path
               </label>
               <input
                 type="text"
@@ -619,7 +679,7 @@ export function SettingsDialog({
 
             <div className="flex flex-col gap-1.5">
               <label htmlFor="codex-path" className="text-sm font-medium text-foreground">
-                Codex CLI path
+                Codex program path
               </label>
               <input
                 id="codex-path"
@@ -639,12 +699,13 @@ export function SettingsDialog({
               <button
                 type="button"
                 onClick={() => {
+                  replayingOnboarding.current = true;
                   onReplayOnboarding();
                   onOpenChange(false);
                 }}
                 className="slide-meta hover:text-foreground transition-colors"
               >
-                Replay first-time welcome →
+                Show getting started →
               </button>
             )}
             <button

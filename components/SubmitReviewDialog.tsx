@@ -21,7 +21,9 @@ interface Props {
   onSubmit: (event: ReviewEvent, body: string) => Promise<{ reviewUrl: string; droppedCommentCount: number }>;
 }
 
-export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOwnPr, onSubmit }: Props) {
+export function SubmitReviewDialog({ open, onOpenChange, comments, prUrl, headSha, isOwnPr, onSubmit }: Props) {
+  const target = prUrl.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+  const destination = target ? `${target[1]}/${target[2]} #${target[3]}` : prUrl;
   const [body, setBody] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -83,10 +85,11 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
           <DialogHeader>
             <DialogTitle className="editorial-heading flex items-center gap-2">
               <Check className="h-4 w-4 text-[var(--color-success)]" />
-              Review submitted
+              Feedback submitted to GitHub
             </DialogTitle>
             <DialogDescription className="slide-meta">
-              Your review with {submittedCount} comment{submittedCount !== 1 ? 's' : ''} has been posted.
+              Your feedback to {destination} with {submittedCount} comment{submittedCount !== 1 ? 's' : ''} has been
+              posted.
             </DialogDescription>
           </DialogHeader>
           {droppedCount > 0 && (
@@ -120,12 +123,26 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-xl max-h-[80vh] flex flex-col gap-5">
         <DialogHeader>
-          <DialogTitle className="editorial-heading">Submit review</DialogTitle>
+          <DialogTitle className="editorial-heading">Submit to GitHub</DialogTitle>
           <DialogDescription className="slide-meta">
             {comments.length} comment{comments.length !== 1 ? 's' : ''} across {fileGroups.size} file
             {fileGroups.size !== 1 ? 's' : ''}
           </DialogDescription>
         </DialogHeader>
+
+        <div className="submission-destination">
+          <p>Posting to</p>
+          <a
+            href={prUrl}
+            onClick={(event) => {
+              event.preventDefault();
+              void window.electronAPI.openExternal(prUrl);
+            }}
+          >
+            {destination} <ExternalLink size={13} aria-hidden="true" />
+          </a>
+          <p>Choose an action below to send your feedback to this PR on GitHub. Your topic progress stays in Gnosis.</p>
+        </div>
 
         {!headSha && (
           <div className="staleBanner-warn flex items-start gap-2 rounded-md p-3 text-sm">
@@ -169,7 +186,9 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
         {/* Review body */}
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-1.5">
-            <label className="text-sm font-medium text-foreground">Review summary <span className="slide-meta">(optional)</span></label>
+            <label className="text-sm font-medium text-foreground">
+              Review summary <span className="slide-meta">(optional)</span>
+            </label>
             <textarea
               value={body}
               onChange={(e) => setBody(e.target.value)}
@@ -196,13 +215,9 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
         {error && <p className="text-sm text-destructive">{error}</p>}
 
         <DialogFooter className="flex-col gap-2 sm:flex-col sm:gap-2">
-          {submitting && (
-            <p className="slide-meta text-center animate-pulse">Posting to GitHub…</p>
-          )}
-          {isOwnPr && (
-            <p className="slide-meta text-center">You can't approve or request changes on your own PR.</p>
-          )}
-          <div className="flex flex-row justify-end gap-2">
+          {submitting && <p className="slide-meta text-center animate-pulse">Posting to GitHub…</p>}
+          {isOwnPr && <p className="slide-meta text-center">You can't approve or request changes on your own PR.</p>}
+          <div className="flex flex-row flex-wrap justify-end gap-2">
             <Button
               variant="outline"
               size="sm"
@@ -210,7 +225,7 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
               disabled={submitting || (comments.length === 0 && !body.trim())}
             >
               <MessageSquare className="h-3.5 w-3.5 mr-1.5" />
-              Comment
+              Post comments
             </Button>
             <Button
               variant="outline"
@@ -220,7 +235,7 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, headSha, isOw
               disabled={submitting || isOwnPr}
             >
               <ShieldCheck className="h-3.5 w-3.5 mr-1.5" />
-              Approve
+              Approve PR
             </Button>
             <Button
               variant="outline"

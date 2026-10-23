@@ -1,3 +1,5 @@
+import { FILE_SUMMARY_DIRECTIVE } from './file-summaries';
+import { INLINE_EXPLANATION_DIRECTIVE } from './inline-explanations';
 import { getProvider } from './provider';
 import { EXPLAINER_IDEA_DIRECTIVE } from './explainer';
 import type { AIReviewGuide, ModelId, PlannerOutput, Provider, WriterSlideOutput } from './types';
@@ -23,13 +25,13 @@ GROUPING: Group changes that are logically related and should be understood toge
 NARRATIVE: For each slide, explain WHY this changed, not just WHAT changed.
 - Assume the reviewer is smart but hasn't read the PR description carefully
 - Lead with the business or technical motivation in one sentence
-- Then explain what specifically changed and how it works
-- Wrap up with anything non-obvious or worth keeping in mind
+- Explain how the changed parts work together and the constraints needed to follow the overall flow
+- Put detailed local mechanisms beside their code in inlineExplanations; introduce their broader role here without repeating the same explanation
 - Write 2–4 short paragraphs — never one dense wall of text
 - Use **bold** for emphasis, \`backticks\` for code symbols, and markdown lists where helpful
 - No headings in narrative — just bold, lists, inline code
 
-REVIEW CHECKS: The reviewer has read your narrative. Now give them 2–4 things they STILL need to check to approve with confidence. This is the highest-leverage field in the review — spend real effort on it.
+REVIEW CHECKS: The reviewer has read your narrative. Now give them 2–4 things they STILL need to check to approve with confidence. Use these for unresolved risks; explain established behavior in the narrative or inlineExplanations.
 
 What makes a good check:
 - Names a SPECIFIC risk in THIS diff — a possible bug, missed edge case, broken invariant, unsafe assumption, race, boundary condition, stale cache, or contract violation. Not a generic review platitude.
@@ -123,6 +125,8 @@ The JSON must match this schema exactly:
       "diffHunkIds": ["hunk-0", "hunk-3", ...],
       "contextSnippets": string[],
       "affectedFiles": string[],
+      "fileSummaries": [{ "filePath": string, "summary": string }],
+      "inlineExplanations": [{ "filePath": string, "line": number, "side": "LEFT" | "RIGHT", "code": string, "text": string }],
       "dependsOn": string[],
       "mermaidDiagram": string | null,
       "explainerIdea": { "title": string, "description": string } | null,
@@ -282,7 +286,7 @@ export async function generateReviewGuide(opts: GenerateReviewGuideOptions): Pro
 
     // Signal boost is always on — deprioritize formatting and
     // import-only changes, emphasize design decisions.
-    const baseSystem = `${FOCUS_DIRECTIVE}\n${webResearchDirective}${educationDirective}${claudeContextDirective}${SYSTEM_PROMPT}${EXPLAINER_IDEA_DIRECTIVE}${reviewSuggestionsDirective}`;
+    const baseSystem = `${FOCUS_DIRECTIVE}\n${webResearchDirective}${educationDirective}${claudeContextDirective}${SYSTEM_PROMPT}${FILE_SUMMARY_DIRECTIVE}${INLINE_EXPLANATION_DIRECTIVE}${EXPLAINER_IDEA_DIRECTIVE}${reviewSuggestionsDirective}`;
 
     const system = customInstructions
       ? `${baseSystem}\n\nIMPORTANT — CUSTOM REVIEWER INSTRUCTIONS:\nThe reviewer has provided the following instructions. These take precedence over the default writing style and tone guidelines above. Adapt your narrative, reviewFocus, summary, and all prose fields accordingly.\n\n<instructions>\n${customInstructions}\n</instructions>`
@@ -456,14 +460,15 @@ const WRITER_SYSTEM = `You are an expert code reviewer writing one slide of a gu
 
 CONTEXT: You are writing ONE slide in a multi-slide review. The <story_arc> tells you the overall PR narrative. The <narrative_brief> tells you what angle to take for THIS slide. Follow these directions to maintain consistency across slides.
 
-NARRATIVE: 2–4 short paragraphs. Lead with motivation, explain what changed, note anything non-obvious.
+NARRATIVE: 2–4 short paragraphs. Lead with motivation, then explain how the changed parts work together and the constraints needed to follow the overall flow.
+- Put detailed local mechanisms beside their code in inlineExplanations; introduce their broader role here without repeating the same explanation
 - Short sentences. Plain words. One idea per sentence.
 - Use **bold** for emphasis, \`backticks\` for code symbols, markdown lists where helpful
 - No headings — just bold, lists, inline code
 - Reference how this topic connects to the broader PR story when relevant
 - If this topic depends on earlier topics, briefly acknowledge what was established (e.g., "Building on the Token type introduced earlier...")
 
-REVIEW CHECKS: The reviewer has read your narrative — give them 2–4 things they STILL need to check to approve with confidence. This is the highest-leverage field; spend real effort on it.
+REVIEW CHECKS: The reviewer has read your narrative — give them 2–4 things they STILL need to check to approve with confidence. Use these for unresolved risks; explain established behavior in the narrative or inlineExplanations.
 
 Each check must:
 - Name a SPECIFIC risk in THIS diff (possible bug, missed edge case, broken invariant, unsafe assumption, race, boundary, stale cache, contract violation) — not a generic review platitude.
@@ -491,6 +496,8 @@ Write the slide content for this topic. Respond with JSON matching this schema e
   "narrative": string,
   "reviewFocus": string | null,
   "contextSnippets": string[],
+  "fileSummaries": [{ "filePath": string, "summary": string }],
+  "inlineExplanations": [{ "filePath": string, "line": number, "side": "LEFT" | "RIGHT", "code": string, "text": string }],
   "mermaidDiagram": string | null,
   "explainerIdea": { "title": string, "description": string } | null,
   "reviewChecks": [
@@ -550,7 +557,7 @@ export async function generateSlide(opts: GenerateSlideOptions): Promise<WriterS
   const educationDirective = educationMode ? EDUCATION_DIRECTIVE : '';
   const claudeContextDirective = hasClaudeContext ? CLAUDE_CONTEXT_DIRECTIVE : '';
 
-  let system = WRITER_SYSTEM + EXPLAINER_IDEA_DIRECTIVE + reviewSuggestionsDirective + educationDirective + claudeContextDirective;
+  let system = WRITER_SYSTEM + FILE_SUMMARY_DIRECTIVE + INLINE_EXPLANATION_DIRECTIVE + EXPLAINER_IDEA_DIRECTIVE + reviewSuggestionsDirective + educationDirective + claudeContextDirective;
   if (instructions?.trim()) {
     system += `\n\nCUSTOM REVIEWER INSTRUCTIONS (take precedence over style guidelines):\n${instructions.trim()}`;
   }
