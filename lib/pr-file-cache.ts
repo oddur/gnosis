@@ -5,7 +5,8 @@ export function createPrFileCache(load: (request: PrFileRequest) => Promise<PrFi
   const saved = new Map<string, { value: PrFileContents; bytes: number }>();
   const pending = new Map<string, Promise<PrFileContents>>();
   let bytes = 0;
-  const keyFor = (r: PrFileRequest) => fileRevisionKey(r.url, r.path, r.baseSha, r.headSha);
+  const keyFor = (r: PrFileRequest) =>
+    `${r.comparison ? 'commit:' : ''}${fileRevisionKey(r.url, r.path, r.baseSha, r.headSha)}`;
   const peek = (r: PrFileRequest) => {
     const key = keyFor(r),
       entry = saved.get(key);

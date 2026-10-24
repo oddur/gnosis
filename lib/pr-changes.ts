@@ -1,3 +1,4 @@
+import type { CommitSelection } from './pr-commits';
 import type { PrMetadata, Provider, ModelId } from './types';
 export interface PrChangeFile {
   path: string;
@@ -9,6 +10,7 @@ export interface PrChangeFile {
   patch?: string;
 }
 export interface PrChanges {
+  comparison?: CommitSelection;
   version: 1;
   url: string;
   metadata: PrMetadata;
@@ -17,6 +19,7 @@ export interface PrChanges {
   fetchedAt: number;
 }
 export interface PrFileRequest {
+  comparison?: CommitSelection;
   url: string;
   baseSha: string;
   headSha: string;
