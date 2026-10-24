@@ -54,7 +54,7 @@ export function createQueueSignalsService(now = Date.now) {
     const result: QueueSignals[] = [];
     const stale: QueueSignals[] = [];
     const missing = parsed.filter(({ request }) => {
-      const saved = cache?.get(`queue-signals:${queueSignalKey(request)}`, isSignals);
+      const saved = cache?.get(`queue-signals:v2:${queueSignalKey(request)}`, isSignals);
       if (saved && !saved.revalidate && now() - saved.value.checkedAt < QUEUE_SIGNALS_TTL) {
         result.push(saved.value);
         return false;
@@ -108,11 +108,14 @@ export function createQueueSignalsService(now = Date.now) {
                     ? 'failure'
                     : 'pending',
               total: rollup?.contexts.totalCount ?? 0,
+              skipped: counts
+                .filter((c) => c.state === 'SKIPPED' || c.state === 'NEUTRAL')
+                .reduce((sum, c) => sum + c.count, 0),
               passed: counts.filter((c) => c.state === 'SUCCESS').reduce((sum, c) => sum + c.count, 0),
             },
           };
           fresh.push(value);
-          if (cache?.version() === version) cache?.set(`queue-signals:${queueSignalKey(request)}`, value);
+          if (cache?.version() === version) cache?.set(`queue-signals:v2:${queueSignalKey(request)}`, value);
         }
         return fresh;
       } catch {

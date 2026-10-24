@@ -68,7 +68,7 @@ void test('queue reads coalesce, cache across service instances, and count over 
   const h = harness();
   const [a, b] = await Promise.all([h.get(h.client, [request]), h.get(h.client, [request])]);
   assert.deepEqual(a, b);
-  assert.deepEqual(a[0].checks, { state: 'success', passed: 130, total: 130 });
+  assert.deepEqual(a[0].checks, { state: 'success', passed: 130, skipped: 0, total: 130 });
   assert.equal(a[0].comments, 4);
   assert.equal(h.calls(), 1);
   await h.get(h.client, [request]);
@@ -112,5 +112,38 @@ void test('rate limiting preserves dated snapshots without retry traffic', async
 void test('a PR with no check rollup is neutral, never reported as passing', async () => {
   const h = harness();
   h.respond({ p0: { pullRequest: { headRefOid: 'abc123', comments: { totalCount: 0 }, commits: { nodes: [] } } } });
-  assert.deepEqual((await h.get(h.client, [request]))[0].checks, { state: 'neutral', passed: 0, total: 0 });
+  assert.deepEqual((await h.get(h.client, [request]))[0].checks, { state: 'neutral', passed: 0, skipped: 0, total: 0 });
+});
+
+void test('skipped checks are separate from successful checks', async () => {
+  const h = harness();
+  h.respond({
+    p0: {
+      pullRequest: {
+        headRefOid: 'abc123',
+        comments: { totalCount: 0 },
+        commits: {
+          nodes: [
+            {
+              commit: {
+                statusCheckRollup: {
+                  state: 'SUCCESS',
+                  contexts: {
+                    totalCount: 3,
+                    checkRunCountsByState: [
+                      { state: 'SUCCESS', count: 1 },
+                      { state: 'SKIPPED', count: 1 },
+                      { state: 'NEUTRAL', count: 1 },
+                    ],
+                    statusContextCountsByState: [],
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+    },
+  });
+  assert.deepEqual((await h.get(h.client, [request]))[0].checks, { state: 'success', passed: 1, skipped: 2, total: 3 });
 });
