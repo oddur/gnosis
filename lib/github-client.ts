@@ -24,6 +24,15 @@ function isCachedResponse(value: unknown): value is CachedResponse {
     'data' in value.response
   );
 }
+/** Read existing account snapshots without revalidating them or making requests. */
+export function githubCachedResponses(client: Octokit) {
+  return (
+    clientCaches
+      .get(client)
+      ?.values(isCachedResponse)
+      .map((entry) => entry.response) ?? []
+  );
+}
 function freshness(headers: Headers, now: number) {
   const control = String(headers['cache-control'] ?? '');
   if (/\b(no-cache|no-store)\b/i.test(control)) return now;

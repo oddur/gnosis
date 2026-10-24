@@ -82,8 +82,9 @@ for (const provider of ['codex', 'claude'] as const) {
       }
     });
     let chat: ReturnType<typeof useSlideChat> | undefined;
+    let activeReview = { ...review, reviewId: `test-${provider}` };
     function Probe() {
-      chat = useSlideChat(review, provider, provider === 'codex' ? 'gpt-6.1-sol' : 'claude-opus-5-5');
+      chat = useSlideChat(activeReview, provider, provider === 'codex' ? 'gpt-6.1-sol' : 'claude-opus-5-5');
       return createElement(
         'div',
         {},
@@ -128,6 +129,25 @@ for (const provider of ['codex', 'claude'] as const) {
       getChat().getMessages(1)[1].content,
       provider === 'codex' ? `Preparing the answer\n\n${answer}` : answer
     );
+    await update(() => {
+      root.render(null);
+    });
+    activeReview = { ...review, reviewId: `other-${provider}` };
+    await update(() => {
+      root.render(createElement(Probe));
+    });
+    assert.equal(getChat().isStreaming, true, 'Another review cannot receive chunks from an in-flight chat');
+    await act(async () => {
+      await getChat().send(1, 'A separate question');
+    });
+    assert.equal(requests.length, 1, 'The shared progress channel has only one sender');
+    await update(() => {
+      root.render(null);
+    });
+    activeReview = { ...review, reviewId: `test-${provider}` };
+    await update(() => {
+      root.render(createElement(Probe));
+    });
     await act(async () => {
       assert.ok(finish);
       finish(answer);
@@ -137,6 +157,13 @@ for (const provider of ['codex', 'claude'] as const) {
     assert.equal(getChat().getMessages(1)[1].isStreaming, false);
     assert.equal(container.textContent.includes('Preparing the answer'), false);
     assert.equal(container.querySelector('h2')?.textContent, 'Explanation');
+    await update(() => {
+      root.render(null);
+    });
+    await update(() => {
+      root.render(createElement(Probe));
+    });
+    assert.equal(getChat().getMessages(1)[1].content, answer, 'Chat survives navigating away and resuming');
     await update(() => {
       pending = getChat().send(1, 'What should I test?');
     });

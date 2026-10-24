@@ -1,4 +1,4 @@
-import { useReducer, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import type { ReviewGuide, Provider, ModelId, SendSlideChatRequest } from './types';
 
 export interface ChatMessage {
@@ -10,6 +10,11 @@ export interface ChatMessage {
 }
 
 type MessagesMap = Map<number, ChatMessage[]>;
+const sessions = new Map<string, MessagesMap>();
+const anyStreaming = () =>
+  [...sessions.values()].some((slides) =>
+    [...slides.values()].some((rows) => rows.some((message) => message.isStreaming))
+  );
 
 type Action =
   | { type: 'SEND'; slideIndex: number; userMessage: ChatMessage; assistantMessage: ChatMessage }
@@ -79,7 +84,26 @@ function reducer(state: MessagesMap, action: Action): MessagesMap {
 }
 
 export function useSlideChat(review: ReviewGuide, provider: Provider, model: ModelId) {
-  const [messages, dispatch] = useReducer(reducer, new Map<number, ChatMessage[]>());
+  const key = `${review.reviewId ?? review.prUrl}:${review.snapshot?.fingerprint ?? review.headSha ?? ''}`;
+  const [sessionBusy, setSessionBusy] = useState(anyStreaming);
+  const [messages, setMessages] = useState<MessagesMap>(() => sessions.get(key) ?? new Map());
+  const dispatch = useCallback(
+    (action: Action) => {
+      const next = reducer(sessions.get(key) ?? new Map<number, ChatMessage[]>(), action);
+      sessions.set(key, next);
+      setMessages(next);
+      window.dispatchEvent(new window.CustomEvent('gnosis-chat-session', { detail: key }));
+    },
+    [key]
+  );
+  useEffect(() => {
+    const sync = (event: Event) => {
+      setSessionBusy(anyStreaming());
+      if ((event as CustomEvent<string>).detail === key) setMessages(sessions.get(key) ?? new Map());
+    };
+    window.addEventListener('gnosis-chat-session', sync);
+    return () => window.removeEventListener('gnosis-chat-session', sync);
+  }, [key]);
   const streamingRef = useRef<{ slideIndex: number; assistantId: string } | null>(null);
   const isStreamingRef = useRef(false);
 
@@ -113,7 +137,7 @@ export function useSlideChat(review: ReviewGuide, provider: Provider, model: Mod
 
   const send = useCallback(
     async (slideIndex: number, question: string) => {
-      if (isStreamingRef.current) return;
+      if (isStreamingRef.current || anyStreaming()) return;
 
       const slide = review.slides[slideIndex - 1];
 
@@ -166,7 +190,8 @@ export function useSlideChat(review: ReviewGuide, provider: Provider, model: Mod
     dispatch({ type: 'CLEAR', slideIndex });
   }, []);
 
-  const isStreaming = isStreamingRef.current;
+  const isStreaming =
+    sessionBusy || isStreamingRef.current || [...messages.values()].some((rows) => rows.some((m) => m.isStreaming));
 
   return { getMessages, send, isStreaming, clearSlide };
 }

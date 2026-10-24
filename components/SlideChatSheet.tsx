@@ -1,3 +1,4 @@
+import { useSessionDraft } from '../lib/session-drafts';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Loader2, MessageSquare } from 'lucide-react';
 import { Markdown } from '@/components/Markdown';
@@ -12,6 +13,7 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   slideTitle: string;
+  slideId?: string;
   reviewFocus: string | null;
   messages: ChatMessage[];
   isStreaming: boolean;
@@ -108,6 +110,7 @@ export function SlideChatSheet({
   open,
   onOpenChange,
   slideTitle,
+  slideId,
   reviewFocus,
   messages,
   isStreaming,
@@ -115,7 +118,7 @@ export function SlideChatSheet({
   quotedCode,
   onQuotedCodeConsumed,
 }: Props) {
-  const [input, setInput] = useState('');
+  const [input, setInput] = useSessionDraft(`chat-input:${slideId ?? slideTitle}`, '');
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);

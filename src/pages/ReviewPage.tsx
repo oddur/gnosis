@@ -1,3 +1,8 @@
+import { rememberCommandDestination } from '../../lib/command-recents';
+import { findReviewLine } from '../../components/ReviewDiff';
+import { useCommandCenter, useCommandScope } from '../../lib/command-center';
+import type { SearchDestination } from '../../lib/command-search';
+import { useSessionDraft } from '../../lib/session-drafts';
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { DEFAULT_DIFF_APPEARANCE, type DiffAppearance } from '../../lib/review-diff';
 import { ArrowLeft, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react';
@@ -30,6 +35,7 @@ interface Props {
   onBack: () => void;
   onReReview: (prUrl: string) => void;
   initialSlideId?: string;
+  commandDestination?: { destination: Extract<SearchDestination, { kind: 'review' }>; nonce: number };
   exploreInitially?: boolean;
   onShowActivity: () => void;
 }
@@ -96,10 +102,14 @@ export function ReviewPage({
   onBack,
   onReReview,
   initialSlideId,
+  commandDestination,
   exploreInitially,
   onShowActivity,
 }: Props) {
+  const commandCenter = useCommandCenter();
   const [review, setReview] = useState(initialReview);
+  useEffect(() => setReview(initialReview), [initialReview]);
+  const [consumedCommand, setConsumedCommand] = useSessionDraft('review-command', 0);
   const { viewedFiles, setFileViewed } = useViewedFiles(review);
   const [currentSlide, setCurrentSlide] = useState(() => {
     if (initialSlideId) return initialReview.slides.find((s) => s.id === initialSlideId)?.slideNumber ?? 0;
@@ -127,12 +137,12 @@ export function ReviewPage({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [currentLogin, setCurrentLogin] = useState<string | null>(null);
   const [freshness, setFreshness] = useState<FreshnessResult | null>(null);
-  const [chatOpen, setChatOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useSessionDraft('chat-open', false);
   const [chatQuotedCode, setChatQuotedCode] = useState<string | null>(null);
   const [chatProvider, setChatProvider] = useState<Provider>('claude');
   const [chatModel, setChatModel] = useState<ModelId>(DEFAULT_FAST_CLAUDE_MODEL);
   const [diffLayout, setDiffLayout] = useState<Preferences['diffLayout']>('unified');
-  const [slideViewMode, setSlideViewMode] = useState<'split' | 'focus'>('split');
+  const [slideViewMode, setSlideViewMode] = useSessionDraft<'split' | 'focus'>('slide-view', 'split');
   const [prefs, setPrefs] = useState<Preferences | null>(null);
   const diffAppearance = useMemo(
     () => ({ ...DEFAULT_DIFF_APPEARANCE, ...prefs?.diffAppearance }),
@@ -458,8 +468,8 @@ export function ReviewPage({
       },
       n: () => jumpToNextUnreviewed(),
       // Global
-      'cmd+k': () => setPaletteOpen(true),
-      'ctrl+k': () => setPaletteOpen(true),
+      'cmd+k': () => (commandCenter ? commandCenter.open() : setPaletteOpen(true)),
+      'ctrl+k': () => (commandCenter ? commandCenter.open() : setPaletteOpen(true)),
       '?': () => setShortcutsOpen((v) => !v),
     };
     // Numeric jump 1–9 → slide N (chapter, not overview)
@@ -570,6 +580,85 @@ export function ReviewPage({
     return commands;
   }, [review.slides, currentSlide, comments.length, handleJumpTo, handleDiffLayoutChange, onBack]);
 
+  useEffect(() => {
+    if (review.reviewId && currentLogin)
+      rememberCommandDestination(
+        currentLogin,
+        currentSlide ? `topic:${review.reviewId}:${review.slides[currentSlide - 1]?.id}` : `summary:${review.reviewId}`
+      );
+  }, [review.reviewId, currentSlide, currentLogin]);
+  useCommandScope('review', [
+    ...paletteCommands
+      .filter((c) => ['chat', 'submit', 'unified', 'split'].includes(c.id))
+      .map((c) => ({ ...c, id: `review:${c.id}` })),
+    ...(currentSlide > 0
+      ? [
+          {
+            id: 'review:explore',
+            label: review.slides[currentSlide - 1]?.explainer
+              ? 'Open interactive explanation'
+              : 'Create interactive explanation',
+            group: 'Current topic · tracked in Activity',
+            perform: openExplainer,
+          },
+        ]
+      : []),
+    ...paletteCommands
+      .filter((c) => !['chat', 'submit', 'unified', 'split'].includes(c.id))
+      .map((c) => ({ ...c, id: `review:${c.id}` })),
+  ]);
+  useEffect(() => {
+    const target = commandDestination?.destination;
+    if (!target || target.reviewId !== review.reviewId || consumedCommand === commandDestination.nonce) return;
+    setConsumedCommand(commandDestination.nonce);
+    const index =
+      target.slideId === 'overview'
+        ? 0
+        : target.slideId
+          ? review.slides.find((s) => s.id === target.slideId)?.slideNumber
+          : undefined;
+    if (index !== undefined) setCurrentSlide(index);
+    if (target.slideId || target.filePath || target.explore !== undefined) {
+      setExploreOpen(!!target.explore);
+      setChatOpen(false);
+    }
+    if (!target.filePath) return;
+    setSlideViewMode('focus');
+    const filePath = target.filePath;
+    let tries = 0;
+    const timer = setInterval(() => {
+      const file = [...document.querySelectorAll<HTMLElement>('.review-file-group[data-file-path]')].find(
+        (el) => el.dataset.filePath === filePath
+      );
+      if (file) {
+        const collapsed = file.querySelector<HTMLButtonElement>(
+          '.review-file-context[data-collapsed=true] .review-file-expand'
+        );
+        if (collapsed) {
+          collapsed.click();
+          return;
+        }
+        let match: HTMLElement | null = target.line ? findReviewLine(file, filePath, target.line, target.side) : file;
+        if (target.threadId) {
+          const thread = file.querySelector<HTMLDetailsElement>(`[data-thread-id="${CSS.escape(target.threadId)}"]`);
+          if (thread) {
+            thread.open = true;
+            match = thread;
+          }
+        }
+        if (!match && ++tries < 30) return;
+        match ??= file;
+        document.querySelectorAll('.search-arrival').forEach((el) => el.classList.remove('search-arrival'));
+        match.scrollIntoView({ block: 'center' });
+        match.classList.add('search-arrival');
+        match.tabIndex = -1;
+        match.focus({ preventScroll: true });
+        clearInterval(timer);
+      } else if (++tries > 50) clearInterval(timer);
+    }, 60);
+    return () => clearInterval(timer);
+  }, [commandDestination, review.reviewId]);
+
   async function handleSubmitReview(event: ReviewEvent, body: string) {
     const result = await window.electronAPI.submitReview({
       prUrl: submitUrl,
@@ -645,8 +734,15 @@ export function ReviewPage({
       {/* Top-of-page reading progress hairline. 1px tall, fills in
           the brand claret as the reader moves through the deck.
           Honors prefers-reduced-motion via .loading-progress-fill. */}
-      <div className="relative h-px w-full bg-transparent shrink-0" role="progressbar" aria-label="Review position" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}
-        aria-valuetext={currentSlide === 0 ? 'Overview' : `Topic ${currentSlide} of ${review.slides.length}`}>
+      <div
+        className="relative h-px w-full bg-transparent shrink-0"
+        role="progressbar"
+        aria-label="Review position"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={progress}
+        aria-valuetext={currentSlide === 0 ? 'Overview' : `Topic ${currentSlide} of ${review.slides.length}`}
+      >
         <div
           className="absolute left-0 top-0 h-px bg-[var(--ring)] loading-progress-fill"
           style={{ width: `${progress}%` }}
@@ -658,6 +754,12 @@ export function ReviewPage({
       {freshness && <StaleBanner freshness={freshness} onReReview={() => onReReview(review.prUrl)} />}
 
       <div className="review-toolbar">
+        <button
+          onClick={() => (commandCenter ? commandCenter.open() : setPaletteOpen(true))}
+          title="Search and navigate (⌘K / Ctrl K)"
+        >
+          Search <kbd className="kbd">{window.electronAPI.platform === 'darwin' ? '⌘ K' : 'Ctrl K'}</kbd>
+        </button>
         <WorkbenchHelp />
         <button onClick={() => setNavOpen((v) => !v)} aria-pressed={navOpen} title="Toggle topic navigation">
           {navOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}Topics
@@ -767,6 +869,7 @@ export function ReviewPage({
                     embedded
                     open={chatOpen}
                     onOpenChange={setChatOpen}
+                    slideId={review.slides[currentSlide - 1].id}
                     slideTitle={review.slides[currentSlide - 1].title}
                     reviewFocus={review.slides[currentSlide - 1].reviewFocus}
                     messages={slideChat.getMessages(currentSlide)}
@@ -836,7 +939,9 @@ export function ReviewPage({
       />
 
       <ShortcutOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={paletteCommands} />
+      {!commandCenter && (
+        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={paletteCommands} />
+      )}
     </div>
   );
 }

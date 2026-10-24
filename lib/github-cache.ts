@@ -83,6 +83,11 @@ export function createGitHubCache(now = Date.now) {
     scope(scope: string) {
       return {
         version: () => versions.get(scope) ?? 0,
+        values<T>(validate: (value: unknown) => value is T): T[] {
+          return [...entries.values()]
+            .filter((entry) => entry.scope === scope && validTime(entry.savedAt) && validate(entry.value))
+            .map((entry) => structuredClone(entry.value) as T);
+        },
         get<T>(
           key: string,
           validate: (value: unknown) => value is T
