@@ -5,7 +5,7 @@ import type { LocalSearchResponse } from './command-search-service';
 import type { GitHubDevicePrompt } from '../lib/github-auth';
 import type { QueueViewAction } from '../lib/saved-views';
 import type { QueueFilters } from '../lib/queue-filters';
-import type { GitHubReviewThread, GitHubReviewThreads, ReviewThreadAction } from '../lib/review-threads';
+import type { GitHubReviewThread, GitHubReviewThreads, ReviewThreadAction, ReviewCommentAction, CreateReviewCommentRequest } from '../lib/review-threads';
 import type { ActivityTask, ActivityAction } from '../lib/activity';
 import type { WorkbenchQueue, GroupingOverride, ReviewSnapshot } from '../lib/workbench';
 import { contextBridge, ipcRenderer } from 'electron';
@@ -146,6 +146,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadReviewImages: (reviewId: string, filePath: string): Promise<import('../lib/review-images').ReviewImageComparison> => ipcRenderer.invoke('load-review-images', reviewId, filePath),
   loadPrImage: (url: string): Promise<string> => ipcRenderer.invoke('load-pr-image', url),
   getReviewThreads: (prUrl: string, refresh?: boolean): Promise<GitHubReviewThreads> => ipcRenderer.invoke('get-review-threads', prUrl, refresh),
+  createReviewComment: (req: CreateReviewCommentRequest): Promise<void> => ipcRenderer.invoke('create-review-comment', req),
+  reviewCommentAction: (req: ReviewCommentAction): Promise<GitHubReviewThread> => ipcRenderer.invoke('review-comment-action', req),
   reviewThreadAction: (req: ReviewThreadAction): Promise<GitHubReviewThread> => ipcRenderer.invoke('review-thread-action', req),
   onUpdateAvailable: (callback: (info: UpdateInfo) => void): void => {
     ipcRenderer.on('update-available', (_event, info: UpdateInfo) => callback(info));

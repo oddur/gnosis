@@ -1,0 +1,97 @@
+import { useId, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { useSessionDraft } from '../lib/session-drafts';
+import { Button } from './ui/button';
+import type { ChangesReviewDraft } from '../lib/changes-review-drafts';
+export function ChangesDraftComment({
+  comment,
+  onEdit,
+  onRemove,
+}: {
+  comment: ChangesReviewDraft;
+  onEdit: (id: string, body: string) => void;
+  onRemove: (id: string) => void;
+}) {
+  const [editing, setEditing] = useState(false),
+    [error, setError] = useState('');
+  const [body, setBody] = useSessionDraft(`changes-draft-edit:${comment.id}`, comment.body);
+  const id = useId();
+  return (
+    <div className="changes-draft-comment">
+      {editing ? (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            try {
+              onEdit(comment.id, body.trim());
+              setEditing(false);
+              setError('');
+            } catch {
+              setError('Could not save this edit. Your text is still here.');
+            }
+          }}
+        >
+          <label htmlFor={id}>Edit draft comment</label>
+          <textarea
+            id={id}
+            rows={3}
+            maxLength={65536}
+            autoFocus
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+          />
+          {error && <p role="alert">{error}</p>}
+          <div className="changes-comment-buttons">
+            <Button variant="ghost" size="sm" type="button" onClick={() => setEditing(false)}>
+              Cancel
+            </Button>
+            <Button size="sm" disabled={!body.trim()}>
+              Save draft
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <>
+          <div className="github-comment-body select-text">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              skipHtml
+              components={{
+                img: ({ alt }) => <span>[{alt || 'Image attachment'}]</span>,
+                a: ({ href, children }) => (
+                  <a
+                    href={href}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      if (href && /^https?:\/\//.test(href)) void window.electronAPI.openExternal(href);
+                    }}
+                  >
+                    {children}
+                  </a>
+                ),
+              }}
+            >
+              {comment.body}
+            </ReactMarkdown>
+          </div>
+          <div className="changes-comment-buttons">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setBody(comment.body);
+                setEditing(true);
+              }}
+            >
+              Edit draft
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => onRemove(comment.id)}>
+              Remove draft
+            </Button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}

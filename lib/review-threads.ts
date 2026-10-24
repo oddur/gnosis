@@ -3,6 +3,8 @@ import { sourceForPath } from './workbench';
 import { prepareReviewHunk } from './review-diff';
 
 export interface GitHubReviewComment {
+  viewerCanUpdate?: boolean;
+  viewerCanDelete?: boolean;
   id: string;
   body: string;
   createdAt: string;
@@ -68,4 +70,23 @@ export function threadPlacementReason(
   )
     return 'This line is outside the code saved in this topic.';
   return null;
+}
+
+export interface ReviewCommentAction {
+  prUrl: string;
+  threadId: string;
+  commentId: string;
+  action: 'edit' | 'delete';
+  body?: string;
+}
+export interface CreateReviewCommentRequest {
+  prUrl: string;
+  headSha: string;
+  baseSha: string;
+  baseBranch: string;
+  path: string;
+  line: number;
+  startLine?: number;
+  side: DiffSide;
+  body: string;
 }

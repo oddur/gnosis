@@ -23,6 +23,10 @@ void app.whenReady().then(async () => {
   const screenshots = path.join(os.tmpdir(), 'gnosis-thread-screenshots');
   fs.mkdirSync(screenshots, { recursive: true });
   const capture = async (name: string) => {
+    if (process.platform === 'darwin') app.show();
+    win.show();
+    win.focus();
+    await wait("document.visibilityState === 'visible'");
     await js('document.fonts.ready');
     await new Promise((r) => setTimeout(r, 150));
     fs.writeFileSync(path.join(screenshots, name + '.png'), (await win.webContents.capturePage()).toPNG());

@@ -2357,7 +2357,7 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .changes-resize:hover,.changes-resize:focus-visible { background:var(--accent);outline:1px solid var(--ring); }
 .changes-diff-pane { flex:1;min-width:0;display:flex;flex-direction:column; }
 .changes-file-header { display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap;flex-shrink:0; }
-.changes-file-header>div:first-child { min-width:0;flex:1; }
+.changes-file-header>div:first-child { min-width:0;flex:1 1 200px; }
 .changes-file-header h2 { font-size:var(--type-control);font-weight:600;overflow-wrap:anywhere; }
 .changes-file-header h2>span { font-weight:400;color:var(--muted-foreground); }
 .changes-file-actions { display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:var(--type-caption); }
@@ -2387,3 +2387,21 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 /* Bound reading text within the full-width summary; media keeps the flexible column. */
 .pr-summary-body .pr-markdown :is(p,ul,ol,blockquote):not(:has(img,.markdown-image,.mermaid-diagram)) { max-width:var(--measure-prose); }
 .pr-summary-body .pr-stack-nav { top:0; max-height:100cqh; }
+
+/* Review comments stay beside the code; pending feedback is explicitly private. */
+.changes-comment-composer { margin:8px 12px;padding:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);color:var(--foreground);font:var(--type-control)/1.5 var(--font-sans);white-space:normal; }
+.changes-comment-composer label { display:block;font-weight:600;margin-bottom:8px;overflow-wrap:anywhere; }
+.changes-comment-composer textarea { display:block;width:100%;min-height:96px;resize:vertical;padding:10px;background:var(--background);border:1px solid var(--input);border-radius:var(--radius);font:var(--type-body)/1.6 var(--font-sans); }
+.changes-comment-help { color:var(--muted-foreground);margin-block:8px;font-size:var(--type-caption); }
+.changes-comment-buttons { display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px; }
+.changes-pending-comment { padding-top:8px;white-space:normal;font-family:var(--font-sans); }
+.changes-pending-comment > span { padding-inline:12px;color:var(--muted-foreground);font-size:var(--type-caption); }
+.changes-drafts { flex-shrink:0;max-height:35vh;overflow:auto;padding:12px 16px;border-bottom:1px solid var(--border);font-size:var(--type-control); }
+.changes-drafts > header { display:flex;align-items:center;justify-content:space-between;gap:12px; }
+.changes-drafts h3 { font-weight:600; }
+.changes-drafts > div > p { color:var(--muted-foreground);margin:12px 8px 4px;overflow-wrap:anywhere; }
+.changes-discussion-tools { padding:8px; }
+.changes-draft-comment { margin:6px 12px;padding:10px 12px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);color:var(--foreground);font:var(--type-body)/1.6 var(--font-sans);white-space:normal;overflow-wrap:anywhere; }
+.changes-draft-comment .changes-comment-buttons { margin-top:8px; }
+.changes-draft-comment label { display:block;margin-bottom:6px;font-size:var(--type-control);font-weight:600; }
+.changes-draft-comment textarea { display:block;width:100%;resize:vertical;padding:8px;border:1px solid var(--input);border-radius:var(--radius);background:var(--background); }
