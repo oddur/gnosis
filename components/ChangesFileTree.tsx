@@ -1,3 +1,4 @@
+import { DIFF_STAT_COLORS } from './DiffStats';
 import { useEffect, useMemo, useRef } from 'react';
 import { FileTree, useFileTree } from '@pierre/trees/react';
 import { prepareFileTreeInput, type GitStatusEntry } from '@pierre/trees';
@@ -6,8 +7,8 @@ const commentIcon = `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="h
 const decorationCSS = `
   [data-item-section="content"] { flex: 1 1 auto; }
   [data-item-section="decoration"] { flex: 0 0 auto; }
-  [data-item-section="decoration"] > span { display: inline-flex; align-items: center; gap: 8px; }
-  [data-item-section="decoration"] > span > span:last-child { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+  [data-item-section="decoration"] > span { display: inline-flex; align-items: center; gap: 4px; }
+  [data-item-section="decoration"] > span > span:last-child { display: inline-flex; align-items: center; gap: 4px; margin-inline-start: 4px; font-variant-numeric: tabular-nums; }
   [data-item-section="decoration"] > span > span:last-child::before { content: ""; width: 12px; height: 12px; flex-shrink: 0; background: currentColor; mask: ${commentIcon} center / contain no-repeat; }
 `;
 export interface ChangeTreeEntry {
@@ -60,7 +61,12 @@ export function ChangesFileTree({
       return {
         text: `${changes} · ${count ?? '—'}`,
         parts: [
-          { text: changes },
+          ...(entry.viewed
+            ? [{ text: 'Viewed' }]
+            : [
+                { text: `+${entry.additions}`, color: DIFF_STAT_COLORS.added },
+                { text: `−${entry.deletions}`, color: DIFF_STAT_COLORS.removed },
+              ]),
           {
             text: count === undefined ? '—' : String(count),
             color: count ? 'var(--foreground)' : undefined,

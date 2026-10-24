@@ -1,3 +1,4 @@
+import { DiffStats } from './DiffStats';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPrFileCache } from '../lib/pr-file-cache';
 import { prChangePreview, prPreviewSelection } from '../lib/pr-change-preview';
@@ -537,7 +538,7 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
                   {entry.file.path}
                 </h2>
                 <span className="changes-file-stats">
-                  {entry.file.status} · +{entry.file.additions} −{entry.file.deletions}
+                  {entry.file.status} · <DiffStats additions={entry.file.additions} deletions={entry.file.deletions} />
                 </span>
               </div>
               <div className="changes-file-actions">

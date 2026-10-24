@@ -2405,3 +2405,5 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .changes-draft-comment .changes-comment-buttons { margin-top:8px; }
 .changes-draft-comment label { display:block;margin-bottom:6px;font-size:var(--type-control);font-weight:600; }
 .changes-draft-comment textarea { display:block;width:100%;resize:vertical;padding:8px;border:1px solid var(--input);border-radius:var(--radius);background:var(--background); }
+
+.diff-stats { display:inline-flex;align-items:baseline;gap:.35em;white-space:nowrap;font-variant-numeric:tabular-nums; }
