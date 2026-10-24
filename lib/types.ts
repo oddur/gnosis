@@ -439,6 +439,8 @@ export interface PrLabel {
 }
 
 export interface PrMetadata {
+  /** Conversation comments, excluding inline review threads. Optional for older snapshots. */
+  commentCount?: number;
   changedFileCount?: number;
   additions?: number;
   deletions?: number;
