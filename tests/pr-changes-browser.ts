@@ -107,6 +107,11 @@ void app.whenReady().then(async () => {
     );
     await wait("document.querySelector('.changes-code')?.textContent.includes('retry boundary')");
     assert.equal(await js("!!document.querySelector('.changes-code textarea')"), false, 'Reply editors open on demand');
+    await js(
+      `window.treeCount=path=>window.deepAll('[role=treeitem]').find(e=>e.getAttribute('data-item-path')===path)?.querySelector('[title*="GitHub"]')?.title;void 0;`
+    );
+    await wait("window.treeCount('src/worker.ts')?.includes('1 GitHub comment,')");
+    assert.match(await js<string>("window.treeCount('src/new.ts')"), /0 GitHub comments/);
     // All writes below use local mocks; never publish fixture feedback to GitHub.
     await js(`(async()=>{window.commentWrites=[];window.reviewWrites=[];window.failPost=false;window.discussion=await window.electronAPI.getReviewThreads();
       window.discussion.threads[0].comments[0].viewerCanUpdate=true;window.discussion.threads[0].comments[0].viewerCanDelete=true;
@@ -123,9 +128,11 @@ void app.whenReady().then(async () => {
     await js("window.fill('.github-thread textarea','The retry stays inside the boundary.')");
     await click('Reply on GitHub');
     await wait("document.querySelector('.github-thread')?.textContent.includes('The retry stays')");
+    await wait("window.treeCount('src/worker.ts')?.includes('2 GitHub comments')");
     await click('Resolve thread');
     await wait("document.querySelector('.github-thread-state')?.textContent.includes('Resolved')");
     await js("document.querySelector('.github-thread summary').click()");
+    assert.match(await js<string>("window.treeCount('src/worker.ts')"), /2 GitHub comments/);
     await click('Reopen thread');
     await click('Edit');
     await js("window.fill('.github-thread textarea','Updated review comment')");
@@ -135,6 +142,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.github-thread')?.textContent.includes('Delete this comment from GitHub?')");
     await click('Delete comment');
     await wait("!document.querySelector('.github-thread')?.textContent.includes('Updated review comment')");
+    await wait("window.treeCount('src/worker.ts')?.includes('1 GitHub comment,')");
     await js('window.commentLine()');
     await wait("!!document.querySelector('.changes-comment-composer textarea')");
     await js("window.fill('.changes-comment-composer textarea','Keep the cancellation boundary explicit.')");
@@ -171,6 +179,7 @@ void app.whenReady().then(async () => {
     await click('Comment now');
     await wait("!document.querySelector('.changes-comment-composer')");
     await wait("document.querySelector('.changes-code')?.textContent.includes('An immediate comment.')");
+    await wait("window.treeCount('src/worker.ts')?.includes('2 GitHub comments')");
     await click('Review PR #150 (1)');
     await wait("document.querySelector('[role=dialog]')?.textContent.includes('Keep the cancellation boundary')");
     await capture('comments-submit');
@@ -270,6 +279,9 @@ void app.whenReady().then(async () => {
     );
     await click('Work queue');
     await js(
+      `window.threadReads=[];window.electronAPI.getReviewThreads=async url=>{window.threadReads.push(url);const count=Number(url.split('/').pop())-119;return {headSha:'head-'+(count-1),baseSha:'base-'+(count-1),threads:[{...window.discussion.threads[0],comments:Array.from({length:count},(_,i)=>({...window.discussion.threads[0].comments[0],id:'comment-'+i}))}]}};void 0;`
+    );
+    await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
     await click('Author description');
@@ -284,6 +296,23 @@ void app.whenReady().then(async () => {
       false,
       'Same paths in different PRs have separate progress'
     );
+    await wait('window.threadReads.length===3');
+    await js(
+      `(()=>{const input=document.querySelector('[aria-label="Find changed files"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'worker.ts');input.dispatchEvent(new Event('input',{bubbles:true}))})()`
+    );
+    await wait("window.deepAll('[data-item-type=file]').length===3");
+    for (const [pr, count] of [
+      [120, 1],
+      [121, 2],
+      [122, 3],
+    ]) {
+      assert.equal(
+        await js(
+          `window.deepAll('[role=treeitem]').find(e=>e.getAttribute('data-item-path')?.includes('#${pr}/src/worker.ts'))?.querySelector('[title*="GitHub"]')?.title.includes('${count} GitHub comment')`
+        ),
+        true
+      );
+    }
     await capture('stack');
     await js(
       `(()=>{const input=document.querySelector('[aria-label="Find changed files"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'worker.ts');input.dispatchEvent(new Event('input',{bubbles:true}))})()`

@@ -1,12 +1,23 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { FileTree, useFileTree } from '@pierre/trees/react';
 import { prepareFileTreeInput, type GitStatusEntry } from '@pierre/trees';
+// Lucide MessageSquare (ISC), used inside Pierre's shadow-DOM text decoration.
+const commentIcon = `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"/></svg>')}")`;
+const decorationCSS = `
+  [data-item-section="content"] { flex: 1 1 auto; }
+  [data-item-section="decoration"] { flex: 0 0 auto; }
+  [data-item-section="decoration"] > span { display: inline-flex; align-items: center; gap: 8px; }
+  [data-item-section="decoration"] > span > span:last-child { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+  [data-item-section="decoration"] > span > span:last-child::before { content: ""; width: 12px; height: 12px; flex-shrink: 0; background: currentColor; mask: ${commentIcon} center / contain no-repeat; }
+`;
 export interface ChangeTreeEntry {
   key: string;
   status: 'added' | 'modified' | 'deleted' | 'renamed';
   viewed: boolean;
   additions: number;
   deletions: number;
+  commentCount?: number;
+  commentError?: boolean;
 }
 export function ChangesFileTree({
   entries,
@@ -33,15 +44,30 @@ export function ChangesFileTree({
     preparedInput: prepared,
     initialExpansion: 'open',
     search: false,
+    unsafeCSS: decorationCSS,
     fileTreeSearchMode: 'hide-non-matches',
     renderRowDecoration: ({ item }) => {
       const entry = current.current.entries.find((e) => e.key === item.path);
-      return entry
-        ? {
-            text: entry.viewed ? 'Viewed' : `+${entry.additions} −${entry.deletions}`,
-            title: entry.viewed ? 'Viewed' : `${entry.additions} additions, ${entry.deletions} deletions`,
-          }
-        : null;
+      if (!entry) return null;
+      const changes = entry.viewed ? 'Viewed' : `+${entry.additions} −${entry.deletions}`;
+      const count = entry.commentCount;
+      const comments =
+        count === undefined
+          ? entry.commentError
+            ? 'Comments unavailable'
+            : 'Loading comments…'
+          : `${count} GitHub ${count === 1 ? 'comment' : 'comments'}, including replies and resolved threads`;
+      return {
+        text: `${changes} · ${count ?? '—'}`,
+        parts: [
+          { text: changes },
+          {
+            text: count === undefined ? '—' : String(count),
+            color: count ? 'var(--foreground)' : undefined,
+          },
+        ],
+        title: `${entry.viewed ? 'Viewed' : `${entry.additions} additions, ${entry.deletions} deletions`}. ${comments}`,
+      };
     },
   });
   useEffect(() => {

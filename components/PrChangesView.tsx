@@ -23,7 +23,7 @@ import {
 import { registerChangeProgress, useFileProgress } from '../lib/file-view-progress';
 import type { ReviewSubject } from '../lib/workbench';
 import type { Preferences } from '../lib/types';
-import type { GitHubReviewThreads } from '../lib/review-threads';
+import { usePrDiscussions } from '../lib/use-pr-discussions';
 import type { ReviewImageSide } from '../lib/review-images';
 
 interface Entry {
@@ -104,9 +104,7 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
   const [loadedFile, setLoadedFile] = useState<{ key: string; data: PrFileContents }>(),
     [fileError, setFileError] = useState(''),
     [fileAttempt, setFileAttempt] = useState(0);
-  const threadGeneration = useRef(0);
-  const [threadResult, setThreads] = useState<{ url: string; data: GitHubReviewThreads }>(),
-    [threadError, setThreadError] = useState('');
+  const discussion = usePrDiscussions(subject.members.map((member) => member.url));
   const [chatOpen, setChatOpen] = useState(false),
     [selection, setSelection] = useState('');
   const [range, setRange] = useState<SelectedLineRange | null>(null);
@@ -190,8 +188,6 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
   const entry =
     entries.find((e) => e.key === selected) ?? entries.find((e) => !progress.isFileViewed(viewKey(e))) ?? entries.at(0);
   const activeKey = entry ? viewKey(entry) : '';
-  const currentThreadUrl = useRef(entry?.snapshot.url);
-  currentThreadUrl.current = entry?.snapshot.url;
   const currentFile = useRef(activeKey);
   currentFile.current = activeKey;
   const request = entry
@@ -215,8 +211,12 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
         viewed: progress.isFileViewed(viewKey(e)),
         additions: e.file.additions,
         deletions: e.file.deletions,
+        commentCount: discussion.discussions[e.snapshot.url]?.data?.threads
+          .filter((t) => t.path === e.file.path || t.path === e.file.previousPath)
+          .reduce((total, thread) => total + thread.comments.length, 0),
+        commentError: !!discussion.discussions[e.snapshot.url]?.error,
       })),
-    [entries, unviewed, viewedSignature]
+    [entries, unviewed, viewedSignature, discussion.discussions]
   );
   // Keep selection/scroll independent of tabs, queue navigation, and background discovery.
   function select(key: string) {
@@ -253,25 +253,6 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
       cancelled = true;
     };
   }, [activeKey, fileAttempt]);
-  useEffect(() => {
-    if (!entry) return;
-    let cancelled = false;
-    const current = ++threadGeneration.current;
-    setThreads(undefined);
-    setThreadError('');
-    void window.electronAPI
-      .getReviewThreads(entry.snapshot.url)
-      .then((value) => {
-        if (!cancelled && current === threadGeneration.current) setThreads({ url: entry.snapshot.url, data: value });
-      })
-      .catch(() => {
-        if (!cancelled && current === threadGeneration.current)
-          setThreadError('GitHub comments are unavailable. Open the PR on GitHub or retry.');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [entry?.snapshot.url, fileAttempt]);
   useLayoutEffect(() => {
     const el = viewport.current;
     if (!el || (!contents && !preview)) return;
@@ -305,7 +286,8 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
       .catch(() => setPreferenceError('Could not save diff preferences.'));
   }
   const appearance = { ...DEFAULT_DIFF_APPEARANCE, ...prefs.diffAppearance };
-  const threads = threadResult?.url === entry?.snapshot.url ? threadResult?.data : undefined;
+  const threads = entry ? discussion.discussions[entry.snapshot.url]?.data : undefined;
+  const threadError = entry ? discussion.discussions[entry.snapshot.url]?.error : undefined;
   const matching =
     threads?.threads.filter((t) => t.path === entry?.file.path || t.path === entry?.file.previousPath) ?? [];
   const inline = matching.filter(
@@ -316,43 +298,14 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
       (t.diffSide === 'RIGHT' || threads?.baseSha === entry?.snapshot.metadata.baseSha)
   );
   const other = matching.filter((t) => !inline.includes(t));
-  async function refreshThreads(url: string) {
-    if (currentThreadUrl.current !== url) return;
-    const current = ++threadGeneration.current;
-    try {
-      const value = await window.electronAPI.getReviewThreads(url, true);
-      if (alive.current && current === threadGeneration.current) setThreadError('');
-      if (alive.current && current === threadGeneration.current) setThreads({ url, data: value });
-    } catch {
-      if (alive.current && current === threadGeneration.current)
-        setThreadError(
-          'Could not refresh GitHub comments. Any completed changes are saved on GitHub. Try Refresh comments again.'
-        );
-    }
-  }
+  const refreshThreads = discussion.refresh;
   const comments = useChangesComments({
     snapshot: entry?.snapshot,
     path: entry?.file.path,
     activeKey,
     inline,
     refresh: refreshThreads,
-    replaceThread: (url, thread) => {
-      if (currentThreadUrl.current !== url) return;
-      threadGeneration.current++;
-      setThreads((old) =>
-        old?.url === url
-          ? {
-              ...old,
-              data: {
-                ...old.data,
-                threads: old.data.threads
-                  .map((t) => (t.id === thread.id ? thread : t))
-                  .filter((t) => t.comments.length),
-              },
-            }
-          : old
-      );
-    },
+    replaceThread: discussion.replace,
   });
   const annotations = comments.annotations;
   const options: FileDiffOptions<(typeof annotations)[number]['metadata'], undefined> = {
@@ -721,7 +674,7 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
             {threadError && (
               <p className="changes-notice">
                 {threadError}
-                <button onClick={() => setFileAttempt((n) => n + 1)}>Retry</button>
+                <button onClick={() => entry && void refreshThreads(entry.snapshot.url)}>Retry</button>
               </p>
             )}
             {!!other.length && (
