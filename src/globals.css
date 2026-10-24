@@ -2331,3 +2331,55 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .queue-row-heading { display:flex;align-items:flex-start;gap:12px;min-width:0; }
 .queue-row-heading .queue-row-main { flex:1;width:auto; }
 .queue-row-heading .queue-state { flex-shrink:0; }
+
+/* Direct PR inspection shares the review renderer, with independent scrolling panes. */
+.pr-overview-tabs { display:flex;gap:24px;padding:0 24px;max-width:var(--pr-frame-width);width:100%;margin:0 auto;border-bottom:1px solid var(--border);flex-shrink:0; }
+.pr-overview-tabs button { padding:12px 0 10px;font-size:var(--type-control);color:var(--muted-foreground);border-bottom:2px solid transparent; }
+.pr-overview-tabs button[data-state=active] { color:var(--foreground);font-weight:600;border-bottom-color:var(--primary); }
+.pr-overview-tabs button:focus-visible { outline:2px solid var(--ring);outline-offset:-2px; }
+.pr-summary-page.showing-changes { display:flex;flex-direction:column;overflow:hidden; }
+.showing-changes .pr-summary-toolbar-inner,.showing-changes .pr-overview-tabs { max-width:none; }
+.pr-changes-tab { flex:1;min-height:0;display:flex;flex-direction:column; }
+.pr-changes-tab[data-state=inactive] { display:none; }
+.pr-changes-title { padding:10px 20px 0;font-size:var(--type-body);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-shrink:0; }
+.pr-changes { display:flex;flex:1;flex-direction:column;min-height:0;min-width:0; }
+.changes-toolbar { display:flex;align-items:center;gap:8px;padding:8px 16px;flex-wrap:wrap;border-bottom:1px solid var(--border);flex-shrink:0; }
+.changes-toolbar select { font-size:var(--type-control);padding:5px 8px;background:var(--background);border:1px solid var(--border);border-radius:var(--radius); }
+.changes-toolbar-spacer { flex:1; }
+.changes-progress,.changes-source,.changes-file-stats,.changes-chat-source { font-size:var(--type-caption);color:var(--muted-foreground);font-variant-numeric:tabular-nums; }
+.changes-workspace { display:flex;flex:1;min-height:0;min-width:0;position:relative; }
+.changes-tree-pane { width:var(--changes-tree-width);max-width:42%;min-width:160px;display:flex;flex-direction:column;flex-shrink:0;background:var(--sidebar); }
+.changes-tree-controls { padding:12px;display:flex;flex-direction:column;gap:10px;font-size:var(--type-caption); }
+.changes-tree-controls>input { width:100%;border:1px solid var(--input);background:var(--background);padding:6px 8px;border-radius:var(--radius); }
+.changes-tree-controls label,.changes-file-actions label { display:inline-flex;align-items:center;gap:5px; }
+.changes-file-tree { flex:1;min-height:0;color-scheme:light;--trees-theme-sidebar-bg:var(--sidebar);--trees-theme-sidebar-fg:var(--foreground);--trees-theme-git-added-fg:var(--color-success);--trees-theme-git-modified-fg:var(--color-info);--trees-theme-git-deleted-fg:var(--color-danger);--trees-theme-list-active-selection-bg:var(--accent);--trees-theme-list-active-selection-fg:var(--accent-foreground);--trees-theme-list-hover-bg:var(--muted);--trees-theme-focus-ring:var(--ring); }
+.changes-resize { width:5px;flex-shrink:0;cursor:col-resize;border-left:1px solid var(--border);touch-action:none; }
+.changes-resize:hover,.changes-resize:focus-visible { background:var(--accent);outline:1px solid var(--ring); }
+.changes-diff-pane { flex:1;min-width:0;display:flex;flex-direction:column; }
+.changes-file-header { display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap;flex-shrink:0; }
+.changes-file-header>div:first-child { min-width:0;flex:1; }
+.changes-file-header h2 { font-size:var(--type-control);font-weight:600;overflow-wrap:anywhere; }
+.changes-file-header h2>span { font-weight:400;color:var(--muted-foreground); }
+.changes-file-actions { display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:var(--type-caption); }
+.changes-code-scroll { overflow:auto;flex:1;min-height:0;scrollbar-gutter:stable; }
+.changes-code { min-width:0; }
+.changes-empty,.changes-loading { padding:24px;font-size:var(--type-control); }
+.changes-loading { color:var(--muted-foreground); }
+.changes-notice { padding:9px 16px;background:var(--secondary);font-size:var(--type-control);display:flex;gap:12px;align-items:center;flex-wrap:wrap; }
+.changes-notice button { color:var(--ring);text-decoration:underline;text-underline-offset:3px; }
+.changes-other-threads { padding:16px; }
+.changes-other-threads>h3 { font-weight:600;font-size:var(--type-control); }
+.changes-other-threads>p { font-size:var(--type-caption);color:var(--muted-foreground);margin:6px 0 12px; }
+.changes-chat { width:340px;max-width:45%;min-width:250px;border-left:1px solid var(--border);display:flex;flex-direction:column;background:var(--card); }
+.changes-chat>header { display:flex;align-items:center;justify-content:space-between;padding:8px 14px;font-size:var(--type-control); }
+.changes-chat-source { padding:0 14px 10px;overflow-wrap:anywhere; }
+.changes-chat-messages { flex:1;min-height:0;overflow:auto;padding:14px;font-size:var(--type-prose);line-height:var(--leading-prose);font-weight:var(--weight-prose);letter-spacing:var(--tracking-prose);overflow-wrap:anywhere; }
+.changes-chat-messages article { margin-bottom:20px; }
+.changes-chat-messages article>strong { display:block;margin-bottom:6px;font-size:var(--type-control); }
+.changes-chat>form { border-top:1px solid var(--border);padding:12px;display:flex;flex-direction:column;gap:8px;font-size:var(--type-control); }
+.changes-chat textarea { border:1px solid var(--input);border-radius:var(--radius);background:var(--background);padding:8px;resize:vertical;max-height:180px; }
+.changes-chat pre { max-height:100px;overflow:auto;font-size:var(--type-caption); }
+@media(max-width:1000px) { .changes-workspace.chat-open .changes-tree-pane,.changes-workspace.chat-open .changes-resize { display:none; } }
+@media(max-width:700px) { .changes-tree-pane { position:absolute;top:0;bottom:0;left:0;width:min(300px,80%);max-width:80%;z-index:4;border-right:1px solid var(--border); } .changes-resize{display:none;} .changes-chat { position:absolute;inset:0 0 0 auto;width:min(380px,100%);max-width:100%;z-index:5; } .changes-progress { display:none; } .changes-toolbar { gap:4px;padding:6px; } }
+
+.dark .changes-file-tree { color-scheme:dark; }

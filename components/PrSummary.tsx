@@ -1,3 +1,6 @@
+import { Tabs } from 'radix-ui';
+import { PrChangesView } from './PrChangesView';
+import type { Preferences } from '../lib/types';
 import { GitHubAuthor } from './GitHubAuthor';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, ChevronLeft, ChevronRight, ExternalLink, Layers } from 'lucide-react';
@@ -15,6 +18,7 @@ export interface PrReadingPosition {
 
 export function PrSummary({
   item,
+  tab, onTabChange, preferences,
   starting,
   error,
   statuses,
@@ -30,6 +34,9 @@ export function PrSummary({
   shortcutsEnabled = true,
 }: {
   item: QueueItem;
+  tab: 'summary' | 'changes';
+  onTabChange: (tab: 'summary' | 'changes') => void;
+  preferences: Preferences | null;
   starting: boolean;
   error: string;
   statuses: Partial<Record<string, PrStatus>>;
@@ -97,7 +104,7 @@ export function PrSummary({
       element.removeEventListener('wheel', stop);
       element.removeEventListener('pointerdown', stop);
     };
-  }, [activeUrl, position]);
+  }, [activeUrl, position, tab]);
   const remember = () => {
     if (page.current && !restoring.current) position.scroll[activeUrl] = page.current.scrollTop;
   };
@@ -112,6 +119,7 @@ export function PrSummary({
   useEffect(() => {
     if (!shortcutsEnabled) return;
     const keydown = (event: KeyboardEvent) => {
+      if (event.composedPath().some(node => node instanceof Element && node.matches('.pr-changes'))) return;
       if (event.defaultPrevented || event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target instanceof HTMLElement ? event.target : null;
       if (
@@ -142,8 +150,9 @@ export function PrSummary({
   const ready = item.review?.status === 'completed';
   const current = ready && item.review?.snapshot?.fingerprint === fingerprint(item.subject);
   return (
+    <Tabs.Root value={tab} onValueChange={value=>{if(tab==='summary')remember();onTabChange(value as 'summary'|'changes');}} asChild>
     <main
-      className={`pr-summary-page ${stacked ? 'is-stack' : ''}`}
+      className={`pr-summary-page ${stacked ? 'is-stack' : ''} ${tab==='changes'?'showing-changes':''}`}
       ref={page}
       onScroll={() => {
         remember();
@@ -195,7 +204,14 @@ export function PrSummary({
           </div>
         </div>
       </div>
-      <div className="pr-summary-content">
+      <Tabs.List className="pr-overview-tabs" aria-label="PR overview">
+        <Tabs.Trigger value="summary">Summary</Tabs.Trigger><Tabs.Trigger value="changes">Changes</Tabs.Trigger>
+      </Tabs.List>
+      <Tabs.Content value="changes" className="pr-changes-tab">
+        <h1 className="pr-changes-title">{item.subject.title}</h1>
+        {preferences && <PrChangesView key={item.subject.id} subject={item.subject} preferences={preferences}/>}
+      </Tabs.Content>
+      <Tabs.Content value="summary" className="pr-summary-content">
         <h1 ref={heading} tabIndex={-1}>
           {item.subject.title}
         </h1>
@@ -282,7 +298,8 @@ export function PrSummary({
           statusErrors={statusErrors}
           onRetryStatus={onRetryStatus}
         />
-      </div>
+      </Tabs.Content>
     </main>
+    </Tabs.Root>
   );
 }

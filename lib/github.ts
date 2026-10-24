@@ -31,9 +31,10 @@ export async function getPrMetadata(
   octokit: Octokit,
   owner: string,
   repo: string,
-  pullNumber: number
+  pullNumber: number,
+  fresh = false
 ): Promise<PrMetadata> {
-  const { data } = await octokit.pulls.get({ owner, repo, pull_number: pullNumber });
+  const { data } = await octokit.pulls.get({ owner, repo, pull_number: pullNumber, ...(fresh ? { headers: { 'cache-control': 'no-cache' } } : {}) });
   return {
     title: data.title,
     commentCount: data.comments,
@@ -130,13 +131,15 @@ export async function getChangedFiles(
   octokit: Octokit,
   owner: string,
   repo: string,
-  pullNumber: number
+  pullNumber: number,
+  fresh = false
 ): Promise<ChangedFile[]> {
   const files: ChangedFile[] = [];
   let page = 1;
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- pagination loop
   while (true) {
     const { data } = await octokit.pulls.listFiles({
+      ...(fresh ? { headers: { 'cache-control': 'no-cache' } } : {}),
       owner,
       repo,
       pull_number: pullNumber,
@@ -146,7 +149,8 @@ export async function getChangedFiles(
     for (const f of data) {
       files.push({
         filename: f.filename,
-        status: f.status as ChangedFile['status'],
+        sha: f.sha ?? undefined,
+        status: (f.status === 'removed' ? 'deleted' : f.status === 'added' || f.status === 'renamed' ? f.status : 'modified') as ChangedFile['status'],
         additions: f.additions,
         deletions: f.deletions,
         previous_filename: f.previous_filename,

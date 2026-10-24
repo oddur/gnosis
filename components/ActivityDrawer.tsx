@@ -10,11 +10,13 @@ const kindLabels = {
   briefing: 'Briefing',
   exploration: 'Interactive explanation',
   github: 'GitHub update',
+  'file-chat': 'File question',
 };
 const completedLabels = {
   review: 'Explanation ready',
   briefing: 'Briefing ready',
   exploration: 'Interactive explanation ready',
+  'file-chat': 'Answer ready',
 };
 const openLabels = {
   review: 'Open guided review',
@@ -285,7 +287,7 @@ export function ActivityDrawer({
                           Retry
                         </button>
                       )}
-                      {task.status === 'completed' && task.kind !== 'github' && (
+                      {task.status === 'completed' && task.kind !== 'github' && task.kind !== 'file-chat' && (
                         <button disabled={pending === task.id} onClick={() => void act(task, 'open')}>
                           {openLabels[task.kind]}
                         </button>

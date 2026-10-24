@@ -408,6 +408,23 @@ let activities: ActivityTask[] = [
 ];
 if (onboardingScenario) activities = [];
 const mocks = {
+  getPrChanges: (url: string) => {
+    const member=items.flatMap(i=>i.subject.members).find(m=>m.url===url)??members[0];
+    return Promise.resolve({version:1 as const,url,metadata:member,comparisonBase:member.baseSha,fetchedAt:Date.now(),files:[
+      {path:'src/worker.ts',status:'modified' as const,additions:1,deletions:1,changeId:'worker-v1'},
+      {path:'src/new.ts',status:'added' as const,additions:2,deletions:0,changeId:'new-v1'},
+      {path:'src/old.ts',status:'deleted' as const,additions:0,deletions:2,changeId:'old-v1'},
+      {path:'assets/flow.svg',status:'modified' as const,additions:1,deletions:1,changeId:'image-v1'},
+      {path:'pnpm-lock.yaml',status:'modified' as const,additions:1,deletions:1,changeId:'lock-v1'},
+    ]});
+  },
+  getPrChangeFile: (request: import('../../lib/pr-changes').PrFileRequest) => {
+    if(request.path.endsWith('.svg')) {const image={kind:'image' as const,dataUrl:'data:image/svg+xml;base64,'+btoa('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="140"><rect width="300" height="140" fill="#5076b8"/><text x="30" y="75" fill="white">Queue flow</text></svg>')};return Promise.resolve({before:image,after:image});}
+    const before=Array.from({length:90},(_,i)=>`const value${i} = ${i};`).join('\n');
+    return Promise.resolve({before:request.path.endsWith('/new.ts')?{kind:'absent' as const}:{kind:'text' as const,content:before},after:request.path.endsWith('/old.ts')?{kind:'absent' as const}:{kind:'text' as const,content:before.replace('value35 = 35','value35 = 36')}});
+  },
+  checkPrChanges: (url:string) => {const member=items.flatMap(i=>i.subject.members).find(m=>m.url===url)??members[0];return Promise.resolve({headSha:member.headSha,baseSha:member.baseSha});},
+  askPrFile: () => Promise.resolve('The worker now advances to the next queued item. This changes the retry boundary.'),
   getGitHubProfile: (login:string) => Promise.resolve({login,name:'Morgan Developer',bio:'Building reliable command queues.',company:'Klang',location:'Berlin',type:'User'}),
   getQueueSignals: (requests: import('../../lib/queue-signals').QueueSignalRequest[]) => Promise.resolve(requests.map((request, i) => ({ ...request, checkedAt: Date.now(), comments: i % 2 ? 0 : 4, checks: { state: 'success' as const, passed: 129, skipped: 1, total: 130 } }))),
   commandSearch: async (query:string, includeBots=false, recentIds:string[]=[]) => {

@@ -63,18 +63,21 @@ export function ReviewImageDiff({
   reviewId,
   filePath,
   enabled,
+  comparison,
 }: {
   reviewId?: string;
   filePath: string;
   enabled: boolean;
+  comparison?: ReviewImageComparison;
 }) {
-  const [result, setResult] = useState<ReviewImageComparison>();
+  const [loadedResult, setResult] = useState<ReviewImageComparison>();
+  const result = comparison ?? loadedResult;
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   const [background, setBackground] = useState('checkerboard');
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    if (!enabled || !reviewId) return;
+    if (comparison || !enabled || !reviewId) return;
     let cancelled = false;
     setBusy(true);
     setError('');
@@ -92,7 +95,7 @@ export function ReviewImageDiff({
     return () => {
       cancelled = true;
     };
-  }, [reviewId, filePath, enabled, attempt]);
+  }, [reviewId, filePath, enabled, attempt, comparison]);
   const failed = error || result?.before.status === 'error' || result?.after.status === 'error';
   const single = result && (result.before.status === 'absent' || result.after.status === 'absent');
   return (
@@ -110,7 +113,7 @@ export function ReviewImageDiff({
           </select>
         </label>
       </div>
-      {!reviewId && <p role="status">Save this review to load its image revisions.</p>}
+      {!reviewId && !comparison && <p role="status">Save this review to load its image revisions.</p>}
       {busy && !result && <p role="status">Loading image revisions…</p>}
       {error && (
         <p className="review-image-error" role="status">
