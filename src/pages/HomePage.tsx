@@ -1,3 +1,5 @@
+import type { VirtualItem } from '@tanstack/react-virtual';
+import { VirtualReviewQueue } from '../../components/VirtualReviewQueue';
 import { GitHubIcon } from '../../lib/constants';
 import { PrLabels } from '../../components/PrLabels';
 import { PrSummary, type PrReadingPosition } from '../../components/PrSummary';
@@ -179,6 +181,14 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   const [statusAttempt, setStatusAttempt] = useState(0);
   const [savedSummary, setSavedSummary] = useState<{ id: string; summary: string; focus: string } | null>(null);
   const searchInput = useRef<HTMLInputElement>(null);
+  const queueScrollElement = useRef<HTMLElement>(null);
+  const queueMeasurements = useRef<VirtualItem[]>([]);
+  const queueScrollOffset = useRef(0);
+  const pendingRowFocus = useRef<string | null>(null);
+  const attachQueueScroll = useCallback((element: HTMLElement | null) => {
+    queueScrollElement.current = element;
+    if (element) element.scrollTop = queueScrollOffset.current;
+  }, []);
   const rowButtons = useRef(new Map<string, HTMLButtonElement>());
   const [statuses, setStatuses] = useState<Partial<Record<string, PrStatus>>>({});
   const alive = useRef(true);
@@ -485,6 +495,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
         : Math.max(0, Math.min(orderedItems.length - 1, index + direction))
     );
     if (!next) return;
+    pendingRowFocus.current = next.subject.id;
     setSelected(next.subject.id);
     rowButtons.current.get(next.subject.id)?.focus({ preventScroll: true });
   };
@@ -547,7 +558,13 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
           <button
             className="queue-row-main"
             ref={(node) => {
-              if (node) rowButtons.current.set(s.id, node);
+              if (node) {
+                rowButtons.current.set(s.id, node);
+                if (pendingRowFocus.current === s.id) {
+                  pendingRowFocus.current = null;
+                  node.focus({ preventScroll: true });
+                }
+              }
               else rowButtons.current.delete(s.id);
             }}
             aria-pressed={active}
@@ -894,6 +911,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                     e.preventDefault();
                     const first = orderedItems.at(0);
                     if (first) {
+                      pendingRowFocus.current = first.subject.id;
                       setSelected(first.subject.id);
                       rowButtons.current.get(first.subject.id)?.focus();
                     }
@@ -982,7 +1000,8 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
             </p>
           )}
           <div className="queue-content">
-            <section className="queue-list" aria-label="Review queue">
+            <section className="queue-list" aria-label="Review queue" ref={attachQueueScroll}
+              onScroll={(event) => { queueScrollOffset.current = event.currentTarget.scrollTop; }}>
               {!gettingStartedVisible && githubConnection}
               {gettingStartedVisible && (
                 <GettingStarted
@@ -1065,17 +1084,8 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                   </div>
                 )
               ) : items.length ? (
-                (['updated', 'requested', 'other'] as const).map((category) => {
-                  const group = items.filter((i) => i.attention === category);
-                  return group.length ? (
-                    <div key={category}>
-                      <h2 className="queue-section-title">
-                        {labels[category]} <span>{group.length}</span>
-                      </h2>
-                      {group.map(row)}
-                    </div>
-                  ) : null;
-                })
+                <VirtualReviewQueue items={orderedItems} labels={labels} selected={selected}
+                  scrollElement={queueScrollElement} measurements={queueMeasurements} initialOffset={queueScrollOffset.current} renderRow={row} />
               ) : gettingStartedVisible && !queueFailed ? null : (
                 <div className="queue-empty">
                   <Inbox size={24} />

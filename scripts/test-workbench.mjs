@@ -7,6 +7,7 @@ import path from 'node:path';
 import process from 'node:process';
 import electron from 'electron';
 import { setTimeout, clearTimeout } from 'node:timers';
+const performance = process.argv.includes('--performance');
 const polish = process.argv.includes('--polish');
 const hardening = process.argv.includes('--hardening');
 const auth = process.argv.includes('--auth');
@@ -23,7 +24,7 @@ try {
   const outfile = path.join(dir, 'test.cjs');
   await build({
     entryPoints: [
-      polish
+      performance ? 'tests/queue-performance-browser.ts' : polish
         ? 'tests/polish-browser.ts'
         : hardening
           ? 'tests/hardening-browser.ts'
