@@ -11,6 +11,7 @@ import { groupSubjects, snapshot, memberPrefix, type ReviewMember, type QueueIte
 import type { Preferences, ReviewGuide, ReviewHistoryEntry } from '../../lib/types';
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_FAST_CLAUDE_MODEL } from '../../lib/models';
 import { review as example, slide, explainer } from './explainer';
+let fixtureStars: import('../../lib/starred-prs').StarredPr[] = JSON.parse(sessionStorage.getItem('fixture-stars') ?? '[]');
 const filterStorageKey = 'fixture-queue-filters' + location.search;
 let queueFilters = normalizeQueueFilters(JSON.parse(sessionStorage.getItem(filterStorageKey) ?? 'null'));
 const viewsStorageKey = 'fixture-views' + location.search;
@@ -509,8 +510,20 @@ const mocks = {
     sessionStorage.setItem(filterStorageKey, JSON.stringify(queueFilters));
     return Promise.resolve(mocks.workbenchQueue());
   },
+  workbenchStarPrs: (request: import('../../lib/starred-prs').StarPrRequest) => {
+    const entries = new Map(fixtureStars.map(entry => [entry.member.url, entry]));
+    for (const member of request.members) {
+      if (request.starred) entries.set(member.url, {member, starredAt:new Date().toISOString()});
+      else entries.delete(member.url);
+    }
+    fixtureStars=[...entries.values()];sessionStorage.setItem('fixture-stars',JSON.stringify(fixtureStars));
+    for (const item of items) { item.starredUrls=item.subject.members.filter(m=>entries.has(m.url)).map(m=>m.url);item.starred=!!item.starredUrls.length; }
+    return mocks.workbenchQueue();
+  },
   workbenchQueue: () =>
     Promise.resolve({
+      starredPrs: fixtureStars,
+      starredItems: items.filter(item=>item.starred),
       filters: queueFilters,
       savedViews: { ...savedViews, counts: Object.fromEntries(savedViews.views.map(view => [view.id, items.filter(item => matchesQueueFilters(item, view.filters, Date.now(), 'oddur')).length])) },
       items: onboardingScenario && !fixtureStarted ? [] : items,
@@ -556,6 +569,7 @@ const mocks = {
   platform: 'darwin',
   isPackaged: false,
 };
+for (const item of items) { item.starredUrls=item.subject.members.filter(m=>fixtureStars.some(e=>e.member.url===m.url)).map(m=>m.url);item.starred=!!item.starredUrls.length; }
 if (new URLSearchParams(location.search).has('threads')) Object.assign(mocks, threadMocks());
 if (new URLSearchParams(location.search).has('images')) Object.assign(mocks, imageMocks(review));
 Object.defineProperty(window, 'electronAPI', {

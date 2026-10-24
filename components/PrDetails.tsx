@@ -6,6 +6,7 @@ import { Markdown } from './Markdown';
 import { PrLabels } from './PrLabels';
 import { PrReadiness } from './PrReadiness';
 import type { QueueSignals } from '../lib/queue-signals';
+import type { ReactNode } from 'react';
 
 function date(value: string) {
   const parsed = new Date(value);
@@ -16,6 +17,7 @@ function date(value: string) {
 
 export function PrDetails({
   member: m,
+  starControl,
   status,
   signals,
   statusError,
@@ -24,6 +26,7 @@ export function PrDetails({
   showIdentity = true,
 }: {
   member: ReviewMember;
+  starControl?: ReactNode;
   status?: PrStatus;
   signals?: QueueSignals;
   statusError?: string;
@@ -49,6 +52,7 @@ export function PrDetails({
               <span className={`pr-state pr-state-${state.toLowerCase()}`}>{state}</span> · by <GitHubAuthor login={m.author}/>
             </p>
           </div>
+          {starControl}
           <a href={m.url} target="_blank" rel="noopener noreferrer" className="pr-github-link">
             GitHub <ExternalLink size={13} />
           </a>

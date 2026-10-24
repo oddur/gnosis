@@ -74,6 +74,8 @@ void test('stale, missing and different-revision snapshots cannot produce a gree
   assert.equal(mergeReadiness(member, undefined, now).ready, false);
 });
 void test('merge queues are distinguished from direct merging and terminal PRs are never ready', () => {
+  assert.equal(mergeReadiness({ ...member, merged: true }, signals(), now).label, 'Merged');
+  assert.equal(mergeReadiness({ ...member, state: 'closed' }, signals(), now).ready, false);
   assert.equal(mergeReadiness(member, signals({ mergeQueue: true }), now).label, 'Ready for merge queue');
   assert.equal(
     mergeReadiness(member, signals({ mergeQueue: true, queueState: 'QUEUED' }), now).label,

@@ -16,6 +16,7 @@ import { timeAgo } from '../lib/utils';
 import { useQueueSignals } from '../lib/use-queue-signals';
 import { subjectReadiness } from '../lib/merge-readiness';
 import { ReadinessBadge, ReadinessCheckedAt } from './MergeReadiness';
+import { PrStarButton } from './PrStarButton';
 
 export interface PrReadingPosition {
   memberUrl: string;
@@ -24,6 +25,10 @@ export interface PrReadingPosition {
 
 export function PrSummary({
   item,
+  starredUrls,
+  starBusy,
+  starError,
+  onStarChange,
   account,
   statusRefreshing,
   tab,
@@ -46,6 +51,10 @@ export function PrSummary({
   shortcutsEnabled = true,
 }: {
   item: QueueItem;
+  starredUrls: ReadonlySet<string>;
+  starBusy: boolean;
+  starError: string;
+  onStarChange: (members: QueueItem['subject']['members'], starred: boolean) => void;
   account: string | null;
   statusRefreshing: boolean;
   tab: 'summary' | 'changes' | 'commits' | 'explanation';
@@ -209,9 +218,22 @@ export function PrSummary({
           </div>
         </div>
         <header className="pr-overview-heading">
-          <h1 ref={heading} tabIndex={-1}>
-            {item.subject.title}
-          </h1>
+          <div className="pr-title-with-star">
+            <h1 ref={heading} tabIndex={-1}>
+              {item.subject.title}
+            </h1>
+            <PrStarButton
+              members={item.subject.members}
+              starredUrls={starredUrls}
+              busy={starBusy}
+              onChange={onStarChange}
+            />
+          </div>
+          {starError && (
+            <p role="alert" className="text-sm text-destructive">
+              {starError}
+            </p>
+          )}
           <div className="pr-summary-context">
             <span>
               {stacked ? (
@@ -313,6 +335,9 @@ export function PrSummary({
               </details>
             )}
             <PrSubjectDetails
+              starredUrls={starredUrls}
+              starBusy={starBusy}
+              onStarChange={onStarChange}
               signals={signals}
               compactIdentity
               subject={item.subject}

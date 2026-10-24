@@ -1723,8 +1723,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .pr-summary-content { flex:1; min-height:0; width:100%; container-type:size; overflow:auto; scrollbar-gutter:stable; padding:16px var(--pr-frame-inset) 32px; }
 .pr-summary-content[data-state=inactive] { display:none; }
 .pr-overview-heading { flex-shrink:0; padding:12px var(--pr-frame-inset) 0; }
-.pr-overview-heading>h1 { font-size:var(--type-page-title); font-weight:650; line-height:1.4; text-wrap:balance; overflow-wrap:anywhere; }
-.pr-overview-heading>h1:focus { outline:none; }
+.pr-overview-heading h1 { font-size:var(--type-page-title); font-weight:650; line-height:1.4; text-wrap:balance; overflow-wrap:anywhere; }
+.pr-overview-heading h1:focus { outline:none; }
 .pr-summary-context { display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; color:var(--muted-foreground); font-size:var(--type-caption); margin:6px 0; }
 .pr-summary-context>span { display:inline-flex; align-items:center; gap:4px; }
 .pr-summary-context>.pr-github-link { margin-left:auto; min-height:24px; font-size:var(--type-caption); }
@@ -2495,3 +2495,14 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .pr-merge-detail-actions a { color:var(--ring); text-decoration:underline; text-underline-offset:3px; }
 .pr-stack-nav .merge-readiness-badge { margin-top:4px; }
 @media(max-width:700px) { .pr-merge-status { padding-inline:16px; } }
+
+/* Personal PR bookmarks stay compact beside titles. */
+.pr-star-button { display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; width:28px; height:28px; border-radius:4px; color:var(--muted-foreground); }
+.pr-star-button.is-starred { color:var(--color-warning); }
+.pr-star-button:hover:not(:disabled) { background:var(--accent); color:var(--foreground); }
+.pr-star-button.is-starred:hover:not(:disabled) { color:var(--color-warning); }
+.pr-star-button:disabled { cursor:wait; }
+.pr-title-with-star { display:flex; align-items:flex-start; gap:8px; }
+.pr-title-with-star h1 { min-width:0; }
+.pr-title-with-star .pr-star-button { margin-top:2px; }
+.pr-details-heading>div:first-child { flex:1; }
