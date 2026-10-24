@@ -59,6 +59,7 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.workbench-overview')");
     await click('Continue review');
     await wait("!!document.querySelector('.review-narrative')");
+    assert.ok(await js(`Array.from(document.querySelectorAll('.file-path-link')).every(el=>el.getBoundingClientRect().height>=24)`), 'File links have a 24px pointer target');
     const topic = await js("document.querySelector('.review-narrative h1,.review-narrative h2')?.textContent");
     await openPalette();
     await capture('commands-light');

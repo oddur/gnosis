@@ -34,7 +34,7 @@ export function FilePathLink({ filePath, gitFileUrlBase, className, compact = fa
   return (
     <button
       type="button"
-      className={`hover:underline hover:text-foreground transition-colors text-left ${layout} ${className ?? ''}`}
+      className={`file-path-link hover:underline hover:text-foreground transition-colors text-left ${layout} ${className ?? ''}`}
       onClick={() =>
         void window.electronAPI.openExternal(gitFileUrlBase + displayPath.split('/').map(encodeURIComponent).join('/'))
       }
