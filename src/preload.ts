@@ -1,7 +1,7 @@
 import type { PrCommits, CommitSelection } from '../lib/pr-commits';
 import type { PrChanges, PrFileRequest, PrFileContents, FileChatRequest } from '../lib/pr-changes';
 import type { GitHubProfile } from '../lib/github-profile';
-import type { QueueSignalRequest, QueueSignals } from '../lib/queue-signals';
+import type { QueueSignalRequest, QueueSignals, QueueSignalOptions } from '../lib/queue-signals';
 import type { LocalSearchResponse } from './command-search-service';
 import type { GitHubDevicePrompt } from '../lib/github-auth';
 import type { QueueViewAction } from '../lib/saved-views';
@@ -37,7 +37,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkPrChanges: (url: string): Promise<{ baseSha: string; headSha: string }> => ipcRenderer.invoke('pr-changes-revision', url),
   askPrFile: (request: FileChatRequest): Promise<string> => ipcRenderer.invoke('ask-pr-file', request),
   getGitHubProfile: (login:string):Promise<GitHubProfile> => ipcRenderer.invoke('get-github-profile',login),
-  getQueueSignals: (requests: QueueSignalRequest[]): Promise<QueueSignals[]> => ipcRenderer.invoke('get-queue-signals', requests),
+  getQueueSignals: (requests: QueueSignalRequest[], options?: QueueSignalOptions): Promise<QueueSignals[]> => ipcRenderer.invoke('get-queue-signals', requests, options),
   commandSearch: (query: string, includeBots = false, recentIds: string[] = []): Promise<LocalSearchResponse> => ipcRenderer.invoke('command-search', query, includeBots, recentIds),
   commandGitHubSearch: (query: string): Promise<PrSearchResult[]> => ipcRenderer.invoke('command-github-search', query),
   listActivity: (): Promise<ActivityTask[]> => ipcRenderer.invoke('list-activity'),
@@ -144,7 +144,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   searchPullRequests: (): Promise<PrSearchResult[]> => ipcRenderer.invoke('search-pull-requests'),
   searchRepos: (query: string): Promise<RepoSearchResult[]> => ipcRenderer.invoke('search-repos', query),
   reRenderHunks: (review: ReviewGuide): Promise<ReviewGuide> => ipcRenderer.invoke('re-render-hunks', review),
-  getPrStatus: (prUrl: string): Promise<PrStatus> => ipcRenderer.invoke('get-pr-status', prUrl),
+  getPrStatus: (prUrl: string, force?: boolean): Promise<PrStatus> => ipcRenderer.invoke('get-pr-status', prUrl, force),
   getPrMetadata: (prUrl: string): Promise<PrMetadata> => ipcRenderer.invoke('get-pr-metadata', prUrl),
   loadReviewImages: (reviewId: string, filePath: string): Promise<import('../lib/review-images').ReviewImageComparison> => ipcRenderer.invoke('load-review-images', reviewId, filePath),
   loadPrImage: (url: string): Promise<string> => ipcRenderer.invoke('load-pr-image', url),

@@ -2473,3 +2473,21 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
   .pr-explanation-workspace .review-submit-target { margin-left:0; }
   .pr-explanation-workspace .review-submit-target select { max-width:160px; }
 }
+
+/* Shared merge readiness: explicit wording, with color as a secondary signal. */
+.merge-readiness-badge { display:inline-flex; align-items:center; gap:6px; min-width:0; font-size:var(--type-caption); font-weight:600; color:var(--muted-foreground); }
+.merge-readiness-badge svg { flex-shrink:0; }
+.merge-readiness-badge>span { overflow-wrap:anywhere; }
+.merge-readiness-badge.is-success { color:var(--color-success); }
+.merge-readiness-badge.is-danger { color:var(--color-danger); }
+.merge-readiness-badge.is-warning { color:var(--color-warning); }
+.merge-readiness-checked { color:var(--muted-foreground); font-size:var(--type-caption); }
+.pr-merge-status { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; padding:0 24px 10px; }
+.pr-merge-status>button { color:var(--ring); font-size:var(--type-caption); text-decoration:underline; text-underline-offset:3px; min-height:24px; }
+.pr-merge-status>button:disabled { color:var(--muted-foreground); cursor:wait; text-decoration:none; }
+.pr-merge-detail { padding:2px 0 14px; }
+.pr-merge-detail ul { display:grid; gap:6px; padding:0; list-style:none; margin:8px 0; max-width:75ch; font-size:var(--type-control); line-height:1.6; overflow-wrap:anywhere; }
+.pr-merge-detail-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; }
+.pr-merge-detail-actions a { color:var(--ring); text-decoration:underline; text-underline-offset:3px; }
+.pr-stack-nav .merge-readiness-badge { margin-top:4px; }
+@media(max-width:700px) { .pr-merge-status { padding-inline:16px; } }

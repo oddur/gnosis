@@ -3,61 +3,91 @@ import { ChevronDown, CircleCheck, CircleHelp, CircleAlert, Clock3, GitPullReque
 import type { ReviewMember } from '../lib/workbench';
 import type { PrStatus } from '../lib/types';
 import { githubFailureMessage } from '../lib/github-feedback';
+import type { QueueSignals } from '../lib/queue-signals';
+import { mergeReadiness } from '../lib/merge-readiness';
+import { ReadinessBadge, ReadinessCheckedAt } from './MergeReadiness';
 
-export function memberReadiness(member: ReviewMember, status?: PrStatus, error?: string): string {
-  if (member.merged) return 'Merged';
-  if (member.state === 'closed') return 'Closed';
-  if (error) return 'Status unavailable';
-  if (!status) return 'Checks not loaded';
-  if (status.mergeable === false) return 'Merge conflicts';
-  if (status.reviewSummary.changesRequested) return 'Changes requested';
-  if (status.ciConclusion === 'failure') return 'Checks failing';
-  if (status.ciConclusion === 'pending') return 'Checks running';
-  if (member.isDraft) return 'Draft';
-  return !status.ciChecks.length
-    ? 'No checks reported'
-    : status.ciConclusion === 'success'
-      ? 'Checks passed'
-      : 'Checks need inspection';
+export function memberReadiness(
+  member: ReviewMember,
+  status?: PrStatus,
+  _error?: string,
+  signals?: QueueSignals
+): string {
+  return mergeReadiness(member, signals ?? status?.signals).label;
 }
 
 export function PrReadiness({
   member,
   status,
+  signals,
   error,
   onRetry,
 }: {
   member: ReviewMember;
   status?: PrStatus;
+  signals?: QueueSignals;
   error?: string;
   onRetry?: () => void;
 }) {
-  const checks = !status
-    ? error
-      ? 'Checks unavailable'
-      : onRetry
-        ? 'Loading checks…'
-        : 'Checks not saved'
-    : !status.ciChecks.length
+  const currentSignals =
+    signals && (!status?.signals || signals.checkedAt >= status.signals.checkedAt) ? signals : status?.signals;
+  const readiness = mergeReadiness(member, currentSignals);
+  const rollup = currentSignals?.headSha === member.headSha ? currentSignals.checks : undefined;
+  const checks = rollup
+    ? !rollup.total
       ? 'No checks reported'
-      : status.ciConclusion === 'success'
+      : rollup.state === 'success'
         ? 'Checks passed'
-        : status.ciConclusion === 'failure'
+        : rollup.state === 'failure'
           ? 'Checks failing'
-          : status.ciConclusion === 'pending'
+          : rollup.state === 'pending'
             ? 'Checks running'
-            : 'Checks need inspection';
+            : 'Checks need inspection'
+    : !status
+      ? error
+        ? 'Checks unavailable'
+        : onRetry
+          ? 'Loading checks…'
+          : 'Checks not saved'
+      : !status.ciChecks.length
+        ? 'No checks reported'
+        : status.ciConclusion === 'success'
+          ? 'Checks passed'
+          : status.ciConclusion === 'failure'
+            ? 'Checks failing'
+            : status.ciConclusion === 'pending'
+              ? 'Checks running'
+              : 'Checks need inspection';
+  const conclusion = rollup?.state ?? status?.ciConclusion;
   const CheckIcon =
-    status?.ciConclusion === 'failure'
+    conclusion === 'failure'
       ? CircleAlert
-      : status?.ciConclusion === 'pending'
+      : conclusion === 'pending'
         ? Clock3
-        : status?.ciChecks.length && status.ciConclusion === 'success'
+        : (rollup?.total || status?.ciChecks.length) && conclusion === 'success'
           ? CircleCheck
           : CircleHelp;
-  const mergeable = (status ?? member).mergeable;
+  const mergeable = currentSignals?.readiness
+    ? currentSignals.readiness.mergeable === 'UNKNOWN'
+      ? null
+      : currentSignals.readiness.mergeable === 'MERGEABLE'
+    : (status ?? member).mergeable;
   return (
     <section className="pr-readiness" aria-label={`Review readiness for PR #${member.number}`}>
+      <div className="pr-merge-detail">
+        <ReadinessBadge readiness={readiness} />
+        <ul>
+          {readiness.details.map((detail) => (
+            <li key={detail}>{detail}</li>
+          ))}
+        </ul>
+        <div className="pr-merge-detail-actions">
+          <ReadinessCheckedAt readiness={readiness} />
+          <a href={member.url} target="_blank" rel="noopener noreferrer">
+            View merge requirements on GitHub
+          </a>
+        </div>
+      </div>
       <div className="pr-readiness-row">
         {status?.ciChecks.length ? (
           <details className="pr-checks">
@@ -80,6 +110,14 @@ export function PrReadiness({
                 </li>
               ))}
             </ul>
+            {rollup && rollup.total > status.ciChecks.length && (
+              <p className="text-muted-foreground">
+                Showing {status.ciChecks.length} of {rollup.total} checks.{' '}
+                <a href={`${member.url}/checks`} target="_blank" rel="noopener noreferrer">
+                  View all checks on GitHub
+                </a>
+              </p>
+            )}
           </details>
         ) : (
           <span>

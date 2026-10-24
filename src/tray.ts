@@ -1,3 +1,4 @@
+import { mergeReadiness } from '../lib/merge-readiness';
 import { Tray, Menu, nativeImage, app } from 'electron';
 import path from 'path';
 import type { PrStatus, ReviewHistoryEntry } from '../lib/types';
@@ -70,14 +71,16 @@ function buildReviewSubmenu(
   if (prStatus) {
     // CI checks
     const ciIcon = CI_ICON[prStatus.ciConclusion] ?? '–';
-    const ciLabel = prStatus.ciConclusion === 'success' ? 'Checks passing'
-      : prStatus.ciConclusion === 'failure' ? 'Checks failing'
-      : prStatus.ciConclusion === 'pending' ? 'Checks running'
-      : 'No checks';
+    const ciLabel =
+      prStatus.ciConclusion === 'success'
+        ? 'Checks passing'
+        : prStatus.ciConclusion === 'failure'
+          ? 'Checks failing'
+          : prStatus.ciConclusion === 'pending'
+            ? 'Checks running'
+            : 'No checks';
 
-    const failedChecks = prStatus.ciChecks.filter(
-      (c) => c.conclusion === 'failure' || c.conclusion === 'timed_out',
-    );
+    const failedChecks = prStatus.ciChecks.filter((c) => c.conclusion === 'failure' || c.conclusion === 'timed_out');
     if (failedChecks.length > 0) {
       items.push({
         label: `${ciIcon} ${ciLabel} (${failedChecks.length} failed)`,
@@ -93,14 +96,17 @@ function buildReviewSubmenu(
       const checksDetail = total > 0 ? ` (${passed}/${total})` : '';
       items.push({
         label: `${ciIcon} ${ciLabel}${checksDetail}`,
-        submenu: total > 0 ? prStatus.ciChecks.slice(0, 15).map((c) => {
-          const icon = CI_ICON[c.conclusion ?? c.status] ?? '–';
-          return {
-            label: `${icon} ${c.name}`,
-            click: c.url ? () => onOpenUrl(c.url!) : undefined,
-            enabled: !!c.url,
-          };
-        }) : undefined,
+        submenu:
+          total > 0
+            ? prStatus.ciChecks.slice(0, 15).map((c) => {
+                const icon = CI_ICON[c.conclusion ?? c.status] ?? '–';
+                return {
+                  label: `${icon} ${c.name}`,
+                  click: c.url ? () => onOpenUrl(c.url!) : undefined,
+                  enabled: !!c.url,
+                };
+              })
+            : undefined,
       });
     }
 
@@ -115,11 +121,18 @@ function buildReviewSubmenu(
     }
 
     // Merge status
-    if (prStatus.isDraft) {
-      items.push({ label: 'Draft PR', enabled: false });
-    } else if (prStatus.mergeable === true && prStatus.ciConclusion === 'success' && approved > 0) {
-      items.push({ label: '✓ Ready to merge', enabled: false });
-    }
+    const readiness = mergeReadiness(
+      {
+        url: review.prUrl,
+        headSha: review.prHeadSha ?? '',
+        merged: false,
+        state: 'open',
+        isDraft: prStatus.isDraft,
+        baseBranch: prStatus.baseBranch,
+      },
+      prStatus.signals
+    );
+    items.push({ label: readiness.label + (readiness.stale ? ' (out of date)' : ''), enabled: false });
   } else {
     items.push({ label: 'Loading status…', enabled: false });
   }

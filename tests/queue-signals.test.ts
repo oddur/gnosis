@@ -12,6 +12,16 @@ function harness() {
     p0: {
       pullRequest: {
         headRefOid: 'abc123',
+        state: 'OPEN',
+        isDraft: false,
+        mergeable: 'MERGEABLE',
+        mergeStateStatus: 'BEHIND',
+        reviewDecision: 'APPROVED',
+        baseRefName: 'feature/base',
+        baseRefOid: 'base123',
+        baseRef: { compare: { behindBy: 3 } },
+        mergeQueue: null,
+        mergeQueueEntry: null,
         comments: { totalCount: 4 },
         commits: {
           nodes: [
@@ -70,6 +80,9 @@ void test('queue reads coalesce, cache across service instances, and count over 
   assert.deepEqual(a, b);
   assert.deepEqual(a[0].checks, { state: 'success', passed: 130, skipped: 0, total: 130 });
   assert.equal(a[0].comments, 4);
+  assert.equal(a[0].readiness?.mergeState, 'BEHIND');
+  assert.equal(a[0].readiness.behindBy, 3);
+  assert.match(h.queries[0], /mergeStateStatus reviewDecision/);
   assert.equal(h.calls(), 1);
   await h.get(h.client, [request]);
   assert.equal(h.calls(), 1);
@@ -78,6 +91,22 @@ void test('queue reads coalesce, cache across service instances, and count over 
   assert.equal(h.calls(), 1);
   await h.get(h.other(), [request]);
   assert.equal(h.calls(), 2, 'Credentials do not share snapshots');
+});
+void test('cached-only reads never request GitHub, including stale snapshots; explicit refresh bypasses freshness', async () => {
+  const h = harness();
+  assert.deepEqual(await h.get(h.client, [request], { cachedOnly: true }), []);
+  assert.equal(h.calls(), 0);
+  const original = await h.get(h.client, [request]);
+  await h.get(h.client, [request], { force: true });
+  assert.equal(h.calls(), 2);
+  h.advance();
+  assert.deepEqual(await h.get(h.client, [request], { cachedOnly: true }), original);
+  assert.equal(h.calls(), 2);
+  h.fail();
+  await h.get(h.client, [request], { force: true });
+  const calls = h.calls();
+  await h.get(h.client, [request], { force: true });
+  assert.equal(h.calls(), calls, 'Explicit refresh still respects the retry deadline');
 });
 void test('visible rows use one batch and snapshots never cross commit revisions', async () => {
   const h = harness();
