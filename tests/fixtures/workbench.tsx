@@ -409,6 +409,7 @@ let activities: ActivityTask[] = [
 if (onboardingScenario) activities = [];
 const mocks = {
   getGitHubProfile: (login:string) => Promise.resolve({login,name:'Morgan Developer',bio:'Building reliable command queues.',company:'Klang',location:'Berlin',type:'User'}),
+  getQueueSignals: (requests: import('../../lib/queue-signals').QueueSignalRequest[]) => Promise.resolve(requests.map((request, i) => ({ ...request, checkedAt: Date.now(), comments: i % 2 ? 0 : 4, checks: { state: 'success' as const, passed: 130, total: 130 } }))),
   commandSearch: async (query:string, includeBots=false, recentIds:string[]=[]) => {
     const queue=await mocks.workbenchQueue();
     const docs=[...queueDocuments(queue),...reviewDocuments(review,history[0],queue)];

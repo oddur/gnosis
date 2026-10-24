@@ -2306,3 +2306,25 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .github-author-detail svg { flex-shrink:0;margin-top:3px; }
 .github-author-tooltip { background:var(--popover);color:var(--popover-foreground);border:1px solid var(--border);max-height:var(--radix-tooltip-content-available-height);overflow-y:auto; }
 .github-author-tooltip .fill-foreground { background:var(--popover);fill:var(--popover); }
+
+/* Familiar GitHub hierarchy: state, title, then identity and status. */
+.queue-pr-gutter { display:flex;align-items:center;justify-content:center;width:24px;flex-shrink:0;padding-top:3px; }
+.queue-pr-icon { display:inline-flex;flex-shrink:0;color:var(--muted-foreground); }
+.queue-pr-icon.is-open { color:var(--color-success); }
+.queue-pr-icon.is-merged { color:var(--color-info); }
+.queue-pr-icon.is-closed { color:var(--color-danger); }
+.queue-stack-icon { color:var(--muted-foreground);align-self:center;flex-shrink:0; }
+.queue-metadata-line { display:flex;align-items:center;gap:12px;min-width:0; }
+.queue-metadata-line .queue-meta { flex:1;gap:4px 10px; }
+.queue-pr-origin { display:inline-flex;align-items:center;flex-wrap:wrap;gap:0 4px; }
+.queue-checks,.queue-comments { display:inline-flex;align-items:center;gap:4px;font-size:var(--type-caption);font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--muted-foreground); }
+.queue-checks svg { flex-shrink:0; }
+.queue-checks.is-success svg { color:var(--color-success); }
+.queue-checks.is-failure svg { color:var(--color-danger); }
+.queue-checks.is-pending svg { color:var(--color-warning); }
+.queue-checks.is-stale { opacity:.8; }
+.queue-comments { flex-shrink:0; }
+.queue-member { align-items:flex-start;padding-top:10px;padding-bottom:10px; }
+.queue-member>.queue-pr-icon { margin-top:2px; }
+.queue-member-title { display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 8px;text-align:left;font-size:var(--type-control);font-weight:600;color:var(--foreground); }
+.queue-member-title:focus-visible { outline:2px solid var(--ring);outline-offset:3px;border-radius:2px; }

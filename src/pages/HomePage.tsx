@@ -1,4 +1,5 @@
 import { GitHubAuthor } from '../../components/GitHubAuthor';
+import { QueueMetadata, PrStateIcon } from '../../components/QueueMetadata';
 import { rememberCommandDestination } from '../../lib/command-recents';
 import { useCommandCenter, useCommandScope } from '../../lib/command-center';
 import type { SearchDestination } from '../../lib/command-search';
@@ -642,12 +643,11 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
     return (
       <div key={s.id} className={`queue-item ${active ? 'is-selected' : ''}`}>
         <div className="queue-row">
-          <button
+          {s.kind !== 'stack' ? <span className="queue-pr-gutter"><PrStateIcon member={s.members[0]} /></span> : <button
             className="queue-disclosure"
             aria-label={`${expanded.has(s.id) ? 'Collapse' : 'Expand'} ${s.title}`}
-            disabled={s.kind !== 'stack'}
-            aria-expanded={s.kind === 'stack' ? expanded.has(s.id) : undefined}
-            aria-controls={s.kind === 'stack' ? `members-${s.id}` : undefined}
+            aria-expanded={expanded.has(s.id)}
+            aria-controls={`members-${s.id}`}
             onClick={() =>
               setExpanded((prev) => {
                 const n = new Set(prev);
@@ -657,16 +657,8 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
               })
             }
           >
-            {s.kind === 'stack' ? (
-              expanded.has(s.id) ? (
-                <ChevronDown size={15} />
-              ) : (
-                <ChevronRight size={15} />
-              )
-            ) : (
-              <GitPullRequest size={15} />
-            )}
-          </button>
+            {expanded.has(s.id) ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+          </button>}
           <div className="queue-row-content"
             onClick={event=>{if((event.target as HTMLElement).closest('a,button'))return;setSelected(s.id);setStatuses({});}}
             onDoubleClick={event=>{if((event.target as HTMLElement).closest('a,button'))return;setError('');setOpenedItem(item);}}>
@@ -705,16 +697,12 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
             }}
           >
             <span className="queue-title-line">
+              {s.kind === 'stack' && <Layers size={16} aria-label="PR stack" className="queue-stack-icon" />}
               <span className="queue-title">{s.title}</span>
               <PrLabels members={s.members} limit={3} />
             </span>
           </button>
-            <span className="queue-meta">
-              <span>{s.members[0].repo}</span>
-              <span>{s.kind === 'stack' ? `${s.members.length} PRs in stack` : `#${s.members[0].number}`}</span>
-              <GitHubAuthor login={s.members[0].author}/>
-              <span>{timeAgo(s.members[0].updatedAt)}</span>
-            </span>
+            <QueueMetadata subject={s} account={auth?.login ?? null} />
             {item.briefing?.summary && <span className="queue-summary">{item.briefing.summary}</span>}
           </div>
           {(item.review?.status === 'generating' ||
@@ -743,15 +731,16 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
         {expanded.has(s.id) && (
           <div id={`members-${s.id}`}>
             {s.members.map((m) => (
-              <button key={m.url} className="queue-member" onClick={() => setSelected(s.id)}>
-                <GitBranch size={13} />
-                <span>#{m.number}</span>
-                <span className="queue-member-content">
-                  <span className="truncate">{m.title}</span>
-                  <PrLabels members={[m]} />
-                </span>
-                <span className="ml-auto">{m.merged ? 'Merged' : m.isDraft ? 'Draft' : m.state}</span>
-              </button>
+              <div key={m.url} className="queue-member">
+                <PrStateIcon member={m} />
+                <div className="queue-member-content">
+                  <button className="queue-member-title" onClick={() => setSelected(s.id)}>
+                    <span className="truncate">{m.title}</span>
+                    <PrLabels members={[m]} />
+                  </button>
+                  <QueueMetadata subject={{ id: m.url, kind: 'pr', title: m.title, members: [m], edges: [], warnings: [] }} account={auth?.login ?? null} />
+                </div>
+              </div>
             ))}
           </div>
         )}
