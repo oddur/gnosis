@@ -1,3 +1,5 @@
+import { createMutedPrStore } from './muted-pr-store';
+import { isMutedReview, withoutMutedMembers, type MutePrRequest } from '../lib/muted-prs';
 import { createSavedViewStore } from './saved-view-store';
 import { createStarredPrStore } from './starred-pr-store';
 import { isStarredSubject, starredFirst, type StarPrRequest } from '../lib/starred-prs';
@@ -90,6 +92,8 @@ export function createWorkbenchService(deps: Deps) {
   const now = deps.now ?? Date.now;
   const savedViews = createSavedViewStore(deps.directory);
   const stars = createStarredPrStore(deps.directory, now);
+  const mutes = createMutedPrStore(deps.directory, now);
+  const mutedUrls = () => new Set(mutes.load(deps.auth().login ?? 'guest').map(entry => entry.member.url));
   let cooldown: { account: string; error: GitHubBackoffError } | undefined;
   let state: State | undefined;
   let refresh: Promise<WorkbenchQueue> | undefined;
@@ -151,23 +155,26 @@ export function createWorkbenchService(deps: Deps) {
       .digest('hex');
   }
   const limit = () => Math.min(100, Math.max(0, (deps.preferences().briefingDailyLimit ?? 10) || 0));
-  function includeSubject(subject: ReviewSubject) {
+  function includeSubject(subject: ReviewSubject, muted = mutedUrls()) {
     // Retain necessary parent context when a human-authored change depends on a bot PR.
-    return subject.members.some(
+    return !subject.members.some(m => muted.has(m.url)) && subject.members.some(
       (m) => m.state === 'open' && (deps.preferences().ignoreDependabotPrs === false || !isDependabot(m.author))
     );
   }
   function view(includeHidden = false): WorkbenchQueue {
     const s = load();
-    const starredPrs = stars.load(s.account);
+    const mutedPrs = mutes.load(s.account);
+    const muted = new Set(mutedPrs.map(entry => entry.member.url));
+    const visibleSubjects = s.subjects.flatMap(subject => { const visible = withoutMutedMembers(subject, muted); return visible ? [visible] : []; });
+    const starredPrs = stars.load(s.account).filter(entry => !muted.has(entry.member.url));
     const starredUrls = new Set(starredPrs.map((entry) => entry.member.url));
-    const history = deps.history();
+    const history = deps.history().filter(entry => !isMutedReview(entry, muted));
     const filters = normalizeQueueFilters(s.filters);
     const selection = modelSettings();
     const knownUrls = new Set(s.subjects.flatMap((subject) => subject.members.map((m) => m.url)));
-    const activeSubjects = new Set(s.subjects.filter(includeSubject));
+    const activeSubjects = new Set(visibleSubjects.filter(subject => includeSubject(subject, muted)));
     const subjects = [
-      ...s.subjects,
+      ...visibleSubjects,
       ...groupSubjects(
         starredPrs.filter((entry) => !knownUrls.has(entry.member.url)).map((entry) => entry.member),
         s.overrides
@@ -234,6 +241,7 @@ export function createWorkbenchService(deps: Deps) {
       items,
       starredPrs,
       starredItems,
+      mutedPrs,
       warnings,
       remaining: Math.max(0, limit() - s.used),
       filters,
@@ -345,6 +353,8 @@ export function createWorkbenchService(deps: Deps) {
           base: { sha: string; ref: string };
         }
       ) => {
+        const muted = mutes.load(s.account).find(entry => entry.member.url === url);
+        if (muted) { members.set(url, previousMembers.get(url) ?? muted.member); return; }
         const withListedLabels = (member: ReviewMember): ReviewMember => {
           // A reused PR can predate label-color support or a repository label
           // edit. Enrich it from the listing we already need for stack discovery.
@@ -780,6 +790,24 @@ export function createWorkbenchService(deps: Deps) {
   return {
     cached: () => view(true),
     queue,
+    mutedUrls,
+    isMutedReview: (entry: Pick<ReviewHistoryEntry, 'prUrl' | 'snapshot'>) => isMutedReview(entry, mutedUrls()),
+    mutePrs(request: MutePrRequest) {
+      if (!deps.auth().login || !deps.auth().token) throw new Error('Connect GitHub to mute PRs.');
+      mutes.set(load().account, request);
+      if (!request.muted) {
+        const s = load();
+        const members = new Map(s.subjects.flatMap(subject => subject.members.map(member => [member.url, member] as const)));
+        for (const member of request.members) if (!members.has(member.url)) members.set(member.url, member);
+        s.subjects = groupSubjects([...members.values()], s.overrides, s.subjects);
+        try { save(); } catch (error) { console.warn('Could not refresh queue cache after unmuting:', error); }
+      }
+      if (request.muted && runningKey) {
+        const subject = load().subjects.find(subject => key(subject) === runningKey);
+        if (!subject || subject.members.some(member => mutedUrls().has(member.url))) running?.abort(new BriefingPaused());
+      }
+      return view();
+    },
     starPrs(request: StarPrRequest) {
       if (!deps.auth().login || !deps.auth().token) throw new Error('Connect GitHub to star PRs.');
       stars.set(load().account, request);
@@ -853,7 +881,7 @@ export function createWorkbenchService(deps: Deps) {
       });
     },
     cancel(id: string) {
-      const sub = load().subjects.find((s) => s.id === id);
+      const sub = view(true).items.find((item) => item.subject.id === id)?.subject;
       if (!sub) return;
       const k = key(sub);
       requestedBriefings.delete(requestKey(k));
@@ -862,7 +890,7 @@ export function createWorkbenchService(deps: Deps) {
       save();
     },
     subject: (id: string) =>
-      load().subjects.find((s) => s.id === id) ?? view().starredItems?.find((item) => item.subject.id === id)?.subject,
+      view(true).items.find((item) => item.subject.id === id)?.subject ?? view().starredItems?.find((item) => item.subject.id === id)?.subject,
     async correct(override: GroupingOverride) {
       if (refresh) await refresh;
       if (!['link', 'unlink'].includes(override.action)) throw new Error('Invalid grouping action.');
@@ -891,7 +919,7 @@ export function createWorkbenchService(deps: Deps) {
       return queue(true);
     },
     retry(id: string, explicit = false) {
-      const sub = load().subjects.find((s) => s.id === id);
+      const sub = view(true).items.find((item) => item.subject.id === id)?.subject;
       if (explicit) {
         if (!sub || !includeSubject(sub))
           throw new Error('This PR is no longer available for briefing. Refresh the queue and try again.');

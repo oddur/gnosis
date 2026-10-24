@@ -1,3 +1,4 @@
+import { withoutMutedMembers, isMutedReview } from '../../lib/muted-prs';
 import { searchHit, queueDocuments, reviewDocuments, searchDocuments, threadDocuments } from '../../lib/command-search';
 import { normalizeViews, editViewFilters, applyViewAction, activeViewFilters, type QueueViewAction } from '../../lib/saved-views';
 import { matchesQueueFilters } from '../../lib/queue-filters';
@@ -11,6 +12,8 @@ import { groupSubjects, snapshot, memberPrefix, type ReviewMember, type QueueIte
 import type { Preferences, ReviewGuide, ReviewHistoryEntry } from '../../lib/types';
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_FAST_CLAUDE_MODEL } from '../../lib/models';
 import { review as example, slide, explainer } from './explainer';
+let fixtureMutes: import('../../lib/muted-prs').MutedPr[] = JSON.parse(sessionStorage.getItem('fixture-mutes') ?? '[]');
+const fixtureMutedUrls = () => new Set(fixtureMutes.map(entry => entry.member.url));
 let fixtureStars: import('../../lib/starred-prs').StarredPr[] = JSON.parse(sessionStorage.getItem('fixture-stars') ?? '[]');
 const filterStorageKey = 'fixture-queue-filters' + location.search;
 let queueFilters = normalizeQueueFilters(JSON.parse(sessionStorage.getItem(filterStorageKey) ?? 'null'));
@@ -510,6 +513,15 @@ const mocks = {
     sessionStorage.setItem(filterStorageKey, JSON.stringify(queueFilters));
     return Promise.resolve(mocks.workbenchQueue());
   },
+  workbenchMutePrs: (request: import('../../lib/muted-prs').MutePrRequest) => {
+    const entries = new Map(fixtureMutes.map(entry => [entry.member.url, entry]));
+    for (const member of request.members) {
+      if (request.muted) entries.set(member.url, { member, mutedAt: new Date().toISOString() });
+      else entries.delete(member.url);
+    }
+    fixtureMutes = [...entries.values()]; sessionStorage.setItem('fixture-mutes', JSON.stringify(fixtureMutes));
+    return mocks.workbenchQueue();
+  },
   workbenchStarPrs: (request: import('../../lib/starred-prs').StarPrRequest) => {
     const entries = new Map(fixtureStars.map(entry => [entry.member.url, entry]));
     for (const member of request.members) {
@@ -522,15 +534,16 @@ const mocks = {
   },
   workbenchQueue: () =>
     Promise.resolve({
-      starredPrs: fixtureStars,
-      starredItems: items.filter(item=>item.starred),
+      mutedPrs: fixtureMutes,
+      starredPrs: fixtureStars.filter(entry => !fixtureMutedUrls().has(entry.member.url)),
+      starredItems: visibleFixtureItems().filter(item=>item.starred),
       filters: queueFilters,
       savedViews: { ...savedViews, counts: Object.fromEntries(savedViews.views.map(view => [view.id, items.filter(item => matchesQueueFilters(item, view.filters, Date.now(), 'oddur')).length])) },
-      items: onboardingScenario && !fixtureStarted ? [] : items,
+      items: onboardingScenario && !fixtureStarted ? [] : visibleFixtureItems(),
       warnings: [],
       remaining: polishScenario ? 0 : 7,
     }),
-  listReviews: () => Promise.resolve(onboardingScenario && !fixtureStarted ? [] : history),
+  listReviews: () => Promise.resolve(onboardingScenario && !fixtureStarted ? [] : history.filter(entry => !isMutedReview(entry, fixtureMutedUrls()))),
   loadReview: () => Promise.resolve(review),
   reRenderHunks: (r: ReviewGuide) => Promise.resolve(r),
   getReviewThreads: () => Promise.resolve({ headSha: 'fixture-head', baseSha: 'fixture-base', threads: [] }),
@@ -594,4 +607,13 @@ if (root) {
     const { HardeningFixture } = await import('./hardening');
     createRoot(root).render(<HardeningFixture />);
   } else createRoot(root).render(<App />);
+}
+
+function visibleFixtureItems() {
+  return items.flatMap(item => {
+    const subject = withoutMutedMembers(item.subject, fixtureMutedUrls());
+    if (!subject) return [];
+    if (subject === item.subject) return [item];
+    return [{ ...item, subject, briefing: undefined, review: item.review && !isMutedReview(item.review, fixtureMutedUrls()) ? item.review : undefined, starred: subject.members.some(m => fixtureStars.some(e => e.member.url === m.url)) }];
+  });
 }

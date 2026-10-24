@@ -1,3 +1,4 @@
+import { PrMuteMenu } from './PrMuteMenu';
 import { PrExplanation } from './PrExplanation';
 import type { ExplanationDestination } from '../lib/explanation-workspace';
 import type { ReviewHistoryEntry } from '../lib/types';
@@ -29,6 +30,8 @@ export function PrSummary({
   starBusy,
   starError,
   onStarChange,
+  onMute,
+  muteBusy,
   account,
   statusRefreshing,
   tab,
@@ -53,6 +56,8 @@ export function PrSummary({
   item: QueueItem;
   starredUrls: ReadonlySet<string>;
   starBusy: boolean;
+  muteBusy: boolean;
+  onMute: (members: QueueItem['subject']['members']) => void;
   starError: string;
   onStarChange: (members: QueueItem['subject']['members'], starred: boolean) => void;
   account: string | null;
@@ -228,6 +233,7 @@ export function PrSummary({
               busy={starBusy}
               onChange={onStarChange}
             />
+            <PrMuteMenu members={item.subject.members} busy={muteBusy} onMute={onMute} />
           </div>
           {starError && (
             <p role="alert" className="text-sm text-destructive">
@@ -338,6 +344,8 @@ export function PrSummary({
               starredUrls={starredUrls}
               starBusy={starBusy}
               onStarChange={onStarChange}
+              onMute={onMute}
+              muteBusy={muteBusy}
               signals={signals}
               compactIdentity
               subject={item.subject}

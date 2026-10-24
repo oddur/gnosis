@@ -1,3 +1,4 @@
+import type { MutePrRequest } from '../lib/muted-prs';
 import type { StarPrRequest } from '../lib/starred-prs';
 import { createPrCommitsService } from './pr-commits-service';
 import type { CommitSelection } from '../lib/pr-commits';
@@ -490,7 +491,7 @@ async function runProactiveCheck() {
     let newCount = 0;
     for (const pr of allPrs.values()) {
       if (newCount >= PROACTIVE_MAX_CONCURRENT_UPDATES) break;
-      if (pr.isDraft) continue;
+      if (pr.isDraft || workbench.mutedUrls().has(pr.url)) continue;
       if (!proactiveSeen.has(pr.url)) {
         proactiveSeen.add(pr.url);
 
@@ -514,7 +515,7 @@ async function runProactiveCheck() {
     const index = readReviewsIndex();
     const openCompletedByPr = new Map<string, ReviewHistoryEntry>();
     for (const entry of index) {
-      if (entry.status === 'completed' && entry.prState === 'open' && entry.prHeadSha) {
+      if (!workbench.isMutedReview(entry) && entry.status === 'completed' && entry.prState === 'open' && entry.prHeadSha) {
         // Keep only the latest review per PR URL
         const existing = openCompletedByPr.get(entry.prUrl);
         if (!existing || new Date(entry.savedAt) > new Date(existing.savedAt)) {
@@ -874,7 +875,7 @@ function initTrayIfEnabled(): void {
 }
 
 function rebuildTrayMenu(): void {
-  updateTrayMenu(readReviewsIndex(), {
+  updateTrayMenu(readReviewsIndex().filter(entry => !workbench.isMutedReview(entry)), {
     onShowWindow: showOrCreateWindow,
     onNavigateToReview: navigateToReview,
     onOpenExternal: (url: string) => {
@@ -1114,7 +1115,7 @@ ipcMain.handle('search-pull-requests', async () => {
   if (!token || !cachedLogin) throw new Error('Not authenticated');
   try {
     const octokit = getGitHubClient(token);
-    return await searchPullRequests(octokit, cachedLogin);
+    return (await searchPullRequests(octokit, cachedLogin)).filter(pr => !workbench.mutedUrls().has(pr.url));
   } catch (err) {
     friendlyRateLimitError(err);
   }
@@ -1169,12 +1170,13 @@ ipcMain.handle('check-cli-installed', (_event, provider: string) => {
 });
 
 ipcMain.handle('list-reviews', () => {
-  return readReviewsIndex();
+  return readReviewsIndex().filter(entry => !workbench.isMutedReview(entry));
 });
 
 ipcMain.handle('load-review', async (_event, id: string) => {
   const reviewPath = path.join(getReviewsDir(), `${id}.json`);
   const review = JSON.parse(fs.readFileSync(reviewPath, 'utf-8')) as ReviewGuide;
+  if (workbench.isMutedReview(review)) throw new Error('This review contains a muted PR. Restore it from Muted PRs first.');
   review.reviewId = id;
   includeImageChanges(review);
   for (const slide of review.slides) {
@@ -1405,6 +1407,7 @@ async function fetchPrStatus(prUrl: string, force = false): Promise<PrStatus | n
 }
 
 ipcMain.handle('get-pr-metadata', async (_event, prUrl: string): Promise<PrMetadata> => {
+  if (workbench.mutedUrls().has(prUrl)) throw new Error('This PR is muted. Restore it from Muted PRs first.');
   const { owner, repo, pullNumber } = parsePrUrl(prUrl);
   try { return await getPrMetadata(getGitHubClient(getResolvedToken()), owner, repo, pullNumber); }
   catch (error) { throw new Error(githubAccessMessage(error, `${owner}/${repo}`)); }
@@ -2145,10 +2148,11 @@ async function runBackgroundGeneration(
     });
 
     activities.finish(`review:${reviewId}`, 'completed', 'Explanation ready');
-    broadcastToAllWindows('review-completed', { reviewId });
+    const muted = workbench.isMutedReview(reviewGuide);
+    if (!muted) broadcastToAllWindows('review-completed', { reviewId });
 
     // Desktop notification
-    if (loadPreferences().notifications) {
+    if (!muted && loadPreferences().notifications) {
       const notif = new Notification({
         title: 'Explanation ready',
         body: prData.title,
@@ -2192,7 +2196,8 @@ const workbench = createWorkbenchService({
 let activeForegroundChats = 0;
 const dismissedBriefings = new Map<string,string>();
 ipcMain.handle('list-activity', () => {
-  return [...activities.list(), ...workbench.activity().filter(t=>dismissedBriefings.get(t.id)!==t.updatedAt)];
+  const hiddenReviews = new Set(readReviewsIndex().filter(entry => workbench.isMutedReview(entry)).map(entry => entry.id));
+  return [...activities.list().filter(task => !task.reviewId || !hiddenReviews.has(task.reviewId)), ...workbench.activity().filter(t=>dismissedBriefings.get(t.id)!==t.updatedAt)];
 });
 ipcMain.handle('activity-action', async (_event, id:string, action:ActivityAction) => {
   if (!['cancel','retry','dismiss'].includes(action)) throw new Error('Invalid task action.');
@@ -2223,6 +2228,7 @@ ipcMain.handle('workbench-queue', async (_event, force: boolean) => {
   }
   return workbench.queue(force);
 });
+ipcMain.handle('workbench-mute-prs', (_event, request: MutePrRequest) => { const queue = workbench.mutePrs(request); rebuildTrayMenu(); return queue; });
 ipcMain.handle('workbench-star-prs', (_event, request: StarPrRequest) => workbench.starPrs(request));
 ipcMain.handle('workbench-view-action', (_event, action: QueueViewAction) => workbench.viewAction(action));
 ipcMain.handle('workbench-set-filters', (_event, filters: unknown) => workbench.setFilters(filters));
@@ -2242,6 +2248,7 @@ async function startReview(request: GenerateReviewRequest): Promise<StartReviewR
   const token = getResolvedToken();
   workbench.interrupt();
   let subject: ReviewSubject | undefined;
+  if (workbench.mutedUrls().has(request.prUrl)) throw new Error('This PR is muted. Restore it from Muted PRs first.');
   if (!isLocalUrl(request.prUrl)) {
     // Verify the requested PR before queue discovery or creating a generation/history entry.
     await checkGitHubPrAccess(getGitHubClient(token), request.prUrl);
@@ -2385,6 +2392,7 @@ const commandSearch = createCommandSearchService({
   cachedResponses: () => { const token=getResolvedToken(); return token?githubCachedResponses(getGitHubClient(token)):[]; },
   queue: () => workbench.cached(),
   history: readReviewsIndex,
+  mutedUrls: () => workbench.mutedUrls(),
   account: () => cachedLogin ?? 'local',
   ignoreBots: () => loadPreferences().ignoreDependabotPrs !== false,
   threads: (url) => { const token = getResolvedToken(); return token ? reviewThreads.cached(getGitHubClient(token), url) : undefined; },
@@ -2397,7 +2405,7 @@ ipcMain.handle('command-github-search', async (_event, query: string) => {
   if (typeof query !== 'string' || !query.trim() || query.length > 500) throw new Error('Enter a search of 1–500 characters.');
   try {
     const {data} = await getGitHubClient(token).search.issuesAndPullRequests({ q: `is:pr ${query.trim()}`, sort:'updated', order:'desc', per_page:30 });
-    return data.items.filter(item=>item.pull_request).map(item=>{
+    return data.items.filter(item=>item.pull_request && !workbench.mutedUrls().has(item.html_url)).map(item=>{
       const parts=item.repository_url.split('/');
       return {number:item.number,title:item.title,url:item.html_url,repoOwner:parts.at(-2)??'',repoName:parts.at(-1)??'',author:item.user?.login??'unknown',updatedAt:item.updated_at,isDraft:item.draft??false,role:'watched' as const};
     });
