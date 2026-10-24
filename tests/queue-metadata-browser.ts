@@ -34,7 +34,19 @@ void app.whenReady().then(async () => {
     assert.match(await js<string>("document.querySelector('.queue-meta').textContent"), /#\d+ opened .* by /);
     assert.ok(await js("document.querySelector('.queue-checks').textContent.includes('130/130')"));
     assert.ok(await js('!!document.querySelector(\'.queue-comments[aria-label="4 conversation comments"]\')'));
-    assert.match(await js<string>("document.querySelector('.queue-checks').getAttribute('aria-label')"), /129 of 130 checks passed, 1 skipped or neutral/);
+    assert.match(
+      await js<string>("document.querySelector('.queue-checks').getAttribute('aria-label')"),
+      /129 of 130 checks passed, 1 skipped or neutral/
+    );
+    assert.ok(
+      await js(`(()=>{
+      const rows=[...document.querySelectorAll('.queue-item')];
+      const ready=rows.find(row=>row.querySelector('.queue-state'));
+      const plain=rows.find(row=>!row.querySelector('.queue-state'));
+      return ready && plain && Math.abs(ready.querySelector('.queue-metadata-line').getBoundingClientRect().right-plain.querySelector('.queue-metadata-line').getBoundingClientRect().right)<1;
+    })()`),
+      'Explanation status does not narrow the metadata row'
+    );
     await capture('light');
     await js("document.documentElement.classList.add('dark')");
     await capture('dark');
@@ -61,9 +73,13 @@ void app.whenReady().then(async () => {
         "!!document.querySelector('.queue-checks.is-pending') && document.querySelector('.queue-checks.is-neutral')?.textContent.includes('No checks')"
       )
     );
-    assert.ok(
-      await js("document.querySelector('.queue-checks.is-unknown')?.textContent.includes('Checks unavailable')")
+    // This row can fall below the scrollport on CI. Status reads are deliberately visible-only.
+    await js(`document.querySelector('[data-queue-id="signals-4"]').scrollIntoView({block:'center'})`);
+    await wait(
+      `document.querySelector('[data-queue-id="signals-4"] .queue-checks')?.textContent.includes('Checks unavailable')`
     );
+    await js("document.querySelector('.queue-list').scrollTop=0");
+    await wait(`!!document.querySelector('[data-queue-id="signals-0"]')`);
     await capture('states');
     await js('document.querySelector(\'[data-queue-id="signals-2"] .queue-disclosure\').click()');
     await wait("!!document.querySelector('.queue-pr-icon.is-merged')");

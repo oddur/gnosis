@@ -662,6 +662,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
           <div className="queue-row-content"
             onClick={event=>{if((event.target as HTMLElement).closest('a,button'))return;setSelected(s.id);setStatuses({});}}
             onDoubleClick={event=>{if((event.target as HTMLElement).closest('a,button'))return;setError('');setOpenedItem(item);}}>
+          <div className="queue-row-heading">
           <button
             className="queue-row-main"
             ref={(node) => {
@@ -702,9 +703,6 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
               <PrLabels members={s.members} limit={3} />
             </span>
           </button>
-            <QueueMetadata subject={s} account={auth?.login ?? null} />
-            {item.briefing?.summary && <span className="queue-summary">{item.briefing.summary}</span>}
-          </div>
           {(item.review?.status === 'generating' ||
             item.review?.status === 'completed' ||
             item.briefing?.status === 'generating') && (
@@ -727,6 +725,10 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
               ) : null}
             </span>
           )}
+          </div>
+            <QueueMetadata subject={s} account={auth?.login ?? null} />
+            {item.briefing?.summary && <span className="queue-summary">{item.briefing.summary}</span>}
+          </div>
         </div>
         {expanded.has(s.id) && (
           <div id={`members-${s.id}`}>

@@ -48,6 +48,9 @@ export function QueueMetadata({ subject, account }: { subject: ReviewSubject; ac
   const passed = values.reduce((n, value) => n + value.checks.passed, 0);
   const skipped = values.reduce((n, value) => n + (value.checks.skipped ?? 0), 0);
   const stale = values.some((value) => Date.now() - value.checkedAt >= QUEUE_SIGNALS_TTL);
+  const lastChecked = complete
+    ? timeAgo(new Date(Math.min(...values.map((value) => value.checkedAt))).toISOString())
+    : null;
   const state = !complete
     ? 'unknown'
     : values.some((v) => v.checks.state === 'failure')
@@ -67,7 +70,7 @@ export function QueueMetadata({ subject, account }: { subject: ReviewSubject; ac
       : `${passed + skipped}/${total}`;
   const checkDescription = !complete
     ? checkLabel
-    : `${passed} of ${total} checks passed${skipped ? `, ${skipped} skipped or neutral` : ''}${state === 'failure' ? ', some checks failed' : state === 'pending' ? ', checks pending' : ''}${stack ? ' across this stack' : ''}${stale ? ' (cached result)' : ''}`;
+    : `${passed} of ${total} checks passed${skipped ? `, ${skipped} skipped or neutral` : ''}${state === 'failure' ? ', some checks failed' : state === 'pending' ? ', checks pending' : ''}${stack ? ' across this stack' : ''}. Last checked ${lastChecked}.`;
   const counts = subject.members.map(
     (m) => values.find((v) => v.url === m.url && v.headSha === m.headSha)?.comments ?? m.commentCount
   );
@@ -98,7 +101,6 @@ export function QueueMetadata({ subject, account }: { subject: ReviewSubject; ac
         >
           <CheckIcon size={14} aria-hidden="true" />
           {checkLabel}
-          {stale && <span>cached</span>}
         </span>
       </div>
       {comments !== undefined && comments > 0 && (
