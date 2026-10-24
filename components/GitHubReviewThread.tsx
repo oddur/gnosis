@@ -10,16 +10,17 @@ import type { GitHubReviewThread as Thread, ReviewThreadAction } from '../lib/re
 interface Props {
   thread: Thread;
   reason?: string;
-  onAction: (action: ReviewThreadAction['action'], body?: string) => Promise<void>;
+  onAction?: (action: ReviewThreadAction['action'], body?: string) => Promise<void>;
 }
 
 export function GitHubReviewThread({ thread, reason, onAction }: Props) {
-  const [replying, setReplying] = useSessionDraft(`thread-replying:${thread.id}`,false);
+  const [replying, setReplying] = useSessionDraft(`thread-replying:${thread.id}`, false);
   const [draft, setDraft] = useSessionDraft(`thread-reply:${thread.id}`, '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const inputId = useId();
   async function act(action: ReviewThreadAction['action']) {
+    if (!onAction) return;
     setBusy(true);
     setError('');
     try {
@@ -54,7 +55,7 @@ export function GitHubReviewThread({ thread, reason, onAction }: Props) {
         {thread.comments.map((comment) => (
           <article key={comment.id}>
             <header>
-              <strong>{comment.author ? <GitHubAuthor login={comment.author.login}/> : 'Deleted account'}</strong>
+              <strong>{comment.author ? <GitHubAuthor login={comment.author.login} /> : 'Deleted account'}</strong>
               <time dateTime={comment.createdAt} title={new Date(comment.createdAt).toLocaleString()}>
                 {timeAgo(comment.createdAt)}
               </time>
@@ -85,20 +86,22 @@ export function GitHubReviewThread({ thread, reason, onAction }: Props) {
           </article>
         ))}
       </div>
-      <div className="github-thread-actions">
-        {!replying && (
-          <button disabled={busy} onClick={() => setReplying(true)}>
-            Reply
-          </button>
-        )}
-        {((thread.isResolved && thread.viewerCanUnresolve) || (!thread.isResolved && thread.viewerCanResolve)) && (
-          <button disabled={busy} onClick={() => void act(thread.isResolved ? 'unresolve' : 'resolve')}>
-            {thread.isResolved ? 'Reopen thread' : 'Resolve thread'}
-          </button>
-        )}
-        {busy && <span role="status">Saving to GitHub…</span>}
-      </div>
-      {replying && (
+      {onAction && (
+        <div className="github-thread-actions">
+          {!replying && (
+            <button disabled={busy} onClick={() => setReplying(true)}>
+              Reply
+            </button>
+          )}
+          {((thread.isResolved && thread.viewerCanUnresolve) || (!thread.isResolved && thread.viewerCanResolve)) && (
+            <button disabled={busy} onClick={() => void act(thread.isResolved ? 'unresolve' : 'resolve')}>
+              {thread.isResolved ? 'Reopen thread' : 'Resolve thread'}
+            </button>
+          )}
+          {busy && <span role="status">Saving to GitHub…</span>}
+        </div>
+      )}
+      {onAction && replying && (
         <form
           onSubmit={(e) => {
             e.preventDefault();

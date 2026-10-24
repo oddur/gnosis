@@ -251,7 +251,7 @@ void app.whenReady().then(async () => {
     await selectTopic(1);
     await js(`(async () => {
       const review = await window.electronAPI.loadReview('workbench-review');
-      review.snapshot = {...review.snapshot, fingerprint: 'new-revision'};
+      review.snapshot = {...review.snapshot, fingerprint: 'new-revision', subject: {...review.snapshot.subject, members: review.snapshot.subject.members.map(member => ({...member, headSha: member.headSha + '-updated'}))}};
     })()`);
     await click('Back');
     await wait("!!document.querySelector('.queue-list')");

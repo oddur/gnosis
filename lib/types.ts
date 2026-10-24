@@ -389,6 +389,7 @@ export interface GenerateReviewResponse {
 }
 
 export interface ChangedFile {
+  sha?: string;
   filename: string;
   status: 'added' | 'modified' | 'deleted' | 'renamed';
   additions: number;
