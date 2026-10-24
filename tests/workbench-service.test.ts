@@ -25,8 +25,8 @@ function setup(generate: () => Promise<string>, auto = true) {
     title: 'Bounded queue',
     body: 'Limit pending work',
     user: { login: 'author' },
-    base: { ref: 'main', sha: 'base', repo: { full_name: 'owner/repo' } },
-    head: { ref: 'queue', sha: 'head', repo: { full_name: 'owner/repo' } },
+    base: { ref: 'main', sha: 'base', repo: { full_name: 'owner/repo', archived: false } },
+    head: { ref: 'queue', sha: 'head', repo: { full_name: 'owner/repo', archived: false } },
     merged: false,
     state: 'open',
     created_at: '2026-10-22',
@@ -1416,4 +1416,72 @@ void test('explicit briefing starts outside automatic filters without enabling a
     assert.equal(s.prefs.autoBriefings,false);
     assert.throws(()=>s.service.retry(q.items[0].subject.id,true),/daily briefing limit/);
   } finally {s.cleanup();}
+});
+
+
+void test('archived watched repositories stop after one listing page without reading PR details', async () => {
+  const s = setup(() => Promise.reject(new Error('No briefing should start')));
+  s.prefs.watchedRepos = ['owner/repo'];
+  s.pr.base.repo.archived = true;
+  const queries: string[] = [];
+  Object.assign(s.deps.client().search, {
+    issuesAndPullRequests: ({ q }: { q: string }) => {
+      queries.push(q);
+      return Promise.resolve({ data: { items: [], total_count: 0 } });
+    },
+  });
+  let pages = 0, details = 0;
+  Object.assign(s.deps.client().pulls, {
+    list: () => { pages++; return Promise.resolve({ data: Array.from({length: 100}, () => s.pr) }); },
+    get: () => { details++; throw new Error('Archived PR details should not be fetched'); },
+  });
+  try {
+    const queue = await s.service.queue();
+    assert.deepEqual(queue.items, []);
+    assert.deepEqual(queue.warnings, []);
+    assert.equal(pages, 1, 'Do not page through an archived backlog');
+    assert.equal(details, 0);
+    assert.ok(queries.length === 3 && queries.every(q => q.includes('archived:false')));
+    assert.deepEqual(s.service.activity(), []);
+  } finally { s.cleanup(); }
+});
+
+void test('archive changes evict cached and starred work, persist, and reverse on unarchive without PR timestamp changes', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  s.prefs.watchedRepos = ['owner/repo'];
+  const search = s.deps.client().search.issuesAndPullRequests;
+  try {
+    const first = await s.service.queue();
+    assert.equal(first.items.length, 1);
+    s.service.starPrs({ members: first.items[0].subject.members, starred: true });
+    s.pr.base.repo.archived = true;
+    Object.assign(s.deps.client().search, { issuesAndPullRequests: () => Promise.resolve({ data: { items: [], total_count: 0 } }) });
+    const archived = await s.service.queue(true);
+    assert.deepEqual(archived.items, []);
+    assert.deepEqual(archived.starredItems, []);
+    assert.deepEqual(archived.warnings, []);
+    const restarted = createWorkbenchService(s.deps);
+    assert.deepEqual(restarted.cached().items, []);
+    assert.deepEqual(restarted.cached().starredItems, []);
+    const { createStarredPrStore } = await import('../src/starred-pr-store');
+    assert.equal(createStarredPrStore(s.deps.directory).load('reviewer').length, 1, 'Keep the bookmark on disk');
+    s.pr.base.repo.archived = false;
+    Object.assign(s.deps.client().search, { issuesAndPullRequests: search });
+    const restored = await restarted.queue(true);
+    assert.equal(restored.items.length, 1);
+    assert.equal(restored.starredItems?.length, 1);
+  } finally { s.cleanup(); }
+});
+
+void test('an archived source fork does not hide a PR targeting an active repository', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  s.pr.head.repo.archived = true;
+  try {
+    const queue = await s.service.queue();
+    assert.equal(queue.items.length, 1);
+    assert.equal(queue.items[0].subject.members[0].repoArchived, false);
+    s.pr.base.repo.archived = true;
+    const archived = await s.service.queue(true);
+    assert.deepEqual(archived.items, [], 'PR metadata also rejects archived targets when search is stale');
+  } finally { s.cleanup(); }
 });

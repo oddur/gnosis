@@ -22,7 +22,7 @@ export interface DiscoveryListings {
   searches: Partial<
     Record<'author' | 'assignee' | 'review-requested', { windows: SearchWindow[]; items: PrSearchResult[] }>
   >;
-  repos: Record<string, { page: number; done: boolean; items: ListedPull[] }>;
+  repos: Record<string, { page: number; done: boolean; items: ListedPull[]; archived?: boolean }>;
 }
 export function createDiscoveryListings(
   client: Octokit,
@@ -53,7 +53,7 @@ export function createDiscoveryListings(
           options.beforeRead();
           options.progress(`Finding your pull requests (${role}, page ${window.page})`);
           const { data } = await client.search.issuesAndPullRequests({
-            q: `is:pr is:open ${role}:${options.login} created:${date(window.from)}..${date(window.to)}`,
+            q: `is:pr is:open archived:false ${role}:${options.login} created:${date(window.from)}..${date(window.to)}`,
             sort: 'created',
             order: 'asc',
             per_page: 100,
@@ -101,8 +101,8 @@ export function createDiscoveryListings(
       }
       return [...seen.values()].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
     },
-    async repository(fullName: string): Promise<{ data: ListedPull[] }> {
-      const listing = (state.repos[fullName] ??= { page: 1, done: false, items: [] });
+    async repository(fullName: string): Promise<{ data: ListedPull[]; archived?: boolean }> {
+      const listing: DiscoveryListings['repos'][string] = (state.repos[fullName] ??= { page: 1, done: false, items: [] });
       const [owner, repo] = fullName.split('/');
       while (!listing.done) {
         options.beforeRead();
@@ -116,6 +116,15 @@ export function createDiscoveryListings(
           direction: 'asc',
           page: listing.page,
         });
+        // A list response already carries the target repository's archive state.
+        // Stop here instead of fetching every PR or adding a repository lookup.
+        if (data.length) listing.archived = data[0].base.repo.archived;
+        if (listing.archived) {
+          listing.items = [];
+          listing.done = true;
+          options.save();
+          break;
+        }
         for (const pr of data)
           listing.items.push({
             html_url: pr.html_url,
@@ -138,7 +147,7 @@ export function createDiscoveryListings(
         listing.done = data.length < 100;
         options.save();
       }
-      return { data: [...new Map(listing.items.map((pr) => [pr.html_url, pr])).values()] };
+      return { data: [...new Map(listing.items.map((pr) => [pr.html_url, pr])).values()], archived: listing.archived };
     },
   };
 }
