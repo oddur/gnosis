@@ -182,6 +182,12 @@ export function App() {
       perform: () => navigate({ kind: 'home', section: 'starred' }),
     },
     {
+      id: 'nav:muted',
+      label: 'Manage muted PRs',
+      keywords: 'hidden ignored unmute restore',
+      perform: () => navigate({ kind: 'home', section: 'muted' }),
+    },
+    {
       id: 'nav:requested',
       label: 'Go to review requests',
       keywords: 'assigned me',

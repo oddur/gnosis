@@ -2506,3 +2506,21 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .pr-title-with-star h1 { min-width:0; }
 .pr-title-with-star .pr-star-button { margin-top:2px; }
 .pr-details-heading>div:first-child { flex:1; }
+
+/* Muting uses the same compact actions and rows as the work queue. */
+.pr-mute-menu { max-width: 260px; }
+.pr-mute-menu [role="menuitem"] { display: flex; align-items: center; gap: 8px; }
+.pr-mute-menu p { margin: 6px 8px; font-size: 12px; line-height: 1.5; color: var(--muted-foreground); }
+.muted-prs { overflow-y: auto; padding: 24px; }
+.muted-prs header { margin-bottom: 20px; }
+.muted-prs h1 { font-size: 20px; font-weight: 600; line-height: 1.4; }
+.muted-prs h1 span { font-size: 14px; color: var(--muted-foreground); font-variant-numeric: tabular-nums; margin-left: 6px; }
+.muted-prs header p, .muted-pr-list p { color: var(--muted-foreground); font-size: 13px; line-height: 1.5; margin-top: 6px; }
+.muted-prs header p { max-width: 75ch; }
+.muted-prs .queue-search { margin-bottom: 16px; max-width: 380px; }
+.muted-pr-list { list-style: none; padding: 0; margin: 0; }
+.muted-pr-list li { display: flex; align-items: center; gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.muted-pr-list li > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.muted-pr-list strong { font-size: 14px; font-weight: 500; }
+.muted-pr-list button { flex-shrink: 0; }
+.muted-prs-error { color: var(--destructive); font-size: 13px; margin-bottom: 16px; }
