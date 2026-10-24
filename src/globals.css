@@ -2288,3 +2288,21 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .global-command-code { font-family:var(--font-mono);font-size:var(--type-caption);line-height:var(--leading-code);white-space:pre;overflow:auto;tab-size:2;margin-top:12px; }
 .global-command-code:first-child { margin-top:0; }
 .global-command-code code { font:inherit; }
+
+/* Compact, linked GitHub identities keep author information in the metadata row. */
+.queue-row-content { display:flex;flex:1;min-width:0;flex-direction:column;gap:6px; }
+.queue-row-content .queue-row-main { flex:initial;width:100%; }
+.queue-meta { align-items:center; }
+.github-author { display:inline-flex;align-items:center;gap:5px;max-width:100%;min-height:24px;vertical-align:middle;color:inherit;text-decoration:none; }
+.github-author .github-author-avatar { width:18px;height:18px;flex-shrink:0; }
+.github-author [data-slot=avatar-fallback] { font-size:9px; }
+.github-author-name { text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px;overflow-wrap:anywhere; }
+.github-author:hover,.github-author:focus-visible { color:var(--ring); }
+.github-author:focus-visible { outline:2px solid var(--ring);outline-offset:3px;border-radius:3px; }
+.github-author-tooltip { display:flex;flex-direction:column;gap:5px;max-width:min(300px,calc(100vw - 24px));padding:12px 14px;text-align:left;text-wrap:pretty;line-height:1.5;overflow-wrap:anywhere; }
+.github-author-tooltip strong { font-size:var(--type-control);font-weight:600; }
+.github-author-tooltip p { margin:3px 0;white-space:pre-wrap; }
+.github-author-detail { display:flex;align-items:flex-start;gap:6px; }
+.github-author-detail svg { flex-shrink:0;margin-top:3px; }
+.github-author-tooltip { background:var(--popover);color:var(--popover-foreground);border:1px solid var(--border);max-height:var(--radix-tooltip-content-available-height);overflow-y:auto; }
+.github-author-tooltip .fill-foreground { background:var(--popover);fill:var(--popover); }

@@ -1,3 +1,4 @@
+import { GitHubAuthor } from './GitHubAuthor';
 import { ExternalLink, ArrowLeft, Settings, GitCompare } from 'lucide-react';
 import { GitHubIcon, riskConfig, safeConfigLookup } from '@/lib/constants';
 import type { ReviewGuide } from '@/lib/types';
@@ -56,7 +57,7 @@ export function PRSummaryBanner({ review, onBack, onOpenSettings }: Props) {
         </div>
 
         <div className="flex items-center gap-5 shrink-0 slide-meta">
-          <span>{review.author}</span>
+          <GitHubAuthor login={review.author}/>
           <span>
             {review.totalFilesChanged} {review.totalFilesChanged === 1 ? 'file' : 'files'}
           </span>

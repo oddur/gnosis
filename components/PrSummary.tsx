@@ -1,3 +1,4 @@
+import { GitHubAuthor } from './GitHubAuthor';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, ChevronLeft, ChevronRight, ExternalLink, Layers } from 'lucide-react';
 import { Button } from './ui/button';
@@ -208,7 +209,7 @@ export function PrSummary({
             ) : (
               <>
                 {first.repo} #{first.number} ·{' '}
-                <span className={`pr-state pr-state-${state.toLowerCase()}`}>{state}</span> · by {first.author} ·
+                <span className={`pr-state pr-state-${state.toLowerCase()}`}>{state}</span> · by <GitHubAuthor login={first.author}/> ·
                 updated <time dateTime={first.updatedAt}>{timeAgo(first.updatedAt)}</time>
               </>
             )}
