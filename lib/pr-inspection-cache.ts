@@ -2,7 +2,12 @@ import { changesRevision, type InspectionRevision, type PrChanges, type PrChange
 import type { PrCommits } from './pr-commits';
 
 const key = (revision: InspectionRevision) => `${revision.url}@${changesRevision(revision)}`;
+export interface PreparedInventories {
+  changes: PrChanges[];
+  commits: PrCommits[];
+}
 interface Dependencies {
+  restore?: (revisions: InspectionRevision[]) => Promise<PreparedInventories>;
   changes: (revision: InspectionRevision, refresh: boolean, background: boolean) => Promise<PrChanges>;
   commits: (revision: InspectionRevision, refresh: boolean, background: boolean) => Promise<PrCommits>;
   file: (snapshot: PrChanges, file: PrChangeFile) => Promise<unknown>;
@@ -31,10 +36,12 @@ export function createPrInspectionCache(deps: Dependencies) {
   const latest = new Map<string, Entry>();
   const jobs = new Map<string, Job>();
   const completed = new Set<string>();
+  const restored = new Set<string>();
   const pending = new Map<string, { promise: Promise<PrChanges | PrCommits>; background: boolean }>();
   let scope: string | null = null,
     epoch = 0;
   let order: string[] = [];
+  let stopped = false;
   let running: Promise<void> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   function remember(value: PrChanges | PrCommits, kind: keyof Entry) {
@@ -135,7 +142,7 @@ export function createPrInspectionCache(deps: Dependencies) {
     }
   }
   function kick(delay = 100) {
-    if (!scope || timer || running || !jobs.size || !deps.visible()) return;
+    if (stopped || !scope || timer || running || !jobs.size || !deps.visible()) return;
     timer = setTimeout(() => {
       timer = undefined;
       void drain();
@@ -144,9 +151,26 @@ export function createPrInspectionCache(deps: Dependencies) {
   function drain(): Promise<void> {
     if (running) return running;
     const generation = epoch;
+    const active = () => !stopped && !!scope && generation === epoch && deps.visible();
     const promise = (async () => {
-      while (scope && generation === epoch && deps.visible()) {
-        const job = order.map((id) => jobs.get(id)).find((job) => job && job.retryAt <= now());
+      while (active()) {
+        const missing = order.filter((id) => !restored.has(id)).flatMap((id) => jobs.get(id)?.revision ?? []);
+        if (deps.restore && missing.length) {
+          try {
+            const inventories = await deps.restore(missing);
+            if (generation !== epoch) return;
+            inventories.changes.forEach((value) => remember(value, 'changes'));
+            inventories.commits.forEach((value) => remember(value, 'commits'));
+          } catch {
+            /* Foreground and background reads can still load individual inventories. */
+          }
+          if (generation !== epoch) return;
+          missing.forEach((revision) => restored.add(key(revision)));
+          if (!active()) break;
+        }
+        const ready = order.map((id) => jobs.get(id)).filter((job): job is Job => !!job && job.retryAt <= now());
+        // Prepare lightweight tab inventories across the queue before deep file downloads.
+        const job = ready.find((job) => job.stage === 0) ?? ready.find((job) => job.stage === 1) ?? ready.at(0);
         if (!job) break;
         try {
           await step(job, generation);
@@ -158,7 +182,7 @@ export function createPrInspectionCache(deps: Dependencies) {
       }
     })().finally(() => {
       if (running === promise) running = undefined;
-      if (scope && jobs.size && deps.visible()) {
+      if (!stopped && scope && jobs.size && deps.visible()) {
         const next = Math.min(...[...jobs.values()].map((job) => job.retryAt));
         kick(Math.max(100, next - now()));
       }
@@ -172,6 +196,7 @@ export function createPrInspectionCache(deps: Dependencies) {
     peekChanges: (r: InspectionRevision) => values.get(key(r))?.changes ?? latest.get(r.url)?.changes,
     peekCommits: (r: InspectionRevision) => values.get(key(r))?.commits ?? latest.get(r.url)?.commits,
     setTargets(account: string | null, targets: InspectionRevision[]) {
+      stopped = false;
       if (scope !== account) {
         epoch++;
         scope = account;
@@ -179,6 +204,7 @@ export function createPrInspectionCache(deps: Dependencies) {
         latest.clear();
         jobs.clear();
         completed.clear();
+        restored.clear();
         pending.clear();
         deps.reset?.();
       }
@@ -196,6 +222,7 @@ export function createPrInspectionCache(deps: Dependencies) {
           jobs.set(key(r), { revision: r, stage: 0, file: 0, retryAt: 0, failures: 0 });
       // Bound bookkeeping too; deleted/replaced revisions cannot stay forever.
       for (const id of completed) if (!wanted.has(id)) completed.delete(id);
+      for (const id of restored) if (!wanted.has(id)) restored.delete(id);
       if (timer) {
         clearTimeout(timer);
         timer = undefined;
@@ -204,15 +231,8 @@ export function createPrInspectionCache(deps: Dependencies) {
     },
     flush: drain,
     stop() {
-      epoch++;
-      scope = null;
-      jobs.clear();
-      values.clear();
-      latest.clear();
-      completed.clear();
-      pending.clear();
-      deps.reset?.();
-      order = [];
+      // Navigation pauses the worker; only an account change invalidates cached content.
+      stopped = true;
       if (timer) clearTimeout(timer);
       timer = undefined;
     },

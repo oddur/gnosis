@@ -162,3 +162,75 @@ void test('account changes discard late responses and stop the old preload chain
     cache.stop();
   }
 });
+
+void test('prepares other PR file lists before downloading every file of the first PR', async () => {
+  const f = fixture();
+  try {
+    f.cache.setTargets('one', [r, { ...r, url: r.url + '2', headSha: 'second' }]);
+    await f.cache.flush();
+    assert.ok(
+      f.calls.indexOf('changes:second') < f.calls.indexOf('file:head:first.ts'),
+      'A large first PR must not block other Changes tabs from getting their file lists'
+    );
+  } finally {
+    f.cache.stop();
+  }
+});
+void test('leaving the queue preserves prepared tab data for the same account', async () => {
+  const f = fixture();
+  try {
+    f.cache.setTargets('one', [r]);
+    await f.cache.flush();
+    f.cache.stop();
+    assert.ok(f.cache.peekChanges(r), 'Returning to Changes must synchronously find its prepared file list');
+    const calls = f.calls.length;
+    f.cache.setTargets('one', [r]);
+    await f.cache.flush();
+    assert.equal(f.calls.length, calls, 'Navigation does not repeat completed preparation');
+    f.cache.setTargets('two', []);
+    assert.equal(f.cache.peekChanges(r), undefined, 'Account changes still discard prepared data');
+  } finally {
+    f.cache.stop();
+  }
+});
+
+void test('restores saved inventories before a cold PR can block the worker on GitHub', async () => {
+  const savedRevision = { ...r, url: r.url + '2', headSha: 'saved' };
+  const snapshot = {
+    version: 1,
+    url: savedRevision.url,
+    metadata: { ...savedRevision, title: 'Saved' } as PrMetadata,
+    comparisonBase: 'base',
+    files: [],
+    fetchedAt: 1,
+  } as PrChanges;
+  let release: (() => void) | undefined;
+  const cache = createPrInspectionCache({
+    restore: () => Promise.resolve({ changes: [snapshot], commits: [] }),
+    changes: () =>
+      new Promise((_resolve, reject) => {
+        release = () => reject(new Error('offline'));
+      }),
+    commits: () => Promise.reject(new Error('offline')),
+    comparison: () => Promise.resolve(),
+    file: () => Promise.resolve(),
+    review: () => Promise.resolve(),
+    visible: () => true,
+  });
+  try {
+    cache.setTargets('one', [r, savedRevision]);
+    const pending = cache.flush();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(
+      cache.peekChanges(savedRevision),
+      snapshot,
+      'Saved Changes is ready even while the first PR waits on GitHub'
+    );
+    cache.stop();
+    release?.();
+    await pending;
+  } finally {
+    cache.stop();
+  }
+});

@@ -55,7 +55,8 @@ Diffs and file contents retain their separate revision-based caches.
 ## Preparing PR revisions
 
 Discovery starts a quiet preload when a PR's base or head SHA changes. The selected PR or stack goes first, followed by the filtered queue and remaining queue.
-Each job prepares the changed-file list, commit list, newest commit comparison, all changed-file contents, and full review diff.
+A local-only restore pass loads saved inventories before network work starts. Missing file lists are prepared across the queue first, followed by commit lists.
+Deeper work then prepares the newest commit comparison, all changed-file contents, and full review diff in priority order.
 Only one preload step runs at a time. All requests use background priority and the shared GitHub allowance and backoff rules.
 Hidden windows pause between steps. Failed steps retry with increasing delays, without repeating completed steps.
 Unsupported files do not block other files. Preparing a revision never starts AI generation.
@@ -71,7 +72,7 @@ Additional context, such as neighboring files and history, can still require req
 Preloading is bounded by API allowance and cache capacity. A first download, an evicted entry, an oversized file, or an unprepared historical commit can still require loading.
 The renderer retains up to 32 MB of file contents and 128 files. Eviction favors the selected PR, then the current view.
 Selecting a different PR prepares it again if its files were evicted. The persistent cache limits above remain unchanged.
-Account changes clear renderer data and discard late responses from the previous account.
+Account changes clear renderer data and discard late responses from the previous account. Navigation pauses the worker without clearing prepared data.
 
 ## Evidence
 

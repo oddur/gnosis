@@ -20,6 +20,7 @@ export const latestCommitSelection = (list: PrCommits): CommitSelection | undefi
 };
 
 export const inspectionData = createPrInspectionCache({
+  restore: revisions => window.electronAPI.getPreparedInventories(revisions),
   changes: (r, refresh, background) => window.electronAPI.getPrChanges(r.url, refresh, { revision: r, background }),
   commits: (r, refresh, background) => window.electronAPI.getPrCommits(r.url, refresh, { revision: r, background }),
   file: (snapshot, file) => inspectionFiles.read(inspectionFileRequest(snapshot, file), true),

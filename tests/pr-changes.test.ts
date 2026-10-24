@@ -196,6 +196,8 @@ void test('cached inventories and opened contents survive a process restart with
     restarted.setStorage(path.join(dir, 'github-state.json'));
     const reader = createPrChangesService(),
       reopened = restarted.client('one');
+    assert.equal(JSON.stringify(reader.cached(reopened, url, saved.metadata)), JSON.stringify(saved));
+    assert.equal(reads, 0, 'Restoring saved inventories makes no network requests');
     assert.equal(JSON.stringify(await reader.manifest(reopened, url)), JSON.stringify(saved));
     assert.deepEqual(await reader.content(reopened, request), content);
     assert.equal(reads, 0);

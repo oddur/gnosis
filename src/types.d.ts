@@ -1,4 +1,5 @@
-import type { InspectionLoadOptions } from '../lib/pr-changes';
+import type { PreparedInventories } from '../lib/pr-inspection-cache';
+import type { InspectionRevision, InspectionLoadOptions } from '../lib/pr-changes';
 import type { MutePrRequest } from '../lib/muted-prs';
 import type { StarPrRequest } from '../lib/starred-prs';
 import type { PrCommits, CommitSelection } from '../lib/pr-commits';
@@ -34,6 +35,7 @@ import type {
 declare global {
   interface Window {
     electronAPI: {
+      getPreparedInventories: (revisions: InspectionRevision[]) => Promise<PreparedInventories>;
       preparePrReview: (url: string, revision: { baseSha: string; headSha: string }) => Promise<void>;
       getPrCommits: (url: string, refresh?: boolean, options?: InspectionLoadOptions) => Promise<PrCommits>;
       getCommitComparison: (selection: CommitSelection, background?: boolean) => Promise<PrChanges>;

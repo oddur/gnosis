@@ -1,4 +1,5 @@
-import type { InspectionLoadOptions } from '../lib/pr-changes';
+import type { PreparedInventories } from '../lib/pr-inspection-cache';
+import type { InspectionRevision, InspectionLoadOptions } from '../lib/pr-changes';
 import type { MutePrRequest } from '../lib/muted-prs';
 import type { StarPrRequest } from '../lib/starred-prs';
 import type { PrCommits, CommitSelection } from '../lib/pr-commits';
@@ -33,6 +34,7 @@ import type {
 } from '../lib/types';
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  getPreparedInventories: (revisions: InspectionRevision[]): Promise<PreparedInventories> => ipcRenderer.invoke('prepared-inventories', revisions),
   preparePrReview: (url: string, revision: { baseSha: string; headSha: string }): Promise<void> => ipcRenderer.invoke('prepare-pr-review', url, revision),
   getPrCommits: (url: string, refresh = false, options?: InspectionLoadOptions): Promise<PrCommits> => ipcRenderer.invoke('pr-commits', url, refresh, options),
   getCommitComparison: (selection: CommitSelection, background?: boolean): Promise<PrChanges> => ipcRenderer.invoke('commit-comparison', selection, background),

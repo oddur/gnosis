@@ -130,6 +130,12 @@ export function createPrChangesService() {
   }
 
   return {
+    cached(client: Octokit, url: string, revision: { baseSha: string; headSha: string }) {
+      const cache = githubCacheFor(client);
+      const exact = snapshotKey(url, changesRevision(revision)), latest = snapshotKey(url, 'latest');
+      return snapshots.get(client)?.get(exact) ?? cache?.get(exact, isSnapshot)?.value ??
+        snapshots.get(client)?.get(latest) ?? cache?.get(latest, isSnapshot)?.value;
+    },
     manifest,
     content,
     find,

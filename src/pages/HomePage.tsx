@@ -605,7 +605,8 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
     ...orderedItems.flatMap(item => item.subject.members), ...queue.items.flatMap(item => item.subject.members)];
   const inspectionKey = JSON.stringify(inspectionTargets.map(member => ({ url: member.url, baseSha: member.baseSha, headSha: member.headSha })));
   useEffect(() => {
-    const preload = () => inspectionData.setTargets(auth?.authenticated ? auth.login : null,
+    if (!auth) return;
+    const preload = () => inspectionData.setTargets(auth.authenticated ? auth.login : null,
       JSON.parse(inspectionKey) as { url: string; baseSha: string; headSha: string }[]);
     preload();
     document.addEventListener('visibilitychange', preload);

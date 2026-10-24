@@ -321,6 +321,9 @@ export function createPrCommitsService() {
     return { snapshot, file };
   }
   return {
+    cached(client: Octokit, url: string, revision: { baseSha: string; headSha: string }) {
+      return read(client, listKey(url, revision.baseSha, revision.headSha), isList) ?? read(client, latestKey(url), isList);
+    },
     list,
     comparison,
     find,

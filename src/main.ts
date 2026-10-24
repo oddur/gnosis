@@ -1,5 +1,5 @@
 import { withGitHubPriority } from '../lib/github-scheduler';
-import type { InspectionLoadOptions } from '../lib/pr-changes';
+import type { InspectionRevision, InspectionLoadOptions } from '../lib/pr-changes';
 import { normalizePrInactivityDays, DEFAULT_PR_INACTIVITY_DAYS } from '../lib/pr-inactivity';
 import type { MutePrRequest } from '../lib/muted-prs';
 import type { StarPrRequest } from '../lib/starred-prs';
@@ -2449,6 +2449,14 @@ const changesClient = () => {
   if (!token) throw new Error('Connect GitHub to view PR changes.');
   return getGitHubClient(token);
 };
+// Local-only restore: never let a network-bound PR delay saved inventories for the rest of the queue.
+ipcMain.handle('prepared-inventories', (_event, revisions: InspectionRevision[]) => {
+  const client = changesClient();
+  return {
+    changes: revisions.flatMap(r => prChanges.cached(client, r.url, r) ?? []),
+    commits: revisions.flatMap(r => prCommits.cached(client, r.url, r) ?? []),
+  };
+});
 ipcMain.handle('pr-changes', (_event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) => withGitHubPriority(options.background ? 'background' : 'foreground', () => prChanges.manifest(changesClient(), url, refresh, options)));
 ipcMain.handle('pr-commits', (_event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) => withGitHubPriority(options.background ? 'background' : 'foreground', () => prCommits.list(changesClient(), url, refresh, options)));
 const inspectionPrefetchGuard = (background: boolean) => {
