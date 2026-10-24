@@ -7,7 +7,7 @@ import { PrChangesView } from './PrChangesView';
 import type { Preferences } from '../lib/types';
 import { GitHubAuthor } from './GitHubAuthor';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowLeft, ChevronLeft, ChevronRight, ExternalLink, Layers } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, ExternalLink, Layers, RefreshCw } from 'lucide-react';
 import { Markdown } from './Markdown';
 import { PrSubjectDetails } from './PrSubjectDetails';
 import { type QueueItem } from '../lib/workbench';
@@ -238,8 +238,19 @@ export function PrSummary({
         <div ref={statusRef} className="pr-merge-status" aria-label="Merge readiness">
           <ReadinessBadge readiness={readiness} />
           <ReadinessCheckedAt readiness={readiness} />
-          <button type="button" disabled={statusRefreshing} onClick={onRetryStatus}>
-            {statusRefreshing ? 'Refreshing status…' : 'Refresh status'}
+          <button
+            type="button"
+            aria-label="Refresh status"
+            title={statusRefreshing ? 'Refreshing status…' : 'Refresh status'}
+            aria-busy={statusRefreshing}
+            disabled={statusRefreshing}
+            onClick={onRetryStatus}
+          >
+            <RefreshCw
+              size={14}
+              aria-hidden="true"
+              className={statusRefreshing ? 'motion-safe:animate-spin' : undefined}
+            />
           </button>
         </div>
         <Tabs.List className="pr-overview-tabs" aria-label="PR overview">
