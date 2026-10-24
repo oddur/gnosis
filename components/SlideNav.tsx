@@ -60,7 +60,7 @@ export function SlideNav({
           <span className="slide-meta shrink-0 group-hover:text-foreground transition-colors">←</span>
           <span className="flex flex-col gap-0.5 min-w-0">
             <span className="slide-meta">Previous</span>
-            <span className="font-sans text-sm text-foreground/60 group-hover:text-foreground transition-colors truncate">
+            <span className="font-sans text-sm text-muted-foreground group-hover:text-foreground transition-colors truncate">
               {prevTitle ?? 'Start of review'}
             </span>
           </span>

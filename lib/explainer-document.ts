@@ -17,7 +17,7 @@ export function buildExplainerDocument(
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${token}'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-:root { color-scheme: ${theme}; --paper: ${theme === 'dark' ? '#211f1c' : '#faf8f3'}; --ink: ${theme === 'dark' ? '#e9e4da' : '#2a2824'}; --muted: ${theme === 'dark' ? '#b4ada0' : '#655e54'}; --line: ${theme === 'dark' ? '#514b42' : '#d6cfc2'}; --accent: ${theme === 'dark' ? '#d8a16c' : '#91522c'}; }
+:root { color-scheme: ${theme}; --paper: ${theme === 'dark' ? '#171a20' : '#fcfcfd'}; --ink: ${theme === 'dark' ? '#e3e7ef' : '#242a35'}; --muted: ${theme === 'dark' ? '#a2adbf' : '#626b7b'}; --line: ${theme === 'dark' ? '#354255' : '#cbd5e1'}; --accent: ${theme === 'dark' ? '#9bb8ff' : '#345fc1'}; }
 * { box-sizing: border-box; } body { margin: 0; padding: 12px; background: var(--paper); color: var(--ink); font: 14px/1.4 system-ui, sans-serif; }
 #root { display: flow-root; min-width: 0; }
 svg { display: block; max-width: 100%; height: auto; } svg text { fill: var(--ink); }
