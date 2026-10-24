@@ -123,9 +123,9 @@ export function createPrChangesService() {
     });
   }
   const loadFile = createSnapshotFileLoader();
-  async function content(client: Octokit, req: PrFileRequest) {
+  async function content(client: Octokit, req: PrFileRequest, beforeRequest?: () => void) {
     const { snapshot, file } = find(client, req);
-    return loadFile(client, req, snapshot, file);
+    return loadFile(client, req, snapshot, file, beforeRequest);
   }
 
   return {

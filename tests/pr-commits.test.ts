@@ -317,3 +317,22 @@ void test('commit content cache cannot alias full-PR content with the same base/
   assert.notDeepEqual(pr, commit);
   assert.equal(calls, 2);
 });
+
+void test('speculative reads respect the background budget while cached comparisons and files remain accessible', async () => {
+  const f = fixture(),
+    service = createPrCommitsService(),
+    client = f.pool.client('one');
+  await service.list(client, url);
+  const deny = () => {
+    throw Error('Background budget reserve');
+  };
+  const reads = f.reads.length;
+  await assert.rejects(service.comparison(client, selection(2), deny), /budget reserve/);
+  assert.equal(f.reads.length, reads);
+  await service.comparison(client, selection(2));
+  assert.equal((await service.comparison(client, selection(2), deny)).metadata.headSha, sha(2));
+  const request = { url, path: 'new.ts', baseSha: sha(1), headSha: sha(2), comparison: selection(2) };
+  await assert.rejects(service.content(client, request, deny), /budget reserve/);
+  await service.content(client, request);
+  assert.equal((await service.content(client, request, deny)).after.kind, 'text');
+});

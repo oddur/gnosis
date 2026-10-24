@@ -104,7 +104,7 @@ void app.whenReady().then(async () => {
     );
     await input('[aria-label="Compare with parent"]', 'f'.repeat(40));
     await wait(
-      "window.compareReads.at(-1).parentSha==='f'.repeat(40) && !!document.querySelector('.changes-file-header')"
+      "document.querySelector('[aria-label=\"Compare with parent\"]')?.value==='f'.repeat(40) && !!document.querySelector('.changes-file-header')"
     );
     await js("window.openFile('worker.ts')");
     await wait(
@@ -182,14 +182,19 @@ void app.whenReady().then(async () => {
     assert.equal(await js('document.querySelectorAll(".commit-row").length'), 7);
     await capture('stack');
     // Recover a failed comparison without downloading unrelated commits.
+    const previousTitle = await js("document.querySelector('.commit-detail-title').textContent");
     await js("window.failComparison=true;document.querySelectorAll('.commit-row')[4].click()");
     await wait("document.querySelector('[role=alert]')?.textContent.includes('Comparison unavailable')");
     assert.equal(
       await js("document.querySelector('.changes-tree-pane').textContent.includes('No changed files')"),
       false
     );
-    assert.equal(await js("document.querySelector('.changes-progress')"), null);
-    assert.match(await js<string>("document.querySelector('.changes-tree-pane').textContent"), /File list unavailable/);
+    assert.equal(
+      await js("document.querySelector('.commit-detail-title').textContent"),
+      previousTitle,
+      'A failed navigation retains the labelled previous comparison'
+    );
+    assert.equal(await js("!!document.querySelector('.changes-loading')"), false);
     await capture('error');
     await js('window.failComparison=false');
     await click('Retry');

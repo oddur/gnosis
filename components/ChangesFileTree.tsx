@@ -27,6 +27,7 @@ export function ChangesFileTree({
   selected,
   query,
   onSelect,
+  onPreview,
   showComments = true,
 }: {
   showComments?: boolean;
@@ -34,6 +35,7 @@ export function ChangesFileTree({
   selected: string;
   query: string;
   onSelect: (path: string) => void;
+  onPreview?: (path: string) => void;
 }) {
   const current = useRef({ entries, onSelect });
   current.current = { entries, onSelect };
@@ -109,6 +111,23 @@ export function ChangesFileTree({
       className="changes-file-tree"
       aria-label="Changed files"
       onClick={activate}
+      onPointerOver={(event) => {
+        const row = event.nativeEvent
+          .composedPath()
+          .find((node) => node instanceof Element && node.hasAttribute('data-item-path'));
+        if (row instanceof Element) {
+          const path = row.getAttribute('data-item-path');
+          if (path) onPreview?.(path);
+        }
+      }}
+      onFocusCapture={() => {
+        const item = model.getFocusedItem();
+        if (item && !item.isDirectory()) onPreview?.(item.getPath());
+      }}
+      onKeyUp={() => {
+        const item = model.getFocusedItem();
+        if (item && !item.isDirectory()) onPreview?.(item.getPath());
+      }}
       onKeyDownCapture={(event) => {
         if (event.key === 'Enter' && model.getFocusedItem()?.isDirectory() === false) {
           event.preventDefault();

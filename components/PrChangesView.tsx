@@ -1,9 +1,16 @@
 import { DiffStats } from './DiffStats';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { createPrFileCache } from '../lib/pr-file-cache';
-import { prChangePreview, prPreviewSelection } from '../lib/pr-change-preview';
+import {
+  inspectionFiles as fileCache,
+  fileIsReady,
+  prepareFile,
+  prefetchInspection,
+  commitPositionId,
+  previewFor,
+} from '../lib/inspection-cache';
+import { prPreviewSelection } from '../lib/pr-change-preview';
 import { FileDiff, MultiFileDiff } from '@pierre/diffs/react';
-import type { DiffFileInput, FileDiffOptions, FileDiffMetadata, SelectedLineRange } from '@pierre/diffs';
+import type { DiffFileInput, FileDiffOptions, SelectedLineRange } from '@pierre/diffs';
 import {
   ChevronDown,
   ChevronRight,
@@ -44,20 +51,6 @@ interface Entry {
 interface Position {
   selected: string;
   scroll: Record<string, number>;
-}
-const fileCache = createPrFileCache((request) => window.electronAPI.getPrChangeFile(request));
-const previews = new Map<string, FileDiffMetadata>();
-function previewFor(key: string, file: PrChangeFile) {
-  let preview = previews.get(key);
-  if (!preview) {
-    preview = prChangePreview(file);
-    if (preview) {
-      previews.set(key, preview);
-      const oldest = previews.keys().next().value;
-      if (previews.size > 32 && oldest) previews.delete(oldest);
-    }
-  }
-  return preview;
 }
 const positions = new Map<string, Position>();
 const memory = new Map<string, PrChanges[]>();
@@ -101,9 +94,7 @@ export function PrChangesView({
   commit?: CommitWorkspace;
   initialFile?: { url: string; path: string };
 }) {
-  const positionId = commit
-    ? `commit:${subject.id}:${commit.snapshot?.url ?? ''}:${commit.snapshot?.comparisonBase ?? ''}:${commit.snapshot?.metadata.headSha ?? ''}`
-    : subject.id;
+  const positionId = commit ? commitPositionId(subject.id, commit.snapshot) : subject.id;
   const [position] = useState(() => loadPosition(positionId));
   const [loadedSnapshots, setSnapshots] = useState<PrChanges[]>(() => memory.get(subject.id) ?? []);
   const snapshots = useMemo(
@@ -111,6 +102,10 @@ export function PrChangesView({
     [commit?.snapshot, !!commit, loadedSnapshots]
   );
   const [selected, setSelected] = useState(position.selected);
+  const [openingFile, setOpeningFile] = useState('');
+  const [navigationError, setNavigationError] = useState<{ key: string; message: string }>();
+  const fileNavigation = useRef(0);
+  const hoverCancel = useRef<() => void>(() => {});
   const [loading, setLoading] = useState(false),
     [error, setError] = useState(''),
     [newer, setNewer] = useState(false),
@@ -186,6 +181,8 @@ export function PrChangesView({
     return () => {
       alive.current = false;
       generation.current++;
+      fileNavigation.current++;
+      hoverCancel.current();
     };
   }, [subject.id]);
   const revision = snapshots.map((s) => `${s.url}:${changesRevision(s.metadata)}`).join('|');
@@ -270,7 +267,41 @@ export function PrChangesView({
       setError(`“${initialFile.path}” is not in the current PR changes. Choose another file to comment on.`);
   }, [initialFile, entries]);
   // Keep selection/scroll independent of tabs, queue navigation, and background discovery.
+  function warmFile(key: string) {
+    const target = entries.find((e) => e.key === key);
+    if (!target || fileIsReady(target.snapshot, target.file)) return () => {};
+    return prefetchInspection(viewKey(target), () => prepareFile(target.snapshot, target.file, true));
+  }
+  useEffect(() => {
+    if (!entry) return;
+    const index = entries.indexOf(entry);
+    const cancel = [index + 1, index + 2, index - 1].flatMap((i) => (entries[i] ? [warmFile(entries[i].key)] : []));
+    return () => cancel.forEach((stop) => stop());
+  }, [activeKey, entries]);
   function select(key: string) {
+    const target = entries.find((e) => e.key === key);
+    if (!target) return;
+    const id = ++fileNavigation.current;
+    setNavigationError(undefined);
+    if (fileIsReady(target.snapshot, target.file)) {
+      setOpeningFile('');
+      applySelection(key);
+      return;
+    }
+    setOpeningFile(key);
+    void prepareFile(target.snapshot, target.file)
+      .then(() => {
+        if (alive.current && fileNavigation.current === id) applySelection(key);
+      })
+      .catch((error: unknown) => {
+        if (alive.current && fileNavigation.current === id)
+          setNavigationError({ key, message: error instanceof Error ? error.message : String(error) });
+      })
+      .finally(() => {
+        if (alive.current && fileNavigation.current === id) setOpeningFile('');
+      });
+  }
+  function applySelection(key: string) {
     if (viewport.current && entry) position.scroll[activeKey] = viewport.current.scrollTop;
     position.selected = key;
     persist();
@@ -478,6 +509,11 @@ export function PrChangesView({
           </span>
         )}
         <span className="changes-toolbar-spacer" />
+        {openingFile && (
+          <span className="changes-progress" role="status">
+            Opening {openingFile.split('/').pop()}…
+          </span>
+        )}
         {commit?.tools}
         {!commit && comments.controls}
         <DiffAppearanceMenu
@@ -505,6 +541,12 @@ export function PrChangesView({
         <div className="changes-notice" role="status">
           {error || checkError || preferenceError}
           {error && <button onClick={() => void load(true)}>Retry</button>}
+        </div>
+      )}
+      {navigationError && (
+        <div className="changes-notice" role="alert">
+          Could not open {navigationError.key}. {navigationError.message}
+          <button onClick={() => select(navigationError.key)}>Retry</button>
         </div>
       )}
       {!commit && comments.panel}
@@ -553,6 +595,10 @@ export function PrChangesView({
                     selected={entry?.key ?? ''}
                     query={query}
                     onSelect={select}
+                    onPreview={(key) => {
+                      hoverCancel.current();
+                      hoverCancel.current = warmFile(key);
+                    }}
                     showComments={!commit}
                   />
                 )}

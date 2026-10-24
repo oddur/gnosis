@@ -12,7 +12,8 @@ export function createSnapshotFileLoader() {
     client: Octokit,
     req: PrFileRequest,
     snapshot: PrChanges,
-    file: PrChangeFile
+    file: PrChangeFile,
+    beforeRequest?: () => void
   ): Promise<PrFileContents> => {
     const identity = {
       url: req.url,
@@ -46,6 +47,7 @@ export function createSnapshotFileLoader() {
           `${parsePrUrl(req.url).owner}/${parsePrUrl(req.url).repo}`;
         const [owner, repo] = repoName.split('/');
         const ref = before ? snapshot.comparisonBase : snapshot.metadata.headSha;
+        beforeRequest?.();
         const { data } = await client.request('GET /repos/{owner}/{repo}/contents/{path}', {
           owner,
           repo,

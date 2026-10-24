@@ -222,7 +222,11 @@ export function createPrCommitsService() {
       return value;
     });
   }
-  async function comparison(client: Octokit, selection: CommitSelection): Promise<PrChanges> {
+  async function comparison(
+    client: Octokit,
+    selection: CommitSelection,
+    beforeRequest?: () => void
+  ): Promise<PrChanges> {
     const t = target(selection.url);
     for (const sha of [
       selection.prBaseSha,
@@ -247,6 +251,7 @@ export function createPrCommitsService() {
       if (chosen.length === 1 && (!selection.parentSha || selection.parentSha === first.parents[0])) {
         let page = 1;
         for (;;) {
+          beforeRequest?.();
           const { data, headers } = await client.repos.getCommit({
             owner: t.owner,
             repo: t.repo,
@@ -268,6 +273,7 @@ export function createPrCommitsService() {
           throw new Error(
             'A range starting at the repository’s first commit cannot be compared here. Inspect its commits individually.'
           );
+        beforeRequest?.();
         const { data } = await client.repos.compareCommits({
           owner: t.owner,
           repo: t.repo,
@@ -317,9 +323,9 @@ export function createPrCommitsService() {
     list,
     comparison,
     find,
-    async content(client: Octokit, request: PrFileRequest) {
+    async content(client: Octokit, request: PrFileRequest, beforeRequest?: () => void) {
       const { snapshot, file } = find(client, request);
-      return loadFile(client, request, snapshot, file);
+      return loadFile(client, request, snapshot, file, beforeRequest);
     },
   };
 }

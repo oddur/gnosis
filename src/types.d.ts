@@ -32,9 +32,9 @@ declare global {
   interface Window {
     electronAPI: {
       getPrCommits: (url: string, refresh?: boolean) => Promise<PrCommits>;
-      getCommitComparison: (selection: CommitSelection) => Promise<PrChanges>;
+      getCommitComparison: (selection: CommitSelection, background?: boolean) => Promise<PrChanges>;
       getPrChanges: (url: string, refresh?: boolean) => Promise<PrChanges>;
-      getPrChangeFile: (request: PrFileRequest) => Promise<PrFileContents>;
+      getPrChangeFile: (request: PrFileRequest, background?: boolean) => Promise<PrFileContents>;
       checkPrChanges: (url: string) => Promise<{ baseSha: string; headSha: string }>;
       askPrFile: (request: FileChatRequest) => Promise<string>;
       getGitHubProfile: (login:string) => Promise<GitHubProfile>;
