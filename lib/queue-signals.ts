@@ -3,6 +3,7 @@ export interface QueueSignalRequest {
   headSha: string;
 }
 export interface QueueSignalOptions {
+  active?: boolean;
   force?: boolean;
   cachedOnly?: boolean;
 }
@@ -23,5 +24,6 @@ export interface QueueSignals extends QueueSignalRequest {
     queueState: string | null;
   };
 }
-export const QUEUE_SIGNALS_TTL = 5 * 60_000;
+export const QUEUE_SIGNALS_TTL = 2 * 60_000;
+export const ACTIVE_SIGNALS_TTL = 25_000;
 export const queueSignalKey = (request: QueueSignalRequest) => `${request.url}@${request.headSha}`;

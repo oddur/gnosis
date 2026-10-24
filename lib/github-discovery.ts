@@ -23,7 +23,49 @@ export interface DiscoveryListings {
   searches: Partial<
     Record<'author' | 'assignee' | 'review-requested', { windows: SearchWindow[]; items: PrSearchResult[] }>
   >;
-  repos: Record<string, { page: number; done: boolean; items: ListedPull[]; archived?: boolean }>;
+  repos: Record<
+    string,
+    {
+      page: number;
+      done: boolean;
+      items: ListedPull[];
+      archived?: boolean;
+      since?: number;
+      checkedAt?: number;
+      reconciledAt?: number;
+      closed?: string[];
+    }
+  >;
+}
+
+/** Keep the repository index; overlapping deltas catch edits while a previous pass was running. */
+export function nextDiscoveryListings(previous: DiscoveryListings | undefined, now: number): DiscoveryListings {
+  return {
+    searches: {},
+    repos: Object.fromEntries(
+      Object.entries(previous?.repos ?? {}).map(([repo, listing]) => {
+        const incremental =
+          listing.done &&
+          !listing.archived &&
+          listing.checkedAt &&
+          listing.reconciledAt &&
+          now >= listing.checkedAt &&
+          now - listing.reconciledAt < 30 * 60_000;
+        return [
+          repo,
+          incremental
+            ? {
+                ...structuredClone(listing),
+                page: 1,
+                done: false,
+                since: (listing.checkedAt ?? now) - 2 * 60_000,
+                closed: [],
+              }
+            : { page: 1, done: false, items: [] },
+        ];
+      })
+    ),
+  };
 }
 export function createDiscoveryListings(
   client: Octokit,
@@ -47,7 +89,8 @@ export function createDiscoveryListings(
         : (['author', 'review-requested'] as const);
       for (const role of roles) {
         const search = (state.searches[role] ??= {
-          windows: [{ from: 0, to: Math.floor(options.now / 1000), page: 1 }],
+          // Stable parameters throughout the day let conditional searches reuse their ETags.
+          windows: [{ from: 0, to: Math.ceil(options.now / 86_400_000) * 86_400, page: 1 }],
           items: [],
         });
         while (search.windows.length) {
@@ -105,7 +148,11 @@ export function createDiscoveryListings(
       return [...seen.values()].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
     },
     async repository(fullName: string): Promise<{ data: ListedPull[]; archived?: boolean }> {
-      const listing: DiscoveryListings['repos'][string] = (state.repos[fullName] ??= { page: 1, done: false, items: [] });
+      const listing: DiscoveryListings['repos'][string] = (state.repos[fullName] ??= {
+        page: 1,
+        done: false,
+        items: [],
+      });
       const [owner, repo] = fullName.split('/');
       while (!listing.done) {
         options.beforeRead();
@@ -113,10 +160,10 @@ export function createDiscoveryListings(
         const { data } = await client.pulls.list({
           owner,
           repo,
-          state: 'open',
+          state: listing.since === undefined ? 'open' : 'all',
           per_page: 100,
-          sort: 'created',
-          direction: 'asc',
+          sort: listing.since === undefined ? 'created' : 'updated',
+          direction: listing.since === undefined ? 'asc' : 'desc',
           page: listing.page,
         });
         // A list response already carries the target repository's archive state.
@@ -128,8 +175,14 @@ export function createDiscoveryListings(
           options.save();
           break;
         }
-        for (const pr of data)
-          listing.items.push({
+        const items = new Map(listing.items.map((pr) => [pr.html_url, pr]));
+        for (const pr of data) {
+          if (pr.state === 'closed') {
+            items.delete(pr.html_url);
+            (listing.closed ??= []).push(pr.html_url);
+            continue;
+          }
+          items.set(pr.html_url, {
             html_url: pr.html_url,
             updated_at: pr.updated_at,
             labelDetails: parseGitHubLabels(pr.labels),
@@ -146,8 +199,16 @@ export function createDiscoveryListings(
               repo: pr.head.repo ? { full_name: pr.head.repo.full_name } : null,
             },
           });
+        }
+        listing.items = [...items.values()];
         listing.page++;
-        listing.done = data.length < 100;
+        const since = listing.since;
+        listing.done =
+          data.length < 100 || (since !== undefined && data.some((pr) => Date.parse(pr.updated_at) < since));
+        if (listing.done) {
+          listing.checkedAt = options.now;
+          if (listing.since === undefined) listing.reconciledAt = options.now;
+        }
         options.save();
       }
       return { data: [...new Map(listing.items.map((pr) => [pr.html_url, pr])).values()], archived: listing.archived };

@@ -63,8 +63,8 @@ function harness() {
     other: () => pool.client('other'),
     calls: () => calls,
     queries,
-    advance: () => {
-      now += QUEUE_SIGNALS_TTL + 1;
+    advance: (ms = QUEUE_SIGNALS_TTL + 1) => {
+      now += ms;
     },
     fail: () => {
       fail = true;
@@ -175,4 +175,16 @@ void test('skipped checks are separate from successful checks', async () => {
     },
   });
   assert.deepEqual((await h.get(h.client, [request]))[0].checks, { state: 'success', passed: 1, skipped: 2, total: 3 });
+});
+
+void test('active PR statuses refresh sooner and share their result with visible queue rows', async () => {
+  const h = harness();
+  await h.get(h.client, [request]);
+  h.advance(30_000);
+  await h.get(h.client, [request]);
+  assert.equal(h.calls(), 1, 'The queue keeps its two-minute cadence');
+  await h.get(h.client, [request], { active: true });
+  assert.equal(h.calls(), 2, 'The active PR refreshes after thirty seconds');
+  await h.get(h.client, [request]);
+  assert.equal(h.calls(), 2, 'The queue reuses the active PR refresh');
 });

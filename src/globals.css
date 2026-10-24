@@ -2530,3 +2530,27 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .pr-inactivity-setting input[type="number"]:disabled { opacity: 0.5; }
 .pr-inactivity-setting input[type="checkbox"] { accent-color: var(--primary); }
 .queue-inactivity-link { font-size: 12px; line-height: 1.5; color: var(--primary); text-align: left; text-decoration: underline; text-underline-offset: 3px; }
+
+/* Routine GitHub checks stay secondary to review actions. */
+.github-sync-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  inline-size: 140px;
+  min-block-size: 28px;
+  flex-shrink: 0;
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+  border-radius: var(--radius);
+}
+.github-sync-status > svg { flex-shrink: 0; }
+.github-sync-status > span { overflow: hidden; text-overflow: ellipsis; }
+.github-sync-status:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 4px;
+}
+@media (max-width: 760px) {
+  .github-sync-status { inline-size: 28px; justify-content: center; }
+  .github-sync-status > span { display: none; }
+}

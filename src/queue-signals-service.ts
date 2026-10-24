@@ -1,8 +1,10 @@
 import type { Octokit } from '@octokit/rest';
+import { withGitHubPriority } from '../lib/github-scheduler';
 import { githubCacheFor } from '../lib/github-client';
 import { isCacheRecord } from '../lib/github-cache';
 import {
   QUEUE_SIGNALS_TTL,
+  ACTIVE_SIGNALS_TTL,
   queueSignalKey,
   type QueueSignalRequest,
   type QueueSignals,
@@ -90,7 +92,12 @@ export function createQueueSignalsService(now = Date.now) {
     const stale: QueueSignals[] = [];
     const missing = parsed.filter(({ request }) => {
       const saved = cache?.get(`queue-signals:v3:${queueSignalKey(request)}`, isSignals);
-      if (!options.force && saved && !saved.revalidate && now() - saved.value.checkedAt < QUEUE_SIGNALS_TTL) {
+      if (
+        !options.force &&
+        saved &&
+        !saved.revalidate &&
+        now() - saved.value.checkedAt < (options.active ? ACTIVE_SIGNALS_TTL : QUEUE_SIGNALS_TTL)
+      ) {
         result.push(saved.value);
         return false;
       }
@@ -123,7 +130,9 @@ export function createQueueSignalsService(now = Date.now) {
     const state = account;
     const pending = (async () => {
       try {
-        const data = await client.graphql<Record<string, { pullRequest: PullSignals | null } | null>>(query);
+        const data = await withGitHubPriority(options.active || options.force ? 'foreground' : 'background', () =>
+          client.graphql<Record<string, { pullRequest: PullSignals | null } | null>>(query)
+        );
         const fresh: QueueSignals[] = [];
         for (const [i, { request }] of missing.entries()) {
           const pr = data[`p${i}`]?.pullRequest;

@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const MAX_BYTES = 8_000_000;
+const MAX_BYTES = 32_000_000;
 const MAX_ENTRY_BYTES = 1_000_000;
-const MAX_ENTRIES = 200;
+const MAX_ENTRIES = 2000;
 const RETENTION_MS = 7 * 24 * 60 * 60_000;
 export function isCacheRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -115,6 +115,12 @@ export function createGitHubCache(now = Date.now) {
         revalidate() {
           versions.set(scope, (versions.get(scope) ?? 0) + 1);
           for (const entry of entries.values()) if (entry.scope === scope) entry.revalidate = true;
+          persist();
+        },
+        invalidate(matches: (value: unknown) => boolean) {
+          versions.set(scope, (versions.get(scope) ?? 0) + 1);
+          for (const entry of entries.values())
+            if (entry.scope === scope && matches(entry.value)) entry.revalidate = true;
           persist();
         },
       };

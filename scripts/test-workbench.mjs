@@ -7,6 +7,7 @@ import path from 'node:path';
 import process from 'node:process';
 import electron from 'electron';
 import { setTimeout, clearTimeout } from 'node:timers';
+const sync = process.argv.includes('--sync');
 const inactivity = process.argv.includes('--inactivity');
 const mutes = process.argv.includes('--mutes');
 const stars = process.argv.includes('--stars');
@@ -36,7 +37,7 @@ try {
   const outfile = path.join(dir, 'test.cjs');
   await build({
     entryPoints: [
-      inactivity ? 'tests/pr-inactivity-browser.ts' : mutes ? 'tests/muted-prs-browser.ts' : stars ? 'tests/starred-prs-browser.ts' : readiness ? 'tests/merge-readiness-browser.ts' : diffContext ? 'tests/diff-context-browser.ts' : explanation ? 'tests/explanation-tab-browser.ts' : diffSpeed ? 'tests/diff-navigation-browser.ts' : commits ? 'tests/pr-commits-browser.ts' : changes ? 'tests/pr-changes-browser.ts' : queueMetadata ? 'tests/queue-metadata-browser.ts' : authors ? 'tests/github-author-browser.ts' : commandCenter ? 'tests/command-center-browser.ts' : performance ? 'tests/queue-performance-browser.ts' : polish
+      sync ? 'tests/github-sync-browser.ts' : inactivity ? 'tests/pr-inactivity-browser.ts' : mutes ? 'tests/muted-prs-browser.ts' : stars ? 'tests/starred-prs-browser.ts' : readiness ? 'tests/merge-readiness-browser.ts' : diffContext ? 'tests/diff-context-browser.ts' : explanation ? 'tests/explanation-tab-browser.ts' : diffSpeed ? 'tests/diff-navigation-browser.ts' : commits ? 'tests/pr-commits-browser.ts' : changes ? 'tests/pr-changes-browser.ts' : queueMetadata ? 'tests/queue-metadata-browser.ts' : authors ? 'tests/github-author-browser.ts' : commandCenter ? 'tests/command-center-browser.ts' : performance ? 'tests/queue-performance-browser.ts' : polish
         ? 'tests/polish-browser.ts'
         : hardening
           ? 'tests/hardening-browser.ts'
