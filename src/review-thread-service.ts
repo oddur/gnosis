@@ -135,6 +135,9 @@ export function createReviewThreadService(now = Date.now) {
     return { ...revision, threads };
   }
   const service = {
+    cached(client: Octokit, prUrl: string): GitHubReviewThreads | undefined {
+      return githubCacheFor(client)?.get(`review-threads:${prUrl}`, isSavedThreads)?.value.value ?? cacheFor(client).get(prUrl)?.value;
+    },
     async list(client: Octokit, prUrl: string, refresh = false): Promise<GitHubReviewThreads> {
       parseUrl(prUrl);
       const cache = cacheFor(client);

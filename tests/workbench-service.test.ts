@@ -1403,3 +1403,17 @@ void test('repository listings hydrate legacy label badges without refetching ca
     s.cleanup();
   }
 });
+
+void test('explicit briefing starts outside automatic filters without enabling automatic work', async () => {
+  let calls=0;
+  const s=setup(()=>{calls++;return Promise.resolve(JSON.stringify({summary:'Explicit briefing',systems:[],priorities:[]}));},false);
+  try {
+    const q=await s.service.queue();
+    s.service.setFilters({query:'not a match',briefingScope:'matches'});
+    s.service.retry(q.items[0].subject.id,true);
+    await settle(s.service,'ready');
+    assert.equal(calls,1);
+    assert.equal(s.prefs.autoBriefings,false);
+    assert.throws(()=>s.service.retry(q.items[0].subject.id,true),/daily briefing limit/);
+  } finally {s.cleanup();}
+});

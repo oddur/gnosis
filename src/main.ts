@@ -1,3 +1,5 @@
+import { githubCachedResponses } from '../lib/github-client';
+import { createCommandSearchService } from './command-search-service';
 import type { QueueViewAction } from '../lib/saved-views';
 import { createActivityService } from './activity-service';
 import { createReviewThreadService } from './review-thread-service';
@@ -2204,7 +2206,7 @@ ipcMain.handle('workbench-queue', async (_event, force: boolean) => {
 ipcMain.handle('workbench-view-action', (_event, action: QueueViewAction) => workbench.viewAction(action));
 ipcMain.handle('workbench-set-filters', (_event, filters: unknown) => workbench.setFilters(filters));
 ipcMain.handle('workbench-group', (_event, correction: GroupingOverride) => workbench.correct(correction));
-ipcMain.handle('workbench-briefing', (_event, id: string) => workbench.retry(id));
+ipcMain.handle('workbench-briefing', (_event, id: string) => workbench.retry(id, true));
 ipcMain.handle('workbench-freshness', async (_event, old: ReviewSnapshot) => {
   try {
     // Refresh stack relationships, then revalidate only the PRs in this review.
@@ -2345,6 +2347,30 @@ ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
 });
 
 const reviewThreads = createReviewThreadService();
+const commandSearch = createCommandSearchService({
+  directory: getReviewsDir,
+  cachedResponses: () => { const token=getResolvedToken(); return token?githubCachedResponses(getGitHubClient(token)):[]; },
+  queue: () => workbench.cached(),
+  history: readReviewsIndex,
+  account: () => cachedLogin ?? 'local',
+  ignoreBots: () => loadPreferences().ignoreDependabotPrs !== false,
+  threads: (url) => { const token = getResolvedToken(); return token ? reviewThreads.cached(getGitHubClient(token), url) : undefined; },
+});
+ipcMain.handle('command-search', (_event, query: string, includeBots: boolean, recentIds: string[]) =>
+  commandSearch.search(query, includeBots === true, Array.isArray(recentIds) ? recentIds.filter(id=>typeof id==='string').slice(0,20) : []));
+ipcMain.handle('command-github-search', async (_event, query: string) => {
+  const token = getResolvedToken();
+  if (!token || !cachedLogin) throw new Error('Connect GitHub to search beyond this computer.');
+  if (typeof query !== 'string' || !query.trim() || query.length > 500) throw new Error('Enter a search of 1–500 characters.');
+  try {
+    const {data} = await getGitHubClient(token).search.issuesAndPullRequests({ q: `is:pr ${query.trim()}`, sort:'updated', order:'desc', per_page:30 });
+    return data.items.filter(item=>item.pull_request).map(item=>{
+      const parts=item.repository_url.split('/');
+      return {number:item.number,title:item.title,url:item.html_url,repoOwner:parts.at(-2)??'',repoName:parts.at(-1)??'',author:item.user?.login??'unknown',updatedAt:item.updated_at,isDraft:item.draft??false,role:'watched' as const};
+    });
+  } catch (error) { friendlyRateLimitError(error); throw error; }
+});
+
 function discussionClient() {
   const token = getResolvedToken();
   if (!token) throw new Error('Sign in to GitHub to load review comments.');

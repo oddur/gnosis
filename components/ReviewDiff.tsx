@@ -1,3 +1,4 @@
+import { useSessionDraft } from '../lib/session-drafts';
 import { useMemo, useState, useRef, type CSSProperties, type ReactNode } from 'react';
 import type { GitHubReviewThread } from '../lib/review-threads';
 import { FileDiff } from '@pierre/diffs/react';
@@ -103,7 +104,7 @@ function ReviewHunk({
     }),
     [prepared]
   );
-  const [active, setActive] = useState<Location | null>(null);
+  const [active, setActive] = useSessionDraft<Location | null>(`comment-location:${slideIndex}:${filePath}:${hunk.hunkHeader}`, null);
   const theme = useMemo(() => {
     const classes = extractShikiStyles(hunk.renderedHtml).preClass.split(' ');
     return CODE_THEMES.find((t) => classes.includes(t.id))?.id ?? 'aurora-x';
@@ -201,6 +202,7 @@ function ReviewHunk({
             ))}
           {commentCallbacks && active?.line === location.line && active.side === location.side && (
             <InlineCommentForm
+              draftKey={`${filePath}:${slideIndex}:${location.side}:${location.line}`}
               onCancel={() => setActive(null)}
               onSubmit={(body) => {
                 const info = prepared.lines.find(
@@ -398,14 +400,14 @@ export function ReviewDiff({ hunks, ...props }: Props) {
 }
 
 /** Keep the renderer's shadow DOM boundary out of review navigation. */
-export function findReviewLine(container: HTMLElement, filePath: string, line: number): HTMLElement | null {
+export function findReviewLine(container: HTMLElement, filePath: string, line: number, side?: DiffSide): HTMLElement | null {
   const roots: (HTMLElement | ShadowRoot)[] = [
     container,
     ...Array.from(container.querySelectorAll('diffs-container')).flatMap((el) =>
       el.shadowRoot ? [el.shadowRoot] : []
     ),
   ];
-  for (const attr of ['data-line-number', 'data-base-line']) {
+  for (const attr of side==='LEFT'?['data-base-line']:side==='RIGHT'?['data-line-number']:['data-line-number', 'data-base-line']) {
     for (const root of roots) {
       const result = root.querySelector<HTMLElement>(`[data-file-path="${CSS.escape(filePath)}"][${attr}="${line}"]`);
       if (result) return result;

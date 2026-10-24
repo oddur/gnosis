@@ -1,3 +1,4 @@
+import { searchHit, queueDocuments, reviewDocuments, searchDocuments, threadDocuments } from '../../lib/command-search';
 import { normalizeViews, editViewFilters, applyViewAction, activeViewFilters, type QueueViewAction } from '../../lib/saved-views';
 import { matchesQueueFilters } from '../../lib/queue-filters';
 import { normalizeQueueFilters, type QueueFilters } from '../../lib/queue-filters';
@@ -407,6 +408,14 @@ let activities: ActivityTask[] = [
 ];
 if (onboardingScenario) activities = [];
 const mocks = {
+  commandSearch: async (query:string, includeBots=false, recentIds:string[]=[]) => {
+    const queue=await mocks.workbenchQueue();
+    const docs=[...queueDocuments(queue),...reviewDocuments(review,history[0],queue)];
+    docs.push(...threadDocuments(review.prUrl,await mocks.getReviewThreads(),docs));
+    const hits=query?searchDocuments(docs,query,includeBots):docs.filter(d=>['pr','stack','view','repository'].includes(d.kind)||recentIds.includes(d.id)).sort((a,b)=>(recentIds.indexOf(a.id)<0?999:recentIds.indexOf(a.id))-(recentIds.indexOf(b.id)<0?999:recentIds.indexOf(b.id))).map(document=>searchHit(document));
+    return {account:'oddur',hits,total:hits.length,ignoreBots:true,warnings:[]};
+  },
+  commandGitHubSearch: () => Promise.resolve([{number:999,title:'Remote queue improvement',url:'https://github.com/klang/engine/pull/999',repoOwner:'klang',repoName:'engine',author:'sam',updatedAt:date,isDraft:false,role:'watched' as const}]),
   listActivity: () => Promise.resolve(activities),
   activityAction: (id: string, action: ActivityAction) => {
     if (action === 'dismiss') activities = activities.filter((t) => t.id !== id);
