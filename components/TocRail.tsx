@@ -64,6 +64,7 @@ export function TocRail({ slides, currentSlide, reviewed, hideReviewed, onToggle
         {/* Overview row — always visible. */}
         <li ref={currentSlide === 0 ? currentRef : null}>
           <button
+            aria-current={currentSlide === 0 ? 'step' : undefined}
             onClick={() => onNavigate(0)}
             className={`group w-full text-left py-2 flex gap-3 transition-colors ${
               currentSlide === 0 ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
@@ -90,26 +91,26 @@ export function TocRail({ slides, currentSlide, reviewed, hideReviewed, onToggle
           return (
             <li key={slide.id} ref={isCurrent ? currentRef : null}>
               <button
+                aria-current={isCurrent ? 'step' : undefined}
                 onClick={() => onNavigate(slide.slideNumber)}
                 className={`group w-full text-left py-2 flex gap-3 transition-[color,opacity] duration-200 ${
                   isCurrent
-                    ? 'text-foreground'
-                    : isReviewed
-                      ? 'text-muted-foreground hover:text-foreground'
-                      : 'text-muted-foreground hover:text-foreground'
+                    ? 'text-foreground font-semibold'
+                    : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
                 <span
                   className={`shrink-0 w-6 flex items-center justify-center ${isCurrent ? 'text-[var(--ring)]' : ''}`}
                 >
                   {isReviewed && !isCurrent ? (
-                    <Check className="h-3 w-3 text-[var(--ring)]/60 animate-fade-in" />
+                    <Check className="h-3 w-3 text-[var(--ring)] animate-fade-in" />
                   ) : (
                     <span className="slide-meta tabular-nums">{num}</span>
                   )}
                 </span>
                 <span className="font-serif text-base leading-snug flex items-center gap-1.5 min-w-0">
                   <span className="line-clamp-2">{slide.title}</span>
+                  {isReviewed && <span className="sr-only"> (reviewed)</span>}
                   {dotClass && <span className={`shrink-0 h-1.5 w-1.5 rounded-full ${dotClass}`} title="Critical" />}
                 </span>
               </button>

@@ -51,6 +51,8 @@ const shadowCSS = `
   --diffs-bg-context-override: var(--diffs-bg);
   --diffs-bg-context-gutter-override: var(--diffs-bg);
   --diffs-fg-number-override: var(--diffs-fg);
+  --diffs-bg-addition-number-override: var(--diffs-bg-addition-override);
+  --diffs-bg-deletion-number-override: var(--diffs-bg-deletion-override);
   --diffs-bg-addition-override: color-mix(in srgb, var(--diffs-bg) 90%, #5ecc71);
   --diffs-bg-deletion-override: color-mix(in srgb, var(--diffs-bg) 90%, #ff6762);
   --diffs-bg-addition-emphasis-override: color-mix(in srgb, var(--diffs-bg) 80%, #5ecc71);

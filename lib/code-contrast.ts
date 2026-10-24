@@ -32,7 +32,10 @@ export function readableCodeTheme(theme: ThemeRegistration, name = theme.name): 
   const background = theme.colors?.['editor.background'] ?? theme.bg ?? '#1e1e1e';
   const surfaces = Object.values(diffSurfaces(background));
   const readable = (color: string | undefined) => {
-    if (!color || !/^#[\da-f]{6}$/i.test(color)) return color;
+    if (!color || !/^#[\da-f]{6}([\da-f]{2})?$/i.test(color)) return color;
+    // Some themes use translucent comments and punctuation. Flatten their
+    // effective color before adjusting; otherwise alpha defeats the contrast floor.
+    if (color.length === 9) color = mixColor(background, color.slice(0, 7), parseInt(color.slice(7), 16) / 255);
     for (let step = 0; step <= 100; step++) {
       const candidate = mixColor(color, '#ffffff', step / 100);
       if (surfaces.every((surface) => contrastRatio(candidate, surface) >= 4.8)) return candidate;
@@ -42,7 +45,12 @@ export function readableCodeTheme(theme: ThemeRegistration, name = theme.name): 
   return {
     ...theme, name,
     fg: readable(theme.fg),
-    colors: { ...theme.colors, 'editor.foreground': readable(theme.colors?.['editor.foreground'] ?? theme.fg) ?? '#ffffff' },
+    colors: {
+      ...theme.colors,
+      'editor.foreground': readable(theme.colors?.['editor.foreground'] ?? theme.fg) ?? '#ffffff',
+      'gitDecoration.addedResourceForeground': readable(theme.colors?.['gitDecoration.addedResourceForeground'] ?? theme.colors?.['terminal.ansiGreen'] ?? '#5ecc71') ?? '#5ecc71',
+      'gitDecoration.deletedResourceForeground': readable(theme.colors?.['gitDecoration.deletedResourceForeground'] ?? theme.colors?.['terminal.ansiRed'] ?? '#ff6762') ?? '#ff6762',
+    },
     tokenColors: theme.tokenColors?.map((token) => ({
       ...token, settings: { ...token.settings, foreground: readable(token.settings.foreground) },
     })),
