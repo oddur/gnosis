@@ -1054,6 +1054,7 @@ export function createWorkbenchService(deps: Deps) {
       void pump();
       return view();
     },
+    isGenerating: () => !!running,
     interrupt() {
       running?.abort(new BriefingPaused());
     },

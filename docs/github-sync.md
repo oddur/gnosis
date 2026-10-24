@@ -74,6 +74,18 @@ The renderer retains up to 32 MB of file contents and 128 files. Eviction favors
 Selecting a different PR prepares it again if its files were evicted. The persistent cache limits above remain unchanged.
 Account changes clear renderer data and discard late responses from the previous account. Navigation pauses the worker without clearing prepared data.
 
+## Clearing downloaded data
+
+Use **Settings → Integrations → GitHub cache → Clear cache & restart** to remove downloaded GitHub data.
+The action restarts Gnosis. Save unfinished text first. Active AI tasks must finish before the action can proceed.
+
+Deletion runs on startup before requests begin, so old in-flight responses cannot restore cleared entries.
+It removes the persistent GitHub response cache, discovery state, file and commit inventories, and the browser HTTP cache.
+Restarting also removes in-memory profiles, comments, statuses, images, comparisons, and prepared files.
+
+Saved reviews, briefings, bookmarks, muted PRs, saved views, grouping choices, preferences, and sign-in remain.
+Daily briefing usage and GitHub cooldowns remain. The queue fetches fresh data under the existing API limits.
+
 ## Evidence
 
 A service test uses 415 unchanged PRs. After sixteen minutes, it makes zero detail requests and one repository-list request.

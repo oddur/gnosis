@@ -1,3 +1,4 @@
+import { Button } from './ui/button';
 import { PrInactivitySetting } from './PrInactivitySetting';
 import { normalizePrInactivityDays, DEFAULT_PR_INACTIVITY_DAYS } from '../lib/pr-inactivity';
 import { useState, useEffect, useRef } from 'react';
@@ -135,6 +136,17 @@ export function SettingsDialog({
   onReplayOnboarding,
   initialSection = 'queue',
 }: Props) {
+  const [clearingCache, setClearingCache] = useState(false);
+  const [cacheError, setCacheError] = useState('');
+  async function clearGitHubCache() {
+    setClearingCache(true);
+    setCacheError('');
+    try { await window.electronAPI.clearGitHubCache(); }
+    catch (error) {
+      setCacheError(error instanceof Error ? error.message : String(error));
+      setClearingCache(false);
+    }
+  }
   const [section, setSection] = useState<SettingsSection>(initialSection);
   useEffect(() => {
     if (open) setSection(initialSection);
@@ -731,6 +743,18 @@ export function SettingsDialog({
               </label>
             </Tabs.Content>
             <Tabs.Content value="integrations" className="settings-panel">
+              <section className="flex flex-col items-start gap-3" aria-labelledby="github-cache-title">
+                <h3 id="github-cache-title" className="text-sm font-medium">GitHub cache</h3>
+                <p className="settings-description">
+                  Remove downloaded PR details, changes, commits, comments, statuses, and images. Gnosis restarts
+                  and fetches them again as needed. Saved reviews, briefings, bookmarks, settings, and sign-in stay.
+                  Save any unfinished text before restarting.
+                </p>
+                <Button variant="outline" size="sm" disabled={clearingCache} onClick={() => void clearGitHubCache()}>
+                  {clearingCache ? 'Restarting…' : 'Clear cache & restart'}
+                </Button>
+                {cacheError && <p role="alert" className="text-sm text-[var(--color-danger)]">{cacheError}</p>}
+              </section>
               <section className="ai-setup-guide" aria-labelledby="ai-setup-title">
                 <h3 id="ai-setup-title">Set up an AI tool</h3>
                 <p>
