@@ -1,3 +1,4 @@
+import type { InspectionLoadOptions } from '../lib/pr-changes';
 import type { MutePrRequest } from '../lib/muted-prs';
 import type { StarPrRequest } from '../lib/starred-prs';
 import type { PrCommits, CommitSelection } from '../lib/pr-commits';
@@ -33,9 +34,10 @@ import type {
 declare global {
   interface Window {
     electronAPI: {
-      getPrCommits: (url: string, refresh?: boolean) => Promise<PrCommits>;
+      preparePrReview: (url: string, revision: { baseSha: string; headSha: string }) => Promise<void>;
+      getPrCommits: (url: string, refresh?: boolean, options?: InspectionLoadOptions) => Promise<PrCommits>;
       getCommitComparison: (selection: CommitSelection, background?: boolean) => Promise<PrChanges>;
-      getPrChanges: (url: string, refresh?: boolean) => Promise<PrChanges>;
+      getPrChanges: (url: string, refresh?: boolean, options?: InspectionLoadOptions) => Promise<PrChanges>;
       getPrChangeFile: (request: PrFileRequest, background?: boolean) => Promise<PrFileContents>;
       checkPrChanges: (url: string) => Promise<{ baseSha: string; headSha: string }>;
       askPrFile: (request: FileChatRequest) => Promise<string>;

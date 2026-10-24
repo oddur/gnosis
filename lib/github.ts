@@ -1,6 +1,7 @@
 import type { Octokit } from '@octokit/rest';
 import { parseGitHubLabels } from './github-labels';
 import { getGitHubClient } from './github-client';
+import { preparedChanges, preparedFile, preparedDiff } from './prepared-pr';
 import { getProvider } from './provider';
 import type { DiffSource } from './diffSource';
 import type {
@@ -83,6 +84,7 @@ export async function getPrDiff(
   repo: string,
   pullNumber: number,
   changedFiles?: ChangedFile[],
+  fresh = false,
 ): Promise<string> {
   try {
     const response = await octokit.request('GET /repos/{owner}/{repo}/pulls/{pull_number}', {
@@ -91,6 +93,7 @@ export async function getPrDiff(
       pull_number: pullNumber,
       headers: {
         accept: 'application/vnd.github.v3.diff',
+        ...(fresh ? { 'cache-control': 'no-cache' } : {}),
       },
     });
     return response.data as unknown as string;
@@ -103,7 +106,7 @@ export async function getPrDiff(
 
     console.warn('[github] Full diff too large, assembling from file patches');
     if (!changedFiles) {
-      changedFiles = await getChangedFiles(octokit, owner, repo, pullNumber);
+      changedFiles = await getChangedFiles(octokit, owner, repo, pullNumber, fresh);
     }
     return assembleUnifiedDiff(changedFiles);
   }
@@ -661,9 +664,9 @@ export class GitHubDiffSource implements DiffSource {
   private readonly pullNumber: number;
   private metadataPromise: Promise<PrMetadata> | null = null;
 
-  constructor(url: string, token: string | null) {
+  constructor(url: string, token: string | null, client?: Octokit) {
     this.key = url;
-    this.octokit = getGitHubClient(token);
+    this.octokit = client ?? getGitHubClient(token);
     const parsed = parsePrUrl(url);
     this.owner = parsed.owner;
     this.repo = parsed.repo;
@@ -671,13 +674,15 @@ export class GitHubDiffSource implements DiffSource {
   }
 
   getMetadata(): Promise<PrMetadata> {
-    this.metadataPromise ??= getPrMetadata(this.octokit, this.owner, this.repo, this.pullNumber);
+    this.metadataPromise ??= getPrMetadata(this.octokit, this.owner, this.repo, this.pullNumber, true);
     return this.metadataPromise;
   }
 
   private comparisonBase: Promise<string> | null = null;
   getComparisonBase(): Promise<string> {
     this.comparisonBase ??= this.getMetadata().then(async meta => {
+      const prepared = preparedChanges(this.octokit, this.key, meta);
+      if (prepared) return prepared.comparisonBase;
       const { data } = await this.octokit.repos.compareCommits({ owner: this.owner, repo: this.repo, base: meta.baseSha, head: meta.headSha });
       return data.merge_base_commit.sha;
     });
@@ -685,24 +690,40 @@ export class GitHubDiffSource implements DiffSource {
   }
   async assertCurrent(): Promise<void> {
     const before = await this.getMetadata();
-    const after = await getPrMetadata(this.octokit, this.owner, this.repo, this.pullNumber);
+    const after = await getPrMetadata(this.octokit, this.owner, this.repo, this.pullNumber, true);
     if (before.headSha !== after.headSha || before.baseSha !== after.baseSha || before.baseBranch !== after.baseBranch) {
       throw new Error('This PR changed during generation. Refresh and try again.');
     }
   }
 
-  getDiff(changedFiles?: ChangedFile[]): Promise<string> {
-    return getPrDiff(this.octokit, this.owner, this.repo, this.pullNumber, changedFiles);
+  async getDiff(changedFiles?: ChangedFile[]): Promise<string> {
+    const cached = preparedDiff(this.octokit, this.key, await this.getMetadata());
+    if (cached !== undefined) return cached;
+    return getPrDiff(this.octokit, this.owner, this.repo, this.pullNumber, changedFiles, true);
   }
 
-  getChangedFiles(): Promise<ChangedFile[]> {
-    return getChangedFiles(this.octokit, this.owner, this.repo, this.pullNumber);
+  async getChangedFiles(): Promise<ChangedFile[]> {
+    const cached = preparedChanges(this.octokit, this.key, await this.getMetadata());
+    if (cached) return cached.files.map(file => ({ filename: file.path, previous_filename: file.previousPath,
+      status: file.status, additions: file.additions, deletions: file.deletions, patch: file.patch }));
+    return getChangedFiles(this.octokit, this.owner, this.repo, this.pullNumber, true);
   }
 
   async getFileContent(filePath: string, ref: 'base' | 'head'): Promise<string | null> {
     const meta = await this.getMetadata();
+    const snapshot = preparedChanges(this.octokit, this.key, meta);
+    const file = snapshot?.files.find(file => file.path === filePath || (ref === 'base' && file.previousPath === filePath));
+    const contents = file && preparedFile(this.octokit, { url: this.key, path: file.path, baseSha: meta.baseSha, headSha: meta.headSha });
+    if (contents) {
+      const side = ref === 'base' ? contents.before : contents.after;
+      if (side.kind === 'text') return side.content;
+      if (side.kind === 'image' && side.dataUrl.startsWith('data:image/svg+xml;base64,'))
+        return Buffer.from(side.dataUrl.split(',')[1], 'base64').toString('utf-8');
+      return null;
+    }
     const gitRef = ref === 'base' ? await this.getComparisonBase() : meta.headSha;
-    return getFileContent(this.octokit, this.owner, this.repo, filePath, gitRef);
+    const [owner, repo] = ((ref === 'base' ? meta.baseRepo : meta.headRepo) ?? `${this.owner}/${this.repo}`).split('/');
+    return getFileContent(this.octokit, owner, repo, filePath, gitRef);
   }
 
   async getFileMetadata(changedFiles: ChangedFile[]): Promise<FileMetadata[]> {

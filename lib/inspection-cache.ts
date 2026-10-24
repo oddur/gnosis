@@ -3,6 +3,47 @@ import { prChangePreview } from './pr-change-preview';
 import { commitSelectionKey, type CommitSelection } from './pr-commits';
 import { fileRevisionKey, type PrChanges, type PrChangeFile } from './pr-changes';
 import type { FileDiffMetadata } from '@pierre/diffs';
+import { createPrInspectionCache } from './pr-inspection-cache';
+import type { PrCommits } from './pr-commits';
+
+export const latestCommitSelection = (list: PrCommits): CommitSelection | undefined => {
+  const commit = list.commits.at(-1);
+  return commit
+    ? {
+        url: list.url,
+        prBaseSha: list.metadata.baseSha,
+        prHeadSha: list.metadata.headSha,
+        firstSha: commit.sha,
+        lastSha: commit.sha,
+      }
+    : undefined;
+};
+
+export const inspectionData = createPrInspectionCache({
+  changes: (r, refresh, background) => window.electronAPI.getPrChanges(r.url, refresh, { revision: r, background }),
+  commits: (r, refresh, background) => window.electronAPI.getPrCommits(r.url, refresh, { revision: r, background }),
+  file: (snapshot, file) => inspectionFiles.read(inspectionFileRequest(snapshot, file), true),
+  comparison: async (list) => {
+    const selection = latestCommitSelection(list);
+    if (selection) await readComparison(selection, '', true);
+  },
+  review: (snapshot) => window.electronAPI.preparePrReview(snapshot.url, snapshot.metadata),
+  visible: () => document.visibilityState !== 'hidden',
+  prioritize: (urls) => {
+    inspectionFiles.prioritize(urls);
+    comparisonPriorities = new Map(urls.map((url, index) => [url, index]));
+  },
+  reset: () => {
+    inspectionEpoch++;
+    inspectionFiles.clear();
+    previews.clear();
+    comparisons.clear();
+    comparisonPriorities.clear();
+    pending.clear();
+    queue.clear();
+    failed.clear();
+  },
+});
 
 export const inspectionFiles = createPrFileCache((request, background) =>
   window.electronAPI.getPrChangeFile(request, background)
@@ -41,6 +82,8 @@ export function fileIsReady(snapshot: PrChanges, file: PrChangeFile) {
 export async function prepareFile(snapshot: PrChanges, file: PrChangeFile, background = false) {
   if (!fileIsReady(snapshot, file)) await inspectionFiles.read(inspectionFileRequest(snapshot, file), background);
 }
+let inspectionEpoch = 0;
+let comparisonPriorities = new Map<string, number>();
 const comparisons = new Map<string, PrChanges>();
 const pending = new Map<string, { promise: Promise<PrChanges>; background: boolean }>();
 export const peekComparison = (selection: CommitSelection) => comparisons.get(commitSelectionKey(selection));
@@ -79,19 +122,28 @@ export async function readComparison(
     return existing.background && !background
       ? existing.promise.catch(() => readComparison(selection, subjectId, false))
       : existing.promise;
+  const generation = inspectionEpoch;
   const promise = (async () => {
     const snapshot = saved ?? (await window.electronAPI.getCommitComparison(selection, background));
+    if (generation !== inspectionEpoch) return snapshot;
     const first = preferredFile(snapshot, subjectId);
     // A missing/binary first file must not prevent access to the rest of the comparison.
     if (first) await prepareFile(snapshot, first, background).catch(() => {});
+    if (generation !== inspectionEpoch) return snapshot;
     comparisons.set(key, snapshot);
     while (comparisons.size > 100) {
-      const oldest = comparisons.keys().next().value;
+      const oldest = [...comparisons]
+        .sort(
+          (a, b) => (comparisonPriorities.get(b[1].url) ?? Infinity) - (comparisonPriorities.get(a[1].url) ?? Infinity)
+        )
+        .at(0)?.[0];
       if (oldest === undefined) break;
       comparisons.delete(oldest);
     }
     return snapshot;
-  })().finally(() => pending.delete(key));
+  })().finally(() => {
+    if (pending.get(key)?.promise === promise) pending.delete(key);
+  });
   pending.set(key, { promise, background });
   return promise;
 }

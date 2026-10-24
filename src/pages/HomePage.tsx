@@ -1,5 +1,6 @@
 import { normalizePrInactivityDays } from '../../lib/pr-inactivity';
 import { GitHubSyncStatus } from '../../components/GitHubSyncStatus';
+import { inspectionData } from '../../lib/inspection-cache';
 import { PrMuteMenu } from '../../components/PrMuteMenu';
 import { MutedPrs } from '../../components/MutedPrs';
 import { isMutedReview } from '../../lib/muted-prs';
@@ -598,6 +599,19 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
     [visibleHistory, query, starredUrls]
   );
   const orderedItems = orderQueueItems(items);
+  // The active PR, current view, then the remaining queue. Revision identity
+  // prevents routine metadata/CI updates from repeating content downloads.
+  const inspectionTargets = [...(statusSubject?.members ?? []),
+    ...orderedItems.flatMap(item => item.subject.members), ...queue.items.flatMap(item => item.subject.members)];
+  const inspectionKey = JSON.stringify(inspectionTargets.map(member => ({ url: member.url, baseSha: member.baseSha, headSha: member.headSha })));
+  useEffect(() => {
+    const preload = () => inspectionData.setTargets(auth?.authenticated ? auth.login : null,
+      JSON.parse(inspectionKey) as { url: string; baseSha: string; headSha: string }[]);
+    preload();
+    document.addEventListener('visibilitychange', preload);
+    return () => document.removeEventListener('visibilitychange', preload);
+  }, [auth?.authenticated, auth?.login, inspectionKey]);
+  useEffect(() => () => inspectionData.stop(), []);
   const summaryIndex = orderedItems.findIndex((item) => item.subject.id === summaryItem?.subject.id);
   const moveSummary = (direction: number) => {
     const nextIndex = summaryIndex + direction;

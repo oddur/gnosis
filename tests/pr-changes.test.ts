@@ -5,6 +5,8 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { createGitHubClientPool } from '../lib/github-client';
 import { createPrChangesService } from '../src/pr-changes-service';
+import { GitHubDiffSource, getPrDiff } from '../lib/github';
+import { preparedDiff } from '../lib/prepared-pr';
 import { fileRevisionKey } from '../lib/pr-changes';
 import { registerChangeProgress, markFileViewed, isFileViewed } from '../lib/file-view-progress';
 const url = 'https://github.com/o/r/pull/1';
@@ -13,7 +15,8 @@ function fixture() {
   let head = 'head1',
     unstable = false,
     incomplete = false,
-    failContent = false;
+    failContent = false,
+    moveDuringDiff = false;
   const files = [
     { filename: 'src/new.ts', status: 'added', sha: 'new', patch: '@@ +1 @@\n+new', additions: 1, deletions: 0 },
     { filename: 'src/old.ts', status: 'removed', sha: 'old', patch: '@@ -1 @@\n-old', additions: 0, deletions: 1 },
@@ -37,13 +40,18 @@ function fixture() {
   ];
   const pool = createGitHubClientPool({
     minSpacingMs: 0,
-    fetch: (async (input: string) => {
+    fetch: (async (input: string, init?: RequestInit) => {
       const u = new URL(input);
       reads.push(u);
       const json = (data: unknown) =>
         new Response(JSON.stringify(data), {
           headers: { 'content-type': 'application/json', 'cache-control': 'no-cache' },
         });
+      if (new Headers(init?.headers).get('accept')?.includes('diff')) {
+        const diff = `diff for ${head}`;
+        if (moveDuringDiff) head = 'moved-during-diff';
+        return new Response(diff, { headers: { 'content-type': 'text/plain' } });
+      }
       if (u.pathname.endsWith('/files')) return json(files);
       if (u.pathname.includes('/compare/')) {
         if (unstable) head = 'moved';
@@ -79,6 +87,7 @@ function fixture() {
     unstable: () => (unstable = true),
     incomplete: () => (incomplete = true),
     failContent: () => (failContent = true),
+    moveDuringDiff: () => (moveDuringDiff = true),
   };
 }
 void test('Changes is cached, complete, account scoped, and pins content to merge base and fork head', async () => {
@@ -206,4 +215,52 @@ void test('large patch inventories remain pinned in memory when too large for di
   assert.equal((await service.manifest(client, url)).metadata.headSha, first.metadata.headSha);
   assert.equal(f.reads.length, count, 'Reopening Changes must not refetch an oversized inventory');
   assert.equal((await service.manifest(client, url, true)).metadata.headSha, 'head2');
+});
+
+void test('guided generation reuses the exact prepared revision, including renamed SVG source and absent sides', async () => {
+  const f = fixture(), client = f.pool.client('one'), service = createPrChangesService();
+  const snapshot = await service.manifest(client, url);
+  for (const file of snapshot.files) await service.content(client, { url, path: file.path, baseSha: 'base', headSha: 'head1' });
+  await service.prepareReview(client, url, snapshot.metadata);
+  const start = f.reads.length;
+  const source = new GitHubDiffSource(url, null, client);
+  assert.equal((await source.getMetadata()).headSha, 'head1');
+  assert.equal((await source.getChangedFiles()).length, 4);
+  assert.equal(await source.getDiff(), 'diff for head1');
+  assert.equal(await source.getComparisonBase(), 'merge-base');
+  assert.equal(await source.getFileContent('src/new.ts', 'head'), 'const value = 1;\n');
+  assert.equal(await source.getFileContent('src/new.ts', 'base'), null);
+  assert.equal(await source.getFileContent('src/old.ts', 'head'), null);
+  assert.equal(await source.getFileContent('art/old.svg', 'base'), '<svg/>');
+  assert.equal(f.reads.length - start, 1, 'Only the current PR metadata needs a network check');
+  await source.assertCurrent();
+  assert.equal(f.reads.length - start, 2, 'Generation can verify the revision again before saving');
+  const other = new GitHubDiffSource(url, null, f.pool.client('two'));
+  await other.getChangedFiles();
+  assert.ok(f.reads.slice(start + 2).some(u => u.pathname.endsWith('/files')), 'Another account cannot reuse this snapshot');
+});
+void test('new discovery revision bypasses saved latest and stale HTTP diff; old prepared revision stays pinned', async () => {
+  const f = fixture(), client = f.pool.client('one'), service = createPrChangesService();
+  const old = await service.manifest(client, url);
+  await service.prepareReview(client, url, old.metadata);
+  // Also seed the mutable HTTP diff endpoint before changing the PR.
+  await getPrDiff(client, 'o', 'r', 1);
+  f.move('head2');
+  const next = await service.manifest(client, url, false, { revision: { baseSha: 'base', headSha: 'head2' } });
+  assert.equal(next.metadata.headSha, 'head2');
+  await service.prepareReview(client, url, next.metadata);
+  assert.equal(preparedDiff(client, url, old.metadata), 'diff for head1');
+  assert.equal(preparedDiff(client, url, next.metadata), 'diff for head2');
+  const source = new GitHubDiffSource(url, null, client);
+  assert.equal(await source.getDiff(), 'diff for head2');
+  f.move('head3');
+  await assert.rejects(source.assertCurrent(), /changed during generation/);
+  assert.equal(await new GitHubDiffSource(url, null, client).getDiff(), 'diff for head3');
+});
+void test('a moving revision cannot poison the prepared review diff cache', async () => {
+  const f = fixture(), client = f.pool.client('one'), service = createPrChangesService();
+  const snapshot = await service.manifest(client, url);
+  f.moveDuringDiff();
+  await assert.rejects(service.prepareReview(client, url, snapshot.metadata), /changed while/);
+  assert.equal(preparedDiff(client, url, snapshot.metadata), undefined);
 });

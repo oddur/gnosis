@@ -52,12 +52,35 @@ GitHub latency and backoff can extend these intervals. Cached data remains visib
 Hidden windows stop recurring discovery and selected PR status requests. Existing background jobs can finish.
 Diffs and file contents retain their separate revision-based caches.
 
+## Preparing PR revisions
+
+Discovery starts a quiet preload when a PR's base or head SHA changes. The selected PR or stack goes first, followed by the filtered queue and remaining queue.
+Each job prepares the changed-file list, commit list, newest commit comparison, all changed-file contents, and full review diff.
+Only one preload step runs at a time. All requests use background priority and the shared GitHub allowance and backoff rules.
+Hidden windows pause between steps. Failed steps retry with increasing delays, without repeating completed steps.
+Unsupported files do not block other files. Preparing a revision never starts AI generation.
+
+Changes and Commits read prepared data from a shared renderer cache. The main process saves revision-specific data in the existing account cache.
+Opening a prepared tab needs no file-list download. An open diff stays on its displayed revision until the reviewer selects **Update changes**.
+Normal metadata and CI updates do not repeat downloads when the base and head SHAs remain unchanged.
+
+Guided reviews check the current PR revision, then reuse that revision's prepared file list, comparison base, full diff, and file contents.
+Generation checks the revision again before saving. Files from forks use their source repository, and renamed files retain both paths.
+Additional context, such as neighboring files and history, can still require requests.
+
+Preloading is bounded by API allowance and cache capacity. A first download, an evicted entry, an oversized file, or an unprepared historical commit can still require loading.
+The renderer retains up to 32 MB of file contents and 128 files. Eviction favors the selected PR, then the current view.
+Selecting a different PR prepares it again if its files were evicted. The persistent cache limits above remain unchanged.
+Account changes clear renderer data and discard late responses from the previous account.
+
 ## Evidence
 
 A service test uses 415 unchanged PRs. After sixteen minutes, it makes zero detail requests and one repository-list request.
 A single changed PR makes one detail request. A closure leaves the queue, and periodic full reconciliation still reads every repository page.
 Other tests cover progressive results, checkpoint recovery, credential changes, foreground priority, cache invalidation, and independent API allowances.
-The Electron test covers the header indicator, retry information, keyboard tooltips, stable controls, and compact layouts.
+The Electron tests cover the header indicator, retry information, keyboard tooltips, stable controls, and compact layouts.
+Preload tests verify tab opening without loading screens, file reuse, and updates that preserve the open diff.
+Service tests verify exact-revision reuse during generation, account isolation, and revisions that change during preparation.
 
 ## Follow-up
 

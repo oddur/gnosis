@@ -25,6 +25,15 @@ export interface PrFileRequest {
   headSha: string;
   path: string;
 }
+export interface InspectionRevision {
+  url: string;
+  baseSha: string;
+  headSha: string;
+}
+export interface InspectionLoadOptions {
+  background?: boolean;
+  revision?: Pick<InspectionRevision, 'baseSha' | 'headSha'>;
+}
 export type PrFileSide = { kind: 'absent' } | { kind: 'text'; content: string } | { kind: 'image'; dataUrl: string };
 export interface PrFileContents {
   before: PrFileSide;
