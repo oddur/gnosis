@@ -2524,3 +2524,9 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .muted-pr-list strong { font-size: 14px; font-weight: 500; }
 .muted-pr-list button { flex-shrink: 0; }
 .muted-prs-error { color: var(--destructive); font-size: 13px; margin-bottom: 16px; }
+
+.pr-inactivity-setting { width: 170px; max-width: 100%; }
+.pr-inactivity-setting input[type="number"] { width: 80px; min-height: 32px; padding: 4px 8px; border: 1px solid var(--input); border-radius: var(--radius-sm); background: var(--background); font-size: 14px; }
+.pr-inactivity-setting input[type="number"]:disabled { opacity: 0.5; }
+.pr-inactivity-setting input[type="checkbox"] { accent-color: var(--primary); }
+.queue-inactivity-link { font-size: 12px; line-height: 1.5; color: var(--primary); text-align: left; text-decoration: underline; text-underline-offset: 3px; }

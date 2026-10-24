@@ -1,3 +1,4 @@
+import { matchesPrInactivity, normalizePrInactivityDays } from '../../lib/pr-inactivity';
 import { withoutMutedMembers, isMutedReview } from '../../lib/muted-prs';
 import { searchHit, queueDocuments, reviewDocuments, searchDocuments, threadDocuments } from '../../lib/command-search';
 import { normalizeViews, editViewFilters, applyViewAction, activeViewFilters, type QueueViewAction } from '../../lib/saved-views';
@@ -303,7 +304,16 @@ if (polishScenario) {
   review.slides[1].title =
     'Adapt batches without changing order or allowing a busy producer to monopolize the worker during cancellation';
 }
+if (new URLSearchParams(location.search).has('inactivity')) {
+  const daysAgo = (days: number) => new Date(Date.now() - days * 86400000).toISOString();
+  items[0].subject.members[0].updatedAt = daysAgo(150);
+  items[0].subject.members[1].updatedAt = daysAgo(2);
+  items[0].subject.members[2].updatedAt = daysAgo(150);
+  items[1].subject.members[0].updatedAt = daysAgo(90);
+  for (const item of items.slice(2)) for (const member of item.subject.members) member.updatedAt = daysAgo(2);
+}
 let prefs: Preferences = {
+  prInactivityDays: JSON.parse(sessionStorage.getItem('fixture-inactivity-days') ?? '30'),
   instructions: '',
   provider: 'claude',
   model: DEFAULT_CLAUDE_MODEL,
@@ -495,6 +505,7 @@ const mocks = {
   loadPreferences: () => Promise.resolve(prefs),
   savePreferences: (next: Preferences) => {
     prefs = next;
+    sessionStorage.setItem('fixture-inactivity-days', JSON.stringify(next.prInactivityDays ?? 30));
     if (onboardingScenario) {
       sessionStorage.setItem('fixture-first-run-seen', String(next.firstRunSeen));
       sessionStorage.setItem('fixture-guest-mode', String(next.guestMode));
@@ -513,6 +524,7 @@ const mocks = {
     sessionStorage.setItem(filterStorageKey, JSON.stringify(queueFilters));
     return Promise.resolve(mocks.workbenchQueue());
   },
+  workbenchSnapshot: () => mocks.workbenchQueue(),
   workbenchMutePrs: (request: import('../../lib/muted-prs').MutePrRequest) => {
     const entries = new Map(fixtureMutes.map(entry => [entry.member.url, entry]));
     for (const member of request.members) {
@@ -612,7 +624,7 @@ if (root) {
 function visibleFixtureItems() {
   return items.flatMap(item => {
     const subject = withoutMutedMembers(item.subject, fixtureMutedUrls());
-    if (!subject) return [];
+    if (!subject || !matchesPrInactivity(subject, normalizePrInactivityDays(prefs.prInactivityDays), Date.now(), new Set(fixtureStars.map(entry => entry.member.url)))) return [];
     if (subject === item.subject) return [item];
     return [{ ...item, subject, briefing: undefined, review: item.review && !isMutedReview(item.review, fixtureMutedUrls()) ? item.review : undefined, starred: subject.members.some(m => fixtureStars.some(e => e.member.url === m.url)) }];
   });

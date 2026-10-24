@@ -1,3 +1,4 @@
+import { normalizePrInactivityDays } from '../lib/pr-inactivity';
 import { useId } from 'react';
 import type { QueueItem } from '../lib/workbench';
 import { RECENCY_DAYS, type QueueFilters } from '../lib/queue-filters';
@@ -6,12 +7,17 @@ export function QueueFilterPanel({
   filters,
   items,
   onChange,
+  prInactivityDays,
+  onManageInactivity,
 }: {
+  prInactivityDays?: number;
+  onManageInactivity?: () => void;
   filters: QueueFilters;
   items: QueueItem[];
   onChange: (patch: Partial<QueueFilters>) => void;
 }) {
   const id = useId();
+  const days = normalizePrInactivityDays(prInactivityDays);
   const members = items.flatMap((i) => i.subject.members).filter((m) => filters.starredOnly || (m.state === 'open' && !m.merged));
   const authors = [
     ...new Set([...members.map((m) => m.author), ...(filters.author === 'all' ? [] : [filters.author])]),
@@ -69,6 +75,12 @@ export function QueueFilterPanel({
   ];
   return (
     <section id="queue-filter-panel" className="queue-filter-panel" aria-label="Queue filters">
+      {onManageInactivity && <div className="queue-filter-policy">
+        <button type="button" className="queue-inactivity-link" onClick={onManageInactivity}
+          title="Change the global inactivity limit. Saved-view filters narrow this scope.">
+          {days ? `Active within ${days} days · starred PRs included` : 'No inactivity limit · change in Settings'}
+        </button>
+      </div>}
       <div className="queue-filter-policy queue-filter-scope">
         <label htmlFor={`${id}-involvement`}>
           Show

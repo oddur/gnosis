@@ -1,3 +1,4 @@
+import { normalizePrInactivityDays, matchesPrInactivity, isPrRecentlyUpdated } from '../lib/pr-inactivity';
 import { createMutedPrStore } from './muted-pr-store';
 import { isMutedReview, withoutMutedMembers, type MutePrRequest } from '../lib/muted-prs';
 import { createSavedViewStore } from './saved-view-store';
@@ -45,6 +46,7 @@ import type { Preferences, ReviewHistoryEntry, PrSearchResult, PrMetadata } from
 interface State {
   account: string;
   archivedRepos?: string[];
+  retainedInactiveIds?: string[];
   subjects: ReviewSubject[];
   overrides: GroupingOverride[];
   briefs: Partial<Record<string, Briefing>>;
@@ -64,7 +66,7 @@ interface State {
 }
 export type WorkbenchPreferences = Pick<
   Preferences,
-  'provider' | 'model' | 'watchedRepos' | 'autoBriefings' | 'briefingDailyLimit' | 'ignoreDependabotPrs'
+  'provider' | 'model' | 'watchedRepos' | 'autoBriefings' | 'briefingDailyLimit' | 'ignoreDependabotPrs' | 'prInactivityDays'
 > &
   Partial<Pick<Preferences, 'proactiveReviewOverrides' | 'proactiveProvider' | 'proactiveModel' | 'proactiveThinking'>>;
 interface Deps {
@@ -112,7 +114,9 @@ export function createWorkbenchService(deps: Deps) {
     createHash('sha256')
       .update(
         JSON.stringify([
-          'active-repositories-v1',
+          'pr-inactivity-v1',
+          normalizePrInactivityDays(deps.preferences().prInactivityDays),
+          stars.load(deps.auth().login ?? 'guest').map(entry => entry.member.url).sort(),
           deps.auth().token,
           [...deps.preferences().watchedRepos].sort(),
           deps.preferences().ignoreDependabotPrs !== false,
@@ -160,9 +164,14 @@ export function createWorkbenchService(deps: Deps) {
   function isArchived(member: ReviewMember) {
     return member.repoArchived === true || (load().archivedRepos ?? []).includes(member.repo.toLowerCase());
   }
-  function includeSubject(subject: ReviewSubject, muted = mutedUrls()) {
+  const inactivityDays = () => normalizePrInactivityDays(deps.preferences().prInactivityDays);
+  const withinInactivity = (subject: ReviewSubject, starred: ReadonlySet<string> = new Set(stars.load(load().account).map(entry => entry.member.url))) => matchesPrInactivity(subject, inactivityDays(), now(), starred);
+  function includeSubject(subject: ReviewSubject, muted = mutedUrls(), starred: ReadonlySet<string> = new Set(stars.load(load().account).map(entry => entry.member.url))) {
+    if (load().retainedInactiveIds?.includes(subject.id) && !subject.members.some(member =>
+      isMyPr(member, deps.auth().login) || deps.preferences().watchedRepos.some(repo => repo.toLowerCase() === member.repo.toLowerCase()) || starred.has(member.url)
+    )) return false;
     // Retain necessary parent context when a human-authored change depends on a bot PR.
-    return !subject.members.some(m => muted.has(m.url) || isArchived(m)) && subject.members.some(
+    return withinInactivity(subject, starred) && !subject.members.some(m => muted.has(m.url) || isArchived(m)) && subject.members.some(
       (m) => m.state === 'open' && (deps.preferences().ignoreDependabotPrs === false || !isDependabot(m.author))
     );
   }
@@ -178,7 +187,7 @@ export function createWorkbenchService(deps: Deps) {
     const filters = normalizeQueueFilters(s.filters);
     const selection = modelSettings();
     const knownUrls = new Set(s.subjects.flatMap((subject) => subject.members.map((m) => m.url)));
-    const activeSubjects = new Set(visibleSubjects.filter(subject => includeSubject(subject, muted)));
+    const activeSubjects = new Set(visibleSubjects.filter(subject => includeSubject(subject, muted, starredUrls)));
     const subjects = [
       ...visibleSubjects,
       ...groupSubjects(
@@ -294,6 +303,8 @@ export function createWorkbenchService(deps: Deps) {
       if (paused) throw paused;
     };
     const prefs = deps.preferences();
+    const days = inactivityDays();
+    const isRecent = (updatedAt: string) => isPrRecentlyUpdated(updatedAt, days, now());
     const previousMembers = new Map([
       ...s.subjects.flatMap((sub) => sub.members.map((m) => [m.url, m] as const)),
       ...(pending?.members ?? []).map((m) => [m.url, m] as const),
@@ -315,6 +326,7 @@ export function createWorkbenchService(deps: Deps) {
     const listings = createDiscoveryListings(octokit, listingState, {
       login,
       includeAssigned: true,
+      updatedSince: days ? new Date(Math.floor((now() - days * 86400000) / 1000) * 1000).toISOString().replace('.000Z', 'Z') : undefined,
       now: now(),
       beforeRead: checkAllowance,
       save: checkpoint,
@@ -342,7 +354,7 @@ export function createWorkbenchService(deps: Deps) {
       // Search excludes archived repositories, so these are active even after an unarchive.
       for (const repo of new Set(found.map(pr => `${pr.repoOwner}/${pr.repoName}`))) setArchiveState(repo, false);
       const seeds = new Map<string, Pick<PrSearchResult, 'url' | 'role' | 'updatedAt'>>(
-        found.filter((m) => prefs.ignoreDependabotPrs === false || !isDependabot(m.author)).map((m) => [m.url, m])
+        found.filter((m) => isRecent(m.updatedAt) && (prefs.ignoreDependabotPrs === false || !isDependabot(m.author))).map((m) => [m.url, m])
       );
       for (const [index, fullName] of (mineOnly ? [] : prefs.watchedRepos).entries()) {
         progress(`Checking ${fullName}`, { completed: index, total: prefs.watchedRepos.length, unit: 'repositories' });
@@ -352,6 +364,7 @@ export function createWorkbenchService(deps: Deps) {
           for (const pr of (await listRepo(fullName)).data)
             if (
               !seeds.has(pr.html_url) &&
+              isRecent(pr.updated_at) &&
               (prefs.ignoreDependabotPrs === false || !isDependabot(pr.user?.login ?? 'unknown'))
             )
               seeds.set(pr.html_url, { url: pr.html_url, role: 'watched', updatedAt: pr.updated_at });
@@ -361,12 +374,18 @@ export function createWorkbenchService(deps: Deps) {
             if (
               m.repo === fullName &&
               m.state === 'open' &&
+              isRecent(m.updatedAt) &&
               !seeds.has(m.url) &&
               (prefs.ignoreDependabotPrs === false || !isDependabot(m.author))
             )
               seeds.set(m.url, { ...m, role: 'watched' });
           warnings.push(`Could not refresh ${fullName}. Some changes may be missing.`);
         }
+      }
+      // Explicit bookmarks remain discovery seeds even when their activity is old.
+      for (const { member } of stars.load(s.account)) {
+        if (member.state === 'open' && !member.merged && !isArchived(member) && !mutedUrls().has(member.url))
+          seeds.set(member.url, member);
       }
       const add = async (
         url: string,
@@ -442,7 +461,7 @@ export function createWorkbenchService(deps: Deps) {
       for (let changed = true; changed; ) {
         changed = false;
         for (const override of s.overrides) {
-          if (mineOnly && !urls.has(override.parent) && !urls.has(override.child)) continue;
+          if (!urls.has(override.parent) && !urls.has(override.child)) continue;
           for (const url of [override.parent, override.child])
             if (!urls.has(url)) {
               urls.set(url, 'watched');
@@ -537,7 +556,12 @@ export function createWorkbenchService(deps: Deps) {
             (subject) => !subject.members.some((member) => members.has(member.url) || isMyPr(member, login))
           )
         : [];
-      s.subjects = [...updatedSubjects, ...untouched];
+      // Keep inactive snapshots for local search and instant widening, without
+      // reintroducing subjects that were part of this completed discovery.
+      const represented = new Set([...updatedSubjects, ...untouched].flatMap(subject => subject.members.map(member => member.url)));
+      const inactive = s.subjects.filter(subject => !withinInactivity(subject) && !subject.members.some(member => represented.has(member.url)));
+      s.subjects = [...updatedSubjects, ...untouched, ...inactive];
+      s.retainedInactiveIds = [...inactive.map(subject => subject.id), ...untouched.filter(subject => s.retainedInactiveIds?.includes(subject.id)).map(subject => subject.id)];
       stars.update(
         s.account,
         s.subjects.flatMap((subject) => subject.members)
@@ -819,6 +843,7 @@ export function createWorkbenchService(deps: Deps) {
   }
   return {
     cached: () => view(true),
+    snapshot: (): WorkbenchQueue => deps.auth().token && deps.auth().login ? view() : { items: [], warnings: [], remaining: 0 },
     queue,
     mutedUrls,
     isMutedReview: (entry: Pick<ReviewHistoryEntry, 'prUrl' | 'snapshot'>) => isMutedReview(entry, mutedUrls()),

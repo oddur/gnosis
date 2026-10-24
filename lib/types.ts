@@ -306,6 +306,8 @@ export type { ClaudeModel, CodexModel, ModelId, Provider } from './models';
 
 export interface Preferences {
   ignoreDependabotPrs?: boolean;
+  /** Days since the last PR update; zero disables the global inactivity limit. */
+  prInactivityDays?: number;
   autoBriefings?: boolean;
   briefingDailyLimit?: number;
   instructions: string;
