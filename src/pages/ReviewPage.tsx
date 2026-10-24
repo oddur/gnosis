@@ -631,7 +631,7 @@ export function ReviewPage({
   // (total - 1)` so the very first slide already shows a visible
   // sliver of progress — a small but meaningful "you've started"
   // signal. Slide 1 of 10 = 10%, slide 5 = 50%, slide 10 = 100%.
-  const progress = currentSlide === 0 ? 0 : (currentSlide / review.slides.length) * 100;
+  const progress = review.slides.length ? Math.min(100, Math.max(0, (currentSlide / review.slides.length) * 100)) : 0;
 
   // Surface the previous and next slide titles to the bottom nav so
   // it can render them as labels — much more informative than
@@ -645,7 +645,8 @@ export function ReviewPage({
       {/* Top-of-page reading progress hairline. 1px tall, fills in
           the brand claret as the reader moves through the deck.
           Honors prefers-reduced-motion via .loading-progress-fill. */}
-      <div className="relative h-px w-full bg-transparent shrink-0" role="progressbar" aria-valuenow={progress}>
+      <div className="relative h-px w-full bg-transparent shrink-0" role="progressbar" aria-label="Review position" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}
+        aria-valuetext={currentSlide === 0 ? 'Overview' : `Topic ${currentSlide} of ${review.slides.length}`}>
         <div
           className="absolute left-0 top-0 h-px bg-[var(--ring)] loading-progress-fill"
           style={{ width: `${progress}%` }}
