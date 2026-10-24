@@ -443,7 +443,7 @@ const mocks = {
   checkPrChanges: (url:string) => {const member=items.flatMap(i=>i.subject.members).find(m=>m.url===url)??members[0];return Promise.resolve({headSha:member.headSha,baseSha:member.baseSha});},
   askPrFile: () => Promise.resolve('The worker now advances to the next queued item. This changes the retry boundary.'),
   getGitHubProfile: (login:string) => Promise.resolve({login,name:'Morgan Developer',bio:'Building reliable command queues.',company:'Klang',location:'Berlin',type:'User'}),
-  getQueueSignals: (requests: import('../../lib/queue-signals').QueueSignalRequest[]) => Promise.resolve(requests.map((request, i) => ({ ...request, checkedAt: Date.now(), comments: i % 2 ? 0 : 4, checks: { state: 'success' as const, passed: 129, skipped: 1, total: 130 } }))),
+  getQueueSignals: (requests: import('../../lib/queue-signals').QueueSignalRequest[]) => Promise.resolve(requests.map((request, i) => ({ ...request, checkedAt: Date.now(), readiness: {state:'OPEN',isDraft:false,mergeable:'MERGEABLE',mergeState:'CLEAN',reviewDecision:'APPROVED',baseBranch:items.flatMap(i=>i.subject.members).find(m=>m.url===request.url)?.baseBranch ?? 'main',baseSha:'base',behindBy:0,mergeQueue:false,queueState:null}, comments: i % 2 ? 0 : 4, checks: { state: 'success' as const, passed: 129, skipped: 1, total: 130 } }))),
   commandSearch: async (query:string, includeBots=false, recentIds:string[]=[]) => {
     const queue=await mocks.workbenchQueue();
     const docs=[...queueDocuments(queue),...reviewDocuments(review,history[0],queue)];
@@ -521,10 +521,11 @@ const mocks = {
   loadReview: () => Promise.resolve(review),
   reRenderHunks: (r: ReviewGuide) => Promise.resolve(r),
   getReviewThreads: () => Promise.resolve({ headSha: 'fixture-head', baseSha: 'fixture-base', threads: [] }),
-  getPrStatus: () =>
+  getPrStatus: async (url: string) =>
     statusFailures-- > 0
       ? Promise.reject(new Error('API rate limit exceeded. Request ID fixture-request. Retry after the limit resets.'))
       : Promise.resolve({
+          signals: (await mocks.getQueueSignals([{url, headSha: items.flatMap(i=>i.subject.members).find(m=>m.url===url)?.headSha ?? ''}]))[0],
           labels: [],
           mergeable: true,
           isDraft: false,

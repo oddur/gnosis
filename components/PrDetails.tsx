@@ -5,6 +5,7 @@ import type { PrStatus } from '../lib/types';
 import { Markdown } from './Markdown';
 import { PrLabels } from './PrLabels';
 import { PrReadiness } from './PrReadiness';
+import type { QueueSignals } from '../lib/queue-signals';
 
 function date(value: string) {
   const parsed = new Date(value);
@@ -16,6 +17,7 @@ function date(value: string) {
 export function PrDetails({
   member: m,
   status,
+  signals,
   statusError,
   onRetryStatus,
   showTitle = true,
@@ -23,6 +25,7 @@ export function PrDetails({
 }: {
   member: ReviewMember;
   status?: PrStatus;
+  signals?: QueueSignals;
   statusError?: string;
   onRetryStatus?: () => void;
   showTitle?: boolean;
@@ -51,7 +54,7 @@ export function PrDetails({
           </a>
         </header>
       )}
-      <PrReadiness member={m} status={status} error={statusError} onRetry={onRetryStatus} />
+      <PrReadiness member={m} status={status} signals={signals} error={statusError} onRetry={onRetryStatus} />
       <div className="pr-details-columns">
         <section className="pr-description" aria-label={`Author description for PR #${m.number}`}>
           <SectionHeading>Author description</SectionHeading>

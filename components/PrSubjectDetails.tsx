@@ -2,6 +2,9 @@ import { PrDetails } from './PrDetails';
 import { memberReadiness } from './PrReadiness';
 import type { ReviewSubject } from '../lib/workbench';
 import type { PrStatus } from '../lib/types';
+import type { QueueSignals } from '../lib/queue-signals';
+import { mergeReadiness } from '../lib/merge-readiness';
+import { ReadinessBadge } from './MergeReadiness';
 
 export function PrSubjectDetails({
   subject,
@@ -11,6 +14,7 @@ export function PrSubjectDetails({
   statusErrors = {},
   onRetryStatus,
   compactIdentity = false,
+  signals = [],
 }: {
   subject: ReviewSubject;
   activeUrl: string;
@@ -19,6 +23,7 @@ export function PrSubjectDetails({
   statusErrors?: Record<string, string>;
   onRetryStatus?: () => void;
   compactIdentity?: boolean;
+  signals?: QueueSignals[];
 }) {
   const member = subject.members.find((m) => m.url === activeUrl) ?? subject.members[0];
   const stacked = subject.members.length > 1;
@@ -51,7 +56,9 @@ export function PrSubjectDetails({
                         #{m.number} {m.title}
                       </strong>
                       <small>{relationship(m.url)}</small>
-                      <small>{memberReadiness(m, statuses[m.url], statusErrors[m.url])}</small>
+                      <ReadinessBadge
+                        readiness={mergeReadiness(m, signals.find((s) => s.url === m.url) ?? statuses[m.url]?.signals)}
+                      />
                     </span>
                   </button>
                 </li>
@@ -64,7 +71,13 @@ export function PrSubjectDetails({
               {subject.members.map((m, i) => (
                 <option key={m.url} value={m.url}>
                   {i + 1} of {subject.members.length} · #{m.number} ·{' '}
-                  {memberReadiness(m, statuses[m.url], statusErrors[m.url])} — {m.title}
+                  {memberReadiness(
+                    m,
+                    statuses[m.url],
+                    statusErrors[m.url],
+                    signals.find((s) => s.url === m.url)
+                  )}{' '}
+                  — {m.title}
                 </option>
               ))}
             </select>
@@ -89,6 +102,7 @@ export function PrSubjectDetails({
           showTitle={stacked}
           showIdentity={stacked || !compactIdentity}
           status={statuses[member.url]}
+          signals={signals.find((s) => s.url === member.url)}
           statusError={statusErrors[member.url]}
           onRetryStatus={onRetryStatus}
         />

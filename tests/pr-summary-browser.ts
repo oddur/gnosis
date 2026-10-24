@@ -83,7 +83,7 @@ void app.whenReady().then(async () => {
     assert.match(await js<string>("document.querySelector('.pr-metadata').textContent"), /lena/);
     assert.equal(await js("document.querySelector('.pr-secondary-metadata').open"), false);
     assert.equal(
-      await js("document.querySelector('.pr-readiness').getBoundingClientRect().bottom < 350"),
+      await js("document.querySelector('.pr-merge-status').getBoundingClientRect().bottom < 350"),
       true,
       'Readiness belongs in the first viewport'
     );

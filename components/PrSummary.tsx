@@ -7,12 +7,15 @@ import { PrChangesView } from './PrChangesView';
 import type { Preferences } from '../lib/types';
 import { GitHubAuthor } from './GitHubAuthor';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowLeft, ChevronLeft, ChevronRight, ExternalLink, Layers } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, ChevronRight, ExternalLink, Layers, RefreshCw } from 'lucide-react';
 import { Markdown } from './Markdown';
 import { PrSubjectDetails } from './PrSubjectDetails';
 import { type QueueItem } from '../lib/workbench';
 import type { PrStatus } from '../lib/types';
 import { timeAgo } from '../lib/utils';
+import { useQueueSignals } from '../lib/use-queue-signals';
+import { subjectReadiness } from '../lib/merge-readiness';
+import { ReadinessBadge, ReadinessCheckedAt } from './MergeReadiness';
 
 export interface PrReadingPosition {
   memberUrl: string;
@@ -21,6 +24,8 @@ export interface PrReadingPosition {
 
 export function PrSummary({
   item,
+  account,
+  statusRefreshing,
   tab,
   onTabChange,
   preferences,
@@ -41,6 +46,8 @@ export function PrSummary({
   shortcutsEnabled = true,
 }: {
   item: QueueItem;
+  account: string | null;
+  statusRefreshing: boolean;
   tab: 'summary' | 'changes' | 'commits' | 'explanation';
   onTabChange: (tab: 'summary' | 'changes' | 'commits' | 'explanation') => void;
   preferences: Preferences | null;
@@ -80,6 +87,11 @@ export function PrSummary({
   const activeUrl = item.subject.members.find((m) => m.url === memberUrl)?.url ?? item.subject.members[0].url;
   const stacked = item.subject.members.length > 1;
   const first = item.subject.members[0];
+  const { ref: statusRef, values: signals } = useQueueSignals(
+    account,
+    item.subject.members.map((m) => ({ url: m.url, headSha: m.headSha }))
+  );
+  const readiness = subjectReadiness(item.subject, signals);
   const state = first.merged ? 'Merged' : first.state === 'closed' ? 'Closed' : first.isDraft ? 'Draft' : 'Open';
   useEffect(() => {
     heading.current?.focus({ preventScroll: true });
@@ -223,6 +235,24 @@ export function PrSummary({
             )}
           </div>
         </header>
+        <div ref={statusRef} className="pr-merge-status" aria-label="Merge readiness">
+          <ReadinessBadge readiness={readiness} />
+          <ReadinessCheckedAt readiness={readiness} />
+          <button
+            type="button"
+            aria-label="Refresh status"
+            title={statusRefreshing ? 'Refreshing status…' : 'Refresh status'}
+            aria-busy={statusRefreshing}
+            disabled={statusRefreshing}
+            onClick={onRetryStatus}
+          >
+            <RefreshCw
+              size={14}
+              aria-hidden="true"
+              className={statusRefreshing ? 'motion-safe:animate-spin' : undefined}
+            />
+          </button>
+        </div>
         <Tabs.List className="pr-overview-tabs" aria-label="PR overview">
           <Tabs.Trigger value="summary">Summary</Tabs.Trigger>
           <Tabs.Trigger value="changes">Changes</Tabs.Trigger>
@@ -283,6 +313,7 @@ export function PrSummary({
               </details>
             )}
             <PrSubjectDetails
+              signals={signals}
               compactIdentity
               subject={item.subject}
               activeUrl={activeUrl}

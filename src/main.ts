@@ -4,7 +4,7 @@ import { createPrChangesService } from './pr-changes-service';
 import type { FileChatRequest, PrFileRequest } from '../lib/pr-changes';
 import { createGitHubProfileService } from './github-profile-service';
 import { createQueueSignalsService } from './queue-signals-service';
-import type { QueueSignalRequest } from '../lib/queue-signals';
+import type { QueueSignalRequest, QueueSignalOptions, QueueSignals } from '../lib/queue-signals';
 import { githubCachedResponses } from '../lib/github-client';
 import { createCommandSearchService } from './command-search-service';
 import type { QueueViewAction } from '../lib/saved-views';
@@ -1356,7 +1356,7 @@ ipcMain.handle(
   }
 );
 
-async function fetchPrStatus(prUrl: string): Promise<PrStatus | null> {
+async function fetchPrStatus(prUrl: string, force = false): Promise<PrStatus | null> {
   // Local reviews have no CI, no reviewers, no mergeability — return null so
   // callers that render PR status chrome simply show nothing.
   if (isLocalUrl(prUrl)) return null;
@@ -1366,21 +1366,27 @@ async function fetchPrStatus(prUrl: string): Promise<PrStatus | null> {
   const { owner, repo, pullNumber } = parsePrUrl(prUrl);
 
   const [prData, reviewSummary] = await Promise.all([
-    getPrMetadata(octokit, owner, repo, pullNumber),
+    getPrMetadata(octokit, owner, repo, pullNumber, force),
     getReviewStatus(octokit, owner, repo, pullNumber),
   ]);
 
-  const ciStatus = await getCiStatus(octokit, owner, repo, prData.headSha).catch(() => ({
-    checks: [] as CiCheck[],
-    conclusion: 'neutral' as const,
-  }));
+  const [ciStatus, signals] = await Promise.all([
+    getCiStatus(octokit, owner, repo, prData.headSha).catch(() => ({
+      checks: [] as CiCheck[],
+      conclusion: 'neutral' as const,
+    })),
+    getQueueSignals(octokit, [{ url: prUrl, headSha: prData.headSha }], { force }).then(
+      ([value]): QueueSignals | undefined => value
+    ),
+  ]);
 
   return {
+    signals,
     labels: prData.labels,
     mergeable: prData.mergeable,
     isDraft: prData.isDraft,
     ciChecks: ciStatus.checks,
-    ciConclusion: ciStatus.conclusion,
+    ciConclusion: signals?.checks.state ?? ciStatus.conclusion,
     reviewSummary,
     baseBranch: prData.baseBranch,
     commitCount: prData.commitCount,
@@ -1405,11 +1411,11 @@ ipcMain.handle('load-pr-image', (_event, url: string) => {
   return loadPrImage(getGitHubClient(token), url);
 });
 
-ipcMain.handle('get-pr-status', async (_event, prUrl: string): Promise<PrStatus> => {
+ipcMain.handle('get-pr-status', async (_event, prUrl: string, force: boolean = false): Promise<PrStatus> => {
   if (isLocalUrl(prUrl)) {
     throw new Error('Local review — no PR status available');
   }
-  const status = await fetchPrStatus(prUrl);
+  const status = await fetchPrStatus(prUrl, force);
   if (!status) throw new Error('Not authenticated');
   return status;
 });
@@ -2356,10 +2362,10 @@ ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
 
 const getGitHubProfile = createGitHubProfileService();
 const getQueueSignals = createQueueSignalsService();
-ipcMain.handle('get-queue-signals', (_event, requests: QueueSignalRequest[]) => {
+ipcMain.handle('get-queue-signals', (_event, requests: QueueSignalRequest[], options?: QueueSignalOptions) => {
   const token = getResolvedToken();
   if (!token) return [];
-  return getQueueSignals(getGitHubClient(token), requests);
+  return getQueueSignals(getGitHubClient(token), requests, options);
 });
 ipcMain.handle('get-github-profile', (_event, login:string) => {
   const token=getResolvedToken();

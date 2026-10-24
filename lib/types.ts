@@ -231,6 +231,7 @@ export interface ReviewGuide {
 }
 
 export interface PrStatus {
+  signals?: import('./queue-signals').QueueSignals;
   labels: string[];
   mergeable: boolean | null;
   isDraft: boolean;

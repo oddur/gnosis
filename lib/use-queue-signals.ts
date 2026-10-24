@@ -15,6 +15,21 @@ const accounts = new Map<
   string,
   { entries: Map<string, Entry>; batch: Map<string, BatchItem>; timer?: ReturnType<typeof setTimeout> }
 >();
+const updates = new EventTarget();
+export function publishQueueSignals(scope: string, values: QueueSignals[]) {
+  let account = accounts.get(scope);
+  if (!account) {
+    account = { entries: new Map(), batch: new Map() };
+    accounts.set(scope, account);
+  }
+  for (const value of values) {
+    const key = queueSignalKey(value);
+    const entry = account.entries.get(key);
+    if (entry?.value && entry.value.checkedAt > value.checkedAt) continue;
+    account.entries.set(key, { ...entry, value, expires: value.checkedAt + QUEUE_SIGNALS_TTL });
+  }
+  updates.dispatchEvent(new Event(scope));
+}
 function read(scope: string, request: QueueSignalRequest): Promise<QueueSignals | undefined> {
   let account = accounts.get(scope);
   if (!account) {
@@ -43,11 +58,13 @@ function read(scope: string, request: QueueSignalRequest): Promise<QueueSignals 
             item.resolve(undefined);
             continue;
           }
-          record.value = result.find((value) => queueSignalKey(value) === id) ?? record.value;
+          const value = result.find((value) => queueSignalKey(value) === id);
+          if (value && (!record.value || value.checkedAt >= record.value.checkedAt)) record.value = value;
           record.expires = Date.now() + QUEUE_SIGNALS_TTL;
           record.pending = undefined;
           item.resolve(record.value);
         }
+        updates.dispatchEvent(new Event(scope));
       }
       for (const [id, record] of state.entries) {
         if (state.entries.size <= 500) break;
@@ -68,10 +85,20 @@ export function useQueueSignals(scope: string | null, requests: QueueSignalReque
     const element = ref.current;
     if (!element || !scope) return;
     const members = JSON.parse(key) as QueueSignalRequest[];
+    const update = () =>
+      setValues(
+        members.flatMap((request) => {
+          const value = accounts.get(scope)?.entries.get(queueSignalKey(request))?.value;
+          return value ? [value] : [];
+        })
+      );
+    update();
+    updates.addEventListener(scope, update);
     let visible = false,
       cancelled = false;
     const load = () => {
       if (!visible || document.visibilityState === 'hidden') return;
+      update();
       void Promise.all(members.map((request) => read(scope, request))).then((results) => {
         if (cancelled) return;
         setValues(results.filter((v): v is QueueSignals => !!v));
@@ -80,7 +107,19 @@ export function useQueueSignals(scope: string | null, requests: QueueSignalReque
     };
     const observer = new IntersectionObserver((entries) => {
       visible = entries[0].isIntersecting;
-      if (visible) load();
+      if (visible) {
+        // Restore persisted snapshots before waiting on GitHub, including expired snapshots.
+        void (async () => {
+          for (let i = 0; i < members.length; i += 25) {
+            const cached = await window.electronAPI
+              .getQueueSignals(members.slice(i, i + 25), { cachedOnly: true })
+              .catch(() => []);
+            if (cancelled) return;
+            publishQueueSignals(scope, cached);
+          }
+          load();
+        })();
+      }
     });
     observer.observe(element);
     const timer = setInterval(load, QUEUE_SIGNALS_TTL);
@@ -90,6 +129,7 @@ export function useQueueSignals(scope: string | null, requests: QueueSignalReque
       observer.disconnect();
       clearInterval(timer);
       document.removeEventListener('visibilitychange', load);
+      updates.removeEventListener(scope, update);
     };
   }, [scope, key]);
   return { ref, values, loaded };
