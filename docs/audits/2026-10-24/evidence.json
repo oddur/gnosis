@@ -1,0 +1,1294 @@
+{
+  "baseline": "39f9b65",
+  "runtime": "Electron 41.2.1 on macOS arm64",
+  "axe": "4.14.0",
+  "method": "Seeded workbench fixtures; modal scans scoped to the open dialog to avoid underlying shadow-DOM contrast false positives. Raw findings require manual triage; repeated findings are not unique defects. No real GitHub/model calls.",
+  "states": [
+    {
+      "state": "queue-light",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 1280,
+        "height": 768,
+        "scrollWidth": 1280,
+        "theme": "light",
+        "controls": 34
+      },
+      "violations": [
+        {
+          "id": "label-content-name-mismatch",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                "button[aria-label=\"GitHub account\"]"
+              ],
+              "summary": "Fix any of the following:\n  Text inside the element is not included in the accessible name"
+            }
+          ]
+        }
+      ],
+      "incomplete": [
+        {
+          "id": "aria-valid-attr-value",
+          "count": 3
+        },
+        {
+          "id": "color-contrast",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "state": "queue-before-scale",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 1100,
+        "height": 700,
+        "scrollWidth": 1100,
+        "theme": "light",
+        "controls": 34
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-valid-attr-value",
+          "count": 3
+        },
+        {
+          "id": "color-contrast",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "state": "filters-dark",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 1280,
+        "height": 768,
+        "scrollWidth": 1280,
+        "theme": "dark",
+        "controls": 44
+      },
+      "violations": [
+        {
+          "id": "label-content-name-mismatch",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                "button[aria-label=\"GitHub account\"]"
+              ],
+              "summary": "Fix any of the following:\n  Text inside the element is not included in the accessible name"
+            }
+          ]
+        }
+      ],
+      "incomplete": [
+        {
+          "id": "aria-valid-attr-value",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "state": "summary-light",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 980,
+        "height": 700,
+        "scrollWidth": 980,
+        "theme": "light",
+        "controls": 13
+      },
+      "violations": [
+        {
+          "id": "label",
+          "impact": "critical",
+          "nodes": [
+            {
+              "target": [
+                "li:nth-child(1) > input"
+              ],
+              "summary": "Fix any of the following:\n  Element does not have an implicit (wrapped) <label>\n  Element does not have an explicit <label>\n  aria-label attribute does not exist or is empty\n  aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty\n  Element has no title attribute\n  Element has no placeholder attribute\n  Element's default semantics were not overridden with role=\"none\" or role=\"presentation\""
+            },
+            {
+              "target": [
+                "li:nth-child(2) > input"
+              ],
+              "summary": "Fix any of the following:\n  Element does not have an implicit (wrapped) <label>\n  Element does not have an explicit <label>\n  aria-label attribute does not exist or is empty\n  aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty\n  Element has no title attribute\n  Element has no placeholder attribute\n  Element's default semantics were not overridden with role=\"none\" or role=\"presentation\""
+            }
+          ]
+        }
+      ],
+      "incomplete": [
+        {
+          "id": "aria-valid-attr-value",
+          "count": 1
+        },
+        {
+          "id": "color-contrast",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "state": "summary-dark",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 980,
+        "height": 700,
+        "scrollWidth": 980,
+        "theme": "dark",
+        "controls": 13
+      },
+      "violations": [
+        {
+          "id": "label",
+          "impact": "critical",
+          "nodes": [
+            {
+              "target": [
+                "li:nth-child(1) > input"
+              ],
+              "summary": "Fix any of the following:\n  Element does not have an implicit (wrapped) <label>\n  Element does not have an explicit <label>\n  aria-label attribute does not exist or is empty\n  aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty\n  Element has no title attribute\n  Element has no placeholder attribute\n  Element's default semantics were not overridden with role=\"none\" or role=\"presentation\""
+            },
+            {
+              "target": [
+                "li:nth-child(2) > input"
+              ],
+              "summary": "Fix any of the following:\n  Element does not have an implicit (wrapped) <label>\n  Element does not have an explicit <label>\n  aria-label attribute does not exist or is empty\n  aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty\n  Element has no title attribute\n  Element has no placeholder attribute\n  Element's default semantics were not overridden with role=\"none\" or role=\"presentation\""
+            }
+          ]
+        }
+      ],
+      "incomplete": [
+        {
+          "id": "aria-valid-attr-value",
+          "count": 1
+        },
+        {
+          "id": "color-contrast",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "state": "review-light",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 1280,
+        "height": 768,
+        "scrollWidth": 1280,
+        "theme": "light",
+        "controls": 25
+      },
+      "violations": [
+        {
+          "id": "aria-progressbar-name",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                ".bg-transparent"
+              ],
+              "summary": "Fix any of the following:\n  aria-label attribute does not exist or is empty\n  aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty\n  Element has no title attribute"
+            }
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-line-number=\"2\"] > span:nth-child(1)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.8 (foreground color: #f97583, background color: #2e4738, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-line-number=\"2\"] > span:nth-child(4)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.8 (foreground color: #f97583, background color: #2e4738, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-line-number=\"2\"] > span:nth-child(6)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.99 (foreground color: #b392f0, background color: #2e4738, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-line=\"3\"] > span:nth-child(1)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.8 (foreground color: #f97583, background color: #2e4738, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-base-line=\"2\"] > span:nth-child(2)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.32 (foreground color: #f97583, background color: #4b3336, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-line=\"4\"] > span:nth-child(2)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.8 (foreground color: #f97583, background color: #2e4738, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "span[data-diff-span=\"\"]:nth-child(4) > span:nth-child(1)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 2.68 (foreground color: #f97583, background color: #2f623e, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-line=\"4\"] > span:nth-child(6)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.99 (foreground color: #b392f0, background color: #2e4738, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-line=\"5\"] > span:nth-child(2)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.8 (foreground color: #f97583, background color: #2e4738, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-line=\"6\"] > span:nth-child(2)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.99 (foreground color: #b392f0, background color: #2e4738, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                ".text-foreground\\/60"
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.92 (foreground color: #797d84, background color: #f8f9fb, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+            }
+          ]
+        },
+        {
+          "id": "label-content-name-mismatch",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                ".font-mono"
+              ],
+              "summary": "Fix any of the following:\n  Text inside the element is not included in the accessible name"
+            }
+          ]
+        }
+      ],
+      "incomplete": [
+        {
+          "id": "aria-prohibited-attr",
+          "count": 2
+        },
+        {
+          "id": "aria-valid-attr-value",
+          "count": 2
+        },
+        {
+          "id": "color-contrast",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "state": "review-dark",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 1280,
+        "height": 768,
+        "scrollWidth": 1280,
+        "theme": "dark",
+        "controls": 25
+      },
+      "violations": [
+        {
+          "id": "aria-progressbar-name",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                ".bg-transparent"
+              ],
+              "summary": "Fix any of the following:\n  aria-label attribute does not exist or is empty\n  aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty\n  Element has no title attribute"
+            }
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-line-number=\"2\"] > span:nth-child(1)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.8 (foreground color: #f97583, background color: #2e4738, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-line-number=\"2\"] > span:nth-child(4)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.8 (foreground color: #f97583, background color: #2e4738, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-line-number=\"2\"] > span:nth-child(6)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.99 (foreground color: #b392f0, background color: #2e4738, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-line=\"3\"] > span:nth-child(1)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.8 (foreground color: #f97583, background color: #2e4738, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-base-line=\"2\"] > span:nth-child(2)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.32 (foreground color: #f97583, background color: #4b3336, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-line=\"4\"] > span:nth-child(2)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.8 (foreground color: #f97583, background color: #2e4738, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "span[data-diff-span=\"\"]:nth-child(4) > span:nth-child(1)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 2.68 (foreground color: #f97583, background color: #2f623e, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-line=\"4\"] > span:nth-child(6)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.99 (foreground color: #b392f0, background color: #2e4738, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-line=\"5\"] > span:nth-child(2)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.8 (foreground color: #f97583, background color: #2e4738, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-line=\"6\"] > span:nth-child(2)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.99 (foreground color: #b392f0, background color: #2e4738, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            }
+          ]
+        },
+        {
+          "id": "label-content-name-mismatch",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                ".font-mono"
+              ],
+              "summary": "Fix any of the following:\n  Text inside the element is not included in the accessible name"
+            }
+          ]
+        }
+      ],
+      "incomplete": [
+        {
+          "id": "aria-prohibited-attr",
+          "count": 2
+        },
+        {
+          "id": "aria-valid-attr-value",
+          "count": 2
+        },
+        {
+          "id": "color-contrast",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "state": "review-aurora-light",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "light",
+        "controls": 32
+      },
+      "violations": [
+        {
+          "id": "aria-progressbar-name",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                ".bg-transparent"
+              ],
+              "summary": "Fix any of the following:\n  aria-label attribute does not exist or is empty\n  aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty\n  Element has no title attribute"
+            }
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                [
+                  "#_r_t_-0 > .review-file-discussion.min-w-0 > .review-diff.border.rounded-md > .review-context-hunk > diffs-container",
+                  "div[data-column-number=\"10\"][data-line-index=\"10,9\"][data-line-type=\"context\"] > span[data-line-number-content=\"\"]"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.45 (foreground color: #777779, background color: #07090f, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "#_r_t_-0 > .review-file-discussion.min-w-0 > .review-diff.border.rounded-md > .review-context-hunk > diffs-container",
+                  "div[data-column-number=\"11\"][data-line-index=\"11,10\"][data-line-type=\"context\"] > span[data-line-number-content=\"\"]"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.45 (foreground color: #777779, background color: #07090f, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                ".text-foreground\\/60"
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.92 (foreground color: #797d84, background color: #f8f9fb, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+            }
+          ]
+        },
+        {
+          "id": "label-content-name-mismatch",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                ".review-file-group.gap-0.flex-col:nth-child(2) > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"] > .review-file-heading > .review-file-identity > .font-mono.hover\\:underline.text-left"
+              ],
+              "summary": "Fix any of the following:\n  Text inside the element is not included in the accessible name"
+            }
+          ]
+        }
+      ],
+      "incomplete": [
+        {
+          "id": "aria-prohibited-attr",
+          "count": 4
+        },
+        {
+          "id": "aria-valid-attr-value",
+          "count": 2
+        },
+        {
+          "id": "color-contrast",
+          "count": 6
+        }
+      ]
+    },
+    {
+      "state": "topics-light",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "light",
+        "controls": 36
+      },
+      "violations": [
+        {
+          "id": "aria-progressbar-name",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                ".bg-transparent"
+              ],
+              "summary": "Fix any of the following:\n  aria-label attribute does not exist or is empty\n  aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty\n  Element has no title attribute"
+            }
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                "li:nth-child(1) > .text-foreground\\/55.py-2.group > .text-base.leading-snug.font-serif"
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.46 (foreground color: #85888f, background color: #fcfcfd, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                "li:nth-child(3) > .transition-\\[color\\,opacity\\].duration-200.text-foreground\\/55 > .text-base.leading-snug.font-serif > .line-clamp-2"
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.46 (foreground color: #85888f, background color: #fcfcfd, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                "li:nth-child(4) > .transition-\\[color\\,opacity\\].duration-200.text-foreground\\/55 > .text-base.leading-snug.font-serif > .line-clamp-2"
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.46 (foreground color: #85888f, background color: #fcfcfd, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "#_r_t_-0 > .review-file-discussion.min-w-0 > .review-diff.border.rounded-md > .review-context-hunk > diffs-container",
+                  "div[data-column-number=\"10\"][data-line-index=\"10,9\"][data-line-type=\"context\"] > span[data-line-number-content=\"\"]"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.45 (foreground color: #777779, background color: #07090f, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "#_r_t_-0 > .review-file-discussion.min-w-0 > .review-diff.border.rounded-md > .review-context-hunk > diffs-container",
+                  "div[data-column-number=\"11\"][data-line-index=\"11,10\"][data-line-type=\"context\"] > span[data-line-number-content=\"\"]"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.45 (foreground color: #777779, background color: #07090f, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                ".text-foreground\\/60"
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.92 (foreground color: #797d84, background color: #f8f9fb, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+            }
+          ]
+        },
+        {
+          "id": "label-content-name-mismatch",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                ".review-file-group.gap-0.flex-col:nth-child(2) > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"] > .review-file-heading > .review-file-identity > .font-mono.hover\\:underline.gap-2"
+              ],
+              "summary": "Fix any of the following:\n  Text inside the element is not included in the accessible name"
+            }
+          ]
+        }
+      ],
+      "incomplete": [
+        {
+          "id": "aria-prohibited-attr",
+          "count": 4
+        },
+        {
+          "id": "aria-valid-attr-value",
+          "count": 2
+        },
+        {
+          "id": "color-contrast",
+          "count": 6
+        }
+      ]
+    },
+    {
+      "state": "chat-light",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "light",
+        "controls": 38
+      },
+      "violations": [
+        {
+          "id": "aria-progressbar-name",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                ".h-px.bg-transparent[role=\"progressbar\"]"
+              ],
+              "summary": "Fix any of the following:\n  aria-label attribute does not exist or is empty\n  aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty\n  Element has no title attribute"
+            }
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                [
+                  "#_r_t_-0 > .review-file-discussion.min-w-0 > .review-diff.border.rounded-md > .review-context-hunk > diffs-container",
+                  "div[data-column-number=\"10\"][data-line-index=\"10,9\"][data-line-type=\"context\"] > span[data-line-number-content=\"\"]"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.45 (foreground color: #777779, background color: #07090f, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "#_r_t_-0 > .review-file-discussion.min-w-0 > .review-diff.border.rounded-md > .review-context-hunk > diffs-container",
+                  "div[data-column-number=\"11\"][data-line-index=\"11,10\"][data-line-type=\"context\"] > span[data-line-number-content=\"\"]"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.45 (foreground color: #777779, background color: #07090f, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                ".text-foreground\\/60"
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.92 (foreground color: #797d84, background color: #f8f9fb, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+            }
+          ]
+        },
+        {
+          "id": "label-content-name-mismatch",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                ".review-file-group.gap-0.flex-col:nth-child(2) > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"] > .review-file-heading > .review-file-identity > .font-mono.hover\\:underline.text-left"
+              ],
+              "summary": "Fix any of the following:\n  Text inside the element is not included in the accessible name"
+            }
+          ]
+        }
+      ],
+      "incomplete": [
+        {
+          "id": "aria-prohibited-attr",
+          "count": 4
+        },
+        {
+          "id": "aria-valid-attr-value",
+          "count": 2
+        },
+        {
+          "id": "color-contrast",
+          "count": 6
+        }
+      ]
+    },
+    {
+      "state": "exploration-light",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "light",
+        "controls": 40
+      },
+      "violations": [
+        {
+          "id": "aria-progressbar-name",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                ".bg-transparent"
+              ],
+              "summary": "Fix any of the following:\n  aria-label attribute does not exist or is empty\n  aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty\n  Element has no title attribute"
+            }
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                ".text-foreground\\/60"
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.92 (foreground color: #797d84, background color: #f8f9fb, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+            }
+          ]
+        }
+      ],
+      "incomplete": [
+        {
+          "id": "aria-valid-attr-value",
+          "count": 1
+        },
+        {
+          "id": "color-contrast",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "state": "exploration-dark",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "dark",
+        "controls": 40
+      },
+      "violations": [
+        {
+          "id": "aria-progressbar-name",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                ".bg-transparent"
+              ],
+              "summary": "Fix any of the following:\n  aria-label attribute does not exist or is empty\n  aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty\n  Element has no title attribute"
+            }
+          ]
+        }
+      ],
+      "incomplete": [
+        {
+          "id": "aria-valid-attr-value",
+          "count": 1
+        },
+        {
+          "id": "color-contrast",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "state": "github-sign-in-light",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 800,
+        "height": 700,
+        "scrollWidth": 800,
+        "theme": "light",
+        "controls": 30
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-hidden-focus",
+          "count": 11
+        },
+        {
+          "id": "color-contrast",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "state": "onboarding-light",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 800,
+        "height": 700,
+        "scrollWidth": 800,
+        "theme": "light",
+        "controls": 26
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-valid-attr-value",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "state": "onboarding-dark",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 800,
+        "height": 700,
+        "scrollWidth": 800,
+        "theme": "dark",
+        "controls": 26
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-valid-attr-value",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "state": "local-review-dark",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 800,
+        "height": 700,
+        "scrollWidth": 800,
+        "theme": "dark",
+        "controls": 34
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-hidden-focus",
+          "count": 11
+        },
+        {
+          "id": "color-contrast",
+          "count": 3
+        }
+      ]
+    },
+    {
+      "state": "activity-light",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 1100,
+        "height": 700,
+        "scrollWidth": 1100,
+        "theme": "light",
+        "controls": 44
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-valid-attr-value",
+          "count": 3
+        },
+        {
+          "id": "color-contrast",
+          "count": 7
+        }
+      ]
+    },
+    {
+      "state": "image-review-light",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 1100,
+        "height": 700,
+        "scrollWidth": 1100,
+        "theme": "light",
+        "controls": 57
+      },
+      "violations": [
+        {
+          "id": "aria-progressbar-name",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                ".bg-transparent"
+              ],
+              "summary": "Fix any of the following:\n  aria-label attribute does not exist or is empty\n  aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty\n  Element has no title attribute"
+            }
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                ".text-foreground\\/60"
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.92 (foreground color: #797d84, background color: #f8f9fb, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+            }
+          ]
+        },
+        {
+          "id": "target-size",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                ".align-middle[aria-label=\"Open mark.svg on GitHub\"][title=\"Open mark.svg on GitHub\"]"
+              ],
+              "summary": "Fix any of the following:\n  Target has insufficient size (75.8px by 18px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 22.6px instead of at least 24px."
+            },
+            {
+              "target": [
+                ".align-middle[aria-label=\"Open photo.png on GitHub\"][title=\"Open photo.png on GitHub\"]"
+              ],
+              "summary": "Fix any of the following:\n  Target has insufficient size (85.2px by 18px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 21.6px instead of at least 24px."
+            },
+            {
+              "target": [
+                ".align-middle[aria-label=\"Open added.svg on GitHub\"][title=\"Open added.svg on GitHub\"]"
+              ],
+              "summary": "Fix any of the following:\n  Target has insufficient size (85.7px by 18px, should be at least 24px by 24px)\n  Target has insufficient space to its closest neighbors. Safe clickable space has a diameter of 21.6px instead of at least 24px."
+            }
+          ]
+        }
+      ],
+      "incomplete": [
+        {
+          "id": "aria-prohibited-attr",
+          "count": 5
+        },
+        {
+          "id": "aria-valid-attr-value",
+          "count": 9
+        },
+        {
+          "id": "color-contrast",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "state": "github-comments-light",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 1100,
+        "height": 700,
+        "scrollWidth": 1100,
+        "theme": "light",
+        "controls": 45
+      },
+      "violations": [
+        {
+          "id": "aria-progressbar-name",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                ".bg-transparent"
+              ],
+              "summary": "Fix any of the following:\n  aria-label attribute does not exist or is empty\n  aria-labelledby attribute does not exist, references elements that do not exist or references elements that are empty\n  Element has no title attribute"
+            }
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-line-number=\"2\"] > span:nth-child(1)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.8 (foreground color: #f97583, background color: #2e4738, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-line-number=\"2\"] > span:nth-child(4)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.8 (foreground color: #f97583, background color: #2e4738, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-line-number=\"2\"] > span:nth-child(6)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.99 (foreground color: #b392f0, background color: #2e4738, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-line=\"3\"] > span:nth-child(1)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.8 (foreground color: #f97583, background color: #2e4738, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-base-line=\"2\"] > span:nth-child(2)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.32 (foreground color: #f97583, background color: #4b3336, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-line=\"4\"] > span:nth-child(2)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.8 (foreground color: #f97583, background color: #2e4738, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "span[data-diff-span=\"\"]:nth-child(4) > span:nth-child(1)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 2.68 (foreground color: #f97583, background color: #2f623e, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                [
+                  "diffs-container",
+                  "div[data-line=\"4\"] > span:nth-child(6)"
+                ]
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.99 (foreground color: #b392f0, background color: #2e4738, font size: 9.8pt (13px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                ".text-foreground\\/60"
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 3.92 (foreground color: #797d84, background color: #f8f9fb, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1"
+            }
+          ]
+        },
+        {
+          "id": "label-content-name-mismatch",
+          "impact": "serious",
+          "nodes": [
+            {
+              "target": [
+                ".font-mono"
+              ],
+              "summary": "Fix any of the following:\n  Text inside the element is not included in the accessible name"
+            }
+          ]
+        }
+      ],
+      "incomplete": [
+        {
+          "id": "aria-prohibited-attr",
+          "count": 2
+        },
+        {
+          "id": "aria-valid-attr-value",
+          "count": 2
+        },
+        {
+          "id": "color-contrast",
+          "count": 7
+        }
+      ]
+    },
+    {
+      "state": "palette-scoped-light",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 1100,
+        "height": 700,
+        "scrollWidth": 1100,
+        "theme": "light",
+        "controls": 47
+      },
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "state": "palette-scoped-dark",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 1100,
+        "height": 700,
+        "scrollWidth": 1100,
+        "theme": "dark",
+        "controls": 47
+      },
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "state": "settings-confirmed-light",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 1100,
+        "height": 700,
+        "scrollWidth": 1100,
+        "theme": "light",
+        "controls": 57
+      },
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "state": "settings-confirmed-dark",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 1100,
+        "height": 700,
+        "scrollWidth": 1100,
+        "theme": "dark",
+        "controls": 57
+      },
+      "violations": [],
+      "incomplete": []
+    },
+    {
+      "state": "appearance-settings-dark",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "layout": {
+        "width": 1100,
+        "height": 700,
+        "scrollWidth": 1100,
+        "theme": "dark",
+        "controls": 57
+      },
+      "violations": [],
+      "incomplete": []
+    }
+  ],
+  "queuePerformance": {
+    "items": 1000,
+    "domElements": 17163,
+    "refreshToPaintMs": 388,
+    "longTasksMs": [
+      222,
+      57
+    ]
+  },
+  "sourceDetector": {
+    "total": 99,
+    "rules": {
+      "overused-font": 4,
+      "design-system-radius": 12,
+      "design-system-color": 83
+    }
+  },
+  "bundle": {
+    "javascriptChunks": 452,
+    "totalJavaScriptBytes": 15185666,
+    "entryBytes": 1467666,
+    "entryGzipBytes": 430175,
+    "note": "Built installed assets, not initial network transfer. Syntax grammars and Mermaid diagrams are split into separate chunks."
+  }
+}
