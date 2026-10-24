@@ -5,6 +5,7 @@ import type { PrStatus } from '../lib/types';
 import type { QueueSignals } from '../lib/queue-signals';
 import { mergeReadiness } from '../lib/merge-readiness';
 import { ReadinessBadge } from './MergeReadiness';
+import { PrStarButton } from './PrStarButton';
 
 export function PrSubjectDetails({
   subject,
@@ -15,6 +16,9 @@ export function PrSubjectDetails({
   onRetryStatus,
   compactIdentity = false,
   signals = [],
+  starredUrls,
+  starBusy,
+  onStarChange,
 }: {
   subject: ReviewSubject;
   activeUrl: string;
@@ -24,6 +28,9 @@ export function PrSubjectDetails({
   onRetryStatus?: () => void;
   compactIdentity?: boolean;
   signals?: QueueSignals[];
+  starredUrls?: ReadonlySet<string>;
+  starBusy?: boolean;
+  onStarChange?: (members: ReviewSubject['members'], starred: boolean) => void;
 }) {
   const member = subject.members.find((m) => m.url === activeUrl) ?? subject.members[0];
   const stacked = subject.members.length > 1;
@@ -99,6 +106,11 @@ export function PrSubjectDetails({
         <PrDetails
           key={member.url}
           member={member}
+          starControl={
+            stacked && starredUrls && onStarChange ? (
+              <PrStarButton members={[member]} starredUrls={starredUrls} busy={starBusy} onChange={onStarChange} />
+            ) : undefined
+          }
           showTitle={stacked}
           showIdentity={stacked || !compactIdentity}
           status={statuses[member.url]}

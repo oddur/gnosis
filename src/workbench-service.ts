@@ -1,4 +1,6 @@
 import { createSavedViewStore } from './saved-view-store';
+import { createStarredPrStore } from './starred-pr-store';
+import { isStarredSubject, starredFirst, type StarPrRequest } from '../lib/starred-prs';
 import { activeViewFilters, type QueueViewAction } from '../lib/saved-views';
 import {
   normalizeQueueFilters,
@@ -36,7 +38,7 @@ import {
   type WorkbenchQueue,
   type GroupingOverride,
 } from '../lib/workbench';
-import type { Preferences, ReviewHistoryEntry, PrSearchResult } from '../lib/types';
+import type { Preferences, ReviewHistoryEntry, PrSearchResult, PrMetadata } from '../lib/types';
 
 interface State {
   account: string;
@@ -87,6 +89,7 @@ class BriefingPaused extends Error {
 export function createWorkbenchService(deps: Deps) {
   const now = deps.now ?? Date.now;
   const savedViews = createSavedViewStore(deps.directory);
+  const stars = createStarredPrStore(deps.directory, now);
   let cooldown: { account: string; error: GitHubBackoffError } | undefined;
   let state: State | undefined;
   let refresh: Promise<WorkbenchQueue> | undefined;
@@ -156,54 +159,81 @@ export function createWorkbenchService(deps: Deps) {
   }
   function view(includeHidden = false): WorkbenchQueue {
     const s = load();
+    const starredPrs = stars.load(s.account);
+    const starredUrls = new Set(starredPrs.map((entry) => entry.member.url));
     const history = deps.history();
     const filters = normalizeQueueFilters(s.filters);
     const selection = modelSettings();
-    const items = s.subjects
-      .filter((subject) => includeHidden || includeSubject(subject))
-      .map((subject) => {
-        const review =
-          history.find((h) => (h.snapshot?.subject.id ?? h.prUrl) === subject.id) ??
-          history.find((h) => subject.members.some((m) => m.url === h.prUrl));
-        const k = key(subject, selection);
-        const cached = s.briefs[k];
-        const briefing = cached ?? {
-          key: k,
-          status:
-            (deps.preferences().autoBriefings !== false || requestedBriefings.has(requestKey(k))) && s.used < limit()
-              ? ('queued' as const)
-              : ('paused' as const),
-          updatedAt: new Date().toISOString(),
-        };
-        const item = { subject, review, briefing, attention: attentionFor(subject, review) };
-        if (
-          !requestedBriefings.has(requestKey(k)) &&
-          (!cached || briefing.status === 'paused') &&
-          ((filters.involvement === 'mine' &&
-            !subject.members.some(
-              (member) => member.state === 'open' && !member.merged && isMyPr(member, deps.auth().login)
-            )) ||
-            (filters.briefingScope === 'matches' && !matchesQueueFilters(item, filters, now(), deps.auth().login)))
-        )
-          return { ...item, briefing: { ...briefing, status: 'paused' as const, pauseReason: 'filter' as const } };
-        return item;
-      });
+    const knownUrls = new Set(s.subjects.flatMap((subject) => subject.members.map((m) => m.url)));
+    const activeSubjects = new Set(s.subjects.filter(includeSubject));
+    const subjects = [
+      ...s.subjects,
+      ...groupSubjects(
+        starredPrs.filter((entry) => !knownUrls.has(entry.member.url)).map((entry) => entry.member),
+        s.overrides
+      ),
+    ];
+    const allItems = subjects.map((subject) => {
+      const review =
+        history.find((h) => (h.snapshot?.subject.id ?? h.prUrl) === subject.id) ??
+        history.find((h) => subject.members.some((m) => m.url === h.prUrl));
+      const k = key(subject, selection);
+      const cached = s.briefs[k];
+      const briefing = cached ?? {
+        key: k,
+        status:
+          activeSubjects.has(subject) &&
+          (deps.preferences().autoBriefings !== false || requestedBriefings.has(requestKey(k))) &&
+          s.used < limit()
+            ? ('queued' as const)
+            : ('paused' as const),
+        updatedAt: new Date().toISOString(),
+      };
+      const item = {
+        subject,
+        review,
+        briefing,
+        attention: attentionFor(subject, review),
+        starred: isStarredSubject(subject, starredUrls),
+        starredUrls: subject.members.filter((m) => starredUrls.has(m.url)).map((m) => m.url),
+      };
+      if (
+        !requestedBriefings.has(requestKey(k)) &&
+        (!cached || briefing.status === 'paused') &&
+        ((filters.involvement === 'mine' &&
+          !subject.members.some(
+            (member) => member.state === 'open' && !member.merged && isMyPr(member, deps.auth().login)
+          )) ||
+          (filters.briefingScope === 'matches' && !matchesQueueFilters(item, filters, now(), deps.auth().login)))
+      )
+        return { ...item, briefing: { ...briefing, status: 'paused' as const, pauseReason: 'filter' as const } };
+      return item;
+    });
     const order = { updated: 0, requested: 1, other: 2 };
-    items.sort(
+    allItems.sort(
       (a, b) =>
         order[a.attention] - order[b.attention] ||
         Math.max(...b.subject.members.map((m) => Date.parse(m.updatedAt))) -
           Math.max(...a.subject.members.map((m) => Date.parse(m.updatedAt)))
     );
+    const items = starredFirst(
+      allItems.filter((item) => includeHidden || activeSubjects.has(item.subject)),
+      (item) => item.starred
+    );
+    const starredItems = allItems.filter((item) => item.starred);
     const views = savedViews.load(s.account, filters);
     const counts = Object.fromEntries(
       views.views.map((view) => [
         view.id,
-        items.filter((item) => matchesQueueFilters(item, view.filters, now(), deps.auth().login)).length,
+        (view.filters.starredOnly ? starredItems : items).filter((item) =>
+          matchesQueueFilters(item, view.filters, now(), deps.auth().login)
+        ).length,
       ])
     );
     return {
       items,
+      starredPrs,
+      starredItems,
       warnings,
       remaining: Math.max(0, limit() - s.used),
       filters,
@@ -468,6 +498,10 @@ export function createWorkbenchService(deps: Deps) {
           )
         : [];
       s.subjects = [...updatedSubjects, ...untouched];
+      stars.update(
+        s.account,
+        s.subjects.flatMap((subject) => subject.members)
+      );
       for (const subject of updatedSubjects)
         if (warnings.length)
           subject.warnings = [...subject.warnings, 'Some repositories or relationships could not be fully refreshed.'];
@@ -746,6 +780,17 @@ export function createWorkbenchService(deps: Deps) {
   return {
     cached: () => view(true),
     queue,
+    starPrs(request: StarPrRequest) {
+      if (!deps.auth().login || !deps.auth().token) throw new Error('Connect GitHub to star PRs.');
+      stars.set(load().account, request);
+      return view();
+    },
+    updateStarredMetadata(metadata: PrMetadata) {
+      const account = deps.auth().login;
+      if (!account) return;
+      const saved = stars.load(account).find((entry) => entry.member.url === metadata.url);
+      if (saved) stars.update(account, [{ ...saved.member, ...metadata }]);
+    },
     viewAction(action: QueueViewAction) {
       if (!deps.auth().login || !deps.auth().token) throw new Error('Connect GitHub to manage saved views.');
       const s = load();
@@ -816,7 +861,8 @@ export function createWorkbenchService(deps: Deps) {
       load().briefs[k] = { key: k, status: 'cancelled', updatedAt: new Date().toISOString() };
       save();
     },
-    subject: (id: string) => load().subjects.find((s) => s.id === id),
+    subject: (id: string) =>
+      load().subjects.find((s) => s.id === id) ?? view().starredItems?.find((item) => item.subject.id === id)?.subject,
     async correct(override: GroupingOverride) {
       if (refresh) await refresh;
       if (!['link', 'unlink'].includes(override.action)) throw new Error('Invalid grouping action.');

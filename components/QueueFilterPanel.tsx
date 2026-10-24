@@ -12,19 +12,19 @@ export function QueueFilterPanel({
   onChange: (patch: Partial<QueueFilters>) => void;
 }) {
   const id = useId();
-  const members = items.flatMap((i) => i.subject.members).filter((m) => m.state === 'open' && !m.merged);
+  const members = items.flatMap((i) => i.subject.members).filter((m) => filters.starredOnly || (m.state === 'open' && !m.merged));
   const authors = [
     ...new Set([...members.map((m) => m.author), ...(filters.author === 'all' ? [] : [filters.author])]),
   ].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }));
   const labels = [
     ...new Set([...members.flatMap((m) => m.labels), ...(filters.label === 'all' ? [] : [filters.label])]),
   ].sort();
-  const fields: { key: keyof QueueFilters; label: string; options: [string, string][] }[] = [
+  const fields: { key: Exclude<keyof QueueFilters, 'starredOnly'>; label: string; options: [string, string][] }[] = [
     {
       key: 'status',
       label: 'PR status',
       options: [
-        ['all', 'All open PRs'],
+        ['all', filters.starredOnly ? 'All starred PRs' : 'All open PRs'],
         ['ready', 'Open, not draft'],
         ['draft', 'Draft'],
       ],

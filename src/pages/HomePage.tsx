@@ -10,6 +10,8 @@ import type { VirtualItem } from '@tanstack/react-virtual';
 import { VirtualReviewQueue } from '../../components/VirtualReviewQueue';
 import { GitHubIcon } from '../../lib/constants';
 import { PrLabels } from '../../components/PrLabels';
+import { PrStarButton } from '../../components/PrStarButton';
+import { orderQueueItems, starredFirst } from '../../lib/starred-prs';
 import { PrSummary, type PrReadingPosition } from '../../components/PrSummary';
 import { publishQueueSignals } from '../../lib/use-queue-signals';
 import { SavedViewsNav, SaveViewControls } from '../../components/SavedQueueViews';
@@ -46,6 +48,7 @@ import {
   Download,
   Link2,
   SlidersHorizontal,
+  Star,
 } from 'lucide-react';
 import { GitHubAuthDialog } from '../../components/GitHubAuthDialog';
 import { GettingStarted } from '../../components/GettingStarted';
@@ -77,6 +80,7 @@ interface Props {
   commandDestination?: { destination: Extract<SearchDestination, { kind: 'home' }>; nonce: number };
 }
 const labels = {
+  starred: 'Starred',
   updated: 'Changed since AI explanation',
   requested: 'Review requested',
   other: 'Other changes',
@@ -111,13 +115,42 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
   const pendingFilters = useRef<QueueFilters | null>(null);
   const filterVersion = useRef(0);
   const [savedView, setSavedView] = useState(false);
+  const [starBusy, setStarBusy] = useState(false);
+  const [starError, setStarError] = useState('');
+  const starBusyRef = useRef(false);
+  const starVersion = useRef(0);
+  const starredUrls = useMemo(
+    () => new Set(queue.starredPrs?.map((entry) => entry.member.url) ?? []),
+    [queue.starredPrs]
+  );
+  const changeStars = async (members: ReviewSubject['members'], starred: boolean) => {
+    if (starBusyRef.current) return;
+    starBusyRef.current = true;
+    setStarBusy(true);
+    setStarError('');
+    starVersion.current++;
+    try {
+      const next = await enqueueWrite(() => window.electronAPI.workbenchStarPrs({ members, starred }));
+      setQueue(next);
+      setError('');
+    } catch (error) {
+      const message = `Could not save starred PRs: ${error instanceof Error ? error.message : String(error)}. Your stars have not changed. Try the star button again.`;
+      setError(message);
+      setStarError(message);
+    } finally {
+      starBusyRef.current = false;
+      setStarBusy(false);
+    }
+  };
   const section = savedView
     ? 'saved'
-    : filters.attention !== 'all'
-      ? filters.attention
-      : filters.kind === 'stack'
-        ? 'stacks'
-        : 'all';
+    : filters.starredOnly
+      ? 'starred'
+      : filters.attention !== 'all'
+        ? filters.attention
+        : filters.kind === 'stack'
+          ? 'stacks'
+          : 'all';
   const query = section === 'saved' ? savedQuery : filters.query;
   const repo = filters.repo;
   const filterCount = activeQueueFilterCount(filters);
@@ -217,11 +250,11 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
   const lastStatusAttempt = useRef(0);
   const [statusRefreshing, setStatusRefreshing] = useState(false);
   const alive = useRef(true);
-  const selectedItem = queue.items.find(
+  const selectedItem = [...queue.items, ...(queue.starredItems ?? [])].find(
     (i) => i.subject.id === selected && matchesQueueFilters(i, filters, Date.now(), auth?.login)
   );
   const summarySource =
-    openedItem && (queue.items.find((item) => item.subject.id === openedItem.subject.id) ?? openedItem);
+    openedItem && ([...queue.items, ...(queue.starredItems ?? [])].find((item) => item.subject.id === openedItem.subject.id) ?? openedItem);
   const summaryItem = summarySource && {
     ...summarySource,
     review:
@@ -248,11 +281,12 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
 
   const refresh = useCallback(async (force = false) => {
     const version = filterVersion.current;
+    const starsVersion = starVersion.current;
     if (force) setRefreshing(true);
     try {
       await Promise.all([
         window.electronAPI.workbenchQueue(force).then((next) => {
-          if (alive.current && version === filterVersion.current && !viewBusyRef.current && !pendingFilters.current) {
+          if (alive.current && version === filterVersion.current && starsVersion === starVersion.current && !starBusyRef.current && !viewBusyRef.current && !pendingFilters.current) {
             setQueue(next);
             if (!filtersLoaded.current) {
               const restored = normalizeQueueFilters(next.filters);
@@ -482,20 +516,20 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
     setError('');
     void refresh(true);
   };
-  const items = queue.items.filter((item) => matchesQueueFilters(item, filters, Date.now(), auth?.login));
+  const queueItems = filters.starredOnly ? (queue.starredItems ?? []) : queue.items;
+  const items = queueItems.filter((item) => matchesQueueFilters(item, filters, Date.now(), auth?.login));
   const repos = [
-    ...new Set([
-      ...queue.items.flatMap((i) => i.subject.members.filter((m) => m.state === 'open').map((m) => m.repo)),
-      ...(repo === 'all' ? [] : [repo]),
-    ]),
+    ...new Set([...queueItems.flatMap((i) => i.subject.members.map((m) => m.repo)), ...(repo === 'all' ? [] : [repo])]),
   ].sort();
   const saved = useMemo(
-    () => history.filter((h) => `${h.prTitle} ${h.prUrl}`.toLowerCase().includes(query.toLowerCase())),
-    [history, query]
+    () =>
+      starredFirst(
+        history.filter((h) => `${h.prTitle} ${h.prUrl}`.toLowerCase().includes(query.toLowerCase())),
+        (entry) => (entry.snapshot?.subject.members ?? [{ url: entry.prUrl }]).some((m) => starredUrls.has(m.url))
+      ),
+    [history, query, starredUrls]
   );
-  const orderedItems = (['updated', 'requested', 'other'] as const).flatMap((category) =>
-    items.filter((item) => item.attention === category)
-  );
+  const orderedItems = orderQueueItems(items);
   const summaryIndex = orderedItems.findIndex((item) => item.subject.id === summaryItem?.subject.id);
   const moveSummary = (direction: number) => {
     const nextIndex = summaryIndex + direction;
@@ -606,6 +640,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
       setSavedView(target.section === 'saved');
       if (target.section !== 'saved')
         updateFilters({
+          starredOnly: target.section === 'starred',
           attention: target.section === 'updated' || target.section === 'requested' ? target.section : 'all',
           kind: target.section === 'stacks' ? 'stack' : 'all',
         });
@@ -635,7 +670,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
             perform: () =>
               start(
                 commandItem.subject.members[0].url,
-                queue.items.some((item) => item.subject.id === commandItem.subject.id)
+                [...queue.items, ...(queue.starredItems ?? [])].some((item) => item.subject.id === commandItem.subject.id)
                   ? commandItem.subject
                   : undefined,
                 undefined,
@@ -750,6 +785,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
               <PrLabels members={s.members} limit={3} />
             </span>
           </button>
+          <PrStarButton members={s.members} starredUrls={starredUrls} busy={starBusy} onChange={(members, value) => void changeStars(members, value)} />
           {(item.review?.status === 'generating' ||
             item.review?.status === 'completed' ||
             item.briefing?.status === 'generating') && (
@@ -789,6 +825,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                   </button>
                   <QueueMetadata subject={{ id: m.url, kind: 'pr', title: m.title, members: [m], edges: [], warnings: [] }} account={auth?.login ?? null} />
                 </div>
+                <PrStarButton members={[m]} starredUrls={starredUrls} busy={starBusy} onChange={(members, value) => void changeStars(members, value)} />
               </div>
             ))}
           </div>
@@ -896,6 +933,10 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
         <PrSummary
         key={summaryItem.subject.id}
         item={summaryItem}
+        starredUrls={starredUrls}
+        starBusy={starBusy}
+        starError={starError}
+        onStarChange={(members, value) => void changeStars(members, value)}
         account={auth?.login ?? null}
         statusRefreshing={statusRefreshing}
         tab={overviewTab}
@@ -926,7 +967,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
           onGenerate={() =>
             void start(
               summaryItem.subject.members[0].url,
-          queue.items.some((item) => item.subject.id === summaryItem.subject.id) ? summaryItem.subject : undefined,
+          [...queue.items, ...(queue.starredItems ?? [])].some((item) => item.subject.id === summaryItem.subject.id) ? summaryItem.subject : undefined,
               undefined,
               summaryItem.subject.scope === 'single'
             )
@@ -941,6 +982,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
           <p className="workbench-nav-heading">Reviews</p>
           {[
             ['all', 'Work queue', Inbox],
+            ['starred', 'Starred', Star],
             ['requested', 'Review requests', GitPullRequest],
             ['updated', 'Updated PRs', RefreshCw],
             ['stacks', 'Stacks', Layers],
@@ -966,7 +1008,8 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                   setSavedView(id === 'saved');
                   if (id !== 'saved') {
                     const patch: Partial<QueueFilters> = {
-                      attention: id === 'stacks' ? 'all' : (id as QueueFilters['attention']),
+                      starredOnly: id === 'starred',
+                      attention: id === 'stacks' || id === 'starred' ? 'all' : (id as QueueFilters['attention']),
                       kind: id === 'stacks' ? 'stack' : 'all',
                     };
                     if (activeQueueView)
@@ -981,6 +1024,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                 <span className="nav-count">
                   {id === 'saved'
                     ? history.length
+                    : id === 'starred' ? queue.starredItems?.length ?? 0
                     : id === 'all'
                       ? queue.items.length
                       : id === 'stacks'
@@ -1033,6 +1077,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                 <p>
                   {section === 'saved'
                     ? 'Saved AI explanations, ready to resume.'
+                    : section === 'starred' ? 'Your starred PRs, saved on this computer. Stacks stay together.'
                     : section === 'stacks'
                       ? 'PRs that build on each other.'
                       : section === 'requested'
@@ -1158,7 +1203,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                         <X size={16} />
                       </Popover.Close>
                     </div>
-                    <QueueFilterPanel filters={filters} items={queue.items} onChange={updateFilters} />
+                    <QueueFilterPanel filters={filters} items={queueItems} onChange={updateFilters} />
                   </Popover.Content>
                 </Popover.Portal>
               </Popover.Root>
@@ -1175,7 +1220,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                     : 'Each stack counts as one item. Counts use loaded GitHub data; built-in sidebar totals do not apply your other filters.'
                 }
             >
-              {section === 'saved' ? `${saved.length} reviews` : `${items.length} of ${queue.items.length} items`}
+              {section === 'saved' ? `${saved.length} reviews` : `${items.length} of ${queueItems.length} items`}
             </span>
           </div>
           {section !== 'saved' && filterCount > 0 && (
@@ -1255,6 +1300,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                         </span>
                         {entry.error && <span className="text-xs text-destructive">{entry.error}</span>}
                       </div>
+                      {!!entry.snapshot?.subject.members.length && <PrStarButton members={entry.snapshot.subject.members} starredUrls={starredUrls} busy={starBusy} onChange={(members, value) => void changeStars(members, value)} />}
                       {entry.status !== 'generating' && (
                         <button
                           className="workbench-icon"
@@ -1306,7 +1352,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                 <div className="queue-empty">
                   <Inbox size={24} />
                   <h2>
-                    {queueFailed
+                    {section === 'starred' && !queue.starredPrs?.length ? 'No starred PRs yet' : queueFailed
                       ? 'Queue could not be loaded'
                       : filterCount > 0
                         ? 'No PRs match these filters'
@@ -1317,7 +1363,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                             : 'No pull requests in your queue'}
                   </h2>
                   <p>
-                    {queueFailed
+                    {section === 'starred' && !queue.starredPrs?.length ? 'Star a PR from the work queue or its overview to keep it here and pin it above other PRs.' : queueFailed
                       ? 'Try loading the queue again. You can still open a PR by URL or a saved review.'
                       : filterCount > 0
                         ? 'Try fewer filters or a wider date range. One open PR must match every filter; its whole stack stays visible.'

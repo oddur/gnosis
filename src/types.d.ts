@@ -1,3 +1,4 @@
+import type { StarPrRequest } from '../lib/starred-prs';
 import type { PrCommits, CommitSelection } from '../lib/pr-commits';
 import type { PrChanges, PrFileRequest, PrFileContents, FileChatRequest } from '../lib/pr-changes';
 import type { GitHubProfile } from '../lib/github-profile';
@@ -43,6 +44,7 @@ declare global {
       commandGitHubSearch: (query: string) => Promise<PrSearchResult[]>;
       listActivity: () => Promise<ActivityTask[]>;
       activityAction: (id:string, action:ActivityAction) => Promise<void>;
+      workbenchStarPrs: (request: StarPrRequest) => Promise<WorkbenchQueue>;
       workbenchViewAction: (action: QueueViewAction) => Promise<WorkbenchQueue>;
       workbenchSetFilters: (filters: QueueFilters) => Promise<WorkbenchQueue>;
       workbenchQueue: (force?: boolean) => Promise<WorkbenchQueue>;

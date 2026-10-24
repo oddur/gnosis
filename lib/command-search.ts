@@ -6,7 +6,7 @@ import type { GitHubReviewThreads } from './review-threads';
 export type SearchDestination =
   | {
       kind: 'home';
-      section?: 'all' | 'requested' | 'updated' | 'stacks' | 'saved';
+      section?: 'all' | 'requested' | 'updated' | 'stacks' | 'saved' | 'starred';
       repo?: string;
       viewId?: string;
       settings?: string;
