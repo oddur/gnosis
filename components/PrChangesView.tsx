@@ -530,12 +530,14 @@ export function PrChangesView({
             {(!commit || commit.filesOpen) && (
               <>
                 <div className="changes-tree-controls">
-                  <input
-                    aria-label="Find changed files"
-                    placeholder="Find a file…"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                  />
+                  {!commit && (
+                    <input
+                      aria-label="Find changed files"
+                      placeholder="Find a file…"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                    />
+                  )}
                   <label>
                     <input type="checkbox" checked={unviewed} onChange={(e) => setUnviewed(e.target.checked)} />
                     Unviewed only

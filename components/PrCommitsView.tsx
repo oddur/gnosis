@@ -18,7 +18,6 @@ import { timeAgo } from '../lib/utils';
 
 interface Position {
   selection?: CommitSelection;
-  oldest?: boolean;
   scroll?: number;
 }
 const catalogs = new Map<string, PrCommits[]>();
@@ -45,9 +44,6 @@ export function PrCommitsView({
   const [position] = useState(() => restore(subject.id));
   const [lists, setLists] = useState(() => catalogs.get(subject.id) ?? []);
   const [selection, setSelection] = useState(position.selection);
-  const [oldest, setOldest] = useState(!!position.oldest);
-  const [query, setQuery] = useState(''),
-    [author, setAuthor] = useState('');
   const [commitsOpen, setCommitsOpen] = useState(true),
     [filesOpen, setFilesOpen] = useState(true);
   const [rangeMode, setRangeMode] = useState(false);
@@ -62,7 +58,10 @@ export function PrCommitsView({
   const epoch = useRef(0);
   const persist = () => {
     try {
-      localStorage.setItem(`gnosis-commits:${subject.id}`, JSON.stringify(position));
+      localStorage.setItem(
+        `gnosis-commits:${subject.id}`,
+        JSON.stringify({ selection: position.selection, scroll: position.scroll })
+      );
     } catch {
       /* Optional navigation memory. */
     }
@@ -79,9 +78,6 @@ export function PrCommitsView({
   const snapshot = comparisons.get(key) ?? (resolved?.key === key ? resolved.snapshot : undefined);
   const first = chosen.at(0),
     last = chosen.at(-1);
-  const authors = [...new Set(groups.flatMap((group) => group.commits.map(authorName)))].sort((a, b) =>
-    a.localeCompare(b, undefined, { sensitivity: 'base' })
-  );
   function choose(list: PrCommits, commit: PrCommit, extend = false) {
     const start = extend && anchor.current?.url === list.url ? anchor.current.sha : commit.sha;
     const a = list.commits.findIndex((c) => c.sha === start),
@@ -135,9 +131,8 @@ export function PrCommitsView({
   }, [subject.id]);
   useEffect(() => {
     position.selection = selection;
-    position.oldest = oldest;
     persist();
-  }, [selection, oldest]);
+  }, [selection]);
   // The shared GitHub scheduler/cache handles these revision checks; it never swaps an open diff.
   useEffect(() => {
     if (!lists.length) return;
@@ -183,16 +178,6 @@ export function PrCommitsView({
       cancelled = true;
     };
   }, [key, attempt]);
-  const filteredGroups = groups.map((group) => ({
-    ...group,
-    visible: group.commits.filter(
-      (commit) =>
-        (!author || authorName(commit) === author) &&
-        `${commit.message} ${authorName(commit)} ${commit.sha}`
-          .toLocaleLowerCase()
-          .includes(query.toLocaleLowerCase().trim())
-    ),
-  }));
   const sidebar = (
     <>
       <button className="commit-section-toggle" onClick={() => setCommitsOpen((v) => !v)} aria-expanded={commitsOpen}>
@@ -201,29 +186,7 @@ export function PrCommitsView({
       </button>
       {commitsOpen && (
         <div className="commit-browser">
-          <div className="commit-filters">
-            <input
-              aria-label="Search commits"
-              placeholder="Message, author, or SHA…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-            <div>
-              <select aria-label="Commit author" value={author} onChange={(e) => setAuthor(e.target.value)}>
-                <option value="">All authors</option>
-                {authors.map((name) => (
-                  <option key={name}>{name}</option>
-                ))}
-              </select>
-              <select
-                aria-label="Commit order"
-                value={oldest ? 'oldest' : 'newest'}
-                onChange={(e) => setOldest(e.target.value === 'oldest')}
-              >
-                <option value="newest">Newest first</option>
-                <option value="oldest">Oldest first</option>
-              </select>
-            </div>
+          <div className="commit-range-controls">
             <label>
               <input
                 type="checkbox"
@@ -248,7 +211,7 @@ export function PrCommitsView({
             }}
             aria-label="Commits"
           >
-            {filteredGroups.map((group) => (
+            {groups.map((group) => (
               <section key={group.member.url}>
                 {subject.kind === 'stack' && (
                   <h2 title={group.member.title}>
@@ -256,7 +219,7 @@ export function PrCommitsView({
                   </h2>
                 )}
                 {group.omitted > 0 && <p className="commit-inherited">{group.omitted} shared with earlier PRs</p>}
-                {(oldest ? group.visible : [...group.visible].reverse()).map((commit) => (
+                {[...group.commits].reverse().map((commit) => (
                   <button
                     key={commit.sha}
                     className="commit-row"
@@ -275,14 +238,8 @@ export function PrCommitsView({
                 ))}
               </section>
             ))}
-            {!filteredGroups.some((g) => g.visible.length) && (
-              <p className="commit-inherited">
-                {loading
-                  ? 'Loading commits…'
-                  : query || author
-                    ? 'No matching commits. Try another search or author.'
-                    : 'No commits in this PR.'}
-              </p>
+            {!groups.some((g) => g.commits.length) && (
+              <p className="commit-inherited">{loading ? 'Loading commits…' : 'No commits in this PR.'}</p>
             )}
           </div>
         </div>

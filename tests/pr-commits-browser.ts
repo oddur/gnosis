@@ -64,34 +64,27 @@ void app.whenReady().then(async () => {
     );
     await wait("!!document.querySelector('.review-image-diff')");
     assert.equal(await js('window.compareReads.length'), 1);
-    const reads = await js('window.commitReads.length');
-    await input('[aria-label="Search commits"]', 'retry');
-    await wait("document.querySelectorAll('.commit-row').length===1");
-    await input('[aria-label="Search commits"]', 'no-such-commit');
-    await wait("document.querySelectorAll('.commit-row').length===0");
-    await capture('empty-search');
-    await input('[aria-label="Search commits"]', '');
-    await input('[aria-label="Commit author"]', 'sam');
-    await wait("document.querySelectorAll('.commit-row').length===1");
-    await input('[aria-label="Commit author"]', '');
-    await input('[aria-label="Commit order"]', 'oldest');
-    await wait("document.querySelector('.commit-row')?.textContent.includes('Introduce')");
-    assert.equal(await js('window.commitReads.length'), reads, 'Search and sorting are local');
-    assert.equal(await js('window.compareReads.length'), 1);
-    // Consecutive ranges retain chronological order even when display is filtered or reversed.
+    assert.equal(
+      await js(
+        `document.querySelector('[aria-label="Search commits"], [aria-label="Commit author"], [aria-label="Commit order"], [aria-label="Find changed files"]')`
+      ),
+      null
+    );
+    assert.match(await js<string>("document.querySelector('.commit-row').textContent"), /Merge worker/);
+    // Ranges retain chronological order while the list always shows newest first.
     await js(
-      "document.querySelector('.commit-filters input[type=checkbox]').click();document.querySelectorAll('.commit-row')[0].click()"
+      "document.querySelector('.commit-range-controls input[type=checkbox]').click();document.querySelectorAll('.commit-row')[2].click()"
     );
     await wait(
       "!document.querySelector('[aria-label=\"Compare with parent\"]') && !!document.querySelector('.changes-file-header')"
     );
-    await js("document.querySelectorAll('.commit-row')[2].click()");
+    await js("document.querySelectorAll('.commit-row')[0].click()");
     await wait(
       "document.querySelector('.commit-detail-title')?.textContent.includes('3 commits') && !!document.querySelector('.changes-file-header')"
     );
     assert.equal(await js('window.compareReads.at(-1).firstSha'), 'a'.repeat(40));
     await js(
-      "document.querySelector('.commit-filters input[type=checkbox]').click();document.querySelectorAll('.commit-row')[2].click()"
+      "document.querySelector('.commit-range-controls input[type=checkbox]').click();document.querySelectorAll('.commit-row')[0].click()"
     );
     await wait(
       "!!document.querySelector('[aria-label=\"Compare with parent\"]') && !!document.querySelector('.changes-file-header')"
@@ -131,6 +124,7 @@ void app.whenReady().then(async () => {
       false,
       'Historical Viewed must not mark full-PR files'
     );
+    assert.equal(await js('!!document.querySelector(\'[aria-label="Find changed files"]\')'), true);
     await click('Commits');
     await wait("!!document.querySelector('.commit-detail') && !!document.querySelector('.changes-file-header')");
     // New pushes are announced without replacing an open historical diff.

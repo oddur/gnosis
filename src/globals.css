@@ -2413,12 +2413,11 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .commit-section-toggle { display:flex;align-items:center;gap:6px;padding:9px 12px;width:100%;text-align:left;font-size:var(--type-caption);font-weight:600;border-bottom:1px solid var(--border);background:var(--sidebar); }
 .commit-section-toggle:hover { background:var(--accent); }
 .commit-section-toggle > span { margin-left:auto;font-variant-numeric:tabular-nums;color:var(--muted-foreground); }
-.commit-browser { display:flex;flex-direction:column;min-height:120px;flex:0 1 55%;overflow:hidden;border-bottom:1px solid var(--border); }
-.commit-filters { padding:8px;display:flex;flex-direction:column;gap:7px; }
-.commit-filters > div { display:flex;gap:6px; }
-.commit-filters input:not([type=checkbox]),.commit-filters select,.commit-baseline select { min-width:0;width:100%;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--background);padding:5px 7px;font-size:var(--type-caption);color:var(--foreground); }
-.commit-filters label { display:flex;align-items:center;gap:6px;font-size:var(--type-caption); }
-.commit-filters p { font-size:var(--type-caption);color:var(--muted-foreground);margin:0; }
+.commit-browser { display:flex;flex-direction:column;min-height:80px;flex:0 1 auto;max-height:55%;overflow:hidden;border-bottom:1px solid var(--border); }
+.commit-range-controls { padding:8px;display:flex;flex-direction:column;gap:7px; }
+.commit-baseline select { min-width:0;width:100%;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--background);padding:5px 7px;font-size:var(--type-caption);color:var(--foreground); }
+.commit-range-controls label { display:flex;align-items:center;gap:6px;font-size:var(--type-caption); }
+.commit-range-controls p { font-size:var(--type-caption);color:var(--muted-foreground);margin:0; }
 .commit-list { overflow:auto;min-height:0;scrollbar-gutter:stable; }
 .commit-list h2 { margin:0;padding:9px 12px 5px;font-size:var(--type-caption);font-weight:600;overflow-wrap:anywhere; }
 .commit-inherited { font-size:var(--type-caption);color:var(--muted-foreground);padding:6px 12px;margin:0; }
