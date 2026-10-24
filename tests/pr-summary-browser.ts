@@ -114,7 +114,7 @@ void app.whenReady().then(async () => {
     await wait('document.querySelector(\'img[alt="Private attachment"]\')?.naturalWidth === 600');
     await new Promise((resolve) => setTimeout(resolve, 4200));
     assert.equal(await js('window.privateImageReads'), 1, 'Background queue polls preserve authenticated images');
-    await js("document.querySelector('.pr-summary-page').scrollTop = 0");
+    await js("document.querySelector('.pr-summary-content').scrollTop = 0");
     await wait("!!document.querySelector('.pr-description .mermaid-preview > div > svg')");
     assert.equal(await js("!!document.querySelector('.pr-description pre .mermaid-diagram')"), false);
     assert.match(await js<string>("document.querySelector('.mermaid-preview').textContent"), /Outbox/);
@@ -124,14 +124,14 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('[data-slot=dialog-close]').click()");
     await wait("!document.querySelector('[role=dialog]')");
     await wait("document.activeElement === document.querySelector('.mermaid-preview')");
-    await js("document.querySelector('.pr-summary-page').scrollTop = 0");
+    await js("document.querySelector('.pr-summary-content').scrollTop = 0");
     await capture('pr-summary-light');
     await js("document.documentElement.classList.add('dark')");
     await wait("!!document.querySelector('.mermaid-diagram[data-theme=dark] .mermaid-preview > div > svg')");
     assert.notEqual(await js<string>("document.querySelector('.mermaid-preview > div > svg').outerHTML"), lightDiagram);
     await js("document.querySelector('.mermaid-diagram').scrollIntoView({block:'center'})");
     await capture('pr-summary-mermaid-dark');
-    await js("document.querySelector('.pr-summary-page').scrollTop = 0");
+    await js("document.querySelector('.pr-summary-content').scrollTop = 0");
     await capture('pr-summary-dark');
     window.setSize(980, 700);
     await capture('pr-summary-laptop');
@@ -183,22 +183,22 @@ void app.whenReady().then(async () => {
     await wait("document.querySelectorAll('.pr-description .mermaid-diagram').length===1");
     await wait("!!document.querySelector('.pr-description .mermaid-preview > div > svg')");
     await js("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
-    await js("document.querySelector('.pr-summary-page').scrollTop = 420");
+    await js("document.querySelector('.pr-summary-content').scrollTop = 420");
     await js('document.querySelector(\'[aria-label="Next change"]\').click()');
-    await wait("document.querySelector('.pr-summary-content h1')?.textContent.includes('Reduce allocations')");
+    await wait("document.querySelector('.pr-overview-heading h1')?.textContent.includes('Reduce allocations')");
     assert.match(await js<string>("document.querySelector('.pr-description').textContent"), /No description provided/);
     await js('document.querySelector(\'[aria-label="Previous change"]\').click()');
-    await wait("document.querySelector('.pr-summary-content h1')?.textContent.includes('Fix reconnect')");
-    await wait("document.querySelector('.pr-summary-page').scrollTop >= 400");
-    await js("document.querySelector('.pr-summary-page').scrollTop = 0");
+    await wait("document.querySelector('.pr-overview-heading h1')?.textContent.includes('Fix reconnect')");
+    await wait("document.querySelector('.pr-summary-content').scrollTop >= 400");
+    await js("document.querySelector('.pr-summary-content').scrollTop = 0");
     await js(
       "document.querySelector('.pr-secondary-metadata summary').dispatchEvent(new KeyboardEvent('keydown',{key:'j',bubbles:true}))"
     );
-    assert.match(await js<string>("document.querySelector('.pr-summary-content h1').textContent"), /Fix reconnect/);
+    assert.match(await js<string>("document.querySelector('.pr-overview-heading h1').textContent"), /Fix reconnect/);
     await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'j',bubbles:true}))");
-    await wait("document.querySelector('.pr-summary-content h1')?.textContent.includes('Reduce allocations')");
+    await wait("document.querySelector('.pr-overview-heading h1')?.textContent.includes('Reduce allocations')");
     await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'k',bubbles:true}))");
-    await wait("document.querySelector('.pr-summary-content h1')?.textContent.includes('Fix reconnect')");
+    await wait("document.querySelector('.pr-overview-heading h1')?.textContent.includes('Fix reconnect')");
     assert.equal(await js('window.metadataReads'), 0, 'Moving through cached summaries adds no metadata reads');
     await click('Generate AI explanation');
     await wait("document.querySelector('.pr-summary-actions button:last-child')?.textContent.includes('Generating')");
@@ -251,7 +251,7 @@ void app.whenReady().then(async () => {
       input.dispatchEvent(new Event('input',{bubbles:true}));
     })()`);
     await js("document.querySelector('.queue-url button[type=submit]').click()");
-    await wait("document.querySelector('.pr-summary-content h1')?.textContent==='A PR outside the queue'");
+    await wait("document.querySelector('.pr-overview-heading h1')?.textContent==='A PR outside the queue'");
     assert.equal(await js('window.metadataReads'), 1);
     assert.equal(await js('window.generationCalls.length'), 1, 'A pasted URL only fetches metadata');
     assert.equal(
@@ -277,7 +277,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelectorAll('.pr-summary-page .pr-details').length"), 1);
     assert.equal(
       await js(
-        "document.querySelector('.pr-summary-content>.workbench-notice').getBoundingClientRect().top < document.querySelector('.pr-description').getBoundingClientRect().top"
+        "document.querySelector('.pr-summary-body>.workbench-notice').getBoundingClientRect().top < document.querySelector('.pr-description').getBoundingClientRect().top"
       ),
       true
     );
@@ -285,18 +285,18 @@ void app.whenReady().then(async () => {
     assert.match(await js<string>("document.querySelector('.pr-details-heading h2').textContent"), /#128/);
     assert.match(await js<string>("document.querySelector('.pr-member-relationship').textContent"), /Builds on #127/);
     await capture('pr-summary-nine-pr-stack');
-    await js("document.querySelector('.pr-summary-page').scrollTop=350");
+    await js("document.querySelector('.pr-summary-content').scrollTop=350");
     await js("document.querySelectorAll('.pr-stack-nav button')[0].click()");
     await js("document.querySelectorAll('.pr-stack-nav button')[8].click()");
-    await wait("document.querySelector('.pr-summary-page').scrollTop>=330");
+    await wait("document.querySelector('.pr-summary-content').scrollTop>=330");
     await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'j',bubbles:true}))");
     await wait("!document.querySelector('.pr-stack-nav')");
     await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'k',bubbles:true}))");
     await wait(
-      "document.querySelector('.pr-details-heading h2')?.textContent.includes('#128') && document.querySelector('.pr-summary-page').scrollTop>=330"
+      "document.querySelector('.pr-details-heading h2')?.textContent.includes('#128') && document.querySelector('.pr-summary-content').scrollTop>=330"
     );
     window.setSize(540, 760);
-    await js("document.querySelector('.pr-summary-page').scrollTop=0");
+    await js("document.querySelector('.pr-summary-content').scrollTop=0");
     await capture('pr-summary-nine-pr-stack-narrow');
     assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
     window.setSize(1280, 800);
@@ -310,7 +310,7 @@ void app.whenReady().then(async () => {
     await js('document.querySelector(\'[aria-label="Next change"]\').click()');
     await wait("document.querySelector('.pr-queue-navigation')?.textContent.includes('2 / 2')");
     assert.match(
-      await js<string>("document.querySelector('.pr-summary-content h1').textContent"),
+      await js<string>("document.querySelector('.pr-overview-heading h1').textContent"),
       /Handle empty batches/
     );
     assert.equal(await js('document.querySelector(\'[aria-label="Next change"]\').disabled'), true);

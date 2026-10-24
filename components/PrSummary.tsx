@@ -18,7 +18,9 @@ export interface PrReadingPosition {
 
 export function PrSummary({
   item,
-  tab, onTabChange, preferences,
+  tab,
+  onTabChange,
+  preferences,
   starting,
   error,
   statuses,
@@ -59,7 +61,7 @@ export function PrSummary({
   shortcutsEnabled?: boolean;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
-  const page = useRef<HTMLElement>(null);
+  const page = useRef<HTMLDivElement>(null);
   const restoring = useRef(false);
   const [position] = useState(() => {
     const saved = positions.get(item.subject.id) ?? { memberUrl: item.subject.members[0].url, scroll: {} };
@@ -80,7 +82,7 @@ export function PrSummary({
     position.memberUrl = activeUrl;
     const desired = position.scroll[activeUrl] ?? 0;
     restoring.current = desired > 0;
-    const content = element.querySelector('.pr-summary-content');
+    const content = element.querySelector('.pr-summary-body');
     const observer = new ResizeObserver(() => restore());
     const stop = () => {
       restoring.current = false;
@@ -119,7 +121,7 @@ export function PrSummary({
   useEffect(() => {
     if (!shortcutsEnabled) return;
     const keydown = (event: KeyboardEvent) => {
-      if (event.composedPath().some(node => node instanceof Element && node.matches('.pr-changes'))) return;
+      if (event.composedPath().some((node) => node instanceof Element && node.matches('.pr-changes'))) return;
       if (event.defaultPrevented || event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target instanceof HTMLElement ? event.target : null;
       if (
@@ -150,156 +152,162 @@ export function PrSummary({
   const ready = item.review?.status === 'completed';
   const current = ready && item.review?.snapshot?.fingerprint === fingerprint(item.subject);
   return (
-    <Tabs.Root value={tab} onValueChange={value=>{if(tab==='summary')remember();onTabChange(value as 'summary'|'changes');}} asChild>
-    <main
-      className={`pr-summary-page ${stacked ? 'is-stack' : ''} ${tab==='changes'?'showing-changes':''}`}
-      ref={page}
-      onScroll={() => {
-        remember();
+    <Tabs.Root
+      value={tab}
+      onValueChange={(value) => {
+        if (tab === 'summary') remember();
+        onTabChange(value as 'summary' | 'changes');
       }}
+      asChild
     >
-      <div className="pr-summary-toolbar">
-        <div className="pr-summary-toolbar-inner">
-          <button onClick={back} className="pr-back" title="Return to work queue (Esc)">
-            <ArrowLeft size={15} />
-            Work queue
-          </button>
-          <nav className="pr-queue-navigation" aria-label="Changes in current view">
-            <button
-              aria-label="Previous change"
-              disabled={!navigation.previous}
-              title={navigation.previous ? `Previous: ${navigation.previous} (k)` : 'First change in this view'}
-              onClick={() => move(-1)}
-            >
-              <ChevronLeft size={16} />
+      <main className={`pr-summary-page ${stacked ? 'is-stack' : ''} ${tab === 'changes' ? 'showing-changes' : ''}`}>
+        <div className="pr-summary-toolbar">
+          <div className="pr-summary-toolbar-inner">
+            <button onClick={back} className="pr-back" title="Return to work queue (Esc)">
+              <ArrowLeft size={15} />
+              Work queue
             </button>
-            <span title={navigation.viewName}>
-              {navigation.index < 0 ? 'Outside current view' : `${navigation.index + 1} / ${navigation.total}`}
-            </span>
-            <button
-              aria-label="Next change"
-              disabled={!navigation.next}
-              title={navigation.next ? `Next: ${navigation.next} (j)` : 'Last change in this view'}
-              onClick={() => move(1)}
-            >
-              <ChevronRight size={16} />
-            </button>
-          </nav>
-          <div className="pr-summary-actions">
-            {ready && !current && (
-              <Button variant="outline" size="sm" onClick={onOpenReview}>
-                Open previous AI explanation
+            <nav className="pr-queue-navigation" aria-label="Changes in current view">
+              <button
+                aria-label="Previous change"
+                disabled={!navigation.previous}
+                title={navigation.previous ? `Previous: ${navigation.previous} (k)` : 'First change in this view'}
+                onClick={() => move(-1)}
+              >
+                <ChevronLeft size={16} />
+              </button>
+              <span title={navigation.viewName}>
+                {navigation.index < 0 ? 'Outside current view' : `${navigation.index + 1} / ${navigation.total}`}
+              </span>
+              <button
+                aria-label="Next change"
+                disabled={!navigation.next}
+                title={navigation.next ? `Next: ${navigation.next} (j)` : 'Last change in this view'}
+                onClick={() => move(1)}
+              >
+                <ChevronRight size={16} />
+              </button>
+            </nav>
+            <div className="pr-summary-actions">
+              {ready && !current && (
+                <Button variant="outline" size="sm" onClick={onOpenReview}>
+                  Open previous AI explanation
+                </Button>
+              )}
+              <Button size="sm" disabled={running} onClick={current ? onOpenReview : onGenerate}>
+                {running
+                  ? 'Generating AI explanation…'
+                  : current
+                    ? 'Open AI explanation'
+                    : ready
+                      ? 'Update AI explanation'
+                      : 'Generate AI explanation'}
+                {!running && <ArrowRight size={14} />}
               </Button>
-            )}
-            <Button size="sm" disabled={running} onClick={current ? onOpenReview : onGenerate}>
-              {running
-                ? 'Generating AI explanation…'
-                : current
-                  ? 'Open AI explanation'
-                  : ready
-                    ? 'Update AI explanation'
-                    : 'Generate AI explanation'}
-              {!running && <ArrowRight size={14} />}
-            </Button>
+            </div>
           </div>
         </div>
-      </div>
-      <Tabs.List className="pr-overview-tabs" aria-label="PR overview">
-        <Tabs.Trigger value="summary">Summary</Tabs.Trigger><Tabs.Trigger value="changes">Changes</Tabs.Trigger>
-      </Tabs.List>
-      <Tabs.Content value="changes" className="pr-changes-tab">
-        <h1 className="pr-changes-title">{item.subject.title}</h1>
-        {preferences && <PrChangesView key={item.subject.id} subject={item.subject} preferences={preferences}/>}
-      </Tabs.Content>
-      <Tabs.Content value="summary" className="pr-summary-content">
-        <h1 ref={heading} tabIndex={-1}>
-          {item.subject.title}
-        </h1>
-        <div className="pr-summary-context">
-          <span>
-            {stacked ? (
-              <>
-                <Layers size={14} />
-                {item.subject.members.length} PRs · one AI explanation
-              </>
-            ) : (
-              <>
-                {first.repo} #{first.number} ·{' '}
-                <span className={`pr-state pr-state-${state.toLowerCase()}`}>{state}</span> · by <GitHubAuthor login={first.author}/> ·
-                updated <time dateTime={first.updatedAt}>{timeAgo(first.updatedAt)}</time>
-              </>
+        <header className="pr-overview-heading">
+          <h1 ref={heading} tabIndex={-1}>
+            {item.subject.title}
+          </h1>
+          <div className="pr-summary-context">
+            <span>
+              {stacked ? (
+                <>
+                  <Layers size={14} />
+                  {item.subject.members.length} PRs · one AI explanation
+                </>
+              ) : (
+                <>
+                  {first.repo} #{first.number} ·{' '}
+                  <span className={`pr-state pr-state-${state.toLowerCase()}`}>{state}</span> · by{' '}
+                  <GitHubAuthor login={first.author} /> · updated{' '}
+                  <time dateTime={first.updatedAt}>{timeAgo(first.updatedAt)}</time>
+                </>
+              )}
+            </span>
+            {!stacked && (
+              <a className="pr-github-link" href={first.url} target="_blank" rel="noopener noreferrer">
+                GitHub <ExternalLink size={13} />
+              </a>
             )}
-          </span>
-          {!stacked && (
-            <a className="pr-github-link" href={first.url} target="_blank" rel="noopener noreferrer">
-              GitHub <ExternalLink size={13} />
-            </a>
-          )}
-        </div>
-        <div className="pr-explanation-help">
-          <span>AI explanations walk through the changes alongside the code.</span>
-          {!current && !running && onAiSetup && (
-            <button className="workbench-help-link" onClick={onAiSetup}>
-              AI setup
-            </button>
-          )}
-          <span className="pr-summary-shortcuts">
-            <kbd>j</kbd>/<kbd>k</kbd> next/previous · <kbd>Esc</kbd> queue
-          </span>
-        </div>
-        {item.subject.warnings.map((warning) => (
-          <p key={warning} className="workbench-notice" role="status">
-            {warning}
-          </p>
-        ))}
-        {running && (
-          <p role="status" className="workbench-notice">
-            Your AI explanation is running in the background. Track progress in Activity while you keep reading.
-          </p>
-        )}
-        {error && (
-          <div role="alert" className="workbench-notice error">
-            <p>Could not open or generate the AI explanation. Your PR description is still available.</p>
-            {/GitHub.*(?:access|sign.in)|token|Resource not accessible/i.test(error) ? (
-              <>
-                <p>{error}</p>
-                {onGitHubAuth && (
-                  <button className="workbench-help-link" onClick={onGitHubAuth}>
-                    Check GitHub access
-                  </button>
+          </div>
+        </header>
+        <Tabs.List className="pr-overview-tabs" aria-label="PR overview">
+          <Tabs.Trigger value="summary">Summary</Tabs.Trigger>
+          <Tabs.Trigger value="changes">Changes</Tabs.Trigger>
+        </Tabs.List>
+        <Tabs.Content value="changes" className="pr-changes-tab">
+          {preferences && <PrChangesView key={item.subject.id} subject={item.subject} preferences={preferences} />}
+        </Tabs.Content>
+        <Tabs.Content value="summary" className="pr-summary-content" ref={page} onScroll={remember}>
+          <div className="pr-summary-body">
+            <div className="pr-explanation-help">
+              <span>AI explanations walk through the changes alongside the code.</span>
+              {!current && !running && onAiSetup && (
+                <button className="workbench-help-link" onClick={onAiSetup}>
+                  AI setup
+                </button>
+              )}
+              <span className="pr-summary-shortcuts">
+                <kbd>j</kbd>/<kbd>k</kbd> next/previous · <kbd>Esc</kbd> queue
+              </span>
+            </div>
+            {item.subject.warnings.map((warning) => (
+              <p key={warning} className="workbench-notice" role="status">
+                {warning}
+              </p>
+            ))}
+            {running && (
+              <p role="status" className="workbench-notice">
+                Your AI explanation is running in the background. Track progress in Activity while you keep reading.
+              </p>
+            )}
+            {error && (
+              <div role="alert" className="workbench-notice error">
+                <p>Could not open or generate the AI explanation. Your PR description is still available.</p>
+                {/GitHub.*(?:access|sign.in)|token|Resource not accessible/i.test(error) ? (
+                  <>
+                    <p>{error}</p>
+                    {onGitHubAuth && (
+                      <button className="workbench-help-link" onClick={onGitHubAuth}>
+                        Check GitHub access
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <details>
+                    <summary>Error details</summary>
+                    <p>{error}</p>
+                  </details>
                 )}
-              </>
-            ) : (
-              <details>
-                <summary>Error details</summary>
-                <p>{error}</p>
+              </div>
+            )}
+            {item.review?.status === 'failed' && (
+              <p className="workbench-notice">The AI explanation could not be completed. Generate it again to retry.</p>
+            )}
+            {item.briefing?.status === 'ready' && (
+              <details className="pr-briefing" open>
+                <summary>AI briefing</summary>
+                <Markdown>{item.briefing.summary ?? ''}</Markdown>
               </details>
             )}
+            <PrSubjectDetails
+              compactIdentity
+              subject={item.subject}
+              activeUrl={activeUrl}
+              onSelect={(url) => {
+                remember();
+                setMemberUrl(url);
+              }}
+              statuses={statuses}
+              statusErrors={statusErrors}
+              onRetryStatus={onRetryStatus}
+            />
           </div>
-        )}
-        {item.review?.status === 'failed' && (
-          <p className="workbench-notice">The AI explanation could not be completed. Generate it again to retry.</p>
-        )}
-        {item.briefing?.status === 'ready' && (
-          <details className="pr-briefing" open>
-            <summary>AI briefing</summary>
-            <Markdown>{item.briefing.summary ?? ''}</Markdown>
-          </details>
-        )}
-        <PrSubjectDetails
-          compactIdentity
-          subject={item.subject}
-          activeUrl={activeUrl}
-          onSelect={(url) => {
-            remember();
-            setMemberUrl(url);
-          }}
-          statuses={statuses}
-          statusErrors={statusErrors}
-          onRetryStatus={onRetryStatus}
-        />
-      </Tabs.Content>
-    </main>
+        </Tabs.Content>
+      </main>
     </Tabs.Root>
   );
 }

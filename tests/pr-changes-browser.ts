@@ -63,7 +63,19 @@ void app.whenReady().then(async () => {
     await js(
       `window.electronAPI.getReviewThreads=async()=>({headSha:'head-0',baseSha:'base-0',threads:[{id:'thread1',path:'src/worker.ts',line:36,startLine:null,diffSide:'RIGHT',isResolved:false,isOutdated:false,viewerCanResolve:true,viewerCanUnresolve:false,comments:[{id:'comment1',body:'Does this preserve the retry boundary?',createdAt:new Date().toISOString(),url:'https://github.com/o/r/pull/1#discussion_r1',author:{login:'maya',avatarUrl:''}}]}]});void 0;`
     );
-    await click('Changes');
+    const frame = () => js(`[...document.querySelectorAll('.pr-summary-toolbar-inner,.pr-overview-heading,.pr-overview-heading h1,.pr-overview-tabs')].map(e=>{const r=e.getBoundingClientRect();return [r.x,r.y,r.width,r.height]})`);
+    for (const width of [1400,1024,640,1280]) {
+      window.setSize(width,800);
+      await click('Summary');
+      await new Promise(r=>setTimeout(r,100));
+      const summaryFrame=await frame();
+      await capture(`frame-summary-${width}`);
+      await js("document.querySelector('.pr-summary-content').scrollTop=160");
+      await click('Changes');
+      await wait("!!document.querySelector('.changes-file-tree')");
+      assert.deepEqual(await frame(),summaryFrame,'Title, navigation, actions, and tabs stay anchored when switching');
+      await capture(`frame-changes-${width}`);
+    }
     await wait("!!document.querySelector('.changes-file-tree')");
     await wait("!!document.querySelector('.review-image-diff') || !!document.querySelector('.changes-code img')");
     // Search the actual shadow DOM, not an imitation of the tree.
@@ -162,7 +174,7 @@ void app.whenReady().then(async () => {
     await wait('window.manifestReads.some(r=>r[1]===true)');
     await click('Next change');
     await wait(
-      "!!document.querySelector('.pr-summary-page.showing-changes') && document.querySelector('.pr-changes-title')?.textContent.includes('Reduce allocations')"
+      "!!document.querySelector('.pr-summary-page.showing-changes') && document.querySelector('.pr-overview-heading h1')?.textContent.includes('Reduce allocations')"
     );
     await click('Work queue');
     await js(
