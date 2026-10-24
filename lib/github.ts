@@ -44,6 +44,7 @@ export async function getPrMetadata(
     assignees: (data.assignees ?? []).map((user) => user.login),
     baseBranch: data.base.ref,
     baseRepo: data.base.repo.full_name,
+    repoArchived: data.base.repo.archived,
     // GitHub can return null after a fork is deleted, despite the generated type.
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     headRepo: data.head.repo?.full_name ?? data.base.repo.full_name,
@@ -184,8 +185,8 @@ export async function getFileContent(
 
 export async function searchPullRequests(octokit: Octokit, login: string, limit = 30): Promise<PrSearchResult[]> {
   const queries = [
-    { q: `is:pr is:open author:${login}`, role: 'author' as const },
-    { q: `is:pr is:open review-requested:${login}`, role: 'review-requested' as const },
+    { q: `is:pr is:open archived:false author:${login}`, role: 'author' as const },
+    { q: `is:pr is:open archived:false review-requested:${login}`, role: 'review-requested' as const },
   ];
 
   const results = await Promise.all(
@@ -240,7 +241,7 @@ export async function searchRepos(
 ): Promise<RepoSearchResult[]> {
   if (!query.trim()) return [];
   const { data } = await octokit.search.repos({
-    q: query,
+    q: `${query} archived:false`,
     sort: 'updated',
     order: 'desc',
     per_page: limit,
@@ -267,7 +268,7 @@ export async function listRepoPullRequests(
     per_page: limit,
   });
 
-  return data.map((pr) => ({
+  return data.filter(pr => !pr.base.repo.archived).map((pr) => ({
     number: pr.number,
     title: pr.title,
     url: pr.html_url,

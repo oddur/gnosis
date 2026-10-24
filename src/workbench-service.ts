@@ -44,6 +44,7 @@ import type { Preferences, ReviewHistoryEntry, PrSearchResult, PrMetadata } from
 
 interface State {
   account: string;
+  archivedRepos?: string[];
   subjects: ReviewSubject[];
   overrides: GroupingOverride[];
   briefs: Partial<Record<string, Briefing>>;
@@ -111,6 +112,7 @@ export function createWorkbenchService(deps: Deps) {
     createHash('sha256')
       .update(
         JSON.stringify([
+          'active-repositories-v1',
           deps.auth().token,
           [...deps.preferences().watchedRepos].sort(),
           deps.preferences().ignoreDependabotPrs !== false,
@@ -155,9 +157,12 @@ export function createWorkbenchService(deps: Deps) {
       .digest('hex');
   }
   const limit = () => Math.min(100, Math.max(0, (deps.preferences().briefingDailyLimit ?? 10) || 0));
+  function isArchived(member: ReviewMember) {
+    return member.repoArchived === true || (load().archivedRepos ?? []).includes(member.repo.toLowerCase());
+  }
   function includeSubject(subject: ReviewSubject, muted = mutedUrls()) {
     // Retain necessary parent context when a human-authored change depends on a bot PR.
-    return !subject.members.some(m => muted.has(m.url)) && subject.members.some(
+    return !subject.members.some(m => muted.has(m.url) || isArchived(m)) && subject.members.some(
       (m) => m.state === 'open' && (deps.preferences().ignoreDependabotPrs === false || !isDependabot(m.author))
     );
   }
@@ -165,8 +170,9 @@ export function createWorkbenchService(deps: Deps) {
     const s = load();
     const mutedPrs = mutes.load(s.account);
     const muted = new Set(mutedPrs.map(entry => entry.member.url));
-    const visibleSubjects = s.subjects.flatMap(subject => { const visible = withoutMutedMembers(subject, muted); return visible ? [visible] : []; });
-    const starredPrs = stars.load(s.account).filter(entry => !muted.has(entry.member.url));
+    const hiddenUrls = new Set([...muted, ...s.subjects.flatMap(subject => subject.members.filter(isArchived).map(member => member.url))]);
+    const visibleSubjects = s.subjects.flatMap(subject => { const visible = withoutMutedMembers(subject, hiddenUrls); return visible ? [visible] : []; });
+    const starredPrs = stars.load(s.account).filter(entry => !muted.has(entry.member.url) && !isArchived(entry.member));
     const starredUrls = new Set(starredPrs.map((entry) => entry.member.url));
     const history = deps.history().filter(entry => !isMutedReview(entry, muted));
     const filters = normalizeQueueFilters(s.filters);
@@ -314,10 +320,27 @@ export function createWorkbenchService(deps: Deps) {
       save: checkpoint,
       progress,
     });
-    const listRepo = (fullName: string) => listings.repository(fullName);
+    const setArchiveState = (fullName: string, archived: boolean) => {
+      const repo = fullName.toLowerCase();
+      const known = new Set(s.archivedRepos ?? []);
+      if (archived) known.add(repo); else known.delete(repo);
+      s.archivedRepos = [...known];
+      // Update saved metadata too: archive changes do not update PR timestamps.
+      const update = (member: ReviewMember) => member.repo.toLowerCase() === repo ? { ...member, repoArchived: archived } : member;
+      s.subjects = s.subjects.map(subject => ({ ...subject, members: subject.members.map(update) }));
+      for (const [url, member] of previousMembers) previousMembers.set(url, update(member));
+      stars.update(s.account, stars.load(s.account).map(entry => update(entry.member)));
+    };
+    const listRepo = async (fullName: string) => {
+      const result = await listings.repository(fullName);
+      if (typeof result.archived === 'boolean') { setArchiveState(fullName, result.archived); checkpoint(); }
+      return result;
+    };
     try {
       progress('Finding your pull requests');
       const found = await listings.personal();
+      // Search excludes archived repositories, so these are active even after an unarchive.
+      for (const repo of new Set(found.map(pr => `${pr.repoOwner}/${pr.repoName}`))) setArchiveState(repo, false);
       const seeds = new Map<string, Pick<PrSearchResult, 'url' | 'role' | 'updatedAt'>>(
         found.filter((m) => prefs.ignoreDependabotPrs === false || !isDependabot(m.author)).map((m) => [m.url, m])
       );
@@ -353,6 +376,8 @@ export function createWorkbenchService(deps: Deps) {
           base: { sha: string; ref: string };
         }
       ) => {
+        const repo = (() => { const p = parsePrUrl(url); return `${p.owner}/${p.repo}`.toLowerCase(); })();
+        if (s.archivedRepos?.includes(repo)) return;
         const muted = mutes.load(s.account).find(entry => entry.member.url === url);
         if (muted) { members.set(url, previousMembers.get(url) ?? muted.member); return; }
         const withListedLabels = (member: ReviewMember): ReviewMember => {
@@ -396,6 +421,7 @@ export function createWorkbenchService(deps: Deps) {
         checkAllowance();
         try {
           const member = await fetchMember(octokit, url, role ?? current?.role);
+          if (member.repoArchived) { setArchiveState(member.repo, true); return; }
           members.set(url, member);
           checkedAt[url] = now();
           completed.set(url, member);
@@ -443,7 +469,11 @@ export function createWorkbenchService(deps: Deps) {
         progress(`Checking PR stacks in ${fullName}`, { completed: index, total: repos.length, unit: 'repositories' });
         const [owner, repo] = fullName.split('/');
         try {
-          const { data } = await listRepo(fullName);
+          const { data, archived } = await listRepo(fullName);
+          if (archived) {
+            for (const [url, member] of members) if (member.repo.toLowerCase() === fullName.toLowerCase()) members.delete(url);
+            continue;
+          }
           // Index branch relationships once. Scanning every pair of PRs becomes
           // expensive now that repository discovery includes every page.
           const byUrl = new Map(data.map((pr) => [pr.html_url, pr]));
@@ -498,7 +528,7 @@ export function createWorkbenchService(deps: Deps) {
       if (deps.auth().login !== login || discoveryKey() !== discoverySettings)
         return { items: [], warnings: [], remaining: 0 };
       progress('Updating your queue');
-      const updatedSubjects = groupSubjects([...members.values()], s.overrides, s.subjects);
+      const updatedSubjects = groupSubjects([...members.values()].filter(member => !isArchived(member)), s.overrides, s.subjects);
       // Keep unrelated saved subjects for an instant return to the full queue.
       // Previously personal subjects absent from the new result may have closed
       // or been unassigned, so do not retain those as current personal work.

@@ -442,6 +442,8 @@ export interface PrLabel {
 }
 
 export interface PrMetadata {
+  /** Archive state of the target repository; absent in older saved reviews. */
+  repoArchived?: boolean;
   /** Conversation comments, excluding inline review threads. Optional for older snapshots. */
   commentCount?: number;
   changedFileCount?: number;
