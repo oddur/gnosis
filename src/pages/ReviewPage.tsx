@@ -869,6 +869,8 @@ export function ReviewPage({
               review={review}
               viewedFiles={viewedFiles}
               onFileViewedChange={setFileViewed}
+              onContinue={() => handleJumpTo(currentSlide < review.slides.length ? currentSlide + 1 : 0)}
+              nextTopicTitle={nextTitle}
               showInlineExplanations={prefs?.showInlineExplanations !== false}
               onShowInlineExplanationsChange={handleShowInlineExplanationsChange}
               slide={review.slides[currentSlide - 1]}

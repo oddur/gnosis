@@ -111,6 +111,37 @@ void app.whenReady().then(async () => {
       "document.querySelector('[role=dialog]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
     );
     await wait("!document.querySelector('[role=dialog]')");
+    // Viewing files offers navigation without approving a topic or submitting feedback.
+    assert.equal(await js("!!document.querySelector('.review-files-complete')"), false);
+    await js("document.querySelector('.review-file-viewed input').click()");
+    await wait("!!document.querySelector('.review-files-complete')");
+    assert.match(await js<string>("document.querySelector('.review-files-complete').textContent"), /Adapt batches/);
+    await capture('files-viewed');
+    win.setSize(640, 800);
+    await wait('!!document.querySelector(\'[aria-label="Review pane"]\')');
+    await click('Code');
+    await capture('files-viewed-narrow');
+    assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
+    win.setSize(1280, 800);
+    await wait('!document.querySelector(\'[aria-label="Review pane"]\')');
+    await js("document.querySelector('.review-file-viewed input').click()");
+    await wait("!document.querySelector('.review-files-complete')");
+    await js("document.querySelector('.review-file-viewed input').click()");
+    await click('Next topic');
+    await wait("document.querySelector('[aria-label=\"Review topic\"]').value==='2'");
+    await js(
+      `(()=>{const el=document.querySelector('[aria-label="Review topic"]');el.value='3';el.dispatchEvent(new Event('change',{bubbles:true}))})()`
+    );
+    await wait("document.querySelector('[aria-label=\"Review topic\"]').value==='3'");
+    await js("document.querySelectorAll('.review-file-viewed input:not(:checked)').forEach(el=>el.click())");
+    await wait("!!document.querySelector('.review-files-complete')");
+    await capture('files-viewed-final');
+    await click('Back to overview');
+    await wait("!!document.querySelector('.workbench-overview')");
+    assert.deepEqual(await js('window.reviewWrites'), []);
+    assert.equal(await js('window.starts'), 0);
+    await click('Continue review');
+    await wait("document.querySelector('[aria-label=\"Review topic\"]').value==='1'");
     const loads = await js('window.loads');
     const topic = await js('document.querySelector(\'[aria-label="Review topic"]\').value');
     await click('Summary');
@@ -178,7 +209,9 @@ void app.whenReady().then(async () => {
     );
     assert.match(await js<string>("document.querySelector('.pr-summary-context').textContent"), /Merged/);
     await capture('historical');
-    await js("document.activeElement.blur();window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+    await js(
+      "document.activeElement.blur();window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
+    );
     await wait("!!document.querySelector('.queue-list')");
     console.log('Explanation tab browser checks passed');
   } catch (e) {
