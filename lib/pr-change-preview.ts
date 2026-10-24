@@ -1,16 +1,16 @@
-import { processFile, type FileDiffMetadata, type SelectedLineRange } from '@pierre/diffs';
+import { processFile, trimPatchContext, type FileDiffMetadata, type SelectedLineRange } from '@pierre/diffs';
 import type { PrChangeFile } from './pr-changes';
 import { imageMimeType } from './review-images';
 
 /** Render GitHub's already-downloaded patch immediately, but never present a truncated patch as complete. */
-export function prChangePreview(file: PrChangeFile): FileDiffMetadata | undefined {
+export function prChangePreview(file: PrChangeFile, contextLines = 3): FileDiffMetadata | undefined {
   if (!file.patch || imageMimeType(file.path)) return;
   const added = file.status === 'added',
     deleted = file.status === 'deleted';
   try {
     // Fixed parser paths avoid quoting ambiguity for filenames with tabs/spaces; identity is assigned afterwards.
     const patch = `diff --git a/source b/source\n${added ? 'new file mode 100644\n' : deleted ? 'deleted file mode 100644\n' : ''}--- ${added ? '/dev/null' : 'a/source'}\n+++ ${deleted ? '/dev/null' : 'b/source'}\n${file.patch}\n`;
-    const preview = processFile(patch, { throwOnError: true });
+    const preview = processFile(trimPatchContext(patch, contextLines), { throwOnError: true });
     if (
       !preview ||
       !preview.hunks.length ||

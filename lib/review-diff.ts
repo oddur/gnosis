@@ -2,6 +2,7 @@ import { contentHasDiffMarkers, parseDiffLines } from './diff-lines';
 import type { DiffHunk, FileMetadata } from './types';
 
 export interface DiffAppearance {
+  contextLines?: number;
   indicators: 'bars' | 'classic' | 'none';
   inline: 'word-alt' | 'word-line' | 'word' | 'char' | 'none';
   backgrounds: boolean;
@@ -9,12 +10,18 @@ export interface DiffAppearance {
   lineNumbers: boolean;
 }
 export const DEFAULT_DIFF_APPEARANCE: DiffAppearance = {
+  contextLines: 3,
   indicators: 'classic',
   inline: 'word-alt',
   backgrounds: true,
   wrap: false,
   lineNumbers: true,
 };
+
+export function diffContextLines(appearance?: DiffAppearance): number {
+  const count = appearance?.contextLines;
+  return typeof count === 'number' && Number.isInteger(count) && count >= 1 && count <= 50 ? count : 3;
+}
 
 /** Saved reviews contain selected/expanded hunks, not complete files. Recount
  * their actual lines, preserving source coordinates and authoritative status. */

@@ -1,3 +1,4 @@
+import { useDiffAppearance } from '../../lib/use-diff-appearance';
 import { refreshDiscussion } from '../../lib/review-discussion-cache';
 import { useChangesComments } from '../../components/useChangesComments';
 import { useExplanationComments } from '../../lib/use-explanation-comments';
@@ -9,7 +10,7 @@ import { useCommandCenter, useCommandScope } from '../../lib/command-center';
 import type { SearchDestination } from '../../lib/command-search';
 import { useSessionDraft } from '../../lib/session-drafts';
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { DEFAULT_DIFF_APPEARANCE, type DiffAppearance } from '../../lib/review-diff';
+import { type DiffAppearance } from '../../lib/review-diff';
 import { ArrowLeft, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react';
 import { PRSummaryBanner } from '../../components/PRSummaryBanner';
 import { StaleBanner } from '../../components/StaleBanner';
@@ -158,10 +159,7 @@ export function ReviewPage({
   const [diffLayout, setDiffLayout] = useState<Preferences['diffLayout']>(initialPreferences?.diffLayout ?? 'unified');
   const [slideViewMode, setSlideViewMode] = useSessionDraft<'split' | 'focus'>('slide-view', 'split');
   const [prefs, setPrefs] = useState<Preferences | null>(initialPreferences ?? null);
-  const diffAppearance = useMemo(
-    () => ({ ...DEFAULT_DIFF_APPEARANCE, ...prefs?.diffAppearance }),
-    [prefs?.diffAppearance]
-  );
+  const diffAppearance = useDiffAppearance(prefs?.diffAppearance);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [exploreOpen, setExploreOpen] = useSessionDraft('explore-open', exploreInitially ?? false);
