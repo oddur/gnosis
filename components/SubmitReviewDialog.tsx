@@ -1,6 +1,6 @@
 import { useSessionDraft } from '../lib/session-drafts';
 import { useState, useEffect } from 'react';
-import { AlertTriangle, Check, ExternalLink, MessageSquare, ShieldCheck, ShieldX } from 'lucide-react';
+import { AlertTriangle, Check, ExternalLink, MessageSquare, ShieldCheck, ShieldX, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -142,7 +142,9 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, prUrl, headSh
           >
             {destination} <ExternalLink size={13} aria-hidden="true" />
           </a>
-          <p>Choose an action below to send your feedback to this PR on GitHub. Your topic progress stays in Gnosis.</p>
+          <p>
+            Choose an action below to send your feedback to this PR on GitHub. Your review progress stays in Gnosis.
+          </p>
         </div>
 
         {!headSha && (
@@ -162,7 +164,11 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, prUrl, headSh
             {Array.from(fileGroups.entries()).map(([filePath, fileComments]) => (
               <details key={filePath} className="group" open>
                 <summary className="slide-meta cursor-pointer hover:text-foreground select-none flex items-center gap-1.5">
-                  <span className="group-open:rotate-90 inline-block transition-transform">▸</span>
+                  <ChevronRight
+                    size={14}
+                    className="group-open:rotate-90 shrink-0 transition-transform"
+                    aria-hidden="true"
+                  />
                   {filePath}
                   <span className="text-[var(--ring)]">({fileComments.length})</span>
                 </summary>
@@ -170,10 +176,10 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, prUrl, headSh
                   {fileComments.map((c) => (
                     <div key={c.id} className="flex flex-col gap-1">
                       <div className="flex items-center gap-2 slide-meta">
-                        <span>Line {c.line}</span>
+                        <span>{c.startLine ? `Lines ${c.startLine}–${c.line}` : `Line ${c.line}`}</span>
                         <code className="text-xs truncate max-w-[200px] text-muted-foreground">{c.codeSnippet}</code>
                       </div>
-                      <pre className="text-xs whitespace-pre-wrap break-words font-mono text-foreground/80">
+                      <pre className="text-[length:var(--type-body)] leading-relaxed whitespace-pre-wrap break-words font-sans text-foreground">
                         {c.body}
                       </pre>
                     </div>

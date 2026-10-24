@@ -1,26 +1,49 @@
 import { GitHubAuthor } from './GitHubAuthor';
 import { useSessionDraft } from '../lib/session-drafts';
-import { useId, useState } from 'react';
+import { useId, useState, useRef } from 'react';
 import { MessageSquare, Check, ChevronRight } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { timeAgo } from '../lib/utils';
-import type { GitHubReviewThread as Thread, ReviewThreadAction } from '../lib/review-threads';
+import type { GitHubReviewThread as Thread, ReviewThreadAction, ReviewCommentAction } from '../lib/review-threads';
 
 interface Props {
   thread: Thread;
   reason?: string;
+  onCommentAction?: (commentId: string, action: ReviewCommentAction['action'], body?: string) => Promise<void>;
   onAction?: (action: ReviewThreadAction['action'], body?: string) => Promise<void>;
 }
 
-export function GitHubReviewThread({ thread, reason, onAction }: Props) {
+export function GitHubReviewThread({ thread, reason, onAction, onCommentAction }: Props) {
   const [replying, setReplying] = useSessionDraft(`thread-replying:${thread.id}`, false);
   const [draft, setDraft] = useSessionDraft(`thread-reply:${thread.id}`, '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const inputId = useId();
+  const pending = useRef(false);
+  const [editing, setEditing] = useState<string>();
+  const [deleting, setDeleting] = useState<string>();
+  const [editBody, setEditBody] = useSessionDraft(`thread-edit:${thread.id}`, '');
+  async function changeComment(id: string, action: ReviewCommentAction['action']) {
+    if (!onCommentAction || pending.current) return;
+    pending.current = true;
+    setBusy(true);
+    setError('');
+    try {
+      await onCommentAction(id, action, action === 'edit' ? editBody : undefined);
+      setEditing(undefined);
+      setDeleting(undefined);
+      setEditBody('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      pending.current = false;
+      setBusy(false);
+    }
+  }
   async function act(action: ReviewThreadAction['action']) {
-    if (!onAction) return;
+    if (!onAction || pending.current) return;
+    pending.current = true;
     setBusy(true);
     setError('');
     try {
@@ -32,6 +55,7 @@ export function GitHubReviewThread({ thread, reason, onAction }: Props) {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
+      pending.current = false;
       setBusy(false);
     }
   }
@@ -61,28 +85,86 @@ export function GitHubReviewThread({ thread, reason, onAction }: Props) {
               </time>
               <button onClick={() => void window.electronAPI.openExternal(comment.url)}>On GitHub</button>
             </header>
-            <div className="github-comment-body select-text">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                skipHtml
-                components={{
-                  a: ({ href, children }) => (
-                    <a
-                      href={href}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        if (href && /^https?:\/\//.test(href)) void window.electronAPI.openExternal(href);
-                      }}
-                    >
-                      {children}
-                    </a>
-                  ),
-                  img: ({ alt }) => <span>[{alt || 'Image attachment'} — view on GitHub]</span>,
+            {editing === comment.id ? (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void changeComment(comment.id, 'edit');
                 }}
               >
-                {comment.body}
-              </ReactMarkdown>
-            </div>
+                <label htmlFor={`${inputId}-edit`}>Edit your comment</label>
+                <textarea
+                  id={`${inputId}-edit`}
+                  value={editBody}
+                  onChange={(e) => setEditBody(e.target.value)}
+                  disabled={busy}
+                  maxLength={65536}
+                  rows={3}
+                  autoFocus
+                />
+                <div className="github-thread-actions">
+                  <button disabled={busy || !editBody.trim()}>Save changes</button>
+                  <button type="button" disabled={busy} onClick={() => setEditing(undefined)}>
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="github-comment-body select-text">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  skipHtml
+                  components={{
+                    a: ({ href, children }) => (
+                      <a
+                        href={href}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          if (href && /^https?:\/\//.test(href)) void window.electronAPI.openExternal(href);
+                        }}
+                      >
+                        {children}
+                      </a>
+                    ),
+                    img: ({ alt }) => <span>[{alt || 'Image attachment'} — view on GitHub]</span>,
+                  }}
+                >
+                  {comment.body}
+                </ReactMarkdown>
+              </div>
+            )}
+            {onCommentAction && !editing && (
+              <div className="github-thread-actions">
+                {comment.viewerCanUpdate && (
+                  <button
+                    disabled={busy}
+                    onClick={() => {
+                      setEditing(comment.id);
+                      setEditBody(comment.body);
+                      setDeleting(undefined);
+                    }}
+                  >
+                    Edit
+                  </button>
+                )}
+                {comment.viewerCanDelete &&
+                  (deleting === comment.id ? (
+                    <>
+                      <span>Delete this comment from GitHub?</span>
+                      <button disabled={busy} onClick={() => void changeComment(comment.id, 'delete')}>
+                        Delete comment
+                      </button>
+                      <button disabled={busy} onClick={() => setDeleting(undefined)}>
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <button disabled={busy} onClick={() => setDeleting(comment.id)}>
+                      Delete
+                    </button>
+                  ))}
+              </div>
+            )}
           </article>
         ))}
       </div>

@@ -5,7 +5,7 @@ import type { LocalSearchResponse } from './command-search-service';
 import type { GitHubDevicePrompt } from '../lib/github-auth';
 import type { QueueViewAction } from '../lib/saved-views';
 import type { QueueFilters } from '../lib/queue-filters';
-import type { GitHubReviewThread, GitHubReviewThreads, ReviewThreadAction } from '../lib/review-threads';
+import type { GitHubReviewThread, GitHubReviewThreads, ReviewThreadAction, ReviewCommentAction, CreateReviewCommentRequest } from '../lib/review-threads';
 import type { ActivityTask, ActivityAction } from '../lib/activity';
 import type { WorkbenchQueue, GroupingOverride, ReviewSnapshot } from '../lib/workbench';
 import type {
@@ -97,6 +97,8 @@ declare global {
       loadReviewImages: (reviewId: string, filePath: string) => Promise<import('../lib/review-images').ReviewImageComparison>;
       loadPrImage: (url: string) => Promise<string>;
       getReviewThreads: (prUrl: string, refresh?: boolean) => Promise<GitHubReviewThreads>;
+      createReviewComment: (req: CreateReviewCommentRequest) => Promise<void>;
+      reviewCommentAction: (req: ReviewCommentAction) => Promise<GitHubReviewThread>;
       reviewThreadAction: (req: ReviewThreadAction) => Promise<GitHubReviewThread>;
       onUpdateAvailable: (callback: (info: UpdateInfo) => void) => void;
       offUpdateAvailable: () => void;

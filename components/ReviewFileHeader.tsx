@@ -1,3 +1,4 @@
+import { DiffStats } from './DiffStats';
 import { ChevronDown, ChevronRight, MessageSquare } from 'lucide-react';
 import { FilePathLink } from './FilePathLink';
 import { prepareReviewHunk } from '@/lib/review-diff';
@@ -101,8 +102,7 @@ export function ReviewFileHeader({
               title={`File totals ${scope}`}
               aria-label={`${counts.additions} added lines, ${counts.deletions} removed lines ${scope}`}
             >
-              <span className="text-[var(--color-success)]">+{counts.additions}</span>
-              <span className="text-[var(--color-danger)]">−{counts.deletions}</span>
+              <DiffStats additions={counts.additions} deletions={counts.deletions} />
             </span>
           )}
           {commentCount > 0 && (

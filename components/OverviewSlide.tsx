@@ -1,3 +1,4 @@
+import { DiffStats } from './DiffStats';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
@@ -24,10 +25,7 @@ function CollapsibleSection({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <section
-      className={`animate-fade-in-up ${className}`}
-      style={delay ? { animationDelay: delay } : undefined}
-    >
+    <section className={`animate-fade-in-up ${className}`} style={delay ? { animationDelay: delay } : undefined}>
       <button
         onClick={() => setOpen((v) => !v)}
         className="slide-meta hover:text-foreground transition-colors flex items-center gap-1.5"
@@ -101,11 +99,7 @@ interface Props {
 // text — color as punctuation, not category shorthand.
 function StatusLine({ status }: { status: PrStatus | null }) {
   if (!status) {
-    return (
-      <div className="slide-meta animate-pulse opacity-60 max-w-6xl mx-auto w-full mb-6">
-        loading PR status…
-      </div>
-    );
+    return <div className="slide-meta animate-pulse opacity-60 max-w-6xl mx-auto w-full mb-6">loading PR status…</div>;
   }
 
   const {
@@ -319,8 +313,8 @@ export function OverviewSlide({ review, prStatus, onNavigate }: Props) {
               {remainingFiles.map((f) => (
                 <li key={f.filename} className="slide-meta flex items-center gap-3">
                   <span className="truncate">{f.filename}</span>
-                  <span className="shrink-0 opacity-60">
-                    +{f.additions} −{f.deletions}
+                  <span className="shrink-0">
+                    <DiffStats additions={f.additions} deletions={f.deletions} />
                   </span>
                 </li>
               ))}

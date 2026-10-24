@@ -1,3 +1,4 @@
+import { DiffStats } from './DiffStats';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -179,8 +180,7 @@ export function FilePickerDialog({ open, onOpenChange, prUrl, onConfirm }: Props
                           </span>
                         </span>
                         <span className="text-xs text-muted-foreground shrink-0">
-                          <span className="text-[var(--color-success)]">+{group.totalAdditions}</span>{' '}
-                          <span className="text-[var(--color-danger)]">−{group.totalDeletions}</span>
+                          <DiffStats additions={group.totalAdditions} deletions={group.totalDeletions} />
                         </span>
                       </div>
 
@@ -198,8 +198,7 @@ export function FilePickerDialog({ open, onOpenChange, prUrl, onConfirm }: Props
                                   {f.filename}
                                 </span>
                                 <span className="text-xs text-muted-foreground shrink-0">
-                                  <span className="text-[var(--color-success)]">+{f.additions}</span>{' '}
-                                  <span className="text-[var(--color-danger)]">−{f.deletions}</span>
+                                  <DiffStats additions={f.additions} deletions={f.deletions} />
                                 </span>
                               </div>
                             </li>
