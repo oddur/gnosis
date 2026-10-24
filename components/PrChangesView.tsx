@@ -480,18 +480,12 @@ export function PrChangesView({
         <span className="changes-toolbar-spacer" />
         {commit?.tools}
         {!commit && comments.controls}
-        <label className="sr-only" htmlFor="changes-layout">
-          Diff layout
-        </label>
-        <select
-          id="changes-layout"
-          value={prefs.diffLayout}
-          onChange={(e) => savePreferences({ diffLayout: e.target.value as Preferences['diffLayout'] })}
-        >
-          <option value="split">Split</option>
-          <option value="unified">Unified</option>
-        </select>
-        <DiffAppearanceMenu value={appearance} onChange={(diffAppearance) => savePreferences({ diffAppearance })} />
+        <DiffAppearanceMenu
+          layout={prefs.diffLayout}
+          onLayoutChange={(diffLayout) => savePreferences({ diffLayout })}
+          value={appearance}
+          onChange={(diffAppearance) => savePreferences({ diffAppearance })}
+        />
         {!commit && (
           <Button variant="ghost" size="sm" disabled={loading} onClick={() => void load(true)}>
             <RefreshCw size={14} />

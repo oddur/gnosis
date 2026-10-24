@@ -44,7 +44,7 @@ function Fixture() {
       <button onClick={() => setLayout((current) => (current === 'split' ? 'unified' : 'split'))}>
         Toggle fixture layout
       </button>
-      <DiffAppearanceMenu value={appearance} onChange={setAppearance} />
+      <DiffAppearanceMenu layout={layout} onLayoutChange={setLayout} value={appearance} onChange={setAppearance} />
       {hunks.map((hunk, index) => (
         <section key={hunk.filePath} data-case={cases[index][0]} style={{ marginBottom: 24 }}>
           <h2>{cases[index][0]}</h2>
@@ -65,6 +65,8 @@ function Fixture() {
               onToggleCheck={() => {}}
               diffLayout="split"
               onDiffLayoutChange={() => {}}
+              diffAppearance={appearance}
+              onDiffAppearanceChange={setAppearance}
               viewMode="focus"
               fileMetadataMap={
                 new Map([

@@ -64,6 +64,19 @@ void app.whenReady().then(async () => {
     );
     await wait("!!document.querySelector('.review-image-diff')");
     assert.equal(await js('window.compareReads.length'), 1);
+    assert.equal(await js("!!document.querySelector('.changes-toolbar select')"), false);
+    await click('Diff appearance');
+    await wait('!!document.querySelector(\'[role=dialog] [aria-label="Diff layout"]\')');
+    await input('[aria-label="Diff layout"]', 'split');
+    await wait("window.electronAPI.loadPreferences().then(p=>p.diffLayout==='split')");
+    await capture('appearance');
+    await input('[aria-label="Diff layout"]', 'unified');
+    await wait("window.electronAPI.loadPreferences().then(p=>p.diffLayout==='unified')");
+    await js(
+      "document.querySelector('[role=dialog]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
+    );
+    await wait("!document.querySelector('[role=dialog]')");
+
     assert.equal(
       await js(
         `document.querySelector('[aria-label="Search commits"], [aria-label="Commit author"], [aria-label="Commit order"], [aria-label="Find changed files"]')`
