@@ -33,7 +33,7 @@ void app.whenReady().then(async () => {
     win.webContents.setZoomFactor(1);
     await wait("document.querySelectorAll('.queue-item').length===7");
     await js(
-      `(()=>{window.profileCalls=0;window.openedProfiles=[];const load=window.electronAPI.getGitHubProfile;window.electronAPI.getGitHubProfile=(login)=>{window.profileCalls++;return load(login)};window.electronAPI.openExternal=(url)=>{window.openedProfiles.push(url);return Promise.resolve()}})()`
+      `(()=>{window.profileCalls=0;window.openedProfiles=[];const load=window.electronAPI.getGitHubProfile;window.electronAPI.getGitHubProfile=(login)=>{window.profileCalls++;return new Promise(resolve=>{window.resolveProfile=()=>resolve(load(login))})};window.electronAPI.openExternal=(url)=>{window.openedProfiles.push(url);return Promise.resolve()}})()`
     );
     await new Promise((r) => setTimeout(r, 450));
     assert.equal(await js('window.profileCalls'), 0, 'Rendering authors does not request profiles');
@@ -49,8 +49,26 @@ void app.whenReady().then(async () => {
     win.webContents.sendInputEvent({ type: 'mouseMove', x: 5, y: 5 });
     await new Promise((r) => setTimeout(r, 80));
     win.webContents.sendInputEvent({ type: 'mouseMove', ...position });
+    await wait('window.profileCalls === 1');
+    assert.equal(
+      await js("!!document.querySelector('.github-author-tooltip')"),
+      false,
+      'No partial card while loading'
+    );
+    win.webContents.sendInputEvent({ type: 'mouseMove', x: 5, y: 5 });
+    await new Promise((r) => setTimeout(r, 100));
+    await js('window.resolveProfile()');
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(
+      await js("!!document.querySelector('.github-author-tooltip')"),
+      false,
+      'Leaving while loading prevents a late tooltip'
+    );
+    win.webContents.sendInputEvent({ type: 'mouseMove', ...position });
+    await wait('window.profileCalls === 2');
+    await js('window.resolveProfile()');
     await wait("document.querySelector('.github-author-tooltip')?.textContent.includes('Morgan Developer')");
-    assert.equal(await js('window.profileCalls'), 1);
+    assert.equal(await js('window.profileCalls'), 2);
     assert.match(await js<string>("document.querySelector('.github-author-tooltip').textContent"), /Berlin/);
     await capture('tooltip-light');
     await js("document.documentElement.classList.add('dark')");
@@ -60,8 +78,27 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelector('.queue-row-main[aria-pressed=true]')?.textContent"), selected);
     assert.equal(await js('window.openedProfiles.length'), 1);
     win.webContents.sendInputEvent({ type: 'mouseMove', x: 5, y: 5 });
-    win.focus();win.webContents.focus();
+    win.focus();
+    win.webContents.focus();
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+    await wait("!document.querySelector('.github-author-tooltip')");
+    await js('document.activeElement.blur()');
     await js("document.querySelector('.queue-meta .github-author').focus()");
+    await wait('window.profileCalls === 3');
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+    await new Promise((r) => setTimeout(r, 100));
+    await js('window.resolveProfile()');
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(
+      await js("!!document.querySelector('.github-author-tooltip')"),
+      false,
+      'Escape dismisses a pending tooltip'
+    );
+    await js("document.activeElement.blur();document.querySelector('.queue-meta .github-author').focus()");
+    await wait('window.profileCalls === 4');
+    await js('window.resolveProfile()');
     await wait("!!document.querySelector('.github-author-tooltip')");
     win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
     win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
@@ -82,7 +119,8 @@ void app.whenReady().then(async () => {
     await new Promise((r) => setTimeout(r, 200));
     await js('document.activeElement.blur()');
     await new Promise((r) => setTimeout(r, 250));
-    win.focus();win.webContents.focus();
+    win.focus();
+    win.webContents.focus();
     await js("document.querySelectorAll('.queue-meta .github-author')[1].focus({preventScroll:true})");
     await wait("document.querySelector('.github-author-tooltip')?.textContent.includes('Profile details unavailable')");
     await capture('zoom');

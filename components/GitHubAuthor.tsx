@@ -7,24 +7,21 @@ import { githubAvatarUrl, isGitHubLogin, type GitHubProfile } from '../lib/githu
 /** One author identity. Profile details load only after deliberate hover or keyboard focus. */
 export function GitHubAuthor({ login }: { login: string }) {
   const [open, setOpen] = useState(false);
-  const [profile, setProfile] = useState<GitHubProfile | null>(null);
-  const [status, setStatus] = useState<'loading' | 'ready' | 'unavailable'>('loading');
+  const [resolved, setResolved] = useState<{ login: string; profile: GitHubProfile | null } | null>(null);
+  const profile = resolved?.login === login ? resolved.profile : null;
   const valid = isGitHubLogin(login);
   useEffect(() => {
     if (!open || !valid) return;
     let cancelled = false;
-    setProfile(null);
-    setStatus('loading');
     void Promise.resolve()
       .then(() => window.electronAPI.getGitHubProfile(login))
       .then((value) => {
         if (!cancelled) {
-          setProfile(value);
-          setStatus('ready');
+          setResolved({ login, profile: value });
         }
       })
       .catch(() => {
-        if (!cancelled) setStatus('unavailable');
+        if (!cancelled) setResolved({ login, profile: null });
       });
     return () => {
       cancelled = true;
@@ -33,7 +30,15 @@ export function GitHubAuthor({ login }: { login: string }) {
   if (!valid) return <span>{login}</span>;
   return (
     <TooltipProvider delayDuration={350}>
-      <Tooltip open={open} onOpenChange={setOpen}>
+      <Tooltip
+        open={open}
+        disableHoverableContent={resolved?.login !== login}
+        onOpenChange={(nextOpen) => {
+          // Mount the complete card once, rather than resizing a loading tooltip.
+          if (nextOpen) setResolved(null);
+          setOpen(nextOpen);
+        }}
+      >
         <TooltipTrigger asChild>
           <a
             className="github-author"
@@ -45,6 +50,10 @@ export function GitHubAuthor({ login }: { login: string }) {
               void window.electronAPI.openExternal(event.currentTarget.href);
             }}
             onDoubleClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              // The tooltip's dismiss layer is not mounted while fetching.
+              if (event.key === 'Escape') setOpen(false);
+            }}
           >
             <Avatar size="sm" className="github-author-avatar" aria-hidden="true">
               <AvatarImage src={githubAvatarUrl(login)} alt="" loading="lazy" referrerPolicy="no-referrer" />
@@ -53,35 +62,37 @@ export function GitHubAuthor({ login }: { login: string }) {
             <span className="github-author-name">{login}</span>
           </a>
         </TooltipTrigger>
-        <TooltipContent
-          side="top"
-          sideOffset={6}
-          collisionPadding={12}
-          hideWhenDetached
-          className="github-author-tooltip"
-          onClick={event=>event.stopPropagation()} onDoubleClick={event=>event.stopPropagation()}
-        >
-          <strong>{profile?.name || login}</strong>
-          {profile?.name && <span>@{profile.login}</span>}
-          <span>
-            {login.endsWith('[bot]') || profile?.type === 'Bot' ? 'GitHub automation account' : 'GitHub author'}
-          </span>
-          {profile?.bio && <p>{profile.bio}</p>}
-          {profile?.company && (
-            <span className="github-author-detail">
-              <Building2 size={13} />
-              {profile.company}
+        {resolved?.login === login && (
+          <TooltipContent
+            side="top"
+            sideOffset={6}
+            collisionPadding={12}
+            hideWhenDetached
+            className="github-author-tooltip"
+            onClick={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => event.stopPropagation()}
+          >
+            <strong>{profile?.name || login}</strong>
+            {profile?.name && <span>@{profile.login}</span>}
+            <span>
+              {login.endsWith('[bot]') || profile?.type === 'Bot' ? 'GitHub automation account' : 'GitHub author'}
             </span>
-          )}
-          {profile?.location && (
-            <span className="github-author-detail">
-              <MapPin size={13} />
-              {profile.location}
-            </span>
-          )}
-          {status === 'loading' && <span role="status">Loading profile…</span>}
-          {status === 'unavailable' && <span>Profile details unavailable. Open the author on GitHub.</span>}
-        </TooltipContent>
+            {profile?.bio && <p>{profile.bio}</p>}
+            {profile?.company && (
+              <span className="github-author-detail">
+                <Building2 size={13} />
+                {profile.company}
+              </span>
+            )}
+            {profile?.location && (
+              <span className="github-author-detail">
+                <MapPin size={13} />
+                {profile.location}
+              </span>
+            )}
+            {!profile && <span>Profile details unavailable. Open the author on GitHub.</span>}
+          </TooltipContent>
+        )}
       </Tooltip>
     </TooltipProvider>
   );
