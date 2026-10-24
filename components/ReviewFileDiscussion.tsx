@@ -1,3 +1,10 @@
+import {
+  readDiscussion,
+  refreshDiscussion,
+  peekDiscussion,
+  subscribeDiscussions,
+  replaceDiscussionThread,
+} from '../lib/review-discussion-cache';
 import { useEffect, useId, useRef, useState, type ComponentProps } from 'react';
 import { ReviewDiff } from './ReviewDiff';
 import { GitHubReviewThread } from './GitHubReviewThread';
@@ -16,7 +23,7 @@ type Props = ComponentProps<typeof ReviewDiff> & { review?: ReviewGuide };
 export function ReviewFileDiscussion({ review, ...diff }: Props) {
   const source = review ? threadSource(review, diff.filePath) : null;
   const prUrl = source?.prUrl;
-  const [data, setData] = useState<GitHubReviewThreads | null>(null);
+  const [data, setData] = useState<GitHubReviewThreads | null>(() => (prUrl ? (peekDiscussion(prUrl) ?? null) : null));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const request = useRef(0);
@@ -33,8 +40,7 @@ export function ReviewFileDiscussion({ review, ...diff }: Props) {
     setError('');
     if (!prUrl) return;
     setBusy(true);
-    void window.electronAPI
-      .getReviewThreads(prUrl, refresh > 0)
+    void (refresh > 0 ? refreshDiscussion(prUrl) : readDiscussion(prUrl))
       .then((result) => {
         if (request.current === version) setData(result);
       })
@@ -48,6 +54,13 @@ export function ReviewFileDiscussion({ review, ...diff }: Props) {
       request.current++;
     };
   }, [prUrl, refresh]);
+  useEffect(
+    () =>
+      subscribeDiscussions((url, next) => {
+        if (url === prUrl) setData(next);
+      }),
+    [prUrl]
+  );
   const threads = data?.threads.filter((t) => t.path === source?.path) ?? [];
   const placed = threads.map((thread) => ({
     thread,
@@ -61,9 +74,7 @@ export function ReviewFileDiscussion({ review, ...diff }: Props) {
   async function act(thread: Thread, action: ReviewThreadAction['action'], body?: string) {
     if (!prUrl) return;
     const updated = await window.electronAPI.reviewThreadAction({ prUrl, threadId: thread.id, action, body });
-    setData((current) =>
-      current ? { ...current, threads: current.threads.map((t) => (t.id === updated.id ? updated : t)) } : current
-    );
+    replaceDiscussionThread(prUrl, updated);
   }
   const renderThread = (thread: Thread, reason?: string) => (
     <GitHubReviewThread
@@ -71,6 +82,20 @@ export function ReviewFileDiscussion({ review, ...diff }: Props) {
       thread={thread}
       reason={reason}
       onAction={(action, body) => act(thread, action, body)}
+      onCommentAction={
+        prUrl
+          ? async (commentId, action, body) => {
+              const next = await window.electronAPI.reviewCommentAction({
+                prUrl,
+                threadId: thread.id,
+                commentId,
+                action,
+                body,
+              });
+              replaceDiscussionThread(prUrl, next);
+            }
+          : undefined
+      }
     />
   );
   return (

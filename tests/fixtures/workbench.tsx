@@ -407,7 +407,13 @@ let activities: ActivityTask[] = [
   },
 ];
 if (onboardingScenario) activities = [];
+let navigateReview: ((event: Event) => void) | undefined;
 const mocks = {
+  onReviewNavigate: (callback: (id: string) => void) => {
+    navigateReview = event => callback((event as CustomEvent<string>).detail);
+    window.addEventListener('fixture-review-navigate', navigateReview);
+  },
+  offReviewNavigate: () => { if (navigateReview) window.removeEventListener('fixture-review-navigate', navigateReview); },
   getPrChanges: (url: string) => {
     const member=items.flatMap(i=>i.subject.members).find(m=>m.url===url)??members[0];
     return Promise.resolve({version:1 as const,url,metadata:member,comparisonBase:member.baseSha,fetchedAt:Date.now(),files:[

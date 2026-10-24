@@ -3,7 +3,7 @@ import type { DiffLineAnnotation, SelectedLineRange } from '@pierre/diffs';
 import type { PrChanges } from '../lib/pr-changes';
 import type { GitHubReviewThread as Thread } from '../lib/review-threads';
 import { useChangesReviewDrafts, type ChangesReviewDraft } from '../lib/changes-review-drafts';
-import { useSessionDraft } from '../lib/session-drafts';
+import { ReviewDraftScope, useSessionDraft } from '../lib/session-drafts';
 import { GitHubReviewThread } from './GitHubReviewThread';
 import { ChangesCommentComposer } from './ChangesCommentComposer';
 import { ChangesDraftComment } from './ChangesDraftComment';
@@ -24,8 +24,12 @@ export function useChangesComments({
   replaceThread,
   refresh,
   enabled = true,
+  onSubmitted,
+  onOpenChanges,
 }: {
   enabled?: boolean;
+  onOpenChanges?: () => void;
+  onSubmitted?: (url: string, event: string) => void;
   snapshot?: PrChanges;
   path?: string;
   activeKey: string;
@@ -186,6 +190,19 @@ export function useChangesComments({
   // Keep submission bound to the captured PR even if the file/stack selection changes.
   const targetDrafts = target && target.url === url ? drafts : [];
   return {
+    openReview: () => {
+      if (stale.length) {
+        setDraftsOpen(true);
+        return;
+      }
+      if (!writable) {
+        setError('Connect GitHub and open a current, open PR to submit a review.');
+        return;
+      }
+      setTarget(snapshot);
+      setReviewOpen(true);
+    },
+    draftCount: drafts.length,
     annotations,
     renderAnnotation,
     renderThread,
@@ -222,6 +239,7 @@ export function useChangesComments({
             {stale.length} draft{stale.length === 1 ? ' refers' : 's refer'} to an earlier version. Open Drafts to copy
             or remove them before reviewing this version.
             <button onClick={() => setDraftsOpen(true)}>Show drafts</button>
+            {onOpenChanges && <button onClick={onOpenChanges}>Open Changes to reposition</button>}
           </p>
         )}
         {draftsOpen && (
@@ -248,58 +266,61 @@ export function useChangesComments({
           </section>
         )}
         {reviewOpen && target && target.url === url && (
-          <SubmitReviewDialog
-            key={`${url}:${target.metadata.headSha}:${target.metadata.baseSha}`}
-            open
-            onOpenChange={setReviewOpen}
-            comments={targetDrafts}
-            prUrl={url}
-            headSha={target.metadata.headSha}
-            isOwnPr={snapshot?.metadata.author === account}
-            onSubmit={async (event, body) => {
-              if (submitting.current) throw new Error('Review submission is already in progress.');
-              submitting.current = true;
-              try {
-                if (
-                  targetDrafts.some(
-                    (d) =>
-                      d.headSha !== target.metadata.headSha ||
-                      d.baseSha !== target.metadata.baseSha ||
-                      d.baseBranch !== target.metadata.baseBranch
-                  )
-                )
-                  throw new Error('Remove drafts from earlier versions before submitting.');
-                const result = await window.electronAPI.submitReview({
-                  prUrl: url,
-                  headSha: target.metadata.headSha,
-                  baseSha: target.metadata.baseSha,
-                  baseBranch: target.metadata.baseBranch,
-                  event,
-                  body,
-                  comments: targetDrafts.map((d) => ({
-                    path: d.filePath,
-                    line: d.line,
-                    startLine: d.startLine,
-                    side: d.side,
-                    body: d.body,
-                  })),
-                });
-                const ids = new Set(targetDrafts.map((d) => d.id));
-                // Once GitHub succeeds, a refresh failure must never offer a duplicate submission.
+          <ReviewDraftScope.Provider value={`pending-review:${account}:${url}`}>
+            <SubmitReviewDialog
+              key={`${url}:${target.metadata.headSha}:${target.metadata.baseSha}`}
+              open
+              onOpenChange={setReviewOpen}
+              comments={targetDrafts}
+              prUrl={url}
+              headSha={target.metadata.headSha}
+              isOwnPr={snapshot?.metadata.author === account}
+              onSubmit={async (event, body) => {
+                if (submitting.current) throw new Error('Review submission is already in progress.');
+                submitting.current = true;
                 try {
-                  change((list) => list.filter((d) => !ids.has(d.id)));
-                } catch {
-                  setError(
-                    'Review posted. Could not remove the local drafts; remove them before starting another review.'
-                  );
+                  if (
+                    targetDrafts.some(
+                      (d) =>
+                        d.headSha !== target.metadata.headSha ||
+                        d.baseSha !== target.metadata.baseSha ||
+                        d.baseBranch !== target.metadata.baseBranch
+                    )
+                  )
+                    throw new Error('Remove drafts from earlier versions before submitting.');
+                  const result = await window.electronAPI.submitReview({
+                    prUrl: url,
+                    headSha: target.metadata.headSha,
+                    baseSha: target.metadata.baseSha,
+                    baseBranch: target.metadata.baseBranch,
+                    event,
+                    body,
+                    comments: targetDrafts.map((d) => ({
+                      path: d.filePath,
+                      line: d.line,
+                      startLine: d.startLine,
+                      side: d.side,
+                      body: d.body,
+                    })),
+                  });
+                  const ids = new Set(targetDrafts.map((d) => d.id));
+                  // Once GitHub succeeds, a refresh failure must never offer a duplicate submission.
+                  try {
+                    change((list) => list.filter((d) => !ids.has(d.id)));
+                  } catch {
+                    setError(
+                      'Review posted. Could not remove the local drafts; remove them before starting another review.'
+                    );
+                  }
+                  onSubmitted?.(url, event);
+                  void refresh(url);
+                  return result;
+                } finally {
+                  submitting.current = false;
                 }
-                void refresh(url);
-                return result;
-              } finally {
-                submitting.current = false;
-              }
-            }}
-          />
+              }}
+            />
+          </ReviewDraftScope.Provider>
         )}
       </>
     ),

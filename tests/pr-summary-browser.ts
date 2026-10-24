@@ -24,7 +24,7 @@ void app.whenReady().then(async () => {
     js(`(()=>{
     const button = [...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(label)});
     if(!button) throw Error('Missing button: '+${JSON.stringify(label)});
-    button.click();
+    button.dispatchEvent(new MouseEvent("mousedown",{bubbles:true,button:0})); button.click();
   })()`);
   const shots = path.join(os.tmpdir(), 'gnosis-workbench-screenshots');
   fs.mkdirSync(shots, { recursive: true });
@@ -219,15 +219,12 @@ void app.whenReady().then(async () => {
     await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'k',bubbles:true}))");
     await wait("document.querySelector('.pr-overview-heading h1')?.textContent.includes('Fix reconnect')");
     assert.equal(await js('window.metadataReads'), 0, 'Moving through cached summaries adds no metadata reads');
-    await click('Generate AI explanation');
-    await wait("document.querySelector('.pr-summary-actions button:last-child')?.textContent.includes('Generating')");
+    await click('Explanation');
+    await click('Generate explanation');
+    await wait("document.querySelector('.explanation-status')?.textContent.includes('Generating explanation')");
     assert.equal(await js('window.generationCalls.length'), 1);
-    assert.equal(await js("document.querySelector('.pr-summary-actions button:last-child').disabled"), true);
-    assert.equal(
-      await js("!!document.querySelector('.pr-description')"),
-      true,
-      'Description remains readable while generating'
-    );
+    await click('Summary');
+    assert.equal(await js("!!document.querySelector('.pr-description')"), true, 'Description remains readable while generating');
     await click('Work queue');
     await wait("!!document.querySelector('.queue-list')");
     await js(
@@ -255,13 +252,13 @@ void app.whenReady().then(async () => {
     await capture('pr-summary-stack-laptop');
     window.setSize(1280, 800);
     assert.equal(await js('window.generationCalls.length'), 1, 'Opening a stack does not generate a review');
-    await click('Open AI explanation');
+    await click('Explanation');
     await wait("!!document.querySelector('.workbench-overview')");
-    await click('Author description');
-    assert.equal(await js("document.querySelectorAll('.workbench-overview .pr-details').length"), 1);
-    await click('AI explanation');
+    await click('Summary');
+    assert.equal(await js("document.querySelectorAll('.pr-summary-page .pr-details').length"), 1);
+    await click('Explanation');
     await wait("!!document.querySelector('.overview-topic')");
-    await click('Back');
+    await click('Work queue');
     await wait("!!document.querySelector('.queue-list')");
     await click('Open PR');
     await js(`(()=>{

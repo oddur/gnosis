@@ -1,3 +1,5 @@
+import { setDiscussionAccount } from '../../lib/review-discussion-cache';
+import { explanationItem, matchesExplanation, type ExplanationDestination } from '../../lib/explanation-workspace';
 import { GitHubAuthor } from '../../components/GitHubAuthor';
 import { QueueMetadata, PrStateIcon } from '../../components/QueueMetadata';
 import { rememberCommandDestination } from '../../lib/command-recents';
@@ -27,7 +29,6 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
-  GitBranch,
   GitPullRequest,
   Layers,
   Loader2,
@@ -68,6 +69,8 @@ import type { Preferences, PrStatus, ReviewGuide, ReviewHistoryEntry, ModelId, P
 
 interface Props {
   onReviewReady: (review: ReviewGuide) => void;
+  explanationDestination?: ExplanationDestination;
+  onShowActivity?: () => void;
   prefillPrUrl?: string;
   initialSubjectId?: string;
   commandDestination?: { destination: Extract<SearchDestination, { kind: 'home' }>; nonce: number };
@@ -78,11 +81,12 @@ const labels = {
   other: 'Other changes',
 };
 
-export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, commandDestination }: Props) {
-  const [overviewTab,setOverviewTab] = useState<'summary'|'changes'|'commits'>('summary');
+export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, commandDestination, explanationDestination, onShowActivity }: Props) {
+  const [overviewTab,setOverviewTab] = useState<'summary'|'changes'|'commits'|'explanation'>('summary');
   const commandCenter = useCommandCenter();
   const handledCommand = useRef<number>(0);
   const [auth, setAuth] = useState<{ authenticated: boolean; login: string | null } | null>(null);
+  useEffect(() => { if (auth) setDiscussionAccount(auth.authenticated ? auth.login ?? '' : ''); }, [auth]);
   const [prefs, setPrefs] = useState<Preferences | null>(null);
   const [queue, setQueue] = useState<WorkbenchQueue>({ items: [], warnings: [], remaining: 0 });
   const [history, setHistory] = useState<ReviewHistoryEntry[]>([]);
@@ -169,6 +173,9 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
   const [selected, setSelected] = useState<string | null>(
     () => initialSubjectId ?? localStorage.getItem('gnosis-queue-selection')
   );
+  useEffect(() => {
+    if (initialSubjectId) { setSelected(initialSubjectId); setOpenedItem(null); }
+  }, [initialSubjectId]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [settings, setSettings] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('queue');
@@ -222,6 +229,13 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
       ) ??
       summarySource.review,
   };
+  useEffect(() => {
+    if (!explanationDestination) return;
+    const item = explanationItem(explanationDestination.review);
+    setOpenedItem(item);
+    setSelected(item.subject.id);
+    setOverviewTab('explanation');
+  }, [explanationDestination]);
   const statusSubject = summaryItem?.subject ?? selectedItem?.subject;
   const briefingSelection = prefs ? briefingModel(prefs) : undefined;
   const briefingModelLabel = briefingSelection
@@ -854,6 +868,9 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
         onTabChange={setOverviewTab}
         preferences={prefs}
         positions={readingPositions.current}
+        explanationDestination={explanationDestination}
+        explanations={history.filter(entry => matchesExplanation(entry, summaryItem.subject))}
+        onShowActivity={onShowActivity ?? (() => {})}
         shortcutsEnabled={!settings && !localOpen && !authOpen && !connectionRequired}
           navigation={{
             index: summaryIndex,
@@ -880,9 +897,6 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
               summaryItem.subject.scope === 'single'
             )
           }
-          onOpenReview={() => {
-            if (summaryItem.review) void open(summaryItem.review);
-          }}
         onRetryStatus={() => setStatusAttempt((n) => n + 1)}
         onAiSetup={() => openSettings('integrations')}
         onGitHubAuth={() => setAuthOpen(true)}
@@ -1186,7 +1200,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                 saved.length ? (
                   saved.map((entry) => (
                     <div className="saved-row" key={entry.id}>
-                      <div className="queue-row-content" onClick={event=>{if((event.target as HTMLElement).closest('a,button')||entry.status==='generating')return;entry.status==='failed'?void start(entry.prUrl):void open(entry);}}>
+                      <div className="queue-row-content" onClick={event=>{if((event.target as HTMLElement).closest('a,button')||entry.status==='generating')return;void (entry.status==='failed' ? start(entry.prUrl) : open(entry));}}>
                       <button
                         className="queue-row-main"
                         disabled={entry.status === 'generating'}

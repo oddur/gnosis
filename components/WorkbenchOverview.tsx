@@ -8,12 +8,14 @@ import { Button } from './ui/button';
 import type { ReviewGuide } from '../lib/types';
 export function WorkbenchOverview({
   review,
+  embedded = false,
   reviewed,
   onNavigate,
   onSubmit,
   submissions = {},
 }: {
   review: ReviewGuide;
+  embedded?: boolean;
   reviewed: Set<number>;
   onNavigate: (n: number) => void;
   onSubmit: (url: string) => void;
@@ -41,8 +43,8 @@ export function WorkbenchOverview({
           {reviewed.size}/{review.slides.length} topics reviewed
         </span>
       </div>
-      <h1>{review.prTitle}</h1>
-      {(subject || review.prDescription) && (
+      {!embedded && <h1>{review.prTitle}</h1>}
+      {!embedded && (subject || review.prDescription) && (
         <div className="pr-overview-switch" aria-label="Overview content">
           <button aria-pressed={!showDetails} onClick={() => setShowDetails(false)}>
             AI explanation
@@ -116,7 +118,7 @@ export function WorkbenchOverview({
                         </span>
                       </div>
                       <p>
-                        {m.repo} · <GitHubAuthor login={m.author}/> · {m.merged ? 'Merged' : m.state}
+                        {m.repo} · <GitHubAuthor login={m.author} /> · {m.merged ? 'Merged' : m.state}
                       </p>
                       <p>
                         {done}/{topics.length} topics reviewed{submissions[m.url] ? ` · ${submissions[m.url]}` : ''}
