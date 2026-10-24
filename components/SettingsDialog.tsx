@@ -1,3 +1,5 @@
+import { PrInactivitySetting } from './PrInactivitySetting';
+import { normalizePrInactivityDays, DEFAULT_PR_INACTIVITY_DAYS } from '../lib/pr-inactivity';
 import { useState, useEffect, useRef } from 'react';
 import { Tabs } from 'radix-ui';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -144,6 +146,7 @@ export function SettingsDialog({
   const [instructions, setInstructions] = useState('');
   const [thinking, setThinking] = useState(false);
   const [smartImports, setSmartImports] = useState(true);
+  const [prInactivityDays, setPrInactivityDays] = useState(DEFAULT_PR_INACTIVITY_DAYS);
   const [ignoreDependabotPrs, setIgnoreDependabotPrs] = useState(true);
   const [autoBriefings, setAutoBriefings] = useState(false);
   const [watchedRepos, setWatchedRepos] = useState<string[]>([]);
@@ -205,6 +208,7 @@ export function SettingsDialog({
         setSmartImports(prefs.smartImports);
         setAutoBriefings(prefs.autoBriefings !== false);
         setIgnoreDependabotPrs(prefs.ignoreDependabotPrs !== false);
+        setPrInactivityDays(normalizePrInactivityDays(prefs.prInactivityDays));
         setWatchedRepos(prefs.watchedRepos);
         setNotifications(prefs.notifications);
         setTrayEnabled(prefs.trayEnabled);
@@ -397,6 +401,12 @@ export function SettingsDialog({
               <Tabs.Trigger value="integrations">Integrations</Tabs.Trigger>
             </Tabs.List>
             <Tabs.Content value="queue" className="settings-panel">
+              <SettingRow label="Ignore PRs inactive for…"
+                description="Uses the last GitHub update. Keep starred PRs and any stack with a recent or starred PR. Applies to all saved views.">
+                <PrInactivitySetting days={prInactivityDays} onChange={days => {
+                  setPrInactivityDays(days); saveField({ prInactivityDays: days });
+                }} />
+              </SettingRow>
               <SettingRow
                 label="Ignore Dependabot PRs"
                 description="Hide Dependabot PRs from the queue and automatic briefings. Keep them visible when a PR by a person builds on them."

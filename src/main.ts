@@ -1,3 +1,4 @@
+import { normalizePrInactivityDays, DEFAULT_PR_INACTIVITY_DAYS } from '../lib/pr-inactivity';
 import type { MutePrRequest } from '../lib/muted-prs';
 import type { StarPrRequest } from '../lib/starred-prs';
 import { createPrCommitsService } from './pr-commits-service';
@@ -908,6 +909,7 @@ function getPreferencesPath() {
 
 const DEFAULT_PREFERENCES: Preferences = {
   ignoreDependabotPrs: true,
+  prInactivityDays: DEFAULT_PR_INACTIVITY_DAYS,
   instructions: '',
   provider: 'claude',
   model: DEFAULT_CLAUDE_MODEL,
@@ -958,6 +960,7 @@ function loadPreferences(): Preferences {
     }
     // Preserve the existing choice about automatic generation during migration.
     if (!('autoBriefings' in stored)) stored.autoBriefings = stored.proactiveMode === true;
+    stored.prInactivityDays = normalizePrInactivityDays(stored.prInactivityDays);
     const selection = normalizeModelSelection(stored.provider, stored.model);
     const proactive = normalizeModelSelection(stored.proactiveProvider, stored.proactiveModel, true);
     Object.assign(stored, selection, {
@@ -972,7 +975,7 @@ function loadPreferences(): Preferences {
 }
 
 function savePreferences(prefs: Preferences): void {
-  fs.writeFileSync(getPreferencesPath(), JSON.stringify(prefs, null, 2));
+  fs.writeFileSync(getPreferencesPath(), JSON.stringify({ ...prefs, prInactivityDays: normalizePrInactivityDays(prefs.prInactivityDays) }, null, 2));
 }
 
 // ── MCP tools constants ─────────────────────────────────────────
@@ -2228,6 +2231,7 @@ ipcMain.handle('workbench-queue', async (_event, force: boolean) => {
   }
   return workbench.queue(force);
 });
+ipcMain.handle('workbench-snapshot', () => workbench.snapshot());
 ipcMain.handle('workbench-mute-prs', (_event, request: MutePrRequest) => { const queue = workbench.mutePrs(request); rebuildTrayMenu(); return queue; });
 ipcMain.handle('workbench-star-prs', (_event, request: StarPrRequest) => workbench.starPrs(request));
 ipcMain.handle('workbench-view-action', (_event, action: QueueViewAction) => workbench.viewAction(action));

@@ -19,6 +19,7 @@ interface SearchWindow {
   page: number;
 }
 export interface DiscoveryListings {
+  updatedSince?: string;
   searches: Partial<
     Record<'author' | 'assignee' | 'review-requested', { windows: SearchWindow[]; items: PrSearchResult[] }>
   >;
@@ -31,11 +32,13 @@ export function createDiscoveryListings(
     login: string;
     now: number;
     includeAssigned?: boolean;
+    updatedSince?: string;
     beforeRead: () => void;
     save: () => void;
     progress: (detail: string) => void;
   }
 ) {
+  state.updatedSince ??= options.updatedSince;
   return {
     async personal(): Promise<PrSearchResult[]> {
       const seen = new Map<string, PrSearchResult>();
@@ -53,7 +56,7 @@ export function createDiscoveryListings(
           options.beforeRead();
           options.progress(`Finding your pull requests (${role}, page ${window.page})`);
           const { data } = await client.search.issuesAndPullRequests({
-            q: `is:pr is:open archived:false ${role}:${options.login} created:${date(window.from)}..${date(window.to)}`,
+            q: `is:pr is:open archived:false ${role}:${options.login}${state.updatedSince ? ` updated:>=${state.updatedSince}` : ''} created:${date(window.from)}..${date(window.to)}`,
             sort: 'created',
             order: 'asc',
             per_page: 100,

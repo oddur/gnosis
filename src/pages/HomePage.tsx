@@ -1,3 +1,4 @@
+import { normalizePrInactivityDays } from '../../lib/pr-inactivity';
 import { PrMuteMenu } from '../../components/PrMuteMenu';
 import { MutedPrs } from '../../components/MutedPrs';
 import { isMutedReview } from '../../lib/muted-prs';
@@ -312,10 +313,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
     const version = filterVersion.current;
     const starsVersion = starVersion.current;
     const mutesVersion = muteVersion.current;
-    if (force) setRefreshing(true);
-    try {
-      await Promise.all([
-        window.electronAPI.workbenchQueue(force).then((next) => {
+    const applyQueue = (next: WorkbenchQueue) => {
           if (alive.current && version === filterVersion.current && starsVersion === starVersion.current && mutesVersion === muteVersion.current && !muteBusyRef.current && !starBusyRef.current && !viewBusyRef.current && !pendingFilters.current) {
             setQueue(next);
             if (!filtersLoaded.current) {
@@ -325,7 +323,12 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
             }
             setQueueFailed(false);
           }
-        }),
+        };
+    if (force) setRefreshing(true);
+    try {
+      await window.electronAPI.workbenchSnapshot().then(next => { applyQueue(next); if (alive.current && next.items.length) setLoading(false); }).catch(() => {});
+      await Promise.all([
+        window.electronAPI.workbenchQueue(force).then(applyQueue),
         window.electronAPI.listReviews().then((entries) => {
           if (alive.current) setHistory(entries);
         }),
@@ -1245,7 +1248,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                         <X size={16} />
                       </Popover.Close>
                     </div>
-                    <QueueFilterPanel filters={filters} items={queueItems} onChange={updateFilters} />
+                    <QueueFilterPanel filters={filters} items={queueItems} onChange={updateFilters} prInactivityDays={prefs?.prInactivityDays} onManageInactivity={() => { setFiltersOpen(false); openSettings('queue'); }} />
                   </Popover.Content>
                 </Popover.Portal>
               </Popover.Root>
@@ -1415,7 +1418,9 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                             : 'Connect GitHub above, or review local changes from the sidebar.'
                           : section !== 'all'
                             ? 'Try the full work queue to see other changes.'
-                            : 'Open a pull request by URL, or add repositories to follow in Settings. Dependabot PRs are hidden by default.'}
+                            : normalizePrInactivityDays(prefs?.prInactivityDays)
+                              ? `No matching PRs were active within ${normalizePrInactivityDays(prefs?.prInactivityDays)} days. Starred PRs are included. Adjust the inactivity limit in Settings, or open a PR by URL.`
+                              : 'Open a pull request by URL, or add repositories to follow in Settings. Dependabot PRs are hidden by default.'}
                   </p>
                   <Button
                     variant="outline"
@@ -1437,7 +1442,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                           ? 'Show work queue'
                           : !auth?.authenticated
                             ? 'Review local changes'
-                            : 'Manage repositories'}
+                            : 'Queue settings'}
                   </Button>
                 </div>
               )}
@@ -1771,7 +1776,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
           if (!open)
             void window.electronAPI.loadPreferences().then((p) => {
               setPrefs(p);
-              void refresh(true);
+              void refresh();
             });
         }}
       />
