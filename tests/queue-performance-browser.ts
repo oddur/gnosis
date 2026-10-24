@@ -35,7 +35,20 @@ void app.whenReady().then(async () => {
     })()`);
     await wait("document.querySelector('[data-queue-total=\"1000\"]')");
     assert.ok(await js("document.querySelectorAll('.queue-item').length<40"), 'Large queue mounts only nearby rows');
-    await js("document.querySelector('.queue-list').scrollTop=51000");
+    // Row wrapping and window chrome differ across CI operating systems.
+    // Seek using mounted row indices rather than assuming a fixed pixel offset.
+    await js(`(async()=>{
+      const queue=document.querySelector('.queue-list');
+      queue.scrollTop=500*104;
+      for(let attempt=0;attempt<30;attempt++){
+        await new Promise(resolve=>setTimeout(resolve,50));
+        if(document.querySelector('[data-queue-id="synthetic-500"]'))return;
+        const candidates=[...document.querySelectorAll('[data-index]')].filter(el=>Number(el.dataset.index)>0);
+        candidates.sort((a,b)=>Math.abs(a.getBoundingClientRect().top-queue.getBoundingClientRect().top)-Math.abs(b.getBoundingClientRect().top-queue.getBoundingClientRect().top));
+        const anchor=candidates[0];
+        if(anchor)queue.scrollTop+=(500-Number(anchor.dataset.index))*104;
+      }
+    })()`);
     await wait("!!document.querySelector('[data-queue-id=\"synthetic-500\"]')");
     await js("document.querySelector('[data-queue-id=\"synthetic-500\"] .queue-row-main').click()");
     await wait("document.querySelector('[data-queue-id=\"synthetic-500\"] .queue-row-main').getAttribute('aria-pressed')==='true'");
