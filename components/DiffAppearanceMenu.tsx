@@ -1,3 +1,4 @@
+import type { Preferences } from '../lib/types';
 import { useId } from 'react';
 import { Popover } from 'radix-ui';
 import { SlidersHorizontal } from 'lucide-react';
@@ -15,7 +16,11 @@ const inlineDescriptions: Record<DiffAppearance['inline'], string> = {
 export function DiffAppearanceMenu({
   value,
   onChange,
+  layout,
+  onLayoutChange,
 }: {
+  layout: Preferences['diffLayout'];
+  onLayoutChange: (layout: Preferences['diffLayout']) => void;
   value: DiffAppearance;
   onChange: (value: DiffAppearance) => void;
 }) {
@@ -40,8 +45,20 @@ export function DiffAppearanceMenu({
           className="z-50 w-72 max-w-[calc(100vw-2rem)] max-h-[var(--radix-popover-content-available-height)] overflow-y-auto rounded-md border bg-popover p-4 text-popover-foreground shadow-md"
         >
           <h3 className="font-semibold text-sm mb-1">Diff appearance</h3>
-          <p className="text-xs text-muted-foreground mb-4">Applies to all reviews. Saved automatically.</p>
+          <p className="text-xs text-muted-foreground mb-4">Applies to all diffs. Saved automatically.</p>
           <div className="space-y-3 text-sm">
+            <label className="flex items-center justify-between gap-3">
+              Layout
+              <select
+                aria-label="Diff layout"
+                className="rounded border bg-background px-2 py-1"
+                value={layout}
+                onChange={(e) => onLayoutChange(e.target.value as Preferences['diffLayout'])}
+              >
+                <option value="unified">Unified</option>
+                <option value="split">Split</option>
+              </select>
+            </label>
             <label className="flex items-center justify-between gap-3">
               Change indicators
               <select

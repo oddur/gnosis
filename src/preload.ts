@@ -1,3 +1,4 @@
+import type { PrCommits, CommitSelection } from '../lib/pr-commits';
 import type { PrChanges, PrFileRequest, PrFileContents, FileChatRequest } from '../lib/pr-changes';
 import type { GitHubProfile } from '../lib/github-profile';
 import type { QueueSignalRequest, QueueSignals } from '../lib/queue-signals';
@@ -29,8 +30,10 @@ import type {
 } from '../lib/types';
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  getPrCommits: (url: string, refresh = false): Promise<PrCommits> => ipcRenderer.invoke('pr-commits', url, refresh),
+  getCommitComparison: (selection: CommitSelection, background?: boolean): Promise<PrChanges> => ipcRenderer.invoke('commit-comparison', selection, background),
   getPrChanges: (url: string, refresh = false): Promise<PrChanges> => ipcRenderer.invoke('pr-changes', url, refresh),
-  getPrChangeFile: (request: PrFileRequest): Promise<PrFileContents> => ipcRenderer.invoke('pr-change-file', request),
+  getPrChangeFile: (request: PrFileRequest, background?: boolean): Promise<PrFileContents> => ipcRenderer.invoke('pr-change-file', request, background),
   checkPrChanges: (url: string): Promise<{ baseSha: string; headSha: string }> => ipcRenderer.invoke('pr-changes-revision', url),
   askPrFile: (request: FileChatRequest): Promise<string> => ipcRenderer.invoke('ask-pr-file', request),
   getGitHubProfile: (login:string):Promise<GitHubProfile> => ipcRenderer.invoke('get-github-profile',login),

@@ -79,7 +79,7 @@ const labels = {
 };
 
 export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, commandDestination }: Props) {
-  const [overviewTab,setOverviewTab] = useState<'summary'|'changes'>('summary');
+  const [overviewTab,setOverviewTab] = useState<'summary'|'changes'|'commits'>('summary');
   const commandCenter = useCommandCenter();
   const handledCommand = useRef<number>(0);
   const [auth, setAuth] = useState<{ authenticated: boolean; login: string | null } | null>(null);

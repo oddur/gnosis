@@ -1,3 +1,4 @@
+import type { PrCommits, CommitSelection } from '../lib/pr-commits';
 import type { PrChanges, PrFileRequest, PrFileContents, FileChatRequest } from '../lib/pr-changes';
 import type { GitHubProfile } from '../lib/github-profile';
 import type { QueueSignalRequest, QueueSignals } from '../lib/queue-signals';
@@ -30,8 +31,10 @@ import type {
 declare global {
   interface Window {
     electronAPI: {
+      getPrCommits: (url: string, refresh?: boolean) => Promise<PrCommits>;
+      getCommitComparison: (selection: CommitSelection, background?: boolean) => Promise<PrChanges>;
       getPrChanges: (url: string, refresh?: boolean) => Promise<PrChanges>;
-      getPrChangeFile: (request: PrFileRequest) => Promise<PrFileContents>;
+      getPrChangeFile: (request: PrFileRequest, background?: boolean) => Promise<PrFileContents>;
       checkPrChanges: (url: string) => Promise<{ baseSha: string; headSha: string }>;
       askPrFile: (request: FileChatRequest) => Promise<string>;
       getGitHubProfile: (login:string) => Promise<GitHubProfile>;

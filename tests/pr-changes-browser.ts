@@ -99,7 +99,12 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.changes-file-header h2')?.textContent==='src/worker.ts'");
     await wait("window.deepAll('[data-line]').length>0");
     assert.equal(await js('window.generationCalls.length'), 0);
-    assert.equal(await js('window.fileReads.length'), 1, 'GitHub patches render without full-file downloads');
+    assert.equal(
+      await js("window.fileReads.some(r=>r.path==='src/worker.ts')"),
+      false,
+      'Usable patches still render without full-file downloads'
+    );
+    assert.ok((await js<number>('window.fileReads.length')) <= 4, 'Preloading stays bounded to nearby files');
     assert.equal(
       await js("!!document.querySelector('.changes-loading')"),
       false,

@@ -46,7 +46,7 @@ interface Props {
   diffLayout: Preferences['diffLayout'];
   onDiffLayoutChange: (layout: Preferences['diffLayout']) => void;
   diffAppearance?: DiffAppearance;
-  onDiffAppearanceChange?: (value: DiffAppearance) => void;
+  onDiffAppearanceChange: (value: DiffAppearance) => void;
   onAskQuestion?: () => void;
   onExplore?: () => void;
   onAskAboutSelection?: (quotedCode: string) => void;
@@ -364,42 +364,6 @@ function groupHunksByFile(hunks: DiffHunk[]): { filePath: string; hunks: DiffHun
   return Array.from(map.entries()).map(([filePath, hunks]) => ({ filePath, hunks }));
 }
 
-function DiffLayoutToggle({
-  value,
-  onChange,
-}: {
-  value: Preferences['diffLayout'];
-  onChange: (v: Preferences['diffLayout']) => void;
-}) {
-  // Quiet text-only toggle — no fills, no borders. The active option
-  // gets a hairline underline in the brand amber so the choice is
-  // visible without becoming chrome.
-  return (
-    <div className="inline-flex items-center gap-4 slide-meta">
-      <button
-        className={`transition-colors ${
-          value === 'unified'
-            ? 'text-foreground border-b border-[var(--ring)] pb-0.5'
-            : 'hover:text-foreground border-b border-transparent pb-0.5'
-        }`}
-        onClick={() => onChange('unified')}
-      >
-        Unified
-      </button>
-      <button
-        className={`transition-colors ${
-          value === 'split'
-            ? 'text-foreground border-b border-[var(--ring)] pb-0.5'
-            : 'hover:text-foreground border-b border-transparent pb-0.5'
-        }`}
-        onClick={() => onChange('split')}
-      >
-        Split
-      </button>
-    </div>
-  );
-}
-
 export function SlideView({
   review,
   leftSlot,
@@ -697,8 +661,12 @@ export function SlideView({
               Inline explanations
             </label>
           )}
-          <DiffLayoutToggle value={diffLayout} onChange={onDiffLayoutChange} />
-          {onDiffAppearanceChange && <DiffAppearanceMenu value={diffAppearance} onChange={onDiffAppearanceChange} />}
+          <DiffAppearanceMenu
+            layout={diffLayout}
+            onLayoutChange={onDiffLayoutChange}
+            value={diffAppearance}
+            onChange={onDiffAppearanceChange}
+          />
         </div>
       </div>
 

@@ -145,8 +145,8 @@ export function WorkbenchHelp({ onGettingStarted }: { onGettingStarted?: () => v
               explanations for extra context. GitHub discussions show their author and replies separately.
             </p>
             <p>
-              <strong>Reveal what you need.</strong> Diffs start with a few surrounding lines. Reveal more context,
-              switch Unified or Split, or use Diff appearance to adjust how code changes are shown.
+              <strong>Reveal what you need.</strong> Diffs start with a few surrounding lines. Reveal more context, or
+              open Diff appearance to choose Unified or Split and adjust how code changes are shown.
             </p>
             <p>
               <strong>Compare images.</strong> Before and After show the saved image revisions, including SVG. Expand an

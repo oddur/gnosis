@@ -418,6 +418,17 @@ const mocks = {
       {path:'pnpm-lock.yaml',status:'modified' as const,additions:1,deletions:1,changeId:'lock-v1'},
     ]});
   },
+  getPrCommits: async (url: string) => {
+    const snapshot = await mocks.getPrChanges(url);
+    const shared = {sha:'a'.repeat(40), message:'Introduce the queue boundary\n\nKeep pending commands ordered.', author:{name:'Maya',login:'maya'}, authoredAt:date, committedAt:date, committer:'Maya',parents:['0'.repeat(40)],url:'https://github.com/klang/engine/commit/'+ 'a'.repeat(40),verified:true};
+    const unique = (url.endsWith('/120') ? 'b' : url.endsWith('/121') ? 'c' : 'd').repeat(40);
+    return {version:1 as const,url,metadata:snapshot.metadata,fetchedAt:Date.now(),commits:[shared,{...shared,sha:unique,message:'Keep retry boundaries intact\n\nRetain pending work after transient failures.',author:{name:'Sam',login:'sam'},parents:[shared.sha]}, {...shared,sha:'e'.repeat(39)+url.slice(-1),message:'Merge worker scheduling updates',parents:[unique,'f'.repeat(40)]}]};
+  },
+  getCommitComparison: async (selection: import('../../lib/pr-commits').CommitSelection) => {
+    const snapshot = await mocks.getPrChanges(selection.url), list = await mocks.getPrCommits(selection.url);
+    const parent = selection.parentSha ?? list.commits.find(c=>c.sha===selection.firstSha)!.parents[0];
+    return {...snapshot, comparison:selection,comparisonBase:parent,metadata:{...snapshot.metadata,baseSha:parent,headSha:selection.lastSha}};
+  },
   getPrChangeFile: (request: import('../../lib/pr-changes').PrFileRequest) => {
     if(request.path.endsWith('.svg')) {const image={kind:'image' as const,dataUrl:'data:image/svg+xml;base64,'+btoa('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="140"><rect width="300" height="140" fill="#5076b8"/><text x="30" y="75" fill="white">Queue flow</text></svg>')};return Promise.resolve({before:image,after:image});}
     const before=Array.from({length:90},(_,i)=>`const value${i} = ${i};`).join('\n');

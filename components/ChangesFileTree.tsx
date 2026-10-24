@@ -8,6 +8,8 @@ const decorationCSS = `
   [data-item-section="content"] { flex: 1 1 auto; }
   [data-item-section="decoration"] { flex: 0 0 auto; }
   [data-item-section="decoration"] > span { display: inline-flex; align-items: center; gap: 4px; }
+`;
+const commentDecorationCSS = `
   [data-item-section="decoration"] > span > span:last-child { display: inline-flex; align-items: center; gap: 4px; margin-inline-start: 4px; font-variant-numeric: tabular-nums; }
   [data-item-section="decoration"] > span > span:last-child::before { content: ""; width: 12px; height: 12px; flex-shrink: 0; background: currentColor; mask: ${commentIcon} center / contain no-repeat; }
 `;
@@ -25,11 +27,15 @@ export function ChangesFileTree({
   selected,
   query,
   onSelect,
+  onPreview,
+  showComments = true,
 }: {
+  showComments?: boolean;
   entries: ChangeTreeEntry[];
   selected: string;
   query: string;
   onSelect: (path: string) => void;
+  onPreview?: (path: string) => void;
 }) {
   const current = useRef({ entries, onSelect });
   current.current = { entries, onSelect };
@@ -45,7 +51,7 @@ export function ChangesFileTree({
     preparedInput: prepared,
     initialExpansion: 'open',
     search: false,
-    unsafeCSS: decorationCSS,
+    unsafeCSS: decorationCSS + (showComments ? commentDecorationCSS : ''),
     fileTreeSearchMode: 'hide-non-matches',
     renderRowDecoration: ({ item }) => {
       const entry = current.current.entries.find((e) => e.key === item.path);
@@ -59,7 +65,7 @@ export function ChangesFileTree({
             : 'Loading comments…'
           : `${count} GitHub ${count === 1 ? 'comment' : 'comments'}, including replies and resolved threads`;
       return {
-        text: `${changes} · ${count ?? '—'}`,
+        text: showComments ? `${changes} · ${count ?? '—'}` : changes,
         parts: [
           ...(entry.viewed
             ? [{ text: 'Viewed' }]
@@ -67,12 +73,16 @@ export function ChangesFileTree({
                 { text: `+${entry.additions}`, color: DIFF_STAT_COLORS.added },
                 { text: `−${entry.deletions}`, color: DIFF_STAT_COLORS.removed },
               ]),
-          {
-            text: count === undefined ? '—' : String(count),
-            color: count ? 'var(--foreground)' : undefined,
-          },
+          ...(showComments
+            ? [
+                {
+                  text: count === undefined ? '—' : String(count),
+                  color: count ? 'var(--foreground)' : undefined,
+                },
+              ]
+            : []),
         ],
-        title: `${entry.viewed ? 'Viewed' : `${entry.additions} additions, ${entry.deletions} deletions`}. ${comments}`,
+        title: `${entry.viewed ? 'Viewed' : `${entry.additions} additions, ${entry.deletions} deletions`}${showComments ? `. ${comments}` : ''}`,
       };
     },
   });
@@ -101,6 +111,23 @@ export function ChangesFileTree({
       className="changes-file-tree"
       aria-label="Changed files"
       onClick={activate}
+      onPointerOver={(event) => {
+        const row = event.nativeEvent
+          .composedPath()
+          .find((node) => node instanceof Element && node.hasAttribute('data-item-path'));
+        if (row instanceof Element) {
+          const path = row.getAttribute('data-item-path');
+          if (path) onPreview?.(path);
+        }
+      }}
+      onFocusCapture={() => {
+        const item = model.getFocusedItem();
+        if (item && !item.isDirectory()) onPreview?.(item.getPath());
+      }}
+      onKeyUp={() => {
+        const item = model.getFocusedItem();
+        if (item && !item.isDirectory()) onPreview?.(item.getPath());
+      }}
       onKeyDownCapture={(event) => {
         if (event.key === 'Enter' && model.getFocusedItem()?.isDirectory() === false) {
           event.preventDefault();

@@ -23,7 +23,9 @@ export function useChangesComments({
   inline,
   replaceThread,
   refresh,
+  enabled = true,
 }: {
+  enabled?: boolean;
   snapshot?: PrChanges;
   path?: string;
   activeKey: string;
@@ -34,6 +36,7 @@ export function useChangesComments({
   const [account, setAccount] = useState('');
   const [authError, setAuthError] = useState('');
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
     void window.electronAPI
       .getAuthState()
@@ -49,7 +52,7 @@ export function useChangesComments({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [enabled]);
   const url = snapshot?.url ?? '';
   const { drafts, update } = useChangesReviewDrafts(account, url);
   const [composer, setComposer] = useSessionDraft<Location | null>(`changes-composer:${account}:${activeKey}`, null);
