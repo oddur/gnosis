@@ -1,3 +1,4 @@
+import { GitHubAuthor } from './GitHubAuthor';
 import { useSessionDraft } from '../lib/session-drafts';
 import { useId, useState } from 'react';
 import { MessageSquare, Check, ChevronRight } from 'lucide-react';
@@ -53,7 +54,7 @@ export function GitHubReviewThread({ thread, reason, onAction }: Props) {
         {thread.comments.map((comment) => (
           <article key={comment.id}>
             <header>
-              <strong>{comment.author?.login ?? 'Deleted account'}</strong>
+              <strong>{comment.author ? <GitHubAuthor login={comment.author.login}/> : 'Deleted account'}</strong>
               <time dateTime={comment.createdAt} title={new Date(comment.createdAt).toLocaleString()}>
                 {timeAgo(comment.createdAt)}
               </time>

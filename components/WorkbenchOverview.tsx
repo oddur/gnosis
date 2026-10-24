@@ -1,3 +1,4 @@
+import { GitHubAuthor } from './GitHubAuthor';
 import { sourceForPath } from '../lib/workbench';
 import { useState } from 'react';
 import { PrSubjectDetails } from './PrSubjectDetails';
@@ -115,7 +116,7 @@ export function WorkbenchOverview({
                         </span>
                       </div>
                       <p>
-                        {m.repo} · {m.author} · {m.merged ? 'Merged' : m.state}
+                        {m.repo} · <GitHubAuthor login={m.author}/> · {m.merged ? 'Merged' : m.state}
                       </p>
                       <p>
                         {done}/{topics.length} topics reviewed{submissions[m.url] ? ` · ${submissions[m.url]}` : ''}
