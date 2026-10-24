@@ -97,6 +97,11 @@ void app.whenReady().then(async () => {
     assert.equal(await js(`window.contextLines().some(l=>l.textContent.includes('const context0 '))`), false);
     assert.equal(await js(`document.querySelectorAll('[data-case=context] .diff-context-gap').length`), 3);
     await js(`document.querySelector('[data-case=context]').scrollIntoView({block:'start'})`);
+    if (process.platform === 'darwin') app.show();
+    window.show();
+    window.focus();
+    await js('document.fonts.ready');
+    await new Promise((resolve) => setTimeout(resolve, 200));
     fs.writeFileSync(
       path.join(os.tmpdir(), 'gnosis-folded-context.png'),
       (await window.webContents.capturePage()).toPNG()
@@ -113,7 +118,7 @@ void app.whenReady().then(async () => {
       field.dispatchEvent(new Event('input',{bubbles:true}));
     })()`);
     await js(
-      `Array.from(document.querySelectorAll('[data-case=context] button')).find(b=>b.textContent==='Hide extra context').click()`
+      `Array.from(document.querySelectorAll('[data-case=context] button')).find(b=>b.getAttribute('aria-label')==='Hide extra context').click()`
     );
     assert.equal(await js(`document.querySelector('[data-case=context] textarea').value`), 'Keep this source context');
     await js(
@@ -121,7 +126,7 @@ void app.whenReady().then(async () => {
     );
     await wait(`JSON.parse(document.querySelector('#comments').textContent).some(c=>c.filePath==='context.ts')`);
     await js(
-      `Array.from(document.querySelectorAll('[data-case=context] button')).find(b=>b.textContent==='Hide extra context').click()`
+      `Array.from(document.querySelectorAll('[data-case=context] button')).find(b=>b.getAttribute('aria-label')==='Hide extra context').click()`
     );
     await wait(`window.contextLines().some(l=>l.dataset.lineNumber==='60')`);
     assert.ok(
@@ -134,7 +139,7 @@ void app.whenReady().then(async () => {
     assert.equal(savedComment.side, 'RIGHT');
     assert.equal(savedComment.hunkHeader, '@@ -40,61 +60,61 @@');
     await js(
-      `Array.from(document.querySelectorAll('[data-case=context] .diff-context-gap button')).filter(b=>b.textContent.startsWith('Show all')).forEach(b=>b.click())`
+      `Array.from(document.querySelectorAll('[data-case=context] .diff-context-gap button')).filter(b=>b.getAttribute('aria-label')?.startsWith('Show all')).forEach(b=>b.click())`
     );
     await wait(`window.contextLines().some(l=>l.textContent.includes('const context60 '))`);
     await js(

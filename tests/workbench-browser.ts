@@ -351,7 +351,7 @@ void app.whenReady().then(async () => {
     await js("document.documentElement.classList.add('dark')");
     await wait("!!document.querySelector('.diff-context-gap')");
     await js(
-      "[...document.querySelectorAll('.review-context-hunk button')].filter(b=>b.textContent.startsWith('Show all')).forEach(b=>b.click())"
+      "[...document.querySelectorAll('.review-context-hunk button')].filter(b=>b.getAttribute('aria-label')?.startsWith('Show all')).forEach(b=>b.click())"
     );
     await wait("document.querySelector('diffs-container')?.shadowRoot?.querySelectorAll('[data-line]').length > 60");
     await js("document.querySelector('.review-code').parentElement.scrollTop = 300");

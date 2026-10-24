@@ -1878,6 +1878,9 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .review-file-comments { padding:1px 5px; border-radius:3px; background:var(--accent); color:var(--accent-foreground); font-variant-numeric:tabular-nums; }
 .review-context-action { color:var(--ring); }
 .review-context-action:hover { color:var(--accent-foreground); }
+.diff-context-button { display:inline-flex; align-items:center; justify-content:center; gap:6px; min-width:24px; min-height:24px; padding:2px 5px; border-radius:4px; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
+.diff-context-button:hover { color:var(--foreground); background:var(--accent); }
+.diff-context-button svg { flex-shrink:0; }
 .review-file-counts { display:inline-flex; gap:8px; font-family:var(--font-mono); font-variant-numeric:tabular-nums; }
 .review-file-summary { margin-top:6px; font-size:var(--type-body); line-height:1.55; overflow-wrap:anywhere; }
 .review-file-history { display:flex; flex-wrap:wrap; gap:4px 12px; margin-top:5px; font-size:var(--type-caption); color:var(--muted-foreground); }
