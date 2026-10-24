@@ -1,6 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { MultiFileDiff } from '@pierre/diffs/react';
-import type { DiffFileInput, DiffLineAnnotation, FileDiffOptions, SelectedLineRange } from '@pierre/diffs';
+import { createPrFileCache } from '../lib/pr-file-cache';
+import { prChangePreview, prPreviewSelection } from '../lib/pr-change-preview';
+import { FileDiff, MultiFileDiff } from '@pierre/diffs/react';
+import type {
+  DiffFileInput,
+  DiffLineAnnotation,
+  FileDiffOptions,
+  FileDiffMetadata,
+  SelectedLineRange,
+} from '@pierre/diffs';
 import { PanelLeft, ArrowLeft, ArrowRight, RefreshCw, MessageSquare, ExternalLink } from 'lucide-react';
 import { ChangesFileTree } from './ChangesFileTree';
 import { DiffAppearanceMenu } from './DiffAppearanceMenu';
@@ -32,6 +40,20 @@ interface Entry {
 interface Position {
   selected: string;
   scroll: Record<string, number>;
+}
+const fileCache = createPrFileCache((request) => window.electronAPI.getPrChangeFile(request));
+const previews = new Map<string, FileDiffMetadata>();
+function previewFor(key: string, file: PrChangeFile) {
+  let preview = previews.get(key);
+  if (!preview) {
+    preview = prChangePreview(file);
+    if (preview) {
+      previews.set(key, preview);
+      const oldest = previews.keys().next().value;
+      if (previews.size > 32 && oldest) previews.delete(oldest);
+    }
+  }
+  return preview;
 }
 const positions = new Map<string, Position>();
 const memory = new Map<string, PrChanges[]>();
@@ -173,7 +195,19 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
   const entry =
     entries.find((e) => e.key === selected) ?? entries.find((e) => !progress.isFileViewed(viewKey(e))) ?? entries.at(0);
   const activeKey = entry ? viewKey(entry) : '';
-  const contents = loadedFile?.key === activeKey ? loadedFile.data : undefined;
+  const currentFile = useRef(activeKey);
+  currentFile.current = activeKey;
+  const request = entry
+    ? {
+        url: entry.snapshot.url,
+        path: entry.file.path,
+        baseSha: entry.snapshot.metadata.baseSha,
+        headSha: entry.snapshot.metadata.headSha,
+      }
+    : null;
+  const preview = useMemo(() => (entry ? previewFor(activeKey, entry.file) : undefined), [activeKey, entry?.file]);
+  const contents =
+    (request ? fileCache.peek(request) : undefined) ?? (loadedFile?.key === activeKey ? loadedFile.data : undefined);
   const visible = entries.filter((e) => !unviewed || !progress.isFileViewed(viewKey(e)));
   const viewedSignature = visible.map((e) => (progress.isFileViewed(viewKey(e)) ? '1' : '0')).join('');
   const treeEntries = useMemo(
@@ -204,8 +238,9 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
     setSelection('');
     setRange(null);
     setFileError('');
-    void window.electronAPI
-      .getPrChangeFile({
+    if (preview || contents) return;
+    void fileCache
+      .read({
         url: entry.snapshot.url,
         baseSha: entry.snapshot.metadata.baseSha,
         headSha: entry.snapshot.metadata.headSha,
@@ -240,7 +275,7 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
   }, [entry?.snapshot.url, fileAttempt]);
   useLayoutEffect(() => {
     const el = viewport.current;
-    if (!el || !contents) return;
+    if (!el || (!contents && !preview)) return;
     const desired = position.scroll[activeKey] ?? 0;
     const restore = () => {
       el.scrollTop = desired;
@@ -258,7 +293,7 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
       el.removeEventListener('wheel', stop);
       el.removeEventListener('pointerdown', stop);
     };
-  }, [activeKey, contents]);
+  }, [activeKey, contents, preview]);
   function savePreferences(patch: Partial<Preferences>) {
     setPrefs((p) => ({ ...p, ...patch }));
     setPreferenceError('');
@@ -290,7 +325,7 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
   const options: FileDiffOptions<Thread, undefined> = {
     theme: `gnosis-${CODE_THEMES.some((t) => t.id === prefs.codeTheme) ? prefs.codeTheme : 'github-dark'}`,
     themeType: 'dark',
-    diffStyle: contents?.before.kind === 'absent' || contents?.after.kind === 'absent' ? 'unified' : prefs.diffLayout,
+    diffStyle: entry?.file.status === 'added' || entry?.file.status === 'deleted' ? 'unified' : prefs.diffLayout,
     disableFileHeader: true,
     collapsedContextThreshold: 3,
     hunkSeparators: 'line-info',
@@ -301,6 +336,23 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
     overflow: appearance.wrap ? 'wrap' : 'scroll',
     enableLineSelection: true,
     onLineSelected: setRange,
+    loadDiffFiles: async () => {
+      if (!request) throw new Error('Select a file first.');
+      try {
+        if (alive.current && currentFile.current === activeKey) setFileError('');
+        const value = await fileCache.read(request);
+        if (value.before.kind !== 'text' || value.after.kind !== 'text')
+          throw new Error('Full text context is unavailable for this file.');
+        return {
+          oldFile: { name: entry?.file.previousPath ?? request.path, contents: value.before.content },
+          newFile: { name: request.path, contents: value.after.content },
+        };
+      } catch (error) {
+        if (alive.current && currentFile.current === activeKey)
+          setFileError(error instanceof Error ? error.message : String(error));
+        throw error;
+      }
+    },
   };
   const files: DiffFileInput | undefined = useMemo(
     () =>
@@ -346,7 +398,10 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
     setChatOpen(true);
   }
   const selectedCode = () => {
-    if (!range || !contents) return '';
+    if (!range) return '';
+    if (preview)
+      return `${range.side === 'deletions' ? 'Before' : 'After'} lines ${range.start}–${range.end}:\n${prPreviewSelection(preview, range)}`;
+    if (!contents) return '';
     const side = range.side === 'deletions' ? contents.before : contents.after;
     return side.kind === 'text'
       ? `${range.side === 'deletions' ? 'Before' : 'After'} lines ${range.start}–${range.end}:\n${side.content
@@ -355,14 +410,6 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
           .join('\n')}`
       : '';
   };
-  const request = entry
-    ? {
-        url: entry.snapshot.url,
-        path: entry.file.path,
-        baseSha: entry.snapshot.metadata.baseSha,
-        headSha: entry.snapshot.metadata.headSha,
-      }
-    : null;
   return (
     <section
       className="pr-changes"
@@ -542,7 +589,7 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
             className="changes-code-scroll"
             ref={viewport}
             onScroll={(e) => {
-              if (entry && contents) {
+              if (entry && (contents || preview)) {
                 position.selected = entry.key;
                 position.scroll[activeKey] = e.currentTarget.scrollTop;
                 persist();
@@ -550,7 +597,7 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
             }}
           >
             {!entry && !loading && <p className="changes-empty">Select a file to inspect its changes.</p>}
-            {entry && !contents && !fileError && (
+            {entry && !contents && !preview && !fileError && (
               <div className="changes-loading" role="status">
                 Loading file contents…
               </div>
@@ -558,9 +605,13 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
             {fileError && (
               <div className="changes-empty" role="alert">
                 <p>{fileError}</p>
-                <Button variant="outline" size="sm" onClick={() => setFileAttempt((n) => n + 1)}>
-                  Retry
-                </Button>
+                {preview ? (
+                  <p>Expand the unchanged lines again to retry loading surrounding context.</p>
+                ) : (
+                  <Button variant="outline" size="sm" onClick={() => setFileAttempt((n) => n + 1)}>
+                    Retry
+                  </Button>
+                )}
                 <Button
                   variant="ghost"
                   size="sm"
@@ -572,7 +623,23 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
             )}
             <div ref={code} className="changes-code">
               <ReviewSelectionActions containerRef={code} resetKey={activeKey} onAsk={ask} />
-              {files && (
+              {preview && (
+                <FileDiff
+                  key={activeKey}
+                  fileDiff={preview}
+                  options={options}
+                  lineAnnotations={annotations}
+                  renderAnnotation={({ metadata: thread }) => <GitHubReviewThread key={thread.id} thread={thread} />}
+                  style={
+                    {
+                      '--diffs-font-family': 'var(--font-mono)',
+                      '--diffs-font-size': 'var(--type-code)',
+                      '--diffs-line-height': 'var(--leading-code)',
+                    } as CSSProperties
+                  }
+                />
+              )}
+              {!preview && files && (
                 <MultiFileDiff
                   key={activeKey}
                   {...files}

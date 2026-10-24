@@ -33,8 +33,26 @@ void app.whenReady().then(async () => {
     await window.loadURL(process.env.GNOSIS_WORKBENCH_URL + '?pr-summary');
     window.webContents.setZoomFactor(1);
     await wait("document.querySelectorAll('.queue-item').length===7");
+    assert.deepEqual(
+      await js(`(async()=>{
+      const {prChangePreview,prPreviewSelection}=await import('/lib/pr-change-preview.ts');
+      const file={path:'dir with spaces/name.ts',status:'modified',additions:1,deletions:1,changeId:'test',patch:'@@ -10,3 +10,3 @@\\n same\\n-old\\n+new\\n end'};
+      const preview=prChangePreview(file);
+      const added=prChangePreview({...file,status:'added',additions:2,deletions:0,patch:'@@ -0,0 +1,2 @@\\n+one\\n+two'});
+      const deleted=prChangePreview({...file,status:'deleted',additions:0,deletions:2,patch:'@@ -1,2 +0,0 @@\\n-one\\n-two'});
+      return {path:preview.name,selected:prPreviewSelection(preview,{side:'additions',start:11,end:11}),added:added.type,deleted:deleted.type,truncated:!prChangePreview({...file,additions:100}),svg:!prChangePreview({...file,path:'diagram.svg'})};
+    })()`),
+      {
+        path: 'dir with spaces/name.ts',
+        selected: '11: new',
+        added: 'new',
+        deleted: 'deleted',
+        truncated: true,
+        svg: true,
+      }
+    );
     await js(
-      `window.fileReads=[];window.manifestReads=[];window.generationCalls=[];const read=window.electronAPI.getPrChangeFile;window.electronAPI.getPrChangeFile=async r=>{window.fileReads.push(r);return read(r)};const manifest=window.electronAPI.getPrChanges;window.electronAPI.getPrChanges=async(...args)=>{window.manifestReads.push(args);return manifest(...args)};window.electronAPI.startReview=async r=>window.generationCalls.push(r);void 0;`
+      `window.fileReads=[];window.manifestReads=[];window.generationCalls=[];const read=window.electronAPI.getPrChangeFile;window.electronAPI.getPrChangeFile=async r=>{window.fileReads.push(r);await new Promise(resolve=>setTimeout(resolve,200));return read(r)};const manifest=window.electronAPI.getPrChanges;window.electronAPI.getPrChanges=async(...args)=>{window.manifestReads.push(args);return manifest(...args)};window.electronAPI.startReview=async r=>window.generationCalls.push(r);void 0;`
     );
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()"
@@ -56,7 +74,12 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.changes-file-header h2')?.textContent==='src/worker.ts'");
     await wait("window.deepAll('[data-line]').length>0");
     assert.equal(await js('window.generationCalls.length'), 0);
-    assert.equal(await js('window.fileReads.length'), 2, 'Only opened files download');
+    assert.equal(await js('window.fileReads.length'), 1, 'GitHub patches render without full-file downloads');
+    assert.equal(
+      await js("!!document.querySelector('.changes-loading')"),
+      false,
+      'An unopened text file renders immediately from its patch'
+    );
     await wait("document.querySelector('.changes-code')?.textContent.includes('retry boundary')");
     assert.equal(await js("!!document.querySelector('.changes-code textarea')"), false, 'Threads are read-only');
     const lineCount = await js<number>("window.deepAll('[data-line]').length");
@@ -78,11 +101,25 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.changes-file-header h2')?.textContent==='src/old.ts'");
     await js("window.openFile('worker.ts')");
     await wait("document.querySelector('.changes-file-header h2')?.textContent==='src/worker.ts'");
+    assert.equal(
+      await js("!!document.querySelector('.changes-loading')"),
+      false,
+      'Returning to an opened file must not show Loading file contents'
+    );
     await click('Viewed & next');
     await wait("document.querySelector('.changes-progress')?.textContent.includes('1 / 5')");
     await js("window.openFile('new.ts')");
     await wait("document.querySelector('.changes-file-header h2')?.textContent==='src/new.ts'");
     await wait("window.deepAll('[data-line]').length>0");
+    await js("window.openFile('worker.ts')");
+    await wait("document.querySelector('.changes-file-header h2')?.textContent==='src/worker.ts'");
+    await js("window.openFile('new.ts')");
+    await wait("document.querySelector('.changes-file-header h2')?.textContent==='src/new.ts'");
+    assert.equal(
+      await js("!!document.querySelector('.changes-loading')"),
+      false,
+      'Files without patches also reopen synchronously from the renderer cache'
+    );
     await click('Ask about this');
     await js(
       `(()=>{const input=document.querySelector('#changes-question');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'What changes here?');input.dispatchEvent(new Event('input',{bubbles:true}))})()`

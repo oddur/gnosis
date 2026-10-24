@@ -194,3 +194,16 @@ void test('cached inventories and opened contents survive a process restart with
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+void test('large patch inventories remain pinned in memory when too large for disk cache', async () => {
+  const f = fixture();
+  f.files[0].patch = 'x'.repeat(1_100_000);
+  const service = createPrChangesService(),
+    client = f.pool.client('one');
+  const first = await service.manifest(client, url);
+  const count = f.reads.length;
+  f.move('head2');
+  assert.equal((await service.manifest(client, url)).metadata.headSha, first.metadata.headSha);
+  assert.equal(f.reads.length, count, 'Reopening Changes must not refetch an oversized inventory');
+  assert.equal((await service.manifest(client, url, true)).metadata.headSha, 'head2');
+});

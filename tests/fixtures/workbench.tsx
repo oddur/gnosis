@@ -411,7 +411,7 @@ const mocks = {
   getPrChanges: (url: string) => {
     const member=items.flatMap(i=>i.subject.members).find(m=>m.url===url)??members[0];
     return Promise.resolve({version:1 as const,url,metadata:member,comparisonBase:member.baseSha,fetchedAt:Date.now(),files:[
-      {path:'src/worker.ts',status:'modified' as const,additions:1,deletions:1,changeId:'worker-v1'},
+      {path:'src/worker.ts',status:'modified' as const,additions:1,deletions:1,changeId:'worker-v1',patch:'@@ -33,7 +33,7 @@\n const value32 = 32;\n const value33 = 33;\n const value34 = 34;\n-const value35 = 35;\n+const value35 = 36;\n const value36 = 36;\n const value37 = 37;\n const value38 = 38;'},
       {path:'src/new.ts',status:'added' as const,additions:2,deletions:0,changeId:'new-v1'},
       {path:'src/old.ts',status:'deleted' as const,additions:0,deletions:2,changeId:'old-v1'},
       {path:'assets/flow.svg',status:'modified' as const,additions:1,deletions:1,changeId:'image-v1'},

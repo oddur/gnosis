@@ -46,7 +46,7 @@ export function createPrChangesService() {
     work.set(key, promise);
     return promise;
   }
-  const snapshotKey = (url: string, revision: string) => `pr-changes:v1:${url}:${revision}`;
+  const snapshotKey = (url: string, revision: string) => `pr-changes:v2:${url}:${revision}`;
   function remember(client: Octokit, snapshot: PrChanges) {
     let values = snapshots.get(client);
     if (!values) {
@@ -54,8 +54,9 @@ export function createPrChangesService() {
       snapshots.set(client, values);
     }
     values.set(snapshotKey(snapshot.url, changesRevision(snapshot.metadata)), snapshot);
+    values.set(snapshotKey(snapshot.url, 'latest'), snapshot);
     const oldest = values.keys().next().value;
-    if (values.size > 100 && oldest) values.delete(oldest);
+    if (values.size > 200 && oldest) values.delete(oldest);
   }
   function find(client: Octokit, req: PrFileRequest) {
     validateURL(req.url);
@@ -71,7 +72,7 @@ export function createPrChangesService() {
       const cache = githubCacheFor(client),
         version = cache?.version();
       const latestKey = snapshotKey(url, 'latest');
-      const saved = cache?.get(latestKey, isSnapshot)?.value;
+      const saved = snapshots.get(client)?.get(latestKey) ?? cache?.get(latestKey, isSnapshot)?.value;
       if (saved && !refresh) {
         remember(client, saved);
         return saved;
@@ -104,6 +105,7 @@ export function createPrChangesService() {
         fetchedAt: Date.now(),
         files: files.map((file) => ({
           path: file.filename,
+          patch: file.patch,
           previousPath: file.previous_filename,
           status: file.status,
           additions: file.additions,

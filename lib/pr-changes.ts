@@ -6,6 +6,7 @@ export interface PrChangeFile {
   additions: number;
   deletions: number;
   changeId: string;
+  patch?: string;
 }
 export interface PrChanges {
   version: 1;
