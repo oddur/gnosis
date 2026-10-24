@@ -1,3 +1,4 @@
+import { contrastRatio } from '../lib/code-contrast';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -367,9 +368,16 @@ void app.whenReady().then(async () => {
       await js("document.querySelectorAll('.review-file-context')[1].querySelector('.review-file-summary') === null"),
       true
     );
-    assert.ok(
-      await js("document.querySelector('diffs-container').shadowRoot.innerHTML.toLowerCase().includes('#91a7b2')")
-    );
+    const commentColors = await js<{ foreground: string; background: string }>(`(() => {
+      const root=document.querySelector('diffs-container').shadowRoot;
+      const comment=[...root.querySelectorAll('[data-code] span')].find(el=>el.childElementCount===0&&el.textContent.includes('Preserve producer'));
+      if(!comment) throw Error('Missing highlighted comment');
+      const canvas=document.createElement('canvas');canvas.width=canvas.height=1;
+      const ctx=canvas.getContext('2d');
+      const hex=color=>{ctx.fillStyle=color;ctx.fillRect(0,0,1,1);return '#'+[...ctx.getImageData(0,0,1,1).data].slice(0,3).map(v=>v.toString(16).padStart(2,'0')).join('')};
+      return {foreground:hex(getComputedStyle(comment).color),background:hex(getComputedStyle(comment.closest('[data-line]')).backgroundColor)};
+    })()`);
+    assert.ok(contrastRatio(commentColors.foreground, commentColors.background) >= 4.5, 'Rendered code comments remain readable');
     await capture('sticky-source-dark');
     await js(`(() => {
       const pane = document.querySelector('.review-code').parentElement;
