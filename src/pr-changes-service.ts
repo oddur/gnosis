@@ -1,3 +1,4 @@
+import { createGitHubWork, joinGitHubWork, type GitHubWork } from '../lib/github-scheduler';
 import { createHash } from 'node:crypto';
 import type { Octokit } from '@octokit/rest';
 import { getChangedFiles, getPrMetadata, getPrDiff, parsePrUrl } from '../lib/github';
@@ -27,7 +28,7 @@ function validateURL(url: string) {
 }
 /** Snapshots pin both comparison revisions. No generation, filtering, or silent version swaps. */
 export function createPrChangesService() {
-  const pending = new WeakMap<Octokit, Map<string, Promise<unknown>>>();
+  const pending = new WeakMap<Octokit, Map<string, GitHubWork<unknown>>>();
   const snapshots = new WeakMap<Octokit, Map<string, PrChanges>>();
   function share<T>(client: Octokit, key: string, run: () => Promise<T>): Promise<T> {
     let work = pending.get(client);
@@ -36,10 +37,10 @@ export function createPrChangesService() {
       pending.set(client, work);
     }
     const previous = work.get(key);
-    if (previous) return previous as Promise<T>;
-    const promise = run().finally(() => work.delete(key));
-    work.set(key, promise);
-    return promise;
+    if (previous) return joinGitHubWork(previous) as Promise<T>;
+    const job = createGitHubWork(() => run().finally(() => work.delete(key)));
+    work.set(key, job);
+    return job.promise;
   }
   const snapshotKey = (url: string, revision: string) => `pr-changes:v2:${url}:${revision}`;
   function remember(client: Octokit, snapshot: PrChanges) {

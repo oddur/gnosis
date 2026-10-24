@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createGitHubCache, isCacheRecord, type GitHubCache } from './github-cache';
-import { createGitHubScheduler, githubPriority } from './github-scheduler';
+import { createGitHubScheduler, githubPriority, githubPriorityScope, createGitHubWork, joinGitHubWork, type GitHubWork } from './github-scheduler';
 
 const clientCaches = new WeakMap<Octokit, GitHubCache>();
 export const githubCacheFor = (client: Octokit) => clientCaches.get(client);
@@ -206,7 +206,7 @@ export function createGitHubClientPool(options: Options = {}) {
       let lastRequest = 0;
       const cache = snapshots.scope(key);
       clientCaches.set(client, cache);
-      const inflight = new Map<string, Promise<OctokitResponse<unknown>>>();
+      const inflight = new Map<string, GitHubWork<OctokitResponse<unknown>>>();
       const observe = (headers: Headers) => {
         const resource = String(headers['x-ratelimit-resource'] ?? 'core');
         const remaining = Number(headers['x-ratelimit-remaining']);
@@ -235,7 +235,6 @@ export function createGitHubClientPool(options: Options = {}) {
         ]);
         const force = /\b(no-cache|no-store)\b/i.test(String(endpoint.headers['cache-control'] ?? ''));
         const deduplicate = get && !force && !requestOptions.request.signal;
-        const priority = githubPriority();
         const fresh = () => {
           const saved = cacheable ? cache.get(requestKey, isCachedResponse) : undefined;
           if (
@@ -254,7 +253,7 @@ export function createGitHubClientPool(options: Options = {}) {
           return Promise.resolve(structuredClone(local));
         }
         const shared = deduplicate ? inflight.get(requestKey) : undefined;
-        if (shared) return shared.then((result) => structuredClone(result));
+        if (shared) return joinGitHubWork(shared).then((result) => structuredClone(result));
         const run = async () => {
           const stored = cacheable ? cache.get(requestKey, isCachedResponse) : undefined;
           const cached = stored?.value;
@@ -269,6 +268,7 @@ export function createGitHubClientPool(options: Options = {}) {
             return structuredClone(cached.response);
           }
           const gate = () => {
+            const priority = githubPriority();
             const budget = state.budgets[resource];
             const reserve =
               priority === 'background' && budget ? Math.min(resource === 'search' ? 3 : 100, budget.limit * 0.1) : 0;
@@ -339,6 +339,7 @@ export function createGitHubClientPool(options: Options = {}) {
             }
             observe(response.headers);
             const budget = state.budgets[resource];
+            const priority = githubPriority();
             if (priority === 'background' && budget && budget.reset > now() && budget.remaining < budget.limit * 0.2) {
               const reserve = Math.min(resource === 'search' ? 3 : 100, budget.limit * 0.1);
               backgroundDue.set(
@@ -424,12 +425,13 @@ export function createGitHubClientPool(options: Options = {}) {
             invalidateWrite();
           }
         };
-        const result = schedule(priority, run);
+        const work = createGitHubWork(() => schedule(githubPriorityScope(), run));
+        const result = work.promise;
         if (deduplicate) {
-          inflight.set(requestKey, result);
+          inflight.set(requestKey, work);
           void result
             .finally(() => {
-              if (inflight.get(requestKey) === result) inflight.delete(requestKey);
+              if (inflight.get(requestKey) === work) inflight.delete(requestKey);
             })
             .catch(() => {});
         }

@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
-import { withGitHubPriority } from '../lib/github-scheduler';
+import { withGitHubPriority, githubPriority, createGitHubWork, joinGitHubWork, type GitHubWork } from '../lib/github-scheduler';
 import type { Octokit } from '@octokit/rest';
 import {
   getGitHubClient,
@@ -103,7 +103,7 @@ export function createWorkbenchService(deps: Deps) {
   const mutedUrls = () => new Set(mutes.load(deps.auth().login ?? 'guest').map(entry => entry.member.url));
   let cooldown: { account: string; error: GitHubBackoffError } | undefined;
   let state: State | undefined;
-  let refresh: Promise<WorkbenchQueue> | undefined;
+  let refresh: GitHubWork<WorkbenchQueue> | undefined;
   let lastRefresh = 0;
   let lastAccount: string | null = null;
   let lastDiscoveryKey: string | undefined;
@@ -312,7 +312,7 @@ export function createWorkbenchService(deps: Deps) {
     const checkedAt = { ...s.checkedAt, ...pending?.checkedAt };
     const checkAllowance = () => {
       if (discoveryKey() !== discoverySettings || deps.auth().login !== login) throw new DiscoverySuperseded();
-      const paused = githubClients.backoff(token, true, ['core', 'search']);
+      const paused = githubClients.backoff(token, githubPriority() === 'background', ['core', 'search']);
       if (paused) throw paused;
     };
     const prefs = deps.preferences();
@@ -639,7 +639,9 @@ export function createWorkbenchService(deps: Deps) {
     }
   }
   async function queue(force = false, revalidate = force): Promise<WorkbenchQueue> {
-    if (refresh) return !force && load().subjects.length ? view() : refresh;
+    const existing = refresh;
+    if (existing) return !force && load().subjects.length ? view() :
+      withGitHubPriority(force && revalidate ? 'interactive' : 'background', () => joinGitHubWork(existing));
     const { token, login } = deps.auth();
     if (!token || !login) return { items: [], warnings: [], remaining: 0 };
     const settings = discoveryKey();
@@ -692,9 +694,9 @@ export function createWorkbenchService(deps: Deps) {
       { id, kind: 'github', title: 'Updating GitHub information', detail: 'Finding your pull requests' },
       { retry: () => queue(true) }
     );
-    refresh = withGitHubPriority(force && revalidate ? 'foreground' : 'background', () => discover((detail, progress) => {
+    refresh = withGitHubPriority(force && revalidate ? 'interactive' : 'background', () => createGitHubWork(() => discover((detail, progress) => {
       if (visibleActivity) deps.activities?.update(id, detail, progress);
-    }, revalidate))
+    }, revalidate)
       .then((result) => {
         if (deps.auth().login !== login) {
           if (visibleActivity) deps.activities?.finish(id, 'cancelled', 'GitHub account changed.');
@@ -742,12 +744,12 @@ export function createWorkbenchService(deps: Deps) {
       })
       .finally(() => {
         refresh = undefined;
-      });
+      })));
     if (!force && load().subjects.length) {
-      void refresh.catch(() => {});
+      void refresh.promise.catch(() => {});
       return view();
     }
-    return refresh;
+    return refresh.promise;
   }
   async function pump() {
     if (

@@ -76,10 +76,7 @@ export function createPrInspectionCache(deps: Dependencies) {
     if (saved && !refresh) return Promise.resolve(saved as T);
     const id = `${kind}:${key(revision)}:${refresh}`;
     const previous = pending.get(id);
-    if (previous)
-      return previous.background && !background
-        ? (previous.promise.catch(() => read<T>(kind, revision, refresh, false)) as Promise<T>)
-        : (previous.promise as Promise<T>);
+    if (previous && (!previous.background || background)) return previous.promise as Promise<T>;
     const generation = epoch;
     const promise = deps[kind](revision, refresh, background)
       .then((value) => {

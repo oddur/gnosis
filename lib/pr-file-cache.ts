@@ -26,8 +26,7 @@ export function createPrFileCache(
     if (cached) return Promise.resolve(cached);
     const key = keyFor(r),
       existing = pending.get(key);
-    if (existing)
-      return existing.background && !background ? existing.promise.catch(() => read(r, false)) : existing.promise;
+    if (existing && (!existing.background || background)) return existing.promise;
     const generation = epoch;
     const promise = load(r, background)
       .then((value) => {
@@ -37,6 +36,7 @@ export function createPrFileCache(
           0
         );
         if (generation === epoch && size <= maxBytes) {
+          bytes -= saved.get(key)?.bytes ?? 0;
           saved.set(key, { value, bytes: size, url: r.url });
           bytes += size;
           // Evict low-priority PRs first; preserve LRU order within each PR.

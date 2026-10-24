@@ -1,3 +1,4 @@
+import { createGitHubWork, joinGitHubWork, type GitHubWork } from '../lib/github-scheduler';
 import { createHash } from 'node:crypto';
 import type { Octokit } from '@octokit/rest';
 import { changesRevision, type InspectionLoadOptions } from '../lib/pr-changes';
@@ -123,7 +124,7 @@ function fileValue(file: ApiFile): PrChangeFile {
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 export function createPrCommitsService() {
   const memory = new WeakMap<Octokit, Map<string, unknown>>(),
-    pending = new WeakMap<Octokit, Map<string, Promise<unknown>>>();
+    pending = new WeakMap<Octokit, Map<string, GitHubWork<unknown>>>();
   const loadFile = createSnapshotFileLoader();
   function map(client: Octokit) {
     let m = memory.get(client);
@@ -155,10 +156,10 @@ export function createPrCommitsService() {
       pending.set(client, m);
     }
     const previous = m.get(key);
-    if (previous) return previous as Promise<T>;
-    const result = run().finally(() => m.delete(key));
-    m.set(key, result);
-    return result;
+    if (previous) return joinGitHubWork(previous) as Promise<T>;
+    const job = createGitHubWork(() => run().finally(() => m.delete(key)));
+    m.set(key, job);
+    return job.promise;
   }
   const listKey = (url: string, base: string, head: string) => `pr-commits:v1:${url}:${base}:${head}`;
   const latestKey = (url: string) => `pr-commits:v1:${url}:latest`;
