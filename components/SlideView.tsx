@@ -7,7 +7,7 @@ import type { ReviewGuide } from '../lib/types';
 import type { ReactNode } from 'react';
 import { useEffect, useId, useMemo, useRef, useState, useCallback } from 'react';
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from 'react-resizable-panels';
-import { Check, Copy, CopyX, MessageCircle } from 'lucide-react';
+import { ArrowRight, Check, Copy, CopyX, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { findReviewLine } from './ReviewDiff';
 import { ReviewSelectionActions } from './ReviewSelectionActions';
@@ -59,6 +59,8 @@ interface Props {
   onToggleReviewed?: () => void;
   viewedFiles?: Set<string>;
   onFileViewedChange?: (filePath: string, viewed: boolean) => void;
+  onContinue?: () => void;
+  nextTopicTitle?: string | null;
   showInlineExplanations?: boolean;
   onShowInlineExplanationsChange?: (show: boolean) => void;
 }
@@ -370,6 +372,7 @@ export function SlideView({
   rightSlot,
   slide,
   slideNumber,
+  totalSlides,
   prUrl,
   checkedChecks,
   onToggleCheck,
@@ -391,6 +394,8 @@ export function SlideView({
   onToggleReviewed,
   viewedFiles,
   onFileViewedChange,
+  onContinue,
+  nextTopicTitle,
   showInlineExplanations = true,
   onShowInlineExplanationsChange,
 }: Props) {
@@ -404,6 +409,8 @@ export function SlideView({
     if (imageMimeType(filePath) && !groupedHunks.some((group) => group.filePath === filePath))
       groupedHunks.push({ filePath, hunks: [] });
   }
+  const allFilesViewed = groupedHunks.length > 0 && groupedHunks.every(({ filePath }) => viewedFiles?.has(filePath));
+  const isLastTopic = slideNumber === totalSlides;
   const rightPanelRef = useRef<HTMLDivElement>(null);
   const fileContentId = useId();
   const [fileExpansion, setFileExpansion] = useSessionDraft<Record<string, boolean>>(`file-expansion:${slide.id}`, {});
@@ -759,6 +766,27 @@ export function SlideView({
           </div>
         );
       })}
+      {allFilesViewed && onContinue && (
+        <div className="review-files-complete flex flex-col items-start gap-3 border-t border-border pt-6">
+          <div className="space-y-1" role="status">
+            <p className="flex items-center gap-2 text-sm font-medium">
+              <Check className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              All files in this topic viewed
+            </p>
+            <p className="text-sm text-muted-foreground break-words">
+              {isLastTopic
+                ? 'You’ve reached the last topic.'
+                : nextTopicTitle
+                  ? `Up next: ${nextTopicTitle}`
+                  : 'Continue to the next topic.'}
+            </p>
+          </div>
+          <Button onClick={onContinue}>
+            {isLastTopic ? 'Back to overview' : 'Next topic'}
+            <ArrowRight className="size-4" aria-hidden="true" />
+          </Button>
+        </div>
+      )}
     </div>
   );
 

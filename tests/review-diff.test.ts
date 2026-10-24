@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { prepareReviewHunk, reviewContextRanges, sliceReviewHunk } from '../lib/review-diff';
+import {
+  prepareReviewHunk,
+  reviewContextRanges,
+  sliceReviewHunk,
+  diffContextLines,
+  DEFAULT_DIFF_APPEARANCE,
+} from '../lib/review-diff';
 import type { DiffHunk } from '../lib/types';
 const hunk = (hunkHeader: string, content: string, filePath = 'src/file.ts'): DiffHunk => ({
   hunkHeader,
@@ -108,4 +114,33 @@ void test('pins commented and referenced context and leaves context-only snippet
   assert.deepEqual(reviewContextRanges(data.lines.filter((l) => l.type === 'context')), [
     { start: 0, end: 29, hidden: false },
   ]);
+});
+
+void test('surrounding-line preferences preserve source coordinates and pinned review annotations', () => {
+  const original = hunk(
+    '@@ -50,31 +70,31 @@',
+    Array.from({ length: 31 }, (_, i) => (i === 10 ? '-old\n+new' : ` context ${i}`)).join('\n')
+  );
+  const prepared = prepareReviewHunk(original);
+  assert.ok(prepared);
+  for (const count of [1, 3, 5, 10, 20, 50]) {
+    const ranges = reviewContextRanges(prepared.lines, new Set([0]), new Set(), count);
+    assert.ok(
+      ranges.some((r) => !r.hidden && r.start === 0),
+      'Pinned lines must remain visible'
+    );
+    const visible: ReturnType<typeof reviewContextRanges> = reviewContextRanges(prepared.lines, new Set(), new Set(), count).filter((r) => !r.hidden);
+    assert.equal(
+      visible.reduce((sum, r) => sum + r.end - r.start, 0),
+      Math.min(count, 10) + Math.min(count, 20) + 2
+    );
+    const excerpt = sliceReviewHunk(original, prepared.lines, visible[0].start, visible[0].end);
+    const parsed = prepareReviewHunk(excerpt);
+    assert.ok(parsed);
+    assert.equal(parsed.lines.find((l) => l.type === 'add')?.headLineNumber, 80);
+    assert.equal(parsed.lines.find((l) => l.type === 'remove')?.baseLineNumber, 60);
+  }
+  assert.equal(diffContextLines(), 3);
+  assert.equal(diffContextLines({ ...DEFAULT_DIFF_APPEARANCE, contextLines: NaN }), 3);
+  assert.equal(diffContextLines({ ...DEFAULT_DIFF_APPEARANCE, contextLines: 10 }), 10);
 });

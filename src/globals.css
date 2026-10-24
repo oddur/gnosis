@@ -2454,3 +2454,22 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .pr-commits .changes-file-header h2 { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
 @media(max-width:700px) { .pr-commits .changes-file-header { display:flex; } }
 .pr-commits .changes-workspace.chat-open .changes-file-header { display:flex; }
+
+/* Explanation is a peer of Changes, inside the same persistent PR frame. */
+.pr-explanation-workspace { display:flex; flex-direction:column; flex:1; min-height:0; min-width:0; overflow:hidden; }
+.pr-explanation-workspace .workbench-review { flex:1; min-height:0; height:auto; padding-bottom:0; }
+.explanation-status { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:8px var(--pr-frame-inset); border-bottom:1px solid var(--border); font-size:var(--type-caption); flex-shrink:0; }
+.explanation-status > span { flex:1; min-width:200px; }
+.explanation-empty { padding:32px var(--pr-frame-inset); max-width:720px; }
+.explanation-empty h2 { font-size:var(--type-title-compact, 18px); font-weight:650; margin-bottom:12px; }
+.explanation-empty p { font-size:var(--type-body); line-height:1.65; color:var(--muted-foreground); }
+.explanation-empty-actions { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:24px 0 12px; }
+.explanation-empty-actions span { font-size:var(--type-caption); color:var(--muted-foreground); }
+.pr-explanation-workspace .workbench-overview { max-width:none; }
+.pr-explanation-workspace .review-toolbar > select { flex:1; min-width:160px; max-width:300px; }
+.pr-explanation-workspace .review-submit-target select { max-width:210px; min-width:0; }
+.pr-explanation-workspace .review-toolbar { gap:8px; }
+@media (max-width:700px) {
+  .pr-explanation-workspace .review-submit-target { margin-left:0; }
+  .pr-explanation-workspace .review-submit-target select { max-width:160px; }
+}

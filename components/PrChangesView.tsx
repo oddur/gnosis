@@ -1,3 +1,4 @@
+import { useDiffAppearance } from '../lib/use-diff-appearance';
 import { DiffStats } from './DiffStats';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
@@ -29,7 +30,7 @@ import { ReviewSelectionActions } from './ReviewSelectionActions';
 import { PrFileChat } from './PrFileChat';
 import { Button } from './ui/button';
 import { CODE_THEMES } from '../lib/constants';
-import { DEFAULT_DIFF_APPEARANCE } from '../lib/review-diff';
+import { diffContextLines } from '../lib/review-diff';
 import {
   changesRevision,
   fileRevisionKey,
@@ -122,6 +123,9 @@ export function PrChangesView({
   });
   const [prefs, setPrefs] = useState(preferences),
     [preferenceError, setPreferenceError] = useState('');
+  const appearance = useDiffAppearance(prefs.diffAppearance);
+  const contextLines = diffContextLines(appearance);
+  const parseDiffOptions = useMemo(() => ({ context: contextLines }), [contextLines]);
   const writes = useRef(Promise.resolve());
   useEffect(
     () =>
@@ -235,7 +239,10 @@ export function PrChangesView({
         comparison: entry.snapshot.comparison,
       }
     : null;
-  const preview = useMemo(() => (entry ? previewFor(activeKey, entry.file) : undefined), [activeKey, entry?.file]);
+  const preview = useMemo(
+    () => (entry ? previewFor(activeKey, entry.file, contextLines) : undefined),
+    [activeKey, entry?.file, contextLines]
+  );
   const contents =
     (request ? fileCache.peek(request) : undefined) ?? (loadedFile?.key === activeKey ? loadedFile.data : undefined);
   const visible = entries.filter((e) => !unviewed || !progress.isFileViewed(viewKey(e)));
@@ -269,7 +276,32 @@ export function PrChangesView({
   // Keep selection/scroll independent of tabs, queue navigation, and background discovery.
   function warmFile(key: string) {
     const target = entries.find((e) => e.key === key);
-    if (!target || fileIsReady(target.snapshot, target.file)) return () => {};
+    if (!target) return () => {};
+    if (
+      contextLines > 3 &&
+      target.file.status === 'modified' &&
+      !fileCache.peek({
+        url: target.snapshot.url,
+        path: target.file.path,
+        baseSha: target.snapshot.metadata.baseSha,
+        headSha: target.snapshot.metadata.headSha,
+        comparison: target.snapshot.comparison,
+      })
+    ) {
+      return prefetchInspection(viewKey(target), () =>
+        fileCache.read(
+          {
+            url: target.snapshot.url,
+            path: target.file.path,
+            baseSha: target.snapshot.metadata.baseSha,
+            headSha: target.snapshot.metadata.headSha,
+            comparison: target.snapshot.comparison,
+          },
+          true
+        )
+      );
+    }
+    if (fileIsReady(target.snapshot, target.file)) return () => {};
     return prefetchInspection(viewKey(target), () => prepareFile(target.snapshot, target.file, true));
   }
   useEffect(() => {
@@ -277,7 +309,7 @@ export function PrChangesView({
     const index = entries.indexOf(entry);
     const cancel = [index + 1, index + 2, index - 1].flatMap((i) => (entries[i] ? [warmFile(entries[i].key)] : []));
     return () => cancel.forEach((stop) => stop());
-  }, [activeKey, entries]);
+  }, [activeKey, entries, contextLines]);
   function select(key: string) {
     const target = entries.find((e) => e.key === key);
     if (!target) return;
@@ -313,11 +345,15 @@ export function PrChangesView({
   useEffect(() => {
     if (!entry) return;
     let cancelled = false;
-    setLoadedFile(undefined);
+    setLoadedFile((previous) => (previous?.key === activeKey ? previous : undefined));
     setSelection('');
     setRange(null);
     setFileError('');
-    if (preview || contents) return;
+    if (
+      contents ||
+      (preview && (contextLines <= 3 || entry.file.status === 'added' || entry.file.status === 'deleted'))
+    )
+      return;
     void fileCache
       .read({
         url: entry.snapshot.url,
@@ -335,7 +371,7 @@ export function PrChangesView({
     return () => {
       cancelled = true;
     };
-  }, [activeKey, fileAttempt]);
+  }, [activeKey, fileAttempt, contextLines]);
   useLayoutEffect(() => {
     const el = viewport.current;
     if (!el || (!contents && !preview)) return;
@@ -368,7 +404,6 @@ export function PrChangesView({
       })
       .catch(() => setPreferenceError('Could not save diff preferences.'));
   }
-  const appearance = { ...DEFAULT_DIFF_APPEARANCE, ...prefs.diffAppearance };
   const threads = entry ? discussion.discussions[entry.snapshot.url]?.data : undefined;
   const threadError = entry ? discussion.discussions[entry.snapshot.url]?.error : undefined;
   const matching =
@@ -401,7 +436,8 @@ export function PrChangesView({
     themeType: 'dark',
     diffStyle: entry?.file.status === 'added' || entry?.file.status === 'deleted' ? 'unified' : prefs.diffLayout,
     disableFileHeader: true,
-    collapsedContextThreshold: 3,
+    collapsedContextThreshold: 0,
+    parseDiffOptions,
     hunkSeparators: 'line-info',
     diffIndicators: appearance.indicators,
     lineDiffType: appearance.inline,
@@ -750,7 +786,12 @@ export function PrChangesView({
               <div className="changes-empty" role="alert">
                 <p>{fileError}</p>
                 {preview ? (
-                  <p>Expand the unchanged lines again to retry loading surrounding context.</p>
+                  <p>
+                    Could not load more surrounding lines.{' '}
+                    <button className="underline" onClick={() => setFileAttempt((n) => n + 1)}>
+                      Retry
+                    </button>
+                  </p>
                 ) : (
                   <Button variant="outline" size="sm" onClick={() => setFileAttempt((n) => n + 1)}>
                     Retry
@@ -767,7 +808,7 @@ export function PrChangesView({
             )}
             <div ref={code} className="changes-code">
               <ReviewSelectionActions containerRef={code} resetKey={activeKey} onAsk={ask} />
-              {preview && (
+              {preview && !(contextLines > 3 && files) && (
                 <FileDiff
                   key={activeKey}
                   fileDiff={preview}
@@ -783,7 +824,7 @@ export function PrChangesView({
                   }
                 />
               )}
-              {!preview && files && (
+              {files && (!preview || contextLines > 3) && (
                 <MultiFileDiff
                   key={activeKey}
                   {...files}

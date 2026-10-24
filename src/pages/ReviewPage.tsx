@@ -1,37 +1,46 @@
+import { useDiffAppearance } from '../../lib/use-diff-appearance';
+import { refreshDiscussion } from '../../lib/review-discussion-cache';
+import { useChangesComments } from '../../components/useChangesComments';
+import { useExplanationComments } from '../../lib/use-explanation-comments';
+import { explanationSubject, rememberExplanation } from '../../lib/explanation-workspace';
+import type { ReviewSubject } from '../../lib/workbench';
 import { rememberCommandDestination } from '../../lib/command-recents';
 import { findReviewLine } from '../../components/ReviewDiff';
 import { useCommandCenter, useCommandScope } from '../../lib/command-center';
 import type { SearchDestination } from '../../lib/command-search';
 import { useSessionDraft } from '../../lib/session-drafts';
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { DEFAULT_DIFF_APPEARANCE, type DiffAppearance } from '../../lib/review-diff';
+import { type DiffAppearance } from '../../lib/review-diff';
 import { ArrowLeft, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react';
 import { PRSummaryBanner } from '../../components/PRSummaryBanner';
 import { StaleBanner } from '../../components/StaleBanner';
 import { WorkbenchOverview } from '../../components/WorkbenchOverview';
-import { coverageKey, sourceForPath, subjectForReview } from '../../lib/workbench';
+import { coverageKey, subjectForReview } from '../../lib/workbench';
 import { SlideView } from '../../components/SlideView';
 import { ExplainerView } from '../../components/ExplainerView';
 import { toast } from '../../components/ui/toast';
 import { SlideNav } from '../../components/SlideNav';
 import { TocRail } from '../../components/TocRail';
 import { SlideChatSheet } from '../../components/SlideChatSheet';
-import { SubmitReviewDialog } from '../../components/SubmitReviewDialog';
 import { WorkbenchHelp } from '../../components/WorkbenchHelp';
 import { SettingsDialog } from '../../components/SettingsDialog';
 import { ShortcutOverlay } from '../../components/ShortcutOverlay';
 import { CommandPalette, type Command } from '../../components/CommandPalette';
-import { useReviewComments } from '../../lib/use-review-comments';
 import { useViewedFiles } from '../../lib/use-viewed-files';
 import { useSlideChat } from '../../lib/use-slide-chat';
 import { useKeyboardShortcuts, type ShortcutMap } from '../../lib/use-keyboard-shortcuts';
 import { buildFileUrlBase } from '../../lib/github-url';
 import { isLocalUrl } from '../../lib/local-url';
-import type { ReviewGuide, ReviewEvent, FreshnessResult, Preferences, Provider, ModelId } from '../../lib/types';
+import type { ReviewGuide, FreshnessResult, Preferences, Provider, ModelId } from '../../lib/types';
 import { DEFAULT_FAST_CLAUDE_MODEL } from '../../lib/models';
 
 interface Props {
   review: ReviewGuide;
+  embedded?: boolean;
+  active?: boolean;
+  currentSubject?: ReviewSubject;
+  initialPreferences?: Preferences;
+  onOpenChanges?: () => void;
   onBack: () => void;
   onReReview: (prUrl: string) => void;
   initialSlideId?: string;
@@ -105,10 +114,16 @@ export function ReviewPage({
   commandDestination,
   exploreInitially,
   onShowActivity,
+  embedded = false,
+  active = true,
+  currentSubject,
+  initialPreferences,
+  onOpenChanges,
 }: Props) {
   const commandCenter = useCommandCenter();
   const [review, setReview] = useState(initialReview);
   useEffect(() => setReview(initialReview), [initialReview]);
+  useEffect(() => rememberExplanation(review), [review]);
   const [consumedCommand, setConsumedCommand] = useSessionDraft('review-command', 0);
   const { viewedFiles, setFileViewed } = useViewedFiles(review);
   const [currentSlide, setCurrentSlide] = useState(() => {
@@ -118,11 +133,11 @@ export function ReviewPage({
     );
     return Number.isInteger(saved) && saved >= 0 && saved <= initialReview.slides.length ? saved : 0;
   });
-  const [navOpen, setNavOpen] = useState(false);
+  const [navOpen, setNavOpen] = useSessionDraft('topics-open', false);
   const [submitUrl, setSubmitUrl] = useState(
     initialReview.snapshot?.subject.members.find((m) => !m.merged && m.state === 'open')?.url ?? initialReview.prUrl
   );
-  const submitMember = review.snapshot?.subject.members.find((m) => m.url === submitUrl);
+  const submitMember = (currentSubject ?? explanationSubject(review)).members.find((m) => m.url === submitUrl);
   const focusBeforeTool = useRef<HTMLElement | null>(null);
 
   const [showSubmitDialog, setShowSubmitDialog] = useState(false);
@@ -139,18 +154,15 @@ export function ReviewPage({
   const [freshness, setFreshness] = useState<FreshnessResult | null>(null);
   const [chatOpen, setChatOpen] = useSessionDraft('chat-open', false);
   const [chatQuotedCode, setChatQuotedCode] = useState<string | null>(null);
-  const [chatProvider, setChatProvider] = useState<Provider>('claude');
-  const [chatModel, setChatModel] = useState<ModelId>(DEFAULT_FAST_CLAUDE_MODEL);
-  const [diffLayout, setDiffLayout] = useState<Preferences['diffLayout']>('unified');
+  const [chatProvider, setChatProvider] = useState<Provider>(initialPreferences?.provider ?? 'claude');
+  const [chatModel, setChatModel] = useState<ModelId>(initialPreferences?.model ?? DEFAULT_FAST_CLAUDE_MODEL);
+  const [diffLayout, setDiffLayout] = useState<Preferences['diffLayout']>(initialPreferences?.diffLayout ?? 'unified');
   const [slideViewMode, setSlideViewMode] = useSessionDraft<'split' | 'focus'>('slide-view', 'split');
-  const [prefs, setPrefs] = useState<Preferences | null>(null);
-  const diffAppearance = useMemo(
-    () => ({ ...DEFAULT_DIFF_APPEARANCE, ...prefs?.diffAppearance }),
-    [prefs?.diffAppearance]
-  );
+  const [prefs, setPrefs] = useState<Preferences | null>(initialPreferences ?? null);
+  const diffAppearance = useDiffAppearance(prefs?.diffAppearance);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [exploreOpen, setExploreOpen] = useState(exploreInitially ?? false);
+  const [exploreOpen, setExploreOpen] = useSessionDraft('explore-open', exploreInitially ?? false);
   const generatingExplainers = useRef(new Set<string>());
 
   function openExplainer() {
@@ -309,12 +321,46 @@ export function ReviewPage({
     // Everything is reviewed — go to overview
     setCurrentSlide(0);
   }, [currentSlide, review.slides.length, reviewed]);
-  const { comments, addComment, removeComment, editComment } = useReviewComments(
-    `gnosis-drafts:${subjectForReview(review)}:${review.snapshot?.fingerprint ?? review.headSha}`
-  );
-  const selectedComments = comments.filter(
-    (c) => (sourceForPath(review, c.filePath).member?.url ?? review.prUrl) === submitUrl
-  );
+  const { comments, addComment, removeComment, editComment } = useExplanationComments(review, currentLogin ?? '');
+  const sharedReview = useChangesComments({
+    enabled: !isLocalUrl(review.prUrl),
+    snapshot: submitMember
+      ? {
+          version: 1,
+          url: submitMember.url,
+          metadata: submitMember,
+          comparisonBase: submitMember.baseSha,
+          files: [],
+          fetchedAt: 0,
+        }
+      : undefined,
+    activeKey: `explanation:${submitUrl}`,
+    inline: [],
+    replaceThread: () => {},
+    refresh: async (url) => {
+      await refreshDiscussion(url).catch(() => {});
+    },
+    onOpenChanges,
+    onSubmitted: (url, event) => {
+      const next = {
+        ...submissions,
+        [url]:
+          event === 'APPROVE'
+            ? 'Approval submitted'
+            : event === 'REQUEST_CHANGES'
+              ? 'Changes requested'
+              : 'Comments submitted',
+      };
+      setSubmissions(next);
+      localStorage.setItem(submissionKey, JSON.stringify(next));
+    },
+  });
+  useEffect(() => {
+    if (showSubmitDialog) {
+      sharedReview.openReview();
+      setShowSubmitDialog(false);
+    }
+  }, [showSubmitDialog, submitUrl]);
   const slideChat = useSlideChat(review, chatProvider, chatModel);
   const gitFileUrlBase = useMemo(
     () => (review.snapshot?.subject.kind === 'stack' ? undefined : buildFileUrlBase(review.prUrl, review.headSha)),
@@ -333,6 +379,13 @@ export function ReviewPage({
     return map;
   }, [review.changedFiles]);
 
+  useEffect(() => {
+    if (!initialPreferences) return;
+    setPrefs(initialPreferences);
+    setChatProvider(initialPreferences.provider);
+    setChatModel(initialPreferences.model);
+    setDiffLayout(initialPreferences.diffLayout);
+  }, [initialPreferences]);
   useEffect(() => {
     void window.electronAPI.loadPreferences().then((p) => {
       setPrefs(p);
@@ -365,7 +418,7 @@ export function ReviewPage({
 
   useEffect(() => {
     // Local reviews have no remote PR to poll or describe — skip both calls.
-    if (isLocal) return;
+    if (isLocal || embedded) return;
     let cancelled = false;
     void (
       review.snapshot
@@ -488,7 +541,7 @@ export function ReviewPage({
     review.slides.length,
   ]);
 
-  useKeyboardShortcuts(shortcutMap, { enabled: !exploreOpen });
+  useKeyboardShortcuts(shortcutMap, { enabled: active && !exploreOpen });
 
   // Build the command palette commands. The slide jump entries
   // are generated dynamically from the review so they read like a
@@ -587,29 +640,35 @@ export function ReviewPage({
         currentSlide ? `topic:${review.reviewId}:${review.slides[currentSlide - 1]?.id}` : `summary:${review.reviewId}`
       );
   }, [review.reviewId, currentSlide, currentLogin]);
-  useCommandScope('review', [
-    ...paletteCommands
-      .filter((c) => ['chat', 'submit', 'unified', 'split'].includes(c.id))
-      .map((c) => ({ ...c, id: `review:${c.id}` })),
-    ...(currentSlide > 0
+  useCommandScope(
+    'review',
+    active
       ? [
-          {
-            id: 'review:explore',
-            label: review.slides[currentSlide - 1]?.explainer
-              ? 'Open interactive explanation'
-              : 'Create interactive explanation',
-            group: 'Current topic · tracked in Activity',
-            perform: openExplainer,
-          },
+          ...paletteCommands
+            .filter((c) => ['chat', 'submit', 'unified', 'split'].includes(c.id))
+            .map((c) => ({ ...c, id: `review:${c.id}` })),
+          ...(currentSlide > 0
+            ? [
+                {
+                  id: 'review:explore',
+                  label: review.slides[currentSlide - 1]?.explainer
+                    ? 'Open interactive explanation'
+                    : 'Create interactive explanation',
+                  group: 'Current topic · tracked in Activity',
+                  perform: openExplainer,
+                },
+              ]
+            : []),
+          ...paletteCommands
+            .filter((c) => !['chat', 'submit', 'unified', 'split'].includes(c.id))
+            .map((c) => ({ ...c, id: `review:${c.id}` })),
         ]
-      : []),
-    ...paletteCommands
-      .filter((c) => !['chat', 'submit', 'unified', 'split'].includes(c.id))
-      .map((c) => ({ ...c, id: `review:${c.id}` })),
-  ]);
+      : []
+  );
   useEffect(() => {
     const target = commandDestination?.destination;
-    if (!target || target.reviewId !== review.reviewId || consumedCommand === commandDestination.nonce) return;
+    if (!active || !target || target.reviewId !== review.reviewId || consumedCommand === commandDestination.nonce)
+      return;
     setConsumedCommand(commandDestination.nonce);
     const index =
       target.slideId === 'overview'
@@ -657,37 +716,7 @@ export function ReviewPage({
       } else if (++tries > 50) clearInterval(timer);
     }, 60);
     return () => clearInterval(timer);
-  }, [commandDestination, review.reviewId]);
-
-  async function handleSubmitReview(event: ReviewEvent, body: string) {
-    const result = await window.electronAPI.submitReview({
-      prUrl: submitUrl,
-      headSha: submitMember?.headSha ?? review.headSha ?? '',
-      baseSha: submitMember?.baseSha,
-      baseBranch: submitMember?.baseBranch,
-      event,
-      body,
-      comments: selectedComments.map((c) => ({
-        path: sourceForPath(review, c.filePath).path,
-        line: c.line,
-        side: c.side,
-        body: c.body,
-      })),
-    });
-    const next = {
-      ...submissions,
-      [submitUrl]:
-        event === 'APPROVE'
-          ? 'Approval submitted'
-          : event === 'REQUEST_CHANGES'
-            ? 'Changes requested'
-            : 'Comments submitted',
-    };
-    setSubmissions(next);
-    localStorage.setItem(submissionKey, JSON.stringify(next));
-    selectedComments.forEach((c) => removeComment(c.id));
-    return result;
-  }
+  }, [commandDestination, review.reviewId, active]);
 
   if (review.slides.length === 0) {
     return (
@@ -749,18 +778,22 @@ export function ReviewPage({
         />
       </div>
 
-      <PRSummaryBanner review={review} onBack={onBack} onOpenSettings={() => setSettingsOpen(true)} />
+      {!embedded && <PRSummaryBanner review={review} onBack={onBack} onOpenSettings={() => setSettingsOpen(true)} />}
 
-      {freshness && <StaleBanner freshness={freshness} onReReview={() => onReReview(review.prUrl)} />}
+      {!embedded && freshness && <StaleBanner freshness={freshness} onReReview={() => onReReview(review.prUrl)} />}
 
       <div className="review-toolbar">
-        <button
-          onClick={() => (commandCenter ? commandCenter.open() : setPaletteOpen(true))}
-          title="Search and navigate (⌘K / Ctrl K)"
-        >
-          Search <kbd className="kbd">{window.electronAPI.platform === 'darwin' ? '⌘ K' : 'Ctrl K'}</kbd>
-        </button>
-        <WorkbenchHelp />
+        {!embedded && (
+          <>
+            <button
+              onClick={() => (commandCenter ? commandCenter.open() : setPaletteOpen(true))}
+              title="Search and navigate (⌘K / Ctrl K)"
+            >
+              Search <kbd className="kbd">{window.electronAPI.platform === 'darwin' ? '⌘ K' : 'Ctrl K'}</kbd>
+            </button>
+            <WorkbenchHelp />
+          </>
+        )}
         <button onClick={() => setNavOpen((v) => !v)} aria-pressed={navOpen} title="Toggle topic navigation">
           {navOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}Topics
         </button>
@@ -786,7 +819,7 @@ export function ReviewPage({
           </button>
         )}
         {review.snapshot?.subject.kind === 'stack' && (
-          <label className="ml-auto flex items-center gap-2 text-xs">
+          <label className="review-submit-target ml-auto flex items-center gap-2 text-xs">
             Send feedback to
             <select
               aria-label="PR for review submission"
@@ -795,14 +828,17 @@ export function ReviewPage({
             >
               {review.snapshot.subject.members.map((m) => (
                 <option key={m.url} value={m.url}>
-                  #{m.number} {m.title}
+                  #{m.number} {embedded ? m.repo : m.title}
                   {m.merged ? ' (merged)' : ''}
                 </option>
               ))}
             </select>
           </label>
         )}
+        {!isLocal && sharedReview.controls}
       </div>
+      {!isLocal && active && sharedReview.panel}
+
       <div className="flex-1 overflow-hidden flex flex-row min-h-0">
         {navOpen && (
           <TocRail
@@ -818,6 +854,7 @@ export function ReviewPage({
           {currentSlide === 0 ? (
             <WorkbenchOverview
               review={review}
+              embedded={embedded}
               reviewed={reviewed}
               onNavigate={handleJumpTo}
               submissions={submissions}
@@ -832,6 +869,8 @@ export function ReviewPage({
               review={review}
               viewedFiles={viewedFiles}
               onFileViewedChange={setFileViewed}
+              onContinue={() => handleJumpTo(currentSlide < review.slides.length ? currentSlide + 1 : 0)}
+              nextTopicTitle={nextTitle}
               showInlineExplanations={prefs?.showInlineExplanations !== false}
               onShowInlineExplanationsChange={handleShowInlineExplanationsChange}
               slide={review.slides[currentSlide - 1]}
@@ -911,26 +950,14 @@ export function ReviewPage({
           nextTitle={nextTitle}
           onPrev={handlePrev}
           onNext={handleNext}
-          commentCount={comments.length}
-          onSubmitReview={isLocal ? undefined : () => setShowSubmitDialog(true)}
+          commentCount={sharedReview.draftCount}
+          onSubmitReview={isLocal || embedded ? undefined : () => setShowSubmitDialog(true)}
         />
       }
 
-      {!isLocal && (
-        <SubmitReviewDialog
-          open={showSubmitDialog}
-          onOpenChange={setShowSubmitDialog}
-          comments={selectedComments.map((c) => ({ ...c, filePath: sourceForPath(review, c.filePath).path }))}
-          prUrl={submitUrl}
-          headSha={submitMember?.headSha ?? review.headSha}
-          isOwnPr={currentLogin !== null && currentLogin === (submitMember?.author ?? review.author)}
-          onSubmit={handleSubmitReview}
-        />
-      )}
-
       <SettingsDialog
         initialSection="review"
-        open={settingsOpen}
+        open={active && settingsOpen}
         onOpenChange={setSettingsOpen}
         onThemeChange={async () => {
           const updated = await window.electronAPI.reRenderHunks(review);
@@ -938,7 +965,7 @@ export function ReviewPage({
         }}
       />
 
-      <ShortcutOverlay open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      <ShortcutOverlay open={active && shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       {!commandCenter && (
         <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={paletteCommands} />
       )}

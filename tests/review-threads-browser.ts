@@ -10,7 +10,8 @@ void app.whenReady().then(async () => {
     height: 800,
     webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false },
   });
-  const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
+  win.webContents.on('console-message', (_e, _l, message) => console.log('renderer:', message));
+  const js = <T = unknown>(code: string) => (win.webContents.executeJavaScript(code) as Promise<T>).catch(error => { console.error('Failed browser expression:', code); throw error; });
   const wait = async (expression: string) => {
     for (let i = 0; i < 160; i++) {
       if (await js(expression)) return;
@@ -83,7 +84,7 @@ void app.whenReady().then(async () => {
       5,
       'Hiding generated explanations preserves GitHub discussions'
     );
-    await click('Back');
+    await click('Work queue');
     await wait("!!document.querySelector('.queue-list')");
     await click('Open AI explanation');
     await wait("!!document.querySelector('.inline-explanations-toggle input')");
@@ -111,7 +112,10 @@ void app.whenReady().then(async () => {
     );
     await js("document.querySelector('.github-discussion-toolbar').scrollIntoView({block:'center'})");
     await capture('threads-light');
-    await click('Split');
+    await click('Diff appearance');
+    await wait(`!!document.querySelector('[aria-label="Diff layout"]')`);
+    await js(`(()=>{const select=document.querySelector('[aria-label="Diff layout"]');select.value='split';select.dispatchEvent(new Event('change',{bubbles:true}))})()`);
+    await js("document.querySelector('[role=dialog]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
     await wait("document.querySelectorAll('.review-diff .github-thread').length===3");
     const slotSides = await js<string[]>(
       `[...document.querySelectorAll('.review-diff .github-thread')].slice(0,2).map(t=>{const slot=t.closest('[slot]');return slot?.assignedSlot?.parentElement?.getAttribute('data-side')??slot?.getAttribute('slot');})`
@@ -211,9 +215,11 @@ void app.whenReady().then(async () => {
       review.slides[0].diffHunks.push(structuredClone(hunk));
       document.body.dataset.discussionStale='false';
     })()`);
-    await click('Back');
+    await click('Work queue');
     await wait("!!document.querySelector('.queue-list')");
     await click('Open AI explanation');
+    await wait("!!document.querySelector('.github-discussion-refresh')");
+    await click('Refresh comments');
     await wait("document.querySelectorAll('.review-diff .github-thread').length===3");
     assert.equal(await js("!!document.querySelector('.diff-context-gap')"), true);
     assert.equal(
@@ -257,7 +263,7 @@ void app.whenReady().then(async () => {
       const review = await window.electronAPI.loadReview('workbench-review');
       review.snapshot = {...review.snapshot, fingerprint: 'new-revision', subject: {...review.snapshot.subject, members: review.snapshot.subject.members.map(member => ({...member, headSha: member.headSha + '-updated'}))}};
     })()`);
-    await click('Back');
+    await click('Work queue');
     await wait("!!document.querySelector('.queue-list')");
     await click('Open AI explanation');
     await wait("!!document.querySelector('.review-file-viewed input')");
