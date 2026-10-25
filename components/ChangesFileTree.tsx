@@ -29,8 +29,10 @@ export function ChangesFileTree({
   onSelect,
   onPreview,
   showComments = true,
+  revealSelected = false,
 }: {
   showComments?: boolean;
+  revealSelected?: boolean;
   entries: ChangeTreeEntry[];
   selected: string;
   query: string;
@@ -100,7 +102,8 @@ export function ChangesFileTree({
   }, [model, query]);
   useEffect(() => {
     model.getItem(selected)?.select();
-  }, [model, selected, prepared]);
+    if (revealSelected && model.getItem(selected)) model.scrollToPath(selected, { focus: false, offset: 'nearest' });
+  }, [model, selected, prepared, revealSelected]);
   const activate = () => {
     const item = model.getFocusedItem();
     if (item && !item.isDirectory()) current.current.onSelect(item.getPath());

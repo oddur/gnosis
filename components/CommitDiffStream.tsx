@@ -1,0 +1,157 @@
+import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual';
+import { useImperativeHandle, useLayoutEffect, useRef, useState, useCallback, type ReactNode, type Ref } from 'react';
+import type { PrChangeFile } from '../lib/pr-changes';
+
+export interface CommitDiffStreamHandle {
+  scrollToFile: (key: string) => void;
+}
+interface StreamFile {
+  key: string;
+  file: PrChangeFile;
+  viewed: boolean;
+}
+/** One scroll surface, with bounded diff mounts and measured file heights. */
+export function CommitDiffStream({
+  files,
+  initialPosition,
+  selected,
+  onPosition,
+  renderFile,
+  completion,
+  ref,
+}: {
+  files: StreamFile[];
+  initialPosition: { key: string; offset: number };
+  selected: string;
+  onPosition: (key: string, offset: number) => void;
+  renderFile: (key: string, next: () => void) => ReactNode;
+  completion?: ReactNode;
+  ref?: Ref<CommitDiffStreamHandle>;
+}) {
+  const viewport = useRef<HTMLDivElement>(null);
+  const initial = useRef(initialPosition);
+  const pending = useRef<{ key: string; offset: number; until: number; focus?: boolean } | undefined>(
+    initial.current.key ? { ...initial.current, until: Date.now() + 1500 } : undefined
+  );
+  const current = useRef({ files, onPosition });
+  current.current = { files, onPosition };
+  const [focused, setFocused] = useState<string>();
+  const keyAt = useCallback((i: number) => current.current.files[i].key, []);
+  const virtual = useVirtualizer({
+    count: files.length,
+    getScrollElement: () => viewport.current,
+    getItemKey: keyAt,
+    estimateSize: (i) =>
+      files[i].viewed
+        ? 92
+        : Math.min(1200, Math.max(240, (files[i].file.additions + files[i].file.deletions + 8) * 22 + 92)),
+    overscan: 2,
+    rangeExtractor: (range) =>
+      [
+        ...new Set([
+          ...defaultRangeExtractor(range),
+          ...(focused ? [files.findIndex((f) => f.key === focused)].filter((i) => i >= 0) : []),
+        ]),
+      ].sort((a, b) => a - b),
+  });
+  const items = virtual.getVirtualItems();
+  function jump(key: string, offset = 0, focus = false) {
+    const index = current.current.files.findIndex((f) => f.key === key);
+    if (index < 0) return;
+    pending.current = { key, offset, focus, until: Date.now() + 1500 };
+    virtual.scrollToIndex(index, { align: 'start' });
+  }
+  useImperativeHandle(ref, () => ({ scrollToFile: jump }));
+  useLayoutEffect(() => {
+    const target = pending.current;
+    if (!target) return;
+    if (Date.now() > target.until) {
+      return;
+    }
+    const index = files.findIndex((f) => f.key === target.key);
+    if (index < 0) {
+      pending.current = undefined;
+      return;
+    }
+    const item = items.find((item) => item.index === index);
+    if (!item) {
+      virtual.scrollToIndex(index, { align: 'start' });
+      return;
+    }
+    const el = viewport.current;
+    if (el) {
+      el.scrollTop = item.start + Math.min(target.offset, Math.max(0, item.size - 60));
+      if (target.focus) {
+        const action = el.querySelector<HTMLButtonElement>(`[data-index="${index}"] [data-viewed-next]`);
+        if (action) {
+          target.focus = false;
+          action.focus({ preventScroll: true });
+        }
+      }
+    }
+  });
+  function remember() {
+    const el = viewport.current;
+    if (!el) return;
+    const target = pending.current;
+    if (target && current.current.files.some((f) => f.key === target.key)) {
+      current.current.onPosition(target.key, target.offset);
+      return;
+    }
+    const rows = virtual.getVirtualItems();
+    const active = rows.find((row) => row.end > el.scrollTop + 2) ?? rows.at(-1);
+    if (active)
+      current.current.onPosition(current.current.files[active.index].key, Math.max(0, el.scrollTop - active.start));
+  }
+  useLayoutEffect(() => {
+    remember();
+  }, [virtual.scrollOffset, files]);
+  return (
+    <div
+      className="changes-code-scroll commit-diff-stream"
+      ref={viewport}
+      tabIndex={0}
+      aria-label="All files in this comparison"
+      onWheel={() => {
+        pending.current = undefined;
+      }}
+      onPointerDown={() => {
+        pending.current = undefined;
+      }}
+      onKeyDown={() => {
+        pending.current = undefined;
+      }}
+      onFocusCapture={(event) => {
+        const row = (event.target as HTMLElement).closest<HTMLElement>('[data-file]');
+        if (row) setFocused(row.dataset.file);
+      }}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(undefined);
+      }}
+      onScroll={remember}
+    >
+      <div className="commit-stream-content" style={{ height: virtual.getTotalSize() }}>
+        {items.map((item) => {
+          const file = files[item.index];
+          return (
+            <div
+              key={item.key}
+              ref={virtual.measureElement}
+              data-index={item.index}
+              data-file={file.key}
+              data-active={file.key === selected}
+              className="commit-stream-row"
+              style={{ position: 'absolute', top: item.start, left: 0, width: '100%' }}
+            >
+              {renderFile(file.key, () => {
+                const next = [...files.slice(item.index + 1), ...files.slice(0, item.index)].find((f) => !f.viewed);
+                if (next) jump(next.key, 0, true);
+              })}
+            </div>
+          );
+        })}
+      </div>
+      {completion}
+    </div>
+  );
+}

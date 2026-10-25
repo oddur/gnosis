@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Copy, ExternalLink, RefreshCw } from 'lucide-react';
-import { peekComparison, readComparison, prefetchInspection, comparisonIsReady, inspectionData, latestCommitSelection } from '../lib/inspection-cache';
+import {
+  peekComparison,
+  readComparison,
+  prefetchInspection,
+  comparisonIsReady,
+  inspectionData,
+  latestCommitSelection,
+} from '../lib/inspection-cache';
 import { PrChangesView } from './PrChangesView';
 import { GitHubAuthor } from './GitHubAuthor';
 import { Button } from './ui/button';
@@ -41,16 +48,36 @@ export function PrCommitsView({
   onOpenCurrentFile: (url: string, path: string) => void;
 }) {
   const [position] = useState(() => restore(subject.id));
-  const [lists, setLists] = useState(() => subject.members.flatMap(member => inspectionData.peekCommits(member) ?? []));
+  const [lists, setLists] = useState(() =>
+    subject.members.flatMap((member) => inspectionData.peekCommits(member) ?? [])
+  );
   const [selection, setSelection] = useState(() => {
     const saved = position.selection;
-    const list = lists.find(list => list.url === saved?.url);
-    try { if (saved && list) { selectedCommits(list, saved); return saved; } } catch { /* Revision changed. */ }
-    const first = ownedCommits(subject, lists).find(group => group.commits.length);
+    const list = lists.find((list) => list.url === saved?.url);
+    try {
+      if (saved && list) {
+        selectedCommits(list, saved);
+        return saved;
+      }
+    } catch {
+      /* Revision changed. */
+    }
+    const first = ownedCommits(subject, lists).find((group) => group.commits.length);
     return first?.list ? latestCommitSelection(first.list) : undefined;
   });
   const [commitsOpen, setCommitsOpen] = useState(true),
     [filesOpen, setFilesOpen] = useState(true);
+  const [closedGroups, setClosedGroups] = useState<Set<string>>(() => new Set());
+  const groupNodes = useRef(new Map<string, HTMLElement>());
+  function revealGroup(url: string) {
+    setClosedGroups((previous) => {
+      const next = new Set(previous);
+      next.delete(url);
+      return next;
+    });
+    groupNodes.current.get(url)?.scrollIntoView({ block: 'nearest' });
+    groupNodes.current.get(url)?.querySelector<HTMLButtonElement>('.commit-pr-heading')?.focus({ preventScroll: true });
+  }
   const [rangeMode, setRangeMode] = useState(false);
   const anchor = useRef<{ url: string; sha: string } | undefined>(undefined);
   const [loading, setLoading] = useState(false),
@@ -60,6 +87,10 @@ export function PrCommitsView({
   const [comparisonError, setComparisonError] = useState(''),
     [attempt, setAttempt] = useState(0);
   const [copyStatus, setCopyStatus] = useState('');
+  const commitListNode = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (commitListNode.current) commitListNode.current.scrollTop = position.scroll ?? 0;
+  }, [commitsOpen]);
   const [opening, setOpening] = useState<CommitSelection>();
   const failedSelection = useRef<CommitSelection | undefined>(undefined);
   const navigation = useRef(0);
@@ -90,6 +121,11 @@ export function PrCommitsView({
   const first = chosen.at(0),
     last = chosen.at(-1);
   function openSelection(next: CommitSelection) {
+    setClosedGroups((previous) => {
+      const groups = new Set(previous);
+      groups.delete(next.url);
+      return groups;
+    });
     intendedSelection.current = next;
     const id = ++navigation.current;
     setComparisonError('');
@@ -268,9 +304,7 @@ export function PrCommitsView({
           </div>
           <div
             className="commit-list"
-            ref={(node) => {
-              if (node) node.scrollTop = position.scroll ?? 0;
-            }}
+            ref={commitListNode}
             onScroll={(e) => {
               position.scroll = e.currentTarget.scrollTop;
               persist();
@@ -278,41 +312,94 @@ export function PrCommitsView({
             aria-label="Commits"
           >
             {groups.map((group) => (
-              <section key={group.member.url}>
+              <section
+                key={group.member.url}
+                className="commit-pr-group"
+                ref={(node) => {
+                  if (node) groupNodes.current.set(group.member.url, node);
+                  else groupNodes.current.delete(group.member.url);
+                }}
+              >
                 {subject.kind === 'stack' && (
-                  <h2 title={group.member.title}>
-                    #{group.member.number} · {group.member.title}
-                  </h2>
-                )}
-                {group.omitted > 0 && <p className="commit-inherited">{group.omitted} shared with earlier PRs</p>}
-                {[...group.commits].reverse().map((commit) => (
                   <button
-                    key={commit.sha}
-                    className="commit-row"
-                    aria-busy={opening?.url === group.member.url && opening.lastSha === commit.sha}
-                    onPointerEnter={() => {
-                      hoverCancel.current();
-                      if (group.list) hoverCancel.current = warmCommit(group.list, commit);
-                    }}
-                    onPointerLeave={() => hoverCancel.current()}
-                    onFocus={() => {
-                      hoverCancel.current();
-                      if (group.list) hoverCancel.current = warmCommit(group.list, commit);
-                    }}
-                    onBlur={() => hoverCancel.current()}
-                    aria-pressed={selection?.url === group.member.url && chosen.some((c) => c.sha === commit.sha)}
-                    onClick={(e) =>
-                      group.list && choose(group.list, commit, e.shiftKey || (rangeMode && !!anchor.current))
+                    className="commit-pr-heading"
+                    aria-expanded={!closedGroups.has(group.member.url)}
+                    onClick={() =>
+                      setClosedGroups((previous) => {
+                        const next = new Set(previous);
+                        if (next.has(group.member.url)) next.delete(group.member.url);
+                        else next.add(group.member.url);
+                        return next;
+                      })
                     }
                   >
-                    <span className="commit-row-title">{commit.message.split('\n')[0]}</span>
-                    <span className="commit-row-meta">
-                      <span>{authorName(commit)}</span>
-                      <code>{short(commit.sha)}</code>
-                      <time title={commit.committedAt}>{commit.committedAt ? timeAgo(commit.committedAt) : ''}</time>
+                    {closedGroups.has(group.member.url) ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                    <span>
+                      <strong>#{group.member.number}</strong>
+                      <small>{group.member.title}</small>
                     </span>
+                    <span className="commit-pr-count">{group.commits.length}</span>
                   </button>
-                ))}
+                )}
+                {!closedGroups.has(group.member.url) && (
+                  <>
+                    {group.parents.length > 0 && (
+                      <div className="commit-source-links">
+                        Based on{' '}
+                        {group.parents.map((parent) => (
+                          <button key={parent.url} onClick={() => revealGroup(parent.url)}>
+                            #{parent.number}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {group.inheritedFrom.length > 0 && (
+                      <div className="commit-source-links">
+                        Includes commits from{' '}
+                        {group.inheritedFrom.map((source) => (
+                          <button key={source.member.url} onClick={() => revealGroup(source.member.url)}>
+                            #{source.member.number} ({source.count})
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <div className={subject.kind === 'stack' ? 'commit-pr-commits' : undefined}>
+                      {[...group.commits].reverse().map((commit) => (
+                        <button
+                          key={commit.sha}
+                          className="commit-row"
+                          aria-busy={opening?.url === group.member.url && opening.lastSha === commit.sha}
+                          onPointerEnter={() => {
+                            hoverCancel.current();
+                            if (group.list) hoverCancel.current = warmCommit(group.list, commit);
+                          }}
+                          onPointerLeave={() => hoverCancel.current()}
+                          onFocus={() => {
+                            hoverCancel.current();
+                            if (group.list) hoverCancel.current = warmCommit(group.list, commit);
+                          }}
+                          onBlur={() => hoverCancel.current()}
+                          aria-pressed={selection?.url === group.member.url && chosen.some((c) => c.sha === commit.sha)}
+                          onClick={(e) =>
+                            group.list && choose(group.list, commit, e.shiftKey || (rangeMode && !!anchor.current))
+                          }
+                        >
+                          <span className="commit-row-title">{commit.message.split('\n')[0]}</span>
+                          <span className="commit-row-meta">
+                            <span>{authorName(commit)}</span>
+                            <code>{short(commit.sha)}</code>
+                            <time title={commit.committedAt}>
+                              {commit.committedAt ? timeAgo(commit.committedAt) : ''}
+                            </time>
+                          </span>
+                        </button>
+                      ))}
+                      {!group.commits.length && (
+                        <p className="commit-inherited">All commits are included in the PRs above.</p>
+                      )}
+                    </div>
+                  </>
+                )}
               </section>
             ))}
             {!groups.some((g) => g.commits.length) && (
@@ -460,19 +547,74 @@ export function PrCommitsView({
         commit={{
           snapshot,
           breadcrumbs: [
-            ...(subject.kind === 'stack' && selection ? [{ id: 'member', label: `#${selection.url.split('/').pop()}`,
-              pickerLabel: 'PR in stack', value: selection.url,
-              options: groups.filter(group => group.commits.length).map(group => ({ value: group.member.url, label: `#${group.member.number} · ${group.member.title}` })),
-              select: (url: string) => { const list = lists.find(list => list.url === url); const next = list && latestCommitSelection(list); if (next) { setRangeMode(false); anchor.current = undefined; openSelection(next); } },
-            }] : []),
-            ...(selection && first && last ? [{ id: 'commit', label: chosen.length > 1 ? `${short(first.sha)}…${short(last.sha)} (${chosen.length} commits)` : short(last.sha),
-              title: chosen.map(commit => commit.message.split('\n')[0]).join(' → '),
-              pickerLabel: 'Commit', value: chosen.length > 1 ? 'current-range' : last.sha,
-              options: [...(chosen.length > 1 ? [{ value: 'current-range', label: `${chosen.length} commits · ${short(first.sha)}…${short(last.sha)}` }] : []),
-                ...(groups.find(group => group.member.url === selection.url)?.commits ?? []).slice().reverse().map(commit => ({ value: commit.sha, label: `${short(commit.sha)} · ${commit.message.split('\n')[0]}` }))],
-              select: (sha: string) => { if (sha === 'current-range' || !activeList) return; setRangeMode(false); anchor.current = undefined;
-                openSelection({ url: activeList.url, prBaseSha: activeList.metadata.baseSha, prHeadSha: activeList.metadata.headSha, firstSha: sha, lastSha: sha }); },
-            }] : []),
+            ...(subject.kind === 'stack' && selection
+              ? [
+                  {
+                    id: 'member',
+                    label: `#${selection.url.split('/').pop()}`,
+                    pickerLabel: 'PR in stack',
+                    value: selection.url,
+                    options: groups
+                      .filter((group) => group.commits.length)
+                      .map((group) => ({
+                        value: group.member.url,
+                        label: `#${group.member.number} · ${group.member.title}`,
+                      })),
+                    select: (url: string) => {
+                      const list = lists.find((list) => list.url === url);
+                      const next = list && latestCommitSelection(list);
+                      if (next) {
+                        setRangeMode(false);
+                        anchor.current = undefined;
+                        openSelection(next);
+                      }
+                    },
+                  },
+                ]
+              : []),
+            ...(selection && first && last
+              ? [
+                  {
+                    id: 'commit',
+                    label:
+                      chosen.length > 1
+                        ? `${short(first.sha)}…${short(last.sha)} (${chosen.length} commits)`
+                        : short(last.sha),
+                    title: chosen.map((commit) => commit.message.split('\n')[0]).join(' → '),
+                    pickerLabel: 'Commit',
+                    value: chosen.length > 1 ? 'current-range' : last.sha,
+                    options: [
+                      ...(chosen.length > 1
+                        ? [
+                            {
+                              value: 'current-range',
+                              label: `${chosen.length} commits · ${short(first.sha)}…${short(last.sha)}`,
+                            },
+                          ]
+                        : []),
+                      ...(groups.find((group) => group.member.url === selection.url)?.commits ?? [])
+                        .slice()
+                        .reverse()
+                        .map((commit) => ({
+                          value: commit.sha,
+                          label: `${short(commit.sha)} · ${commit.message.split('\n')[0]}`,
+                        })),
+                    ],
+                    select: (sha: string) => {
+                      if (sha === 'current-range' || !activeList) return;
+                      setRangeMode(false);
+                      anchor.current = undefined;
+                      openSelection({
+                        url: activeList.url,
+                        prBaseSha: activeList.metadata.baseSha,
+                        prHeadSha: activeList.metadata.headSha,
+                        firstSha: sha,
+                        lastSha: sha,
+                      });
+                    },
+                  },
+                ]
+              : []),
           ],
           fileStatus: comparisonError
             ? 'File list unavailable. Retry the comparison.'

@@ -44,9 +44,21 @@ export function ownedCommits(subject: ReviewSubject, lists: PrCommits[]) {
     visit(member.url);
     const inherited = new Set([...ancestors].flatMap((url) => byUrl.get(url)?.commits.map((c) => c.sha) ?? []));
     const list = byUrl.get(member.url);
+    const remaining = new Set(list?.commits.filter((c) => inherited.has(c.sha)).map((c) => c.sha));
+    const inheritedFrom = subject.members
+      .filter((m) => ancestors.has(m.url))
+      .flatMap((source) => {
+        const shared = byUrl.get(source.url)?.commits.filter((c) => remaining.has(c.sha)) ?? [];
+        shared.forEach((c) => remaining.delete(c.sha));
+        return shared.length ? [{ member: source, count: shared.length }] : [];
+      });
     return {
       member,
       list,
+      inheritedFrom,
+      parents: subject.edges
+        .filter((edge) => edge.child === member.url)
+        .flatMap((edge) => subject.members.find((m) => m.url === edge.parent) ?? []),
       commits: list?.commits.filter((c) => !inherited.has(c.sha)) ?? [],
       omitted: list?.commits.filter((c) => inherited.has(c.sha)).length ?? 0,
     };
