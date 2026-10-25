@@ -35,8 +35,12 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.pr-description')");
     await click('Commits');
     await wait("!!document.querySelector('.review-image-diff')");
-    // Give the active view idle time to prepare the next commit, with deliberately slow IPC.
-    await new Promise((r) => setTimeout(r, 1200));
+    // Wait for automatic preparation, not a machine-dependent idle delay. The
+    // measured click below must still render within two frames without IPC.
+    await js("import('/lib/inspection-cache.ts').then(module => { window.inspection = module; })");
+    await wait(
+      "window.compareReads.some(([s]) => s.lastSha === 'd'.repeat(40) && window.inspection.comparisonIsReady(s, ''))"
+    );
     const switched = await js<{ loading: boolean; title: string; elapsed: number }>(
       `(async()=>{const t=performance.now();document.querySelectorAll('.commit-row')[1].click();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {loading:!!document.querySelector('.changes-loading')||document.querySelector('.changes-empty')?.textContent.includes('Loading')||false,title:document.querySelector('.commit-detail-title')?.textContent??'',elapsed:performance.now()-t}})()`
     );
@@ -48,7 +52,12 @@ void app.whenReady().then(async () => {
     );
     assert.match(switched.title, /retry boundaries/);
     await wait("!!document.querySelector('.review-image-diff')");
-    await new Promise((r) => setTimeout(r, 1200));
+    await wait(`(() => {
+      const selection = window.compareReads.find(([s]) => s.lastSha === 'd'.repeat(40))?.[0];
+      const snapshot = selection && window.inspection.peekComparison(selection);
+      const file = snapshot?.files.find(f => f.path === 'src/new.ts');
+      return !!file && window.inspection.fileIsReady(snapshot, file);
+    })()`);
     const nextFile = await js<{ loading: boolean; path: string }>(
       `(async()=>{window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='new.ts').click();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {loading:!!document.querySelector('.changes-loading'),path:document.querySelector('.changes-file-header h2')?.textContent??''}})()`
     );
