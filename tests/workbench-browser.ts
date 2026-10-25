@@ -13,7 +13,13 @@ void app.whenReady().then(async () => {
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
   });
   window.webContents.on('console-message', (_event, _level, message) => console.log('renderer:', message));
-  const js = <T = unknown>(code: string) => window.webContents.executeJavaScript(code) as Promise<T>;
+  const js = async <T = unknown>(code: string): Promise<T> => {
+    try {
+      return (await window.webContents.executeJavaScript(code)) as T;
+    } catch (error) {
+      throw new Error(`Browser assertion failed: ${code}\n${String(error)}`);
+    }
+  };
   const match = (actual: unknown, pattern: RegExp) => assert.match(String(actual), pattern);
   const fixtureUrl = process.env.GNOSIS_WORKBENCH_URL;
   if (!fixtureUrl) throw new Error('Missing workbench fixture URL');
@@ -345,9 +351,11 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.workbench-overview')");
     await click('Continue review');
     await wait("document.querySelectorAll('.review-file-context').length === 2");
-    match(await js("document.querySelector('.staleBanner-unknown').textContent"), /API limit was reached/);
-    assert.equal(await js("document.querySelector('.staleBanner-unknown details').open"), false);
-    assert.ok(await js("document.querySelector('.staleBanner-unknown').getBoundingClientRect().height < 100"));
+    assert.equal(
+      await js("document.querySelector('.staleBanner-unknown')"),
+      null,
+      'Embedded explanations use the PR workspace status instead of duplicating the standalone freshness banner'
+    );
     await js("document.documentElement.classList.add('dark')");
     await wait("!!document.querySelector('.diff-context-gap')");
     await js(
