@@ -1,5 +1,6 @@
 import { useSessionScroll, useSessionDraft } from '../lib/session-drafts';
 import { ReviewImageDiff } from './ReviewImageDiff';
+import { LFS_VERSION } from '../lib/git-lfs';
 import { imageMimeType } from '../lib/review-images';
 import { sourceForPath } from '../lib/workbench';
 import { buildFileUrlBase } from '../lib/github-url';
@@ -19,7 +20,7 @@ import { normalizeInlineExplanations } from '@/lib/inline-explanations';
 import { FilePathLink } from '@/components/FilePathLink';
 import { Markdown } from '@/components/Markdown';
 import { MermaidDiagram } from '@/components/MermaidDiagram';
-import { slideTypeConfig, safeConfigLookup } from '@/lib/constants';
+import { CODE_THEMES, slideTypeConfig, safeConfigLookup } from '@/lib/constants';
 import {
   buildAgentPrompt,
   buildAnchorableSet,
@@ -28,7 +29,7 @@ import {
   splitIntoProseChecks,
 } from '@/lib/review-checks';
 import { useCopyToClipboard } from '@/lib/use-copy';
-import type { CommentCallbacks } from '@/components/shared-diff-utils';
+import { extractShikiStyles, type CommentCallbacks } from '@/components/shared-diff-utils';
 import type { Slide, DiffHunk, FileMetadata, PendingReviewComment, Preferences, ReviewCheck } from '@/lib/types';
 
 interface Props {
@@ -699,6 +700,7 @@ export function SlideView({
         const viewed = viewedFiles?.has(filePath) ?? false;
         const expanded = fileExpansion[filePath] ?? !viewed;
         const contentId = `${fileContentId}-${index}`;
+        const lfsResource = hunks.some(hunk => hunk.content.includes(LFS_VERSION));
         const fileDiff = (
           <ReviewFileDiscussion
             inlineExplanations={
@@ -746,15 +748,18 @@ export function SlideView({
               age={ageBadge}
             />
             <div id={contentId} className="review-file-content" hidden={!expanded}>
-              {imageMimeType(filePath) && (
+              {(imageMimeType(filePath) || lfsResource) && (
                 <ReviewImageDiff
                   key={`${review?.reviewId}:${filePath}`}
                   reviewId={review?.reviewId}
                   filePath={filePath}
                   enabled={expanded}
+                  diffLayout={diffLayout}
+                  diffAppearance={diffAppearance}
+                  diffTheme={CODE_THEMES.find(theme => extractShikiStyles(hunks[0]?.renderedHtml ?? '').preClass.split(' ').includes(theme.id))?.id ?? 'aurora-x'}
                 />
               )}
-              {imageMimeType(filePath) && hunks.length > 0 ? (
+              {(imageMimeType(filePath) || lfsResource) && hunks.length > 0 ? (
                 <details className="review-image-source">
                   <summary>Source diff and comments</summary>
                   {fileDiff}

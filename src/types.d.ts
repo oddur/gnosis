@@ -107,7 +107,7 @@ declare global {
       reRenderHunks: (review: ReviewGuide) => Promise<ReviewGuide>;
       getPrStatus: (prUrl: string, force?: boolean) => Promise<PrStatus>;
       getPrMetadata: (prUrl: string) => Promise<PrMetadata>;
-      loadReviewImages: (reviewId: string, filePath: string) => Promise<import('../lib/review-images').ReviewImageComparison>;
+      loadReviewImages: (reviewId: string, filePath: string, downloadLfs?: boolean) => Promise<import('../lib/review-images').ReviewImageComparison>;
       loadPrImage: (url: string) => Promise<string>;
       getReviewThreads: (prUrl: string, refresh?: boolean) => Promise<GitHubReviewThreads>;
       createReviewComment: (req: CreateReviewCommentRequest) => Promise<void>;

@@ -1,3 +1,4 @@
+import type { LfsPointer } from './git-lfs';
 import type { CommitSelection } from './pr-commits';
 import type { PrMetadata, Provider, ModelId } from './types';
 export interface PrChangeFile {
@@ -19,6 +20,7 @@ export interface PrChanges {
   fetchedAt: number;
 }
 export interface PrFileRequest {
+  downloadLfs?: boolean;
   comparison?: CommitSelection;
   url: string;
   baseSha: string;
@@ -34,8 +36,13 @@ export interface InspectionLoadOptions {
   background?: boolean;
   revision?: Pick<InspectionRevision, 'baseSha' | 'headSha'>;
 }
-export type PrFileSide = { kind: 'absent' } | { kind: 'text'; content: string } | { kind: 'image'; dataUrl: string };
+export type PrFileSide =
+  | { kind: 'absent' }
+  | { kind: 'text'; content: string }
+  | { kind: 'image'; dataUrl: string }
+  | { kind: 'lfs'; pointer: LfsPointer };
 export interface PrFileContents {
+  lfs?: boolean;
   before: PrFileSide;
   after: PrFileSide;
 }

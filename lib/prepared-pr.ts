@@ -20,7 +20,7 @@ export function preparedChanges(client: Octokit, url: string, revision: Pick<PrM
   )?.value;
 }
 export function preparedFileKey(req: PrFileRequest) {
-  return `pr-file:v1:${createHash('sha256')
+  return `pr-file:v2:${createHash('sha256')
     .update(
       JSON.stringify({
         url: req.url,

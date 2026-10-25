@@ -1216,7 +1216,7 @@ const loadReviewImages = createReviewImageService({
   client: () => getGitHubClient(getResolvedToken()),
   allowLocal: (id) => readReviewsIndex().some((entry) => entry.id === id && !entry.imported),
 });
-handleInteractive('load-review-images', (_event, reviewId: string, filePath: string) => loadReviewImages(reviewId, filePath));
+handleInteractive('load-review-images', (_event, reviewId: string, filePath: string, downloadLfs = false) => loadReviewImages(reviewId, filePath, downloadLfs === true));
 
 ipcMain.handle('re-render-hunks', async (_event, review: ReviewGuide) => {
   const prefs = loadPreferences();

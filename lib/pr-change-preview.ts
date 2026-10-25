@@ -1,10 +1,11 @@
 import { processFile, trimPatchContext, type FileDiffMetadata, type SelectedLineRange } from '@pierre/diffs';
 import type { PrChangeFile } from './pr-changes';
+import { LFS_VERSION } from './git-lfs';
 import { imageMimeType } from './review-images';
 
 /** Render GitHub's already-downloaded patch immediately, but never present a truncated patch as complete. */
 export function prChangePreview(file: PrChangeFile, contextLines = 3): FileDiffMetadata | undefined {
-  if (!file.patch || imageMimeType(file.path)) return;
+  if (!file.patch || imageMimeType(file.path) || file.patch.includes(LFS_VERSION)) return;
   const added = file.status === 'added',
     deleted = file.status === 'deleted';
   try {
