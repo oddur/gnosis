@@ -45,6 +45,7 @@ declare global {
       commandGitHubSearch: (query: string) => Promise<PrSearchResult[]>;
       listActivity: () => Promise<ActivityTask[]>;
       activityAction: (id:string, action:ActivityAction) => Promise<void>;
+      workbenchSnapshot: () => Promise<WorkbenchQueue>;
       workbenchMutePrs: (request: MutePrRequest) => Promise<WorkbenchQueue>;
       workbenchStarPrs: (request: StarPrRequest) => Promise<WorkbenchQueue>;
       workbenchViewAction: (action: QueueViewAction) => Promise<WorkbenchQueue>;

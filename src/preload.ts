@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   commandGitHubSearch: (query: string): Promise<PrSearchResult[]> => ipcRenderer.invoke('command-github-search', query),
   listActivity: (): Promise<ActivityTask[]> => ipcRenderer.invoke('list-activity'),
   activityAction: (id:string, action:ActivityAction): Promise<void> => ipcRenderer.invoke('activity-action',id,action),
+  workbenchSnapshot: (): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-snapshot'),
   workbenchMutePrs: (request: MutePrRequest): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-mute-prs', request),
   workbenchStarPrs: (request: StarPrRequest): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-star-prs', request),
   workbenchViewAction: (action: QueueViewAction): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-view-action', action),
