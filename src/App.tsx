@@ -3,14 +3,14 @@ import type { SearchDestination } from '../lib/command-search';
 import { ReviewDraftScope } from '../lib/session-drafts';
 import { ActivityDrawer } from '../components/ActivityDrawer';
 import type { ActivityTask } from '../lib/activity';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { HomePage } from './pages/HomePage';
 import { ReviewPage } from './pages/ReviewPage';
 import { UpdateBanner } from '../components/UpdateBanner';
 import { applyCodeFont } from '../components/SettingsDialog';
 import { applyTheme } from '../lib/theme';
 import type { ReviewGuide } from '../lib/types';
-import { Toaster } from '../components/ui/toast';
+import { toast, Toaster } from '../components/ui/toast';
 
 import { isLocalUrl } from '../lib/local-url';
 import { rememberExplanation, loadExplanation, type ExplanationDestination } from '../lib/explanation-workspace';
@@ -28,6 +28,7 @@ export function App() {
   }>();
   const [explanationDestination, setExplanationDestination] = useState<ExplanationDestination>();
   const [page, setPage] = useState<Page>('home');
+  const navigationVersion = useRef(0);
   const [activityOpen, setActivityOpen] = useState(false);
   const [destination, setDestination] = useState<{
     subjectId?: string;
@@ -37,10 +38,22 @@ export function App() {
   }>({ nonce: 0 });
 
   useEffect(() => {
-    void window.electronAPI.loadPreferences().then((prefs) => {
-      if (prefs.codeFont) applyCodeFont(prefs.codeFont);
-      applyTheme(prefs.theme);
-    });
+    let cancelled = false;
+    const loadAppearance = async () => {
+      try {
+        const prefs = await window.electronAPI.loadPreferences();
+        if (cancelled) return;
+        if (prefs.codeFont) applyCodeFont(prefs.codeFont);
+        applyTheme(prefs.theme);
+      } catch {
+        // HomePage owns account/settings recovery and applies appearance after a retry.
+      }
+    };
+    void loadAppearance();
+    return () => {
+      cancelled = true;
+      navigationVersion.current++;
+    };
   }, []);
 
   // When a background auto-review completes, the history list will refresh itself
@@ -49,6 +62,7 @@ export function App() {
   const [prefillPrUrl, setPrefillPrUrl] = useState<string | undefined>();
 
   const handleReviewReady = useCallback((r: ReviewGuide) => {
+    navigationVersion.current++;
     setReviewCommand(undefined);
     setHomeCommand(undefined);
     setDestination((d) => ({ nonce: d.nonce + 1 }));
@@ -69,6 +83,7 @@ export function App() {
 
   async function openActivity(task: ActivityTask) {
     if (task.kind === 'briefing') {
+      navigationVersion.current++;
       setHomeCommand(undefined);
       setDestination((d) => ({ subjectId: task.subjectId, nonce: d.nonce + 1 }));
       setReview(null);
@@ -87,6 +102,7 @@ export function App() {
   }
 
   function handleBack() {
+    navigationVersion.current++;
     setExplanationDestination(undefined);
     setHomeCommand(undefined);
     setReviewCommand(undefined);
@@ -95,6 +111,7 @@ export function App() {
   }
 
   function handleReReview(prUrl: string) {
+    navigationVersion.current++;
     setExplanationDestination(undefined);
     setHomeCommand(undefined);
     setReviewCommand(undefined);
@@ -106,9 +123,28 @@ export function App() {
   // Navigate to a completed review when notification is clicked
   useEffect(() => {
     window.electronAPI.onReviewNavigate((reviewId) => {
-      void window.electronAPI.loadReview(reviewId).then((r) => {
-        handleReviewReady(r);
-      });
+      const open = async () => {
+        const version = ++navigationVersion.current;
+        try {
+          const loaded = await loadExplanation(reviewId);
+          if (version === navigationVersion.current) handleReviewReady(loaded);
+        } catch (error) {
+          if (version !== navigationVersion.current) return;
+          const id = toast.add({
+            type: 'error',
+            title: 'Could not open saved review',
+            description: error instanceof Error ? error.message : String(error),
+            actionProps: {
+              children: 'Retry',
+              onClick: () => {
+                toast.close(id);
+                void open();
+              },
+            },
+          });
+        }
+      };
+      void open();
     });
     return () => {
       window.electronAPI.offReviewNavigate();
@@ -116,12 +152,14 @@ export function App() {
   }, [handleReviewReady]);
 
   async function navigate(target: SearchDestination) {
+    const version = ++navigationVersion.current;
     if (target.kind === 'activity') {
       setActivityOpen(true);
       return;
     }
     if (target.kind === 'review') {
       const loaded = review?.reviewId === target.reviewId ? review : await loadExplanation(target.reviewId);
+      if (version !== navigationVersion.current) return;
       setHomeCommand(undefined);
       if (isLocalUrl(loaded.prUrl)) {
         setExplanationDestination(undefined);
@@ -141,6 +179,7 @@ export function App() {
       const canonical = `https://github.com/${match[1]}/${match[2]}/pull/${match[3]}`;
       const meta = await window.electronAPI.getPrMetadata(canonical),
         repo = `${match[1]}/${match[2]}`;
+      if (version !== navigationVersion.current) return;
       resolved = {
         kind: 'home',
         subject: {
@@ -245,7 +284,7 @@ export function App() {
       {/* Update banner shows on the review page. On the home page,
           the newspaper "Extra" notice handles it instead. */}
       {page !== 'home' && <UpdateBanner />}
-      <div id="main-content">
+      <div id="main-content" tabIndex={-1}>
         {page === 'home' && (
           <HomePage
             onReviewReady={handleReviewReady}

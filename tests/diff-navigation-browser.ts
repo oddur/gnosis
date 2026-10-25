@@ -35,8 +35,12 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.pr-description')");
     await click('Commits');
     await wait("!!document.querySelector('.review-image-diff')");
-    // Give the active view idle time to prepare the next commit, with deliberately slow IPC.
-    await new Promise((r) => setTimeout(r, 1200));
+    // Wait for automatic preparation, not a machine-dependent idle delay. The
+    // measured click below must still render within two frames without IPC.
+    await js("import('/lib/inspection-cache.ts').then(module => { window.inspection = module; })");
+    await wait(
+      "window.compareReads.some(([s]) => s.lastSha === 'd'.repeat(40) && window.inspection.comparisonIsReady(s, ''))"
+    );
     const switched = await js<{ loading: boolean; title: string; elapsed: number }>(
       `(async()=>{const t=performance.now();document.querySelectorAll('.commit-row')[1].click();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {loading:!!document.querySelector('.changes-loading')||document.querySelector('.changes-empty')?.textContent.includes('Loading')||false,title:document.querySelector('.commit-detail-title')?.textContent??'',elapsed:performance.now()-t}})()`
     );
@@ -48,7 +52,12 @@ void app.whenReady().then(async () => {
     );
     assert.match(switched.title, /retry boundaries/);
     await wait("!!document.querySelector('.review-image-diff')");
-    await new Promise((r) => setTimeout(r, 1200));
+    await wait(`(() => {
+      const selection = window.compareReads.find(([s]) => s.lastSha === 'd'.repeat(40))?.[0];
+      const snapshot = selection && window.inspection.peekComparison(selection);
+      const file = snapshot?.files.find(f => f.path === 'src/new.ts');
+      return !!file && window.inspection.fileIsReady(snapshot, file);
+    })()`);
     const nextFile = await js<{ loading: boolean; path: string }>(
       `(async()=>{window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='new.ts').click();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {loading:!!document.querySelector('.changes-loading'),path:document.querySelector('.changes-file-header h2')?.textContent??''}})()`
     );
@@ -86,6 +95,46 @@ void app.whenReady().then(async () => {
       await js<string>("document.querySelector('.commit-detail-title').textContent"),
       /Introduce the queue/,
       'The latest commit selection wins'
+    );
+    await click('Changes');
+    await wait("!!document.querySelector('.changes-file-tree')");
+    await js(`(()=>{const manifest=window.electronAPI.getPrChanges,read=window.electronAPI.getPrChangeFile;
+      window.unsupportedReads=[];window.openedURLs=[];
+      window.electronAPI.openExternal=async url=>window.openedURLs.push(url);
+      window.electronAPI.getPrChanges=async(...args)=>{const s=await manifest(...args);return {...s,files:[...s.files,...['binary.dat','oversized.txt','invalid.txt','temporary.txt'].map(path=>({path:'unsupported/'+path,status:'added',additions:1,deletions:0,changeId:path}))]}};
+      window.electronAPI.getPrChangeFile=async r=>{
+        if(r.path.startsWith('unsupported/')){window.unsupportedReads.push(r.path);throw Error(r.path.endsWith('binary.dat')?'This binary file has no text preview. Open it on GitHub.':r.path.endsWith('oversized.txt')?'This file is too large to preview. Open it on GitHub.':r.path.endsWith('invalid.txt')?'This file is not UTF-8 text. Open it on GitHub.':'Network unavailable. Try again.')}
+        return read(r);
+      };
+    })()`);
+    await click('Update changes');
+    await wait("window.deepAll('[role=treeitem]').some(e=>e.getAttribute('aria-label')==='binary.dat')");
+    for (const name of ['binary.dat', 'oversized.txt', 'invalid.txt']) {
+      await js(
+        `window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')===${JSON.stringify(name)}).click()`
+      );
+      await wait(`document.querySelector('.changes-file-header h2')?.textContent==='unsupported/${name}'`);
+      await wait(
+        "document.querySelector('.changes-code-scroll [role=alert]')?.textContent.includes('Open it on GitHub')"
+      );
+      assert.equal(await js("!!document.querySelector('.changes-loading')"), false);
+      await js("document.querySelector('.changes-file-actions input').click()");
+      assert.equal(
+        await js("document.querySelector('.changes-file-actions input').checked"),
+        true,
+        'Unsupported files can be marked Viewed'
+      );
+      await click('Open on GitHub');
+      assert.match(await js<string>('window.openedURLs.at(-1)'), /\/pull\/150\/files$/);
+    }
+    await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='worker.ts').click()");
+    await wait("document.querySelector('.changes-file-header h2')?.textContent==='src/worker.ts'");
+    await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='temporary.txt').click()");
+    await wait("document.querySelector('.pr-changes')?.textContent.includes('Network unavailable')");
+    assert.equal(
+      await js("document.querySelector('.changes-file-header h2')?.textContent"),
+      'src/worker.ts',
+      'Transient failure keeps the current diff visible'
     );
     console.log('Diff navigation performance checks passed');
     app.exit(0);

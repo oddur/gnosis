@@ -68,12 +68,13 @@ void app.whenReady().then(async () => {
     );
     assert.ok(await js('window.signalCalls.flat().length<25'), 'Only visible rows request status, not the backlog');
     assert.ok(await js('window.signalCalls.every(batch=>batch.length<=25)'));
-    assert.ok(
-      await js(
-        "!!document.querySelector('.queue-checks.is-pending') && document.querySelector('.queue-checks.is-neutral')?.textContent.includes('No checks')"
-      )
+    // These rows can fall below the scrollport on CI. Status reads are deliberately visible-only.
+    await js(`document.querySelector('[data-queue-id="signals-1"]').scrollIntoView({block:'center'})`);
+    await wait(`!!document.querySelector('[data-queue-id="signals-1"] .queue-checks.is-pending')`);
+    await js(`document.querySelector('[data-queue-id="signals-3"]').scrollIntoView({block:'center'})`);
+    await wait(
+      `document.querySelector('[data-queue-id="signals-3"] .queue-checks.is-neutral')?.textContent.includes('No checks')`
     );
-    // This row can fall below the scrollport on CI. Status reads are deliberately visible-only.
     await js(`document.querySelector('[data-queue-id="signals-4"]').scrollIntoView({block:'center'})`);
     await wait(
       `document.querySelector('[data-queue-id="signals-4"] .queue-checks')?.textContent.includes('Checks unavailable')`

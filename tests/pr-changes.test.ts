@@ -12,6 +12,8 @@ import { registerChangeProgress, markFileViewed, isFileViewed } from '../lib/fil
 const url = 'https://github.com/o/r/pull/1';
 function fixture() {
   const reads: URL[] = [];
+  let state = 'open',
+    baseBranch = 'main';
   let head = 'head1',
     unstable = false,
     incomplete = false,
@@ -71,9 +73,9 @@ function fixture() {
         title: 'PR',
         body: 'Description',
         user: { login: 'dev' },
-        base: { ref: 'main', sha: 'base', repo: { full_name: 'o/r' } },
+        base: { ref: baseBranch, sha: 'base', repo: { full_name: 'o/r' } },
         head: { ref: 'feature', sha: head, repo: { full_name: 'fork/r' } },
-        state: 'open',
+        state,
         labels: [],
         changed_files: incomplete ? 3001 : files.length,
       });
@@ -81,6 +83,10 @@ function fixture() {
   });
   return {
     pool,
+    metadata: (nextState: string, nextBase: string) => {
+      state = nextState;
+      baseBranch = nextBase;
+    },
     reads,
     files,
     move: (v: string) => (head = v),
@@ -265,4 +271,28 @@ void test('a moving revision cannot poison the prepared review diff cache', asyn
   f.moveDuringDiff();
   await assert.rejects(service.prepareReview(client, url, snapshot.metadata), /changed while/);
   assert.equal(preparedDiff(client, url, snapshot.metadata), undefined);
+});
+
+void test('refresh reuses immutable files but persists reopened and retargeted PR metadata', async () => {
+  const f = fixture(),
+    client = f.pool.client('one'),
+    service = createPrChangesService();
+  f.metadata('closed', 'main');
+  const closed = await service.manifest(client, url);
+  f.metadata('open', 'release');
+  const start = f.reads.length;
+  const reopened = await service.manifest(client, url, true);
+  assert.equal(reopened.metadata.state, 'open');
+  assert.equal(reopened.metadata.baseBranch, 'release');
+  assert.deepEqual(reopened.files, closed.files);
+  assert.equal(reopened.comparisonBase, closed.comparisonBase);
+  assert.ok(reopened.fetchedAt >= closed.fetchedAt);
+  assert.equal(
+    f.reads.slice(start).filter(u => u.pathname.endsWith('/files') || u.pathname.includes('/compare/')).length,
+    0
+  );
+  const reader = createPrChangesService();
+  assert.deepEqual((await reader.manifest(client, url)).metadata, reopened.metadata, 'latest disk snapshot');
+  assert.deepEqual(reader.cached(client, url, closed.metadata)?.metadata, reopened.metadata, 'revision disk snapshot');
+  assert.equal(closed.metadata.state, 'closed', 'already displayed snapshot remains immutable');
 });

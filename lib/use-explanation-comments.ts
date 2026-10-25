@@ -8,6 +8,7 @@ import {
 } from './changes-review-drafts';
 import { memberPrefix, sourceForPath, subjectForReview } from './workbench';
 import type { PendingReviewComment, ReviewGuide } from './types';
+import { isLocalUrl } from './local-url';
 
 export function useExplanationComments(review: ReviewGuide, account: string) {
   useSyncExternalStore(subscribeReviewDrafts, reviewDraftVersion);
@@ -54,7 +55,7 @@ export function useExplanationComments(review: ReviewGuide, account: string) {
   );
   // Migrate drafts from the old standalone viewer, retaining their original revisions.
   useEffect(() => {
-    if (!account) return;
+    if (!account && !isLocalUrl(review.prUrl)) return;
     const key = `gnosis-drafts:${subjectForReview(review)}:${review.snapshot?.fingerprint ?? review.headSha}`;
     try {
       const legacy: PendingReviewComment[] = JSON.parse(localStorage.getItem(key) ?? '[]') as PendingReviewComment[];

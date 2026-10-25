@@ -1,3 +1,4 @@
+import { applyTheme } from '../../lib/theme';
 import { normalizePrInactivityDays } from '../../lib/pr-inactivity';
 import { GitHubSyncStatus } from '../../components/GitHubSyncStatus';
 import { inspectionData } from '../../lib/inspection-cache';
@@ -60,7 +61,7 @@ import {
 import { GitHubAuthDialog } from '../../components/GitHubAuthDialog';
 import { GettingStarted } from '../../components/GettingStarted';
 import { WorkbenchHelp } from '../../components/WorkbenchHelp';
-import { SettingsDialog, type SettingsSection } from '../../components/SettingsDialog';
+import { applyCodeFont, SettingsDialog, type SettingsSection } from '../../components/SettingsDialog';
 import { LocalRepoDialog } from '../../components/LocalRepoDialog';
 import { UpdateBanner } from '../../components/UpdateBanner';
 import { Button } from '../../components/ui/button';
@@ -105,6 +106,10 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [queueFailed, setQueueFailed] = useState(false);
+  const [initializationFailed, setInitializationFailed] = useState(false);
+  const [initializing, setInitializing] = useState(true);
+  const initializationPending = useRef(false);
+  const initialized = useRef(false);
   const [error, setError] = useState('');
   const [filters, setFilters] = useState<QueueFilters>(DEFAULT_QUEUE_FILTERS);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -237,7 +242,10 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
     setSavedView(false);
   };
   const [selected, setSelected] = useState<string | null>(
-    () => initialSubjectId ?? localStorage.getItem('gnosis-queue-selection')
+    () => {
+      if (initialSubjectId) return initialSubjectId;
+      try { return localStorage.getItem('gnosis-queue-selection'); } catch { return null; }
+    }
   );
   useEffect(() => {
     if (initialSubjectId) { setSelected(initialSubjectId); setOpenedItem(null); }
@@ -252,6 +260,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
   const [url, setUrl] = useState(prefillPrUrl ?? '');
   const [showUrl, setShowUrl] = useState(!!prefillPrUrl);
   const [pendingStarts, setPendingStarts] = useState<Set<string>>(new Set());
+  const startingReviews = useRef(new Set<string>());
   const [summaryErrors, setSummaryErrors] = useState<Record<string, string>>({});
   const [openingPr, setOpeningPr] = useState(false);
   const [openedItem, setOpenedItem] = useState<QueueItem | null>(null);
@@ -311,12 +320,18 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
     ? `${PROVIDERS[briefingSelection.provider].label} · ${PROVIDERS[briefingSelection.provider].models.find((m) => m.id === briefingSelection.model)?.label ?? briefingSelection.model}`
     : '';
 
-  const refresh = useCallback(async (force = false) => {
+  const queueRefresh = useRef<Promise<void> | null>(null);
+  const refreshVersion = useRef(0);
+  const refresh = useCallback((force = false): Promise<void> => {
+    if (queueRefresh.current && !force) return queueRefresh.current;
+    const requestVersion = ++refreshVersion.current;
+    const current = () => alive.current && requestVersion === refreshVersion.current;
+    const request = (async () => {
     const version = filterVersion.current;
     const starsVersion = starVersion.current;
     const mutesVersion = muteVersion.current;
     const applyQueue = (next: WorkbenchQueue) => {
-          if (alive.current && version === filterVersion.current && starsVersion === starVersion.current && mutesVersion === muteVersion.current && !muteBusyRef.current && !starBusyRef.current && !viewBusyRef.current && !pendingFilters.current) {
+          if (current() && version === filterVersion.current && starsVersion === starVersion.current && mutesVersion === muteVersion.current && !muteBusyRef.current && !starBusyRef.current && !viewBusyRef.current && !pendingFilters.current) {
             setQueue(next);
             if (!filtersLoaded.current) {
               const restored = normalizeQueueFilters(next.filters);
@@ -328,48 +343,70 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
         };
     if (force) setRefreshing(true);
     try {
-      await window.electronAPI.workbenchSnapshot().then(next => { applyQueue(next); if (alive.current && next.items.length) setLoading(false); }).catch(() => {});
+      await window.electronAPI.workbenchSnapshot().then(next => { applyQueue(next); if (current() && next.items.length) setLoading(false); }).catch(() => {});
       await Promise.all([
         window.electronAPI.workbenchQueue(force).then(applyQueue),
         window.electronAPI.listReviews().then((entries) => {
-          if (alive.current) setHistory(entries);
+          if (current()) setHistory(entries);
         }),
       ]);
     } catch (e) {
-      if (alive.current) {
+      if (current()) {
         setError(String(e));
         setQueueFailed(true);
       }
     } finally {
-      if (alive.current) {
+      if (current()) {
         setLoading(false);
         setRefreshing(false);
       }
     }
+    })().finally(() => {
+      if (queueRefresh.current === request) queueRefresh.current = null;
+    });
+    queueRefresh.current = request;
+    return request;
   }, []);
+  const initialize = useCallback(async () => {
+    if (initializationPending.current) return;
+    initializationPending.current = true;
+    setInitializing(true);
+    try {
+      const [a, p] = await Promise.all([window.electronAPI.getAuthState(), window.electronAPI.loadPreferences()]);
+      if (!alive.current) return;
+      setAuth(a);
+      setPrefs(p);
+      if (p.codeFont) applyCodeFont(p.codeFont);
+      applyTheme(p.theme);
+      initialized.current = true;
+      setInitializationFailed(false);
+      setError('');
+      void refresh();
+    } catch (e) {
+      if (alive.current) {
+        setError(`Could not load your account and settings. ${e instanceof Error ? e.message : String(e)}`);
+        setInitializationFailed(true);
+        setLoading(false);
+      }
+    } finally {
+      initializationPending.current = false;
+      if (alive.current) setInitializing(false);
+    }
+  }, [refresh]);
   useEffect(() => {
     alive.current = true;
-    void Promise.all([window.electronAPI.getAuthState(), window.electronAPI.loadPreferences()])
-      .then(([a, p]) => {
-        if (alive.current) {
-          setAuth(a);
-          setPrefs(p);
-          void refresh();
-        }
-      })
-      .catch((e: unknown) => {
-        setError(String(e));
-        setLoading(false);
-      });
-    const poll = () => { if (document.visibilityState !== 'hidden') void refresh(); };
+    void initialize();
+    const poll = () => { if (initialized.current && document.visibilityState !== 'hidden') void refresh(); };
     const timer = setInterval(poll, 4000);
     document.addEventListener('visibilitychange', poll);
     return () => {
       alive.current = false;
+      refreshVersion.current++;
+      queueRefresh.current = null;
       clearInterval(timer);
       document.removeEventListener('visibilitychange', poll);
     };
-  }, [refresh]);
+  }, [refresh, initialize]);
   useEffect(() => {
     if (!pendingFilters.current || !auth?.authenticated) return;
     const version = filterVersion.current;
@@ -399,7 +436,9 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
     []
   );
   useEffect(() => {
-    if (selected) localStorage.setItem('gnosis-queue-selection', selected);
+    try {
+      if (selected) localStorage.setItem('gnosis-queue-selection', selected);
+    } catch { /* Remembering selection is optional; keep the queue usable if storage is unavailable. */ }
     let cancelled = false;
     const cacheKey = (url: string, sha: string) => `${auth?.login}:${url}@${sha}`;
     setStatuses(
@@ -526,7 +565,8 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
   const start = async (target: string, subject?: ReviewSubject, localTools?: boolean, standalone = false) => {
     if (!prefs) return;
     const requestKey = subject?.id ?? openedItem?.subject.id ?? target;
-    if (pendingStarts.has(requestKey)) return;
+    if (startingReviews.current.has(requestKey)) return;
+    startingReviews.current.add(requestKey);
     setError('');
     setSummaryErrors((previous) => ({ ...previous, [requestKey]: '' }));
     setPendingStarts((previous) => new Set(previous).add(requestKey));
@@ -559,6 +599,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
       if (openedItem) setSummaryErrors((previous) => ({ ...previous, [requestKey]: message }));
       else setError(message);
     } finally {
+      startingReviews.current.delete(requestKey);
       setPendingStarts((previous) => {
         const next = new Set(previous);
         next.delete(requestKey);
@@ -1235,9 +1276,15 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                 {/GitHub.*(?:access|sign.in)|token|Resource not accessible/i.test(error) && (
                   <button onClick={() => setAuthOpen(true)}>Check GitHub access</button>
                 )}
-              <button aria-label="Dismiss error" onClick={() => setError('')}>
-                <X size={14} />
-              </button>
+              {initializationFailed ? (
+                <button disabled={initializing} onClick={() => void initialize()}>
+                  {initializing ? 'Loading account and settings…' : 'Retry loading Gnosis'}
+                </button>
+              ) : (
+                <button aria-label="Dismiss error" onClick={() => setError('')}>
+                  <X size={14} />
+                </button>
+              )}
             </div>
           )}
           <div className="queue-filters">
@@ -1448,7 +1495,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                 <div className="queue-empty">
                   <Inbox size={24} />
                   <h2>
-                    {section === 'starred' && !queue.starredPrs?.length ? 'No starred PRs yet' : queueFailed
+                    {initializationFailed ? 'Gnosis could not finish starting' : section === 'starred' && !queue.starredPrs?.length ? 'No starred PRs yet' : queueFailed
                       ? 'Queue could not be loaded'
                       : filterCount > 0
                         ? 'No PRs match these filters'
@@ -1459,7 +1506,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                             : 'No pull requests in your queue'}
                   </h2>
                   <p>
-                    {section === 'starred' && !queue.starredPrs?.length ? 'Star a PR from the work queue or its overview to keep it here and pin it above other PRs.' : queueFailed
+                    {initializationFailed ? 'Your account and settings could not be read. Retry loading them to restore your work queue.' : section === 'starred' && !queue.starredPrs?.length ? 'Star a PR from the work queue or its overview to keep it here and pin it above other PRs.' : queueFailed
                       ? 'Try loading the queue again. You can still open a PR by URL or a saved review.'
                       : filterCount > 0
                         ? 'Try fewer filters or a wider date range. One open PR must match every filter; its whole stack stays visible.'
@@ -1476,8 +1523,10 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                   <Button
                     variant="outline"
                     size="sm"
+                    disabled={initializationFailed && initializing}
                     onClick={() => {
-                      if (queueFailed) void refresh(true);
+                      if (initializationFailed) void initialize();
+                      else if (queueFailed) void refresh(true);
                       else if (filterCount > 0) {
                         resetFilters();
                       } else if (section !== 'all') resetFilters();
@@ -1485,7 +1534,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                       else openSettings();
                     }}
                   >
-                    {queueFailed
+                    {initializationFailed ? 'Retry loading account and settings' : queueFailed
                       ? 'Retry queue'
                       : filterCount > 0
                         ? 'Clear filters'

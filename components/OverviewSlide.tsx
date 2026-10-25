@@ -27,6 +27,7 @@ function CollapsibleSection({
   return (
     <section className={`animate-fade-in-up ${className}`} style={delay ? { animationDelay: delay } : undefined}>
       <button
+        aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         className="slide-meta hover:text-foreground transition-colors flex items-center gap-1.5"
       >

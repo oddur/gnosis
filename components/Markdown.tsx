@@ -119,12 +119,16 @@ const components: Components = {
       {children}
     </code>
   ),
-  pre: ({ children }) => <pre className="markdown-code-block">{children}</pre>,
+  pre: ({ children }) => (
+    <pre className="markdown-code-block" tabIndex={0} aria-label="Code block">
+      {children}
+    </pre>
+  ),
   h4: ({ children }) => <h4 className="markdown-subheading">{children}</h4>,
   h5: ({ children }) => <h5 className="markdown-subheading">{children}</h5>,
   h6: ({ children }) => <h6 className="markdown-subheading">{children}</h6>,
   table: ({ children }) => (
-    <div className="overflow-x-auto my-3 last:mb-0">
+    <div className="overflow-x-auto my-3 last:mb-0" role="region" aria-label="Scrollable table" tabIndex={0}>
       <table className="min-w-full text-sm border-collapse">{children}</table>
     </div>
   ),
@@ -145,7 +149,11 @@ function GitHubCodeBlock({ children }: ComponentProps<'pre'>) {
   ) {
     return <MermaidDiagram chart={code.props.children.trimEnd()} />;
   }
-  return <pre>{children}</pre>;
+  return (
+    <pre tabIndex={0} aria-label="Code block">
+      {children}
+    </pre>
+  );
 }
 
 // Stable component identities preserve authenticated image state across queue polls.

@@ -70,8 +70,14 @@ void app.whenReady().then(async () => {
       localStorage.setItem('gnosis-drafts:'+r.snapshot.subject.id+':'+r.snapshot.fingerprint, JSON.stringify([{id:'legacy-comment',filePath:h.filePath,line:2,side:'RIGHT',body:'Keep the queue slot on cancellation.',hunkHeader:h.hunkHeader,codeSnippet:'const slot = await queue.acquire();',slideIndex:1}]));
       const read=window.electronAPI.getPrChanges;
       window.electronAPI.getPrChanges=async url=>{const s=await read(url);return url===m.url?{...s,files:[{path:'src/command-queue.ts',status:'modified',additions:6,deletions:1,changeId:'queue-v1',patch:h.hunkHeader+'\\n'+h.content}]}:s};
+      await (await import('/lib/inspection-cache.ts')).inspectionData.readChanges(m,true);
       window.fill=(selector,value)=>{const el=document.querySelector(selector);Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(el,value);el.dispatchEvent(new Event('input',{bubbles:true}))};
       window.reviewWrites=[];window.electronAPI.submitReview=async r=>{window.reviewWrites.push(r);return {reviewUrl:r.prUrl+'#review',droppedCommentCount:0}};
+      window.chatRequests=[];window.electronAPI.onChatProgress=callback=>{window.chatProgress=callback};window.electronAPI.offChatProgress=()=>{window.chatProgress=undefined};
+      window.electronAPI.sendSlideChat=request=>{window.chatRequests.push(request);return new Promise((resolve,reject)=>{window.chatFinish=resolve;window.chatFail=reject})};
+      window.failDiffSave=false;const savePreferences=window.electronAPI.savePreferences;
+      window.electronAPI.savePreferences=async prefs=>{await new Promise(r=>setTimeout(r,30));if(window.failDiffSave)throw Error('Disk full');return savePreferences(prefs)};
+
     })()`);
     await click('Work queue');
     await js("document.querySelector('.queue-item:has(.queue-disclosure) .queue-row-main').click()");
@@ -87,6 +93,67 @@ void app.whenReady().then(async () => {
     await click('Continue review');
     await wait("!!document.querySelector('.review-narrative')");
     await wait("document.querySelector('.pending-comment-block')?.textContent.includes('Keep the queue slot')");
+    // Interrupted output remains visibly incomplete and can retry without duplicating the question.
+    await click('Ask a question');
+    await wait("!!document.querySelector('.chat-sheet textarea')");
+    await js("window.fill('.chat-sheet textarea','What happens if cancellation interrupts the worker?')");
+    await click('Send question');
+    await wait('window.chatRequests.length===1');
+    await js("window.chatProgress('A partial answer');window.chatFail(Error('Connection interrupted'))");
+    await wait("document.querySelector('.chat-sheet [role=alert]')?.textContent.includes('Connection interrupted')");
+    assert.equal(await js("document.querySelector('.chat-sheet')?.textContent.includes('A partial answer')"), true);
+    await capture('chat-interrupted');
+    await click('Retry answer');
+    await wait('window.chatRequests.length===2');
+    assert.deepEqual(await js('window.chatRequests[1].history'), []);
+    await js("window.chatFinish('The queue slot is released in finally.')");
+    await wait("document.querySelector('.chat-sheet')?.textContent.includes('The queue slot is released')");
+    assert.equal(await js("!!document.querySelector('.chat-sheet [role=alert]')"), false);
+    await click('Close chat');
+    // Closing the interactive pane must retain an unfinished refinement.
+    await click('Open interactive explanation');
+    await wait('!!document.querySelector(\'[aria-label="Interactive explanation"]\')');
+    await click('Details & refine');
+    await js("window.fill('#explainer-refinement','Show cancellation during a batch — 日本語 🧪')");
+    await click('Back to explanation');
+    await click('Open interactive explanation');
+    await click('Details & refine');
+    assert.equal(
+      await js("document.querySelector('#explainer-refinement').value"),
+      'Show cancellation during a batch — 日本語 🧪'
+    );
+    await click('Back to explanation');
+    // Rapid diff settings preserve each other; failures retain the choice and offer retry.
+    await click('Diff appearance');
+    await wait('!!document.querySelector(\'[aria-label="Diff layout"]\')');
+    await js(
+      `window.selectSetting=(label,value)=>{const el=document.querySelector('[aria-label="'+label+'"]');el.value=value;el.dispatchEvent(new Event('change',{bubbles:true}))};window.selectSetting('Diff layout','split');window.selectSetting('Show surrounding lines','5');`
+    );
+    await wait(
+      "window.electronAPI.loadPreferences().then(p=>p.diffLayout==='split'&&p.diffAppearance.contextLines===5)"
+    );
+    await js("window.failDiffSave=true;window.selectSetting('Show surrounding lines','10')");
+    await wait(
+      "document.querySelector('.workbench-review [role=alert]')?.textContent.includes('Could not save your diff settings')"
+    );
+    await js(
+      "document.querySelector('[aria-label=\"Diff appearance\"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
+    );
+    await capture('diff-settings-save-error');
+    await js('window.failDiffSave=false');
+    await click('Retry saving diff settings');
+    await wait(
+      "window.electronAPI.loadPreferences().then(p=>p.diffLayout==='split'&&p.diffAppearance.contextLines===10)"
+    );
+    await wait("!document.querySelector('.workbench-review [role=alert]')");
+    await click('Diff appearance');
+    await js("window.selectSetting('Diff layout','unified');window.selectSetting('Show surrounding lines','3')");
+    await wait(
+      "window.electronAPI.loadPreferences().then(p=>p.diffLayout==='unified'&&p.diffAppearance.contextLines===3)"
+    );
+    await js(
+      "document.querySelector('[aria-label=\"Diff appearance\"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
+    );
     await click('Changes');
     await wait("!!document.querySelector('.changes-file-tree')");
     await js("document.querySelectorAll('.changes-member')[1]?.click()");
@@ -166,6 +233,7 @@ void app.whenReady().then(async () => {
       window.queue=structuredClone(await window.electronAPI.workbenchQueue());
       window.reviewHistory=structuredClone(await window.electronAPI.listReviews());
       window.queue.items.find(i=>i.subject.kind==='stack').subject.members[1].headSha='head-1-new';
+      Object.assign(window.queue.items.find(i=>i.subject.kind==='stack').subject.members[0], {headSha:'new-head',baseSha:'new-base',baseBranch:'release'});
       window.electronAPI.workbenchQueue=async()=>structuredClone(window.queue);
       window.electronAPI.listReviews=async()=>structuredClone(window.reviewHistory);
       window.electronAPI.startReview=async request=>{
@@ -175,10 +243,34 @@ void app.whenReady().then(async () => {
       };
     })()`);
     await wait("document.querySelector('.explanation-status')?.textContent.includes('earlier version')");
-    await wait("document.querySelector('.changes-notice')?.textContent.includes('earlier version')");
+    // Even without drafts, approval must target the displayed explanation, never newly discovered code.
+    await js(
+      `(()=>{const el=document.querySelector('[aria-label="PR for review submission"]');el.value=window.savedReview.snapshot.subject.members[0].url;el.dispatchEvent(new Event('change',{bubbles:true}));window.electronAPI.submitReview=async r=>{window.reviewWrites.push(r);throw Error('This PR changed. Open the latest changes before submitting.')}})()`
+    );
+    await click('Review PR #120');
+    await wait("!!document.querySelector('[role=dialog]')");
+    await click('Approve PR');
+    await wait('window.reviewWrites.length===1');
+    assert.deepEqual(
+      await js(
+        `(()=>{const r=window.reviewWrites[0], m=window.savedReview.snapshot.subject.members[0];return {actual:[r.prUrl,r.headSha,r.baseSha,r.baseBranch],expected:[m.url,m.headSha,m.baseSha,m.baseBranch],event:r.event,comments:r.comments}})()`
+      ),
+      await js(
+        `(()=>{const m=window.savedReview.snapshot.subject.members[0], revision=[m.url,m.headSha,m.baseSha,m.baseBranch];return {actual:revision,expected:revision,event:'APPROVE',comments:[]}})()`
+      )
+    );
+    await wait("document.querySelector('[role=dialog]')?.textContent.includes('This PR changed')");
+    await js(
+      "document.querySelector('[role=dialog]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
+    );
+    await wait("!document.querySelector('[role=dialog]')");
+    await js(
+      `(()=>{const el=document.querySelector('[aria-label="PR for review submission"]');el.value=window.savedReview.snapshot.subject.members[1].url;el.dispatchEvent(new Event('change',{bubbles:true}))})()`
+    );
     assert.equal(
       await js("[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Review PR #121')).disabled"),
-      true
+      false,
+      'Drafts still belong to the displayed revision'
     );
     await click('Update explanation');
     await wait("document.querySelector('.explanation-status')?.textContent.includes('Generating explanation')");
@@ -196,6 +288,15 @@ void app.whenReady().then(async () => {
     await capture('update-ready');
     await click('Open updated explanation');
     await wait("!document.querySelector('.explanation-status')");
+    await js(
+      `(()=>{const el=document.querySelector('[aria-label="PR for review submission"]');el.value=window.savedReview.snapshot.subject.members[1].url;el.dispatchEvent(new Event('change',{bubbles:true}))})()`
+    );
+    await wait("document.querySelector('.changes-notice')?.textContent.includes('earlier version')");
+    assert.equal(
+      await js("[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Review PR #121')).disabled"),
+      true,
+      'Old drafts block submission after explicitly opening the new revision'
+    );
     assert.equal(await js(`document.querySelector('[aria-label="Review topic"]').value`), priorTopic);
     await click('Work queue');
     // Notification destinations also work for historical PRs outside the queue.

@@ -138,7 +138,10 @@ export function SettingsDialog({
 }: Props) {
   const [clearingCache, setClearingCache] = useState(false);
   const [cacheError, setCacheError] = useState('');
+  const [setupError, setSetupError] = useState('');
+  const [logsError, setLogsError] = useState('');
   async function clearGitHubCache() {
+    if (savingRef.current || Object.keys(pendingChanges.current).length) return;
     setClearingCache(true);
     setCacheError('');
     try { await window.electronAPI.clearGitHubCache(); }
@@ -298,7 +301,14 @@ export function SettingsDialog({
   }
 
   function handleOpenChange(next: boolean) {
-    if (!next && (savingRef.current || Object.keys(pendingChanges.current).length)) return;
+    if (!next && savingRef.current) return;
+    if (!next && Object.keys(pendingChanges.current).length) {
+      // Escape does not blur text fields before the dialog unmounts. Flush staged text first.
+      void flushChanges().then(() => {
+        if (!savingRef.current && !Object.keys(pendingChanges.current).length) onOpenChange(false);
+      });
+      return;
+    }
     onOpenChange(next);
   }
 
@@ -347,6 +357,7 @@ export function SettingsDialog({
     setWatchedRepos(next);
     searchRepositories('');
     saveField({ watchedRepos: next });
+    document.getElementById('watched-repos')?.focus();
   }
 
   function handleSelectTheme(theme: CodeTheme) {
@@ -366,6 +377,14 @@ export function SettingsDialog({
       <DialogContent
         className="settings-dialog bg-card sm:max-w-2xl"
         showCloseButton={!saving && !saveError}
+        onEscapeKeyDown={(event) => {
+          // Radix handles Escape in document capture, before a search field's key handler.
+          if (showSuggestions) {
+            event.preventDefault();
+            document.getElementById('watched-repos')?.focus();
+            setSuggestionsDismissed(true);
+          }
+        }}
         onCloseAutoFocus={(event) => {
           if (replayingOnboarding.current) {
             event.preventDefault();
@@ -455,7 +474,9 @@ export function SettingsDialog({
                 <p className="settings-description">
                   Add open PRs from these repositories. This does not change your GitHub Watch subscriptions.
                 </p>
-                <div className="relative">
+                <div className="relative" onBlur={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget)) setSuggestionsDismissed(true);
+                }}>
                   <div className="flex items-end gap-2">
                     <input
                       id="watched-repos"
@@ -471,11 +492,9 @@ export function SettingsDialog({
                           e.preventDefault();
                           addWatchedRepo(watchedRepoInput.trim());
                         }
-                        if (e.key === 'Escape') setSuggestionsDismissed(true);
                       }}
                       onFocus={() => setSuggestionsDismissed(false)}
-                      onBlur={() => setTimeout(() => setSuggestionsDismissed(true), 200)}
-                      className="flex-1 bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground transition-colors"
+                      className="min-w-0 flex-1 bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground transition-colors"
                     />
                   </div>
                   {searchError && (
@@ -493,9 +512,9 @@ export function SettingsDialog({
                             onMouseDown={(e) => e.preventDefault()}
                             onClick={() => addWatchedRepo(repo.fullName)}
                           >
-                            <span className="font-mono text-xs text-foreground">{repo.fullName}</span>
+                            <span className="max-w-full break-words font-mono text-xs text-foreground">{repo.fullName}</span>
                             {repo.description && (
-                              <span className="text-xs text-muted-foreground truncate">{repo.description}</span>
+                              <span className="max-w-full text-xs text-muted-foreground truncate">{repo.description}</span>
                             )}
                           </button>
                         </li>
@@ -507,7 +526,7 @@ export function SettingsDialog({
                   <ul className="flex flex-col gap-1 mt-1">
                     {watchedRepos.map((repo) => (
                       <li key={repo} className="flex items-center justify-between gap-2 text-sm text-foreground">
-                        <span className="font-mono text-xs">{repo}</span>
+                        <span className="min-w-0 break-words font-mono text-xs">{repo}</span>
                         <button
                           type="button"
                           onClick={() => {
@@ -515,7 +534,8 @@ export function SettingsDialog({
                             setWatchedRepos(next);
                             saveField({ watchedRepos: next });
                           }}
-                          className="text-xs text-muted-foreground hover:text-destructive transition-colors"
+                          aria-label={`Remove ${repo} from your queue`}
+                          className="shrink-0 text-xs text-muted-foreground hover:text-destructive transition-colors"
                         >
                           Remove
                         </button>
@@ -702,7 +722,10 @@ export function SettingsDialog({
                   value={instructions}
                   rows={3}
                   placeholder="What should reviews focus on?"
-                  onChange={(e) => setInstructions(e.target.value)}
+                  onChange={(e) => {
+                    setInstructions(e.target.value);
+                    pendingChanges.current = { ...pendingChanges.current, instructions: e.target.value };
+                  }}
                   onBlur={() => saveField({ instructions })}
                   className="rounded-md border border-border bg-background p-2 text-sm"
                 />
@@ -750,7 +773,7 @@ export function SettingsDialog({
                   and fetches them again as needed. Saved reviews, briefings, bookmarks, settings, and sign-in stay.
                   Save any unfinished text before restarting.
                 </p>
-                <Button variant="outline" size="sm" disabled={clearingCache} onClick={() => void clearGitHubCache()}>
+                <Button variant="outline" size="sm" disabled={clearingCache || saving || !!Object.keys(pendingChanges.current).length} onClick={() => void clearGitHubCache()}>
                   {clearingCache ? 'Restarting…' : 'Clear cache & restart'}
                 </Button>
                 {cacheError && <p role="alert" className="text-sm text-[var(--color-danger)]">{cacheError}</p>}
@@ -766,15 +789,24 @@ export function SettingsDialog({
                   in to the AI tool.
                 </p>
                 <div className="ai-setup-links">
-                  <button onClick={() => void window.electronAPI.openExternal('https://code.claude.com/docs/en/setup')}>
+                  <button onClick={() => {
+                    setSetupError('');
+                    void window.electronAPI.openExternal('https://code.claude.com/docs/en/setup').catch(() =>
+                      setSetupError('Could not open the setup guide. Open https://code.claude.com/docs/en/setup in your browser.'));
+                  }}>
                     Claude Code setup ↗
                   </button>
                   <button
-                    onClick={() => void window.electronAPI.openExternal('https://developers.openai.com/codex/cli/')}
+                    onClick={() => {
+                      setSetupError('');
+                      void window.electronAPI.openExternal('https://developers.openai.com/codex/cli/').catch(() =>
+                        setSetupError('Could not open the setup guide. Open https://developers.openai.com/codex/cli/ in your browser.'));
+                    }}
                   >
                     Codex setup ↗
                   </button>
                 </div>
+                {setupError && <p role="alert" className="text-sm text-destructive">{setupError}</p>}
                 <p>
                   The paths below locate the command-line programs (CLIs). Leave them empty unless automatic detection
                   fails.
@@ -828,7 +860,10 @@ export function SettingsDialog({
                   id="claude-path"
                   value={claudePath}
                   placeholder={claudeDetected || 'auto-detect'}
-                  onChange={(e) => setClaudePath(e.target.value)}
+                  onChange={(e) => {
+                    setClaudePath(e.target.value);
+                    pendingChanges.current = { ...pendingChanges.current, claudePath: e.target.value };
+                  }}
                   onBlur={() => saveField({ claudePath })}
                   className="bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground transition-colors"
                 />
@@ -844,7 +879,10 @@ export function SettingsDialog({
                   type="text"
                   value={codexPath}
                   placeholder={codexDetected || 'auto-detect'}
-                  onChange={(e) => setCodexPath(e.target.value)}
+                  onChange={(e) => {
+                    setCodexPath(e.target.value);
+                    pendingChanges.current = { ...pendingChanges.current, codexPath: e.target.value };
+                  }}
                   onBlur={() => saveField({ codexPath })}
                   className="bg-transparent border-0 border-b border-border px-0 py-1 text-sm text-foreground placeholder:text-muted-foreground transition-colors"
                 />
@@ -869,11 +907,16 @@ export function SettingsDialog({
               )}
               <button
                 type="button"
-                onClick={() => void window.electronAPI.openLogsDirectory()}
+                onClick={() => {
+                  setLogsError('');
+                  void window.electronAPI.openLogsDirectory().catch(() =>
+                    setLogsError('Could not open the logs folder. Try Open logs directory again.'));
+                }}
                 className="slide-meta hover:text-foreground transition-colors"
               >
                 Open logs directory →
               </button>
+              {logsError && <p role="alert" className="text-sm text-destructive">{logsError}</p>}
             </Tabs.Content>
           </Tabs.Root>
         )}

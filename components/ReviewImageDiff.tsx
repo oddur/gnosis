@@ -70,8 +70,9 @@ export function ReviewImageDiff({
   enabled: boolean;
   comparison?: ReviewImageComparison;
 }) {
-  const [loadedResult, setResult] = useState<ReviewImageComparison>();
-  const result = comparison ?? loadedResult;
+  const source = JSON.stringify([reviewId, filePath]);
+  const [loadedResult, setResult] = useState<{ source: string; value: ReviewImageComparison }>();
+  const result = comparison ?? (loadedResult?.source === source ? loadedResult.value : undefined);
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   const [background, setBackground] = useState('checkerboard');
@@ -84,7 +85,7 @@ export function ReviewImageDiff({
     void window.electronAPI
       .loadReviewImages(reviewId, filePath)
       .then((data) => {
-        if (!cancelled) setResult(data);
+        if (!cancelled) setResult({ source, value: data });
       })
       .catch((e: unknown) => {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -95,7 +96,7 @@ export function ReviewImageDiff({
     return () => {
       cancelled = true;
     };
-  }, [reviewId, filePath, enabled, attempt, comparison]);
+  }, [reviewId, filePath, enabled, attempt, comparison, source]);
   const failed = error || result?.before.status === 'error' || result?.after.status === 'error';
   const single = result && (result.before.status === 'absent' || result.after.status === 'absent');
   return (
@@ -123,12 +124,17 @@ export function ReviewImageDiff({
       {result && (
         <div className="review-image-pair" data-single={!!single}>
           <ImageSide
-            key={`before-${attempt}-${filePath}`}
+            key={`before-${attempt}-${source}-${result.before.status === 'ready' ? result.before.revision : result.before.status}`}
             label="Before"
             value={result.before}
             background={background}
           />
-          <ImageSide key={`after-${attempt}-${filePath}`} label="After" value={result.after} background={background} />
+          <ImageSide
+            key={`after-${attempt}-${source}-${result.after.status === 'ready' ? result.after.revision : result.after.status}`}
+            label="After"
+            value={result.after}
+            background={background}
+          />
         </div>
       )}
       {failed && (

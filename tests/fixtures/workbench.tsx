@@ -598,6 +598,20 @@ const mocks = {
 for (const item of items) { item.starredUrls=item.subject.members.filter(m=>fixtureStars.some(e=>e.member.url===m.url)).map(m=>m.url);item.starred=!!item.starredUrls.length; }
 if (new URLSearchParams(location.search).has('threads')) Object.assign(mocks, threadMocks());
 if (new URLSearchParams(location.search).has('images')) Object.assign(mocks, imageMocks(review));
+if (new URLSearchParams(location.search).has('shell-startup-failure')) {
+  const load = mocks.loadPreferences;
+  mocks.loadPreferences = () => sessionStorage.getItem('fixture-startup-recovered')
+    ? load() : Promise.reject(new Error('Settings temporarily unavailable.'));
+  const read = Storage.prototype.getItem, write = Storage.prototype.setItem;
+  Storage.prototype.getItem = function(key) {
+    if (key === 'gnosis-queue-selection') throw new Error('Storage unavailable');
+    return read.call(this, key);
+  };
+  Storage.prototype.setItem = function(key, value) {
+    if (key === 'gnosis-queue-selection') throw new Error('Storage full');
+    return write.call(this, key, value);
+  };
+}
 Object.defineProperty(window, 'electronAPI', {
   value: new Proxy(mocks, {
     get: (target, key) => (key in target ? target[key as keyof typeof target] : () => Promise.resolve()),
