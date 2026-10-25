@@ -176,6 +176,12 @@ export function App() {
       perform: () => navigate({ kind: 'home', section: 'all' }),
     },
     {
+      id: 'nav:starred',
+      label: 'Go to starred PRs',
+      keywords: 'favorites bookmarks pinned',
+      perform: () => navigate({ kind: 'home', section: 'starred' }),
+    },
+    {
       id: 'nav:requested',
       label: 'Go to review requests',
       keywords: 'assigned me',

@@ -4,7 +4,7 @@ import type { QueueItem } from '../lib/workbench';
 
 interface Props {
   items: QueueItem[];
-  labels: Record<QueueItem['attention'], string>;
+  labels: Record<QueueItem['attention'], string> & { starred?: string };
   selected: string | null;
   scrollElement: RefObject<HTMLElement | null>;
   initialOffset: number;
@@ -20,8 +20,9 @@ export function VirtualReviewQueue({ items, labels, selected, scrollElement, ini
   const virtual = items.length > 80;
   const selectedIndex = items.findIndex((item) => item.subject.id === selected);
   const focusedIndex = items.findIndex((item) => item.subject.id === focused);
-  const counts = new Map<QueueItem['attention'], number>();
-  for (const item of items) counts.set(item.attention, (counts.get(item.attention) ?? 0) + 1);
+  const category = (item: QueueItem) => item.starred ? 'starred' : item.attention;
+  const counts = new Map<QueueItem['attention'] | 'starred', number>();
+  for (const item of items) counts.set(category(item), (counts.get(category(item)) ?? 0) + 1);
   const rowKey = useCallback((index: number) => items[index].subject.id, [items]);
   const virtualizer = useVirtualizer({
     count: items.length,
@@ -59,9 +60,10 @@ export function VirtualReviewQueue({ items, labels, selected, scrollElement, ini
 
   const render = (index: number) => {
     const item = items[index];
-    const first = index === 0 || items[index - 1].attention !== item.attention;
+    const group = category(item);
+    const first = index === 0 || category(items[index - 1]) !== group;
     return <>
-      {first && <h2 className="queue-section-title">{labels[item.attention]} <span>{counts.get(item.attention)}</span></h2>}
+      {first && <h2 className="queue-section-title">{labels[group] ?? 'Starred'} <span>{counts.get(group)}</span></h2>}
       {renderRow(item)}
     </>;
   };

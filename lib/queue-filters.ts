@@ -1,6 +1,7 @@
 import { fingerprint, type QueueItem, type ReviewMember } from './workbench';
 
 export interface QueueFilters {
+  starredOnly: boolean;
   involvement: 'all' | 'mine';
   query: string;
   repo: string;
@@ -15,6 +16,7 @@ export interface QueueFilters {
   briefingScope: 'matches' | 'all';
 }
 export const DEFAULT_QUEUE_FILTERS: QueueFilters = {
+  starredOnly: false,
   involvement: 'all',
   query: '',
   repo: 'all',
@@ -37,6 +39,7 @@ export function normalizeQueueFilters(value: unknown): QueueFilters {
   const days = (key: string) =>
     RECENCY_DAYS.includes(raw[key] as (typeof RECENCY_DAYS)[number]) ? Number(raw[key]) : 0;
   return {
+    starredOnly: raw.starredOnly === true,
     involvement: choice('involvement', ['all', 'mine'], 'all'),
     query: text('query', ''),
     repo: text('repo', 'all'),
@@ -86,12 +89,13 @@ export function matchesQueueFilters(
   // All PR-specific conditions must match the same open member. Keep its full stack as context.
   return subject.members.some(
     (m: ReviewMember) =>
-      m.state === 'open' &&
-      !m.merged &&
+      (filters.starredOnly || (m.state === 'open' && !m.merged)) &&
+      (!filters.starredOnly || item.starredUrls?.includes(m.url)) &&
       (filters.involvement !== 'mine' || isMyPr(m, login)) &&
       (filters.repo === 'all' || m.repo === filters.repo) &&
       (filters.author === 'all' || m.author === filters.author) &&
-      (filters.status === 'all' || (filters.status === 'draft' ? m.isDraft : !m.isDraft)) &&
+      (filters.status === 'all' ||
+        (m.state === 'open' && !m.merged && (filters.status === 'draft' ? m.isDraft : !m.isDraft))) &&
       (filters.label === 'all' || m.labels.includes(filters.label)) &&
       recent(m.createdAt, filters.createdWithin) &&
       recent(m.updatedAt, filters.updatedWithin) &&
@@ -120,6 +124,7 @@ export function prioritizeBriefings(
 
 export function describeQueueFilters(filters: QueueFilters): { key: keyof QueueFilters; label: string }[] {
   const labels: Partial<Record<keyof QueueFilters, string>> = {
+    starredOnly: 'Starred PRs',
     involvement: 'Involving me',
     query: `Search: ${filters.query}`,
     repo: filters.repo,

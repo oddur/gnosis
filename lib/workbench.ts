@@ -40,12 +40,16 @@ export interface Briefing {
   updatedAt: string;
 }
 export interface QueueItem {
+  starred?: boolean;
+  starredUrls?: string[];
   subject: ReviewSubject;
   briefing?: Briefing;
   review?: ReviewHistoryEntry;
   attention: 'updated' | 'requested' | 'other';
 }
 export interface WorkbenchQueue {
+  starredPrs?: import('./starred-prs').StarredPr[];
+  starredItems?: QueueItem[];
   savedViews?: QueueViewsSnapshot;
   filters?: QueueFilters;
   items: QueueItem[];

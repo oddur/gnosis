@@ -1,3 +1,4 @@
+import type { StarPrRequest } from '../lib/starred-prs';
 import { createPrCommitsService } from './pr-commits-service';
 import type { CommitSelection } from '../lib/pr-commits';
 import { createPrChangesService } from './pr-changes-service';
@@ -1379,6 +1380,11 @@ async function fetchPrStatus(prUrl: string, force = false): Promise<PrStatus | n
       ([value]): QueueSignals | undefined => value
     ),
   ]);
+  try {
+    workbench.updateStarredMetadata(prData);
+  } catch (error) {
+    console.warn('Could not update the saved starred PR metadata:', error);
+  }
 
   return {
     signals,
@@ -2217,6 +2223,7 @@ ipcMain.handle('workbench-queue', async (_event, force: boolean) => {
   }
   return workbench.queue(force);
 });
+ipcMain.handle('workbench-star-prs', (_event, request: StarPrRequest) => workbench.starPrs(request));
 ipcMain.handle('workbench-view-action', (_event, action: QueueViewAction) => workbench.viewAction(action));
 ipcMain.handle('workbench-set-filters', (_event, filters: unknown) => workbench.setFilters(filters));
 ipcMain.handle('workbench-group', (_event, correction: GroupingOverride) => workbench.correct(correction));

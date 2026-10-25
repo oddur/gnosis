@@ -28,7 +28,8 @@ export function mergeReadiness(
     checkedAt,
     stale,
   });
-  const state = status?.state ?? (member.merged ? 'MERGED' : member.state.toUpperCase());
+  // A cached open status must not make a now-completed bookmark appear mergeable.
+  const state = member.merged ? 'MERGED' : member.state === 'closed' ? 'CLOSED' : (status?.state ?? 'OPEN');
   if (state === 'MERGED') return result('Merged', 'muted', ['This PR has already been merged.']);
   if (state === 'CLOSED') return result('Closed', 'muted', ['This PR is closed without merging.']);
   if (!status)
