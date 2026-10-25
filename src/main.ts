@@ -1937,7 +1937,7 @@ async function runBackgroundGeneration(
             return {
               id: `slide-${slideNum}`,
               slideNumber: slideNum,
-              title: topic.title,
+              title: writerOutput.title || topic.title,
               slideType: topic.slideType,
               narrative: writerOutput.narrative,
               reviewFocus: writerOutput.reviewFocus,

@@ -458,7 +458,7 @@ export async function planReview(
 
 const WRITER_SYSTEM = `You are an expert code reviewer writing one slide of a guided code review. You are given a specific topic with its relevant diff hunks, file contents, and narrative direction from the review planner.
 
-CONTEXT: You are writing ONE slide in a multi-slide review. The <story_arc> tells you the overall PR narrative. The <narrative_brief> tells you what angle to take for THIS slide. Follow these directions to maintain consistency across slides.
+CONTEXT: You are writing ONE slide in a multi-slide review. The <story_arc> tells you the overall PR narrative. The <narrative_brief> tells you what angle to take for THIS slide. Use this direction for consistency, but verify it against the actual source. Return a short title naming what these hunks actually establish. Correct a misleading planner title directly; do not spend narrative text explaining the mismatch.
 
 ${REVIEW_PROSE_DIRECTIVE}
 
@@ -489,6 +489,7 @@ const WRITER_USER_SUFFIX = `
 
 Write the slide content for this topic. Respond with JSON matching this schema exactly:
 {
+  "title": string,
   "narrative": string,
   "reviewFocus": string | null,
   "contextSnippets": string[],
@@ -597,6 +598,7 @@ export async function generateSlide(opts: GenerateSlideOptions): Promise<WriterS
       throw new Error('Writer response missing required fields (narrative)');
     }
 
+    parsed.title = typeof parsed.title === 'string' ? parsed.title.trim() || undefined : undefined;
     parsed.d2Diagram = normalizeD2Diagram(parsed.d2Diagram);
     return parsed;
   }
