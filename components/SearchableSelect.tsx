@@ -22,6 +22,7 @@ export function SearchableSelect({
   label,
   id,
   className,
+  popupClassName,
   disabled,
   describedBy,
   triggerLabel,
@@ -34,6 +35,7 @@ export function SearchableSelect({
   label: string;
   id?: string;
   className?: string;
+  popupClassName?: string;
   disabled?: boolean;
   describedBy?: string;
   triggerLabel?: string;
@@ -102,7 +104,7 @@ export function SearchableSelect({
       >
         {triggerLabel ?? labels.get(value) ?? placeholder}
       </ComboboxTrigger>
-      <ComboboxContent container={container}>
+      <ComboboxContent container={container} className={popupClassName}>
         <ComboboxInput aria-label={`Search ${label.toLowerCase()}`} placeholder="Type to search…" />
         <ComboboxEmpty>No matches. Try another search.</ComboboxEmpty>
         <ComboboxList>

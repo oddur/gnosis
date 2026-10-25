@@ -38,6 +38,7 @@ function Segment({ crumb, current = false }: { crumb: ReviewCrumb; current?: boo
           onValueChange={(value) => crumb.select?.(value)}
           triggerLabel={crumb.navigate ? '' : crumb.label}
           current={current}
+          popupClassName="breadcrumb-options"
           className={crumb.navigate ? 'breadcrumb-picker breadcrumb-chevron' : 'breadcrumb-picker'}
         />
       )}
