@@ -1,3 +1,4 @@
+import { GitHubIcon } from '../../lib/constants';
 import { PrLabels } from '../../components/PrLabels';
 import { PrSummary, type PrReadingPosition } from '../../components/PrSummary';
 import { SavedViewsNav, SaveViewControls } from '../../components/SavedQueueViews';
@@ -19,7 +20,6 @@ import {
   ChevronDown,
   ChevronRight,
   GitBranch,
-  Github,
   GitPullRequest,
   Layers,
   Loader2,
@@ -695,7 +695,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
           <button className="workbench-icon" title="Settings" aria-label="Settings" onClick={() => openSettings()}>
             <Settings size={17} />
           </button>
-          <button className="workbench-help-trigger" aria-label="GitHub account" title={auth?.login ? `GitHub: ${auth.login}` : 'Connect GitHub'} onClick={() => setAuthOpen(true)}><Github size={16} /><span className="account-name">{auth?.login ?? 'Connect GitHub'}</span></button>
+          <button className="workbench-help-trigger" aria-label={auth?.login ? `GitHub account: ${auth.login}` : 'Connect GitHub'} data-github-account title={auth?.login ? `GitHub: ${auth.login}` : 'Connect GitHub'} onClick={() => setAuthOpen(true)}><GitHubIcon width={16} height={16} /><span className="account-name">{auth?.login ?? 'Connect GitHub'}</span></button>
         </div>
       </header>
       <UpdateBanner />

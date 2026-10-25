@@ -13,7 +13,7 @@ export function FilePathLink({ filePath, gitFileUrlBase, className, compact = fa
   const content =
     compact && slash >= 0 ? (
       <>
-        <span className="truncate shrink-0 max-w-[65%]">{displayPath.slice(slash + 1)}</span>
+        <span className="truncate shrink-0 max-w-[65%]">{displayPath.slice(slash + 1)}</span>{' '}
         <span className="truncate text-muted-foreground">{displayPath.slice(0, slash)}</span>
       </>
     ) : (
@@ -38,7 +38,7 @@ export function FilePathLink({ filePath, gitFileUrlBase, className, compact = fa
       onClick={() =>
         void window.electronAPI.openExternal(gitFileUrlBase + displayPath.split('/').map(encodeURIComponent).join('/'))
       }
-      aria-label={`Open ${displayPath} on GitHub`}
+      aria-label={`Open ${compact && slash >= 0 ? `${displayPath.slice(slash + 1)} ${displayPath.slice(0, slash)}` : displayPath} on GitHub`}
       title={`Open ${displayPath} on GitHub`}
     >
       <FileTypeIcon filePath={displayPath} />

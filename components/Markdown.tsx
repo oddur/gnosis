@@ -7,6 +7,7 @@ import rehypeSanitize from 'rehype-sanitize';
 import { githubMarkdownUrl, type GitHubMarkdownSource } from '../lib/github-markdown';
 import { isGitHubImageUrl } from '../lib/github-image';
 import { cn } from '@/lib/utils';
+import { nameMarkdownTasks } from '../lib/markdown-tasks';
 import { scopeMarkdownHeadings } from '../lib/markdown-headings';
 import { MermaidDiagram } from './MermaidDiagram';
 
@@ -173,6 +174,7 @@ export function Markdown({ children, className, githubSource, headingLevel }: Pr
             ? [
                 rehypeRaw,
                 rehypeSanitize,
+                nameMarkdownTasks,
                 ...(headingLevel
                   ? [
                       [scopeMarkdownHeadings, { startLevel: headingLevel }] as [
@@ -182,7 +184,7 @@ export function Markdown({ children, className, githubSource, headingLevel }: Pr
                     ]
                   : []),
               ]
-            : []
+            : [nameMarkdownTasks]
         }
         urlTransform={githubSource ? (url, key) => githubMarkdownUrl(url, key === 'src', githubSource) : undefined}
         components={githubSource ? githubComponents : components}

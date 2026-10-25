@@ -93,6 +93,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelector('.pr-markdown').getBoundingClientRect().width <= 550"), true);
     assert.equal(await js("document.querySelectorAll('.pr-description table').length"), 1);
     assert.equal(await js("document.querySelectorAll('.pr-description input[type=checkbox]').length"), 2);
+    assert.equal(await js(`Array.from(document.querySelectorAll('.pr-description input[type=checkbox]')).every(box => box.disabled && box.getAttribute('aria-label')?.trim().length > 3)`), true, 'Read-only task boxes announce the task text');
     assert.match(await js<string>("document.querySelector('.pr-description pre').textContent"), /outbox.flush/);
     await wait('document.querySelector(\'img[alt="Reconnect flow"]\')?.naturalWidth === 600');
     await js("document.querySelector('.pr-description details:not(.mermaid-source)').open = true");
