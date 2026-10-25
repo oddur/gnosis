@@ -540,7 +540,7 @@ async function runProactiveCheck() {
         const { owner, repo, pullNumber } = parsePrUrl(prUrl);
         const prData = await getPrMetadata(octokit, owner, repo, pullNumber);
 
-        if (prData.headSha !== entry.prHeadSha) {
+        if (!prData.repoArchived && prData.headSha !== entry.prHeadSha) {
           console.log(`[proactive] PR head changed for ${prUrl} (${entry.prHeadSha?.slice(0, 7)} → ${prData.headSha.slice(0, 7)}), re-reviewing`);
           void triggerProactiveReview(prUrl, prefs, { autoUpdated: true, prData });
           updateCount++;
@@ -2404,7 +2404,7 @@ ipcMain.handle('command-github-search', async (_event, query: string) => {
   if (!token || !cachedLogin) throw new Error('Connect GitHub to search beyond this computer.');
   if (typeof query !== 'string' || !query.trim() || query.length > 500) throw new Error('Enter a search of 1–500 characters.');
   try {
-    const {data} = await getGitHubClient(token).search.issuesAndPullRequests({ q: `is:pr ${query.trim()}`, sort:'updated', order:'desc', per_page:30 });
+    const {data} = await getGitHubClient(token).search.issuesAndPullRequests({ q: `is:pr ${query.trim()} archived:false`, sort:'updated', order:'desc', per_page:30 });
     return data.items.filter(item=>item.pull_request && !workbench.mutedUrls().has(item.html_url)).map(item=>{
       const parts=item.repository_url.split('/');
       return {number:item.number,title:item.title,url:item.html_url,repoOwner:parts.at(-2)??'',repoName:parts.at(-1)??'',author:item.user?.login??'unknown',updatedAt:item.updated_at,isDraft:item.draft??false,role:'watched' as const};
