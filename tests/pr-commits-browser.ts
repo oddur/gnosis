@@ -6,6 +6,8 @@ void app.whenReady().then(async () => {
   const window = new BrowserWindow({
     width: 1280,
     height: 800,
+    useContentSize: true,
+    enableLargerThanScreen: true,
     show: true,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
   });
@@ -154,8 +156,10 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.commitReads.at(-1)[1]'), true);
     await js("document.querySelector('.changes-file-actions input[type=checkbox]').click()");
     for (const width of [1280, 1024, 640, 1616]) {
-      window.setSize(width, width === 1616 ? 1200 : 800);
-      await new Promise((r) => setTimeout(r, 80));
+      const height = width === 1616 ? 1200 : 800;
+      window.setContentSize(width, height);
+      await wait(`innerWidth === ${width} && innerHeight === ${height}`);
+      await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
       if (width === 640) await js("document.querySelector('.changes-toolbar button').click()");
       if (width === 1024)
         assert.ok(
@@ -166,7 +170,7 @@ void app.whenReady().then(async () => {
       await capture(width === 1280 ? 'desktop' : width === 640 ? 'mobile' : `user-${width}`);
       if (width === 640) await js("document.querySelector('.changes-toolbar button').click()");
     }
-    window.setSize(1280, 800);
+    window.setContentSize(1280, 800);
     await js("document.documentElement.classList.add('dark')");
     await capture('dark');
     await js("document.documentElement.classList.remove('dark')");
