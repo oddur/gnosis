@@ -408,6 +408,7 @@ let activities: ActivityTask[] = [
 ];
 if (onboardingScenario) activities = [];
 const mocks = {
+  getGitHubProfile: (login:string) => Promise.resolve({login,name:'Morgan Developer',bio:'Building reliable command queues.',company:'Klang',location:'Berlin',type:'User'}),
   commandSearch: async (query:string, includeBots=false, recentIds:string[]=[]) => {
     const queue=await mocks.workbenchQueue();
     const docs=[...queueDocuments(queue),...reviewDocuments(review,history[0],queue)];

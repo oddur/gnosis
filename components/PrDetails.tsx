@@ -1,3 +1,4 @@
+import { GitHubAuthor } from './GitHubAuthor';
 import { ExternalLink, GitBranch } from 'lucide-react';
 import type { ReviewMember } from '../lib/workbench';
 import type { PrStatus } from '../lib/types';
@@ -42,7 +43,7 @@ export function PrDetails({
             )}
             <p>
               {showTitle && <>{m.repo} · </>}
-              <span className={`pr-state pr-state-${state.toLowerCase()}`}>{state}</span> · by {m.author}
+              <span className={`pr-state pr-state-${state.toLowerCase()}`}>{state}</span> · by <GitHubAuthor login={m.author}/>
             </p>
           </div>
           <a href={m.url} target="_blank" rel="noopener noreferrer" className="pr-github-link">
@@ -63,7 +64,7 @@ export function PrDetails({
               {m.description}
             </Markdown>
           ) : (
-            <p className="text-sm text-muted-foreground">No description provided by {m.author}.</p>
+            <p className="text-sm text-muted-foreground">No description provided by <GitHubAuthor login={m.author}/>.</p>
           )}
         </section>
         <aside className="pr-metadata" aria-label={`Metadata for PR #${m.number}`}>

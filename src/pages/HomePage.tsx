@@ -1,3 +1,4 @@
+import { GitHubAuthor } from '../../components/GitHubAuthor';
 import { rememberCommandDestination } from '../../lib/command-recents';
 import { useCommandCenter, useCommandScope } from '../../lib/command-center';
 import type { SearchDestination } from '../../lib/command-search';
@@ -666,6 +667,9 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
               <GitPullRequest size={15} />
             )}
           </button>
+          <div className="queue-row-content"
+            onClick={event=>{if((event.target as HTMLElement).closest('a,button'))return;setSelected(s.id);setStatuses({});}}
+            onDoubleClick={event=>{if((event.target as HTMLElement).closest('a,button'))return;setError('');setOpenedItem(item);}}>
           <button
             className="queue-row-main"
             ref={(node) => {
@@ -704,14 +708,15 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
               <span className="queue-title">{s.title}</span>
               <PrLabels members={s.members} limit={3} />
             </span>
+          </button>
             <span className="queue-meta">
               <span>{s.members[0].repo}</span>
               <span>{s.kind === 'stack' ? `${s.members.length} PRs in stack` : `#${s.members[0].number}`}</span>
-              <span>{s.members[0].author}</span>
+              <GitHubAuthor login={s.members[0].author}/>
               <span>{timeAgo(s.members[0].updatedAt)}</span>
             </span>
             {item.briefing?.summary && <span className="queue-summary">{item.briefing.summary}</span>}
-          </button>
+          </div>
           {(item.review?.status === 'generating' ||
             item.review?.status === 'completed' ||
             item.briefing?.status === 'generating') && (
@@ -1185,17 +1190,19 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                 saved.length ? (
                   saved.map((entry) => (
                     <div className="saved-row" key={entry.id}>
+                      <div className="queue-row-content" onClick={event=>{if((event.target as HTMLElement).closest('a,button')||entry.status==='generating')return;entry.status==='failed'?void start(entry.prUrl):void open(entry);}}>
                       <button
                         className="queue-row-main"
                         disabled={entry.status === 'generating'}
                         onClick={() => (entry.status === 'failed' ? void start(entry.prUrl) : void open(entry))}
                       >
                         <span className="queue-title">{entry.prTitle}</span>
+                      </button>
                         <span className="queue-meta">
                           {entry.snapshot?.subject.kind === 'stack'
                             ? `${entry.snapshot.subject.members.length} PR stack · `
                             : ''}
-                          {entry.author} · {timeAgo(entry.savedAt)} ·{' '}
+                          <GitHubAuthor login={entry.author}/> · {timeAgo(entry.savedAt)} ·{' '}
                           {entry.status === 'generating'
                             ? 'Generating explanation'
                             : entry.status === 'failed'
@@ -1203,7 +1210,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                               : 'Explanation ready'}
                         </span>
                         {entry.error && <span className="text-xs text-destructive">{entry.error}</span>}
-                      </button>
+                      </div>
                       {entry.status !== 'generating' && (
                         <button
                           className="workbench-icon"
