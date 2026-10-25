@@ -22,8 +22,20 @@ Checkpoints preserve completed pages and details across rate limits and restarts
 
 ## Request scheduling
 
-Each credential has one serial network scheduler. Foreground requests precede queued background requests.
-After eight foreground requests, waiting background work receives a turn. An active network request completes before the next request starts.
+Each credential has one serial network scheduler with three priorities:
+
+| Priority | Work |
+| --- | --- |
+| Interactive | Opening PR details, Changes, Commits, files, comments, images, profiles, explicit searches and refreshes, and submitting feedback |
+| Foreground | AI context requests and automatic status checks for the selected PR |
+| Background | Preloading, discovery, and status checks for other visible queue rows |
+
+Interactive work always gets the next available slot before either lower tier. Without interactive work, background requests receive a turn after eight foreground requests.
+An active network request completes before the next request starts. Priority never increases network concurrency.
+
+If the UI opens something already being prepared, it promotes the shared operation instead of waiting behind background work.
+Queued requests and later requests in that operation inherit the promotion. File downloads still occur once per side.
+Promoted requests can use the allowance reserved for interaction. They cannot bypass primary exhaustion, secondary limits, or server retry deadlines.
 Fresh HTTP cache hits bypass this scheduler and remain available during network delays and backoff.
 
 The scheduler reserves API allowance for interaction. Background requests pause near exhaustion and spread out as the remaining allowance decreases.

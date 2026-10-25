@@ -119,10 +119,7 @@ export async function readComparison(
   const saved = comparisons.get(key);
   if (saved && comparisonIsReady(selection, subjectId)) return saved;
   const existing = pending.get(key);
-  if (existing)
-    return existing.background && !background
-      ? existing.promise.catch(() => readComparison(selection, subjectId, false))
-      : existing.promise;
+  if (existing && (!existing.background || background)) return existing.promise;
   const generation = inspectionEpoch;
   const promise = (async () => {
     const snapshot = saved ?? (await window.electronAPI.getCommitComparison(selection, background));

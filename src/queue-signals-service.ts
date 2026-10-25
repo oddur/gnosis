@@ -1,5 +1,5 @@
 import type { Octokit } from '@octokit/rest';
-import { withGitHubPriority } from '../lib/github-scheduler';
+import { withGitHubPriority, createGitHubWork, joinGitHubWork, type GitHubWork } from '../lib/github-scheduler';
 import { githubCacheFor } from '../lib/github-client';
 import { isCacheRecord } from '../lib/github-cache';
 import {
@@ -69,7 +69,7 @@ function isSignals(value: unknown): value is QueueSignals {
 }
 /** Visible-row reads, batched across repositories, with credential-scoped snapshots and backoff. */
 export function createQueueSignalsService(now = Date.now) {
-  const accounts = new WeakMap<Octokit, { retryAt: number; pending: Map<string, Promise<QueueSignals[]>> }>();
+  const accounts = new WeakMap<Octokit, { retryAt: number; pending: Map<string, GitHubWork<QueueSignals[]>> }>();
   return async (
     client: Octokit,
     requests: QueueSignalRequest[],
@@ -109,8 +109,9 @@ export function createQueueSignalsService(now = Date.now) {
       .map(({ request }) => queueSignalKey(request))
       .sort()
       .join('|');
+    const priority = options.force ? 'interactive' : options.active ? 'foreground' : 'background';
     const existing = account.pending.get(batchKey);
-    if (existing) return [...result, ...(await existing)];
+    if (existing) return [...result, ...(await withGitHubPriority(priority, () => joinGitHubWork(existing)))];
     const version = cache?.version();
     const query = `query { ${missing
       .map(
@@ -128,11 +129,9 @@ export function createQueueSignalsService(now = Date.now) {
       )
       .join('\n')} }`;
     const state = account;
-    const pending = (async () => {
+    const pending = withGitHubPriority(priority, () => createGitHubWork(async () => {
       try {
-        const data = await withGitHubPriority(options.active || options.force ? 'foreground' : 'background', () =>
-          client.graphql<Record<string, { pullRequest: PullSignals | null } | null>>(query)
-        );
+        const data = await client.graphql<Record<string, { pullRequest: PullSignals | null } | null>>(query);
         const fresh: QueueSignals[] = [];
         for (const [i, { request }] of missing.entries()) {
           const pr = data[`p${i}`]?.pullRequest;
@@ -187,8 +186,8 @@ export function createQueueSignalsService(now = Date.now) {
       } finally {
         state.pending.delete(batchKey);
       }
-    })();
+    }));
     state.pending.set(batchKey, pending);
-    return [...result, ...(await pending)];
+    return [...result, ...(await pending.promise)];
   };
 }

@@ -1,5 +1,5 @@
 import { requestGitHubCacheClear, applyPendingGitHubCacheClear } from './github-cache-reset';
-import { withGitHubPriority } from '../lib/github-scheduler';
+import { withGitHubPriority, githubPriority } from '../lib/github-scheduler';
 import type { InspectionRevision, InspectionLoadOptions } from '../lib/pr-changes';
 import { normalizePrInactivityDays, DEFAULT_PR_INACTIVITY_DAYS } from '../lib/pr-inactivity';
 import type { MutePrRequest } from '../lib/muted-prs';
@@ -1063,15 +1063,15 @@ ipcMain.handle('start-oauth', () => {
   return githubWebAuth.start();
 });
 ipcMain.handle('cancel-oauth', () => githubWebAuth.cancel());
-ipcMain.handle('begin-github-sign-in', () => {
+handleInteractive('begin-github-sign-in', () => {
   authRevision++;
   githubWebAuth.cancel();
   return githubAuth.begin();
 });
-ipcMain.handle('complete-github-sign-in', (_event, id: string) => githubAuth.complete(id));
+handleInteractive('complete-github-sign-in', (_event, id: string) => githubAuth.complete(id));
 ipcMain.handle('cancel-github-sign-in', (_event, id: string) => githubAuth.cancel(id));
 
-ipcMain.handle('save-pat', async (_event, token: string, prUrl?: string) => {
+handleInteractive('save-pat', async (_event, token: string, prUrl?: string) => {
   if (typeof token !== 'string' || !token.trim()) throw new Error('Enter a GitHub personal access token.');
   const revision = ++authRevision;
   githubAuth.cancel();
@@ -1090,7 +1090,12 @@ ipcMain.handle('save-pat', async (_event, token: string, prUrl?: string) => {
   return login;
 });
 
-ipcMain.handle('get-auth-state', async () => {
+function handleInteractive(channel: string, listener: Parameters<typeof ipcMain.handle>[1]) {
+  ipcMain.handle(channel, (event, ...args): unknown =>
+    withGitHubPriority('interactive', (): unknown => listener(event, ...args)));
+}
+
+handleInteractive('get-auth-state', async () => {
   const token = getResolvedToken();
   if (!token) return { authenticated: false, login: null };
 
@@ -1123,7 +1128,7 @@ ipcMain.handle('sign-out', () => {
   deleteStoredToken();
 });
 
-ipcMain.handle('search-pull-requests', async () => {
+handleInteractive('search-pull-requests', async () => {
   const token = getResolvedToken();
   if (!token || !cachedLogin) throw new Error('Not authenticated');
   try {
@@ -1134,7 +1139,7 @@ ipcMain.handle('search-pull-requests', async () => {
   }
 });
 
-ipcMain.handle('search-repos', async (_event, query: string) => {
+handleInteractive('search-repos', async (_event, query: string) => {
   const token = getResolvedToken();
   if (!token) throw new Error('Not authenticated');
   try {
@@ -1211,7 +1216,7 @@ const loadReviewImages = createReviewImageService({
   client: () => getGitHubClient(getResolvedToken()),
   allowLocal: (id) => readReviewsIndex().some((entry) => entry.id === id && !entry.imported),
 });
-ipcMain.handle('load-review-images', (_event, reviewId: string, filePath: string) => loadReviewImages(reviewId, filePath));
+handleInteractive('load-review-images', (_event, reviewId: string, filePath: string) => loadReviewImages(reviewId, filePath));
 
 ipcMain.handle('re-render-hunks', async (_event, review: ReviewGuide) => {
   const prefs = loadPreferences();
@@ -1419,7 +1424,7 @@ async function fetchPrStatus(prUrl: string, force = false): Promise<PrStatus | n
   };
 }
 
-ipcMain.handle('get-pr-metadata', async (_event, prUrl: string): Promise<PrMetadata> => {
+handleInteractive('get-pr-metadata', async (_event, prUrl: string): Promise<PrMetadata> => {
   if (workbench.mutedUrls().has(prUrl)) throw new Error('This PR is muted. Restore it from Muted PRs first.');
   const { owner, repo, pullNumber } = parsePrUrl(prUrl);
   try { return await getPrMetadata(getGitHubClient(getResolvedToken()), owner, repo, pullNumber); }
@@ -1427,7 +1432,7 @@ ipcMain.handle('get-pr-metadata', async (_event, prUrl: string): Promise<PrMetad
 });
 
 const loadPrImage = createPrImageService();
-ipcMain.handle('load-pr-image', (_event, url: string) => {
+handleInteractive('load-pr-image', (_event, url: string) => {
   const token = getResolvedToken();
   if (!token) throw new Error('Sign in to GitHub to view this image.');
   return loadPrImage(getGitHubClient(token), url);
@@ -1437,7 +1442,7 @@ ipcMain.handle('get-pr-status', async (_event, prUrl: string, force: boolean = f
   if (isLocalUrl(prUrl)) {
     throw new Error('Local review — no PR status available');
   }
-  const status = await fetchPrStatus(prUrl, force);
+  const status = await withGitHubPriority(force ? 'interactive' : 'foreground', () => fetchPrStatus(prUrl, force));
   if (!status) throw new Error('Not authenticated');
   return status;
 });
@@ -2395,7 +2400,7 @@ ipcMain.handle('get-queue-signals', (_event, requests: QueueSignalRequest[], opt
   if (!token) return [];
   return getQueueSignals(getGitHubClient(token), requests, options);
 });
-ipcMain.handle('get-github-profile', (_event, login:string) => {
+handleInteractive('get-github-profile', (_event, login:string) => {
   const token=getResolvedToken();
   if(!token)throw new Error('Connect GitHub to load profile details.');
   return getGitHubProfile(getGitHubClient(token),login);
@@ -2413,7 +2418,7 @@ const commandSearch = createCommandSearchService({
 });
 ipcMain.handle('command-search', (_event, query: string, includeBots: boolean, recentIds: string[]) =>
   commandSearch.search(query, includeBots === true, Array.isArray(recentIds) ? recentIds.filter(id=>typeof id==='string').slice(0,20) : []));
-ipcMain.handle('command-github-search', async (_event, query: string) => {
+handleInteractive('command-github-search', async (_event, query: string) => {
   const token = getResolvedToken();
   if (!token || !cachedLogin) throw new Error('Connect GitHub to search beyond this computer.');
   if (typeof query !== 'string' || !query.trim() || query.length > 500) throw new Error('Enter a search of 1–500 characters.');
@@ -2431,19 +2436,19 @@ function discussionClient() {
   if (!token) throw new Error('Sign in to GitHub to load review comments.');
   return getGitHubClient(token);
 }
-ipcMain.handle('get-review-threads', (_event, prUrl: string, refresh: boolean) =>
+handleInteractive('get-review-threads', (_event, prUrl: string, refresh: boolean) =>
   reviewThreads.list(discussionClient(), prUrl, refresh));
-ipcMain.handle('review-thread-action', (_event, req: ReviewThreadAction) =>
+handleInteractive('review-thread-action', (_event, req: ReviewThreadAction) =>
   reviewThreads.act(discussionClient(), req));
 
-ipcMain.handle('review-comment-action', (_event, req: ReviewCommentAction) =>
+handleInteractive('review-comment-action', (_event, req: ReviewCommentAction) =>
   reviewThreads.comment(discussionClient(), req));
-ipcMain.handle('create-review-comment', async (_event, req: CreateReviewCommentRequest) => {
+handleInteractive('create-review-comment', async (_event, req: CreateReviewCommentRequest) => {
   const client = discussionClient();
   await createReviewComment(client, req);
   reviewThreads.invalidate(client, req.prUrl);
 });
-ipcMain.handle('submit-review', async (_event, req: SubmitReviewRequest) => {
+handleInteractive('submit-review', async (_event, req: SubmitReviewRequest) => {
   const client = discussionClient();
   const result = await submitPrReview(client, req, loadPreferences().reviewSignature);
   reviewThreads.invalidate(client, req.prUrl);
@@ -2473,18 +2478,19 @@ ipcMain.handle('prepared-inventories', (_event, revisions: InspectionRevision[])
     commits: revisions.flatMap(r => prCommits.cached(client, r.url, r) ?? []),
   };
 });
-ipcMain.handle('pr-changes', (_event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) => withGitHubPriority(options.background ? 'background' : 'foreground', () => prChanges.manifest(changesClient(), url, refresh, options)));
-ipcMain.handle('pr-commits', (_event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) => withGitHubPriority(options.background ? 'background' : 'foreground', () => prCommits.list(changesClient(), url, refresh, options)));
+ipcMain.handle('pr-changes', (_event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) => withGitHubPriority(options.background ? 'background' : 'interactive', () => prChanges.manifest(changesClient(), url, refresh, options)));
+ipcMain.handle('pr-commits', (_event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) => withGitHubPriority(options.background ? 'background' : 'interactive', () => prCommits.list(changesClient(), url, refresh, options)));
 const inspectionPrefetchGuard = (background: boolean) => {
   const token = getResolvedToken();
   return background ? () => {
     if (token !== getResolvedToken()) throw new Error('GitHub account changed.');
+    if (githubPriority() !== 'background') return;
     const paused = githubClients.backoff(token, true, ['core']);
     if (paused) throw paused;
   } : undefined;
 };
-ipcMain.handle('commit-comparison', (_event, selection: CommitSelection, background: boolean = false) => withGitHubPriority(background ? 'background' : 'foreground', () => prCommits.comparison(changesClient(), selection, inspectionPrefetchGuard(background))));
-ipcMain.handle('pr-change-file', (_event, request: PrFileRequest, background: boolean = false) => withGitHubPriority(background ? 'background' : 'foreground', () => (request.comparison ? prCommits : prChanges).content(changesClient(), request, inspectionPrefetchGuard(background))));
+ipcMain.handle('commit-comparison', (_event, selection: CommitSelection, background: boolean = false) => withGitHubPriority(background ? 'background' : 'interactive', () => prCommits.comparison(changesClient(), selection, inspectionPrefetchGuard(background))));
+ipcMain.handle('pr-change-file', (_event, request: PrFileRequest, background: boolean = false) => withGitHubPriority(background ? 'background' : 'interactive', () => (request.comparison ? prCommits : prChanges).content(changesClient(), request, inspectionPrefetchGuard(background))));
 ipcMain.handle('prepare-pr-review', (_event, url: string, revision: { baseSha: string; headSha: string }) => withGitHubPriority('background', () => prChanges.prepareReview(changesClient(), url, revision)));
 ipcMain.handle('pr-changes-revision', (_event, url: string) => prChanges.revision(changesClient(), url));
 ipcMain.handle('ask-pr-file', async (_event, request: FileChatRequest) => {
