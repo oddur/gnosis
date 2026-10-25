@@ -61,6 +61,7 @@ export function StaleBanner({ freshness, onReReview }: Props) {
     <div className="staleBanner-warn border-b border-[var(--color-warning)]/28 text-xs">
       <div className="flex items-center justify-between gap-2 px-6 py-1.5">
         <button
+          aria-expanded={expanded}
           onClick={() => setExpanded((v) => !v)}
           className="staleBanner-warn-toggle inline-flex items-center gap-1.5 text-left transition-colors"
         >

@@ -62,58 +62,69 @@ export function ActivityDrawer({
     onOpenRef.current = onOpen;
   }, [onOpen]);
   const [error, setError] = useState('');
-  const [pending, setPending] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState('');
+  const [pending, setPending] = useState<Set<string>>(new Set());
+  const pendingActions = useRef(new Set<string>());
+  const refreshRequest = useRef<Promise<void> | null>(null);
+  const refreshVersion = useRef(0);
   const alive = useRef(true);
-  const refreshFailed = useRef(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
-  const refresh = useCallback(async () => {
-    try {
-      const next = await window.electronAPI.listActivity();
-      if (alive.current) {
-        setTasks(next);
-        for (const task of newCompletions(next)) {
-          const id = toast.add({
-            title: task.kind === 'exploration' ? 'Interactive explanation ready' : 'Review ready',
-            description: task.kind === 'exploration' ? `${task.title} · ${task.detail}` : task.title,
-            type: 'success',
-            actionProps: {
-              children: task.kind === 'exploration' ? 'Open interactive explanation' : 'Open review',
-              onClick: () => {
-                toast.update(id, { actionProps: { children: 'Opening…', disabled: true } });
-                void onOpenRef
-                  .current(task)
-                  .then(() => toast.close(id))
-                  .catch((e: unknown) => {
-                    toast.update(id, {
-                      type: 'error',
-                      title: 'Could not open result',
-                      description: e instanceof Error ? e.message : String(e),
-                      actionProps: { children: undefined },
-                    });
-                  });
-              },
-            },
-          });
+  const refresh = useCallback(
+    (force = false): Promise<void> => {
+      if (refreshRequest.current && !force) return refreshRequest.current;
+      const version = ++refreshVersion.current;
+      const request = (async () => {
+        try {
+          const next = await window.electronAPI.listActivity();
+          if (alive.current && version === refreshVersion.current) {
+            setTasks(next);
+            for (const task of newCompletions(next)) {
+              const id = toast.add({
+                title: task.kind === 'exploration' ? 'Interactive explanation ready' : 'Review ready',
+                description: task.kind === 'exploration' ? `${task.title} · ${task.detail}` : task.title,
+                type: 'success',
+                actionProps: {
+                  children: task.kind === 'exploration' ? 'Open interactive explanation' : 'Open review',
+                  onClick: () => {
+                    toast.update(id, { actionProps: { children: 'Opening…', disabled: true } });
+                    void onOpenRef
+                      .current(task)
+                      .then(() => toast.close(id))
+                      .catch((e: unknown) => {
+                        toast.update(id, {
+                          type: 'error',
+                          title: 'Could not open result',
+                          description: e instanceof Error ? e.message : String(e),
+                          actionProps: { children: undefined },
+                        });
+                      });
+                  },
+                },
+              });
+            }
+            setRefreshError('');
+          }
+        } catch {
+          if (alive.current && version === refreshVersion.current)
+            setRefreshError('Could not refresh activity. Retrying…');
         }
-        if (refreshFailed.current) {
-          setError('');
-          refreshFailed.current = false;
-        }
-      }
-    } catch {
-      if (alive.current) {
-        refreshFailed.current = true;
-        setError('Could not refresh activity. Retrying…');
-      }
-    }
-  }, [newCompletions]);
+      })().finally(() => {
+        if (refreshRequest.current === request) refreshRequest.current = null;
+      });
+      refreshRequest.current = request;
+      return request;
+    },
+    [newCompletions]
+  );
   useEffect(() => {
     alive.current = true;
     void refresh();
     const timer = setInterval(() => void refresh(), 2000);
     return () => {
       alive.current = false;
+      refreshVersion.current++;
+      refreshRequest.current = null;
       clearInterval(timer);
     };
   }, [refresh]);
@@ -125,20 +136,23 @@ export function ActivityDrawer({
     if (open) closeButton.current?.focus();
   }, [open]);
   async function act(task: ActivityTask, action: ActivityAction | 'open') {
-    setPending(task.id);
+    if (pendingActions.current.has(task.id)) return;
+    pendingActions.current.add(task.id);
+    setPending(new Set(pendingActions.current));
     setError('');
     try {
       if (action === 'open') {
         await onOpen(task);
-        close();
+        if (alive.current) close();
       } else {
         await window.electronAPI.activityAction(task.id, action);
-        await refresh();
+        if (alive.current) await refresh(true);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (alive.current) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setPending(null);
+      pendingActions.current.delete(task.id);
+      if (alive.current) setPending(new Set(pendingActions.current));
     }
   }
   const running = tasks.filter((t) => t.status === 'running');
@@ -200,9 +214,9 @@ export function ActivityDrawer({
               <X size={15} />
             </button>
           </header>
-          {error && (
+          {(error || refreshError) && (
             <p className="activity-error" role="alert">
-              {error}
+              {error || refreshError}
             </p>
           )}
           <div className="activity-list">
@@ -231,7 +245,7 @@ export function ActivityDrawer({
                       {!isActiveTask(task) && (
                         <button
                           className="workbench-icon"
-                          disabled={pending === task.id}
+                          disabled={pending.has(task.id)}
                           aria-label={`Dismiss ${task.title}`}
                           onClick={() => void act(task, 'dismiss')}
                         >
@@ -278,21 +292,21 @@ export function ActivityDrawer({
                     {task.status === 'running' && <Progress task={task} />}
                     <div className="activity-actions">
                       {task.canCancel && (
-                        <button disabled={pending === task.id} onClick={() => void act(task, 'cancel')}>
+                        <button disabled={pending.has(task.id)} onClick={() => void act(task, 'cancel')}>
                           Cancel
                         </button>
                       )}
                       {task.canRetry && (
-                        <button disabled={pending === task.id} onClick={() => void act(task, 'retry')}>
+                        <button disabled={pending.has(task.id)} onClick={() => void act(task, 'retry')}>
                           Retry
                         </button>
                       )}
                       {task.status === 'completed' && task.kind !== 'github' && task.kind !== 'file-chat' && (
-                        <button disabled={pending === task.id} onClick={() => void act(task, 'open')}>
+                        <button disabled={pending.has(task.id)} onClick={() => void act(task, 'open')}>
                           {openLabels[task.kind]}
                         </button>
                       )}
-                      {pending === task.id && <Loader2 size={12} className="animate-spin" />}
+                      {pending.has(task.id) && <Loader2 size={12} className="animate-spin" />}
                     </div>
                   </article>
                 );

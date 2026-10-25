@@ -1,5 +1,5 @@
 import { useSessionDraft } from '../lib/session-drafts';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { AlertTriangle, Check, ExternalLink, MessageSquare, ShieldCheck, ShieldX, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -32,12 +32,48 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, prUrl, headSh
   const [droppedCount, setDroppedCount] = useState(0);
   const [submittedCount, setSubmittedCount] = useState(0);
   const [reviewSignature, setReviewSignature] = useState(true);
+  const [signatureState, setSignatureState] = useState<'loading' | 'saving' | 'ready' | 'error'>('loading');
+  const [signatureError, setSignatureError] = useState('');
+  const signatureIntent = useRef<boolean | undefined>(undefined);
+  const signatureEpoch = useRef(0);
+  const signaturePending = useRef(false);
+  const pending = useRef(false);
+
+  async function syncSignature(desired?: boolean) {
+    if (signaturePending.current) return;
+    const epoch = ++signatureEpoch.current;
+    signaturePending.current = true;
+    signatureIntent.current = desired;
+    if (desired !== undefined) setReviewSignature(desired);
+    setSignatureState(desired === undefined ? 'loading' : 'saving');
+    setSignatureError('');
+    try {
+      const prefs = await window.electronAPI.loadPreferences();
+      if (signatureEpoch.current !== epoch) return;
+      if (desired !== undefined) await window.electronAPI.savePreferences({ ...prefs, reviewSignature: desired });
+      if (signatureEpoch.current !== epoch) return;
+      setReviewSignature(desired ?? prefs.reviewSignature);
+      setSignatureState('ready');
+    } catch {
+      if (signatureEpoch.current !== epoch) return;
+      setSignatureState('error');
+      setSignatureError(
+        desired === undefined
+          ? 'Could not load the signature setting. Retry before posting your review.'
+          : 'Could not save the signature setting. Your review has not been posted. Retry saving before submitting.'
+      );
+    } finally {
+      if (signatureEpoch.current === epoch) signaturePending.current = false;
+    }
+  }
 
   useEffect(() => {
     if (!open) return;
-    void window.electronAPI.loadPreferences().then((prefs) => {
-      setReviewSignature(prefs.reviewSignature);
-    });
+    void syncSignature();
+    return () => {
+      signatureEpoch.current++;
+      signaturePending.current = false;
+    };
   }, [open]);
 
   // Group comments by file for the summary
@@ -52,6 +88,10 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, prUrl, headSh
   }
 
   async function handleSubmit(event: ReviewEvent) {
+    if (pending.current || signaturePending.current || signatureState !== 'ready' || successUrl) return;
+    if (event !== 'COMMENT' && isOwnPr) return;
+    if (event !== 'APPROVE' && !comments.length && !body.trim()) return;
+    pending.current = true;
     setSubmitting(true);
     setError(null);
     try {
@@ -62,6 +102,7 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, prUrl, headSh
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't submit the review.");
     } finally {
+      pending.current = false;
       setSubmitting(false);
     }
   }
@@ -70,7 +111,7 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, prUrl, headSh
     // Don't allow closing while a submit is in flight — the user
     // might think the review wasn't posted and retry, creating a
     // duplicate. The dialog stays open until the operation finishes.
-    if (submitting) return;
+    if (pending.current) return;
     if (successUrl) {
       setSuccessUrl(null);
       setBody('');
@@ -199,6 +240,8 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, prUrl, headSh
             <textarea
               id="review-summary"
               value={body}
+              disabled={submitting}
+              maxLength={65536}
               onChange={(e) => setBody(e.target.value)}
               placeholder="Overall feedback…"
               className="w-full min-h-[80px] bg-transparent text-sm resize-y border-0 border-b border-border px-0 py-2 placeholder:text-muted-foreground/60 transition-colors"
@@ -208,19 +251,29 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, prUrl, headSh
             <input
               type="checkbox"
               checked={reviewSignature}
+              disabled={submitting || signatureState === 'loading' || signatureState === 'saving'}
               onChange={(e) => {
-                setReviewSignature(e.target.checked);
-                void window.electronAPI
-                  .loadPreferences()
-                  .then((prefs) => window.electronAPI.savePreferences({ ...prefs, reviewSignature: e.target.checked }));
+                void syncSignature(e.target.checked);
               }}
               className="accent-[var(--ring)]"
             />
             <span>Add &ldquo;Reviewed using gnosis.to&rdquo; signature</span>
           </label>
+          {signatureError && (
+            <div className="text-sm text-destructive" role="alert">
+              <p>{signatureError}</p>
+              <Button variant="link" size="sm" onClick={() => void syncSignature(signatureIntent.current)}>
+                Retry signature setting
+              </Button>
+            </div>
+          )}
         </div>
 
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && (
+          <p className="text-sm text-destructive" role="alert">
+            {error}
+          </p>
+        )}
 
         <DialogFooter className="flex-col gap-2 sm:flex-col sm:gap-2">
           {submitting && <p className="slide-meta text-center animate-pulse">Posting to GitHub…</p>}
@@ -230,7 +283,7 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, prUrl, headSh
               variant="outline"
               size="sm"
               onClick={() => handleSubmit('COMMENT')}
-              disabled={submitting || (comments.length === 0 && !body.trim())}
+              disabled={submitting || signatureState !== 'ready' || (comments.length === 0 && !body.trim())}
             >
               <MessageSquare className="h-3.5 w-3.5 mr-1.5" />
               Post comments
@@ -240,7 +293,7 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, prUrl, headSh
               size="sm"
               className="border-[var(--color-success)]/35 text-[var(--color-success)] hover:bg-[var(--color-success)]/10"
               onClick={() => handleSubmit('APPROVE')}
-              disabled={submitting || isOwnPr}
+              disabled={submitting || signatureState !== 'ready' || isOwnPr}
             >
               <ShieldCheck className="h-3.5 w-3.5 mr-1.5" />
               Approve PR
@@ -250,7 +303,7 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, prUrl, headSh
               size="sm"
               className="border-[var(--color-danger)]/35 text-[var(--color-danger)] hover:bg-[var(--color-danger)]/10"
               onClick={() => handleSubmit('REQUEST_CHANGES')}
-              disabled={submitting || isOwnPr || (comments.length === 0 && !body.trim())}
+              disabled={submitting || signatureState !== 'ready' || isOwnPr || (comments.length === 0 && !body.trim())}
             >
               <ShieldX className="h-3.5 w-3.5 mr-1.5" />
               Request changes

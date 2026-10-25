@@ -1846,8 +1846,9 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .activity-task-meta>span:first-child { font-weight:600; }
 .activity-task-meta .workbench-icon { margin-left:auto; }
 .activity-task h3 { font-size:var(--type-body); line-height:1.5; font-weight:600; overflow-wrap:anywhere; }
-.activity-task-status { display:flex; align-items:center; gap:6px; margin-top:6px; font-size:var(--type-control); color:var(--muted-foreground); }
+.activity-task-status { overflow-wrap:anywhere; display:flex; align-items:center; gap:6px; margin-top:6px; font-size:var(--type-control); color:var(--muted-foreground); }
 .activity-task-status svg { flex-shrink:0; }
+.activity-task-status span { min-width:0; }
 .activity-task[data-status=failed] .activity-task-status { color:var(--destructive); }
 .activity-task[data-status=warning] .activity-task-status { color:var(--color-warning); }
 .activity-progress { height:3px; background:var(--muted); border-radius:2px; overflow:hidden; margin-top:9px; }
@@ -2025,9 +2026,9 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .queue-meta>span { overflow-wrap:anywhere; }
 
 /* Notifications stay above Activity and never take keyboard focus on arrival. */
-.app-toasts { position:fixed; right:12px; bottom:46px; z-index:60; width:min(380px,calc(100vw - 24px)); display:flex; flex-direction:column-reverse; gap:8px; outline:none; pointer-events:none; }
-body:has(.activity-drawer) .app-toasts { bottom:auto; top:64px; }
-.app-toast { pointer-events:auto; background:var(--popover); color:var(--popover-foreground); border:1px solid var(--border); border-radius:8px; transition:opacity 180ms ease-out,transform 180ms ease-out; }
+.app-toasts { max-height:calc(100dvh - 58px); overflow-y:auto; overscroll-behavior:contain; position:fixed; right:12px; bottom:46px; z-index:60; width:min(380px,calc(100vw - 24px)); display:flex; flex-direction:column-reverse; gap:8px; outline:none; pointer-events:none; }
+body:has(.activity-drawer) .app-toasts { bottom:auto; top:64px; max-height:calc(100dvh - 76px); }
+.app-toast { flex-shrink:0; pointer-events:auto; background:var(--popover); color:var(--popover-foreground); border:1px solid var(--border); border-radius:8px; transition:opacity 180ms ease-out,transform 180ms ease-out; }
 .app-toast[data-starting-style],.app-toast[data-ending-style] { opacity:0; transform:translateY(8px); }
 .app-toast[data-limited] { display:none; }
 .app-toast-content { display:flex; align-items:flex-start; gap:10px; padding:12px; }

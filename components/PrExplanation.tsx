@@ -90,9 +90,12 @@ export function PrExplanation({
     if (!completed) return;
     try {
       const next = await loadExplanation(completed.id);
-      const previousPosition = Number(
-        localStorage.getItem(`gnosis-position:${item.subject.id}:${review?.reviewId}`) ?? 0
-      );
+      let previousPosition = 0;
+      try {
+        previousPosition = Number(localStorage.getItem(`gnosis-position:${item.subject.id}:${review?.reviewId}`) ?? 0);
+      } catch {
+        // Optional reading position must not prevent opening a successfully loaded explanation.
+      }
       const previous = review?.slides.find((s) => s.slideNumber === previousPosition);
       const corresponding = previous && next.slides.find((s) => s.id === previous.id || s.title === previous.title);
       setInitialSlideId(corresponding?.id ?? 'overview');
@@ -155,7 +158,6 @@ export function PrExplanation({
             review={review}
             embedded
             active={active}
-            currentSubject={item.subject}
             initialPreferences={preferences ?? undefined}
             onBack={onBack}
             onReReview={onGenerate}
@@ -168,11 +170,19 @@ export function PrExplanation({
       ) : (
         !review && (
           <div className="explanation-empty">
-            <h2>{wanted ? 'Opening saved explanation' : 'Understand the changes, step by step'}</h2>
+            <h2>
+              {loadError
+                ? 'Saved explanation could not be opened'
+                : wanted
+                  ? 'Opening saved explanation'
+                  : 'Understand the changes, step by step'}
+            </h2>
             <p>
-              {wanted
-                ? 'Reading the explanation saved on this computer.'
-                : 'Get a guided walkthrough of what changed, why it matters, and where to focus your review. Explore the code, ask questions, and open interactive diagrams alongside it.'}
+              {loadError
+                ? 'Retry loading to read the explanation saved on this computer.'
+                : wanted
+                  ? 'Reading the explanation saved on this computer.'
+                  : 'Get a guided walkthrough of what changed, why it matters, and where to focus your review. Explore the code, ask questions, and open interactive diagrams alongside it.'}
             </p>
             {!wanted && !running && !failed && !error && (
               <div className="explanation-empty-actions">

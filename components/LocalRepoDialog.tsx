@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { FolderOpen, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -51,6 +51,10 @@ export function LocalRepoDialog({ supportsTools = true, open, onOpenChange, onSu
   const [headRef, setHeadRef] = useState('HEAD');
   const [localTools, setLocalTools] = useState(false);
   const [validating, setValidating] = useState(false);
+  const [browsing, setBrowsing] = useState(false);
+  const session = useRef(0);
+  const submitPending = useRef(false);
+  const browsePending = useRef(false);
   const [error, setError] = useState<{ title: string; hint: string; detail?: string } | null>(null);
   const [refs, setRefs] = useState<{ branches: string[]; tags: string[] }>({ branches: [], tags: [] });
   const [loadingRefs, setLoadingRefs] = useState(false);
@@ -59,7 +63,13 @@ export function LocalRepoDialog({ supportsTools = true, open, onOpenChange, onSu
 
   // Seed path + tool-mode preference from last-used values on open.
   useEffect(() => {
+    session.current++;
+    submitPending.current = false;
+    browsePending.current = false;
+    setValidating(false);
+    setBrowsing(false);
     if (!open) return;
+    setError(null);
     const last = loadLastRepoPath();
     if (last) setRepoPath(last);
     try {
@@ -67,15 +77,17 @@ export function LocalRepoDialog({ supportsTools = true, open, onOpenChange, onSu
     } catch {
       /* localStorage unavailable */
     }
+    return () => {
+      session.current++;
+    };
   }, [open]);
 
   // Fetch branches + tags whenever the repo path changes (debounced).
   useEffect(() => {
     const trimmed = repoPath.trim();
-    if (!trimmed) {
-      setRefs({ branches: [], tags: [] });
-      return;
-    }
+    setRefs({ branches: [], tags: [] });
+    setLoadingRefs(false);
+    if (!open || !trimmed) return;
     let cancelled = false;
     setLoadingRefs(true);
     const timer = setTimeout(() => {
@@ -84,12 +96,10 @@ export function LocalRepoDialog({ supportsTools = true, open, onOpenChange, onSu
         .then((result) => {
           if (cancelled) return;
           setRefs({ branches: result.branches, tags: result.tags });
-          if (result.defaultBase && (baseRef === 'HEAD~1' || baseRef === '')) {
-            setBaseRef(result.defaultBase);
-          }
-          if (result.defaultHead && (headRef === 'HEAD' || headRef === '')) {
-            setHeadRef(result.defaultHead);
-          }
+          const { defaultBase, defaultHead } = result;
+          if (submitPending.current) return;
+          if (defaultBase) setBaseRef((current) => (current === 'HEAD~1' || !current ? defaultBase : current));
+          if (defaultHead) setHeadRef((current) => (current === 'HEAD' || !current ? defaultHead : current));
         })
         .catch(() => {
           if (!cancelled) setRefs({ branches: [], tags: [] });
@@ -102,7 +112,7 @@ export function LocalRepoDialog({ supportsTools = true, open, onOpenChange, onSu
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [repoPath]);
+  }, [open, repoPath]);
 
   // Preview the diff whenever all three inputs are populated — gives the user
   // early warning if the picked base produces a runaway file count (e.g. a
@@ -111,14 +121,9 @@ export function LocalRepoDialog({ supportsTools = true, open, onOpenChange, onSu
     const rp = repoPath.trim();
     const br = baseRef.trim();
     const hr = headRef.trim();
-    if (!rp || !br || !hr) {
-      setPreview(null);
-      return;
-    }
-    if (br === hr) {
-      setPreview(null);
-      return;
-    }
+    setPreview(null);
+    setLoadingPreview(false);
+    if (!open || !rp || !br || !hr || br === hr) return;
     let cancelled = false;
     setLoadingPreview(true);
     const timer = setTimeout(() => {
@@ -143,19 +148,46 @@ export function LocalRepoDialog({ supportsTools = true, open, onOpenChange, onSu
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [repoPath, baseRef, headRef]);
+  }, [open, repoPath, baseRef, headRef]);
+
+  const handleOpenChange = (next: boolean) => {
+    if (!next) {
+      session.current++;
+      submitPending.current = false;
+      browsePending.current = false;
+      setValidating(false);
+      setBrowsing(false);
+    }
+    onOpenChange(next);
+  };
 
   const handleBrowse = useCallback(async () => {
-    const dir = await window.electronAPI.pickRepoDir();
-    if (dir) {
-      setRepoPath(dir);
-      setError(null);
+    if (!open || browsePending.current || submitPending.current) return;
+    const current = session.current;
+    browsePending.current = true;
+    setBrowsing(true);
+    setError(null);
+    try {
+      const dir = await window.electronAPI.pickRepoDir();
+      if (current === session.current && dir) setRepoPath(dir);
+    } catch {
+      if (current === session.current)
+        setError({
+          title: 'Could not open the folder picker.',
+          hint: 'Try Browse again, or enter the repository path directly.',
+        });
+    } finally {
+      if (current === session.current) {
+        browsePending.current = false;
+        setBrowsing(false);
+      }
     }
-  }, []);
+  }, [open]);
 
   const handleSubmit = useCallback(
     async (e: React.SyntheticEvent) => {
       e.preventDefault();
+      if (!open || submitPending.current || browsePending.current) return;
       const rp = repoPath.trim();
       const br = baseRef.trim();
       const hr = headRef.trim();
@@ -171,10 +203,13 @@ export function LocalRepoDialog({ supportsTools = true, open, onOpenChange, onSu
         return;
       }
 
+      const current = session.current;
+      submitPending.current = true;
       setValidating(true);
       setError(null);
       try {
         const result = await window.electronAPI.validateLocalRepo(rp, br, hr);
+        if (current !== session.current) return;
         if (!result.ok) {
           setError(explainValidationFailure(result, rp));
           return;
@@ -187,26 +222,36 @@ export function LocalRepoDialog({ supportsTools = true, open, onOpenChange, onSu
         }
         onSubmit(buildUrl(rp, br, hr), { localTools: supportsTools && localTools });
         onOpenChange(false);
+      } catch (cause) {
+        if (current === session.current)
+          setError({
+            title: 'Could not validate this repository.',
+            hint: 'Your inputs are kept. Check the repository path and refs, then try Begin review again.',
+            detail: cause instanceof Error ? cause.message : undefined,
+          });
       } finally {
-        setValidating(false);
+        if (current === session.current) {
+          submitPending.current = false;
+          setValidating(false);
+        }
       }
     },
-    [repoPath, baseRef, headRef, localTools, supportsTools, onSubmit, onOpenChange],
+    [open, repoPath, baseRef, headRef, localTools, supportsTools, onSubmit, onOpenChange]
   );
 
   const inputClass =
-    'w-full bg-transparent border-0 border-b border-border px-0 py-2 text-base placeholder:text-muted-foreground/60 focus:outline-none focus:border-[var(--ring)] transition-colors';
+    'min-w-0 w-full bg-transparent border-0 border-b border-border px-0 py-2 text-base placeholder:text-muted-foreground/60 focus:outline-none focus:border-[var(--ring)] transition-colors';
 
-  const refOptions = [...refs.branches, ...refs.tags];
+  const refOptions = [...new Set([...refs.branches, ...refs.tags])];
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Review a local git diff</DialogTitle>
           <DialogDescription>
-            Point Gnosis at a local git repository and two commit refs. Any ref works —
-            a SHA, branch, tag, or <code>HEAD~n</code>.
+            Point Gnosis at a local git repository and two commit refs. Any ref works — a SHA, branch, tag, or{' '}
+            <code>HEAD~n</code>.
           </DialogDescription>
         </DialogHeader>
 
@@ -221,7 +266,11 @@ export function LocalRepoDialog({ supportsTools = true, open, onOpenChange, onSu
                 type="text"
                 placeholder="/absolute/path/to/repo"
                 value={repoPath}
-                onChange={(e) => setRepoPath(e.target.value)}
+                onChange={(e) => {
+                  setRepoPath(e.target.value);
+                  setError(null);
+                }}
+                disabled={validating || browsing}
                 className={inputClass}
                 aria-describedby="local-repo-status"
                 required
@@ -229,11 +278,12 @@ export function LocalRepoDialog({ supportsTools = true, open, onOpenChange, onSu
               />
               <button
                 type="button"
-                onClick={handleBrowse}
-                className="slide-meta hover:text-foreground transition-colors flex items-center gap-1 pb-1"
+                onClick={() => void handleBrowse()}
+                disabled={validating || browsing}
+                className="slide-meta shrink-0 whitespace-nowrap hover:text-foreground transition-colors flex items-center gap-1 pb-1"
               >
                 <FolderOpen className="h-3.5 w-3.5" />
-                Browse
+                {browsing ? 'Choosing…' : 'Browse'}
               </button>
             </div>
           </div>
@@ -257,7 +307,11 @@ export function LocalRepoDialog({ supportsTools = true, open, onOpenChange, onSu
                 list="local-ref-suggestions"
                 placeholder="HEAD~1"
                 value={baseRef}
-                onChange={(e) => setBaseRef(e.target.value)}
+                onChange={(e) => {
+                  setBaseRef(e.target.value);
+                  setError(null);
+                }}
+                disabled={validating || browsing}
                 className={inputClass}
                 required
               />
@@ -272,7 +326,11 @@ export function LocalRepoDialog({ supportsTools = true, open, onOpenChange, onSu
                 list="local-ref-suggestions"
                 placeholder="HEAD"
                 value={headRef}
-                onChange={(e) => setHeadRef(e.target.value)}
+                onChange={(e) => {
+                  setHeadRef(e.target.value);
+                  setError(null);
+                }}
+                disabled={validating || browsing}
                 className={inputClass}
                 required
               />
@@ -283,11 +341,7 @@ export function LocalRepoDialog({ supportsTools = true, open, onOpenChange, onSu
               doesn't shift layout. Doubles as the error surface and diff
               preview. Errors take priority; otherwise show the file count
               so the user can catch a bad base before kicking off the review. */}
-          <div
-            id="local-repo-status"
-            className="min-h-[2.5rem] slide-meta"
-            aria-live="polite"
-          >
+          <div id="local-repo-status" className="min-h-[2.5rem] slide-meta" aria-live="polite">
             {error ? (
               <div className="text-destructive">
                 <p className="text-sm font-medium">{error.title}</p>
@@ -299,11 +353,7 @@ export function LocalRepoDialog({ supportsTools = true, open, onOpenChange, onSu
             ) : loadingRefs ? (
               <span className="text-muted-foreground">Reading branches…</span>
             ) : preview ? (
-              <DiffPreview
-                count={preview.changedFileCount}
-                mergeBase={preview.mergeBase}
-                loading={loadingPreview}
-              />
+              <DiffPreview count={preview.changedFileCount} mergeBase={preview.mergeBase} loading={loadingPreview} />
             ) : loadingPreview ? (
               <span className="text-muted-foreground">Checking diff…</span>
             ) : null}
@@ -312,15 +362,12 @@ export function LocalRepoDialog({ supportsTools = true, open, onOpenChange, onSu
           {/* Tool-mode opt-in. Off by default because running project-local
               scripts is a trust boundary — it executes code from whichever
               branch is checked out. */}
-          <label
-            htmlFor="local-tools"
-            className="flex items-start gap-3 cursor-pointer select-none group"
-          >
+          <label htmlFor="local-tools" className="flex items-start gap-3 cursor-pointer select-none group">
             <input
               id="local-tools"
               type="checkbox"
               checked={supportsTools && localTools}
-              disabled={!supportsTools}
+              disabled={!supportsTools || validating || browsing}
               onChange={(e) => setLocalTools(e.target.checked)}
               className="mt-1 h-4 w-4 rounded border-border bg-transparent accent-[var(--ring)] cursor-pointer"
             />
@@ -329,17 +376,21 @@ export function LocalRepoDialog({ supportsTools = true, open, onOpenChange, onSu
                 Run project tools during review (Claude only)
               </span>
               <span className="slide-meta leading-relaxed">
-                Lets Claude run tests, read the whole tree, and use the repo's own MCP
-                servers and skills. Only enable for repos you trust.
+                Lets Claude run tests, read the whole tree, and use the repo's own MCP servers and skills. Only enable
+                for repos you trust.
               </span>
             </div>
           </label>
 
           <DialogFooter>
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+            <Button type="button" variant="ghost" onClick={() => handleOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={validating} className="gap-2">
+            <Button
+              type="submit"
+              disabled={validating || browsing || !repoPath.trim() || !baseRef.trim() || !headRef.trim()}
+              className="gap-2"
+            >
               {validating ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -370,9 +421,7 @@ interface DiffPreviewProps {
 function DiffPreview({ count, mergeBase, loading }: DiffPreviewProps) {
   if (count === 0) {
     return (
-      <span className="text-muted-foreground">
-        No changed files in this range. Pick a different base or head.
-      </span>
+      <span className="text-muted-foreground">No changed files in this range. Pick a different base or head.</span>
     );
   }
   const huge = count >= LARGE_DIFF_THRESHOLD;
@@ -382,16 +431,16 @@ function DiffPreview({ count, mergeBase, loading }: DiffPreviewProps) {
         {count.toLocaleString()} file{count === 1 ? '' : 's'} will be reviewed
         {mergeBase && (
           <>
-            {' '}from merge-base <span className="font-mono">{mergeBase.slice(0, 7)}</span>
+            {' '}
+            from merge-base <span className="font-mono">{mergeBase.slice(0, 7)}</span>
           </>
         )}
         {loading && '…'}
       </p>
       {huge && (
         <p className="text-sm mt-0.5">
-          That's a lot — often means the base branch is stale. Try{' '}
-          <code>git fetch</code> and pick <code>origin/main</code>, or choose a more
-          recent base.
+          That's a lot — often means the base branch is stale. Try <code>git fetch</code> and pick{' '}
+          <code>origin/main</code>, or choose a more recent base.
         </p>
       )}
     </div>
@@ -402,7 +451,7 @@ function DiffPreview({ count, mergeBase, loading }: DiffPreviewProps) {
 // process classifies the failure; this is just the humanizer.
 function explainValidationFailure(
   result: Exclude<Awaited<ReturnType<typeof window.electronAPI.validateLocalRepo>>, { ok: true }>,
-  repoPath: string,
+  repoPath: string
 ): { title: string; hint: string; detail?: string } {
   switch (result.reason) {
     case 'not-a-repo':

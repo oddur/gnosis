@@ -3,7 +3,6 @@ import { refreshDiscussion } from '../../lib/review-discussion-cache';
 import { useChangesComments } from '../../components/useChangesComments';
 import { useExplanationComments } from '../../lib/use-explanation-comments';
 import { explanationSubject, rememberExplanation } from '../../lib/explanation-workspace';
-import type { ReviewSubject } from '../../lib/workbench';
 import { rememberCommandDestination } from '../../lib/command-recents';
 import { findReviewLine } from '../../components/ReviewDiff';
 import { useCommandCenter, useCommandScope } from '../../lib/command-center';
@@ -38,7 +37,6 @@ interface Props {
   review: ReviewGuide;
   embedded?: boolean;
   active?: boolean;
-  currentSubject?: ReviewSubject;
   initialPreferences?: Preferences;
   onOpenChanges?: () => void;
   onBack: () => void;
@@ -116,7 +114,6 @@ export function ReviewPage({
   onShowActivity,
   embedded = false,
   active = true,
-  currentSubject,
   initialPreferences,
   onOpenChanges,
 }: Props) {
@@ -128,16 +125,22 @@ export function ReviewPage({
   const { viewedFiles, setFileViewed } = useViewedFiles(review);
   const [currentSlide, setCurrentSlide] = useState(() => {
     if (initialSlideId) return initialReview.slides.find((s) => s.id === initialSlideId)?.slideNumber ?? 0;
-    const saved = Number(
-      localStorage.getItem(`gnosis-position:${subjectForReview(initialReview)}:${initialReview.reviewId}`) ?? 0
-    );
-    return Number.isInteger(saved) && saved >= 0 && saved <= initialReview.slides.length ? saved : 0;
+    try {
+      const saved = Number(
+        localStorage.getItem(`gnosis-position:${subjectForReview(initialReview)}:${initialReview.reviewId}`) ?? 0
+      );
+      return Number.isInteger(saved) && saved >= 0 && saved <= initialReview.slides.length ? saved : 0;
+    } catch {
+      return 0;
+    }
   });
   const [navOpen, setNavOpen] = useSessionDraft('topics-open', false);
   const [submitUrl, setSubmitUrl] = useState(
     initialReview.snapshot?.subject.members.find((m) => !m.merged && m.state === 'open')?.url ?? initialReview.prUrl
   );
-  const submitMember = (currentSubject ?? explanationSubject(review)).members.find((m) => m.url === submitUrl);
+  // Discovery may be ahead of this walkthrough. Submit only the revision actually displayed;
+  // GitHub submission validation rejects it if the PR has since changed.
+  const submitMember = explanationSubject(review).members.find((m) => m.url === submitUrl);
   const focusBeforeTool = useRef<HTMLElement | null>(null);
 
   const [showSubmitDialog, setShowSubmitDialog] = useState(false);
@@ -159,6 +162,9 @@ export function ReviewPage({
   const [diffLayout, setDiffLayout] = useState<Preferences['diffLayout']>(initialPreferences?.diffLayout ?? 'unified');
   const [slideViewMode, setSlideViewMode] = useSessionDraft<'split' | 'focus'>('slide-view', 'split');
   const [prefs, setPrefs] = useState<Preferences | null>(initialPreferences ?? null);
+  const preferenceWrites = useRef(Promise.resolve());
+  const pendingPreferences = useRef<Partial<Preferences>>({});
+  const [preferenceError, setPreferenceError] = useState('');
   const diffAppearance = useDiffAppearance(prefs?.diffAppearance);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -166,8 +172,9 @@ export function ReviewPage({
   const generatingExplainers = useRef(new Set<string>());
 
   function openExplainer() {
-    const slide = review.slides[currentSlide - 1];
-    if (!review.reviewId) return;
+    if (currentSlide < 1) return;
+    const slide = review.slides.at(currentSlide - 1);
+    if (!review.reviewId || !slide) return;
     if (slide.explainer) {
       setChatOpen(false);
       setExploreOpen(true);
@@ -352,7 +359,11 @@ export function ReviewPage({
               : 'Comments submitted',
       };
       setSubmissions(next);
-      localStorage.setItem(submissionKey, JSON.stringify(next));
+      try {
+        localStorage.setItem(submissionKey, JSON.stringify(next));
+      } catch {
+        // GitHub already accepted this review. A local marker cannot turn it into a failed submission.
+      }
     },
   });
   useEffect(() => {
@@ -387,16 +398,42 @@ export function ReviewPage({
     setDiffLayout(initialPreferences.diffLayout);
   }, [initialPreferences]);
   useEffect(() => {
-    void window.electronAPI.loadPreferences().then((p) => {
-      setPrefs(p);
-      setChatProvider(p.provider);
-      setChatModel(p.model);
-      setDiffLayout(p.diffLayout);
-    });
+    if (initialPreferences) return;
+    let cancelled = false;
+    void window.electronAPI
+      .loadPreferences()
+      .then((p) => {
+        if (cancelled) return;
+        setPrefs(p);
+        setChatProvider(p.provider);
+        setChatModel(p.model);
+        setDiffLayout(p.diffLayout);
+      })
+      .catch(() => {
+        if (!cancelled)
+          toast.add({
+            title: 'Could not load review settings',
+            description: 'Open Settings to check your saved preferences.',
+          });
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
-    void window.electronAPI.getAuthState().then((state) => setCurrentLogin(state.login));
+    let cancelled = false;
+    void window.electronAPI
+      .getAuthState()
+      .then((state) => {
+        if (!cancelled) setCurrentLogin(state.login);
+      })
+      .catch(() => {
+        if (!cancelled) setCurrentLogin(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const isLocal = isLocalUrl(review.prUrl);
@@ -427,9 +464,14 @@ export function ReviewPage({
             status: 'unknown',
             reason: 'This saved review predates revision tracking. Regenerate it to check all dependencies.',
           } as FreshnessResult)
-    ).then((result) => {
-      if (!cancelled) setFreshness(result);
-    });
+    )
+      .then((result) => {
+        if (!cancelled) setFreshness(result);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled)
+          setFreshness({ status: 'unknown', reason: error instanceof Error ? error.message : String(error) });
+      });
     return () => {
       cancelled = true;
     };
@@ -458,32 +500,45 @@ export function ReviewPage({
     [addComment, removeComment, editComment]
   );
 
+  const savePreferencePatch = useCallback((patch: Partial<Preferences>) => {
+    pendingPreferences.current = { ...pendingPreferences.current, ...patch };
+    setPrefs((current) => (current ? { ...current, ...patch } : current));
+    preferenceWrites.current = preferenceWrites.current
+      .then(async () => {
+        const saving = { ...pendingPreferences.current };
+        if (!Object.keys(saving).length) return;
+        const current = await window.electronAPI.loadPreferences();
+        await window.electronAPI.savePreferences({ ...current, ...saving });
+        const remaining = { ...pendingPreferences.current };
+        for (const key of Object.keys(saving) as (keyof Preferences)[])
+          if (remaining[key] === saving[key]) Reflect.deleteProperty(remaining, key);
+        pendingPreferences.current = remaining;
+        setPreferenceError('');
+      })
+      .catch(() => setPreferenceError('Could not save your diff settings. Your choices still apply in this view.'));
+  }, []);
+
   const handleDiffLayoutChange = useCallback(
     (layout: Preferences['diffLayout']) => {
       setDiffLayout(layout);
-      if (prefs) {
-        const updated = { ...prefs, diffLayout: layout };
-        setPrefs(updated);
-        void window.electronAPI.savePreferences(updated);
-      }
+      savePreferencePatch({ diffLayout: layout });
     },
-    [prefs]
+    [savePreferencePatch]
   );
 
-  const handleDiffAppearanceChange = useCallback((value: DiffAppearance) => {
-    setPrefs((current) => (current ? { ...current, diffAppearance: value } : current));
-    // Read current settings so appearance changes cannot revert unrelated preferences.
-    void window.electronAPI
-      .loadPreferences()
-      .then((current) => window.electronAPI.savePreferences({ ...current, diffAppearance: value }));
-  }, []);
+  const handleDiffAppearanceChange = useCallback(
+    (value: DiffAppearance) => {
+      savePreferencePatch({ diffAppearance: value });
+    },
+    [savePreferencePatch]
+  );
 
-  const handleShowInlineExplanationsChange = useCallback((show: boolean) => {
-    setPrefs((current) => (current ? { ...current, showInlineExplanations: show } : current));
-    void window.electronAPI
-      .loadPreferences()
-      .then((current) => window.electronAPI.savePreferences({ ...current, showInlineExplanations: show }));
-  }, []);
+  const handleShowInlineExplanationsChange = useCallback(
+    (show: boolean) => {
+      savePreferencePatch({ showInlineExplanations: show });
+    },
+    [savePreferencePatch]
+  );
 
   // Build the keyboard shortcut map. The hook handles input
   // suppression, modifier signatures, and two-key sequences.
@@ -782,6 +837,12 @@ export function ReviewPage({
 
       {!embedded && freshness && <StaleBanner freshness={freshness} onReReview={() => onReReview(review.prUrl)} />}
 
+      {preferenceError && (
+        <div className="changes-notice" role="alert">
+          {preferenceError} <button onClick={() => savePreferencePatch({})}>Retry saving diff settings</button>
+        </div>
+      )}
+
       <div className="review-toolbar">
         {!embedded && (
           <>
@@ -914,6 +975,7 @@ export function ReviewPage({
                     messages={slideChat.getMessages(currentSlide)}
                     isStreaming={slideChat.isStreaming}
                     onSend={(text) => void slideChat.send(currentSlide, text)}
+                    onRetry={(id) => void slideChat.retry(currentSlide, id)}
                     quotedCode={chatQuotedCode}
                     onQuotedCodeConsumed={() => setChatQuotedCode(null)}
                   />

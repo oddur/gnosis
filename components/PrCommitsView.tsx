@@ -63,6 +63,7 @@ export function PrCommitsView({
   const [opening, setOpening] = useState<CommitSelection>();
   const failedSelection = useRef<CommitSelection | undefined>(undefined);
   const navigation = useRef(0);
+  const intendedSelection = useRef(selection);
   const hoverCancel = useRef<() => void>(() => {});
   const epoch = useRef(0);
   const persist = () => {
@@ -89,6 +90,7 @@ export function PrCommitsView({
   const first = chosen.at(0),
     last = chosen.at(-1);
   function openSelection(next: CommitSelection) {
+    intendedSelection.current = next;
     const id = ++navigation.current;
     setComparisonError('');
     failedSelection.current = undefined;
@@ -158,21 +160,33 @@ export function PrCommitsView({
       const next: PrCommits[] = [];
       for (const member of subject.members) next.push(await inspectionData.readCommits(member, refresh));
       if (epoch.current !== current) return;
+      // A refresh may finish after the user chooses a different commit. Reconcile that
+      // latest choice, and prevent an older comparison request from replacing it later.
+      const desired = intendedSelection.current;
+      navigation.current++;
+      setOpening(undefined);
+      setComparisonError('');
+      failedSelection.current = undefined;
       setLists(next);
       setNewer(false);
-      const previous = selection && next.find((list) => list.url === selection.url);
+      const previous = desired && next.find((list) => list.url === desired.url);
       if (
-        selection &&
+        desired &&
         previous &&
-        previous.commits.some((c) => c.sha === selection.firstSha) &&
-        previous.commits.some((c) => c.sha === selection.lastSha)
+        previous.commits.some((c) => c.sha === desired.firstSha) &&
+        previous.commits.some((c) => c.sha === desired.lastSha)
       ) {
-        setSelection({ ...selection, prBaseSha: previous.metadata.baseSha, prHeadSha: previous.metadata.headSha });
+        const refreshed = { ...desired, prBaseSha: previous.metadata.baseSha, prHeadSha: previous.metadata.headSha };
+        intendedSelection.current = refreshed;
+        setSelection(refreshed);
       } else {
         const group = ownedCommits(subject, next).find((g) => g.commits.length);
         const latest = group?.commits.at(-1);
         if (group?.list && latest) choose(group.list, latest);
-        else setSelection(undefined);
+        else {
+          intendedSelection.current = undefined;
+          setSelection(undefined);
+        }
       }
     } catch (e) {
       if (epoch.current === current) setListError(e instanceof Error ? e.message : String(e));

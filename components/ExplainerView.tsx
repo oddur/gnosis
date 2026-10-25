@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowUpRight, Pause, Play, RotateCcw, SkipForward } from 'lu
 import { Button } from './ui/button';
 import { buildExplainerDocument } from '../lib/explainer-document';
 import type { InteractiveExplainer, Slide } from '../lib/types';
+import { useSessionDraft } from '../lib/session-drafts';
 
 interface Props {
   reviewId: string;
@@ -19,7 +20,7 @@ export function ExplainerView({ reviewId, slide, onClose, onSaved, onShowActivit
   const [runtimeError, setRuntimeError] = useState('');
   const [ready, setReady] = useState(false);
   const [playing, setPlaying] = useState(false);
-  const [refinement, setRefinement] = useState('');
+  const [refinement, setRefinement] = useSessionDraft(`explainer-refinement:${reviewId}:${slide.id}`, '');
   const [source, setSource] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const [detailsOpen, setDetailsOpen] = useState(false);

@@ -75,11 +75,16 @@ export function createPrChangesService() {
       }
       const metadata = await getPrMetadata(client, owner, repo, pullNumber, true);
       const key = snapshotKey(url, changesRevision(metadata));
-      const existing = cache?.get(key, isSnapshot)?.value;
+      const existing = snapshots.get(client)?.get(key) ?? cache?.get(key, isSnapshot)?.value;
       if (existing) {
-        remember(client, existing);
-        if (cache.version() === version) cache.set(latestKey, existing);
-        return existing;
+        // File content is immutable at these SHAs; PR state and branch names are not.
+        const refreshed = { ...existing, metadata, fetchedAt: Date.now() };
+        remember(client, refreshed);
+        if (cache?.version() === version) {
+          cache?.set(key, refreshed);
+          cache?.set(latestKey, refreshed);
+        }
+        return refreshed;
       }
       const files = await getChangedFiles(client, owner, repo, pullNumber, true);
       if (metadata.changedFileCount !== undefined && files.length !== metadata.changedFileCount)

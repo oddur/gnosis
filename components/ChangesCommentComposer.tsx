@@ -52,6 +52,7 @@ export function ChangesCommentComposer({
         autoFocus
         placeholder="Write a comment… Markdown supported."
         onKeyDown={(e) => {
+          if (e.nativeEvent.isComposing) return;
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
             e.preventDefault();
             void save(false);

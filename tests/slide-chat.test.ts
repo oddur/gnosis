@@ -47,6 +47,7 @@ for (const provider of ['codex', 'claude'] as const) {
     Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { value: true, configurable: true });
     let onProgress: ((chunk: string) => void) | undefined;
     let finish: ((answer: string) => void) | undefined;
+    let fail: ((error: Error) => void) | undefined;
     const requests: SendSlideChatRequest[] = [];
     const electronAPI = {
       onChatProgress: (callback: (chunk: string) => void) => {
@@ -59,8 +60,9 @@ for (const provider of ['codex', 'claude'] as const) {
       offChatToolUse: () => {},
       sendSlideChat: (request: SendSlideChatRequest) => {
         requests.push(request);
-        return new Promise<string>((resolve) => {
+        return new Promise<string>((resolve, reject) => {
           finish = resolve;
+          fail = reject;
         });
       },
     } satisfies Partial<Window['electronAPI']>;
@@ -178,5 +180,38 @@ for (const provider of ['codex', 'claude'] as const) {
       await pending;
     });
     assert.equal(getChat().getMessages(1)[3].content, 'Test positive and negative operands.');
+    await update(() => {
+      pending = getChat().send(1, 'What if the network fails?');
+    });
+    await update(() => {
+      onProgress?.('This answer is incomplete');
+    });
+    await act(async () => {
+      assert.ok(fail);
+      fail(new Error('Connection interrupted'));
+      await pending;
+    });
+    const failed = getChat().getMessages(1).at(-1);
+    assert.equal(failed?.content, 'This answer is incomplete', 'Keep partial output available');
+    assert.equal(failed.error, 'Connection interrupted', 'A partial answer must visibly remain failed');
+    assert.equal(getChat().isStreaming, false);
+    assert.ok(failed);
+    await update(() => {
+      pending = getChat().retry(1, failed.id);
+    });
+    assert.equal(requests[3].question, 'What if the network fails?');
+    assert.equal(requests[3].history.length, 4, 'Retry excludes the failed pair from conversation history');
+    assert.equal(getChat().getMessages(1).length, 6, 'Retry reuses the original question');
+    await act(async () => {
+      assert.ok(finish);
+      finish('The operation is retryable.');
+      await pending;
+    });
+    assert.equal(getChat().getMessages(1).at(-1)?.error, undefined);
+    await act(async () => {
+      await getChat().send(0, 'Invalid topic');
+    });
+    assert.equal(getChat().isStreaming, false, 'An invalid topic cannot lock all chat sessions');
+    assert.equal(requests.length, 4);
   });
 }

@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import type { PendingReviewComment } from './types';
+import { isLocalUrl } from './local-url';
 export interface ChangesReviewDraft extends PendingReviewComment {
   headSha: string;
   baseSha: string;
@@ -9,9 +10,10 @@ const values = new Map<string, ChangesReviewDraft[]>();
 const listeners = new Set<() => void>();
 const empty: ChangesReviewDraft[] = [];
 let version = 0;
-const keyFor = (account: string, url: string) => `gnosis-changes-drafts:${account}:${url}`;
+// Local notes belong to the working copy, independently of GitHub sign-in.
+const keyFor = (account: string, url: string) => `gnosis-changes-drafts:${isLocalUrl(url) ? 'local' : account}:${url}`;
 export function readReviewDrafts(account: string, url: string): ChangesReviewDraft[] {
-  if (!account || !url) return empty;
+  if (!url || (!account && !isLocalUrl(url))) return empty;
   const key = keyFor(account, url);
   if (!values.has(key)) {
     try {
@@ -47,7 +49,7 @@ export function updateReviewDrafts(
   url: string,
   fn: (current: ChangesReviewDraft[]) => ChangesReviewDraft[]
 ) {
-  if (!account || !url) throw new Error('Connect GitHub to save review comments.');
+  if (!url || (!account && !isLocalUrl(url))) throw new Error('Connect GitHub to save review comments.');
   const key = keyFor(account, url),
     next = fn(readReviewDrafts(account, url));
   localStorage.setItem(key, JSON.stringify(next));

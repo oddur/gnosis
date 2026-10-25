@@ -1,6 +1,6 @@
 import { useSessionDraft } from '../lib/session-drafts';
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, MessageSquare } from 'lucide-react';
+import { Send, Loader2, MessageSquare, X } from 'lucide-react';
 import { Markdown } from '@/components/Markdown';
 import type { ChatMessage } from '@/lib/use-slide-chat';
 
@@ -18,6 +18,7 @@ interface Props {
   messages: ChatMessage[];
   isStreaming: boolean;
   onSend: (text: string) => void;
+  onRetry?: (assistantId: string) => void;
   // When the user selects code in the diff and clicks "Ask about
   // this", the selected code is passed here as a fenced code block.
   // The chat sheet renders it as a quoted block above the input and
@@ -28,7 +29,15 @@ interface Props {
 }
 
 // Suggested questions remain compact, readable actions.
-function SuggestedQuestions({ reviewFocus, onSelect }: { reviewFocus: string | null; onSelect: (q: string) => void }) {
+function SuggestedQuestions({
+  reviewFocus,
+  onSelect,
+  disabled,
+}: {
+  reviewFocus: string | null;
+  onSelect: (q: string) => void;
+  disabled: boolean;
+}) {
   const suggestions = buildSuggestions(reviewFocus);
   if (suggestions.length === 0) return null;
 
@@ -38,7 +47,11 @@ function SuggestedQuestions({ reviewFocus, onSelect }: { reviewFocus: string | n
       <ul className="flex flex-col gap-3 w-full">
         {suggestions.map((q, i) => (
           <li key={i}>
-            <button onClick={() => onSelect(q)} className="chat-suggestion transition-colors">
+            <button
+              disabled={disabled}
+              onClick={() => onSelect(q)}
+              className="chat-suggestion transition-colors disabled:opacity-50"
+            >
               {q}
             </button>
           </li>
@@ -71,7 +84,7 @@ function buildSuggestions(reviewFocus: string | null): string[] {
 }
 
 // Role labels distinguish participants; both messages use the shared reading style.
-function Message({ message }: { message: ChatMessage }) {
+function Message({ message, onRetry, busy }: { message: ChatMessage; onRetry?: () => void; busy: boolean }) {
   if (message.role === 'user') {
     return (
       <div className="flex flex-col gap-1.5">
@@ -101,6 +114,21 @@ function Message({ message }: { message: ChatMessage }) {
       {message.isStreaming && message.content && (
         <span className="inline-block w-px h-4 bg-foreground/40 align-text-bottom" />
       )}
+      {message.error && (
+        <div role="alert" className="text-sm [overflow-wrap:anywhere]">
+          <p className="text-destructive">Answer interrupted. {message.error}</p>
+          {onRetry && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onRetry}
+              className="mt-2 underline underline-offset-4 disabled:opacity-50"
+            >
+              Retry answer
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -115,23 +143,30 @@ export function SlideChatSheet({
   messages,
   isStreaming,
   onSend,
+  onRetry,
   quotedCode,
   onQuotedCodeConsumed,
 }: Props) {
   const [input, setInput] = useSessionDraft(`chat-input:${slideId ?? slideTitle}`, '');
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messageViewport = useRef<HTMLDivElement>(null);
+  const followAnswer = useRef(true);
+  const previousSlide = useRef(slideId);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dragging = useRef<{ id: number; target: HTMLButtonElement; cursor: string; select: string } | null>(null);
   const didDrag = useRef(false);
 
   const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const viewport = messageViewport.current;
+    if (viewport && followAnswer.current) viewport.scrollTop = viewport.scrollHeight;
   }, []);
 
   useEffect(() => {
+    if (previousSlide.current !== slideId) followAnswer.current = true;
+    previousSlide.current = slideId;
     scrollToBottom();
-  }, [messages, scrollToBottom]);
+  }, [messages, slideId, scrollToBottom]);
 
   useEffect(() => {
     if (open) {
@@ -213,6 +248,7 @@ export function SlideChatSheet({
     // code block so the AI knows exactly which code the user is asking
     // about. Clear the quote after sending so it doesn't persist.
     const message = quotedCode ? `Regarding this code:\n\`\`\`\n${quotedCode}\n\`\`\`\n\n${trimmed}` : trimmed;
+    followAnswer.current = true;
     setInput('');
     onQuotedCodeConsumed?.();
     onSend(message);
@@ -260,6 +296,7 @@ export function SlideChatSheet({
 
       {/* Panel content */}
       <div
+        inert={!open}
         className="overflow-hidden transition-[width] duration-300 ease-out"
         style={{ width: embedded ? '100%' : open ? width : 0, maxWidth: 'calc(100vw - 1rem)' }}
       >
@@ -274,13 +311,32 @@ export function SlideChatSheet({
           </div>
 
           {/* Message list */}
-          <div className="flex-1 overflow-y-auto min-h-0 px-6 py-6 flex flex-col gap-7">
+          <div
+            ref={messageViewport}
+            onScroll={(event) => {
+              const element = event.currentTarget;
+              followAnswer.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+            }}
+            className="flex-1 overflow-y-auto min-h-0 px-6 py-6 flex flex-col gap-7"
+          >
             {messages.length === 0 ? (
-              <SuggestedQuestions reviewFocus={reviewFocus} onSelect={(q) => onSend(q)} />
+              <SuggestedQuestions reviewFocus={reviewFocus} onSelect={(q) => onSend(q)} disabled={isStreaming} />
             ) : (
               <>
                 {messages.map((msg) => (
-                  <Message key={msg.id} message={msg} />
+                  <Message
+                    key={msg.id}
+                    message={msg}
+                    busy={isStreaming}
+                    onRetry={
+                      onRetry && msg === messages.at(-1)
+                        ? () => {
+                            followAnswer.current = true;
+                            onRetry(msg.id);
+                          }
+                        : undefined
+                    }
+                  />
                 ))}
                 <div ref={messagesEndRef} />
               </>
@@ -303,7 +359,7 @@ export function SlideChatSheet({
                   className="shrink-0 text-muted-foreground hover:text-foreground transition-colors mt-1"
                   aria-label="Remove quoted code"
                 >
-                  ×
+                  <X size={14} aria-hidden="true" />
                 </button>
               </div>
             )}

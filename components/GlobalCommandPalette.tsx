@@ -62,11 +62,15 @@ export function GlobalCommandPalette({
   const [pending, setPending] = useState(false),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
+  const [searchAttempt, setSearchAttempt] = useState(0);
+  const [localSearchFailed, setLocalSearchFailed] = useState(false);
   const [includeBots, setIncludeBots] = useState(false),
     [expanded, setExpanded] = useState(new Set<string>());
   const [remote, setRemote] = useState<PrSearchResult[] | null>(null),
     [remotePending, setRemotePending] = useState(false);
   const selectionTouched = useRef(false);
+  const actionPending = useRef(false);
+  const remoteInFlight = useRef(false);
   const sequence = useRef(0),
     remoteSequence = useRef(0),
     account = useRef('local'),
@@ -86,14 +90,21 @@ export function GlobalCommandPalette({
       setExpanded(new Set());
       setIncludeBots(false);
     }
+    return () => {
+      remoteSequence.current++;
+    };
   }, [open]);
+  useEffect(() => {
+    remoteSequence.current++;
+    remoteInFlight.current = false;
+    setRemote(null);
+    setRemotePending(false);
+  }, [open, term, commandOnly]);
   useEffect(() => {
     if (!open) return;
     const id = ++sequence.current;
-    remoteSequence.current++;
-    setRemote(null);
-    setRemotePending(false);
     setError('');
+    setLocalSearchFailed(false);
     if (commandOnly) {
       setPending(false);
       return;
@@ -120,6 +131,7 @@ export function GlobalCommandPalette({
               setError(e instanceof Error ? e.message : String(e));
               setPending(false);
               setResult(null);
+              setLocalSearchFailed(true);
             }
           });
       },
@@ -129,7 +141,7 @@ export function GlobalCommandPalette({
       clearTimeout(timer);
       sequence.current++;
     };
-  }, [open, term, commandOnly, includeBots]);
+  }, [open, term, commandOnly, includeBots, searchAttempt]);
   const filteredCommands = useMemo(
     () =>
       commands
@@ -165,13 +177,15 @@ export function GlobalCommandPalette({
   useEffect(() => {
     const ids = [
       ...visible.map((h) => h.document.id),
+      ...groups.filter(([, hits]) => hits.length > 1).map(([id]) => `expand:${id}`),
       ...filteredCommands.map((c) => c.id),
       ...(remoteRows ?? []).map((r) => `remote:${r.url}`),
     ];
-    if ((!selectionTouched.current || !ids.includes(value)) && !value.startsWith('expand:')) setValue(ids[0] ?? '');
+    if (!selectionTouched.current || !ids.includes(value)) setValue(ids[0] ?? '');
   }, [visible.map((h) => h.document.id).join('|'), filteredCommands, remote, value]);
   async function run(action: () => void | Promise<void>, doc?: SearchDocument) {
-    if (busy) return;
+    if (actionPending.current) return;
+    actionPending.current = true;
     setBusy(true);
     setError('');
     try {
@@ -181,10 +195,13 @@ export function GlobalCommandPalette({
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
+      actionPending.current = false;
       setBusy(false);
     }
   }
   async function searchGitHub() {
+    if (remoteInFlight.current) return;
+    remoteInFlight.current = true;
     const id = ++remoteSequence.current;
     setRemotePending(true);
     setError('');
@@ -194,7 +211,10 @@ export function GlobalCommandPalette({
     } catch (e) {
       if (id === remoteSequence.current) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      if (id === remoteSequence.current) setRemotePending(false);
+      if (id === remoteSequence.current) {
+        remoteInFlight.current = false;
+        setRemotePending(false);
+      }
     }
   }
   const isPrUrl = /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+(?:[/?#].*)?$/.test(term);
@@ -345,6 +365,7 @@ export function GlobalCommandPalette({
                       {hits.length > 1 && (
                         <CommandItem
                           value={`expand:${groupId}`}
+                          disabled={busy}
                           onSelect={() =>
                             setExpanded((prev) => {
                               const next = new Set(prev);
@@ -402,27 +423,29 @@ export function GlobalCommandPalette({
               )}
               {remote && (
                 <CommandGroup heading="From GitHub">
-                  {remote
-                    .filter(
-                      (r) => includeBots || !result?.ignoreBots || !r.author.toLowerCase().startsWith('dependabot')
-                    )
-                    .map((row) => (
-                      <CommandItem
-                        key={row.url}
-                        value={`remote:${row.url}`}
-                        disabled={busy}
-                        onSelect={() => void run(() => navigate({ kind: 'home', url: row.url }))}
-                      >
-                        <GitPullRequest size={16} />
-                        <span className="global-command-result-copy">
-                          <strong>{row.title}</strong>
-                          <span>
-                            {row.repoOwner}/{row.repoName} #{row.number} · {row.author}
-                          </span>
+                  {remoteRows?.map((row) => (
+                    <CommandItem
+                      key={row.url}
+                      value={`remote:${row.url}`}
+                      disabled={busy}
+                      onSelect={() => void run(() => navigate({ kind: 'home', url: row.url }))}
+                    >
+                      <GitPullRequest size={16} />
+                      <span className="global-command-result-copy">
+                        <strong>{row.title}</strong>
+                        <span>
+                          {row.repoOwner}/{row.repoName} #{row.number} · {row.author}
                         </span>
-                      </CommandItem>
-                    ))}
-                  {remote.length === 0 && <p className="global-command-empty">No matching PRs on GitHub.</p>}
+                      </span>
+                    </CommandItem>
+                  ))}
+                  {!remoteRows?.length && (
+                    <p className="global-command-empty">
+                      {remote.length
+                        ? 'Matching Dependabot PRs are hidden. Select “Include Dependabot” to show them.'
+                        : 'No matching PRs on GitHub.'}
+                    </p>
+                  )}
                 </CommandGroup>
               )}
             </CommandList>
@@ -498,7 +521,7 @@ export function GlobalCommandPalette({
                   <p>
                     {selectedRemote.repoOwner}/{selectedRemote.repoName} #{selectedRemote.number}
                   </p>
-                  <Button size="sm" onClick={openSelected}>
+                  <Button size="sm" disabled={busy} onClick={openSelected}>
                     Open PR overview
                   </Button>
                 </>
@@ -515,7 +538,16 @@ export function GlobalCommandPalette({
           </div>
           {error && (
             <div className="global-command-error" role="alert">
-              {error}
+              <span>{error}</span>
+              {localSearchFailed && (
+                <button
+                  type="button"
+                  className="ml-3 underline underline-offset-2"
+                  onClick={() => setSearchAttempt((n) => n + 1)}
+                >
+                  Retry local search
+                </button>
+              )}
             </div>
           )}
           {!!result?.warnings.length && (

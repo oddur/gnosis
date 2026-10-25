@@ -7,6 +7,9 @@ import path from 'node:path';
 import process from 'node:process';
 import electron from 'electron';
 import { setTimeout, clearTimeout } from 'node:timers';
+const shellHardening = process.argv.includes('--shell-hardening');
+const setupHardening = process.argv.includes('--setup-hardening');
+const inspectionHardening = process.argv.includes('--inspection-hardening');
 const cacheReset = process.argv.includes('--cache-reset');
 const preload = process.argv.includes('--preload');
 const sync = process.argv.includes('--sync');
@@ -39,7 +42,7 @@ try {
   const outfile = path.join(dir, 'test.cjs');
   await build({
     entryPoints: [
-      cacheReset ? 'tests/github-cache-reset-browser.ts' : preload ? 'tests/pr-preload-browser.ts' : sync ? 'tests/github-sync-browser.ts' : inactivity ? 'tests/pr-inactivity-browser.ts' : mutes ? 'tests/muted-prs-browser.ts' : stars ? 'tests/starred-prs-browser.ts' : readiness ? 'tests/merge-readiness-browser.ts' : diffContext ? 'tests/diff-context-browser.ts' : explanation ? 'tests/explanation-tab-browser.ts' : diffSpeed ? 'tests/diff-navigation-browser.ts' : commits ? 'tests/pr-commits-browser.ts' : changes ? 'tests/pr-changes-browser.ts' : queueMetadata ? 'tests/queue-metadata-browser.ts' : authors ? 'tests/github-author-browser.ts' : commandCenter ? 'tests/command-center-browser.ts' : performance ? 'tests/queue-performance-browser.ts' : polish
+      shellHardening ? 'tests/shell-hardening-browser.ts' : setupHardening ? 'tests/setup-hardening-browser.ts' : inspectionHardening ? 'tests/inspection-hardening-browser.ts' : cacheReset ? 'tests/github-cache-reset-browser.ts' : preload ? 'tests/pr-preload-browser.ts' : sync ? 'tests/github-sync-browser.ts' : inactivity ? 'tests/pr-inactivity-browser.ts' : mutes ? 'tests/muted-prs-browser.ts' : stars ? 'tests/starred-prs-browser.ts' : readiness ? 'tests/merge-readiness-browser.ts' : diffContext ? 'tests/diff-context-browser.ts' : explanation ? 'tests/explanation-tab-browser.ts' : diffSpeed ? 'tests/diff-navigation-browser.ts' : commits ? 'tests/pr-commits-browser.ts' : changes ? 'tests/pr-changes-browser.ts' : queueMetadata ? 'tests/queue-metadata-browser.ts' : authors ? 'tests/github-author-browser.ts' : commandCenter ? 'tests/command-center-browser.ts' : performance ? 'tests/queue-performance-browser.ts' : polish
         ? 'tests/polish-browser.ts'
         : hardening
           ? 'tests/hardening-browser.ts'

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useSessionDraft } from '../lib/session-drafts';
 import { X } from 'lucide-react';
 import { PROVIDERS } from '../lib/models';
 import { Markdown } from './Markdown';
@@ -19,7 +19,7 @@ export function PrFileChat({
 }) {
   const key = `${request.comparison ? 'commit:' : ''}${fileRevisionKey(request.url, request.path, request.baseSha, request.headSha)}`;
   const chat = useFileChat(key);
-  const [question, setQuestion] = useState('');
+  const [question, setQuestion] = useSessionDraft(`file-question:${key}`, '');
   return (
     <aside className="changes-chat" aria-label="Ask about this file">
       <header>

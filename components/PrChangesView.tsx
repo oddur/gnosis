@@ -24,6 +24,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { ChangesFileTree } from './ChangesFileTree';
+import { ChangesFileResize } from './ChangesFileResize';
 import { DiffAppearanceMenu } from './DiffAppearanceMenu';
 import { useChangesComments } from './useChangesComments';
 import { ReviewImageDiff } from './ReviewImageDiff';
@@ -72,6 +73,9 @@ function loadPosition(id: string): Position {
 }
 const viewKey = (e: Entry) =>
   `${e.snapshot.comparison ? 'commit:' : ''}${fileRevisionKey(e.snapshot.url, e.file.path, e.snapshot.metadata.baseSha, e.snapshot.metadata.headSha)}`;
+// Electron preserves the loader's error message across IPC, but not custom Error types.
+const isUnsupportedPreview = (message: string) =>
+  /This file is too large to preview|This binary file has no text preview|This file is not UTF-8 text/.test(message);
 
 export interface CommitWorkspace {
   snapshot?: PrChanges;
@@ -107,6 +111,7 @@ export function PrChangesView({
   const [openingFile, setOpeningFile] = useState('');
   const [navigationError, setNavigationError] = useState<{ key: string; message: string }>();
   const fileNavigation = useRef(0);
+  const unsupportedFiles = useRef(new Map<string, string>());
   const hoverCancel = useRef<() => void>(() => {});
   const [loading, setLoading] = useState(false),
     [error, setError] = useState(''),
@@ -117,7 +122,8 @@ export function PrChangesView({
     [treeOpen, setTreeOpen] = useState(true);
   const [treeWidth, setTreeWidth] = useState(() => {
     try {
-      return Math.max(180, Math.min(500, Number(localStorage.getItem('gnosis-changes-tree-width')) || 270));
+      const saved = Number(localStorage.getItem('gnosis-changes-tree-width'));
+      return Number.isFinite(saved) && saved > 0 ? Math.max(180, Math.min(500, saved)) : 270;
     } catch {
       return 270;
     }
@@ -277,7 +283,7 @@ export function PrChangesView({
   // Keep selection/scroll independent of tabs, queue navigation, and background discovery.
   function warmFile(key: string) {
     const target = entries.find((e) => e.key === key);
-    if (!target) return () => {};
+    if (!target || unsupportedFiles.current.has(viewKey(target))) return () => {};
     if (
       contextLines > 3 &&
       target.file.status === 'modified' &&
@@ -316,7 +322,7 @@ export function PrChangesView({
     if (!target) return;
     const id = ++fileNavigation.current;
     setNavigationError(undefined);
-    if (fileIsReady(target.snapshot, target.file)) {
+    if (fileIsReady(target.snapshot, target.file) || unsupportedFiles.current.has(viewKey(target))) {
       setOpeningFile('');
       applySelection(key);
       return;
@@ -327,8 +333,12 @@ export function PrChangesView({
         if (alive.current && fileNavigation.current === id) applySelection(key);
       })
       .catch((error: unknown) => {
-        if (alive.current && fileNavigation.current === id)
-          setNavigationError({ key, message: error instanceof Error ? error.message : String(error) });
+        if (!alive.current || fileNavigation.current !== id) return;
+        const message = error instanceof Error ? error.message : String(error);
+        if (isUnsupportedPreview(message)) {
+          unsupportedFiles.current.set(viewKey(target), message);
+          applySelection(key);
+        } else setNavigationError({ key, message });
       })
       .finally(() => {
         if (alive.current && fileNavigation.current === id) setOpeningFile('');
@@ -355,6 +365,11 @@ export function PrChangesView({
       (preview && (contextLines <= 3 || entry.file.status === 'added' || entry.file.status === 'deleted'))
     )
       return;
+    const unsupported = unsupportedFiles.current.get(activeKey);
+    if (unsupported) {
+      setFileError(unsupported);
+      return;
+    }
     void fileCache
       .read({
         url: entry.snapshot.url,
@@ -367,7 +382,11 @@ export function PrChangesView({
         if (!cancelled) setLoadedFile({ key: activeKey, data: value });
       })
       .catch((e: unknown) => {
-        if (!cancelled) setFileError(e instanceof Error ? e.message : String(e));
+        if (!cancelled) {
+          const message = e instanceof Error ? e.message : String(e);
+          if (isUnsupportedPreview(message)) unsupportedFiles.current.set(activeKey, message);
+          setFileError(message);
+        }
       });
     return () => {
       cancelled = true;
@@ -644,44 +663,12 @@ export function PrChangesView({
           </aside>
         )}
         {treeOpen && (
-          <div
-            className="changes-resize"
-            role="separator"
-            aria-label="Resize file browser"
-            aria-orientation="vertical"
-            aria-valuemin={180}
-            aria-valuemax={500}
-            aria-valuenow={treeWidth}
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-                e.preventDefault();
-                const width = Math.max(180, Math.min(500, treeWidth + (e.key === 'ArrowRight' ? 20 : -20)));
-                setTreeWidth(width);
-                try {
-                  localStorage.setItem('gnosis-changes-tree-width', String(width));
-                } catch {
-                  /* Optional. */
-                }
-              }
-            }}
-            onPointerDown={(e) => {
-              e.preventDefault();
-              e.currentTarget.setPointerCapture(e.pointerId);
-            }}
-            onPointerMove={(e) => {
-              if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-                const width = Math.max(
-                  180,
-                  Math.min(500, e.clientX - (e.currentTarget.parentElement?.getBoundingClientRect().left ?? 0))
-                );
-                setTreeWidth(width);
-              }
-            }}
-            onPointerUp={(e) => {
-              e.currentTarget.releasePointerCapture(e.pointerId);
+          <ChangesFileResize
+            width={treeWidth}
+            onChange={setTreeWidth}
+            onCommit={(width) => {
               try {
-                localStorage.setItem('gnosis-changes-tree-width', String(treeWidth));
+                localStorage.setItem('gnosis-changes-tree-width', String(width));
               } catch {
                 /* Optional. */
               }
@@ -786,18 +773,19 @@ export function PrChangesView({
             {fileError && (
               <div className="changes-empty" role="alert">
                 <p>{fileError}</p>
-                {preview ? (
-                  <p>
-                    Could not load more surrounding lines.{' '}
-                    <button className="underline" onClick={() => setFileAttempt((n) => n + 1)}>
+                {!isUnsupportedPreview(fileError) &&
+                  (preview ? (
+                    <p>
+                      Could not load more surrounding lines.{' '}
+                      <button className="underline" onClick={() => setFileAttempt((n) => n + 1)}>
+                        Retry
+                      </button>
+                    </p>
+                  ) : (
+                    <Button variant="outline" size="sm" onClick={() => setFileAttempt((n) => n + 1)}>
                       Retry
-                    </button>
-                  </p>
-                ) : (
-                  <Button variant="outline" size="sm" onClick={() => setFileAttempt((n) => n + 1)}>
-                    Retry
-                  </Button>
-                )}
+                    </Button>
+                  ))}
                 <Button
                   variant="ghost"
                   size="sm"

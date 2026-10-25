@@ -197,7 +197,7 @@ void app.whenReady().then(async () => {
       target.value = 'https://github.com/klang/engine/pull/122';
       target.dispatchEvent(new Event('change', {bubbles:true}));
     })()`);
-    await click('Submit to GitHub');
+    await click('Review PR #122');
     await wait("!!document.querySelector('.submission-destination')");
     assert.equal(
       await js("document.querySelector('.submission-destination a').textContent.trim()"),
