@@ -2,15 +2,17 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { D2 } from '@d2lang/d2';
-import { generateSlide } from '../lib/agent';
+import { generateSlide, planReview } from '../lib/agent';
 import { DEFAULT_CODEX_MODEL } from '../lib/models';
-import { prepareD2Source } from '../lib/d2-source';
+import { compileD2Source } from '../lib/d2-compile';
+import { buildTopicContext } from '../lib/context-builder';
 import { diagramFrameCaption } from '../lib/diagram-spec';
 
 // Explicit opt-in: this calls the installed Codex provider, using synthetic code only.
 const cases = [
   {
     name: 'architecture',
+    questions: ['When can a late response replace the snapshot?', 'What remains visible while refresh runs?'],
     code: `class Snapshots {
   private heads = new Map<string, string>();
   private snapshots = new Map<string, Snapshot>();
@@ -27,6 +29,11 @@ const cases = [
   },
   {
     name: 'sequence',
+    questions: [
+      'Why can a stale editor not overwrite a newer version?',
+      'Are the check and write atomic?',
+      'What happens when zero rows match?',
+    ],
     code: `async function updateDocument(id, expectedVersion, body) {
   // Replaces unconditional update. The comparison and update are one DB statement.
   const result = await db.execute(
@@ -39,6 +46,11 @@ const cases = [
   },
   {
     name: 'algorithm',
+    questions: [
+      'What runs first for weights [8,5,3] at capacity 12?',
+      'Why can 3 not skip ahead of 5?',
+      'How does an overweight item avoid blocking the queue forever?',
+    ],
     code: `function takeBatch(pending, maxWeight) {
   // Previously limited only by item count. Now preserves order and bounds total weight.
   const batch = []; let weight = 0;
@@ -52,12 +64,20 @@ const cases = [
 // Example: weights [8,5,3], maxWeight=12. First batch [8], remaining [5,3].
 // It must not skip 5 to pack 3. Also explain [15,2] with maxWeight=12.`,
   },
+  {
+    name: 'simple',
+    questions: ['What user-visible wording changed?'],
+    omitDiagram: true,
+    code: `// The only change is the label on the existing close button. Behavior is unchanged.
+// Before: <Button onClick={onClose}>Dismiss</Button>
+// After:  <Button onClick={onClose}>Close</Button>`,
+  },
 ];
 
 async function main() {
   if (!process.argv.includes('--live')) {
     console.log(
-      'Use npm run eval:diagrams -- --live to generate three synthetic examples with the installed Codex provider. Output stays in a temporary directory.'
+      'Use npm run eval:diagrams -- --live to evaluate synthetic examples through the planner and writer with the installed Codex provider. Output stays in a temporary directory.'
     );
     return;
   }
@@ -70,15 +90,37 @@ async function main() {
     for (const item of cases.filter((item) => !selected || item.name === selected)) {
       const start = Date.now();
       try {
+        const plan = await planReview(
+          `[hunk-0] Synthetic change:\n${item.code}`,
+          `Synthetic explanation evaluation: ${item.name}. Keep this small change in one topic using hunk-0. Do not use tools or inspect the environment.`,
+          'codex',
+          DEFAULT_CODEX_MODEL,
+          undefined,
+          false,
+          AbortSignal.timeout(180000)
+        );
+        await fs.writeFile(path.join(directory, `${item.name}-plan.json`), JSON.stringify(plan, null, 2));
+        const topic = plan.topics[0];
+        const context = buildTopicContext(topic, new Map(), {}, {}, {}, item.name, '', plan.storyArc, plan.topics);
         const slide = await generateSlide({
           providerName: 'codex',
           model: DEFAULT_CODEX_MODEL,
           signal: AbortSignal.timeout(180000),
-          topicContext: `Synthetic diagram evaluation: ${item.name}. Include a D2 diagram to explain the non-obvious behavior in this code. Prefer a useful guided walkthrough when there are meaningful phases. Do not use tools or inspect the environment.\n\n${item.code}`,
+          topicContext: `${context}\n\nExplain this synthetic change. Choose prose, inline explanation and an optional diagram according to what makes it easiest to understand. Do not use tools or inspect the environment.\n<synthetic_source>\n${item.code}\n</synthetic_source>`,
         });
         await fs.writeFile(path.join(directory, `${item.name}.json`), JSON.stringify(slide, null, 2));
-        if (!slide.d2Diagram) throw new Error('No usable D2 diagram returned');
-        const compiled = await d2.compile(prepareD2Source(slide.d2Diagram.source, false), { layout: 'tala' });
+        if (item.omitDiagram && slide.d2Diagram) throw new Error('A wording-only change should not require a diagram');
+        if (!slide.d2Diagram) {
+          results.push({
+            case: item.name,
+            diagram: 'omitted',
+            questions: item.questions,
+            seconds: Math.round((Date.now() - start) / 1000),
+          });
+          console.log(results[results.length - 1]);
+          continue;
+        }
+        const compiled = await compileD2Source(d2, slide.d2Diagram.source, false);
         const boards = [
           { id: 'overview', board: compiled.diagram },
           ...(compiled.diagram.steps ?? []).flatMap((board) => (board ? [{ id: `steps.${board.name}`, board }] : [])),
@@ -102,6 +144,9 @@ async function main() {
           case: item.name,
           rendered: true,
           frames: boards.length,
+          views: slide.d2Diagram.steps?.length || 1,
+          questions: item.questions,
+          quality: 'Requires human assessment of accuracy, abstraction, redundancy and effort saved.',
           seconds: Math.round((Date.now() - start) / 1000),
         });
       } catch (error) {

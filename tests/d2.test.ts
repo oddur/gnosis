@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { D2 } from '@d2lang/d2';
-import { normalizeD2Diagram, diagramFrameCaption } from '../lib/diagram-spec';
+import { normalizeD2Diagram, diagramFrameCaption, normalizeDiagramBrief } from '../lib/diagram-spec';
 import { D2_RECIPES } from '../lib/d2-recipes';
 import generated from './fixtures/d2-generated.json';
 import { prepareD2Source } from '../lib/d2-source';
@@ -111,6 +111,14 @@ void test('diagram resources stay local', () => {
 
 void test('planner, whole-review and topic writer share the diagram contract and retain usable output', async (t) => {
   const diagram = { source: 'a -> b', caption: 'A hands work to B.', steps: [] };
+  const teachingGoal = {
+    question: 'Why must C wait when both slots are occupied?',
+    takeaway: 'A completion releases capacity before C can run.',
+    assumedKnowledge: ['A queue holds pending work.'],
+    essentialConcepts: ['pending', 'in flight', 'capacity'],
+    omit: ['HTTP transport', 'logging'],
+    visualApproach: 'Show a concrete full queue and the release condition.',
+  };
   const responses = [
     {
       summary: 'Bound work.',
@@ -125,7 +133,7 @@ void test('planner, whole-review and topic writer share the diagram contract and
           dependsOn: [],
           order: 1,
           narrativeBrief: 'Explain the bound.',
-          diagramBrief: 'Show the state when both slots are occupied.',
+          diagramBrief: teachingGoal,
         },
       ],
     },
@@ -156,7 +164,49 @@ void test('planner, whole-review and topic writer share the diagram contract and
     plan.storyArc,
     plan.topics
   );
-  assert.match(context, /<diagram_brief>Show the state/);
+  assert.deepEqual(plan.topics[0].diagramBrief, teachingGoal);
+  assert.ok(context.includes(JSON.stringify(teachingGoal)));
+  const sibling = {
+    ...plan.topics[0],
+    title: 'Retries',
+    diagramBrief: {
+      ...teachingGoal,
+      question: 'When is a retry safe?',
+      takeaway: 'A repeated job must not repeat its effect.',
+    },
+  };
+  const shared = buildTopicContext(plan.topics[0], new Map(), {}, {}, {}, 'Bound work', '', plan.storyArc, [
+    plan.topics[0],
+    sibling,
+  ]);
+  assert.match(shared, /<diagram_coverage_plan>Planned coverage/);
+  assert.ok(shared.includes('When is a retry safe?'));
+  assert.equal(shared.split('When is a retry safe?').length, 2);
+  assert.ok(!shared.includes('[object Object]'));
+  const legacy = buildTopicContext(
+    { ...plan.topics[0], diagramBrief: 'Show the state when both slots are occupied.' },
+    new Map(),
+    {},
+    {},
+    {},
+    'Bound work',
+    '',
+    plan.storyArc,
+    []
+  );
+  assert.match(legacy, /<diagram_brief>Show the state/);
+  const noDiagram = buildTopicContext(
+    { ...plan.topics[0], diagramBrief: null },
+    new Map(),
+    {},
+    {},
+    {},
+    'Bound work',
+    '',
+    plan.storyArc,
+    []
+  );
+  assert.match(noDiagram, /No diagram planned/);
   const whole = await generateReviewGuide({
     providerName: 'codex',
     model: DEFAULT_CODEX_MODEL,
@@ -268,6 +318,11 @@ void test('guided steps survive saved JSON and reuse one layout while identifyin
     assert.deepEqual(views[1].evidence, { filePath: 'api.ts', startLine: 12 });
     assert.equal(views[1].change, 'Send the input.');
     assert.equal(views[2].differences.length, 0, 'focus does not falsely imply state changed');
+    assert.deepEqual(
+      diagramViews({ ...spec, steps: spec.steps?.slice(1) }, [frame]).map((view) => view.title),
+      ['Request', 'Write'],
+      'an explicit walkthrough starts at the first useful explanation, without an inserted overview'
+    );
     const malformed = normalizeD2Diagram({
       source: spec.source,
       steps: [
@@ -280,4 +335,29 @@ void test('guided steps survive saved JSON and reuse one layout while identifyin
   } finally {
     await d2.dispose();
   }
+});
+
+void test('optional diagram teaching goals reject malformed fields and retain legacy plans', () => {
+  assert.equal(normalizeDiagramBrief(' Explain capacity. '), 'Explain capacity.');
+  for (const value of [null, [], false, { question: 'Why?' }, { question: {}, takeaway: 'A' }]) {
+    assert.equal(normalizeDiagramBrief(value), null);
+  }
+  assert.deepEqual(
+    normalizeDiagramBrief({
+      question: ' Why? ',
+      takeaway: ' Because. ',
+      assumedKnowledge: [null, 'queues', 'queues'],
+      essentialConcepts: {},
+      omit: ['logs', 1],
+      visualApproach: false,
+    }),
+    {
+      question: 'Why?',
+      takeaway: 'Because.',
+      assumedKnowledge: ['queues'],
+      essentialConcepts: [],
+      omit: ['logs'],
+      visualApproach: '',
+    }
+  );
 });

@@ -1,6 +1,16 @@
 /** Executable syntax recipes used in prompts and checked against the bundled compiler. */
 export const D2_RECIPES = [
   {
+    name: 'Decision: one concrete state explains the constraint without a call trace',
+    source: `direction: right
+edit: "Illustrative edit\\nExpected version: 7"
+write: "One atomic UPDATE\\nMatch id and expected version\\nStored version: 8\\nMismatch: no write"
+result: "0 affected rows: conflict\\nReload before deciding what to submit"
+edit -> write: body + expected version
+write -> result: affected row count
+`,
+  },
+  {
     name: 'Architecture: show ownership and the important data path',
     source: `direction: right
 client: Caller { icon: gnosis:user }

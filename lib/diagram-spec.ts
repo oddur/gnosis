@@ -1,4 +1,4 @@
-import type { D2DiagramSpec } from './types';
+import type { D2DiagramSpec, DiagramBrief } from './types';
 
 const text = (value: unknown, limit: number) => (typeof value === 'string' ? value.trim().slice(0, limit) : '');
 
@@ -53,4 +53,24 @@ export function diagramFrameCaption(diagram: D2DiagramSpec, board: string, index
   return diagram.steps?.some((step) => step.board)
     ? diagram.steps.find((step) => step.board === board)
     : diagram.steps?.[index];
+}
+
+/** Planner guidance is optional; malformed guidance must not discard the review. */
+export function normalizeDiagramBrief(value: unknown): DiagramBrief | string | null {
+  if (typeof value === 'string') return text(value, 2400) || null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const input = value as Record<string, unknown>;
+  const question = text(input.question, 500);
+  const takeaway = text(input.takeaway, 600);
+  if (!question || !takeaway) return null;
+  const list = (value: unknown) =>
+    Array.isArray(value) ? [...new Set(value.map((item) => text(item, 240)).filter(Boolean))].slice(0, 12) : [];
+  return {
+    question,
+    takeaway,
+    assumedKnowledge: list(input.assumedKnowledge),
+    essentialConcepts: list(input.essentialConcepts),
+    omit: list(input.omit),
+    visualApproach: text(input.visualApproach, 500),
+  };
 }

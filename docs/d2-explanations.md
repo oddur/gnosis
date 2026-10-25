@@ -23,7 +23,20 @@ Auto-play starts only through “Auto-play steps” and advances every 6.5 secon
 
 ## Generation and saved metadata
 
-The planner suggests a reviewer question and visual approach in `diagramBrief`. Each writer checks that suggestion against the actual source. Whole-review and topic writers share [the instructions](../lib/d2-guidance.ts) and [compiler-checked recipes](../lib/d2-recipes.ts).
+The planner defines the teaching goal before choosing a visual form. Its optional `diagramBrief` contains:
+
+- `question`: the specific question the diagram answers.
+- `takeaway`: what the reviewer can explain or predict afterward.
+- `assumedKnowledge`: concepts that need no further explanation.
+- `essentialConcepts`: responsibilities, decisions, state, and boundaries needed for the answer.
+- `omit`: incidental details left in code or another topic.
+- `visualApproach`: the simplest useful form and its benefit over prose.
+
+Writers check this proposal against the source and can revise or reject it. They also receive other topics' planned questions, takeaways, and concepts. This shared plan helps prevent repetition across parallel writers. It does not contain the other writers' completed explanations. Older text briefs remain supported. Malformed briefs become null without discarding the review.
+
+A useful diagram reduces the reader's reasoning effort. Each step explains one meaningful decision or discovery, rather than one function call. The first view supplies a takeaway without extra clicks. Prose states the rationale, the diagram exposes a difficult relationship, and code supplies evidence. A static example can replace a walkthrough. The writer omits a diagram when its terminology and navigation require more effort than they save.
+
+ Whole-review and topic writers share [the instructions](../lib/d2-guidance.ts) and [compiler-checked recipes](../lib/d2-recipes.ts).
 
 The instructions ask the writer to:
 
@@ -45,7 +58,7 @@ A saved `d2Diagram` contains D2 `source`, an optional `kind`, a `caption`, and o
 | `focus` | Exact D2 node or connection identifiers |
 | `evidence` | Optional `{filePath, startLine}` anchor in the supplied diff |
 
-For a stable walkthrough, metadata steps reuse `board: "overview"`. An initial Overview entry has `focus: []`. Later entries select exact identifiers such as `api`, `service.handler`, `(client -> api)[0]`, or `service.(handler -> jobs)[0]`. Connection indices start at zero for each source/target pair. Unknown focus identifiers do not hide the diagram.
+For a stable walkthrough, metadata steps reuse `board: "overview"`. An optional Overview entry has `focus: []`. Explicit diagram kinds can start at the first useful focused step without an inserted overview. Entries select exact identifiers such as `api`, `service.handler`, `(client -> api)[0]`, or `service.(handler -> jobs)[0]`. Connection indices start at zero for each source/target pair. Unknown focus identifiers do not hide the diagram.
 
 Native D2 boards represent actual drawing changes: new labels or values, added or removed dependencies, or different algorithm states. Native `steps` inherit the previous board. Native `scenarios` inherit the overview and represent alternative outcomes or inputs. Named captions prevent reordered boards from receiving another board's explanation. Older positional captions remain readable.
 
@@ -84,17 +97,21 @@ npm run diagrams -- --generated
 
 The gallery lives in test fixtures, outside the shipped application entry point.
 
-Run the real explanation writer on synthetic code:
+Run the real planner and writer on synthetic code:
 
 ```sh
 npm run eval:diagrams -- --live
 npm run eval:diagrams -- --live --case=sequence
 ```
 
-This command calls the installed Codex provider with the app's default Codex model. It writes responses, rendered SVGs, and results to a temporary directory. It does not fetch GitHub code. The evaluator checks compilation, caption coverage, and exact focus identifiers against compiled entities.
+This command calls the installed Codex provider with the app's default Codex model. It writes plans, responses, rendered SVGs, and results to a temporary directory. It does not fetch GitHub code. The evaluator checks compilation, caption coverage, and exact focus identifiers against compiled entities. It also checks that a wording-only change omits a diagram. Other cases allow omission when prose explains the mechanism better.
+
+Each case records comprehension questions for human assessment. Check whether the output explains the mechanism, preserves its important constraint, and supports the expected prediction. Also check the abstraction level, repeated content, and effort required to read it. Compilation alone does not establish those qualities.
 
 The guided-diagram finish pass generated and compiled a fresh synthetic sequence through the live writer. Its focus identifiers matched compiled entities. The accepted response remains in [the generated fixtures](../tests/fixtures/d2-generated.json). The finish pass reported 288 passing tests, the diagram browser suite, TypeScript, and targeted ESLint checks.
 
 The independent finish reviewer returned SHIP. Captures in `.impeccable/review/d2-integration/` show the real explanation pane, expanded guidance, light and dark themes, and narrow layouts. These checks establish behavior on the tested fixtures. They do not establish explanation accuracy across arbitrary pull requests or exhaustive accessibility coverage.
 
 When evaluating generated output, inspect the causal claim, step order, focus, inherited state, failure paths, readability, and usefulness against the supplied code. Keep accepted outputs as compiler and browser fixtures. Valid SVG alone does not establish a useful explanation.
+
+The teaching-goal evaluation produced plans with explicit questions, assumptions, and omissions. Its first version-check diagram still repeated a full exchange for two clients. This result led to stronger decision/state guidance and a compact, compiler-checked recipe. Follow-up live samples timed out, so output quality after that refinement remains unverified. Deterministic tests check the contract and rendering behavior, not comprehension across arbitrary changes.

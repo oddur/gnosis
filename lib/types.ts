@@ -173,6 +173,16 @@ export interface AIReviewGuide {
   webSources?: WebSource[];
 }
 
+/** A proposed teaching goal, verified by the writer against the actual source. */
+export interface DiagramBrief {
+  question: string;
+  takeaway: string;
+  assumedKnowledge: string[];
+  essentialConcepts: string[];
+  omit: string[];
+  visualApproach: string;
+}
+
 // Planner output for two-phase review generation
 export interface TopicPlan {
   title: string;
@@ -182,7 +192,7 @@ export interface TopicPlan {
   dependsOn: string[];
   order: number;
   narrativeBrief: string; // 1-2 sentence direction for the writer
-  diagramBrief?: string | null; // Concept and visual approach, verified by the writer against source.
+  diagramBrief?: DiagramBrief | string | null; // Strings preserve plans saved by earlier versions.
 }
 
 export interface PlannerOutput {

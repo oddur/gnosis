@@ -1,5 +1,5 @@
 import { D2_DIRECTIVE, D2_PLANNER_DIRECTIVE } from './d2-guidance';
-import { normalizeD2Diagram } from './diagram-spec';
+import { normalizeD2Diagram, normalizeDiagramBrief } from './diagram-spec';
 import { FILE_SUMMARY_DIRECTIVE } from './file-summaries';
 import { INLINE_EXPLANATION_DIRECTIVE } from './inline-explanations';
 import { getProvider } from './provider';
@@ -398,7 +398,14 @@ Respond with JSON matching this schema exactly:
       "dependsOn": [],
       "order": 1,
       "narrativeBrief": string,
-      "diagramBrief": string | null
+      "diagramBrief": {
+        "question": string,
+        "takeaway": string,
+        "assumedKnowledge": string[],
+        "essentialConcepts": string[],
+        "omit": string[],
+        "visualApproach": string
+      } | null
     }
   ]
 }`;
@@ -450,6 +457,7 @@ export async function planReview(
     throw new Error('Planner response missing required fields (summary, riskLevel, topics)');
   }
 
+  for (const topic of parsed.topics) topic.diagramBrief = normalizeDiagramBrief(topic.diagramBrief);
   return parsed;
 }
 

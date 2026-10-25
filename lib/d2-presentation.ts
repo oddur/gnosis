@@ -29,7 +29,7 @@ export function diagramViews(spec: D2DiagramSpec, frames: D2Frame[]): DiagramVie
         return frame ? [{ frame, caption: step, index: i }] : [];
       })
     : frames.map((frame, i) => ({ frame, caption: diagramFrameCaption(spec, frame.id, i), index: i }));
-  if (guided && frames[0] && entries[0]?.caption?.focus?.length) {
+  if (guided && !spec.kind && frames[0] && entries[0]?.caption?.focus?.length) {
     entries.unshift({ frame: frames[0], caption: { title: 'Overview', description: spec.caption ?? '' }, index: -1 });
   }
   // Bad optional references must not hide an otherwise usable saved diagram.
