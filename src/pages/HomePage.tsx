@@ -79,6 +79,7 @@ const labels = {
 };
 
 export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, commandDestination }: Props) {
+  const [overviewTab,setOverviewTab] = useState<'summary'|'changes'>('summary');
   const commandCenter = useCommandCenter();
   const handledCommand = useRef<number>(0);
   const [auth, setAuth] = useState<{ authenticated: boolean; login: string | null } | null>(null);
@@ -849,6 +850,9 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
         <PrSummary
         key={summaryItem.subject.id}
         item={summaryItem}
+        tab={overviewTab}
+        onTabChange={setOverviewTab}
+        preferences={prefs}
         positions={readingPositions.current}
         shortcutsEnabled={!settings && !localOpen && !authOpen && !connectionRequired}
           navigation={{
@@ -864,6 +868,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
         statuses={statuses}
         statusErrors={statusErrors}
         onBack={() => {
+          setOverviewTab('summary');
           setOpenedItem(null);
           requestAnimationFrame(() => rowButtons.current.get(selected ?? '')?.focus({ preventScroll: true }));
         }}

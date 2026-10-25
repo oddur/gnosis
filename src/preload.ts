@@ -1,3 +1,4 @@
+import type { PrChanges, PrFileRequest, PrFileContents, FileChatRequest } from '../lib/pr-changes';
 import type { GitHubProfile } from '../lib/github-profile';
 import type { QueueSignalRequest, QueueSignals } from '../lib/queue-signals';
 import type { LocalSearchResponse } from './command-search-service';
@@ -28,6 +29,10 @@ import type {
 } from '../lib/types';
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  getPrChanges: (url: string, refresh = false): Promise<PrChanges> => ipcRenderer.invoke('pr-changes', url, refresh),
+  getPrChangeFile: (request: PrFileRequest): Promise<PrFileContents> => ipcRenderer.invoke('pr-change-file', request),
+  checkPrChanges: (url: string): Promise<{ baseSha: string; headSha: string }> => ipcRenderer.invoke('pr-changes-revision', url),
+  askPrFile: (request: FileChatRequest): Promise<string> => ipcRenderer.invoke('ask-pr-file', request),
   getGitHubProfile: (login:string):Promise<GitHubProfile> => ipcRenderer.invoke('get-github-profile',login),
   getQueueSignals: (requests: QueueSignalRequest[]): Promise<QueueSignals[]> => ipcRenderer.invoke('get-queue-signals', requests),
   commandSearch: (query: string, includeBots = false, recentIds: string[] = []): Promise<LocalSearchResponse> => ipcRenderer.invoke('command-search', query, includeBots, recentIds),
