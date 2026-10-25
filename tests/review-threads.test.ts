@@ -284,3 +284,46 @@ void test('a failed discussion page never persists an incomplete thread snapshot
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+void test('editing and deleting enforce PR membership and comment permissions before mutation', async () => {
+  const writes: string[] = [];
+  const h = harness((query, vars) => {
+    if (query.startsWith('mutation')) {
+      writes.push(query);
+      assert.equal(vars.id, comment.id);
+      return query.includes('EditReviewComment')
+        ? response({
+            data: { updatePullRequestReviewComment: { pullRequestReviewComment: { ...comment, body: vars.body } } },
+          })
+        : response({ data: { deletePullRequestReviewComment: { clientMutationId: null } } });
+    }
+    return response(
+      pr(
+        page([
+          {
+            ...thread,
+            comments: page([
+              { ...comment, viewerCanUpdate: true, viewerCanDelete: true },
+              { ...comment, id: 'other', viewerCanUpdate: false, viewerCanDelete: false },
+            ]),
+          },
+        ])
+      )
+    );
+  });
+  const service = createReviewThreadService(),
+    client = h.pool.client('one');
+  const req = { prUrl: review.prUrl, threadId: thread.id, commentId: comment.id };
+  await assert.rejects(service.comment(client, { ...req, commentId: 'missing', action: 'delete' }), /does not belong/);
+  await assert.rejects(
+    service.comment(client, { ...req, commentId: 'other', action: 'edit', body: 'No' }),
+    /cannot edit/
+  );
+  await assert.rejects(service.comment(client, { ...req, commentId: 'other', action: 'delete' }), /cannot delete/);
+  assert.equal(writes.length, 0);
+  const edited = await service.comment(client, { ...req, action: 'edit', body: 'Updated' });
+  assert.equal(edited.comments[0].body, 'Updated');
+  const deleted = await service.comment(client, { ...req, action: 'delete' });
+  assert.equal(deleted.comments.length, 1);
+  assert.equal(deleted.comments[0].id, 'other');
+});

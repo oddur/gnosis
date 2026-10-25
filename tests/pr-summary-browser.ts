@@ -9,7 +9,7 @@ void app.whenReady().then(async () => {
     width: 1280,
     height: 800,
     show: true,
-    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
   });
   window.webContents.on('console-message', (_event, _level, message) => console.log('renderer:', message));
   const js = <T = unknown>(code: string) => window.webContents.executeJavaScript(code) as Promise<T>;
@@ -29,6 +29,10 @@ void app.whenReady().then(async () => {
   const shots = path.join(os.tmpdir(), 'gnosis-workbench-screenshots');
   fs.mkdirSync(shots, { recursive: true });
   const capture = async (name: string) => {
+    if (process.platform === 'darwin') app.show();
+    window.show();
+    window.focus();
+    await wait("document.visibilityState === 'visible'");
     await js('document.fonts.ready');
     await new Promise((resolve) => setTimeout(resolve, 150));
     fs.writeFileSync(path.join(shots, `${name}.png`), (await window.webContents.capturePage()).toPNG());
@@ -90,10 +94,22 @@ void app.whenReady().then(async () => {
       true,
       'Author Markdown stays beneath the app heading hierarchy'
     );
-    assert.equal(await js("Math.abs(document.querySelector('.pr-markdown').getBoundingClientRect().width-document.querySelector('.pr-description').getBoundingClientRect().width)<1"), true, 'Author description fills the main column');
+    assert.equal(
+      await js(
+        "Math.abs(document.querySelector('.pr-markdown').getBoundingClientRect().width-document.querySelector('.pr-description').getBoundingClientRect().width)<1"
+      ),
+      true,
+      'Author description fills the main column'
+    );
     assert.equal(await js("document.querySelectorAll('.pr-description table').length"), 1);
     assert.equal(await js("document.querySelectorAll('.pr-description input[type=checkbox]').length"), 2);
-    assert.equal(await js(`Array.from(document.querySelectorAll('.pr-description input[type=checkbox]')).every(box => box.disabled && box.getAttribute('aria-label')?.trim().length > 3)`), true, 'Read-only task boxes announce the task text');
+    assert.equal(
+      await js(
+        `Array.from(document.querySelectorAll('.pr-description input[type=checkbox]')).every(box => box.disabled && box.getAttribute('aria-label')?.trim().length > 3)`
+      ),
+      true,
+      'Read-only task boxes announce the task text'
+    );
     assert.match(await js<string>("document.querySelector('.pr-description pre').textContent"), /outbox.flush/);
     await wait('document.querySelector(\'img[alt="Reconnect flow"]\')?.naturalWidth === 600');
     await js("document.querySelector('.pr-description details:not(.mermaid-source)').open = true");
@@ -119,9 +135,12 @@ void app.whenReady().then(async () => {
     assert.equal(await js("!!document.querySelector('.pr-description pre .mermaid-diagram')"), false);
     assert.match(await js<string>("document.querySelector('.mermaid-preview').textContent"), /Outbox/);
     const lightDiagram = await js<string>("document.querySelector('.mermaid-preview > div > svg').outerHTML");
+    if (process.platform === 'darwin') app.show();
+    window.show();
+    window.focus();
     await js("document.querySelector('.mermaid-preview').click()");
     await wait("!!document.querySelector('[role=dialog] .mermaid-fullscreen svg')");
-    await js("document.querySelector('[data-slot=dialog-close]').click()");
+    await js("document.querySelector('[role=dialog] [data-slot=dialog-close]').click()");
     await wait("!document.querySelector('[role=dialog]')");
     await wait("document.activeElement === document.querySelector('.mermaid-preview')");
     await js("document.querySelector('.pr-summary-content').scrollTop = 0");
@@ -182,7 +201,7 @@ void app.whenReady().then(async () => {
     })()`);
     await wait("document.querySelectorAll('.pr-description .mermaid-diagram').length===1");
     await wait("!!document.querySelector('.pr-description .mermaid-preview > div > svg')");
-    await js("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+    await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     await js("document.querySelector('.pr-summary-content').scrollTop = 420");
     await js('document.querySelector(\'[aria-label="Next change"]\').click()');
     await wait("document.querySelector('.pr-overview-heading h1')?.textContent.includes('Reduce allocations')");

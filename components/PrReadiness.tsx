@@ -1,3 +1,4 @@
+import { DiffStats } from './DiffStats';
 import { ChevronDown, CircleCheck, CircleHelp, CircleAlert, Clock3, GitPullRequest } from 'lucide-react';
 import type { ReviewMember } from '../lib/workbench';
 import type { PrStatus } from '../lib/types';
@@ -108,9 +109,14 @@ export function PrReadiness({
           {mergeable === null ? 'Conflicts not checked' : mergeable ? 'No conflicts' : 'Merge conflicts'}
         </span>
         <span>
-          {member.changedFileCount === undefined
-            ? `${member.commitCount} commits`
-            : `${member.changedFileCount} files · +${member.additions ?? 0} / −${member.deletions ?? 0} lines`}
+          {member.changedFileCount === undefined ? (
+            `${member.commitCount} commits`
+          ) : (
+            <>
+              {member.changedFileCount} files ·{' '}
+              <DiffStats additions={member.additions ?? 0} deletions={member.deletions ?? 0} /> lines
+            </>
+          )}
         </span>
       </div>
       {error && (

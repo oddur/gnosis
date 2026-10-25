@@ -250,6 +250,7 @@ export type DiffSide = 'LEFT' | 'RIGHT';
 export type ReviewEvent = 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT';
 
 export interface PendingReviewComment {
+  startLine?: number;
   id: string;
   filePath: string;
   line: number;
@@ -267,7 +268,7 @@ export interface SubmitReviewRequest {
   headSha: string;
   event: ReviewEvent;
   body: string;
-  comments: { path: string; line: number; side: DiffSide; body: string }[];
+  comments: { path: string; line: number; startLine?: number; side: DiffSide; body: string }[];
 }
 
 export interface ReviewHistoryEntry {

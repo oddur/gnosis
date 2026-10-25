@@ -7,7 +7,7 @@ void app.whenReady().then(async () => {
     width: 1280,
     height: 800,
     show: true,
-    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
   });
   window.webContents.on('console-message', (_e, _l, m) => console.log('renderer:', m));
   const js = <T = unknown>(code: string) => window.webContents.executeJavaScript(code) as Promise<T>;
@@ -18,19 +18,25 @@ void app.whenReady().then(async () => {
     }
     throw Error(`Timed out: ${expression}`);
   };
-  const click = (label: string) =>
-    js(
+  const click = async (label: string) => {
+    await js(
       `(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(label)} || b.getAttribute('aria-label')===${JSON.stringify(label)});if(!b)throw Error('Missing button '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
     );
+    await new Promise((r) => setTimeout(r, 40));
+  };
   const shots = path.resolve('.impeccable/review/changes');
   fs.mkdirSync(shots, { recursive: true });
   const capture = async (name: string) => {
+    if (process.platform === 'darwin') app.show();
+    window.show();
+    window.focus();
+    await wait("document.visibilityState === 'visible'");
     await js('document.fonts.ready');
     await new Promise((r) => setTimeout(r, 250));
     fs.writeFileSync(path.join(shots, `${name}.png`), (await window.webContents.capturePage()).toPNG());
   };
   try {
-    await window.loadURL(process.env.GNOSIS_WORKBENCH_URL + '?pr-summary');
+    await window.loadURL(`${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary`);
     window.webContents.setZoomFactor(1);
     await wait("document.querySelectorAll('.queue-item').length===7");
     assert.deepEqual(
@@ -63,17 +69,24 @@ void app.whenReady().then(async () => {
     await js(
       `window.electronAPI.getReviewThreads=async()=>({headSha:'head-0',baseSha:'base-0',threads:[{id:'thread1',path:'src/worker.ts',line:36,startLine:null,diffSide:'RIGHT',isResolved:false,isOutdated:false,viewerCanResolve:true,viewerCanUnresolve:false,comments:[{id:'comment1',body:'Does this preserve the retry boundary?',createdAt:new Date().toISOString(),url:'https://github.com/o/r/pull/1#discussion_r1',author:{login:'maya',avatarUrl:''}}]}]});void 0;`
     );
-    const frame = () => js(`[...document.querySelectorAll('.pr-summary-toolbar-inner,.pr-overview-heading,.pr-overview-heading h1,.pr-overview-tabs')].map(e=>{const r=e.getBoundingClientRect();return [r.x,r.y,r.width,r.height]})`);
-    for (const width of [1400,1024,640,1280]) {
-      window.setSize(width,800);
+    const frame = () =>
+      js(
+        `[...document.querySelectorAll('.pr-summary-toolbar-inner,.pr-overview-heading,.pr-overview-heading h1,.pr-overview-tabs')].map(e=>{const r=e.getBoundingClientRect();return [r.x,r.y,r.width,r.height]})`
+      );
+    for (const width of [1400, 1024, 640, 1280]) {
+      window.setSize(width, 800);
       await click('Summary');
-      await new Promise(r=>setTimeout(r,100));
-      const summaryFrame=await frame();
+      await new Promise((r) => setTimeout(r, 100));
+      const summaryFrame = await frame();
       await capture(`frame-summary-${width}`);
       await js("document.querySelector('.pr-summary-content').scrollTop=160");
       await click('Changes');
       await wait("!!document.querySelector('.changes-file-tree')");
-      assert.deepEqual(await frame(),summaryFrame,'Title, navigation, actions, and tabs stay anchored when switching');
+      assert.deepEqual(
+        await frame(),
+        summaryFrame,
+        'Title, navigation, actions, and tabs stay anchored when switching'
+      );
       await capture(`frame-changes-${width}`);
     }
     await wait("!!document.querySelector('.changes-file-tree')");
@@ -93,12 +106,96 @@ void app.whenReady().then(async () => {
       'An unopened text file renders immediately from its patch'
     );
     await wait("document.querySelector('.changes-code')?.textContent.includes('retry boundary')");
-    assert.equal(await js("!!document.querySelector('.changes-code textarea')"), false, 'Threads are read-only');
+    assert.equal(await js("!!document.querySelector('.changes-code textarea')"), false, 'Reply editors open on demand');
+    await js(
+      `window.treeCount=path=>window.deepAll('[role=treeitem]').find(e=>e.getAttribute('data-item-path')===path)?.querySelector('[title*="GitHub"]')?.title;void 0;`
+    );
+    await wait("window.treeCount('src/worker.ts')?.includes('1 GitHub comment,')");
+    assert.match(await js<string>("window.treeCount('src/new.ts')"), /0 GitHub comments/);
+    // All writes below use local mocks; never publish fixture feedback to GitHub.
+    await js(`(async()=>{window.commentWrites=[];window.reviewWrites=[];window.failPost=false;window.discussion=await window.electronAPI.getReviewThreads();
+      window.discussion.threads[0].comments[0].viewerCanUpdate=true;window.discussion.threads[0].comments[0].viewerCanDelete=true;
+      window.electronAPI.getReviewThreads=async()=>structuredClone(window.discussion);
+      window.electronAPI.reviewThreadAction=async r=>{window.commentWrites.push(r);const t=window.discussion.threads.find(t=>t.id===r.threadId);if(r.action==='reply')t.comments.push({...t.comments[0],id:'reply',body:r.body});else{t.isResolved=r.action==='resolve';t.viewerCanResolve=!t.isResolved;t.viewerCanUnresolve=t.isResolved}return structuredClone(t)};
+      window.electronAPI.reviewCommentAction=async r=>{window.commentWrites.push(r);const t=window.discussion.threads.find(t=>t.id===r.threadId);t.comments=r.action==='edit'?t.comments.map(c=>c.id===r.commentId?{...c,body:r.body}:c):t.comments.filter(c=>c.id!==r.commentId);return structuredClone(t)};
+      window.electronAPI.createReviewComment=async r=>{window.commentWrites.push(r);if(window.failPost)throw Error('Posting failed. Try again.');window.discussion.threads.push({...window.discussion.threads[0],id:'posted-'+window.commentWrites.length,line:r.line,diffSide:r.side,comments:[{...window.discussion.threads[0].comments[0],id:'posted-comment',body:r.body}]})};
+      window.electronAPI.submitReview=async r=>{window.reviewWrites.push(r);return {reviewUrl:r.prUrl+'#review',droppedCommentCount:0}};
+      window.fill=(selector,value)=>{const el=document.querySelector(selector);Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(el,value);el.dispatchEvent(new Event('input',{bubbles:true}))};
+      window.commentLine=()=>window.deepAll('[data-column-number]').find(e=>e.getAttribute('data-column-number')==='36'&&e.getAttribute('data-line-type')==='change-addition').click();})()`);
+    await click('Refresh comments');
+    await wait("[...document.querySelectorAll('.github-thread button')].some(b=>b.textContent==='Edit')");
+    await click('Reply');
+    await js("window.fill('.github-thread textarea','The retry stays inside the boundary.')");
+    await click('Reply on GitHub');
+    await wait("document.querySelector('.github-thread')?.textContent.includes('The retry stays')");
+    await wait("window.treeCount('src/worker.ts')?.includes('2 GitHub comments')");
+    await click('Resolve thread');
+    await wait("document.querySelector('.github-thread-state')?.textContent.includes('Resolved')");
+    await js("document.querySelector('.github-thread summary').click()");
+    assert.match(await js<string>("window.treeCount('src/worker.ts')"), /2 GitHub comments/);
+    await click('Reopen thread');
+    await click('Edit');
+    await js("window.fill('.github-thread textarea','Updated review comment')");
+    await click('Save changes');
+    await wait("document.querySelector('.github-thread')?.textContent.includes('Updated review comment')");
+    await click('Delete');
+    await wait("document.querySelector('.github-thread')?.textContent.includes('Delete this comment from GitHub?')");
+    await click('Delete comment');
+    await wait("!document.querySelector('.github-thread')?.textContent.includes('Updated review comment')");
+    await wait("window.treeCount('src/worker.ts')?.includes('1 GitHub comment,')");
+    await js('window.commentLine()');
+    await wait("!!document.querySelector('.changes-comment-composer textarea')");
+    await js("window.fill('.changes-comment-composer textarea','Keep the cancellation boundary explicit.')");
+    for (const width of [1280, 1024, 640, 1616]) {
+      window.setSize(width, width === 1616 ? 1200 : 800);
+      if (width === 640) await js("document.querySelector('.changes-toolbar button').click()");
+      await js(
+        "document.querySelector('.changes-code-scroll').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));document.querySelector('.changes-comment-composer').scrollIntoView({block:'center'})"
+      );
+      await capture(`comments-composer-${width}`);
+      if (width === 640) await js("document.querySelector('.changes-toolbar button').click()");
+    }
+    window.setSize(1280, 800);
+    await click('Add to review');
+    await wait("!!document.querySelector('.changes-pending-comment')");
+    assert.equal(
+      await js('window.commentWrites.some(r=>r.body==="Keep the cancellation boundary explicit.")'),
+      false,
+      'Drafts stay private'
+    );
+    await click('Summary');
+    await click('Changes');
+    await wait("!!document.querySelector('.changes-pending-comment')");
+    await js('window.commentLine()');
+    await wait("!!document.querySelector('.changes-comment-composer textarea')");
+    await js("window.failPost=true;window.fill('.changes-comment-composer textarea','An immediate comment.')");
+    await click('Comment now');
+    await wait("document.querySelector('.changes-comment-composer')?.textContent.includes('Posting failed')");
+    assert.equal(
+      await js("document.querySelector('.changes-comment-composer textarea').value"),
+      'An immediate comment.'
+    );
+    await js('window.failPost=false');
+    await click('Comment now');
+    await wait("!document.querySelector('.changes-comment-composer')");
+    await wait("document.querySelector('.changes-code')?.textContent.includes('An immediate comment.')");
+    await wait("window.treeCount('src/worker.ts')?.includes('2 GitHub comments')");
+    await click('Review PR #150 (1)');
+    await wait("document.querySelector('[role=dialog]')?.textContent.includes('Keep the cancellation boundary')");
+    await capture('comments-submit');
+    await click('Post comments');
+    await wait("document.querySelector('[role=dialog]')?.textContent.includes('Feedback submitted')");
+    assert.equal(await js('window.reviewWrites[0].prUrl'), 'https://github.com/klang/engine/pull/150');
+    assert.equal(await js('window.reviewWrites[0].comments.length'), 1);
+    await click('Done');
+    await wait("!document.querySelector('.changes-pending-comment')");
     const lineCount = await js<number>("window.deepAll('[data-line]').length");
     await js("window.deepAll('[data-expand-button]')[0].click()");
     await wait(`window.deepAll('[data-line]').length>${lineCount}`);
     await capture('desktop');
-    await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='worker.ts').focus()");
+    await js(
+      "window.openFile('worker.ts');window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='worker.ts').focus()"
+    );
     window.focus();
     window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Up' });
     window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Up' });
@@ -162,7 +259,11 @@ void app.whenReady().then(async () => {
     await capture('mobile');
     window.setSize(1280, 800);
     await js("window.electronAPI.checkPrChanges=async()=>({baseSha:'base-0',headSha:'new-head'});void 0");
+    window.show();
+    window.focus();
+    await wait("document.visibilityState==='visible'");
     await click('Summary');
+    await wait("!document.querySelector('.pr-changes')");
     await click('Changes');
     await wait("document.querySelector('.changes-notice')?.textContent.includes('New commits')");
     assert.equal(
@@ -178,6 +279,9 @@ void app.whenReady().then(async () => {
     );
     await click('Work queue');
     await js(
+      `window.threadReads=[];window.electronAPI.getReviewThreads=async url=>{window.threadReads.push(url);const count=Number(url.split('/').pop())-119;return {headSha:'head-'+(count-1),baseSha:'base-'+(count-1),threads:[{...window.discussion.threads[0],comments:Array.from({length:count},(_,i)=>({...window.discussion.threads[0].comments[0],id:'comment-'+i}))}]}};void 0;`
+    );
+    await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
     await click('Author description');
@@ -192,18 +296,79 @@ void app.whenReady().then(async () => {
       false,
       'Same paths in different PRs have separate progress'
     );
+    await wait('window.threadReads.length===3');
+    await js(
+      `(()=>{const input=document.querySelector('[aria-label="Find changed files"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'worker.ts');input.dispatchEvent(new Event('input',{bubbles:true}))})()`
+    );
+    await wait("window.deepAll('[data-item-type=file]').length===3");
+    for (const [pr, count] of [
+      [120, 1],
+      [121, 2],
+      [122, 3],
+    ]) {
+      assert.equal(
+        await js(
+          `window.deepAll('[role=treeitem]').find(e=>e.getAttribute('data-item-path')?.includes('#${pr}/src/worker.ts'))?.querySelector('[title*="GitHub"]')?.title.includes('${count} GitHub comment')`
+        ),
+        true
+      );
+    }
     await capture('stack');
     await js(
       `(()=>{const input=document.querySelector('[aria-label="Find changed files"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'worker.ts');input.dispatchEvent(new Event('input',{bubbles:true}))})()`
     );
     await wait("window.deepAll('[data-item-type=file]').length===3");
     assert.equal(await js('window.generationCalls.length'), 0);
+    await js('window.commentLine()');
+    await wait("!!document.querySelector('.changes-comment-composer textarea')");
+    await js("window.fill('.changes-comment-composer textarea','Only for the middle PR.')");
+    await click('Add to review');
+    await click('Review PR #121 (1)');
+    await wait("!!document.querySelector('[role=dialog]')");
+    await click('Post comments');
+    await wait("document.querySelector('[role=dialog]')?.textContent.includes('Feedback submitted')");
+    assert.equal(await js('window.reviewWrites.at(-1).prUrl'), 'https://github.com/klang/engine/pull/121');
+    assert.equal(await js('window.reviewWrites.at(-1).comments[0].path'), 'src/worker.ts');
+    await click('Done');
+    await js('window.commentLine()');
+    await wait("!!document.querySelector('.changes-comment-composer textarea')");
+    await js("window.fill('.changes-comment-composer textarea','Persist this draft across restarts.')");
+    await click('Add to review');
+    await wait("!!document.querySelector('.changes-pending-comment')");
+    await window.loadURL(`${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary&keep-progress`);
+    await wait("document.querySelectorAll('.queue-item').length===7");
+    await js(
+      "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
+    );
+    await click('Author description');
+    await click('Changes');
+    await wait("document.querySelector('.changes-code')?.textContent.includes('Persist this draft across restarts.')");
+    await js(
+      `const read=window.electronAPI.getPrChanges;window.electronAPI.getPrChanges=async (...args)=>{const value=await read(...args);return {...value,metadata:{...value.metadata,headSha:'new-head'}}};void 0;`
+    );
+    await click('Update changes');
+    await wait("[...document.querySelectorAll('.changes-notice')].some(e=>e.textContent.includes('earlier version'))");
+    assert.equal(
+      await js("[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Review PR #121')).disabled"),
+      true
+    );
+    await click('Show drafts');
+    await wait(
+      "document.querySelector('.changes-drafts')?.textContent.includes('Persist this draft across restarts.')"
+    );
+    await capture('comments-stale-drafts');
+    await click('Remove draft');
+    await wait("![...document.querySelectorAll('button')].find(b=>b.textContent.includes('Review PR #121')).disabled");
     console.log('PR Changes browser checks passed. Captures:', shots);
   } catch (error) {
     console.error(error);
     await capture('failure');
-    console.log(await js('document.body.innerText.slice(-5000)'));
-    console.log(await js("window.deepAll?.('[role=treeitem]').map(e=>e.getAttribute('data-item-path'))"));
+    console.log(await js('({visibility:document.visibilityState,text:document.body.innerText.slice(-5000)})'));
+    console.log(
+      await js(
+        "window.deepAll?.('[data-column-number]').slice(0,12).map(e=>[e.outerHTML,e.parentElement.outerHTML.slice(0,200)])"
+      )
+    );
     process.exitCode = 1;
   } finally {
     window.webContents.setZoomFactor(1);

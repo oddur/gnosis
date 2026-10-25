@@ -6,9 +6,10 @@ import type {
   GitHubReviewThread,
   GitHubReviewThreads,
   ReviewThreadAction,
+  ReviewCommentAction,
 } from '../lib/review-threads';
 
-const commentFields = 'id body createdAt url author { login avatarUrl }';
+const commentFields = 'id body createdAt url viewerCanUpdate viewerCanDelete author { login avatarUrl }';
 const pageFields = 'pageInfo { hasNextPage endCursor }';
 const threadFields = `id path line startLine diffSide isResolved isOutdated viewerCanResolve viewerCanUnresolve comments(first:20) { nodes { ${commentFields} } ${pageFields} }`;
 interface Page<T> {
@@ -135,8 +136,48 @@ export function createReviewThreadService(now = Date.now) {
     return { ...revision, threads };
   }
   const service = {
+    invalidate(client: Octokit, prUrl: string) {
+      cacheFor(client).delete(prUrl);
+      githubCacheFor(client)?.delete(`review-threads:${prUrl}`);
+    },
+    async comment(client: Octokit, req: ReviewCommentAction): Promise<GitHubReviewThread> {
+      parseUrl(req.prUrl);
+      if (!['edit', 'delete'].includes(req.action)) throw new Error('Unknown comment action.');
+      const snapshot = await service.list(client, req.prUrl);
+      const thread = snapshot.threads.find((t) => t.id === req.threadId);
+      const comment = thread?.comments.find((c) => c.id === req.commentId);
+      if (!thread || !comment) throw new Error('This comment does not belong to the selected PR. Refresh comments.');
+      if (req.action === 'edit') {
+        if (!comment.viewerCanUpdate) throw new Error('Your account cannot edit this comment.');
+        const body = req.body?.trim();
+        if (!body || body.length > 65536) throw new Error('Enter a comment of at most 65,536 characters.');
+        const result = await graphql<{
+          updatePullRequestReviewComment: { pullRequestReviewComment: GitHubReviewComment };
+        }>(
+          client,
+          `mutation EditReviewComment($id:ID!,$body:String!) { updatePullRequestReviewComment(input:{pullRequestReviewCommentId:$id,body:$body}) { pullRequestReviewComment { ${commentFields} } } }`,
+          { id: comment.id, body }
+        );
+        thread.comments = thread.comments.map((c) =>
+          c.id === comment.id ? result.updatePullRequestReviewComment.pullRequestReviewComment : c
+        );
+      } else {
+        if (!comment.viewerCanDelete) throw new Error('Your account cannot delete this comment.');
+        await graphql(
+          client,
+          'mutation DeleteReviewComment($id:ID!) { deletePullRequestReviewComment(input:{id:$id}) { clientMutationId } }',
+          { id: comment.id }
+        );
+        thread.comments = thread.comments.filter((c) => c.id !== comment.id);
+      }
+      service.invalidate(client, req.prUrl);
+      return thread;
+    },
     cached(client: Octokit, prUrl: string): GitHubReviewThreads | undefined {
-      return githubCacheFor(client)?.get(`review-threads:${prUrl}`, isSavedThreads)?.value.value ?? cacheFor(client).get(prUrl)?.value;
+      return (
+        githubCacheFor(client)?.get(`review-threads:${prUrl}`, isSavedThreads)?.value.value ??
+        cacheFor(client).get(prUrl)?.value
+      );
     },
     async list(client: Octokit, prUrl: string, refresh = false): Promise<GitHubReviewThreads> {
       parseUrl(prUrl);
@@ -208,8 +249,7 @@ export function createReviewThreadService(now = Date.now) {
         );
         Object.assign(thread, result[field].thread);
       }
-      cacheFor(client).delete(req.prUrl);
-      githubCacheFor(client)?.delete(`review-threads:${req.prUrl}`);
+      service.invalidate(client, req.prUrl);
       return thread;
     },
   };

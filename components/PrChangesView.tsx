@@ -1,18 +1,13 @@
+import { DiffStats } from './DiffStats';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPrFileCache } from '../lib/pr-file-cache';
 import { prChangePreview, prPreviewSelection } from '../lib/pr-change-preview';
 import { FileDiff, MultiFileDiff } from '@pierre/diffs/react';
-import type {
-  DiffFileInput,
-  DiffLineAnnotation,
-  FileDiffOptions,
-  FileDiffMetadata,
-  SelectedLineRange,
-} from '@pierre/diffs';
+import type { DiffFileInput, FileDiffOptions, FileDiffMetadata, SelectedLineRange } from '@pierre/diffs';
 import { PanelLeft, ArrowLeft, ArrowRight, RefreshCw, MessageSquare, ExternalLink } from 'lucide-react';
 import { ChangesFileTree } from './ChangesFileTree';
 import { DiffAppearanceMenu } from './DiffAppearanceMenu';
-import { GitHubReviewThread } from './GitHubReviewThread';
+import { useChangesComments } from './useChangesComments';
 import { ReviewImageDiff } from './ReviewImageDiff';
 import { ReviewSelectionActions } from './ReviewSelectionActions';
 import { PrFileChat } from './PrFileChat';
@@ -29,7 +24,7 @@ import {
 import { registerChangeProgress, useFileProgress } from '../lib/file-view-progress';
 import type { ReviewSubject } from '../lib/workbench';
 import type { Preferences } from '../lib/types';
-import type { GitHubReviewThreads, GitHubReviewThread as Thread } from '../lib/review-threads';
+import { usePrDiscussions } from '../lib/use-pr-discussions';
 import type { ReviewImageSide } from '../lib/review-images';
 
 interface Entry {
@@ -110,8 +105,7 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
   const [loadedFile, setLoadedFile] = useState<{ key: string; data: PrFileContents }>(),
     [fileError, setFileError] = useState(''),
     [fileAttempt, setFileAttempt] = useState(0);
-  const [threadResult, setThreads] = useState<{ url: string; data: GitHubReviewThreads }>(),
-    [threadError, setThreadError] = useState('');
+  const discussion = usePrDiscussions(subject.members.map((member) => member.url));
   const [chatOpen, setChatOpen] = useState(false),
     [selection, setSelection] = useState('');
   const [range, setRange] = useState<SelectedLineRange | null>(null);
@@ -218,8 +212,12 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
         viewed: progress.isFileViewed(viewKey(e)),
         additions: e.file.additions,
         deletions: e.file.deletions,
+        commentCount: discussion.discussions[e.snapshot.url]?.data?.threads
+          .filter((t) => t.path === e.file.path || t.path === e.file.previousPath)
+          .reduce((total, thread) => total + thread.comments.length, 0),
+        commentError: !!discussion.discussions[e.snapshot.url]?.error,
       })),
-    [entries, unviewed, viewedSignature]
+    [entries, unviewed, viewedSignature, discussion.discussions]
   );
   // Keep selection/scroll independent of tabs, queue navigation, and background discovery.
   function select(key: string) {
@@ -256,23 +254,6 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
       cancelled = true;
     };
   }, [activeKey, fileAttempt]);
-  useEffect(() => {
-    if (!entry) return;
-    let cancelled = false;
-    setThreads(undefined);
-    setThreadError('');
-    void window.electronAPI
-      .getReviewThreads(entry.snapshot.url)
-      .then((value) => {
-        if (!cancelled) setThreads({ url: entry.snapshot.url, data: value });
-      })
-      .catch(() => {
-        if (!cancelled) setThreadError('GitHub comments are unavailable. Open the PR on GitHub or retry.');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [entry?.snapshot.url, fileAttempt]);
   useLayoutEffect(() => {
     const el = viewport.current;
     if (!el || (!contents && !preview)) return;
@@ -306,7 +287,8 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
       .catch(() => setPreferenceError('Could not save diff preferences.'));
   }
   const appearance = { ...DEFAULT_DIFF_APPEARANCE, ...prefs.diffAppearance };
-  const threads = threadResult?.url === entry?.snapshot.url ? threadResult?.data : undefined;
+  const threads = entry ? discussion.discussions[entry.snapshot.url]?.data : undefined;
+  const threadError = entry ? discussion.discussions[entry.snapshot.url]?.error : undefined;
   const matching =
     threads?.threads.filter((t) => t.path === entry?.file.path || t.path === entry?.file.previousPath) ?? [];
   const inline = matching.filter(
@@ -317,12 +299,21 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
       (t.diffSide === 'RIGHT' || threads?.baseSha === entry?.snapshot.metadata.baseSha)
   );
   const other = matching.filter((t) => !inline.includes(t));
-  const annotations: DiffLineAnnotation<Thread>[] = inline.map((t) => ({
-    lineNumber: t.line ?? 0,
-    side: t.diffSide === 'LEFT' ? 'deletions' : 'additions',
-    metadata: t,
-  }));
-  const options: FileDiffOptions<Thread, undefined> = {
+  const refreshThreads = discussion.refresh;
+  const comments = useChangesComments({
+    snapshot: entry?.snapshot,
+    path: entry?.file.path,
+    activeKey,
+    inline,
+    refresh: refreshThreads,
+    replaceThread: discussion.replace,
+  });
+  const annotations = comments.annotations;
+  const options: FileDiffOptions<(typeof annotations)[number]['metadata'], undefined> = {
+    enableGutterUtility: comments.writable,
+    onGutterUtilityClick: comments.begin,
+    onLineNumberClick: (event) =>
+      comments.begin({ start: event.lineNumber, end: event.lineNumber, side: event.annotationSide }),
     theme: `gnosis-${CODE_THEMES.some((t) => t.id === prefs.codeTheme) ? prefs.codeTheme : 'github-dark'}`,
     themeType: 'dark',
     diffStyle: entry?.file.status === 'added' || entry?.file.status === 'deleted' ? 'unified' : prefs.diffLayout,
@@ -427,6 +418,7 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
           {entries.filter((e) => progress.isFileViewed(viewKey(e))).length} / {entries.length} viewed
         </span>
         <span className="changes-toolbar-spacer" />
+        {comments.controls}
         <label className="sr-only" htmlFor="changes-layout">
           Diff layout
         </label>
@@ -458,6 +450,7 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
           {error && <button onClick={() => void load(true)}>Retry</button>}
         </div>
       )}
+      {comments.panel}
       <div
         className={`changes-workspace${treeOpen ? '' : ' tree-hidden'}${chatOpen ? ' chat-open' : ''}`}
         style={{ '--changes-tree-width': `${treeWidth}px` } as CSSProperties}
@@ -545,7 +538,7 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
                   {entry.file.path}
                 </h2>
                 <span className="changes-file-stats">
-                  {entry.file.status} · +{entry.file.additions} −{entry.file.deletions}
+                  {entry.file.status} · <DiffStats additions={entry.file.additions} deletions={entry.file.deletions} />
                 </span>
               </div>
               <div className="changes-file-actions">
@@ -577,6 +570,15 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
                 </label>
                 <Button variant="outline" size="sm" onClick={() => mark(true)}>
                   Viewed & next
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={!range || !comments.writable}
+                  onClick={() => range && comments.begin(range)}
+                  title="Select lines in the diff to comment"
+                >
+                  <MessageSquare size={14} /> Comment
                 </Button>
                 <Button variant="ghost" size="sm" onClick={() => ask(selectedCode())}>
                   <MessageSquare size={14} />
@@ -629,7 +631,7 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
                   fileDiff={preview}
                   options={options}
                   lineAnnotations={annotations}
-                  renderAnnotation={({ metadata: thread }) => <GitHubReviewThread key={thread.id} thread={thread} />}
+                  renderAnnotation={comments.renderAnnotation}
                   style={
                     {
                       '--diffs-font-family': 'var(--font-mono)',
@@ -645,7 +647,7 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
                   {...files}
                   options={options}
                   lineAnnotations={annotations}
-                  renderAnnotation={({ metadata: thread }) => <GitHubReviewThread key={thread.id} thread={thread} />}
+                  renderAnnotation={comments.renderAnnotation}
                   style={
                     {
                       '--diffs-font-family': 'var(--font-mono)',
@@ -663,19 +665,24 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
                 />
               )}
             </div>
+            {entry && (
+              <div className="changes-discussion-tools">
+                <Button variant="ghost" size="sm" onClick={() => void refreshThreads(entry.snapshot.url)}>
+                  Refresh comments
+                </Button>
+              </div>
+            )}
             {threadError && (
               <p className="changes-notice">
                 {threadError}
-                <button onClick={() => setFileAttempt((n) => n + 1)}>Retry</button>
+                <button onClick={() => entry && void refreshThreads(entry.snapshot.url)}>Retry</button>
               </p>
             )}
             {!!other.length && (
               <section className="changes-other-threads">
                 <h3>Other discussions on this file</h3>
                 <p>These comments refer to a different revision or no longer have an inline location.</p>
-                {other.map((thread) => (
-                  <GitHubReviewThread key={thread.id} thread={thread} />
-                ))}
+                {other.map(comments.renderThread)}
               </section>
             )}
           </div>

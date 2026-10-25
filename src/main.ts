@@ -8,7 +8,8 @@ import { createCommandSearchService } from './command-search-service';
 import type { QueueViewAction } from '../lib/saved-views';
 import { createActivityService } from './activity-service';
 import { createReviewThreadService } from './review-thread-service';
-import type { ReviewThreadAction } from '../lib/review-threads';
+import { createReviewComment, submitPrReview } from './review-write-service';
+import type { ReviewThreadAction, ReviewCommentAction, CreateReviewCommentRequest } from '../lib/review-threads';
 import type { ActivityAction } from '../lib/activity';
 import { createWorkbenchService } from './workbench-service';
 import { StackDiffSource } from '../lib/stack-source';
@@ -53,7 +54,7 @@ import { createExplainerService } from './explainer-service';
 import { protectExplainerFrames, validateExplainerInBrowser } from './explainer-validation';
 import { checkForUpdate } from '../lib/updater';
 import { renderDiffHunk, reRenderAllHunks } from '../lib/highlight';
-import { parseDiffLines, parsePatchValidLines } from '../lib/diff-lines';
+import { parseDiffLines } from '../lib/diff-lines';
 import { setBinaryOverride, detectBinaryPath, resolveBinaryPath } from '../lib/providers/shared';
 import { getProvider } from '../lib/provider';
 import { buildSlideChatSystemPrompt, buildSlideChatUserMessage } from '../lib/chat-agent';
@@ -2398,81 +2399,18 @@ ipcMain.handle('get-review-threads', (_event, prUrl: string, refresh: boolean) =
 ipcMain.handle('review-thread-action', (_event, req: ReviewThreadAction) =>
   reviewThreads.act(discussionClient(), req));
 
+ipcMain.handle('review-comment-action', (_event, req: ReviewCommentAction) =>
+  reviewThreads.comment(discussionClient(), req));
+ipcMain.handle('create-review-comment', async (_event, req: CreateReviewCommentRequest) => {
+  const client = discussionClient();
+  await createReviewComment(client, req);
+  reviewThreads.invalidate(client, req.prUrl);
+});
 ipcMain.handle('submit-review', async (_event, req: SubmitReviewRequest) => {
-  if (isLocalUrl(req.prUrl)) {
-    throw new Error('Local reviews cannot be submitted back to GitHub — there is no remote PR to comment on.');
-  }
-  const token = getResolvedToken();
-  const octokit = getGitHubClient(token);
-  const { owner, repo, pullNumber } = parsePrUrl(req.prUrl);
-
-  const current = await getPrMetadata(octokit, owner, repo, pullNumber);
-  if (current.headSha !== req.headSha || (req.baseSha && current.baseSha !== req.baseSha) || (req.baseBranch && current.baseBranch !== req.baseBranch)) {
-    throw new Error('This PR or its parent changed. Refresh the review before submitting comments or approval.');
-  }
-  if (current.merged || current.state !== 'open') throw new Error('This PR is no longer open for review.');
-
-  // Fetch actual PR file patches to validate line numbers.
-  // The AI-generated hunks have expanded context (10 lines vs GitHub's 3),
-  // so some lines may not be in the real diff.
-  const prFiles = await octokit.paginate(octokit.pulls.listFiles, {
-    owner,
-    repo,
-    pull_number: pullNumber,
-    per_page: 100,
-  });
-
-  const validLinesByFile = new Map<string, Set<string>>();
-  for (const file of prFiles) {
-    if (file.patch) {
-      validLinesByFile.set(file.filename, parsePatchValidLines(file.patch));
-    }
-  }
-
-  // Partition comments into valid (can be posted as line comments) and
-  // dropped (line not in GitHub's diff — folded into review body instead)
-  const validComments: typeof req.comments = [];
-  const droppedComments: typeof req.comments = [];
-
-  for (const c of req.comments) {
-    const validLines = validLinesByFile.get(c.path);
-    const key = `${c.line}:${c.side}`;
-    if (validLines?.has(key)) {
-      validComments.push(c);
-    } else {
-      droppedComments.push(c);
-    }
-  }
-
-  // If some comments can't be posted inline, append them to the review body
-  let reviewBody = req.body;
-  if (droppedComments.length > 0) {
-    const droppedText = droppedComments.map((c) => `**${c.path}:${c.line}** — ${c.body}`).join('\n\n');
-    const suffix = `\n\n---\n_${droppedComments.length} comment(s) could not be posted inline (lines outside the diff range):_\n\n${droppedText}`;
-    reviewBody = (reviewBody || '') + suffix;
-  }
-
-  const prefs = loadPreferences();
-  if (prefs.reviewSignature) {
-    reviewBody = (reviewBody || '') + '\n\n---\n_Reviewed using [gnosis.to](https://gnosis.to)_';
-  }
-
-  const { data } = await octokit.pulls.createReview({
-    owner,
-    repo,
-    pull_number: pullNumber,
-    commit_id: req.headSha,
-    body: reviewBody,
-    event: req.event,
-    comments: validComments.map((c) => ({
-      path: c.path,
-      line: c.line,
-      side: c.side,
-      body: c.body,
-    })),
-  });
-
-  return { reviewUrl: data.html_url, droppedCommentCount: droppedComments.length };
+  const client = discussionClient();
+  const result = await submitPrReview(client, req, loadPreferences().reviewSignature);
+  reviewThreads.invalidate(client, req.prUrl);
+  return result;
 });
 
 const prChanges = createPrChangesService();
