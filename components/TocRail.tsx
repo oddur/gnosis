@@ -66,7 +66,7 @@ export function TocRail({ slides, currentSlide, reviewed, hideReviewed, onToggle
           <button
             onClick={() => onNavigate(0)}
             className={`group w-full text-left py-2 flex gap-3 transition-colors ${
-              currentSlide === 0 ? 'text-foreground' : 'text-foreground/55 hover:text-foreground'
+              currentSlide === 0 ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
             }`}
           >
             <span className={`slide-meta shrink-0 tabular-nums w-6 ${currentSlide === 0 ? 'text-[var(--ring)]' : ''}`}>
@@ -95,8 +95,8 @@ export function TocRail({ slides, currentSlide, reviewed, hideReviewed, onToggle
                   isCurrent
                     ? 'text-foreground'
                     : isReviewed
-                      ? 'text-foreground/35 hover:text-foreground/55'
-                      : 'text-foreground/55 hover:text-foreground'
+                      ? 'text-muted-foreground hover:text-foreground'
+                      : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
                 <span

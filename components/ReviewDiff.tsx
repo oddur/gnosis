@@ -6,6 +6,7 @@ import { bundledThemes } from 'shiki/themes';
 import { processFile, registerCustomTheme } from '@pierre/diffs';
 import type { DiffLineAnnotation, FileDiffOptions } from '@pierre/diffs';
 import { ChevronsUpDown } from 'lucide-react';
+import { readableCodeTheme } from '@/lib/code-contrast';
 import { CODE_THEMES } from '@/lib/constants';
 import {
   DEFAULT_DIFF_APPEARANCE,
@@ -21,21 +22,13 @@ import { InteractiveDiffHunkGroup } from './InteractiveDiffHunk';
 import { SplitDiffHunkGroup } from './SplitDiffHunk';
 import { CommentBubble, InlineCommentForm, extractShikiStyles, type CommentCallbacks } from './shared-diff-utils';
 
-// Match the readable Aurora comment color used in saved review highlighting.
-registerCustomTheme('gnosis-aurora-x', async () => {
-  const { default: theme } = await bundledThemes['aurora-x']();
-  return {
-    ...theme,
-    name: 'gnosis-aurora-x',
-    tokenColors: theme.tokenColors?.map((token) => ({
-      ...token,
-      settings: {
-        ...token.settings,
-        foreground: token.settings.foreground?.toLowerCase() === '#546e7a' ? '#91a7b2' : token.settings.foreground,
-      },
-    })),
-  };
-});
+// Each preference keeps its syntax palette, adjusted for changed-line surfaces.
+for (const { id } of CODE_THEMES) {
+  registerCustomTheme(`gnosis-${id}`, async () => {
+    const { default: theme } = await bundledThemes[id]();
+    return readableCodeTheme(theme, `gnosis-${id}`);
+  });
+}
 
 type Location = { line: number; side: DiffSide };
 interface Props {
@@ -54,10 +47,20 @@ interface Props {
 }
 
 const shadowCSS = `
+:host {
+  --diffs-bg-context-override: var(--diffs-bg);
+  --diffs-bg-context-gutter-override: var(--diffs-bg);
+  --diffs-fg-number-override: var(--diffs-fg);
+  --diffs-bg-addition-override: color-mix(in srgb, var(--diffs-bg) 90%, #5ecc71);
+  --diffs-bg-deletion-override: color-mix(in srgb, var(--diffs-bg) 90%, #ff6762);
+  --diffs-bg-addition-emphasis-override: color-mix(in srgb, var(--diffs-bg) 80%, #5ecc71);
+  --diffs-bg-deletion-emphasis-override: color-mix(in srgb, var(--diffs-bg) 80%, #ff6762);
+}
+
 [data-line] { scroll-margin-block: 4rem; }
 .check-highlight { animation: check-flash 1.6s ease-out; }
-@keyframes check-flash { from { background-color: #b5822680; } to { background-color: transparent; } }
-@media (prefers-reduced-motion: reduce) { .check-highlight { animation: none; outline: 2px solid #b58226; } }
+@keyframes check-flash { from { outline: 2px solid var(--ring); } to { background-color: transparent; } }
+@media (prefers-reduced-motion: reduce) { .check-highlight { animation: none; outline: 2px solid var(--ring); } }
 ::selection { background: var(--accent); color: var(--accent-foreground); }
 `;
 
@@ -105,7 +108,7 @@ function ReviewHunk({
   }, [hunk.renderedHtml]);
   const options = useMemo<FileDiffOptions<Location, undefined>>(
     () => ({
-      theme: theme === 'aurora-x' ? 'gnosis-aurora-x' : theme,
+      theme: `gnosis-${theme}`,
       themeType: 'dark',
       diffStyle: prepared?.singleSide ? 'unified' : diffLayout,
       disableFileHeader: true,
