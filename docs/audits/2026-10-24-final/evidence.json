@@ -1,0 +1,1480 @@
+{
+  "implementation": "f5105b5",
+  "engine": "Electron 41.2.1 / Chromium",
+  "scans": [
+    {
+      "url": "http://127.0.0.1:5173/tests/fixtures/workbench.html",
+      "timestamp": "2026-10-24T00:10:20.936Z",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-valid-attr-value",
+          "nodes": [
+            {
+              "target": [
+                "button[title=\"Help and terminology\"]"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_1_\""
+            },
+            {
+              "target": [
+                ".queue-filter-toggle"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_2_\""
+            },
+            {
+              "target": [
+                "button[aria-controls=\"radix-_r_d_\"]"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_d_\""
+            }
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "nodes": [
+            {
+              "target": [
+                ".inline-flex"
+              ],
+              "summary": "Fix any of the following:\n  Element's background color could not be determined because it is overlapped by another element"
+            },
+            {
+              "target": [
+                ".queue-count"
+              ],
+              "summary": "Fix any of the following:\n  Element's background color could not be determined because it is overlapped by another element"
+            },
+            {
+              "target": [
+                "div[role=\"listitem\"]:nth-child(1) > .queue-section-title > span"
+              ],
+              "summary": "Fix any of the following:\n  Element content is too short to determine if it is actual text content"
+            },
+            {
+              "target": [
+                "div[role=\"listitem\"]:nth-child(3) > .queue-section-title > span"
+              ],
+              "summary": "Fix any of the following:\n  Element content is too short to determine if it is actual text content"
+            },
+            {
+              "target": [
+                ".workbench-help-link"
+              ],
+              "summary": "Fix any of the following:\n  Element's background color could not be determined because it is overlapped by another element"
+            }
+          ]
+        }
+      ],
+      "passes": 31,
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "light",
+        "controls": 44
+      },
+      "snapshot": "final-activity-light"
+    },
+    {
+      "url": "http://127.0.0.1:5173/tests/fixtures/workbench.html?polish",
+      "timestamp": "2026-10-24T00:10:14.406Z",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-prohibited-attr",
+          "nodes": [
+            {
+              "target": [
+                ".review-file-group.gap-0.flex-col:nth-child(2) > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"div\" elements with no valid role attribute."
+            },
+            {
+              "target": [
+                "span[title=\"File totals in this change\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"span\" elements with no valid role attribute."
+            },
+            {
+              "target": [
+                ".review-file-group.gap-0.flex-col:nth-child(3) > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"div\" elements with no valid role attribute."
+            },
+            {
+              "target": [
+                ".review-file-group.gap-0.flex-col:nth-child(3) > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"] > .review-file-heading > .review-file-details > .review-file-counts"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"span\" elements with no valid role attribute."
+            }
+          ]
+        },
+        {
+          "id": "aria-valid-attr-value",
+          "nodes": [
+            {
+              "target": [
+                ".workbench-help-trigger"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_f_\""
+            },
+            {
+              "target": [
+                ".dark\\:hover\\:bg-accent\\/50"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_13_\""
+            }
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "nodes": [
+            {
+              "target": [
+                ".group-hover\\:text-foreground.slide-meta.transition-colors"
+              ],
+              "summary": "Fix any of the following:\n  Element content contains only non-text characters"
+            },
+            {
+              "target": [
+                ".text-right > .group-hover\\:opacity-80.transition-opacity.text-foreground"
+              ],
+              "summary": "Fix any of the following:\n  Element content contains only non-text characters"
+            }
+          ]
+        }
+      ],
+      "passes": 31,
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "dark",
+        "controls": 42
+      },
+      "snapshot": "final-chat-dark"
+    },
+    {
+      "url": "http://127.0.0.1:5173/tests/fixtures/workbench.html?polish",
+      "timestamp": "2026-10-24T00:10:16.917Z",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-valid-attr-value",
+          "nodes": [
+            {
+              "target": [
+                ".workbench-help-trigger"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_f_\""
+            }
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "nodes": [
+            {
+              "target": [
+                ".group-hover\\:text-foreground.slide-meta.transition-colors"
+              ],
+              "summary": "Fix any of the following:\n  Element content contains only non-text characters"
+            },
+            {
+              "target": [
+                ".text-right > .group-hover\\:opacity-80.transition-opacity.text-foreground"
+              ],
+              "summary": "Fix any of the following:\n  Element content contains only non-text characters"
+            }
+          ]
+        }
+      ],
+      "passes": 33,
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "dark",
+        "controls": 40
+      },
+      "snapshot": "final-explainer-dark"
+    },
+    {
+      "url": "http://127.0.0.1:5173/tests/fixtures/workbench.html?onboarding",
+      "timestamp": "2026-10-24T00:10:27.654Z",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-valid-attr-value",
+          "nodes": [
+            {
+              "target": [
+                "button[title=\"Help and terminology\"]"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_1_\""
+            },
+            {
+              "target": [
+                ".queue-filter-toggle"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_2_\""
+            }
+          ]
+        }
+      ],
+      "passes": 27,
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "light",
+        "controls": 26
+      },
+      "snapshot": "final-guest"
+    },
+    {
+      "url": "http://127.0.0.1:5173/tests/fixtures/workbench.html?images",
+      "timestamp": "2026-10-24T00:10:24.261Z",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-prohibited-attr",
+          "nodes": [
+            {
+              "target": [
+                ".review-file-group.gap-0[data-file-path=\"PR-klang~engine-121/mark.svg\"] > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"div\" elements with no valid role attribute."
+            },
+            {
+              "target": [
+                "div[data-file-path=\"PR-klang~engine-121/photo.png\"] > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"div\" elements with no valid role attribute."
+            },
+            {
+              "target": [
+                "div[data-file-path=\"PR-klang~engine-121/added.svg\"] > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"div\" elements with no valid role attribute."
+            },
+            {
+              "target": [
+                ".review-file-group.gap-0.flex-col:nth-child(5) > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"div\" elements with no valid role attribute."
+            },
+            {
+              "target": [
+                "div[data-file-path=\"PR-klang~engine-121/retry.svg\"] > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"div\" elements with no valid role attribute."
+            }
+          ]
+        },
+        {
+          "id": "aria-valid-attr-value",
+          "nodes": [
+            {
+              "target": [
+                ".workbench-help-trigger"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_f_\""
+            },
+            {
+              "target": [
+                ".dark\\:hover\\:bg-accent\\/50"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_13_\""
+            },
+            {
+              "target": [
+                "button[aria-controls=\"radix-_r_19_\"]"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_19_\""
+            },
+            {
+              "target": [
+                "button[aria-controls=\"radix-_r_1c_\"]"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_1c_\""
+            },
+            {
+              "target": [
+                "button[aria-controls=\"radix-_r_1f_\"]"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_1f_\""
+            },
+            {
+              "target": [
+                "button[aria-controls=\"radix-_r_1i_\"]"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_1i_\""
+            },
+            {
+              "target": [
+                "button[aria-controls=\"radix-_r_1l_\"]"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_1l_\""
+            },
+            {
+              "target": [
+                "button[aria-controls=\"radix-_r_1o_\"]"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_1o_\""
+            },
+            {
+              "target": [
+                "button[aria-controls=\"radix-_r_1r_\"]"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_1r_\""
+            }
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "nodes": [
+            {
+              "target": [
+                ".group-hover\\:text-foreground.slide-meta.shrink-0"
+              ],
+              "summary": "Fix any of the following:\n  Element content contains only non-text characters"
+            },
+            {
+              "target": [
+                ".text-right > .group-hover\\:opacity-80.transition-opacity.text-foreground"
+              ],
+              "summary": "Fix any of the following:\n  Element content contains only non-text characters"
+            }
+          ]
+        }
+      ],
+      "passes": 32,
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "light",
+        "controls": 57
+      },
+      "snapshot": "final-images-light"
+    },
+    {
+      "url": "http://127.0.0.1:5173/tests/fixtures/workbench.html?polish",
+      "timestamp": "2026-10-24T00:10:30.445Z",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-prohibited-attr",
+          "nodes": [
+            {
+              "target": [
+                "div[aria-label=\"Review pane\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"div\" elements with no valid role attribute."
+            }
+          ]
+        },
+        {
+          "id": "aria-valid-attr-value",
+          "nodes": [
+            {
+              "target": [
+                ".workbench-help-trigger"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_f_\""
+            }
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "nodes": [
+            {
+              "target": [
+                ".group-hover\\:text-foreground.slide-meta.transition-colors"
+              ],
+              "summary": "Fix any of the following:\n  Element content contains only non-text characters"
+            },
+            {
+              "target": [
+                ".text-right > .group-hover\\:opacity-80.transition-opacity.text-foreground"
+              ],
+              "summary": "Fix any of the following:\n  Element content contains only non-text characters"
+            }
+          ]
+        }
+      ],
+      "passes": 31,
+      "layout": {
+        "width": 850,
+        "height": 700,
+        "scrollWidth": 850,
+        "theme": "light",
+        "controls": 34
+      },
+      "snapshot": "final-laptop-review"
+    },
+    {
+      "url": "http://127.0.0.1:5173/tests/fixtures/workbench.html?onboarding",
+      "timestamp": "2026-10-24T00:10:28.941Z",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "color-contrast",
+          "nodes": [
+            {
+              "target": [
+                "#radix-_r_b_"
+              ],
+              "summary": "Fix any of the following:\n  Element's background color could not be determined because it partially overlaps other elements"
+            },
+            {
+              "target": [
+                ".hover\\:text-foreground"
+              ],
+              "summary": "Fix any of the following:\n  Element's background color could not be determined because it partially overlaps other elements"
+            },
+            {
+              "target": [
+                ".leading-relaxed"
+              ],
+              "summary": "Fix any of the following:\n  Element's background color could not be determined because it partially overlaps other elements"
+            }
+          ]
+        }
+      ],
+      "passes": 17,
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "light",
+        "controls": 34
+      },
+      "snapshot": "final-local"
+    },
+    {
+      "url": "http://127.0.0.1:5173/tests/fixtures/workbench.html?onboarding",
+      "timestamp": "2026-10-24T00:10:26.564Z",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "color-contrast",
+          "nodes": [
+            {
+              "target": [
+                "#radix-_r_5_"
+              ],
+              "summary": "Fix any of the following:\n  Element's background color could not be determined because it partially overlaps other elements"
+            }
+          ]
+        }
+      ],
+      "passes": 15,
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "light",
+        "controls": 30
+      },
+      "snapshot": "final-onboarding"
+    },
+    {
+      "url": "http://127.0.0.1:5173/tests/fixtures/workbench.html?polish",
+      "timestamp": "2026-10-24T00:10:22.768Z",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "violations": [],
+      "incomplete": [],
+      "passes": 20,
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "dark",
+        "controls": 34
+      },
+      "snapshot": "final-palette-dark"
+    },
+    {
+      "url": "http://127.0.0.1:5173/tests/fixtures/workbench.html",
+      "timestamp": "2026-10-24T00:10:02.845Z",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-valid-attr-value",
+          "nodes": [
+            {
+              "target": [
+                "button[title=\"Help and terminology\"]"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_1_\""
+            },
+            {
+              "target": [
+                ".queue-filter-toggle"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_2_\""
+            },
+            {
+              "target": [
+                "button[aria-controls=\"radix-_r_d_\"]"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_d_\""
+            }
+          ]
+        }
+      ],
+      "passes": 30,
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "dark",
+        "controls": 34
+      },
+      "snapshot": "final-queue-dark"
+    },
+    {
+      "url": "http://127.0.0.1:5173/tests/fixtures/workbench.html",
+      "timestamp": "2026-10-24T00:10:02.068Z",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-valid-attr-value",
+          "nodes": [
+            {
+              "target": [
+                "button[title=\"Help and terminology\"]"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_1_\""
+            },
+            {
+              "target": [
+                ".queue-filter-toggle"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_2_\""
+            },
+            {
+              "target": [
+                "button[aria-controls=\"radix-_r_d_\"]"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_d_\""
+            }
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "nodes": [
+            {
+              "target": [
+                "div[role=\"listitem\"]:nth-child(1) > h2 > span"
+              ],
+              "summary": "Fix any of the following:\n  Element content is too short to determine if it is actual text content"
+            },
+            {
+              "target": [
+                "div[role=\"listitem\"]:nth-child(3) > h2 > span"
+              ],
+              "summary": "Fix any of the following:\n  Element content is too short to determine if it is actual text content"
+            }
+          ]
+        }
+      ],
+      "passes": 30,
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "light",
+        "controls": 34
+      },
+      "snapshot": "final-queue-light"
+    },
+    {
+      "url": "http://127.0.0.1:5173/tests/fixtures/workbench.html?polish",
+      "timestamp": "2026-10-24T00:10:08.908Z",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-prohibited-attr",
+          "nodes": [
+            {
+              "target": [
+                ".review-file-group.gap-0.flex-col:nth-child(2) > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"div\" elements with no valid role attribute."
+            },
+            {
+              "target": [
+                "span[title=\"File totals in this change\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"span\" elements with no valid role attribute."
+            },
+            {
+              "target": [
+                ".review-file-group.gap-0.flex-col:nth-child(3) > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"div\" elements with no valid role attribute."
+            },
+            {
+              "target": [
+                ".review-file-group.gap-0.flex-col:nth-child(3) > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"] > .review-file-heading > .review-file-details > .review-file-counts"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"span\" elements with no valid role attribute."
+            }
+          ]
+        },
+        {
+          "id": "aria-valid-attr-value",
+          "nodes": [
+            {
+              "target": [
+                ".workbench-help-trigger"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_f_\""
+            },
+            {
+              "target": [
+                ".dark\\:hover\\:bg-accent\\/50"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_13_\""
+            }
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "nodes": [
+            {
+              "target": [
+                ".group-hover\\:text-foreground.slide-meta.transition-colors"
+              ],
+              "summary": "Fix any of the following:\n  Element content contains only non-text characters"
+            },
+            {
+              "target": [
+                ".text-right > .group-hover\\:opacity-80.transition-opacity.text-foreground"
+              ],
+              "summary": "Fix any of the following:\n  Element content contains only non-text characters"
+            }
+          ]
+        }
+      ],
+      "passes": 31,
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "dark",
+        "controls": 32
+      },
+      "snapshot": "final-review-dark"
+    },
+    {
+      "url": "http://127.0.0.1:5173/tests/fixtures/workbench.html?polish",
+      "timestamp": "2026-10-24T00:10:07.393Z",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-prohibited-attr",
+          "nodes": [
+            {
+              "target": [
+                ".review-file-group.gap-0.flex-col:nth-child(2) > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"div\" elements with no valid role attribute."
+            },
+            {
+              "target": [
+                "span[title=\"File totals in this change\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"span\" elements with no valid role attribute."
+            },
+            {
+              "target": [
+                ".review-file-group.gap-0.flex-col:nth-child(3) > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"div\" elements with no valid role attribute."
+            },
+            {
+              "target": [
+                ".review-file-group.gap-0.flex-col:nth-child(3) > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"] > .review-file-heading > .review-file-details > .review-file-counts"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"span\" elements with no valid role attribute."
+            }
+          ]
+        },
+        {
+          "id": "aria-valid-attr-value",
+          "nodes": [
+            {
+              "target": [
+                ".workbench-help-trigger"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_f_\""
+            },
+            {
+              "target": [
+                ".dark\\:hover\\:bg-accent\\/50"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_13_\""
+            }
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "nodes": [
+            {
+              "target": [
+                ".group-hover\\:text-foreground.slide-meta.transition-colors"
+              ],
+              "summary": "Fix any of the following:\n  Element content contains only non-text characters"
+            },
+            {
+              "target": [
+                ".text-right > .group-hover\\:opacity-80.transition-opacity.text-foreground"
+              ],
+              "summary": "Fix any of the following:\n  Element content contains only non-text characters"
+            }
+          ]
+        }
+      ],
+      "passes": 31,
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "light",
+        "controls": 32
+      },
+      "snapshot": "final-review-light"
+    },
+    {
+      "url": "http://127.0.0.1:5173/tests/fixtures/workbench.html?polish",
+      "timestamp": "2026-10-24T00:11:29.114Z",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-prohibited-attr",
+          "nodes": [
+            {
+              "target": [
+                ".review-file-group.gap-0.flex-col:nth-child(2) > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"div\" elements with no valid role attribute."
+            },
+            {
+              "target": [
+                "span[title=\"File totals in this change\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"span\" elements with no valid role attribute."
+            },
+            {
+              "target": [
+                ".review-file-group.gap-0.flex-col:nth-child(3) > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"div\" elements with no valid role attribute."
+            },
+            {
+              "target": [
+                ".review-file-group.gap-0.flex-col:nth-child(3) > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"] > .review-file-heading > .review-file-details > .review-file-counts"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"span\" elements with no valid role attribute."
+            }
+          ]
+        },
+        {
+          "id": "aria-valid-attr-value",
+          "nodes": [
+            {
+              "target": [
+                ".workbench-help-trigger"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_f_\""
+            },
+            {
+              "target": [
+                ".dark\\:hover\\:bg-accent\\/50"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_13_\""
+            }
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "nodes": [
+            {
+              "target": [
+                ".group-hover\\:text-foreground.slide-meta.transition-colors"
+              ],
+              "summary": "Fix any of the following:\n  Element content contains only non-text characters"
+            },
+            {
+              "target": [
+                ".text-right > .group-hover\\:opacity-80.transition-opacity.text-foreground"
+              ],
+              "summary": "Fix any of the following:\n  Element content contains only non-text characters"
+            }
+          ]
+        }
+      ],
+      "passes": 31,
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "light",
+        "controls": 32
+      },
+      "snapshot": "final-review-semantics"
+    },
+    {
+      "url": "http://127.0.0.1:5173/tests/fixtures/workbench.html",
+      "timestamp": "2026-10-24T00:10:19.927Z",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "violations": [],
+      "incomplete": [],
+      "passes": 22,
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "dark",
+        "controls": 53
+      },
+      "snapshot": "final-settings-dark"
+    },
+    {
+      "url": "http://127.0.0.1:5173/tests/fixtures/workbench.html",
+      "timestamp": "2026-10-24T00:10:18.417Z",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "violations": [],
+      "incomplete": [],
+      "passes": 22,
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "light",
+        "controls": 53
+      },
+      "snapshot": "final-settings-light"
+    },
+    {
+      "url": "http://127.0.0.1:5173/tests/fixtures/workbench.html?pr-summary",
+      "timestamp": "2026-10-24T00:10:05.868Z",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-valid-attr-value",
+          "nodes": [
+            {
+              "target": [
+                "button[title=\"Help and terminology\"]"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_1_\""
+            }
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "nodes": [
+            {
+              "target": [
+                ".pr-branches > span"
+              ],
+              "summary": "Fix any of the following:\n  Element content contains only non-text characters"
+            }
+          ]
+        }
+      ],
+      "passes": 35,
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "dark",
+        "controls": 13
+      },
+      "snapshot": "final-summary-dark"
+    },
+    {
+      "url": "http://127.0.0.1:5173/tests/fixtures/workbench.html?pr-summary",
+      "timestamp": "2026-10-24T00:10:04.353Z",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-valid-attr-value",
+          "nodes": [
+            {
+              "target": [
+                "button[title=\"Help and terminology\"]"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_1_\""
+            }
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "nodes": [
+            {
+              "target": [
+                ".pr-branches > span"
+              ],
+              "summary": "Fix any of the following:\n  Element content contains only non-text characters"
+            }
+          ]
+        }
+      ],
+      "passes": 35,
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "light",
+        "controls": 13
+      },
+      "snapshot": "final-summary-light"
+    },
+    {
+      "url": "http://127.0.0.1:5173/tests/fixtures/workbench.html?threads",
+      "timestamp": "2026-10-24T00:10:25.800Z",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-prohibited-attr",
+          "nodes": [
+            {
+              "target": [
+                ".review-file-context"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"div\" elements with no valid role attribute."
+            },
+            {
+              "target": [
+                ".review-file-counts"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"span\" elements with no valid role attribute."
+            }
+          ]
+        },
+        {
+          "id": "aria-valid-attr-value",
+          "nodes": [
+            {
+              "target": [
+                ".workbench-help-trigger"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_f_\""
+            },
+            {
+              "target": [
+                ".dark\\:hover\\:bg-accent\\/50"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_13_\""
+            }
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "nodes": [
+            {
+              "target": [
+                ".group-hover\\:text-foreground.slide-meta.transition-colors"
+              ],
+              "summary": "Fix any of the following:\n  Element content contains only non-text characters"
+            },
+            {
+              "target": [
+                ".tabular-nums"
+              ],
+              "summary": "Fix any of the following:\n  Element's background color could not be determined because it is overlapped by another element"
+            },
+            {
+              "target": [
+                ".gap-1\\.5.inline-flex.hover\\:text-foreground"
+              ],
+              "summary": "Fix any of the following:\n  Element's background color could not be determined because it is overlapped by another element"
+            },
+            {
+              "target": [
+                ".items-end > .slide-meta"
+              ],
+              "summary": "Fix any of the following:\n  Element's background color could not be determined because it is overlapped by another element"
+            },
+            {
+              "target": [
+                ".group-hover\\:opacity-80.transition-opacity.max-w-full"
+              ],
+              "summary": "Fix any of the following:\n  Element's background color could not be determined because it is overlapped by another element"
+            },
+            {
+              "target": [
+                ".text-right > .group-hover\\:opacity-80.transition-opacity.text-foreground"
+              ],
+              "summary": "Fix any of the following:\n  Element content contains only non-text characters"
+            }
+          ]
+        }
+      ],
+      "passes": 31,
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "dark",
+        "controls": 45
+      },
+      "snapshot": "final-threads-dark"
+    },
+    {
+      "url": "http://127.0.0.1:5173/tests/fixtures/workbench.html?polish",
+      "timestamp": "2026-10-24T00:10:12.577Z",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-prohibited-attr",
+          "nodes": [
+            {
+              "target": [
+                ".review-file-group.gap-0.flex-col:nth-child(2) > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"div\" elements with no valid role attribute."
+            },
+            {
+              "target": [
+                "span[title=\"File totals in this change\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"span\" elements with no valid role attribute."
+            },
+            {
+              "target": [
+                ".review-file-group.gap-0.flex-col:nth-child(3) > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"div\" elements with no valid role attribute."
+            },
+            {
+              "target": [
+                ".review-file-group.gap-0.flex-col:nth-child(3) > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"] > .review-file-heading > .review-file-details > .review-file-counts"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"span\" elements with no valid role attribute."
+            }
+          ]
+        },
+        {
+          "id": "aria-valid-attr-value",
+          "nodes": [
+            {
+              "target": [
+                ".workbench-help-trigger"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_f_\""
+            },
+            {
+              "target": [
+                ".dark\\:hover\\:bg-accent\\/50"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_13_\""
+            }
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "nodes": [
+            {
+              "target": [
+                ".group-hover\\:text-foreground.slide-meta.transition-colors"
+              ],
+              "summary": "Fix any of the following:\n  Element content contains only non-text characters"
+            },
+            {
+              "target": [
+                ".text-right > .group-hover\\:opacity-80.transition-opacity.text-foreground"
+              ],
+              "summary": "Fix any of the following:\n  Element content contains only non-text characters"
+            }
+          ]
+        }
+      ],
+      "passes": 31,
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "dark",
+        "controls": 36
+      },
+      "snapshot": "final-topics-dark"
+    },
+    {
+      "url": "http://127.0.0.1:5173/tests/fixtures/workbench.html?polish",
+      "timestamp": "2026-10-24T00:10:10.732Z",
+      "engine": {
+        "name": "axe-core",
+        "version": "4.14.0"
+      },
+      "violations": [],
+      "incomplete": [
+        {
+          "id": "aria-prohibited-attr",
+          "nodes": [
+            {
+              "target": [
+                ".review-file-group.gap-0.flex-col:nth-child(2) > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"div\" elements with no valid role attribute."
+            },
+            {
+              "target": [
+                "span[title=\"File totals in this change\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"span\" elements with no valid role attribute."
+            },
+            {
+              "target": [
+                ".review-file-group.gap-0.flex-col:nth-child(3) > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"]"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"div\" elements with no valid role attribute."
+            },
+            {
+              "target": [
+                ".review-file-group.gap-0.flex-col:nth-child(3) > .review-file-context[aria-label=\"Current source\"][data-collapsed=\"false\"] > .review-file-heading > .review-file-details > .review-file-counts"
+              ],
+              "summary": "Fix all of the following:\n  aria-label attribute is not well supported on \"span\" elements with no valid role attribute."
+            }
+          ]
+        },
+        {
+          "id": "aria-valid-attr-value",
+          "nodes": [
+            {
+              "target": [
+                ".workbench-help-trigger"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_f_\""
+            },
+            {
+              "target": [
+                ".dark\\:hover\\:bg-accent\\/50"
+              ],
+              "summary": "Fix all of the following:\n  Unable to determine if aria-controls referenced ID exists on the page while using aria-haspopup: aria-controls=\"radix-_r_13_\""
+            }
+          ]
+        },
+        {
+          "id": "color-contrast",
+          "nodes": [
+            {
+              "target": [
+                ".group-hover\\:text-foreground.slide-meta.transition-colors"
+              ],
+              "summary": "Fix any of the following:\n  Element content contains only non-text characters"
+            },
+            {
+              "target": [
+                ".text-right > .group-hover\\:opacity-80.transition-opacity.text-foreground"
+              ],
+              "summary": "Fix any of the following:\n  Element content contains only non-text characters"
+            }
+          ]
+        }
+      ],
+      "passes": 31,
+      "layout": {
+        "width": 1280,
+        "height": 700,
+        "scrollWidth": 1280,
+        "theme": "light",
+        "controls": 36
+      },
+      "snapshot": "final-topics-light"
+    }
+  ],
+  "codePalettes": [
+    {
+      "theme": "aurora-x",
+      "tokens": 61,
+      "minimum": 6.670445376663932,
+      "failures": []
+    },
+    {
+      "theme": "github-dark",
+      "tokens": 48,
+      "minimum": 4.834405392703189,
+      "failures": []
+    },
+    {
+      "theme": "github-dark-dimmed",
+      "tokens": 48,
+      "minimum": 4.819244786949728,
+      "failures": []
+    },
+    {
+      "theme": "one-dark-pro",
+      "tokens": 56,
+      "minimum": 4.8314411770540024,
+      "failures": []
+    },
+    {
+      "theme": "dracula",
+      "tokens": 48,
+      "minimum": 4.800110592251058,
+      "failures": []
+    },
+    {
+      "theme": "nord",
+      "tokens": 57,
+      "minimum": 4.839458253498938,
+      "failures": []
+    },
+    {
+      "theme": "vitesse-dark",
+      "tokens": 57,
+      "minimum": 4.811433366033532,
+      "failures": []
+    },
+    {
+      "theme": "tokyo-night",
+      "tokens": 61,
+      "minimum": 4.958962335569969,
+      "failures": []
+    },
+    {
+      "theme": "catppuccin-mocha",
+      "tokens": 57,
+      "minimum": 5.378210903274315,
+      "failures": []
+    },
+    {
+      "theme": "poimandres",
+      "tokens": 56,
+      "minimum": 4.825201717832483,
+      "failures": []
+    }
+  ],
+  "queue": {
+    "before": {
+      "items": 1000,
+      "domElements": 17162,
+      "refreshToPaintMs": 252,
+      "longTasksMs": [
+        95,
+        147
+      ]
+    },
+    "after": {
+      "items": 10,
+      "domElements": 342,
+      "refreshToPaintMs": 104,
+      "longTasksMs": []
+    },
+    "method": "1,000 cloned standalone PRs at 1100x700; development build; 100ms readiness polling plus two animation frames; one run per condition"
+  },
+  "fileHeaderAX": [
+    {
+      "selector": ".review-file-context",
+      "ax": {
+        "nodes": [
+          {
+            "nodeId": "108020",
+            "ignored": false,
+            "role": {
+              "type": "role",
+              "value": "generic"
+            },
+            "chromeRole": {
+              "type": "internalRole",
+              "value": 88
+            },
+            "name": {
+              "type": "computedString",
+              "value": "Current source",
+              "sources": [
+                {
+                  "type": "relatedElement",
+                  "attribute": "aria-labelledby"
+                },
+                {
+                  "type": "attribute",
+                  "value": {
+                    "type": "computedString",
+                    "value": "Current source"
+                  },
+                  "attribute": "aria-label",
+                  "attributeValue": {
+                    "type": "string",
+                    "value": "Current source"
+                  }
+                }
+              ]
+            },
+            "properties": [],
+            "parentId": "108057",
+            "childIds": [
+              "108004",
+              "108005"
+            ],
+            "backendDOMNodeId": 108020
+          }
+        ]
+      }
+    },
+    {
+      "selector": ".review-file-counts",
+      "ax": {
+        "nodes": [
+          {
+            "nodeId": "108000",
+            "ignored": false,
+            "role": {
+              "type": "role",
+              "value": "generic"
+            },
+            "chromeRole": {
+              "type": "internalRole",
+              "value": 88
+            },
+            "name": {
+              "type": "computedString",
+              "value": "6 added lines, 1 removed lines in this change",
+              "sources": [
+                {
+                  "type": "relatedElement",
+                  "attribute": "aria-labelledby"
+                },
+                {
+                  "type": "attribute",
+                  "value": {
+                    "type": "computedString",
+                    "value": "6 added lines, 1 removed lines in this change"
+                  },
+                  "attribute": "aria-label",
+                  "attributeValue": {
+                    "type": "string",
+                    "value": "6 added lines, 1 removed lines in this change"
+                  }
+                }
+              ]
+            },
+            "description": {
+              "type": "computedString",
+              "value": "File totals in this change"
+            },
+            "properties": [],
+            "parentId": "108003",
+            "childIds": [
+              "107996",
+              "107997"
+            ],
+            "backendDOMNodeId": 108000
+          }
+        ]
+      }
+    }
+  ],
+  "detectors": {
+    "sourceCounts": {
+      "overused-font": 4,
+      "design-system-radius": 13,
+      "design-system-color": 81
+    },
+    "rendered": [
+      {
+        "antipattern": "overused-font",
+        "name": "Overused font",
+        "description": "Inter, Roboto, Fraunces, Geist, Plus Jakarta Sans, and Space Grotesk are used on so many sites they no longer feel distinctive. Each new wave of AI-generated UIs converges on the same handful of faces. Choose a face that gives your interface personality.",
+        "severity": "warning",
+        "category": "slop",
+        "file": "http://127.0.0.1:5173/tests/fixtures/workbench.html?polish",
+        "line": 0,
+        "snippet": "Primary font: plus jakarta sans (88% of text)",
+        "selector": "body"
+      }
+    ]
+  },
+  "validation": {
+    "unitTests": 153,
+    "workbenchSuites": 10,
+    "explainerSuite": "passed",
+    "typescript": "passed",
+    "targetedEslint": "passed",
+    "package": "darwin arm64 succeeded"
+  }
+}
