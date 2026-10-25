@@ -400,6 +400,8 @@ export function SlideView({
   showInlineExplanations = true,
   onShowInlineExplanationsChange,
 }: Props) {
+  const [diagramOpen, setDiagramOpen] = useState(false);
+  useEffect(() => setDiagramOpen(false), [slide.id]);
   const narrativeScroll = useSessionScroll(`${slide.id}:narrative`);
   const codeScroll = useSessionScroll(`${slide.id}:code`);
   const focusScroll = useSessionScroll(`${slide.id}:focus`);
@@ -509,6 +511,8 @@ export function SlideView({
       <h2 className="slide-title select-text">{slide.title}</h2>
 
       <Markdown className="slide-prose select-text">{slide.narrative}</Markdown>
+
+      {slide.mermaidDiagram && <MermaidDiagram chart={slide.mermaidDiagram} title={slide.title} expanded={diagramOpen} onExpandedChange={setDiagramOpen} />}
 
       {onExplore &&
         (slide.explainerIdea ||
@@ -684,7 +688,6 @@ export function SlideView({
         </p>
       )}
 
-      {slide.mermaidDiagram && <MermaidDiagram chart={slide.mermaidDiagram} />}
 
       {groupedHunks.length === 0 && (
         <div className="flex flex-col gap-1.5">

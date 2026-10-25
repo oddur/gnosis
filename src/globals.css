@@ -1002,22 +1002,34 @@ ul.review-focus-content > li::before {
   line-height: inherit;
 }
 
-/* ─── Mermaid fullscreen dialog ───────────────────────────────── */
+/* ─── Mermaid previews and inspection ─────────────────────────── */
 
 .mermaid-diagram { min-width:0; margin:12px 0; }
-.mermaid-preview svg { display:block; width:100%; height:auto; }
+.review-narrative > .mermaid-diagram { margin:0; }
+.mermaid-preview { display:flex;flex-direction:column;gap:12px;width:100%;padding:12px;border-radius:var(--radius-md);background:var(--muted);cursor:zoom-in;overflow:hidden;text-align:left; }
+.mermaid-preview:hover { background:var(--accent); }
+.mermaid-preview:focus-visible { outline:2px solid var(--ring);outline-offset:2px; }
+.mermaid-preview-canvas { display:flex;align-items:center;justify-content:center;min-width:0; }
+.mermaid-preview-canvas svg { display:block;width:100% !important;max-width:100% !important;height:auto !important;max-height:var(--mermaid-preview-height,min(320px,40dvh)); }
+.mermaid-expand { display:flex;align-items:center;justify-content:flex-end;gap:6px;font-size:var(--type-control);color:var(--foreground); }
 .mermaid-source { font-size:var(--type-caption); margin-top:6px; }
 .mermaid-source summary { cursor:pointer; color:var(--muted-foreground); }
 .mermaid-diagram pre { overflow:auto; max-width:100%; white-space:pre; }
 .mermaid-diagram pre code { font-family:var(--font-mono); font-size:var(--type-control); }
 .pr-markdown .mermaid-source { border:0; padding:0; margin:6px 0; }
-
-.mermaid-fullscreen svg {
-  width: auto !important;
-  max-width: 100% !important;
-  height: auto !important;
-  max-height: calc(90vh - 6rem);
-}
+.mermaid-dialog { display:flex;flex-direction:column;gap:0;top:16px;width:calc(100vw - 32px);max-width:none;height:calc(100dvh - 32px);max-height:none;padding:0;overflow:hidden; }
+.mermaid-dialog-title { padding:16px 56px 12px 16px;font-size:var(--type-body);flex:none; }
+.mermaid-viewer { display:flex;flex-direction:column;flex:1;min-height:0;min-width:0; }
+.mermaid-controls { display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:0 16px 12px;border-bottom:1px solid var(--border); }
+.mermaid-controls output { min-width:5ch;text-align:center;font-size:var(--type-control);font-variant-numeric:tabular-nums; }
+.mermaid-pan-hint { margin-left:auto;font-size:var(--type-caption);color:var(--muted-foreground); }
+.mermaid-fullscreen { position:relative;flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;touch-action:none;cursor:grab;background:var(--muted); }
+.mermaid-fullscreen[data-dragging=true] { cursor:grabbing;user-select:none; }
+.mermaid-fullscreen:focus-visible { outline:2px solid var(--ring);outline-offset:-2px; }
+.mermaid-pan-surface { position:relative; }
+.mermaid-zoom-art { position:absolute; }
+.mermaid-zoom-art svg { display:block;width:100% !important;height:100% !important;max-width:none !important;max-height:none !important; }
+@media (max-width:700px) { .mermaid-pan-hint { display:none; } }
 
 /* ─── Slide transitions (Priority 3) ─────────────────────────── */
 
