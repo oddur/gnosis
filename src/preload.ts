@@ -34,6 +34,7 @@ import type {
 } from '../lib/types';
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  clearGitHubCache: (): Promise<void> => ipcRenderer.invoke('clear-github-cache'),
   getPreparedInventories: (revisions: InspectionRevision[]): Promise<PreparedInventories> => ipcRenderer.invoke('prepared-inventories', revisions),
   preparePrReview: (url: string, revision: { baseSha: string; headSha: string }): Promise<void> => ipcRenderer.invoke('prepare-pr-review', url, revision),
   getPrCommits: (url: string, refresh = false, options?: InspectionLoadOptions): Promise<PrCommits> => ipcRenderer.invoke('pr-commits', url, refresh, options),

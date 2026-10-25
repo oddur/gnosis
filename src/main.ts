@@ -1,3 +1,4 @@
+import { requestGitHubCacheClear, applyPendingGitHubCacheClear } from './github-cache-reset';
 import { withGitHubPriority } from '../lib/github-scheduler';
 import type { InspectionRevision, InspectionLoadOptions } from '../lib/pr-changes';
 import { normalizePrInactivityDays, DEFAULT_PR_INACTIVITY_DAYS } from '../lib/pr-inactivity';
@@ -21,7 +22,7 @@ import type { ActivityAction } from '../lib/activity';
 import { createWorkbenchService } from './workbench-service';
 import { StackDiffSource } from '../lib/stack-source';
 import { snapshot, fingerprint, type ReviewSubject, type ReviewSnapshot, type GroupingOverride } from '../lib/workbench';
-import { app, autoUpdater, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell } from 'electron';
+import { app, autoUpdater, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell, session } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -640,8 +641,15 @@ function setupAutoUpdater() {
   setInterval(() => autoUpdater.checkForUpdates(), 4 * 60 * 60 * 1_000);
 }
 
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
   setupLogging();
+  try {
+    await applyPendingGitHubCacheClear(app.getPath('userData'), () => session.defaultSession.clearCache());
+  } catch (error) {
+    dialog.showErrorBox('Could not clear GitHub cache', error instanceof Error ? error.message : String(error));
+    app.exit(1);
+    return;
+  }
   githubClients.setStorage(path.join(app.getPath('userData'), 'github-budget.json'));
 
   // Expose packaged state to preload via env var (before creating windows)
@@ -2449,6 +2457,14 @@ const changesClient = () => {
   if (!token) throw new Error('Connect GitHub to view PR changes.');
   return getGitHubClient(token);
 };
+ipcMain.handle('clear-github-cache', () => {
+  if (activeGenerations.size || activeForegroundChats || workbench.isGenerating() ||
+    activities.list().some(task => task.kind !== 'github' && task.status === 'running'))
+    throw new Error('Wait for active AI tasks to finish, then clear the cache again.');
+  requestGitHubCacheClear(app.getPath('userData'));
+  app.relaunch();
+  app.exit(0);
+});
 // Local-only restore: never let a network-bound PR delay saved inventories for the rest of the queue.
 ipcMain.handle('prepared-inventories', (_event, revisions: InspectionRevision[]) => {
   const client = changesClient();

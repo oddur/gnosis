@@ -35,6 +35,7 @@ import type {
 declare global {
   interface Window {
     electronAPI: {
+      clearGitHubCache: () => Promise<void>;
       getPreparedInventories: (revisions: InspectionRevision[]) => Promise<PreparedInventories>;
       preparePrReview: (url: string, revision: { baseSha: string; headSha: string }) => Promise<void>;
       getPrCommits: (url: string, refresh?: boolean, options?: InspectionLoadOptions) => Promise<PrCommits>;
