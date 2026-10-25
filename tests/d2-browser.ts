@@ -38,7 +38,7 @@ void app.whenReady().then(async () => {
     await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
     await wait("document.querySelectorAll('.queue-item').length===7");
     await js(
-      `(()=>{const load=window.electronAPI.loadReview;window.electronAPI.loadReview=async(...args)=>{const review=await load(...args);return {...review,slides:[{...review.slides[0],title:'Architecture with annotations',d2Diagram:${JSON.stringify(D2_EXAMPLES[0].diagram)},mermaidDiagram:null}]};};})()`
+      `(()=>{const load=window.electronAPI.loadReview;window.electronAPI.loadReview=async(...args)=>{const review=await load(...args);const diagram=${JSON.stringify(D2_EXAMPLES[0].diagram)};const h=review.slides[0].diffHunks[0];diagram.steps[0].evidence={filePath:h.filePath,startLine:parseInt(h.hunkHeader.split('+')[1])};return {...review,slides:[{...review.slides[0],title:'Architecture with annotations',d2Diagram:diagram,mermaidDiagram:null}]};};})()`
     );
     await js("document.querySelector('.queue-item:has(.queue-disclosure) .queue-row-main').click()");
     await click('Open AI explanation');
@@ -52,12 +52,13 @@ void app.whenReady().then(async () => {
     await click('Expand diagram');
     await wait("!!document.querySelector('.d2-dialog svg')");
     await capture('expanded-light');
-    assert.equal(await js("document.querySelectorAll('.d2-notes > div').length"), 3);
+    assert.equal(await js("document.querySelectorAll('.d2-additional-notes > div').length"), 3);
     const duplicateIDs = await js<string[]>(
       `(()=>{const ids=[...document.querySelectorAll('.d2-diagram [id],.d2-dialog [id]')].map(e=>e.id);return ids.filter((id,i)=>ids.indexOf(id)!==i)})()`
     );
     assert.deepEqual(duplicateIDs, []);
-    await click('Close');
+    await click('Show supporting code', dialog);
+    await wait("!document.querySelector('.d2-dialog')");
     await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
     await wait("document.querySelectorAll('.queue-item').length===7");
     await js(
@@ -98,19 +99,52 @@ void app.whenReady().then(async () => {
       }
     }
     await click('Sequence');
-    await wait("document.querySelector('.d2-step-count')?.textContent.includes('1 / 4')");
-    await click('Play');
-    await wait("document.querySelector('.d2-step-count')?.textContent.includes('2 / 4')");
+    await wait("document.querySelector('.d2-step-count')?.textContent.includes('Step 1 of 4')");
+    await click('Auto-play steps');
+    await wait("document.querySelector('.d2-step-count')?.textContent.includes('Step 2 of 4')");
+    const geometry = await js(
+      "[...document.querySelectorAll('.d2-preview [data-d2-entity] .shape rect')].map(e=>[e.getAttribute('x'),e.getAttribute('y'),e.getAttribute('width'),e.getAttribute('height')])"
+    );
     await click('Next diagram step');
-    await wait("document.querySelector('.d2-step-count')?.textContent.includes('3 / 4')");
+    await wait("document.querySelector('.d2-step-count')?.textContent.includes('Step 3 of 4')");
+    assert.deepEqual(
+      await js(
+        "[...document.querySelectorAll('.d2-preview [data-d2-entity] .shape rect')].map(e=>[e.getAttribute('x'),e.getAttribute('y'),e.getAttribute('width'),e.getAttribute('height')])"
+      ),
+      geometry
+    );
+    assert.equal(
+      await js(
+        "document.querySelector('.d2-preview [data-d2-entity=\"(app -> api)[0]\"]').getAttribute('data-d2-focus')"
+      ),
+      'active'
+    );
+    assert.equal(
+      await js(
+        "document.querySelector('.d2-preview [data-d2-entity=\"(reviewer -> app)[0]\"]').getAttribute('data-d2-focus')"
+      ),
+      'context'
+    );
     assert.equal(await js("document.querySelector('.d2-diagram').dataset.motion"), 'false');
     await click('Expand diagram');
     await wait("!!document.querySelector('.d2-dialog svg')");
     await capture('sequence-expanded-dark');
-    await click('Reset diagram walkthrough', dialog);
+    const point = await js<{ x: number; y: number }>(
+      `(()=>{const r=${dialog}.querySelector('[data-d2-entity="app.pin"] .shape').getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()`
+    );
+    win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point });
+    win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point });
+    await wait(`${dialog}.querySelector('.d2-step-count').textContent.includes('Step 2 of 4')`);
+    const actorPoint = await js<{ x: number; y: number }>(
+      `(()=>{const r=${dialog}.querySelector('[data-d2-entity="api"] .shape').getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()`
+    );
+    win.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...actorPoint });
+    win.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...actorPoint });
+    await wait(`${dialog}.querySelector('.d2-step-count').textContent.includes('Step 3 of 4')`);
+    await js(`${dialog}.querySelector('.d2-view-nav button').click()`);
     await click('Next diagram step', dialog);
-    assert.match(await js<string>(`${dialog}.querySelector('.d2-caption').textContent`), /Pin what the reviewer saw/);
-    await click('Animate flow', dialog);
+    assert.match(await js<string>(`${dialog}.querySelector('.d2-caption').textContent`), /Pin the displayed revision/);
+    await click('Auto-play steps', dialog);
     win.webContents.debugger.attach('1.3');
     await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
       features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],

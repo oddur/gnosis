@@ -520,6 +520,8 @@ export function SlideView({
           title={slide.title}
           expanded={diagramOpen}
           onExpandedChange={setDiagramOpen}
+          canShowCode={(source) => isAnchorable({ ...source, text: '' }, anchorable)}
+          onShowCode={(source) => handleCheckClick({ ...source, text: '' })}
         />
       ) : (
         slide.mermaidDiagram && (

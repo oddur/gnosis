@@ -77,7 +77,17 @@ export interface InlineExplanation {
 export interface D2DiagramSpec {
   source: string;
   caption?: string;
-  steps?: { board?: string; title: string; description: string }[];
+  kind?: 'map' | 'walkthrough' | 'comparison';
+  steps?: {
+    board?: string;
+    title: string;
+    description: string;
+    /** Exact D2 node or connection identifiers to spotlight on a shared board. */
+    focus?: string[];
+    /** The meaningful event or difference from the previous view. */
+    change?: string;
+    evidence?: { filePath: string; startLine: number };
+  }[];
 }
 
 export interface Slide {

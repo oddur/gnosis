@@ -7,6 +7,35 @@ export const D2_EXAMPLES: { id: string; title: string; summary: string; diagram:
     title: 'A fast review, without a request storm',
     summary: 'Architecture · boundaries, role icons, annotated paths',
     diagram: {
+      kind: 'map',
+      steps: [
+        {
+          board: 'overview',
+          title: 'Overview',
+          description: 'A local snapshot serves the UI while a scheduler controls refresh work.',
+        },
+        {
+          board: 'overview',
+          title: 'Read the local snapshot',
+          change: 'Opening a PR reads the revision cache.',
+          description: 'A cached read keeps navigation responsive while fresh data is fetched.',
+          focus: ['desktop.(ui -> cache)[0]'],
+        },
+        {
+          board: 'overview',
+          title: 'Schedule the network request',
+          change: 'The queue sends a conditional request.',
+          description: 'Visible work takes priority over prefetch; shared scheduling bounds concurrent requests.',
+          focus: ['(sync.queue -> github)[0]'],
+        },
+        {
+          board: 'overview',
+          title: 'Check the revision before publishing',
+          change: 'The gate publishes only a matching response.',
+          description: 'A response for an older head must not replace the snapshot of the newer revision.',
+          focus: ['(sync.gate -> desktop.cache)[0]'],
+        },
+      ],
       caption:
         'The UI reads a local snapshot. A scheduler owns network traffic, and a revision check prevents an old response from replacing newer data.',
       source: `direction: right
@@ -47,25 +76,37 @@ sync.gate -> desktop.cache: publish snapshot { style.animated: true }
     title: 'An approval must match the code you saw',
     summary: 'Sequence · ordered messages, invariant notes, guided playback',
     diagram: {
+      kind: 'walkthrough',
       caption:
         'Illustrative review submission protocol. The displayed revision remains the authority, even when discovery has found a newer commit.',
       steps: [
         {
-          title: 'The whole exchange',
+          board: 'overview',
+          focus: [],
+          title: 'Overview',
           description:
             'Read down the sequence. The approval carries the displayed head SHA; the server rejects it if that revision has moved.',
         },
         {
-          title: '1. Pin what the reviewer saw',
+          board: 'overview',
+          focus: ['(reviewer -> app)[0]', 'app.pin'],
+          change: 'Capture the SHA of the code currently on screen.',
+          title: 'Pin the displayed revision',
           description: 'The click captures the displayed snapshot, not the newest head found by background discovery.',
         },
         {
-          title: '2. Submit the exact revision',
+          board: 'overview',
+          focus: ['(app -> api)[0]'],
+          change: 'Send the approval with the pinned SHA.',
+          title: 'Submit the exact revision',
           description:
             'The request carries the pinned SHA. A background refresh must not replace it with a newer commit.',
         },
         {
-          title: '3. Stop on a stale revision',
+          board: 'overview',
+          focus: ['(api -> app)[0]'],
+          change: 'Accept the matching revision, or reject the stale approval.',
+          title: 'Check at the write boundary',
           description:
             'The server validates the revision when writing. A mismatch returns the reviewer to the changed code before approval.',
         },
@@ -82,18 +123,7 @@ app -> api: Submit approval + pinned SHA { style.animated: true }
 api -> app: Accepted or stale {
   tooltip: "Check the expected revision at the write boundary; a separate read can race with a push."
 }
-scenarios: {
-  pin_revision: {
-    (reviewer -> app)[0].style.stroke-width: 4
-    app.pin.style.stroke-width: 4
-  }
-  submit_pinned: {
-    (app -> api)[0].style.stroke-width: 4
-  }
-  validate_revision: {
-    (api -> app)[0].style.stroke-width: 4
-  }
-}
+
 `,
     },
   },
@@ -102,6 +132,7 @@ scenarios: {
     title: 'Move slow work off the request path',
     summary: 'Change walkthrough · inherited boards, active paths, failure boundary',
     diagram: {
+      kind: 'comparison',
       caption: 'Illustrative architecture change: acknowledge durable work quickly, then process it asynchronously.',
       steps: [
         {

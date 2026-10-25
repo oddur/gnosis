@@ -2,12 +2,14 @@ import type { D2, Diagram } from '@d2lang/d2';
 import DOMPurify from 'dompurify';
 import { D2_ICON_NAMES, d2IconData } from './d2-icons';
 import { compileD2Source } from './d2-compile';
+import { tagDiagramEntities, type DiagramEntity } from './d2-presentation';
 
 export interface D2Frame {
   id: string;
   name: string;
   animated: boolean;
   svg: string;
+  entities: DiagramEntity[];
   notes: { subject: string; text: string }[];
 }
 export interface D2Render {
@@ -35,7 +37,7 @@ function getEngine() {
   return engine;
 }
 const iconURLs = new Set(D2_ICON_NAMES.flatMap((name) => [d2IconData(name, false), d2IconData(name, true)]));
-function cleanSVG(svg: string) {
+function cleanSVG(svg: string, entities: DiagramEntity[]) {
   const clean = DOMPurify.sanitize(svg, {
     USE_PROFILES: { svg: true, svgFilters: true },
     FORBID_TAGS: ['foreignObject', 'a', 'script', 'animate', 'set'],
@@ -50,6 +52,7 @@ function cleanSVG(svg: string) {
         el.removeAttributeNode(attr);
     }
   }
+  tagDiagramEntities(root, entities);
   root.setAttribute('preserveAspectRatio', 'xMidYMid meet');
   return new XMLSerializer().serializeToString(root);
 }
@@ -109,11 +112,18 @@ export function renderD2(source: string, dark: boolean): Promise<D2Render> {
           noXMLTag: true,
           salt: `gnosis-${++salt}`,
         });
+        const entities: DiagramEntity[] = [...board.shapes, ...board.connections].map((item) => ({
+          id: item.id,
+          label: ('label' in item && typeof item.label === 'string' ? item.label : '') || item.id,
+          ...('src' in item ? { src: item.src, dst: item.dst } : {}),
+          emphasized: item.strokeWidth >= 4,
+        }));
         frames.push({
           id,
           animated: [...board.shapes, ...board.connections].some((item) => item.animated),
           name: board.name || 'Overview',
-          svg: cleanSVG(svg),
+          svg: cleanSVG(svg, entities),
+          entities,
           notes: [...board.shapes, ...board.connections]
             .filter((item) => item.tooltip)
             .map((item) => ({

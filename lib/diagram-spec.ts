@@ -22,15 +22,29 @@ export function normalizeD2Diagram(value: unknown): D2DiagramSpec | null {
       }
       const step = raw as Record<string, unknown>;
       const board = text(step.board, 160);
+      const evidence =
+        step.evidence && typeof step.evidence === 'object' ? (step.evidence as Record<string, unknown>) : undefined;
       steps.push({
         ...(board ? { board } : {}),
+        ...(evidence &&
+        text(evidence.filePath, 500) &&
+        Number.isSafeInteger(evidence.startLine) &&
+        Number(evidence.startLine) > 0
+          ? { evidence: { filePath: text(evidence.filePath, 500), startLine: Number(evidence.startLine) } }
+          : {}),
         title: text(step.title, 160),
         description: text(step.description, 1400),
+        ...(Array.isArray(step.focus)
+          ? { focus: [...new Set(step.focus.map((id) => text(id, 240)).filter(Boolean))].slice(0, 24) }
+          : {}),
+        ...(text(step.change, 600) ? { change: text(step.change, 600) } : {}),
       });
     }
   }
   const caption = text(input.caption, 1400);
-  return { source, ...(caption ? { caption } : {}), ...(steps.length ? { steps } : {}) };
+  const kind =
+    input.kind === 'map' || input.kind === 'walkthrough' || input.kind === 'comparison' ? input.kind : undefined;
+  return { source, ...(kind ? { kind } : {}), ...(caption ? { caption } : {}), ...(steps.length ? { steps } : {}) };
 }
 
 export function diagramFrameCaption(diagram: D2DiagramSpec, board: string, index: number) {

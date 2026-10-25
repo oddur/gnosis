@@ -3,8 +3,11 @@ import { ArrowLeft, ArrowRight, Moon, Sun } from 'lucide-react';
 import { D2Diagram } from '../../components/D2Diagram';
 import { Button } from '../../components/ui/button';
 import { D2_EXAMPLES } from './d2-examples';
+import { normalizeD2Diagram } from '../../lib/diagram-spec';
 import generated from './d2-generated.json';
-const examples = new URLSearchParams(location.search).has('generated') ? generated : D2_EXAMPLES;
+const examples = new URLSearchParams(location.search).has('generated')
+  ? generated.map((item) => ({ ...item, diagram: normalizeD2Diagram(item.diagram) ?? { source: '' } }))
+  : D2_EXAMPLES;
 const labels: Record<string, string> = {
   architecture: 'Architecture',
   sequence: 'Sequence',
@@ -87,8 +90,7 @@ export function DiagramGallery() {
           <p>{example.summary}</p>
           <p>{example.diagram.caption}</p>
           <p className="text-muted-foreground">
-            Expand to inspect the layout and annotations. Playback follows the change at your pace; animation stays off
-            until you choose it.
+            Choose a named step to see where to look and why it matters. Expand for more detail; auto-play is optional.
           </p>
           <Button
             variant="outline"

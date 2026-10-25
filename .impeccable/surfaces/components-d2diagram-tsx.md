@@ -2,52 +2,56 @@
 version: 1
 slug: "components-d2diagram-tsx"
 primary_target: "components/D2Diagram.tsx"
-related_targets: ["components/SlideView.tsx", "components/DiagramViewport.tsx"]
+related_targets: ["components/SlideView.tsx", "components/DiagramViewport.tsx", "lib/d2-presentation.ts"]
 ---
 
 # D2 explanation diagrams
 
-Mode: Read within the existing explanation workspace. D2/TALA is the default for newly generated explanation diagrams. It preserves saved Mermaid diagrams.
+Mode: Read within the existing explanation workspace. D2/TALA is the default for newly generated explanation diagrams. Saved Mermaid diagrams retain their renderer.
 
 ## Direction contract
 
-THESIS: A diagram explains a relationship or a change, with an inspectable overview and an intentional walkthrough instead of an overflowing illustration.
+THESIS: Teach how the change works through named, manual steps on a stable diagram. Before/after comparison supports that causal explanation.
 
-OWN-WORLD: Inherit the compact Gnosis workbench, semantic light/dark tokens, existing buttons and dialog. Diagram colors distinguish boundaries and active paths; icons identify component roles.
+OWN-WORLD: Inherit the compact Gnosis workbench, semantic light/dark tokens, existing buttons, and dialog. Diagram colors distinguish boundaries and active paths. Icons identify component roles.
 
-STORY: See the system, inspect the invariant, then follow the exchange or change with explicit previous/play/next controls. Source remains inspectable.
+STORY: Read the overview, select a named step, understand its action and consequence, then inspect supporting code when an anchor resolves.
 
-FIRST VIEWPORT: Explanation pane contains a fitted diagram, concise caption and playback controls when steps exist. Expanded view retains pan/zoom, step controls, and annotations. The real explanation workflow generates architecture, sequence and algorithm walkthroughs; a development-only gallery holds authored and model-generated fixtures.
+FIRST VIEWPORT: The explanation pane contains a fitted diagram, named navigation, and the active explanation. Expansion places that explanation beside the canvas, or below it at narrow widths. Additional notes start collapsed.
 
-FORM: Extension of the existing diagram viewer. Code-led integration of the approved prototype; no visual-world replacement. seed: none (unavailable)
+FORM: Ordinary extension of the existing diagram viewer. Code-led integration preserves the approved workbench system. No visual-world replacement or new system tokens.
 
-FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
+FINISH: The build ends with an independent finish review, a verdict, and documentation grounded in the implementation. No shipping raster assets were added.
 
 ## Implemented decisions
 
-- The viewer reuses the existing Button, Dialog, and pan/zoom viewport. Bordered surfaces, surrounding typography, focus treatment, and light/dark colors follow the workbench. D2's SVG typography and diagram palette are scoped to diagram SVGs.
-- A fitted preview opens an expanded diagram with readable annotations. Previous, Play/Pause, Next, Reset, and a step count support walkthroughs. Flow animation starts only after an explicit action; reduced motion suppresses visual animation. Source and render errors remain inspectable.
-- Expanded annotations occupy a side column, then move below the diagram at narrow widths. Playback controls and captions remain beneath the inspection area. The development gallery and its responsive example navigation live in test fixtures.
-- This incorporates the approved prototype without changing the surrounding design system. `DESIGN.md` records the adopted diagram pattern; its tokens and `.impeccable/design.json` remain unchanged. Technical behavior and limitations are recorded in `docs/d2-explanations.md`; historical research remains in `docs/research/`.
+- The viewer reuses Button, Dialog, and DiagramViewport. Borders, surfaces, focus treatment, and surrounding type retain the workbench system. SVG typography and diagram colors remain scoped to the diagram.
+- Named buttons and Previous/Next controls support manual inspection. Explicit `walkthrough` diagrams also offer optional auto-play at 6.5-second intervals. Maps, comparisons, and older diagrams without `kind` use named views without auto-play.
+- Exact node and connection identifiers select focus on a compiled board. Focus changes preserve layout and zoom. Clicking an entity in the expanded viewer selects the first matching step. A node also matches focus on an incident connection. Keyboard users use the navigation buttons.
+- Native boards represent actual state changes or alternative outcomes. Adjacent boards expose label changes and added or removed entities. The viewer does not simulate algorithm state beyond compiled labels.
+- The active explanation includes the step title, action, consequence, and optional supporting-code link. The link appears only for a resolvable `filePath` and `startLine` in the current slide. Additional tooltip notes start collapsed.
+- The expanded explanation occupies a side column and moves below the diagram at narrow widths. Navigation remains available in both layouts. Reduced motion removes animation and transitions.
+- Manual navigation, Pause, dialog dismissal, source navigation, and window hiding stop auto-play and flow animation. Source disclosure and local retry preserve recovery from rendering errors.
+- Compiled output is cached by source and theme, separately from presentation metadata. Focus and caption changes do not recompile source. Existing saved explanations remain readable and require generation to gain richer metadata.
+
+Technical behavior and limits appear in [D2 explanation diagrams](../../docs/d2-explanations.md). DESIGN.md records the adopted component pattern. Its tokens and `.impeccable/design.json` remain unchanged.
 
 ## Finish evidence
 
-Prototype disposition: ship; the narrow gallery overlay finding is resolved. Documentation comparison checked `components/D2Diagram.tsx`, `lib/d2.ts`, `components/SlideView.tsx`, and the final D2 rules in `src/globals.css` against `PRODUCT.md`, `DESIGN.md`, and `.impeccable/design.json`.
+Integration disposition: SHIP, with no material findings from the independent finish reviewer.
 
-Rendered evidence in `.impeccable/review/d2/`: `actual-explanation-slide.png`, `actual-explanation-expanded.png`, `light-Architecture.png`, `dark-Sequence.png`, and `sequence-narrow-dark-fixed.png`. These establish integration into the explanation pane, expanded annotations, both themes, and the narrow switcher fix. They do not establish production readiness or exhaustive accessibility coverage.
+Documentation comparison covered `components/D2Diagram.tsx`, `components/DiagramViewport.tsx`, `components/SlideView.tsx`, `lib/d2-presentation.ts`, `lib/diagram-spec.ts`, `lib/types.ts`, `lib/d2-guidance.ts`, and `lib/d2.ts`. The final D2 styles preserve the system in PRODUCT.md, DESIGN.md, and `.impeccable/design.json`.
 
-## Integration checks
+The finish pass reported 288 passing tests, the diagram browser suite, TypeScript, and targeted ESLint checks. A fresh synthetic sequence from the live writer compiled with exact focus identifiers. The accepted response remains in `tests/fixtures/d2-generated.json`.
 
-Named board captions support source reordering; invalid optional output cannot break the narrative. The shared DiagramViewport preserves legacy Mermaid. Cached rendering avoids repeat work within the session; errors expose a local retry. Manual step changes and closing the expanded view stop playback and flow animation. Both preview and expanded frame changes respect reduced motion. Gallery imports and styles live in test fixtures, outside the application entry.
+Reviewed captures in `.impeccable/review/d2-integration/`:
 
-Integration disposition: SHIP, with no material findings from the finish reviewer. Documentation comparison checked `components/D2Diagram.tsx`, `components/DiagramViewport.tsx`, `components/SlideView.tsx`, `lib/d2.ts`, and the final D2 styles against `DESIGN.md`, `.impeccable/design.json`, and the behavior record in `docs/d2-explanations.md`. The implementation retains existing controls, border and surface roles, focus treatment, and surrounding type hierarchy. Diagram SVG fonts and palette remain scoped to the diagram.
+- `sequence-expanded-dark.png`: named steps and the active explanation beside the sequence in Dark.
+- `expanded-narrow.png`: the explanation moves below the canvas while navigation remains available.
+- `light-Sequence.png`: the sequence preview and guidance in Light.
+- `generated-Sequence-expanded.png`: the fresh generated sequence in the shared expanded viewer.
+- `explanation-light-scrolled.png`: D2 within the real explanation pane beside source code.
 
-Inspected captures in `.impeccable/review/d2-integration/`:
+These captures support the adopted visual pattern and tested integration. They do not establish explanation accuracy across arbitrary pull requests or exhaustive accessibility coverage.
 
-- `explanation-light-scrolled.png`: D2 remains within the real explanation pane beside source code.
-- `generated-Sequence-expanded.png`: a generated sequence uses the shared expanded viewer, explicit playback, and its board caption.
-- `generated-Algorithm.png`: concrete algorithm state appears with a readable caption and source disclosure in the development fixture.
-- `expanded-narrow.png`: annotations move below the canvas while playback and captions remain visible.
-- `legacy-mermaid.png`: a saved Mermaid diagram retains the shared fit, zoom, and pan viewer.
-
-These captures support the adopted visual pattern and compatibility review. They do not establish explanation accuracy across arbitrary pull requests or exhaustive accessibility coverage. No unrelated design drift was repaired.
+The detector reported only preexisting global CSS advisories outside the changed blocks, with no new findings. This ordinary extension neither records those advisories as system rules nor repairs unrelated design drift.

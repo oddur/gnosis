@@ -4,7 +4,15 @@ import { Button } from './ui/button';
 import { namespaceSVG } from '../lib/svg-ids';
 
 /** A dedicated inspection surface: fit by default, readable scale on demand. */
-export function DiagramViewport({ svg, frameKey }: { svg: string; frameKey?: string }) {
+export function DiagramViewport({
+  svg,
+  frameKey,
+  onEntitySelect,
+}: {
+  svg: string;
+  frameKey?: string;
+  onEntitySelect?: (id: string) => void;
+}) {
   const hintId = useId();
   const instanceId = useId().replace(/[^a-zA-Z0-9]/g, '');
   const viewport = useRef<HTMLDivElement>(null);
@@ -77,7 +85,7 @@ export function DiagramViewport({ svg, frameKey }: { svg: string; frameKey?: str
     return () => window.removeEventListener('blur', stop);
   }, []);
   return (
-    <div className="mermaid-viewer">
+    <div className="mermaid-viewer" data-selectable={!!onEntitySelect}>
       <div className="mermaid-controls" role="group" aria-label="Diagram zoom">
         <Button
           variant="ghost"
@@ -146,7 +154,17 @@ export function DiagramViewport({ svg, frameKey }: { svg: string; frameKey?: str
           event.currentTarget.scrollLeft = current.left + current.x - event.clientX;
           event.currentTarget.scrollTop = current.top + current.y - event.clientY;
         }}
-        onPointerUp={(event) => stopDragging(event.pointerId)}
+        onPointerUp={(event) => {
+          const current = drag.current;
+          const clicked = current && Math.hypot(event.clientX - current.x, event.clientY - current.y) < 5;
+          stopDragging(event.pointerId);
+          if (clicked && onEntitySelect) {
+            // Pointer capture retargets the event to the viewport; hit-test the actual element.
+            const element = document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-d2-entity]');
+            const id = element?.getAttribute('data-d2-entity');
+            if (id && element && event.currentTarget.contains(element)) onEntitySelect(id);
+          }
+        }}
         onPointerCancel={(event) => stopDragging(event.pointerId)}
         onLostPointerCapture={(event) => stopDragging(event.pointerId)}
       >

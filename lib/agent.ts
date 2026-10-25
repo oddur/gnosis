@@ -125,7 +125,7 @@ The JSON must match this schema exactly:
       "fileSummaries": [{ "filePath": string, "summary": string }],
       "inlineExplanations": [{ "filePath": string, "line": number, "side": "LEFT" | "RIGHT", "code": string, "text": string }],
       "dependsOn": string[],
-      "d2Diagram": { "source": string, "caption": string, "steps": [{ "board": string, "title": string, "description": string }] } | null,
+      "d2Diagram": { "source": string, "kind": "map" | "walkthrough" | "comparison", "caption": string, "steps": [{ "board": string, "title": string, "description": string, "change": string, "focus": string[], "evidence": { "filePath": string, "startLine": number } | null }] } | null,
       "explainerIdea": { "title": string, "description": string } | null,
       "importance": "critical" | "important" | "minor",
       "reviewChecks": [
@@ -497,7 +497,7 @@ Write the slide content for this topic. Respond with JSON matching this schema e
   "contextSnippets": string[],
   "fileSummaries": [{ "filePath": string, "summary": string }],
   "inlineExplanations": [{ "filePath": string, "line": number, "side": "LEFT" | "RIGHT", "code": string, "text": string }],
-  "d2Diagram": { "source": string, "caption": string, "steps": [{ "board": string, "title": string, "description": string }] } | null,
+  "d2Diagram": { "source": string, "kind": "map" | "walkthrough" | "comparison", "caption": string, "steps": [{ "board": string, "title": string, "description": string, "change": string, "focus": string[], "evidence": { "filePath": string, "startLine": number } | null }] } | null,
   "explainerIdea": { "title": string, "description": string } | null,
   "reviewChecks": [
     {

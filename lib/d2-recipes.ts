@@ -15,7 +15,7 @@ worker: Worker {
   tooltip: "Retries can repeat a delivery. Check where duplicate effects are prevented."
 }
 client -> service.handler: submit job
-service.jobs -> worker: claim { style.animated: true }
+service.jobs -> worker: claim
 `,
   },
   {
@@ -28,17 +28,10 @@ caller -> api.run: update(expected_version)
 api.guard: "Keep expected version" {
   tooltip: "Replacing the caller's version with a fresh read would silently permit a stale write."
 }
-api.run -> store: compare-and-set { style.animated: true }
+api.run -> store: compare-and-set
 store -> api.run: applied or conflict
 api.run -> caller: result
-scenarios: {
-  compare: {
-    (api.run -> store)[0].style.stroke-width: 4
-  }
-  conflict: {
-    (store -> api.run)[0].style.stroke-width: 4
-  }
-}
+
 `,
   },
   {
@@ -77,7 +70,7 @@ steps: {
     (ui -> api)[0]: null
     cache: Snapshot { shape: cylinder; icon: gnosis:database }
     ui -> cache: immediate read
-    cache -> api: refresh { style.animated: true }
+    cache -> api: refresh
     cache.tooltip: "Show snapshot freshness; a fast local read does not imply current remote state."
   }
 }

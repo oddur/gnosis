@@ -86,6 +86,12 @@ async function main() {
             board ? [{ id: `scenarios.${board.name}`, board }] : []
           ),
         ];
+        for (const step of slide.d2Diagram.steps ?? []) {
+          const board = boards.find((item) => item.id === (step.board || 'overview'))?.board;
+          if (!board) throw new Error(`Unknown board: ${step.board}`);
+          const ids = new Set([...board.shapes, ...board.connections].map((item) => item.id));
+          for (const id of step.focus ?? []) if (!ids.has(id)) throw new Error(`Unknown focus: ${id}`);
+        }
         for (const [index, { id, board }] of boards.entries()) {
           if (boards.length > 1 && !diagramFrameCaption(slide.d2Diagram, id, index)?.description)
             throw new Error(`Missing caption for ${id}`);

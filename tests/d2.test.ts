@@ -173,7 +173,8 @@ void test('planner, whole-review and topic writer share the diagram contract and
   for (const call of calls.slice(1)) {
     assert.match(call.systemPrompt, /COMPILER-CHECKED SYNTAX RECIPES/);
     assert.match(call.systemPrompt, /exactly-once/);
-    assert.match(call.systemPrompt, /scenarios\.compare/);
+    assert.match(call.systemPrompt, /HOW THE CHANGE WORKS/);
+    assert.match(call.content, /"focus"/);
     assert.match(call.content, /"d2Diagram"/);
     assert.doesNotMatch(call.content, /"mermaidDiagram"/);
   }
@@ -208,6 +209,74 @@ void test('saved diagrams with literal SQL placeholders render without changing 
     assert.ok(alreadyEscaped.diagram.shapes.some((shape) => 'label' in shape && shape.label === 'WHERE id = $1'));
     await assert.rejects(compileD2Source(d2, 'query: "${missing}"', false));
     await assert.rejects(compileD2Source(d2, 'query: {', false));
+  } finally {
+    await d2.dispose();
+  }
+});
+
+void test('guided steps survive saved JSON and reuse one layout while identifying exact D2 entities', async () => {
+  const { diagramViews, tagDiagramEntities } = await import('../lib/d2-presentation');
+  const { JSDOM } = await import('jsdom');
+  const d2 = new D2();
+  try {
+    const spec = normalizeD2Diagram(
+      JSON.parse(
+        JSON.stringify({
+          kind: 'walkthrough',
+          source:
+            'client: Client\nservice: { handler: Handler; store: Store; handler -> store: write }\nclient -> service.handler: request',
+          caption: 'Illustrative request.',
+          steps: [
+            { board: 'overview', title: 'Overview', description: 'See the exchange.' },
+            {
+              board: 'overview',
+              title: 'Request',
+              description: 'The handler receives the request.',
+              change: 'Send the input.',
+              focus: ['(client -> service.handler)[0]'],
+              evidence: { filePath: 'api.ts', startLine: 12 },
+            },
+            {
+              board: 'overview',
+              title: 'Write',
+              description: 'The store receives the write.',
+              focus: ['service.(handler -> store)[0]'],
+            },
+          ],
+        })
+      )
+    );
+    assert.ok(spec);
+    const compiled = await compileD2Source(d2, spec.source, false);
+    const entities = [...compiled.diagram.shapes, ...compiled.diagram.connections].map((item) => ({
+      id: item.id,
+      label: 'label' in item ? item.label : item.id,
+      emphasized: false,
+    }));
+    const svg = await d2.render(compiled.diagram, { ...compiled.renderOptions, noXMLTag: true });
+    const root = new JSDOM(svg, { contentType: 'image/svg+xml' }).window.document.documentElement;
+    tagDiagramEntities(root, entities);
+    const tagged = [...root.querySelectorAll('[data-d2-entity]')].map((el) => el.getAttribute('data-d2-entity'));
+    for (const step of spec.steps ?? []) for (const id of step.focus ?? []) assert.ok(tagged.includes(id), id);
+    const frame = { id: 'overview', name: 'Overview', svg, entities, animated: false, notes: [] };
+    const views = diagramViews(spec, [frame]);
+    assert.equal(views.length, 3);
+    assert.ok(
+      views.every((view) => view.frame === frame),
+      'focus views share the compiled drawing'
+    );
+    assert.deepEqual(views[1].evidence, { filePath: 'api.ts', startLine: 12 });
+    assert.equal(views[1].change, 'Send the input.');
+    assert.equal(views[2].differences.length, 0, 'focus does not falsely imply state changed');
+    const malformed = normalizeD2Diagram({
+      source: spec.source,
+      steps: [
+        { board: 'missing', title: 'Bad reference', focus: ['missing'], evidence: { filePath: {}, startLine: -1 } },
+      ],
+    });
+    assert.ok(malformed);
+    assert.equal(diagramViews(malformed, [frame])[0].frame, frame, 'invalid references retain a usable diagram');
+    assert.equal(malformed.steps?.[0].evidence, undefined);
   } finally {
     await d2.dispose();
   }
