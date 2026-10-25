@@ -1,3 +1,4 @@
+import { useReviewBreadcrumbs, type ReviewCrumb } from '../lib/review-breadcrumbs';
 import { LfsDownload } from './LfsDownload';
 import { useDiffAppearance } from '../lib/use-diff-appearance';
 import { DiffStats } from './DiffStats';
@@ -79,6 +80,7 @@ const isUnsupportedPreview = (message: string) =>
   /This file is too large to preview|This binary file has no text preview|This file is not UTF-8 text/.test(message);
 
 export interface CommitWorkspace {
+  breadcrumbs?: ReviewCrumb[];
   snapshot?: PrChanges;
   sidebar: ReactNode;
   header: ReactNode;
@@ -359,6 +361,19 @@ export function PrChangesView({
         if (alive.current && fileNavigation.current === id) setOpeningFile('');
       });
   }
+  useReviewBreadcrumbs(commit ? 'commits' : 'changes', [
+    ...(commit?.breadcrumbs ?? []),
+    ...(!commit && subject.kind === 'stack' && entry ? [{
+      id: 'member', label: `#${entry.snapshot.url.split('/').pop()}`,
+      pickerLabel: 'PR in stack', value: entry.snapshot.url,
+      options: subject.members.map(member => ({ value: member.url, label: `#${member.number} · ${member.title}` })),
+      select: (url: string) => { const next = entries.find(e => e.snapshot.url === url); if (next) select(next.key); },
+    }] : []),
+    ...(entry ? [{ id: 'file', label: entry.file.path, pickerLabel: 'File in comparison', value: entry.key,
+      options: entries.filter(e => e.snapshot.url === entry.snapshot.url).map(e => ({ value: e.key, label: e.file.path })),
+      select,
+    }] : []),
+  ]);
   function applySelection(key: string) {
     if (viewport.current && entry) position.scroll[activeKey] = viewport.current.scrollTop;
     position.selected = key;

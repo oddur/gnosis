@@ -78,7 +78,7 @@ export function PrSubjectDetails({
               ))}
             </ol>
           </nav>
-          <div className="pr-stack-select">
+          {!compactIdentity && <div className="pr-stack-select">
             <label htmlFor="pr-stack-member">PR in stack</label>
             <SearchableSelect id="pr-stack-member" label="PR in stack" value={member.url} onValueChange={onSelect}
               options={subject.members.map((m, i) => ({ value: m.url,
@@ -86,7 +86,7 @@ export function PrSubjectDetails({
                   m, statuses[m.url], statusErrors[m.url], signals.find(s => s.url === m.url)
                 )} — ${m.title}` }))}
             />
-          </div>
+          </div>}
         </>
       )}
       <div

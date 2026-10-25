@@ -1,3 +1,6 @@
+import { ReviewBreadcrumbProvider, useReviewBreadcrumbs } from '../lib/review-breadcrumbs';
+import { ReviewBreadcrumbs } from './ReviewBreadcrumbs';
+import type { ComponentProps } from 'react';
 import { PrMuteMenu } from './PrMuteMenu';
 import { PrExplanation } from './PrExplanation';
 import type { ExplanationDestination } from '../lib/explanation-workspace';
@@ -8,7 +11,7 @@ import { PrChangesView } from './PrChangesView';
 import type { Preferences } from '../lib/types';
 import { GitHubAuthor } from './GitHubAuthor';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowLeft, ChevronLeft, ChevronRight, ExternalLink, Layers, RefreshCw } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ExternalLink, Layers, RefreshCw } from 'lucide-react';
 import { Markdown } from './Markdown';
 import { PrSubjectDetails } from './PrSubjectDetails';
 import { type QueueItem } from '../lib/workbench';
@@ -24,7 +27,7 @@ export interface PrReadingPosition {
   scroll: Record<string, number>;
 }
 
-export function PrSummary({
+function PrSummaryContent({
   item,
   starredUrls,
   starBusy,
@@ -84,6 +87,8 @@ export function PrSummary({
     previous?: string;
     next?: string;
     move: (direction: number) => void;
+    choices: { value: string; label: string }[];
+    select: (id: string) => void;
   };
   positions: Map<string, PrReadingPosition>;
   shortcutsEnabled?: boolean;
@@ -162,7 +167,7 @@ export function PrSummary({
       if (
         target?.isContentEditable ||
         target?.closest(
-          'input, textarea, select, summary, [role="dialog"], [role="menu"], .activity-shell, .workbench-help'
+          'input, textarea, select, summary, [role="combobox"], [role="dialog"], [role="menu"], .review-breadcrumbs, .activity-shell, .workbench-help'
         )
       )
         return;
@@ -183,6 +188,15 @@ export function PrSummary({
     window.addEventListener('keydown', keydown);
     return () => window.removeEventListener('keydown', keydown);
   }, [navigation, onBack, shortcutsEnabled, activeUrl, position, tab]);
+  useReviewBreadcrumbs('summary', stacked ? [{
+    id: 'member', label: `#${item.subject.members.find(m => m.url === activeUrl)?.number}`,
+    title: item.subject.members.find(m => m.url === activeUrl)?.title,
+    pickerLabel: 'PR in stack', value: activeUrl,
+    options: item.subject.members.map(m => ({ value: m.url, label: `#${m.number} · ${m.title}` })),
+    select: url => { remember(); setMemberUrl(url); },
+  }] : []);
+  const tabs = [{ value: 'summary', label: 'Summary' }, { value: 'changes', label: 'Changes' },
+    { value: 'commits', label: 'Commits' }, { value: 'explanation', label: 'Explanation' }];
   return (
     <Tabs.Root
       value={tab}
@@ -195,10 +209,16 @@ export function PrSummary({
       <main className={`pr-summary-page ${stacked ? 'is-stack' : ''} ${tab !== 'summary' ? 'showing-changes' : ''}`}>
         <div className="pr-summary-toolbar">
           <div className="pr-summary-toolbar-inner">
-            <button onClick={back} className="pr-back" title="Return to work queue (Esc)">
-              <ArrowLeft size={15} />
-              Work queue
-            </button>
+            <ReviewBreadcrumbs scope={tab} base={[
+              { id: 'origin', label: navigation.viewName, navigate: back },
+              { id: 'subject', label: stacked ? `Stack · ${item.subject.title}` : `${first.repo} #${first.number}`,
+                title: item.subject.title, navigate: () => { remember(); onTabChange('summary'); },
+                pickerLabel: 'PR or stack', value: item.subject.id, options: navigation.choices,
+                select: id => { remember(); navigation.select(id); } },
+              { id: 'tab', label: tabs.find(t => t.value === tab)?.label ?? 'Summary',
+                pickerLabel: 'Review tab', value: tab, options: tabs,
+                select: value => { remember(); onTabChange(value as typeof tab); } },
+            ]} />
             <nav className="pr-queue-navigation" aria-label="Changes in current view">
               <button
                 aria-label="Previous change"
@@ -363,4 +383,8 @@ export function PrSummary({
       </main>
     </Tabs.Root>
   );
+}
+
+export function PrSummary(props: ComponentProps<typeof PrSummaryContent>) {
+  return <ReviewBreadcrumbProvider><PrSummaryContent {...props} /></ReviewBreadcrumbProvider>;
 }

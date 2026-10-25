@@ -1,3 +1,5 @@
+import { ReviewBreadcrumbProvider, useReviewBreadcrumbs } from '../../lib/review-breadcrumbs';
+import { ReviewBreadcrumbs } from '../../components/ReviewBreadcrumbs';
 import { SearchableSelect } from '../../components/SearchableSelect';
 import { useDiffAppearance } from '../../lib/use-diff-appearance';
 import { refreshDiscussion } from '../../lib/review-discussion-cache';
@@ -36,6 +38,8 @@ import { DEFAULT_FAST_CLAUDE_MODEL } from '../../lib/models';
 
 interface Props {
   review: ReviewGuide;
+  origin?: { name: string; reviews: { id: string; title: string }[] };
+  onSelectReview?: (id: string) => void;
   embedded?: boolean;
   active?: boolean;
   initialPreferences?: Preferences;
@@ -105,7 +109,7 @@ function saveChecks(review: ReviewGuide, checked: Set<string>) {
   }
 }
 
-export function ReviewPage({
+function ReviewPageContent({
   review: initialReview,
   onBack,
   onReReview,
@@ -117,6 +121,8 @@ export function ReviewPage({
   active = true,
   initialPreferences,
   onOpenChanges,
+  origin,
+  onSelectReview,
 }: Props) {
   const commandCenter = useCommandCenter();
   const [review, setReview] = useState(initialReview);
@@ -498,6 +504,12 @@ export function ReviewPage({
     [review.slides.length]
   );
 
+  useReviewBreadcrumbs('explanation', [{ id: 'topic',
+    label: currentSlide === 0 ? 'Overview' : review.slides[currentSlide - 1]?.title ?? 'Overview',
+    pickerLabel: 'Review topic', value: String(currentSlide),
+    options: [{ value: '0', label: 'Overview' }, ...review.slides.map(s => ({ value: String(s.slideNumber), label: s.title }))],
+    select: value => handleJumpTo(Number(value)),
+  }]);
   const commentCallbacks = useMemo(
     () => ({ onAddComment: addComment, onRemoveComment: removeComment, onEditComment: editComment }),
     [addComment, removeComment, editComment]
@@ -836,7 +848,16 @@ export function ReviewPage({
         />
       </div>
 
-      {!embedded && <PRSummaryBanner review={review} onBack={onBack} onOpenSettings={() => setSettingsOpen(true)} />}
+      {!embedded && <div className="pr-summary-toolbar"><div className="pr-summary-toolbar-inner">
+        <ReviewBreadcrumbs scope="explanation" base={[
+          { id: 'origin', label: origin?.name ?? 'Work queue', navigate: onBack },
+          ...(isLocal ? [{ id: 'repository', label: review.prUrl.slice(6).split('#')[0].split('/').filter(Boolean).pop() ?? 'Local repository', title: review.prUrl }] : []),
+          { id: 'review', label: review.prTitle, navigate: () => handleJumpTo(0),
+            pickerLabel: 'Saved review', value: review.reviewId, options: origin?.reviews.map(r => ({ value: r.id, label: r.title })), select: onSelectReview },
+          { id: 'tab', label: 'Explanation' },
+        ]} />
+      </div></div>}
+      {!embedded && <PRSummaryBanner review={review} onOpenSettings={() => setSettingsOpen(true)} />}
 
       {!embedded && freshness && <StaleBanner freshness={freshness} onReReview={() => onReReview(review.prUrl)} />}
 
@@ -861,12 +882,6 @@ export function ReviewPage({
         <button onClick={() => setNavOpen((v) => !v)} aria-pressed={navOpen} title="Toggle topic navigation">
           {navOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}Topics
         </button>
-        <SearchableSelect label="Review topic" value={String(currentSlide)}
-          onValueChange={value => handleJumpTo(Number(value))}
-          options={[{ value: '0', label: 'Overview' }, ...review.slides.map(s => ({
-            value: String(s.slideNumber), label: `${reviewed.has(s.slideNumber) ? 'Reviewed · ' : ''}${s.title}`,
-          }))]}
-        />
         {chatOpen && (
           <button onClick={() => setChatOpen(false)}>
             <X size={13} />
@@ -1025,4 +1040,9 @@ export function ReviewPage({
       )}
     </div>
   );
+}
+
+export function ReviewPage(props: Props) {
+  return props.embedded ? <ReviewPageContent {...props} />
+    : <ReviewBreadcrumbProvider><ReviewPageContent {...props} /></ReviewBreadcrumbProvider>;
 }

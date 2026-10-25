@@ -459,6 +459,21 @@ export function PrCommitsView({
         preferences={preferences}
         commit={{
           snapshot,
+          breadcrumbs: [
+            ...(subject.kind === 'stack' && selection ? [{ id: 'member', label: `#${selection.url.split('/').pop()}`,
+              pickerLabel: 'PR in stack', value: selection.url,
+              options: groups.filter(group => group.commits.length).map(group => ({ value: group.member.url, label: `#${group.member.number} · ${group.member.title}` })),
+              select: (url: string) => { const list = lists.find(list => list.url === url); const next = list && latestCommitSelection(list); if (next) { setRangeMode(false); anchor.current = undefined; openSelection(next); } },
+            }] : []),
+            ...(selection && first && last ? [{ id: 'commit', label: chosen.length > 1 ? `${short(first.sha)}…${short(last.sha)} (${chosen.length} commits)` : short(last.sha),
+              title: chosen.map(commit => commit.message.split('\n')[0]).join(' → '),
+              pickerLabel: 'Commit', value: chosen.length > 1 ? 'current-range' : last.sha,
+              options: [...(chosen.length > 1 ? [{ value: 'current-range', label: `${chosen.length} commits · ${short(first.sha)}…${short(last.sha)}` }] : []),
+                ...(groups.find(group => group.member.url === selection.url)?.commits ?? []).slice().reverse().map(commit => ({ value: commit.sha, label: `${short(commit.sha)} · ${commit.message.split('\n')[0]}` }))],
+              select: (sha: string) => { if (sha === 'current-range' || !activeList) return; setRangeMode(false); anchor.current = undefined;
+                openSelection({ url: activeList.url, prBaseSha: activeList.metadata.baseSha, prHeadSha: activeList.metadata.headSha, firstSha: sha, lastSha: sha }); },
+            }] : []),
+          ],
           fileStatus: comparisonError
             ? 'File list unavailable. Retry the comparison.'
             : key

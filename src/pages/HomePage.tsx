@@ -82,6 +82,7 @@ import type { Preferences, PrStatus, ReviewGuide, ReviewHistoryEntry, ModelId, P
 
 interface Props {
   onReviewReady: (review: ReviewGuide) => void;
+  onReviewOriginChange?: (origin: { name: string; reviews: { id: string; title: string }[] }) => void;
   explanationDestination?: ExplanationDestination;
   onShowActivity?: () => void;
   prefillPrUrl?: string;
@@ -95,7 +96,7 @@ const labels = {
   other: 'Other changes',
 };
 
-export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, commandDestination, explanationDestination, onShowActivity }: Props) {
+export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, initialSubjectId, commandDestination, explanationDestination, onShowActivity }: Props) {
   const [overviewTab,setOverviewTab] = useState<'summary'|'changes'|'commits'|'explanation'>('summary');
   const commandCenter = useCommandCenter();
   const handledCommand = useRef<number>(0);
@@ -114,7 +115,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
   const [error, setError] = useState('');
   const [filters, setFilters] = useState<QueueFilters>(DEFAULT_QUEUE_FILTERS);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [savedQuery, setSavedQuery] = useState('');
+  const [savedQuery, setSavedQuery] = useSessionDraft('queue-saved-query', '');
   const [viewBusy, setViewBusy] = useState(false);
   const viewBusyRef = useRef(false);
   const writes = useRef<Promise<unknown>>(Promise.resolve());
@@ -132,7 +133,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
   const [muteError, setMuteError] = useState('');
   const muteBusyRef = useRef(false);
   const muteVersion = useRef(0);
-  const [savedView, setSavedView] = useState(false);
+  const [savedView, setSavedView] = useSessionDraft('queue-saved-view', false);
   const [starBusy, setStarBusy] = useState(false);
   const [starError, setStarError] = useState('');
   const starBusyRef = useRef(false);
@@ -655,14 +656,39 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
     return () => document.removeEventListener('visibilitychange', preload);
   }, [auth?.authenticated, auth?.login, inspectionKey]);
   useEffect(() => () => inspectionData.stop(), []);
-  const summaryIndex = orderedItems.findIndex((item) => item.subject.id === summaryItem?.subject.id);
-  const moveSummary = (direction: number) => {
-    const nextIndex = summaryIndex + direction;
-    if (summaryIndex < 0 || nextIndex < 0 || nextIndex >= orderedItems.length) return;
-    const item = orderedItems[nextIndex];
-    setSelected(item.subject.id);
-    setOpenedItem(item);
+  const originName = savedView ? 'Saved reviews' : activeQueueView?.name ??
+    ({ saved: 'Saved reviews', all: 'Work queue', starred: 'Starred', requested: 'Review requests', updated: 'Updated PRs', stacks: 'Stacks', other: 'Other changes' }[section]);
+  const originSignature = JSON.stringify({ name: originName, reviews: savedView ? saved.map(entry => ({ id: entry.id, title: entry.prTitle })) : [] });
+  useEffect(() => { onReviewOriginChange?.(JSON.parse(originSignature) as { name: string; reviews: { id: string; title: string }[] }); }, [originSignature, onReviewOriginChange]);
+  const summaryChoices = savedView
+    ? [...new Map(saved.map(entry => [entry.snapshot?.subject.id ?? entry.prUrl,
+      { value: entry.snapshot?.subject.id ?? entry.prUrl, label: entry.prTitle }])).values()]
+    : orderedItems.map(item => ({ value: item.subject.id, label: item.subject.kind === 'stack'
+      ? `Stack · ${item.subject.title}` : `${item.subject.members[0].repo} #${item.subject.members[0].number} · ${item.subject.title}` }));
+  const summaryNavigation = useRef(0);
+  useEffect(() => { summaryNavigation.current++; }, [openedItem?.subject.id, savedView, commandDestination]);
+  const summaryIndex = summaryChoices.findIndex(choice => choice.value === summaryItem?.subject.id);
+  const selectSummary = async (id: string) => {
+    const version = ++summaryNavigation.current;
     setError('');
+    if (savedView) {
+      const entry = saved.find(entry => (entry.snapshot?.subject.id ?? entry.prUrl) === id);
+      if (!entry) return;
+      try {
+        const review = await window.electronAPI.loadReview(entry.id);
+        if (!alive.current || summaryNavigation.current !== version) return;
+        if (review.prUrl.startsWith('local:')) { onReviewReady(review); return; }
+        setSelected(id);
+        setOpenedItem({ ...explanationItem(review), review: entry });
+      } catch (e) { if (summaryNavigation.current === version) setError(String(e)); }
+    } else {
+      const item = orderedItems.find(item => item.subject.id === id);
+      if (item) { setSelected(id); setOpenedItem(item); }
+    }
+  };
+  const moveSummary = (direction: number) => {
+    const next = summaryChoices[summaryIndex + direction];
+    if (summaryIndex >= 0 && summaryIndex + direction >= 0 && summaryIndex + direction < summaryChoices.length) void selectSummary(next.value);
   };
   const openSettings = (next: SettingsSection = 'queue') => {
     setSettingsSection(next);
@@ -1065,10 +1091,12 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
         shortcutsEnabled={!settings && !localOpen && !authOpen && !connectionRequired}
           navigation={{
             index: summaryIndex,
-            total: orderedItems.length,
-            viewName: activeQueueView?.name ?? 'Current filtered view',
-          previous: summaryIndex > 0 ? orderedItems[summaryIndex - 1].subject.title : undefined,
-            next: summaryIndex >= 0 ? orderedItems[summaryIndex + 1]?.subject.title : undefined,
+            total: summaryChoices.length,
+            viewName: originName,
+            choices: summaryChoices,
+            select: id => void selectSummary(id),
+            previous: summaryIndex > 0 ? summaryChoices[summaryIndex - 1].label : undefined,
+            next: summaryIndex >= 0 ? summaryChoices[summaryIndex + 1]?.label : undefined,
             move: moveSummary,
           }}
         starting={pendingStarts.has(summaryItem.subject.id)}
@@ -1076,6 +1104,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
         statuses={statuses}
         statusErrors={statusErrors}
         onBack={() => {
+          summaryNavigation.current++;
           setOverviewTab('summary');
           setOpenedItem(null);
           requestAnimationFrame(() => rowButtons.current.get(selected ?? '')?.focus({ preventScroll: true }));

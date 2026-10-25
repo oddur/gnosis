@@ -24,6 +24,8 @@ export function SearchableSelect({
   className,
   disabled,
   describedBy,
+  triggerLabel,
+  current,
   placeholder = 'Choose an option',
 }: {
   options: SelectionOption[];
@@ -34,6 +36,8 @@ export function SearchableSelect({
   className?: string;
   disabled?: boolean;
   describedBy?: string;
+  triggerLabel?: string;
+  current?: boolean;
   placeholder?: string;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
@@ -57,7 +61,7 @@ export function SearchableSelect({
       }}
       open={open}
       onOpenChange={(next) => {
-        if (next) setContainer(trigger.current?.closest<HTMLElement>('[role="dialog"], .queue-filter-popover') ?? null);
+        if (next) setContainer(trigger.current?.closest<HTMLElement>('[role="dialog"]:not(.breadcrumb-overflow-menu), .queue-filter-popover') ?? null);
         setOpen(next);
         setQuery('');
       }}
@@ -72,6 +76,7 @@ export function SearchableSelect({
         value={value}
         aria-label={label}
         aria-describedby={describedBy}
+        aria-current={current ? 'page' : undefined}
         className={className}
         title={labels.get(value) ?? placeholder}
         onKeyDown={(event) => {
@@ -90,12 +95,12 @@ export function SearchableSelect({
           event.preventBaseUIHandler();
           event.preventDefault();
           event.stopPropagation();
-          setContainer(trigger.current?.closest<HTMLElement>('[role="dialog"], .queue-filter-popover') ?? null);
+          setContainer(trigger.current?.closest<HTMLElement>('[role="dialog"]:not(.breadcrumb-overflow-menu), .queue-filter-popover') ?? null);
           setQuery(event.key);
           setOpen(true);
         }}
       >
-        {labels.get(value) ?? placeholder}
+        {triggerLabel ?? labels.get(value) ?? placeholder}
       </ComboboxTrigger>
       <ComboboxContent container={container}>
         <ComboboxInput aria-label={`Search ${label.toLowerCase()}`} placeholder="Type to search…" />

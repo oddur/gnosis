@@ -20,7 +20,7 @@ Object.assign(window, {
       if (option) {
         option.click();
         for (let j = 0; j < 160; j++) {
-          if (control.value === value && control.getAttribute('aria-expanded') === 'false') return;
+          if (!control.isConnected || (control.value === value && control.getAttribute('aria-expanded') === 'false')) return;
           await new Promise((resolve) => setTimeout(resolve, 25));
         }
         throw Error(`Selection did not commit: ${value}`);
