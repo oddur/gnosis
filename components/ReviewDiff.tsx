@@ -6,7 +6,7 @@ import { bundledLanguages } from 'shiki/langs';
 import { bundledThemes } from 'shiki/themes';
 import { processFile, registerCustomTheme } from '@pierre/diffs';
 import type { DiffLineAnnotation, FileDiffOptions } from '@pierre/diffs';
-import { ChevronsUpDown } from 'lucide-react';
+import { ChevronsUpDown, FoldVertical, UnfoldVertical } from 'lucide-react';
 import { readableCodeTheme } from '@/lib/code-contrast';
 import { CODE_THEMES } from '@/lib/constants';
 import {
@@ -293,12 +293,15 @@ function FoldableReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: D
         </p>
       )}
       {revealed.size > 0 && (
-        <div className="flex justify-end border-b bg-muted/30 px-3 py-1">
+        <div className="flex justify-end border-b bg-muted/20 px-2 py-0.5">
           <button
-            className="review-context-action text-xs underline underline-offset-2"
+            type="button"
+            className="diff-context-button"
+            aria-label="Hide extra context"
+            title="Hide extra context"
             onClick={() => changeContext(() => setRevealed(new Set()))}
           >
-            Hide extra context
+            <FoldVertical size={14} aria-hidden="true" />
           </button>
         </div>
       )}
@@ -335,24 +338,27 @@ function FoldableReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: D
         return (
           <div
             key={`gap-${range.start}`}
-            className="diff-context-gap flex flex-wrap items-center gap-x-3 gap-y-1 border-y bg-muted/40 px-3 py-1.5 text-xs"
+            className="diff-context-gap flex items-center gap-1 border-y bg-muted/20 px-2 py-0.5 text-xs"
           >
-            <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-            <span className="text-muted-foreground">
-              {count} unchanged {count === 1 ? 'line' : 'lines'} hidden
-            </span>
             <button
-              className="review-context-action underline underline-offset-2"
+              type="button"
+              className="diff-context-button"
+              aria-label={`Show ${Math.min(count, 10)} more unchanged ${count === 1 ? 'line' : 'lines'} (${count} hidden)`}
+              title={`Show ${Math.min(count, 10)} of ${count} hidden unchanged ${count === 1 ? 'line' : 'lines'}`}
               onClick={() => changeContext(() => reveal(false))}
             >
-              Show {Math.min(count, 10)} more {Math.min(count, 10) === 1 ? 'line' : 'lines'}
+              <ChevronsUpDown size={14} aria-hidden="true" />
+              <span aria-hidden="true">{count} hidden</span>
             </button>
             {count > 10 && (
               <button
-                className="review-context-action underline underline-offset-2"
+                type="button"
+                className="diff-context-button"
+                aria-label={`Show all ${count} unchanged lines`}
+                title={`Show all ${count} unchanged lines`}
                 onClick={() => changeContext(() => reveal(true))}
               >
-                Show all {count} lines
+                <UnfoldVertical size={14} aria-hidden="true" />
               </button>
             )}
           </div>

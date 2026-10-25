@@ -1,0 +1,101 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mergeReadiness, subjectReadiness } from '../lib/merge-readiness';
+import { QUEUE_SIGNALS_TTL, type QueueSignals } from '../lib/queue-signals';
+import type { ReviewMember, ReviewSubject } from '../lib/workbench';
+
+const now = 1_000_000;
+const member = {
+  url: 'https://github.com/example/repo/pull/1',
+  number: 1,
+  headSha: 'head',
+  merged: false,
+  state: 'open',
+  isDraft: false,
+  baseBranch: 'feature/base',
+} as ReviewMember;
+function signals(overrides: Partial<NonNullable<QueueSignals['readiness']>> = {}): QueueSignals {
+  return {
+    url: member.url,
+    headSha: member.headSha,
+    checkedAt: now,
+    comments: 0,
+    checks: { state: 'success', total: 5, passed: 5 },
+    readiness: {
+      state: 'OPEN',
+      isDraft: false,
+      mergeable: 'MERGEABLE',
+      mergeState: 'CLEAN',
+      reviewDecision: 'APPROVED',
+      baseBranch: member.baseBranch,
+      baseSha: 'base',
+      behindBy: 0,
+      mergeQueue: false,
+      queueState: null,
+      ...overrides,
+    },
+  };
+}
+void test('clean conflict-free GitHub policy state is required for readiness; passing checks alone are insufficient', () => {
+  assert.equal(mergeReadiness(member, signals(), now).ready, true);
+  for (const mergeState of ['BLOCKED', 'UNKNOWN', 'HAS_HOOKS', 'UNSTABLE', 'NEW_STATE']) {
+    assert.equal(mergeReadiness(member, signals({ mergeState }), now).ready, false, mergeState);
+  }
+  assert.equal(mergeReadiness(member, { ...signals(), readiness: undefined }, now).label, 'Readiness unknown');
+  assert.equal(mergeReadiness(member, signals({ mergeable: 'UNKNOWN' }), now).ready, false);
+});
+void test('required base update, conflicts and optional updates are distinct and name the PR base branch', () => {
+  const required = mergeReadiness(member, signals({ mergeState: 'BEHIND', behindBy: 4 }), now);
+  assert.equal(required.label, 'Update required to merge');
+  assert.match(required.details.join(' '), /Rebase onto feature\/base, or merge feature\/base/);
+  assert.equal(mergeReadiness(member, signals({ mergeable: 'CONFLICTING' }), now).label, 'Merge conflicts');
+  const optional = mergeReadiness(member, signals({ behindBy: 4 }), now);
+  assert.equal(optional.ready, true);
+  assert.match(optional.details.join(' '), /updating is optional/);
+  const blocked = mergeReadiness(member, signals({ behindBy: 4, mergeState: 'BLOCKED' }), now);
+  assert.doesNotMatch(blocked.details.join(' '), /optional/);
+});
+void test('all known blockers remain visible even when branch updates take priority', () => {
+  const value = signals({ mergeState: 'BEHIND', isDraft: true, reviewDecision: 'REVIEW_REQUIRED' });
+  value.checks.state = 'failure';
+  const result = mergeReadiness(member, value, now);
+  assert.equal(result.ready, false);
+  assert.match(result.details.join(' '), /ready for review/);
+  assert.match(result.details.join(' '), /Required approvals/);
+  assert.match(result.details.join(' '), /checks are failing/);
+  assert.equal(mergeReadiness(member, signals({ reviewDecision: 'CHANGES_REQUESTED' }), now).ready, false);
+});
+void test('stale, missing and different-revision snapshots cannot produce a green merge claim', () => {
+  const stale = mergeReadiness(member, signals(), now + QUEUE_SIGNALS_TTL);
+  assert.equal(stale.ready, false);
+  assert.equal(stale.tone, 'muted');
+  assert.equal(stale.label, 'Readiness out of date');
+  assert.equal(mergeReadiness({ ...member, headSha: 'new' }, signals(), now).label, 'Readiness unknown');
+  assert.equal(mergeReadiness(member, undefined, now).ready, false);
+});
+void test('merge queues are distinguished from direct merging and terminal PRs are never ready', () => {
+  assert.equal(mergeReadiness(member, signals({ mergeQueue: true }), now).label, 'Ready for merge queue');
+  assert.equal(
+    mergeReadiness(member, signals({ mergeQueue: true, queueState: 'QUEUED' }), now).label,
+    'In merge queue'
+  );
+  for (const state of ['MERGED', 'CLOSED']) assert.equal(mergeReadiness(member, signals({ state }), now).ready, false);
+});
+void test('stacks name only the next dependency-eligible PR and never promise the whole stack can merge', () => {
+  const child = { ...member, url: 'https://github.com/example/repo/pull/2', number: 2, headSha: 'child' };
+  const subject: ReviewSubject = {
+    id: 'stack',
+    kind: 'stack',
+    title: 'Stack',
+    members: [member, child],
+    edges: [{ parent: member.url, child: child.url, evidence: 'branch' }],
+    warnings: [],
+  };
+  const childSignals = { ...signals(), url: child.url, headSha: child.headSha };
+  const blockedBase = signals({ mergeState: 'BEHIND' });
+  assert.equal(subjectReadiness(subject, [blockedBase, childSignals], now).ready, false);
+  assert.match(subjectReadiness(subject, [signals(), childSignals], now).label, /Next: #1/);
+  assert.match(subjectReadiness(subject, [signals({ state: 'MERGED' }), childSignals], now).label, /Next: #2/);
+  assert.equal(subjectReadiness(subject, [signals({ state: 'CLOSED' }), childSignals], now).ready, false);
+  assert.equal(subjectReadiness(subject, [], now).label, 'Stack readiness unknown');
+});

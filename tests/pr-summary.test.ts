@@ -23,21 +23,23 @@ void test('author headings are scoped beneath single-PR and stack sections witho
   }
 });
 
-void test('stack readiness never presents neutral, absent, or failed status as passed', () => {
-  const member = { state: 'open', merged: false, isDraft: false } as ReviewMember;
+void test('stack readiness does not infer merge eligibility from checks or approval counts', () => {
+  const member = {
+    url: 'https://github.com/example/repo/pull/1',
+    headSha: 'head',
+    baseBranch: 'main',
+    state: 'open',
+    merged: false,
+    isDraft: false,
+  } as ReviewMember;
   const status = {
     mergeable: true,
     ciChecks: [{}],
-    ciConclusion: 'neutral',
-    reviewSummary: { approved: 0, changesRequested: 0 },
+    ciConclusion: 'success',
+    reviewSummary: { approved: 2, changesRequested: 0 },
   } as PrStatus;
-  assert.equal(memberReadiness(member), 'Checks not loaded');
-  assert.equal(memberReadiness(member, status), 'Checks need inspection');
-  assert.equal(memberReadiness(member, { ...status, ciConclusion: 'failure' }), 'Checks failing');
-  assert.equal(memberReadiness(member, { ...status, ciConclusion: 'success' }), 'Checks passed');
-  assert.equal(memberReadiness(member, status, 'Rate limited'), 'Status unavailable');
-  assert.equal(
-    memberReadiness(member, { ...status, reviewSummary: { approved: 2, changesRequested: 1, commented: 0 } }),
-    'Changes requested'
-  );
+  assert.equal(memberReadiness(member), 'Readiness unknown');
+  assert.equal(memberReadiness(member, status), 'Readiness unknown');
+  assert.equal(memberReadiness(member, status, 'Rate limited'), 'Readiness unknown');
+  assert.equal(memberReadiness({ ...member, merged: true }, status), 'Merged');
 });

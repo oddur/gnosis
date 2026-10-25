@@ -14,6 +14,8 @@ import type { ReviewMember, ReviewSubject } from '../lib/workbench';
 import { useQueueSignals } from '../lib/use-queue-signals';
 import { QUEUE_SIGNALS_TTL } from '../lib/queue-signals';
 import { timeAgo } from '../lib/utils';
+import { subjectReadiness } from '../lib/merge-readiness';
+import { ReadinessBadge } from './MergeReadiness';
 
 export function PrStateIcon({ member }: { member: ReviewMember }) {
   const state = member.merged ? 'merged' : member.state === 'closed' ? 'closed' : member.isDraft ? 'draft' : 'open';
@@ -102,6 +104,7 @@ export function QueueMetadata({ subject, account }: { subject: ReviewSubject; ac
           <CheckIcon size={14} aria-hidden="true" />
           {checkLabel}
         </span>
+        <ReadinessBadge readiness={subjectReadiness(subject, values)} />
       </div>
       {comments !== undefined && comments > 0 && (
         <span

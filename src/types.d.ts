@@ -1,7 +1,7 @@
 import type { PrCommits, CommitSelection } from '../lib/pr-commits';
 import type { PrChanges, PrFileRequest, PrFileContents, FileChatRequest } from '../lib/pr-changes';
 import type { GitHubProfile } from '../lib/github-profile';
-import type { QueueSignalRequest, QueueSignals } from '../lib/queue-signals';
+import type { QueueSignalRequest, QueueSignals, QueueSignalOptions } from '../lib/queue-signals';
 import type { LocalSearchResponse } from './command-search-service';
 import type { GitHubDevicePrompt } from '../lib/github-auth';
 import type { QueueViewAction } from '../lib/saved-views';
@@ -38,7 +38,7 @@ declare global {
       checkPrChanges: (url: string) => Promise<{ baseSha: string; headSha: string }>;
       askPrFile: (request: FileChatRequest) => Promise<string>;
       getGitHubProfile: (login:string) => Promise<GitHubProfile>;
-      getQueueSignals: (requests: QueueSignalRequest[]) => Promise<QueueSignals[]>;
+      getQueueSignals: (requests: QueueSignalRequest[], options?: QueueSignalOptions) => Promise<QueueSignals[]>;
       commandSearch: (query: string, includeBots?: boolean, recentIds?: string[]) => Promise<LocalSearchResponse>;
       commandGitHubSearch: (query: string) => Promise<PrSearchResult[]>;
       listActivity: () => Promise<ActivityTask[]>;
@@ -95,7 +95,7 @@ declare global {
       searchPullRequests: () => Promise<PrSearchResult[]>;
       searchRepos: (query: string) => Promise<RepoSearchResult[]>;
       reRenderHunks: (review: ReviewGuide) => Promise<ReviewGuide>;
-      getPrStatus: (prUrl: string) => Promise<PrStatus>;
+      getPrStatus: (prUrl: string, force?: boolean) => Promise<PrStatus>;
       getPrMetadata: (prUrl: string) => Promise<PrMetadata>;
       loadReviewImages: (reviewId: string, filePath: string) => Promise<import('../lib/review-images').ReviewImageComparison>;
       loadPrImage: (url: string) => Promise<string>;

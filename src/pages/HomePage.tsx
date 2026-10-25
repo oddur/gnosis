@@ -11,6 +11,7 @@ import { VirtualReviewQueue } from '../../components/VirtualReviewQueue';
 import { GitHubIcon } from '../../lib/constants';
 import { PrLabels } from '../../components/PrLabels';
 import { PrSummary, type PrReadingPosition } from '../../components/PrSummary';
+import { publishQueueSignals } from '../../lib/use-queue-signals';
 import { SavedViewsNav, SaveViewControls } from '../../components/SavedQueueViews';
 import type { QueueViewAction } from '../../lib/saved-views';
 import { Popover } from 'radix-ui';
@@ -212,6 +213,9 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
   }, []);
   const rowButtons = useRef(new Map<string, HTMLButtonElement>());
   const [statuses, setStatuses] = useState<Partial<Record<string, PrStatus>>>({});
+  const cachedStatuses = useRef(new Map<string, PrStatus>());
+  const lastStatusAttempt = useRef(0);
+  const [statusRefreshing, setStatusRefreshing] = useState(false);
   const alive = useRef(true);
   const selectedItem = queue.items.find(
     (i) => i.subject.id === selected && matchesQueueFilters(i, filters, Date.now(), auth?.login)
@@ -325,17 +329,37 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
   useEffect(() => {
     if (selected) localStorage.setItem('gnosis-queue-selection', selected);
     let cancelled = false;
-    setStatuses({});
+    const cacheKey = (url: string, sha: string) => `${auth?.login}:${url}@${sha}`;
+    setStatuses(
+      Object.fromEntries(
+        (statusSubject?.members ?? []).flatMap((m) => {
+          const saved = cachedStatuses.current.get(cacheKey(m.url, m.headSha));
+          return saved ? [[m.url, saved]] : [];
+        })
+      )
+    );
     setStatusErrors({});
+    let force = lastStatusAttempt.current !== statusAttempt;
+    lastStatusAttempt.current = statusAttempt;
     const refreshStatuses = () => {
-      if (statusSubject)
+      if (statusSubject) {
+        setStatusRefreshing(true);
+        const refreshNow = force;
+        force = false;
         void Promise.allSettled(
           statusSubject.members.map(async (m) => ({
             url: m.url,
-            status: await window.electronAPI.getPrStatus(m.url),
+            status: await window.electronAPI.getPrStatus(m.url, refreshNow),
           }))
         ).then((results) => {
           if (!cancelled) {
+            setStatusRefreshing(false);
+            results.forEach((r, i) => {
+              if (r.status !== 'fulfilled') return;
+              const m = statusSubject.members[i];
+              cachedStatuses.current.set(cacheKey(m.url, m.headSha), r.value.status);
+              if (auth?.login && r.value.status.signals) publishQueueSignals(auth.login, [r.value.status.signals]);
+            });
             setStatusErrors(
               Object.fromEntries(
                 results.flatMap((r, i) =>
@@ -343,13 +367,15 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                 )
               )
             );
-            setStatuses(
-              Object.fromEntries(
+            setStatuses((previous) => ({
+              ...previous,
+              ...Object.fromEntries(
                 results.flatMap((r) => (r.status === 'fulfilled' ? [[r.value.url, r.value.status]] : []))
-              )
-            );
+              ),
+            }));
           }
         });
+      }
     };
     refreshStatuses();
     const timer = setInterval(refreshStatuses, 60000);
@@ -357,7 +383,13 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
       cancelled = true;
       clearInterval(timer);
     };
-  }, [selected, statusSubject?.id, statusSubject?.members.map((m) => m.url).join(','), statusAttempt]);
+  }, [
+    selected,
+    auth?.login,
+    statusSubject?.id,
+    statusSubject?.members.map((m) => `${m.url}@${m.headSha}`).join(','),
+    statusAttempt,
+  ]);
   const fallbackReview =
     selectedItem?.review?.status === 'completed' && selectedItem.briefing?.status !== 'ready'
       ? selectedItem.review
@@ -864,6 +896,8 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
         <PrSummary
         key={summaryItem.subject.id}
         item={summaryItem}
+        account={auth?.login ?? null}
+        statusRefreshing={statusRefreshing}
         tab={overviewTab}
         onTabChange={setOverviewTab}
         preferences={prefs}
@@ -897,7 +931,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
               summaryItem.subject.scope === 'single'
             )
           }
-        onRetryStatus={() => setStatusAttempt((n) => n + 1)}
+        onRetryStatus={() => { if (!statusRefreshing) setStatusAttempt((n) => n + 1); }}
         onAiSetup={() => openSettings('integrations')}
         onGitHubAuth={() => setAuthOpen(true)}
         />

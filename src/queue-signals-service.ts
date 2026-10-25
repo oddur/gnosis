@@ -1,10 +1,26 @@
 import type { Octokit } from '@octokit/rest';
 import { githubCacheFor } from '../lib/github-client';
 import { isCacheRecord } from '../lib/github-cache';
-import { QUEUE_SIGNALS_TTL, queueSignalKey, type QueueSignalRequest, type QueueSignals } from '../lib/queue-signals';
+import {
+  QUEUE_SIGNALS_TTL,
+  queueSignalKey,
+  type QueueSignalRequest,
+  type QueueSignals,
+  type QueueSignalOptions,
+} from '../lib/queue-signals';
 
 interface PullSignals {
   headRefOid: string;
+  state: string;
+  isDraft: boolean;
+  mergeable: string;
+  mergeStateStatus: string;
+  reviewDecision: string | null;
+  baseRefName: string;
+  baseRefOid: string;
+  baseRef: { compare: { behindBy: number } | null } | null;
+  mergeQueue: { id: string } | null;
+  mergeQueueEntry: { state: string } | null;
   comments: { totalCount: number };
   commits: {
     nodes: {
@@ -22,6 +38,21 @@ interface PullSignals {
   };
 }
 function isSignals(value: unknown): value is QueueSignals {
+  if (isCacheRecord(value) && value.readiness !== undefined) {
+    const readiness = value.readiness;
+    if (
+      !isCacheRecord(readiness) ||
+      !['state', 'mergeable', 'mergeState', 'baseBranch', 'baseSha'].every(
+        (key) => typeof readiness[key] === 'string'
+      ) ||
+      typeof readiness.isDraft !== 'boolean' ||
+      typeof readiness.mergeQueue !== 'boolean' ||
+      (readiness.reviewDecision !== null && typeof readiness.reviewDecision !== 'string') ||
+      (readiness.queueState !== null && typeof readiness.queueState !== 'string') ||
+      (readiness.behindBy !== null && (typeof readiness.behindBy !== 'number' || !Number.isFinite(readiness.behindBy)))
+    )
+      return false;
+  }
   return (
     isCacheRecord(value) &&
     typeof value.url === 'string' &&
@@ -37,7 +68,11 @@ function isSignals(value: unknown): value is QueueSignals {
 /** Visible-row reads, batched across repositories, with credential-scoped snapshots and backoff. */
 export function createQueueSignalsService(now = Date.now) {
   const accounts = new WeakMap<Octokit, { retryAt: number; pending: Map<string, Promise<QueueSignals[]>> }>();
-  return async (client: Octokit, requests: QueueSignalRequest[]): Promise<QueueSignals[]> => {
+  return async (
+    client: Octokit,
+    requests: QueueSignalRequest[],
+    options: QueueSignalOptions = {}
+  ): Promise<QueueSignals[]> => {
     if (!Array.isArray(requests) || requests.length > 25) throw new Error('Request at most 25 PR statuses.');
     const unique = [...new Map(requests.map((request) => [queueSignalKey(request), request])).values()];
     const parsed = unique.map((request) => {
@@ -54,15 +89,15 @@ export function createQueueSignalsService(now = Date.now) {
     const result: QueueSignals[] = [];
     const stale: QueueSignals[] = [];
     const missing = parsed.filter(({ request }) => {
-      const saved = cache?.get(`queue-signals:v2:${queueSignalKey(request)}`, isSignals);
-      if (saved && !saved.revalidate && now() - saved.value.checkedAt < QUEUE_SIGNALS_TTL) {
+      const saved = cache?.get(`queue-signals:v3:${queueSignalKey(request)}`, isSignals);
+      if (!options.force && saved && !saved.revalidate && now() - saved.value.checkedAt < QUEUE_SIGNALS_TTL) {
         result.push(saved.value);
         return false;
       }
       if (saved) stale.push(saved.value);
       return true;
     });
-    if (!missing.length || account.retryAt > now()) return [...result, ...stale];
+    if (options.cachedOnly || !missing.length || account.retryAt > now()) return [...result, ...stale];
     const batchKey = missing
       .map(({ request }) => queueSignalKey(request))
       .sort()
@@ -73,10 +108,13 @@ export function createQueueSignalsService(now = Date.now) {
     const query = `query { ${missing
       .map(
         (
-          { owner, repo, number },
+          { owner, repo, number, request },
           i
         ) => `p${i}: repository(owner:${JSON.stringify(owner)},name:${JSON.stringify(repo)}) { pullRequest(number:${number}) {
-      headRefOid comments { totalCount } commits(last:1) { nodes { commit { statusCheckRollup { state contexts {
+      headRefOid state isDraft mergeable mergeStateStatus reviewDecision baseRefName baseRefOid
+      baseRef { compare(headRef:${JSON.stringify(request.headSha)}) { behindBy } }
+      mergeQueue { id } mergeQueueEntry { state }
+      comments { totalCount } commits(last:1) { nodes { commit { statusCheckRollup { state contexts {
         totalCount checkRunCountsByState { state count } statusContextCountsByState { state count }
       } } } } }
     } }`
@@ -99,6 +137,20 @@ export function createQueueSignalsService(now = Date.now) {
             ...request,
             checkedAt: now(),
             comments: pr.comments.totalCount,
+            readiness: pr.mergeStateStatus
+              ? {
+                  state: pr.state,
+                  isDraft: pr.isDraft,
+                  mergeable: pr.mergeable,
+                  mergeState: pr.mergeStateStatus,
+                  reviewDecision: pr.reviewDecision,
+                  baseBranch: pr.baseRefName,
+                  baseSha: pr.baseRefOid,
+                  behindBy: pr.baseRef?.compare?.behindBy ?? null,
+                  mergeQueue: !!pr.mergeQueue,
+                  queueState: pr.mergeQueueEntry?.state ?? null,
+                }
+              : undefined,
             checks: {
               state: !rollup
                 ? 'neutral'
@@ -115,7 +167,7 @@ export function createQueueSignalsService(now = Date.now) {
             },
           };
           fresh.push(value);
-          if (cache?.version() === version) cache?.set(`queue-signals:v2:${queueSignalKey(request)}`, value);
+          if (cache?.version() === version) cache?.set(`queue-signals:v3:${queueSignalKey(request)}`, value);
         }
         return fresh;
       } catch {
