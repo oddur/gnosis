@@ -1,4 +1,4 @@
-import { MERMAID_DIRECTIVE } from './mermaid-guidance';
+import { D2_DIRECTIVE } from './d2-guidance';
 import { FILE_SUMMARY_DIRECTIVE } from './file-summaries';
 import { INLINE_EXPLANATION_DIRECTIVE } from './inline-explanations';
 import { getProvider } from './provider';
@@ -56,7 +56,7 @@ Anchor each check to a location when you honestly can:
 
 REVIEW FOCUS: The markdown-prose rendering of the same 2–4 checks as a bullet list. Same items, same standard — just formatted for reading.
 
-${MERMAID_DIRECTIVE}
+${D2_DIRECTIVE}
 
 WRITING STYLE (apply to all text fields — narrative, reviewFocus, summary, riskRationale):
 - Short sentences. Plain words. No jargon when plain English works.
@@ -124,7 +124,7 @@ The JSON must match this schema exactly:
       "fileSummaries": [{ "filePath": string, "summary": string }],
       "inlineExplanations": [{ "filePath": string, "line": number, "side": "LEFT" | "RIGHT", "code": string, "text": string }],
       "dependsOn": string[],
-      "mermaidDiagram": string | null,
+      "d2Diagram": { "source": string, "caption": string, "steps"?: [{ "title": string, "description": string }] } | null,
       "explainerIdea": { "title": string, "description": string } | null,
       "importance": "critical" | "important" | "minor",
       "reviewChecks": [
@@ -262,9 +262,10 @@ export async function generateReviewGuide(opts: GenerateReviewGuideOptions): Pro
     const educationNotesSchema = educationMode
       ? `,\n      "educationNotes": [{ "concept": string, "explanation": string }]`
       : '';
-    const slideSchema = USER_SUFFIX
-      .replace(/\n {4}}\n/, `${educationNotesSchema}\n    }\n`)
-      .replace('\n}', `${webSourcesSchema}\n}`);
+    const slideSchema = USER_SUFFIX.replace(/\n {4}}\n/, `${educationNotesSchema}\n    }\n`).replace(
+      '\n}',
+      `${webSourcesSchema}\n}`
+    );
     const userMessage = customInstructions
       ? contextPackage +
         slideSchema +
@@ -401,10 +402,7 @@ function validatePlannerOutput(obj: unknown): obj is PlannerOutput {
   if (typeof obj !== 'object' || obj === null) return false;
   const o = obj as Record<string, unknown>;
   return (
-    typeof o.summary === 'string' &&
-    typeof o.riskLevel === 'string' &&
-    Array.isArray(o.topics) &&
-    o.topics.length > 0
+    typeof o.summary === 'string' && typeof o.riskLevel === 'string' && Array.isArray(o.topics) && o.topics.length > 0
   );
 }
 
@@ -416,7 +414,7 @@ export async function planReview(
   onChunk?: (chunk: string, isThinking: boolean) => void,
   thinking: boolean = false,
   signal?: AbortSignal,
-  toolOpts?: { cwd?: string; mcpConfigPath?: string; allowedTools?: string[]; nonStrictMcp?: boolean },
+  toolOpts?: { cwd?: string; mcpConfigPath?: string; allowedTools?: string[]; nonStrictMcp?: boolean }
 ): Promise<PlannerOutput> {
   const provider = getProvider(providerName);
   const userMessage = prMetadata + '\n' + hunkIndex + PLANNER_USER_SUFFIX;
@@ -481,7 +479,7 @@ Anchor when you can:
 
 REVIEW FOCUS: Markdown-bullet-list rendering of the same checks. Same items, same standard.
 
-${MERMAID_DIRECTIVE}
+${D2_DIRECTIVE}
 
 Respond with valid JSON only. No explanation outside the JSON.`;
 
@@ -494,7 +492,7 @@ Write the slide content for this topic. Respond with JSON matching this schema e
   "contextSnippets": string[],
   "fileSummaries": [{ "filePath": string, "summary": string }],
   "inlineExplanations": [{ "filePath": string, "line": number, "side": "LEFT" | "RIGHT", "code": string, "text": string }],
-  "mermaidDiagram": string | null,
+  "d2Diagram": { "source": string, "caption": string, "steps"?: [{ "title": string, "description": string }] } | null,
   "explainerIdea": { "title": string, "description": string } | null,
   "reviewChecks": [
     {
@@ -553,7 +551,14 @@ export async function generateSlide(opts: GenerateSlideOptions): Promise<WriterS
   const educationDirective = educationMode ? EDUCATION_DIRECTIVE : '';
   const claudeContextDirective = hasClaudeContext ? CLAUDE_CONTEXT_DIRECTIVE : '';
 
-  let system = WRITER_SYSTEM + FILE_SUMMARY_DIRECTIVE + INLINE_EXPLANATION_DIRECTIVE + EXPLAINER_IDEA_DIRECTIVE + reviewSuggestionsDirective + educationDirective + claudeContextDirective;
+  let system =
+    WRITER_SYSTEM +
+    FILE_SUMMARY_DIRECTIVE +
+    INLINE_EXPLANATION_DIRECTIVE +
+    EXPLAINER_IDEA_DIRECTIVE +
+    reviewSuggestionsDirective +
+    educationDirective +
+    claudeContextDirective;
   if (instructions?.trim()) {
     system += `\n\nCUSTOM REVIEWER INSTRUCTIONS (take precedence over style guidelines):\n${instructions.trim()}`;
   }
@@ -599,6 +604,8 @@ export async function generateSlide(opts: GenerateSlideOptions): Promise<WriterS
     const msg = err instanceof Error ? err.message : '';
     if (msg.includes('rate limit') || msg.includes('prompt is too long')) throw err;
     console.warn(`[writer] First attempt failed (${msg}), retrying concisely`);
-    return await attempt('\n\nIMPORTANT: Return only raw JSON starting with { and ending with }. Keep narrative under 3 sentences. No markdown fences.');
+    return await attempt(
+      '\n\nIMPORTANT: Return only raw JSON starting with { and ending with }. Keep narrative under 3 sentences. No markdown fences.'
+    );
   }
 }

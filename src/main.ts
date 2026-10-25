@@ -1946,6 +1946,7 @@ async function runBackgroundGeneration(
               affectedFiles: [...new Set(diffHunks.map((h) => h.filePath))],
               dependsOn: topic.dependsOn,
               mermaidDiagram: writerOutput.mermaidDiagram,
+              d2Diagram: writerOutput.d2Diagram,
               explainerIdea: normalizeExplainerIdea(writerOutput.explainerIdea),
               fileSummaries: normalizeFileSummaries(writerOutput.fileSummaries, diffHunks),
               inlineExplanations: writerOutput.inlineExplanations,
@@ -2045,6 +2046,7 @@ async function runBackgroundGeneration(
           // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- AI response may omit fields
           dependsOn: aiSlide.dependsOn ?? [],
           mermaidDiagram: aiSlide.mermaidDiagram,
+          d2Diagram: aiSlide.d2Diagram,
           explainerIdea: normalizeExplainerIdea(aiSlide.explainerIdea),
           fileSummaries: normalizeFileSummaries(aiSlide.fileSummaries, diffHunks),
           inlineExplanations: aiSlide.inlineExplanations,

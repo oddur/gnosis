@@ -5,6 +5,7 @@ import { Button } from './ui/button';
 /** A dedicated inspection surface: fit by default, readable scale on demand. */
 export function MermaidViewport({ svg }: { svg: string }) {
   const hintId = useId();
+  const instanceId = useId().replace(/[^a-zA-Z0-9]/g, '');
   const viewport = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ width: 0, height: 0 });
   const [zoom, setZoom] = useState<number | 'fit'>('fit');
@@ -21,13 +22,18 @@ export function MermaidViewport({ svg }: { svg: string }) {
         .map(Number) ?? [];
     const valid = Number.isFinite(parts[2]) && parts[2] > 0 && Number.isFinite(parts[3]) && parts[3] > 0;
     // The preview remains mounted. Give this copy its own marker/style IDs.
-    const id = root.getAttribute('id');
+    const ids = [root, ...root.querySelectorAll('[id]')]
+      .map((element) => element.getAttribute('id'))
+      .filter((id): id is string => !!id)
+      .sort((a, b) => b.length - a.length);
+    let uniqueSVG = svg;
+    for (const id of ids) uniqueSVG = uniqueSVG.split(id).join(`${id}-${instanceId}`);
     return {
       width: valid ? parts[2] : 640,
       height: valid ? parts[3] : 480,
-      svg: id ? svg.split(id).join(`${id}-expanded`) : svg,
+      svg: uniqueSVG,
     };
-  }, [svg]);
+  }, [svg, instanceId]);
   useLayoutEffect(() => {
     const el = viewport.current;
     if (!el) return;

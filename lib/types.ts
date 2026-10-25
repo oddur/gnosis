@@ -73,6 +73,13 @@ export interface InlineExplanation {
   text: string;
 }
 
+/** Prototype D2 source with optional captions aligned to root + native steps/scenarios. */
+export interface D2DiagramSpec {
+  source: string;
+  caption?: string;
+  steps?: { title: string; description: string }[];
+}
+
 export interface Slide {
   id: string;
   slideNumber: number;
@@ -88,6 +95,7 @@ export interface Slide {
   inlineExplanations?: InlineExplanation[];
   dependsOn: string[];
   mermaidDiagram?: string | null;
+  d2Diagram?: D2DiagramSpec | null;
   reviewChecks?: ReviewCheck[];
   educationNotes?: EducationNote[];
   // AI-assigned importance. "critical" = auth, data integrity, API
@@ -116,6 +124,7 @@ export interface AISlide {
   inlineExplanations?: InlineExplanation[];
   dependsOn: string[];
   mermaidDiagram?: string | null;
+  d2Diagram?: D2DiagramSpec | null;
   reviewChecks?: ReviewCheck[];
   educationNotes?: EducationNote[];
   importance?: SlideImportance;
@@ -181,6 +190,7 @@ export interface WriterSlideOutput {
   reviewFocus: string | null;
   contextSnippets: string[];
   mermaidDiagram?: string | null;
+  d2Diagram?: D2DiagramSpec | null;
   reviewChecks?: ReviewCheck[];
   educationNotes?: EducationNote[];
   explainerIdea?: ExplainerIdea | null;
