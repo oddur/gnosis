@@ -56,7 +56,7 @@ import {
   normalizeModelSelection,
 } from '../lib/models';
 import { buildContextPackage, buildPlannerContext, buildTopicContext } from '../lib/context-builder';
-import { generateReviewGuide, planReview, generateSlide } from '../lib/agent';
+import { generateReviewGuide, planReview, generateSlide, finalizeReviewOverview } from '../lib/agent';
 import { buildArchive, parseArchive } from '../lib/review-archive';
 import { normalizeFileSummaries } from '../lib/file-summaries';
 import { normalizeInlineExplanations } from '../lib/inline-explanations';
@@ -1958,6 +1958,17 @@ async function runBackgroundGeneration(
       );
 
       resolvedSlides = slideResults;
+      reportReviewPhase({ reviewId, phase: 'Writing overview' });
+      plan.summary = await finalizeReviewOverview({
+        providerName: provider,
+        model,
+        title: prData.title,
+        draft: plan.summary,
+        riskRationale: plan.riskRationale,
+        topics: slideResults,
+        instructions,
+        signal,
+      });
     } else {
       // ── Single-shot: existing approach ──
       reportReviewPhase( { reviewId, phase: 'Generating review' });
