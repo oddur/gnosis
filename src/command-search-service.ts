@@ -1,3 +1,4 @@
+import { isMutedReview } from '../lib/muted-prs';
 import fs from 'node:fs/promises';
 import { isCacheRecord } from '../lib/github-cache';
 import { isDependabot } from '../lib/workbench';
@@ -16,6 +17,7 @@ import type { ReviewGuide, ReviewHistoryEntry } from '../lib/types';
 import type { GitHubReviewThreads } from '../lib/review-threads';
 
 interface Deps {
+  mutedUrls?: () => ReadonlySet<string>;
   cachedResponses?: () => { url: string; data: unknown }[];
   directory: () => string;
   queue: () => WorkbenchQueue;
@@ -35,12 +37,18 @@ export interface LocalSearchResponse {
 export function createCommandSearchService(deps: Deps) {
   const files = new Map<string, { stamp: string; review: ReviewGuide }>();
   let checkedAt = 0;
+  let muteSignature = '';
   let indexed: { account: string; signature: string; documents: SearchDocument[]; warnings: string[] } | undefined;
   let building: Promise<void> | undefined;
   let httpDocuments: SearchDocument[] = [];
   async function refresh() {
     const queue = deps.queue(),
-      history = deps.history().filter((e) => e.status === undefined || e.status === 'completed');
+      history = deps
+        .history()
+        .filter(
+          (e) =>
+            !isMutedReview(e, deps.mutedUrls?.() ?? new Set()) && (e.status === undefined || e.status === 'completed')
+        );
     const account = deps.account();
     const stamps = await Promise.all(
       history.map(async (entry) => {
@@ -57,6 +65,7 @@ export function createCommandSearchService(deps: Deps) {
       account,
       queue.items.map(({ subject, review, briefing }) => ({ subject, review, briefing: briefing?.summary })),
       queue.savedViews?.views,
+      [...(deps.mutedUrls?.() ?? [])],
       stamps.map((s) => [s.entry, s.stamp]),
     ]);
     if (indexed?.signature === signature) {
@@ -93,6 +102,11 @@ export function createCommandSearchService(deps: Deps) {
   return {
     async search(query: string, includeBots = false, recentIds: string[] = []): Promise<LocalSearchResponse> {
       if (typeof query !== 'string' || query.length > 1000) throw Error('Use a search of 1,000 characters or fewer.');
+      const currentMutes = JSON.stringify([...(deps.mutedUrls?.() ?? [])].sort());
+      if (currentMutes !== muteSignature) {
+        checkedAt = 0;
+        muteSignature = currentMutes;
+      }
       if (indexed?.account !== deps.account()) {
         indexed = undefined;
         checkedAt = 0;
@@ -137,10 +151,29 @@ export function createCommandSearchService(deps: Deps) {
           );
         }
       }
+      // Apply current mutes even during the index freshness window or an in-flight rebuild.
+      const muted = deps.mutedUrls?.() ?? new Set<string>();
+      const hiddenReviews = new Set(
+        deps
+          .history()
+          .filter((entry) => isMutedReview(entry, muted))
+          .map((entry) => entry.id)
+      );
+      const visibleDocs = docs.filter(
+        (doc) =>
+          !(doc.sourceUrl && muted.has(doc.sourceUrl)) &&
+          !(doc.reviewId && hiddenReviews.has(doc.reviewId)) &&
+          !(doc.destination.kind === 'review' && hiddenReviews.has(doc.destination.reviewId)) &&
+          !(
+            doc.destination.kind === 'home' &&
+            ((doc.destination.url && muted.has(doc.destination.url)) ||
+              doc.destination.subject?.subject.members.some((member) => muted.has(member.url)))
+          )
+      );
       const bots = includeBots || !deps.ignoreBots();
       const hits = query.trim()
-        ? searchDocuments(docs, query, bots)
-        : docs
+        ? searchDocuments(visibleDocs, query, bots)
+        : visibleDocs
             .filter(
               (d) =>
                 (['pr', 'stack', 'view', 'repository'].includes(d.kind) || recentIds.includes(d.id)) && (bots || !d.bot)

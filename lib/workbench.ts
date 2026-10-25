@@ -48,6 +48,7 @@ export interface QueueItem {
   attention: 'updated' | 'requested' | 'other';
 }
 export interface WorkbenchQueue {
+  mutedPrs?: import('./muted-prs').MutedPr[];
   starredPrs?: import('./starred-prs').StarredPr[];
   starredItems?: QueueItem[];
   savedViews?: QueueViewsSnapshot;

@@ -1,3 +1,4 @@
+import { PrMuteMenu } from './PrMuteMenu';
 import { PrDetails } from './PrDetails';
 import { memberReadiness } from './PrReadiness';
 import type { ReviewSubject } from '../lib/workbench';
@@ -19,6 +20,8 @@ export function PrSubjectDetails({
   starredUrls,
   starBusy,
   onStarChange,
+  onMute,
+  muteBusy,
 }: {
   subject: ReviewSubject;
   activeUrl: string;
@@ -30,6 +33,8 @@ export function PrSubjectDetails({
   signals?: QueueSignals[];
   starredUrls?: ReadonlySet<string>;
   starBusy?: boolean;
+  muteBusy?: boolean;
+  onMute?: (members: ReviewSubject['members']) => void;
   onStarChange?: (members: ReviewSubject['members'], starred: boolean) => void;
 }) {
   const member = subject.members.find((m) => m.url === activeUrl) ?? subject.members[0];
@@ -108,7 +113,7 @@ export function PrSubjectDetails({
           member={member}
           starControl={
             stacked && starredUrls && onStarChange ? (
-              <PrStarButton members={[member]} starredUrls={starredUrls} busy={starBusy} onChange={onStarChange} />
+              <><PrStarButton members={[member]} starredUrls={starredUrls} busy={starBusy} onChange={onStarChange} />{onMute && <PrMuteMenu members={[member]} busy={muteBusy} onMute={onMute} />}</>
             ) : undefined
           }
           showTitle={stacked}

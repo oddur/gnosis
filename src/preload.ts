@@ -1,3 +1,4 @@
+import type { MutePrRequest } from '../lib/muted-prs';
 import type { StarPrRequest } from '../lib/starred-prs';
 import type { PrCommits, CommitSelection } from '../lib/pr-commits';
 import type { PrChanges, PrFileRequest, PrFileContents, FileChatRequest } from '../lib/pr-changes';
@@ -43,6 +44,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   commandGitHubSearch: (query: string): Promise<PrSearchResult[]> => ipcRenderer.invoke('command-github-search', query),
   listActivity: (): Promise<ActivityTask[]> => ipcRenderer.invoke('list-activity'),
   activityAction: (id:string, action:ActivityAction): Promise<void> => ipcRenderer.invoke('activity-action',id,action),
+  workbenchMutePrs: (request: MutePrRequest): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-mute-prs', request),
   workbenchStarPrs: (request: StarPrRequest): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-star-prs', request),
   workbenchViewAction: (action: QueueViewAction): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-view-action', action),
   workbenchSetFilters: (filters: QueueFilters): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-set-filters', filters),

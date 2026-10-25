@@ -1,3 +1,6 @@
+import { PrMuteMenu } from '../../components/PrMuteMenu';
+import { MutedPrs } from '../../components/MutedPrs';
+import { isMutedReview } from '../../lib/muted-prs';
 import { setDiscussionAccount } from '../../lib/review-discussion-cache';
 import { explanationItem, matchesExplanation, type ExplanationDestination } from '../../lib/explanation-workspace';
 import { GitHubAuthor } from '../../components/GitHubAuthor';
@@ -49,6 +52,7 @@ import {
   Link2,
   SlidersHorizontal,
   Star,
+  VolumeX,
 } from 'lucide-react';
 import { GitHubAuthDialog } from '../../components/GitHubAuthDialog';
 import { GettingStarted } from '../../components/GettingStarted';
@@ -114,6 +118,11 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
   const filtersLoaded = useRef(false);
   const pendingFilters = useRef<QueueFilters | null>(null);
   const filterVersion = useRef(0);
+  const [mutedOpen, setMutedOpen] = useState(false);
+  const [muteBusy, setMuteBusy] = useState(false);
+  const [muteError, setMuteError] = useState('');
+  const muteBusyRef = useRef(false);
+  const muteVersion = useRef(0);
   const [savedView, setSavedView] = useState(false);
   const [starBusy, setStarBusy] = useState(false);
   const [starError, setStarError] = useState('');
@@ -141,6 +150,25 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
       starBusyRef.current = false;
       setStarBusy(false);
     }
+  };
+  const mutedUrls = useMemo(() => new Set(queue.mutedPrs?.map(entry => entry.member.url) ?? []), [queue.mutedPrs]);
+  const visibleHistory = useMemo(() => history.filter(entry => !isMutedReview(entry, mutedUrls)), [history, mutedUrls]);
+  const changeMutes = async (members: ReviewSubject['members'], muted: boolean) => {
+    if (muteBusyRef.current) return;
+    muteBusyRef.current = true; setMuteBusy(true); setMuteError(''); muteVersion.current++;
+    try {
+      const next = await enqueueWrite(() => window.electronAPI.workbenchMutePrs({ members, muted }));
+      setQueue(next); setError('');
+      if (muted) {
+        setOpenedItem(null); setSelected(null);
+        requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('[title="Muted PRs"]')?.focus());
+      } else {
+        void window.electronAPI.listReviews().then(setHistory).catch(() => {});
+      }
+    } catch (error) {
+      const message = `Could not ${muted ? 'mute' : 'unmute'} PRs: ${error instanceof Error ? error.message : String(error)}. Nothing changed. Try again.`;
+      setMuteError(message); setError(message);
+    } finally { muteBusyRef.current = false; setMuteBusy(false); }
   };
   const section = savedView
     ? 'saved'
@@ -186,6 +214,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
         (action.type === 'delete' && action.id === queue.savedViews?.activeId)
       ) {
         setSavedView(false);
+        setMutedOpen(false);
         setSelected(null);
       }
       setError('');
@@ -258,8 +287,8 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
   const summaryItem = summarySource && {
     ...summarySource,
     review:
-      history.find((entry) => entry.id === requestedReviews[summarySource.subject.id]) ??
-      history.find(
+      visibleHistory.find((entry) => entry.id === requestedReviews[summarySource.subject.id]) ??
+      visibleHistory.find(
         (entry) =>
           entry.snapshot?.subject.id === summarySource.subject.id ||
           (!entry.snapshot && entry.prUrl === summarySource.subject.members[0].url)
@@ -282,11 +311,12 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
   const refresh = useCallback(async (force = false) => {
     const version = filterVersion.current;
     const starsVersion = starVersion.current;
+    const mutesVersion = muteVersion.current;
     if (force) setRefreshing(true);
     try {
       await Promise.all([
         window.electronAPI.workbenchQueue(force).then((next) => {
-          if (alive.current && version === filterVersion.current && starsVersion === starVersion.current && !starBusyRef.current && !viewBusyRef.current && !pendingFilters.current) {
+          if (alive.current && version === filterVersion.current && starsVersion === starVersion.current && mutesVersion === muteVersion.current && !muteBusyRef.current && !starBusyRef.current && !viewBusyRef.current && !pendingFilters.current) {
             setQueue(next);
             if (!filtersLoaded.current) {
               const restored = normalizeQueueFilters(next.filters);
@@ -524,10 +554,10 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
   const saved = useMemo(
     () =>
       starredFirst(
-        history.filter((h) => `${h.prTitle} ${h.prUrl}`.toLowerCase().includes(query.toLowerCase())),
+        visibleHistory.filter((h) => `${h.prTitle} ${h.prUrl}`.toLowerCase().includes(query.toLowerCase())),
         (entry) => (entry.snapshot?.subject.members ?? [{ url: entry.prUrl }]).some((m) => starredUrls.has(m.url))
       ),
-    [history, query, starredUrls]
+    [visibleHistory, query, starredUrls]
   );
   const orderedItems = orderQueueItems(items);
   const summaryIndex = orderedItems.findIndex((item) => item.subject.id === summaryItem?.subject.id);
@@ -611,6 +641,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
     if (!commandDestination || !prefs || loading || handledCommand.current === commandDestination.nonce) return;
     handledCommand.current = commandDestination.nonce;
     const target = commandDestination.destination;
+    setMutedOpen(target.section === 'muted');
     setError('');
     if (target.subject) {
       setOpenedItem(target.subject);
@@ -637,8 +668,9 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
       return;
     }
     if (target.section) {
+      setMutedOpen(target.section === 'muted');
       setSavedView(target.section === 'saved');
-      if (target.section !== 'saved')
+      if (target.section !== 'saved' && target.section !== 'muted')
         updateFilters({
           starredOnly: target.section === 'starred',
           attention: target.section === 'updated' || target.section === 'requested' ? target.section : 'all',
@@ -704,7 +736,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
         if (!(e.target instanceof HTMLElement) || !e.target.closest('.activity-shell')) moveSelection(-1);
       },
     },
-    { enabled: !settings && !localOpen && !openedItem && !authOpen && !connectionRequired && section !== 'saved' }
+    { enabled: !mutedOpen && !settings && !localOpen && !openedItem && !authOpen && !connectionRequired && section !== 'saved' }
   );
   const correct = async (action: 'link' | 'unlink', parent = parentUrl, child = childUrl) => {
     setGrouping(true);
@@ -786,6 +818,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
             </span>
           </button>
           <PrStarButton members={s.members} starredUrls={starredUrls} busy={starBusy} onChange={(members, value) => void changeStars(members, value)} />
+          <PrMuteMenu members={s.members} busy={muteBusy} onMute={members => void changeMutes(members, true)} />
           {(item.review?.status === 'generating' ||
             item.review?.status === 'completed' ||
             item.briefing?.status === 'generating') && (
@@ -826,6 +859,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                   <QueueMetadata subject={{ id: m.url, kind: 'pr', title: m.title, members: [m], edges: [], warnings: [] }} account={auth?.login ?? null} />
                 </div>
                 <PrStarButton members={[m]} starredUrls={starredUrls} busy={starBusy} onChange={(members, value) => void changeStars(members, value)} />
+          <PrMuteMenu members={[m]} busy={muteBusy} onMute={members => void changeMutes(members, true)} />
               </div>
             ))}
           </div>
@@ -935,7 +969,9 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
         item={summaryItem}
         starredUrls={starredUrls}
         starBusy={starBusy}
-        starError={starError}
+        starError={muteError || starError}
+        muteBusy={muteBusy}
+        onMute={members => void changeMutes(members, true)}
         onStarChange={(members, value) => void changeStars(members, value)}
         account={auth?.login ?? null}
         statusRefreshing={statusRefreshing}
@@ -944,7 +980,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
         preferences={prefs}
         positions={readingPositions.current}
         explanationDestination={explanationDestination}
-        explanations={history.filter(entry => matchesExplanation(entry, summaryItem.subject))}
+        explanations={visibleHistory.filter(entry => matchesExplanation(entry, summaryItem.subject))}
         onShowActivity={onShowActivity ?? (() => {})}
         shortcutsEnabled={!settings && !localOpen && !authOpen && !connectionRequired}
           navigation={{
@@ -1001,10 +1037,11 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                         ? 'PR content or stack changes since a saved AI explanation'
                         : (label as string)
                 }
-                aria-current={section === id && (id === 'saved' || !activeQueueView) ? 'page' : undefined}
-                className={section === id && (id === 'saved' || !activeQueueView) ? 'active' : ''}
+                aria-current={!mutedOpen && section === id && (id === 'saved' || !activeQueueView) ? 'page' : undefined}
+                className={!mutedOpen && section === id && (id === 'saved' || !activeQueueView) ? 'active' : ''}
                 disabled={viewBusy}
                 onClick={() => {
+                  setMutedOpen(false);
                   setSavedView(id === 'saved');
                   if (id !== 'saved') {
                     const patch: Partial<QueueFilters> = {
@@ -1023,7 +1060,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                 <span>{label as string}</span>
                 <span className="nav-count">
                   {id === 'saved'
-                    ? history.length
+                    ? visibleHistory.length
                     : id === 'starred' ? queue.starredItems?.length ?? 0
                     : id === 'all'
                       ? queue.items.length
@@ -1035,9 +1072,13 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
             );
           })}
           {auth?.authenticated && queue.savedViews && (
-            <SavedViewsNav state={queue.savedViews} active={!savedView} busy={viewBusy} onAction={viewAction} />
+            <SavedViewsNav state={queue.savedViews} active={!savedView && !mutedOpen} busy={viewBusy} onAction={viewAction} />
           )}
           <div className="mt-auto flex flex-col gap-1">
+            <button title="Muted PRs" className={mutedOpen ? 'active' : ''} aria-current={mutedOpen ? 'page' : undefined}
+              onClick={() => { setMutedOpen(true); setSelected(null); setOpenedItem(null); setError(''); }}>
+              <VolumeX size={16} /><span>Muted PRs</span><span className="nav-count">{queue.mutedPrs?.length ?? 0}</span>
+            </button>
             <button title="Local changes" onClick={() => setLocalOpen(true)}>
               <FolderGit2 size={16} />
               Local changes
@@ -1060,6 +1101,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
           </div>
         </nav>
         <main className="workbench-main">
+          {mutedOpen ? <MutedPrs entries={queue.mutedPrs ?? []} busy={muteBusy} error={muteError} onUnmute={members => void changeMutes(members, false)} /> : <>
           <div className="queue-toolbar">
             <div>
               <h1>
@@ -1300,7 +1342,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                         </span>
                         {entry.error && <span className="text-xs text-destructive">{entry.error}</span>}
                       </div>
-                      {!!entry.snapshot?.subject.members.length && <PrStarButton members={entry.snapshot.subject.members} starredUrls={starredUrls} busy={starBusy} onChange={(members, value) => void changeStars(members, value)} />}
+                      {!!entry.snapshot?.subject.members.length && <><PrStarButton members={entry.snapshot.subject.members} starredUrls={starredUrls} busy={starBusy} onChange={(members, value) => void changeStars(members, value)} /><PrMuteMenu members={entry.snapshot.subject.members} busy={muteBusy} onMute={members => void changeMutes(members, true)} /></>}
                       {entry.status !== 'generating' && (
                         <button
                           className="workbench-icon"
@@ -1690,6 +1732,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
               </button>
             </footer>
           )}
+          </>}
         </main>
         </div>
       )}
