@@ -5,9 +5,11 @@ export function createPrFileCache(
   load: (request: PrFileRequest, background?: boolean) => Promise<PrFileContents>,
   maxBytes = 32_000_000
 ) {
-  const saved = new Map<string, { value: PrFileContents; bytes: number }>();
+  const saved = new Map<string, { value: PrFileContents; bytes: number; url: string }>();
+  let priorities = new Map<string, number>();
   const pending = new Map<string, { promise: Promise<PrFileContents>; background: boolean }>();
-  let bytes = 0;
+  let bytes = 0,
+    epoch = 0;
   const keyFor = (r: PrFileRequest) =>
     `${r.comparison ? 'commit:' : ''}${fileRevisionKey(r.url, r.path, r.baseSha, r.headSha)}`;
   const peek = (r: PrFileRequest) => {
@@ -26,6 +28,7 @@ export function createPrFileCache(
       existing = pending.get(key);
     if (existing)
       return existing.background && !background ? existing.promise.catch(() => read(r, false)) : existing.promise;
+    const generation = epoch;
     const promise = load(r, background)
       .then((value) => {
         const size = [value.before, value.after].reduce(
@@ -33,10 +36,14 @@ export function createPrFileCache(
             n + (side.kind === 'text' ? side.content.length * 2 : side.kind === 'image' ? side.dataUrl.length * 2 : 0),
           0
         );
-        if (size <= maxBytes) {
-          saved.set(key, { value, bytes: size });
+        if (generation === epoch && size <= maxBytes) {
+          saved.set(key, { value, bytes: size, url: r.url });
           bytes += size;
-          for (const [oldKey, old] of saved) {
+          // Evict low-priority PRs first; preserve LRU order within each PR.
+          const eviction = [...saved].sort(
+            (a, b) => (priorities.get(b[1].url) ?? Infinity) - (priorities.get(a[1].url) ?? Infinity)
+          );
+          for (const [oldKey, old] of eviction) {
             if (bytes <= maxBytes && saved.size <= 128) break;
             saved.delete(oldKey);
             bytes -= old.bytes;
@@ -44,9 +51,24 @@ export function createPrFileCache(
         }
         return value;
       })
-      .finally(() => pending.delete(key));
+      .finally(() => {
+        if (pending.get(key)?.promise === promise) pending.delete(key);
+      });
     pending.set(key, { promise, background });
     return promise;
   }
-  return { peek, read };
+  return {
+    peek,
+    read,
+    prioritize(urls: string[]) {
+      priorities = new Map(urls.map((url, index) => [url, index]));
+    },
+    clear() {
+      epoch++;
+      saved.clear();
+      pending.clear();
+      priorities.clear();
+      bytes = 0;
+    },
+  };
 }

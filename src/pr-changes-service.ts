@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import type { Octokit } from '@octokit/rest';
-import { getChangedFiles, getPrMetadata, parsePrUrl } from '../lib/github';
+import { getChangedFiles, getPrMetadata, getPrDiff, parsePrUrl } from '../lib/github';
+import { preparedDiff, preparedDiffKey } from '../lib/prepared-pr';
 import { githubCacheFor } from '../lib/github-client';
 import { isCacheRecord } from '../lib/github-cache';
 import { createSnapshotFileLoader } from './snapshot-file-loader';
-import { changesRevision, type PrChanges, type PrFileRequest } from '../lib/pr-changes';
+import { changesRevision, type PrChanges, type PrFileRequest, type InspectionLoadOptions } from '../lib/pr-changes';
 
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 function isSnapshot(value: unknown): value is PrChanges {
@@ -60,14 +61,14 @@ export function createPrChangesService() {
     if (!snapshot || !file) throw new Error('Reload this PR’s file list before opening the file.');
     return { snapshot, file };
   }
-  async function manifest(client: Octokit, url: string, refresh = false): Promise<PrChanges> {
+  async function manifest(client: Octokit, url: string, refresh = false, options: InspectionLoadOptions = {}): Promise<PrChanges> {
     const { owner, repo, pullNumber } = validateURL(url);
-    return share(client, `manifest:${url}:${refresh}`, async () => {
+    return share(client, `manifest:${url}:${refresh}:${options.revision ? changesRevision(options.revision) : ''}`, async () => {
       const cache = githubCacheFor(client),
         version = cache?.version();
       const latestKey = snapshotKey(url, 'latest');
       const saved = snapshots.get(client)?.get(latestKey) ?? cache?.get(latestKey, isSnapshot)?.value;
-      if (saved && !refresh) {
+      if (saved && !refresh && (!options.revision || changesRevision(saved.metadata) === changesRevision(options.revision))) {
         remember(client, saved);
         return saved;
       }
@@ -129,9 +130,28 @@ export function createPrChangesService() {
   }
 
   return {
+    cached(client: Octokit, url: string, revision: { baseSha: string; headSha: string }) {
+      const cache = githubCacheFor(client);
+      const exact = snapshotKey(url, changesRevision(revision)), latest = snapshotKey(url, 'latest');
+      return snapshots.get(client)?.get(exact) ?? cache?.get(exact, isSnapshot)?.value ??
+        snapshots.get(client)?.get(latest) ?? cache?.get(latest, isSnapshot)?.value;
+    },
     manifest,
     content,
     find,
+    async prepareReview(client: Octokit, url: string, revision: Pick<PrChanges['metadata'], 'baseSha' | 'headSha'>) {
+      if (preparedDiff(client, url, revision) !== undefined) return;
+      return share(client, `review:${url}:${changesRevision(revision)}`, async () => {
+        const { owner, repo, pullNumber } = validateURL(url);
+        const cache = githubCacheFor(client), version = cache?.version();
+        const before = await getPrMetadata(client, owner, repo, pullNumber);
+        if (changesRevision(before) !== changesRevision(revision)) return;
+        const diff = await getPrDiff(client, owner, repo, pullNumber, undefined, true);
+        const after = await getPrMetadata(client, owner, repo, pullNumber, true);
+        if (changesRevision(before) !== changesRevision(after)) throw new Error('This PR changed while its diff was being prepared.');
+        if (cache?.version() === version) cache?.set(preparedDiffKey(url, revision), diff);
+      });
+    },
     async revision(client: Octokit, url: string) {
       const { owner, repo, pullNumber } = validateURL(url);
       const m = await getPrMetadata(client, owner, repo, pullNumber);

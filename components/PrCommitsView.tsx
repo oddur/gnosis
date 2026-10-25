@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Copy, ExternalLink, RefreshCw } from 'lucide-react';
-import { peekComparison, readComparison, prefetchInspection, comparisonIsReady } from '../lib/inspection-cache';
+import { peekComparison, readComparison, prefetchInspection, comparisonIsReady, inspectionData, latestCommitSelection } from '../lib/inspection-cache';
 import { PrChangesView } from './PrChangesView';
 import { GitHubAuthor } from './GitHubAuthor';
 import { Button } from './ui/button';
@@ -21,7 +21,6 @@ interface Position {
   selection?: CommitSelection;
   scroll?: number;
 }
-const catalogs = new Map<string, PrCommits[]>();
 function restore(id: string): Position {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(`gnosis-commits:${id}`) ?? '{}');
@@ -42,8 +41,14 @@ export function PrCommitsView({
   onOpenCurrentFile: (url: string, path: string) => void;
 }) {
   const [position] = useState(() => restore(subject.id));
-  const [lists, setLists] = useState(() => catalogs.get(subject.id) ?? []);
-  const [selection, setSelection] = useState(position.selection);
+  const [lists, setLists] = useState(() => subject.members.flatMap(member => inspectionData.peekCommits(member) ?? []));
+  const [selection, setSelection] = useState(() => {
+    const saved = position.selection;
+    const list = lists.find(list => list.url === saved?.url);
+    try { if (saved && list) { selectedCommits(list, saved); return saved; } } catch { /* Revision changed. */ }
+    const first = ownedCommits(subject, lists).find(group => group.commits.length);
+    return first?.list ? latestCommitSelection(first.list) : undefined;
+  });
   const [commitsOpen, setCommitsOpen] = useState(true),
     [filesOpen, setFilesOpen] = useState(true);
   const [rangeMode, setRangeMode] = useState(false);
@@ -147,13 +152,12 @@ export function PrCommitsView({
   }
   async function load(refresh: boolean) {
     const current = ++epoch.current;
-    setLoading(true);
+    setLoading(refresh || !lists.length);
     setListError('');
     try {
       const next: PrCommits[] = [];
-      for (const member of subject.members) next.push(await window.electronAPI.getPrCommits(member.url, refresh));
+      for (const member of subject.members) next.push(await inspectionData.readCommits(member, refresh));
       if (epoch.current !== current) return;
-      catalogs.set(subject.id, next);
       setLists(next);
       setNewer(false);
       const previous = selection && next.find((list) => list.url === selection.url);
@@ -177,7 +181,7 @@ export function PrCommitsView({
     }
   }
   useEffect(() => {
-    void load(false);
+    if (lists.length !== subject.members.length) void load(false);
     return () => {
       epoch.current++;
       navigation.current++;

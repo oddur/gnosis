@@ -428,6 +428,7 @@ const mocks = {
     window.addEventListener('fixture-review-navigate', navigateReview);
   },
   offReviewNavigate: () => { if (navigateReview) window.removeEventListener('fixture-review-navigate', navigateReview); },
+  getPreparedInventories: () => Promise.resolve({ changes: [], commits: [] }),
   getPrChanges: (url: string) => {
     const member=items.flatMap(i=>i.subject.members).find(m=>m.url===url)??members[0];
     return Promise.resolve({version:1 as const,url,metadata:member,comparisonBase:member.baseSha,fetchedAt:Date.now(),files:[

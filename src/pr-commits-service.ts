@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Octokit } from '@octokit/rest';
+import { changesRevision, type InspectionLoadOptions } from '../lib/pr-changes';
 import { getPrMetadata, parsePrUrl } from '../lib/github';
 import { githubCacheFor } from '../lib/github-client';
 import { isCacheRecord } from '../lib/github-cache';
@@ -161,12 +162,12 @@ export function createPrCommitsService() {
   }
   const listKey = (url: string, base: string, head: string) => `pr-commits:v1:${url}:${base}:${head}`;
   const latestKey = (url: string) => `pr-commits:v1:${url}:latest`;
-  async function list(client: Octokit, url: string, refresh = false): Promise<PrCommits> {
+  async function list(client: Octokit, url: string, refresh = false, options: InspectionLoadOptions = {}): Promise<PrCommits> {
     const t = target(url);
-    return share(client, `list:${url}:${refresh}`, async () => {
+    return share(client, `list:${url}:${refresh}:${options.revision ? changesRevision(options.revision) : ''}`, async () => {
       const version = githubCacheFor(client)?.version();
       const saved = read(client, latestKey(url), isList);
-      if (saved && !refresh) {
+      if (saved && !refresh && (!options.revision || changesRevision(saved.metadata) === changesRevision(options.revision))) {
         map(client).set(listKey(url, saved.metadata.baseSha, saved.metadata.headSha), saved);
         return saved;
       }
@@ -320,6 +321,9 @@ export function createPrCommitsService() {
     return { snapshot, file };
   }
   return {
+    cached(client: Octokit, url: string, revision: { baseSha: string; headSha: string }) {
+      return read(client, listKey(url, revision.baseSha, revision.headSha), isList) ?? read(client, latestKey(url), isList);
+    },
     list,
     comparison,
     find,

@@ -1,3 +1,5 @@
+import { withGitHubPriority } from '../lib/github-scheduler';
+import type { InspectionRevision, InspectionLoadOptions } from '../lib/pr-changes';
 import { normalizePrInactivityDays, DEFAULT_PR_INACTIVITY_DAYS } from '../lib/pr-inactivity';
 import type { MutePrRequest } from '../lib/muted-prs';
 import type { StarPrRequest } from '../lib/starred-prs';
@@ -2447,18 +2449,27 @@ const changesClient = () => {
   if (!token) throw new Error('Connect GitHub to view PR changes.');
   return getGitHubClient(token);
 };
-ipcMain.handle('pr-changes', (_event, url: string, refresh: boolean) => prChanges.manifest(changesClient(), url, refresh));
-ipcMain.handle('pr-commits', (_event, url: string, refresh: boolean) => prCommits.list(changesClient(), url, refresh));
+// Local-only restore: never let a network-bound PR delay saved inventories for the rest of the queue.
+ipcMain.handle('prepared-inventories', (_event, revisions: InspectionRevision[]) => {
+  const client = changesClient();
+  return {
+    changes: revisions.flatMap(r => prChanges.cached(client, r.url, r) ?? []),
+    commits: revisions.flatMap(r => prCommits.cached(client, r.url, r) ?? []),
+  };
+});
+ipcMain.handle('pr-changes', (_event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) => withGitHubPriority(options.background ? 'background' : 'foreground', () => prChanges.manifest(changesClient(), url, refresh, options)));
+ipcMain.handle('pr-commits', (_event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) => withGitHubPriority(options.background ? 'background' : 'foreground', () => prCommits.list(changesClient(), url, refresh, options)));
 const inspectionPrefetchGuard = (background: boolean) => {
   const token = getResolvedToken();
   return background ? () => {
     if (token !== getResolvedToken()) throw new Error('GitHub account changed.');
-    const paused = githubClients.backoff(token, true);
+    const paused = githubClients.backoff(token, true, ['core']);
     if (paused) throw paused;
   } : undefined;
 };
-ipcMain.handle('commit-comparison', (_event, selection: CommitSelection, background = false) => prCommits.comparison(changesClient(), selection, inspectionPrefetchGuard(background)));
-ipcMain.handle('pr-change-file', (_event, request: PrFileRequest, background = false) => (request.comparison ? prCommits : prChanges).content(changesClient(), request, inspectionPrefetchGuard(background)));
+ipcMain.handle('commit-comparison', (_event, selection: CommitSelection, background: boolean = false) => withGitHubPriority(background ? 'background' : 'foreground', () => prCommits.comparison(changesClient(), selection, inspectionPrefetchGuard(background))));
+ipcMain.handle('pr-change-file', (_event, request: PrFileRequest, background: boolean = false) => withGitHubPriority(background ? 'background' : 'foreground', () => (request.comparison ? prCommits : prChanges).content(changesClient(), request, inspectionPrefetchGuard(background))));
+ipcMain.handle('prepare-pr-review', (_event, url: string, revision: { baseSha: string; headSha: string }) => withGitHubPriority('background', () => prChanges.prepareReview(changesClient(), url, revision)));
 ipcMain.handle('pr-changes-revision', (_event, url: string) => prChanges.revision(changesClient(), url));
 ipcMain.handle('ask-pr-file', async (_event, request: FileChatRequest) => {
   if (!request.question.trim() || request.question.length > 20000) throw new Error('Enter a question under 20,000 characters.');

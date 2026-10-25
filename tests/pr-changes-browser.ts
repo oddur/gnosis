@@ -39,6 +39,7 @@ void app.whenReady().then(async () => {
     await window.loadURL(`${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary`);
     window.webContents.setZoomFactor(1);
     await wait("document.querySelectorAll('.queue-item').length===7");
+    await js("(async()=>{await (await import('/lib/inspection-cache.ts')).inspectionData.flush()})()");
     assert.deepEqual(
       await js(`(async()=>{
       const {prChangePreview,prPreviewSelection}=await import('/lib/pr-change-preview.ts');
@@ -102,13 +103,13 @@ void app.whenReady().then(async () => {
     assert.equal(
       await js("window.fileReads.some(r=>r.path==='src/worker.ts')"),
       false,
-      'Usable patches still render without full-file downloads'
+      'Prepared files render without another full-file download'
     );
-    assert.ok((await js<number>('window.fileReads.length')) <= 4, 'Preloading stays bounded to nearby files');
+    assert.equal(await js('window.fileReads.length'), 0, 'Discovery prepared every file before inspection');
     assert.equal(
       await js("!!document.querySelector('.changes-loading')"),
       false,
-      'An unopened text file renders immediately from its patch'
+      'A prepared text file renders immediately'
     );
     await wait("document.querySelector('.changes-code')?.textContent.includes('retry boundary')");
     assert.equal(await js("!!document.querySelector('.changes-code textarea')"), false, 'Reply editors open on demand');

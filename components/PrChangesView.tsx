@@ -8,6 +8,7 @@ import {
   prefetchInspection,
   commitPositionId,
   previewFor,
+  inspectionData,
 } from '../lib/inspection-cache';
 import { prPreviewSelection } from '../lib/pr-change-preview';
 import { FileDiff, MultiFileDiff } from '@pierre/diffs/react';
@@ -54,7 +55,6 @@ interface Position {
   scroll: Record<string, number>;
 }
 const positions = new Map<string, Position>();
-const memory = new Map<string, PrChanges[]>();
 function loadPosition(id: string): Position {
   let saved: Position | undefined = positions.get(id);
   if (!saved) {
@@ -97,7 +97,8 @@ export function PrChangesView({
 }) {
   const positionId = commit ? commitPositionId(subject.id, commit.snapshot) : subject.id;
   const [position] = useState(() => loadPosition(positionId));
-  const [loadedSnapshots, setSnapshots] = useState<PrChanges[]>(() => memory.get(subject.id) ?? []);
+  const [loadedSnapshots, setSnapshots] = useState<PrChanges[]>(() => subject.members.flatMap(member =>
+    inspectionData.peekChanges(member) ?? []));
   const snapshots = useMemo(
     () => (commit ? (commit.snapshot ? [commit.snapshot] : []) : loadedSnapshots),
     [commit?.snapshot, !!commit, loadedSnapshots]
@@ -159,17 +160,16 @@ export function PrChangesView({
   async function load(refresh: boolean) {
     if (commit) return;
     const current = ++generation.current;
-    setLoading(true);
+    setLoading(refresh || !loadedSnapshots.length);
     setError('');
     try {
       const next: PrChanges[] = [];
       for (const member of subject.members) {
-        const snapshot = await window.electronAPI.getPrChanges(member.url, refresh);
+        const snapshot = await inspectionData.readChanges(member, refresh);
         registerChangeProgress(snapshot);
         next.push(snapshot);
       }
       if (!alive.current || current !== generation.current) return;
-      memory.set(subject.id, next);
       setSnapshots(next);
       if (refresh) setNewer(false);
       setCheckError('');
@@ -181,7 +181,8 @@ export function PrChangesView({
   }
   useEffect(() => {
     alive.current = true;
-    void load(false);
+    if (loadedSnapshots.length === subject.members.length) loadedSnapshots.forEach(registerChangeProgress);
+    else void load(false);
     return () => {
       alive.current = false;
       generation.current++;

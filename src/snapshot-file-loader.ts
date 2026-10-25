@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { preparedFileKey } from '../lib/prepared-pr';
 import type { Octokit } from '@octokit/rest';
 import { parsePrUrl } from '../lib/github';
 import { githubCacheFor } from '../lib/github-client';
@@ -33,7 +34,7 @@ export function createSnapshotFileLoader() {
     const promise = (async () => {
       const cache = githubCacheFor(client),
         version = cache?.version();
-      const key = `pr-file:v1:${hash(identity)}`;
+      const key = preparedFileKey(req);
       const saved = cache?.get(
         key,
         (v): v is PrFileContents => isCacheRecord(v) && isCacheRecord(v.before) && isCacheRecord(v.after)

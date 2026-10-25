@@ -52,3 +52,29 @@ void test('a foreground click can continue when a speculative read stops at the 
   assert.deepEqual(await foreground, value);
   assert.deepEqual(calls, [true, false]);
 });
+
+void test('account reset discards an in-flight file and permits a fresh read', async () => {
+  const releases: ((value: PrFileContents) => void)[] = [];
+  const cache = createPrFileCache(() => new Promise(resolve => releases.push(resolve)));
+  const first = cache.read(request);
+  cache.clear();
+  const second = cache.read(request);
+  releases[0](value); await first;
+  assert.equal(cache.peek(request), undefined);
+  assert.equal(cache.read(request), second, 'The old request must not remove the new in-flight read');
+  releases[1](value); await second;
+  assert.equal(cache.peek(request), value);
+});
+
+void test('background queue preparation cannot evict the selected PR to keep a lower-priority file', async () => {
+  const cache = createPrFileCache(() => Promise.resolve(value), 12);
+  const other = { ...request, url: request.url + '2' };
+  cache.prioritize([request.url, other.url]);
+  await cache.read(request); await cache.read(other, true);
+  assert.equal(cache.peek(request), value);
+  assert.equal(cache.peek(other), undefined);
+  cache.prioritize([other.url, request.url]);
+  await cache.read(other);
+  assert.equal(cache.peek(other), value);
+  assert.equal(cache.peek(request), undefined);
+});

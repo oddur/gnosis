@@ -336,3 +336,11 @@ void test('speculative reads respect the background budget while cached comparis
   await service.content(client, request);
   assert.equal((await service.content(client, request, deny)).after.kind, 'text');
 });
+
+void test('a newly discovered revision bypasses the previous saved commit catalog', async () => {
+  const f = fixture(), service = createPrCommitsService(), client = f.pool.client('one');
+  await service.list(client, url);
+  f.move();
+  const next = await service.list(client, url, false, { revision: { baseSha: sha(0), headSha: sha(999) } });
+  assert.equal(next.metadata.headSha, sha(999));
+});

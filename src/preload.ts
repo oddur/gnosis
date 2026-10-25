@@ -1,3 +1,5 @@
+import type { PreparedInventories } from '../lib/pr-inspection-cache';
+import type { InspectionRevision, InspectionLoadOptions } from '../lib/pr-changes';
 import type { MutePrRequest } from '../lib/muted-prs';
 import type { StarPrRequest } from '../lib/starred-prs';
 import type { PrCommits, CommitSelection } from '../lib/pr-commits';
@@ -32,9 +34,11 @@ import type {
 } from '../lib/types';
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  getPrCommits: (url: string, refresh = false): Promise<PrCommits> => ipcRenderer.invoke('pr-commits', url, refresh),
+  getPreparedInventories: (revisions: InspectionRevision[]): Promise<PreparedInventories> => ipcRenderer.invoke('prepared-inventories', revisions),
+  preparePrReview: (url: string, revision: { baseSha: string; headSha: string }): Promise<void> => ipcRenderer.invoke('prepare-pr-review', url, revision),
+  getPrCommits: (url: string, refresh = false, options?: InspectionLoadOptions): Promise<PrCommits> => ipcRenderer.invoke('pr-commits', url, refresh, options),
   getCommitComparison: (selection: CommitSelection, background?: boolean): Promise<PrChanges> => ipcRenderer.invoke('commit-comparison', selection, background),
-  getPrChanges: (url: string, refresh = false): Promise<PrChanges> => ipcRenderer.invoke('pr-changes', url, refresh),
+  getPrChanges: (url: string, refresh = false, options?: InspectionLoadOptions): Promise<PrChanges> => ipcRenderer.invoke('pr-changes', url, refresh, options),
   getPrChangeFile: (request: PrFileRequest, background?: boolean): Promise<PrFileContents> => ipcRenderer.invoke('pr-change-file', request, background),
   checkPrChanges: (url: string): Promise<{ baseSha: string; headSha: string }> => ipcRenderer.invoke('pr-changes-revision', url),
   askPrFile: (request: FileChatRequest): Promise<string> => ipcRenderer.invoke('ask-pr-file', request),

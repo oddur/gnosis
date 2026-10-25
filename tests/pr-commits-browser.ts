@@ -43,6 +43,7 @@ void app.whenReady().then(async () => {
     await window.loadURL(`${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary`);
     window.webContents.setZoomFactor(1);
     await wait("document.querySelectorAll('.queue-item').length===7");
+    await js("(async()=>{await (await import('/lib/inspection-cache.ts')).inspectionData.flush()})()");
     await js(
       `window.commitReads=[];window.compareReads=[];window.fileReads=[];window.chatReads=[];window.threadReads=0;const list=window.electronAPI.getPrCommits,compare=window.electronAPI.getCommitComparison,file=window.electronAPI.getPrChangeFile,thread=window.electronAPI.getReviewThreads;window.electronAPI.getPrCommits=async(...args)=>{window.commitReads.push(args);return list(...args)};window.electronAPI.getCommitComparison=async s=>{window.compareReads.push(s);if(window.failComparison)throw Error('Comparison unavailable. Retry.');await new Promise(r=>setTimeout(r,40));return compare(s)};window.electronAPI.getPrChangeFile=async r=>{window.fileReads.push(r);return file(r)};window.electronAPI.askPrFile=async r=>{window.chatReads.push(r);return 'This exact comparison preserves the retry boundary.'};window.electronAPI.getReviewThreads=async(...args)=>{window.threadReads++;return thread(...args)};window.deepAll=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(selector,e.shadowRoot))];window.openFile=name=>window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')===name).click();void 0;`
     );
@@ -63,7 +64,7 @@ void app.whenReady().then(async () => {
       'Historical comparisons must not load current review threads'
     );
     await wait("!!document.querySelector('.review-image-diff')");
-    assert.equal(await js('window.compareReads.length'), 1);
+    assert.equal(await js("window.compareReads.filter(s=>s.lastSha==='e'.repeat(39)+'0').length"), 0, 'The newest commit comparison was prepared before opening Commits');
     assert.equal(await js("!!document.querySelector('.changes-toolbar select')"), false);
     await click('Diff appearance');
     await wait('!!document.querySelector(\'[role=dialog] [aria-label="Diff layout"]\')');
