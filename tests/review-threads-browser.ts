@@ -242,10 +242,7 @@ void app.whenReady().then(async () => {
       }));
     })()`);
     const selectTopic = (number: number) =>
-      js(`(() => {
-      const select = document.querySelector('.review-toolbar select');
-      select.value = '${number}'; select.dispatchEvent(new Event('change', {bubbles:true}));
-    })()`);
+      js(`window.selectOption('[aria-label="Review topic"]', '${number}')`);
     await selectTopic(2);
     assert.equal(
       await js("document.querySelector('.review-file-viewed input').checked"),

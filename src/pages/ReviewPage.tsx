@@ -1,3 +1,4 @@
+import { SearchableSelect } from '../../components/SearchableSelect';
 import { useDiffAppearance } from '../../lib/use-diff-appearance';
 import { refreshDiscussion } from '../../lib/review-discussion-cache';
 import { useChangesComments } from '../../components/useChangesComments';
@@ -860,15 +861,12 @@ export function ReviewPage({
         <button onClick={() => setNavOpen((v) => !v)} aria-pressed={navOpen} title="Toggle topic navigation">
           {navOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}Topics
         </button>
-        <select aria-label="Review topic" value={currentSlide} onChange={(e) => handleJumpTo(Number(e.target.value))}>
-          <option value={0}>Overview</option>
-          {review.slides.map((s) => (
-            <option key={s.id} value={s.slideNumber}>
-              {reviewed.has(s.slideNumber) ? '✓ ' : ''}
-              {s.title}
-            </option>
-          ))}
-        </select>
+        <SearchableSelect label="Review topic" value={String(currentSlide)}
+          onValueChange={value => handleJumpTo(Number(value))}
+          options={[{ value: '0', label: 'Overview' }, ...review.slides.map(s => ({
+            value: String(s.slideNumber), label: `${reviewed.has(s.slideNumber) ? 'Reviewed · ' : ''}${s.title}`,
+          }))]}
+        />
         {chatOpen && (
           <button onClick={() => setChatOpen(false)}>
             <X size={13} />
@@ -882,21 +880,13 @@ export function ReviewPage({
           </button>
         )}
         {review.snapshot?.subject.kind === 'stack' && (
-          <label className="review-submit-target ml-auto flex items-center gap-2 text-xs">
+          <div className="review-submit-target ml-auto flex items-center gap-2 text-xs">
             Send feedback to
-            <select
-              aria-label="PR for review submission"
-              value={submitUrl}
-              onChange={(e) => setSubmitUrl(e.target.value)}
-            >
-              {review.snapshot.subject.members.map((m) => (
-                <option key={m.url} value={m.url}>
-                  #{m.number} {embedded ? m.repo : m.title}
-                  {m.merged ? ' (merged)' : ''}
-                </option>
-              ))}
-            </select>
-          </label>
+            <SearchableSelect label="PR for review submission" value={submitUrl} onValueChange={setSubmitUrl}
+              options={review.snapshot.subject.members.map(m => ({ value: m.url,
+                label: `#${m.number} ${m.repo} · ${m.title}${m.merged ? ' (merged)' : ''}` }))}
+            />
+          </div>
         )}
         {!isLocal && sharedReview.controls}
       </div>

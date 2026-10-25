@@ -168,7 +168,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.pending-comment-block')?.textContent.includes('cancellation throws')");
     // Feedback in either view targets the same PR, not the stack's first member.
     await js(
-      `(()=>{const el=document.querySelector('[aria-label="PR for review submission"]');el.value=window.savedReview.snapshot.subject.members[1].url;el.dispatchEvent(new Event('change',{bubbles:true}))})()`
+      `(async()=>{await window.selectOption('[aria-label="PR for review submission"]',window.savedReview.snapshot.subject.members[1].url);})()`
     );
     await click('Review PR #121 (1)');
     await wait("!!document.querySelector('[role=dialog]')");
@@ -197,7 +197,7 @@ void app.whenReady().then(async () => {
     await click('Next topic');
     await wait("document.querySelector('[aria-label=\"Review topic\"]').value==='2'");
     await js(
-      `(()=>{const el=document.querySelector('[aria-label="Review topic"]');el.value='3';el.dispatchEvent(new Event('change',{bubbles:true}))})()`
+      `(async()=>{await window.selectOption('[aria-label="Review topic"]','3');})()`
     );
     await wait("document.querySelector('[aria-label=\"Review topic\"]').value==='3'");
     await js("document.querySelectorAll('.review-file-viewed input:not(:checked)').forEach(el=>el.click())");
@@ -209,6 +209,18 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.starts'), 0);
     await click('Continue review');
     await wait("document.querySelector('[aria-label=\"Review topic\"]').value==='1'");
+    // A focused picker owns typing and navigation; underlying review shortcuts stay idle.
+    for (const key of ['j', 'k', 'ArrowLeft', 'ArrowRight']) {
+      const original = await js(`document.querySelector('[aria-label="Review topic"]').value`);
+      await js(`(()=>{const trigger=document.querySelector('[aria-label="Review topic"]');trigger.focus();trigger.dispatchEvent(new KeyboardEvent('keydown',{key:${JSON.stringify(key)},bubbles:true,cancelable:true}))})()`);
+      if (key.length === 1) {
+        await wait("document.activeElement?.getAttribute('data-slot')==='combobox-input'");
+        assert.equal(await js("document.querySelector('[data-slot=combobox-input]').value"), key);
+        await js("document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))");
+        await wait("!document.querySelector('[data-slot=combobox-content]')");
+      }
+      assert.equal(await js(`document.querySelector('[aria-label="Review topic"]').value`), original, key);
+    }
     const loads = await js('window.loads');
     const topic = await js('document.querySelector(\'[aria-label="Review topic"]\').value');
     await click('Summary');
@@ -245,7 +257,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.explanation-status')?.textContent.includes('earlier version')");
     // Even without drafts, approval must target the displayed explanation, never newly discovered code.
     await js(
-      `(()=>{const el=document.querySelector('[aria-label="PR for review submission"]');el.value=window.savedReview.snapshot.subject.members[0].url;el.dispatchEvent(new Event('change',{bubbles:true}));window.electronAPI.submitReview=async r=>{window.reviewWrites.push(r);throw Error('This PR changed. Open the latest changes before submitting.')}})()`
+      `(async()=>{await window.selectOption('[aria-label="PR for review submission"]',window.savedReview.snapshot.subject.members[0].url);window.electronAPI.submitReview=async r=>{window.reviewWrites.push(r);throw Error('This PR changed. Open the latest changes before submitting.')}})()`
     );
     await click('Review PR #120');
     await wait("!!document.querySelector('[role=dialog]')");
@@ -265,7 +277,7 @@ void app.whenReady().then(async () => {
     );
     await wait("!document.querySelector('[role=dialog]')");
     await js(
-      `(()=>{const el=document.querySelector('[aria-label="PR for review submission"]');el.value=window.savedReview.snapshot.subject.members[1].url;el.dispatchEvent(new Event('change',{bubbles:true}))})()`
+      `(async()=>{await window.selectOption('[aria-label="PR for review submission"]',window.savedReview.snapshot.subject.members[1].url);})()`
     );
     assert.equal(
       await js("[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Review PR #121')).disabled"),
@@ -289,7 +301,7 @@ void app.whenReady().then(async () => {
     await click('Open updated explanation');
     await wait("!document.querySelector('.explanation-status')");
     await js(
-      `(()=>{const el=document.querySelector('[aria-label="PR for review submission"]');el.value=window.savedReview.snapshot.subject.members[1].url;el.dispatchEvent(new Event('change',{bubbles:true}))})()`
+      `(async()=>{await window.selectOption('[aria-label="PR for review submission"]',window.savedReview.snapshot.subject.members[1].url);})()`
     );
     await wait("document.querySelector('.changes-notice')?.textContent.includes('earlier version')");
     assert.equal(

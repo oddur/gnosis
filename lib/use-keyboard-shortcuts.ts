@@ -64,7 +64,7 @@ export function useKeyboardShortcuts(map: ShortcutMap, options: Options = {}) {
         e.defaultPrevented ||
         e.isComposing ||
         isTypingTarget(e.target) ||
-        target?.closest('[role="dialog"], [role="alertdialog"], [role="menu"]')
+        target?.closest('[role="dialog"], [role="alertdialog"], [role="menu"], [role="combobox"]')
       ) {
         lastKey = null;
         return;

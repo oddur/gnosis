@@ -1,3 +1,4 @@
+import './select-option';
 import { matchesPrInactivity, normalizePrInactivityDays } from '../../lib/pr-inactivity';
 import { withoutMutedMembers, isMutedReview } from '../../lib/muted-prs';
 import { searchHit, queueDocuments, reviewDocuments, searchDocuments, threadDocuments } from '../../lib/command-search';

@@ -1,3 +1,4 @@
+import { SearchableSelect } from './SearchableSelect';
 import { PrMuteMenu } from './PrMuteMenu';
 import { PrDetails } from './PrDetails';
 import { memberReadiness } from './PrReadiness';
@@ -77,23 +78,15 @@ export function PrSubjectDetails({
               ))}
             </ol>
           </nav>
-          <label className="pr-stack-select">
-            PR in stack
-            <select value={member.url} onChange={(e) => onSelect(e.target.value)}>
-              {subject.members.map((m, i) => (
-                <option key={m.url} value={m.url}>
-                  {i + 1} of {subject.members.length} · #{m.number} ·{' '}
-                  {memberReadiness(
-                    m,
-                    statuses[m.url],
-                    statusErrors[m.url],
-                    signals.find((s) => s.url === m.url)
-                  )}{' '}
-                  — {m.title}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="pr-stack-select">
+            <label htmlFor="pr-stack-member">PR in stack</label>
+            <SearchableSelect id="pr-stack-member" label="PR in stack" value={member.url} onValueChange={onSelect}
+              options={subject.members.map((m, i) => ({ value: m.url,
+                label: `${i + 1} of ${subject.members.length} · #${m.number} · ${memberReadiness(
+                  m, statuses[m.url], statusErrors[m.url], signals.find(s => s.url === m.url)
+                )} — ${m.title}` }))}
+            />
+          </div>
         </>
       )}
       <div

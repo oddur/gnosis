@@ -1,3 +1,4 @@
+import { SearchableSelect } from '../../components/SearchableSelect';
 import { applyTheme } from '../../lib/theme';
 import { normalizePrInactivityDays } from '../../lib/pr-inactivity';
 import { GitHubSyncStatus } from '../../components/GitHubSyncStatus';
@@ -1002,34 +1003,18 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
         </a>
         <div className="ml-auto flex items-center gap-2">
           {prefs && (
-            <select
-              aria-label="Review model"
-              title="Model for reviews and briefings"
-              className="workbench-select model-select"
+            <SearchableSelect
+              label="Review model"
+              className="model-select"
               value={`${prefs.provider}:${prefs.model}`}
-              onChange={(e) => {
-                const [provider, ...rest] = e.target.value.split(':');
-                void savePrefs({
-                  ...prefs,
-                  provider: provider as Provider,
-                  model: rest.join(':') as ModelId,
-                  proactiveReviewOverrides: false,
-                });
+              options={Object.entries(PROVIDERS).flatMap(([provider, p]) =>
+                p.models.map(m => ({ value: `${provider}:${m.id}`, label: `${p.label} · ${m.label}` })))}
+              onValueChange={(value) => {
+                const [provider, ...rest] = value.split(':');
+                void savePrefs({ ...prefs, provider: provider as Provider, model: rest.join(':') as ModelId,
+                  proactiveReviewOverrides: false });
               }}
-            >
-              {Object.values(PROVIDERS).map((p) => (
-                <optgroup key={p.label} label={p.label}>
-                  {p.models.map((m) => (
-                    <option
-                      key={m.id}
-                      value={`${p.label.toLowerCase().includes('codex') ? 'codex' : 'claude'}:${m.id}`}
-                    >
-                      {p.label} · {m.label}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
+            />
           )}
           <GitHubSyncStatus sync={queue.sync} onRefresh={() => void refresh(true)} />
           <button
@@ -1313,17 +1298,12 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
               />
             </label>
             {section !== 'saved' && (
-              <select
-                aria-label="Filter repository"
-                className="workbench-select"
+              <SearchableSelect
+                label="Filter repository"
                 value={repo}
-                onChange={(e) => setRepo(e.target.value)}
-              >
-                <option value="all">All repositories</option>
-                {repos.map((r) => (
-                  <option key={r}>{r}</option>
-                ))}
-              </select>
+                onValueChange={setRepo}
+                options={[{ value: 'all', label: 'All repositories' }, ...repos.map(r => ({ value: r, label: r }))]}
+              />
             )}
             {section !== 'saved' && (
               <Popover.Root open={filtersOpen} onOpenChange={setFiltersOpen}>
@@ -1339,6 +1319,10 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                     sideOffset={8}
                     collisionPadding={16}
                     aria-label="Queue filters"
+                    onEscapeKeyDown={event => {
+                      if (event.target instanceof Element && event.target.closest('[data-slot="combobox-content"]'))
+                        event.preventDefault();
+                    }}
                   >
                     <div className="queue-filter-heading">
                       <strong>Filter PRs and stacks</strong>
@@ -1786,14 +1770,10 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
                     value={parentUrl}
                     onChange={(e) => setParentUrl(e.target.value)}
                   />
-                  <select aria-label="Dependent PR" value={childUrl} onChange={(e) => setChildUrl(e.target.value)}>
-                    <option value="">Choose dependent PR</option>
-                    {selectedItem.subject.members.map((m) => (
-                      <option key={m.url} value={m.url}>
-                        #{m.number} {m.title}
-                      </option>
-                    ))}
-                  </select>
+                  <SearchableSelect label="Dependent PR" value={childUrl} onValueChange={setChildUrl}
+                    placeholder="Choose dependent PR"
+                    options={selectedItem.subject.members.map(m => ({ value: m.url, label: `#${m.number} ${m.title}` }))}
+                  />
                   <Button
                     size="sm"
                     variant="outline"

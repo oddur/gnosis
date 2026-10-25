@@ -54,7 +54,7 @@ void app.whenReady().then(async () => {
     );
 
     await js(
-      `(() => { const select = document.querySelector('[aria-label="Review model"]'); select.value = 'codex:gpt-6-astra'; select.dispatchEvent(new Event('change', {bubbles:true})); })()`
+      `window.selectOption('[aria-label="Review model"]', 'codex:gpt-6-astra')`
     );
     assert.equal(await js('window.electronAPI.loadPreferences().then(p => p.model)'), 'gpt-6-astra');
     assert.equal(
@@ -198,11 +198,7 @@ void app.whenReady().then(async () => {
     await js("document.documentElement.classList.remove('dark')");
     await capture('review-light');
     // A stack's submission target is explicit and independent of the displayed source PR.
-    await js(`(() => {
-      const target = document.querySelector('[aria-label="PR for review submission"]');
-      target.value = 'https://github.com/klang/engine/pull/122';
-      target.dispatchEvent(new Event('change', {bubbles:true}));
-    })()`);
+    await js(`window.selectOption('[aria-label="PR for review submission"]', 'https://github.com/klang/engine/pull/122')`);
     await click('Review PR #122');
     await wait("!!document.querySelector('.submission-destination')");
     assert.equal(
@@ -227,10 +223,7 @@ void app.whenReady().then(async () => {
     window.setSize(1280, 800);
     await js("document.documentElement.classList.remove('dark')");
     // Unsaved topics offer generation; saved topics offer reopening.
-    await js(`(() => {
-      const topic = document.querySelector('[aria-label="Review topic"]');
-      topic.value = '2'; topic.dispatchEvent(new Event('change', {bubbles:true}));
-    })()`);
+    await js(`window.selectOption('[aria-label="Review topic"]', '2')`);
     await wait(
       "document.querySelector('.interactive-explanation-prompt')?.textContent.includes('Create interactive explanation')"
     );
@@ -244,10 +237,7 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.review-tool-slot iframe')");
     assert.equal(await js('Number(document.body.dataset.explainerCalls)'), 1);
     await click('Close interactive explanation');
-    await js(`(() => {
-      const topic = document.querySelector('[aria-label="Review topic"]');
-      topic.value = '1'; topic.dispatchEvent(new Event('change', {bubbles:true}));
-    })()`);
+    await js(`window.selectOption('[aria-label="Review topic"]', '1')`);
 
     window.setSize(1440, 900);
     await capture('review-large');
@@ -315,7 +305,7 @@ void app.whenReady().then(async () => {
       "[...document.querySelectorAll('[role=tab]')].find(b=>b.textContent==='Appearance').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}))"
     );
     await wait("document.querySelector('[role=tabpanel][data-state=active]')?.textContent.includes('Code font')");
-    assert.equal(await js("document.querySelectorAll('[role=tabpanel][data-state=active] select').length"), 2);
+    assert.equal(await js("document.querySelectorAll('[role=tabpanel][data-state=active] [data-slot=combobox-trigger]').length"), 2);
     match(await js("document.querySelector('[role=tabpanel][data-state=active]').textContent"), /Light/);
     window.setSize(800, 700);
     await capture('settings-appearance-narrow');
@@ -586,10 +576,10 @@ void app.whenReady().then(async () => {
     await wait("document.querySelectorAll('.queue-item').length === 7");
     await js("document.querySelector('.queue-filter-toggle').click()");
     const selectFilter = async (label: string, value: string) => {
-      await js(`(() => {
+      await js(`(async () => {
         const label = [...document.querySelectorAll('.queue-filter-panel label')].find(l=>l.textContent.startsWith(${JSON.stringify(label)}));
-        const select = label.querySelector('select');
-        select.value = ${JSON.stringify(value)}; select.dispatchEvent(new Event('change',{bubbles:true}));
+        const control = label.querySelector('select, [data-slot=combobox-trigger]');
+        await window.selectOption('#' + CSS.escape(control.id), ${JSON.stringify(value)});
       })()`);
     };
     await selectFilter('PR status', 'draft');
@@ -913,7 +903,7 @@ void app.whenReady().then(async () => {
     );
     await js("document.querySelector('[data-slot=toast] .app-toast-action').click()");
     await wait("!!document.querySelector('.review-tool-slot iframe')");
-    assert.equal(await js("document.querySelector('.review-toolbar select').value"), '1');
+    assert.equal(await js("document.querySelector('[aria-label=\"Review topic\"]').value"), '1');
     assert.equal(
       await js('Number(document.body.dataset.explainerCalls)'),
       1,
