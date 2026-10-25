@@ -17,7 +17,7 @@ void app.whenReady().then(async () => {
   };
   const click = async (label: string) =>
     js(
-      `(()=>{const b=[...document.querySelectorAll('button')].find(e=>e.textContent.trim()===${JSON.stringify(label)});if(!b)throw Error('Missing button');b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
+      `(()=>{const b=[...document.querySelectorAll('.commit-stream-row[data-active=true] button'),...document.querySelectorAll('button')].find(e=>e.textContent.trim()===${JSON.stringify(label)});if(!b)throw Error('Missing button');b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
     );
   try {
     if (process.platform === 'darwin') app.show();
@@ -42,7 +42,7 @@ void app.whenReady().then(async () => {
       "window.compareReads.some(([s]) => s.lastSha === 'd'.repeat(40) && window.inspection.comparisonIsReady(s, ''))"
     );
     const switched = await js<{ loading: boolean; title: string; elapsed: number }>(
-      `(async()=>{const t=performance.now();document.querySelectorAll('.commit-row')[1].click();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {loading:!!document.querySelector('.changes-loading')||document.querySelector('.changes-empty')?.textContent.includes('Loading')||false,title:document.querySelector('.commit-detail-title')?.textContent??'',elapsed:performance.now()-t}})()`
+      `(async()=>{const t=performance.now();document.querySelectorAll('.commit-row')[1].click();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {loading:!!document.querySelector('.commit-stream-row[data-active=true] .changes-loading')||document.querySelector('.changes-empty')?.textContent.includes('Loading')||false,title:document.querySelector('.commit-detail-title')?.textContent??'',elapsed:performance.now()-t}})()`
     );
     console.log('Adjacent commit:', JSON.stringify(switched));
     assert.equal(
@@ -59,7 +59,7 @@ void app.whenReady().then(async () => {
       return !!file && window.inspection.fileIsReady(snapshot, file);
     })()`);
     const nextFile = await js<{ loading: boolean; path: string }>(
-      `(async()=>{window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='new.ts').click();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {loading:!!document.querySelector('.changes-loading'),path:document.querySelector('.changes-file-header h2')?.textContent??''}})()`
+      `(async()=>{window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='new.ts').click();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {loading:!!document.querySelector('.commit-stream-row[data-active=true] .changes-loading'),path:document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent??''}})()`
     );
     console.log('Unopened file:', JSON.stringify(nextFile));
     assert.equal(
@@ -68,16 +68,16 @@ void app.whenReady().then(async () => {
       'The next file must be ready before selection, including files without a usable patch'
     );
     assert.equal(nextFile.path, 'src/new.ts');
-    // A cold file keeps the existing diff. A later click must win over its slower response.
+    // A later file click must win over a slower response.
     await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='old.ts').click()");
     const cold = await js<{ loading: boolean; path: string }>(
-      `({loading:!!document.querySelector('.changes-loading'),path:document.querySelector('.changes-file-header h2')?.textContent})`
+      `({loading:!!document.querySelector('.commit-stream-row[data-active=true] .changes-loading'),path:document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent})`
     );
     assert.equal(cold.loading, false);
     await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='worker.ts').click()");
     await new Promise((r) => setTimeout(r, 600));
     assert.equal(
-      await js("document.querySelector('.changes-file-header h2')?.textContent"),
+      await js("document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent"),
       'src/worker.ts',
       'A stale file response must not override the latest selection'
     );
@@ -88,7 +88,7 @@ void app.whenReady().then(async () => {
       `(()=>{const select=document.querySelector('[aria-label="Compare with parent"]');select.value='f'.repeat(40);select.dispatchEvent(new Event('change',{bubbles:true}));})()`
     );
     await new Promise((r) => setTimeout(r, 30));
-    assert.equal(await js("!!document.querySelector('.changes-loading')"), false);
+    assert.equal(await js("!!document.querySelector('.commit-stream-row[data-active=true] .changes-loading')"), false);
     await js("document.querySelectorAll('.commit-row')[2].click()");
     await new Promise((r) => setTimeout(r, 700));
     assert.match(
@@ -113,28 +113,35 @@ void app.whenReady().then(async () => {
       await js(
         `window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')===${JSON.stringify(name)}).click()`
       );
-      await wait(`document.querySelector('.changes-file-header h2')?.textContent==='unsupported/${name}'`);
       await wait(
-        "document.querySelector('.changes-code-scroll [role=alert]')?.textContent.includes('Open it on GitHub')"
+        `document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='unsupported/${name}'`
       );
-      assert.equal(await js("!!document.querySelector('.changes-loading')"), false);
-      await js("document.querySelector('.changes-file-actions input').click()");
+      await wait(
+        "document.querySelector('.commit-stream-row[data-active=true] .changes-code-scroll [role=alert]')?.textContent.includes('Open it on GitHub')"
+      );
       assert.equal(
-        await js("document.querySelector('.changes-file-actions input').checked"),
-        true,
-        'Unsupported files can be marked Viewed'
+        await js("!!document.querySelector('.commit-stream-row[data-active=true] .changes-loading')"),
+        false
       );
       await click('Open on GitHub');
       assert.match(await js<string>('window.openedURLs.at(-1)'), /\/pull\/150\/files$/);
+      await js("document.querySelector('.commit-stream-row[data-active=true] .changes-file-actions input').click()");
+      assert.equal(
+        await js("document.querySelector('.commit-stream-row[data-active=true] .changes-file-actions input').checked"),
+        true,
+        'Unsupported files can be marked Viewed'
+      );
     }
     await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='worker.ts').click()");
-    await wait("document.querySelector('.changes-file-header h2')?.textContent==='src/worker.ts'");
+    await wait(
+      "document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/worker.ts'"
+    );
     await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='temporary.txt').click()");
     await wait("document.querySelector('.pr-changes')?.textContent.includes('Network unavailable')");
     assert.equal(
-      await js("document.querySelector('.changes-file-header h2')?.textContent"),
-      'src/worker.ts',
-      'Transient failure keeps the current diff visible'
+      await js("document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent"),
+      'unsupported/temporary.txt',
+      'A failed file stays reachable in the stream with its recovery actions'
     );
     console.log('Diff navigation performance checks passed');
     app.exit(0);

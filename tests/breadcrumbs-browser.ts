@@ -20,7 +20,7 @@ void app.whenReady().then(async () => {
   };
   const click = async (label: string) => {
     await js(
-      `(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.getBoundingClientRect().width && (b.textContent.trim()===${JSON.stringify(label)}||b.getAttribute('aria-label')===${JSON.stringify(label)}));if(!b)throw Error('Missing '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
+      `(()=>{const b=[...document.querySelectorAll('.commit-stream-row[data-active=true] button'),...document.querySelectorAll('button')].find(b=>b.getBoundingClientRect().width && (b.textContent.trim()===${JSON.stringify(label)}||b.getAttribute('aria-label')===${JSON.stringify(label)}));if(!b)throw Error('Missing '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
     );
     await new Promise((r) => setTimeout(r, 80));
   };
@@ -77,7 +77,9 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.calls'), 0);
     await capture('file-search-1280');
     await js("document.querySelector('[data-slot=combobox-item]').click()");
-    await wait("document.querySelector('.changes-file-header h2')?.textContent==='src/worker.ts'");
+    await wait(
+      "document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/worker.ts'"
+    );
     assert.match(await js<string>("document.querySelector('[data-slot=breadcrumb-list]').textContent"), /worker.ts/);
     const worker = await js<string>('document.querySelector(\'[aria-label="File in comparison"]\').value');
     assert.equal(

@@ -24,7 +24,7 @@ void app.whenReady().then(async () => {
   };
   const click = async (text: string) => {
     await js(
-      `(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.getBoundingClientRect().width && b.textContent.trim()===${JSON.stringify(text)});if(!b)throw Error('Missing '+${JSON.stringify(text)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
+      `(()=>{const b=[...document.querySelectorAll('.commit-stream-row[data-active=true] button'),...document.querySelectorAll('button')].find(b=>b.getBoundingClientRect().width && b.textContent.trim()===${JSON.stringify(text)});if(!b)throw Error('Missing '+${JSON.stringify(text)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
     );
     await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
   };
@@ -74,10 +74,15 @@ void app.whenReady().then(async () => {
     await wait("document.body.textContent.includes('Downloading the displayed revisions')");
     await capture('downloading-light');
     await js("window.openFile('worker.ts')");
-    await wait("document.querySelector('.changes-file-header h2')?.textContent==='src/worker.ts'");
+    await wait(
+      "document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/worker.ts'"
+    );
     await js('window.finishLfs()');
     await wait("!document.body.textContent.includes('Downloading the displayed revisions')");
-    assert.equal(await js("document.querySelector('.changes-file-header h2').textContent"), 'src/worker.ts');
+    assert.equal(
+      await js("document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2').textContent"),
+      'src/worker.ts'
+    );
     await js("window.openFile('flow.svg')");
     await wait(
       "document.querySelectorAll('.review-image-stage img').length===2 && [...document.querySelectorAll('.review-image-stage img')].every(i=>i.naturalWidth>0)"
@@ -87,7 +92,7 @@ void app.whenReady().then(async () => {
     await capture('downloaded-dark');
     await js("window.openFile('new.ts')");
     await wait(
-      "document.querySelector('.changes-file-header h2')?.textContent==='src/new.ts' && document.body.textContent.includes('Git LFS resource')"
+      "document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/new.ts' && document.body.textContent.includes('Git LFS resource')"
     );
     await click('Download');
     await wait("document.body.textContent.includes('Download interrupted')");

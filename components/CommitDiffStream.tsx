@@ -36,6 +36,14 @@ export function CommitDiffStream({
   const current = useRef({ files, onPosition });
   current.current = { files, onPosition };
   const [focused, setFocused] = useState<string>();
+  // Keep interacted discussions alive until leaving this comparison. In-flight
+  // writes and unsaved edits must not disappear when their row scrolls offscreen.
+  const [discussions, setDiscussions] = useState<Set<string>>(() => new Set());
+  function retainDiscussion(target: HTMLElement) {
+    if (!target.closest('.github-thread, .changes-comment-composer, .changes-draft-comment')) return;
+    const key = target.closest<HTMLElement>('[data-file]')?.dataset.file;
+    if (key) setDiscussions((old) => (old.has(key) ? old : new Set([...old, key])));
+  }
   const keyAt = useCallback((i: number) => current.current.files[i].key, []);
   const virtual = useVirtualizer({
     count: files.length,
@@ -50,6 +58,7 @@ export function CommitDiffStream({
       [
         ...new Set([
           ...defaultRangeExtractor(range),
+          ...files.flatMap((file, index) => (discussions.has(file.key) ? [index] : [])),
           ...(focused ? [files.findIndex((f) => f.key === focused)].filter((i) => i >= 0) : []),
         ]),
       ].sort((a, b) => a - b),
@@ -115,13 +124,16 @@ export function CommitDiffStream({
       onWheel={() => {
         pending.current = undefined;
       }}
-      onPointerDown={() => {
+      onPointerDown={(event) => {
+        retainDiscussion(event.target as HTMLElement);
         pending.current = undefined;
       }}
       onKeyDown={() => {
         pending.current = undefined;
       }}
+      onClickCapture={(event) => retainDiscussion(event.target as HTMLElement)}
       onFocusCapture={(event) => {
+        retainDiscussion(event.target as HTMLElement);
         const row = (event.target as HTMLElement).closest<HTMLElement>('[data-file]');
         if (row) setFocused(row.dataset.file);
       }}
