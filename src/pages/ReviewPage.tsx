@@ -398,12 +398,14 @@ export function ReviewPage({
     setDiffLayout(initialPreferences.diffLayout);
   }, [initialPreferences]);
   useEffect(() => {
-    if (initialPreferences) return;
     let cancelled = false;
+    const writesAtLoad = preferenceWrites.current;
     void window.electronAPI
       .loadPreferences()
       .then((p) => {
-        if (cancelled) return;
+        // Parent preferences seed an instant render, but may predate changes saved
+        // in a previous review. Do not let this refresh overwrite a newer edit.
+        if (cancelled || writesAtLoad !== preferenceWrites.current) return;
         setPrefs(p);
         setChatProvider(p.provider);
         setChatModel(p.model);
@@ -419,7 +421,7 @@ export function ReviewPage({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [initialPreferences]);
 
   useEffect(() => {
     let cancelled = false;
