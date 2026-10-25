@@ -593,9 +593,9 @@ void test('automatic refresh reuses unchanged PRs, detects branch changes, and p
     await refresh();
     await refresh();
     await refresh();
-    assert.equal(reads, 4, 'Unchanged metadata is still revalidated after fifteen minutes');
+    assert.equal(reads, 3, 'Unchanged metadata does not expire into a full detail sweep');
     await service.queue(true);
-    assert.equal(reads, 5, 'An explicit refresh revalidates PR details');
+    assert.equal(reads, 4, 'An explicit refresh revalidates PR details');
   } finally {
     s.cleanup();
   }
@@ -751,7 +751,8 @@ void test('recent successful discovery survives restart, including empty queues,
     });
     const updated = createWorkbenchService(deps);
     assert.equal((await updated.queue()).items.length, 1);
-    assert.equal(s.deps.activities.list()[0].status, 'running');
+    assert.equal(s.deps.activities.list().length, 0, 'Routine sync stays out of Activity');
+    assert.equal(updated.snapshot().sync?.status, 'checking');
     release?.();
     gate = undefined;
     await updated.queue(true);
@@ -872,7 +873,8 @@ void test('rate-limited discovery retains completed details across restart and r
     limited = false;
     now += 121_001;
     const restarted = createWorkbenchService({ ...s.deps, now: () => now });
-    const q = await restarted.queue();
+    await restarted.queue();
+    const q = await restarted.queue(true, false);
     assert.equal(q.items.length, 6);
     assert.deepEqual(reads, [1, 2, 3, 4, 5, 6, 6]);
     assert.equal(s.deps.activities.list()[0].status, 'completed');
@@ -914,13 +916,14 @@ void test('a failed batch drains its successful reads before checkpointing and c
     const saved = fs.readFileSync(file, 'utf8');
     limited = false;
     now += 121_001;
-    const q = await createWorkbenchService(deps).queue();
+    const resumed = createWorkbenchService(deps);
+    const q = await resumed.queue(true, false);
     assert.equal(q.items.length, 2);
     assert.deepEqual(reads, [1, 2, 1], 'A successful read in the failed batch must be retained');
     fs.writeFileSync(file, saved);
     token = 'checkpoint-other-token';
     reads.length = 0;
-    await createWorkbenchService(deps).queue();
+    await createWorkbenchService(deps).queue(true, false);
     assert.deepEqual(reads, [1, 2], 'Another credential must not reuse the checkpoint');
   } finally {
     s.cleanup();
@@ -1082,7 +1085,7 @@ void test('personal discovery splits searches above GitHub’s 1000-result ceili
     const found = await listing.personal();
     assert.equal(found.length, 1001);
     assert.equal(new Set(found.map((pr) => pr.url)).size, 1001);
-    assert.ok(calls.some((q) => q.includes('1970-01-01T00:16:41Z')));
+    assert.ok(new Set(calls).size > 2, 'Search windows split until every result is accessible');
   } finally {
     s.cleanup();
   }
@@ -1199,7 +1202,7 @@ void test('my PR filter reduces discovery reads, retains connected stacks and ca
     );
     assert.deepEqual(
       [...reads].sort((a, b) => a - b),
-      [1, 2, 3, 4]
+      [4]
     );
     assert.ok(!repos.includes('unrelated'));
     assert.ok(searches.some((q) => q.includes('assignee:reviewer')));
@@ -1208,12 +1211,12 @@ void test('my PR filter reduces discovery reads, retains connected stacks and ca
     assert.equal(focused.items.length, full.items.length, 'Unrelated cached subjects remain available');
     const restarted = createWorkbenchService(deps);
     assert.equal((await restarted.queue()).filters?.involvement, 'mine');
-    assert.equal(reads.length, 4, 'A fresh personal discovery survives restart');
+    assert.equal(reads.length, 1, 'A fresh personal discovery survives restart');
     restarted.setFilters({ involvement: 'all' });
     const restored = await restarted.queue(true, false);
     assert.equal(restored.items.length, full.items.length);
     assert.ok(repos.includes('unrelated'), 'Clearing the filter resumes full discovery');
-    assert.equal(new Set(reads).size, 105);
+    assert.equal(new Set(reads).size, 1, 'Widening the queue reuses unchanged details');
   } finally {
     s.cleanup();
   }
@@ -1483,5 +1486,145 @@ void test('an archived source fork does not hide a PR targeting an active reposi
     s.pr.base.repo.archived = true;
     const archived = await s.service.queue(true);
     assert.deepEqual(archived.items, [], 'PR metadata also rejects archived targets when search is stale');
+  } finally { s.cleanup(); }
+});
+
+void test('415 unchanged PRs require no repeated detail reads and repository deltas stop at the update boundary', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  let now = Date.parse('2026-10-24T12:00:00Z');
+  const prs = Array.from({ length: 415 }, (_, i) => ({
+    ...structuredClone(s.pr), number: i + 1, html_url: `https://github.com/owner/repo/pull/${i + 1}`,
+    head: { ...s.pr.head, ref: `branch-${i}`, sha: `head-${i}` },
+    base: { ...s.pr.base, repo: { ...s.pr.base.repo, default_branch: 'main' } },
+  }));
+  let reads = 0, lists = 0;
+  s.prefs.watchedRepos = ['owner/repo'];
+  Object.assign(s.deps.client().search, { issuesAndPullRequests: () => Promise.resolve({ data: { items: [], total_count: 0 } }) });
+  Object.assign(s.deps.client().pulls, {
+    get: ({ pull_number }: { pull_number: number }) => { reads++; return Promise.resolve({ data: prs[pull_number - 1] }); },
+    list: ({ page = 1, sort }: { page?: number; sort?: string }) => {
+      lists++;
+      const ordered = sort === 'updated' ? [...prs].sort((a, b) => b.updated_at.localeCompare(a.updated_at)) : prs;
+      return Promise.resolve({ data: ordered.slice((page - 1) * 100, page * 100) });
+    },
+  });
+  const deps = { ...s.deps, now: () => now };
+  try {
+    const service = createWorkbenchService(deps);
+    await service.queue(true, false);
+    assert.equal(reads, 415); assert.equal(lists, 5);
+    reads = lists = 0;
+    now += 16 * 60_000;
+    const restarted = createWorkbenchService(deps);
+    await restarted.queue(true, false);
+    assert.equal(reads, 0, 'Time alone must not trigger another 415 detail requests');
+    assert.equal(lists, 1, 'Stop after the first page of older updates');
+    prs[200].title = 'Changed title';
+    prs[200].updated_at = new Date(now).toISOString();
+    prs[200].head.sha = 'new-head';
+    now += 2 * 60_000;
+    const changed = await restarted.queue(true, false);
+    assert.equal(reads, 1);
+    assert.equal(changed.items.find(i => i.subject.members[0].number === 201)?.subject.title, 'Changed title');
+    prs[200].state = 'closed';
+    prs[200].updated_at = new Date(now).toISOString();
+    now += 2 * 60_000;
+    assert.equal((await restarted.queue(true, false)).items.length, 414, 'A closure removes the open PR from the retained index');
+    now += 31 * 60_000;
+    lists = 0;
+    await restarted.queue(true, false);
+    assert.equal(lists, 5, 'Periodic full reconciliation still examines the whole repository');
+  } finally { s.cleanup(); }
+});
+
+void test('completed batches become visible before the rest of discovery finishes', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  let entered!: () => void, release!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const blocked = new Promise<void>(resolve => { release = resolve; });
+  const prs = Array.from({ length: 6 }, (_, i) => ({
+    ...structuredClone(s.pr), html_url: `https://github.com/owner/repo/pull/${i + 1}`,
+    head: { ...s.pr.head, ref: `branch-${i}` },
+    base: { ...s.pr.base, repo: { ...s.pr.base.repo, default_branch: 'main' } },
+  }));
+  s.prefs.watchedRepos = ['owner/repo'];
+  Object.assign(s.deps.client().pulls, {
+    list: () => Promise.resolve({ data: prs }),
+    get: async ({ pull_number }: { pull_number: number }) => {
+      if (pull_number === 6) { entered(); await blocked; }
+      return { data: prs[pull_number - 1] };
+    },
+  });
+  const pending = s.service.queue();
+  try {
+    await started;
+    assert.equal(s.service.snapshot().items.length, 5, 'Useful work is published while the next batch is waiting');
+    assert.equal(s.service.snapshot().sync?.status, 'checking');
+  } finally { release(); await pending; s.cleanup(); }
+});
+
+void test('routine sync does not recreate Activity or repeat completed task notifications', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  let now = Date.now(), finishes = 0;
+  const finish = s.deps.activities.finish.bind(s.deps.activities);
+  s.deps.activities.finish = (...args) => { finishes++; finish(...args); };
+  const service = createWorkbenchService({ ...s.deps, now: () => now });
+  try {
+    await service.queue(true, false);
+    assert.equal(finishes, 1);
+    now += 2 * 60_000 + 1;
+    await service.queue(true, false);
+    assert.equal(finishes, 1, 'A quiet check must not touch the previous completed task');
+    assert.equal(service.snapshot().sync?.status, 'idle');
+    await s.deps.activities.act('github:reviewer', 'dismiss');
+    now += 2 * 60_000 + 1;
+    await service.queue(true, false);
+    assert.equal(s.deps.activities.list().length, 0);
+    await service.queue(true);
+    assert.equal(s.deps.activities.list()[0].status, 'completed', 'Manual refresh remains in Activity');
+  } finally { s.cleanup(); }
+});
+
+void test('briefings pause during API backoff without spending an AI attempt before generation', async () => {
+  let generated = 0;
+  const s = setup(() => { generated++; return Promise.resolve('{"summary":"Ready","systems":[],"priorities":[]}'); });
+  let now = Date.now(), limited = true;
+  const listFiles = s.deps.client().pulls.listFiles;
+  Object.assign(s.deps.client().pulls, {
+    listFiles: (...args: Parameters<typeof listFiles>) => limited
+      ? Promise.reject(Object.assign(new Error('Secondary rate limit'), { status: 429, response: { headers: { 'retry-after': '120' } } }))
+      : listFiles(...args),
+  });
+  const service = createWorkbenchService({ ...s.deps, now: () => now });
+  try {
+    await service.queue();
+    await settle(service, 'paused');
+    assert.equal(generated, 0);
+    assert.equal(service.snapshot().remaining, 1);
+    limited = false;
+    now += 121_001;
+    await service.queue(true, false);
+    await settle(service, 'ready');
+    assert.equal(generated, 1);
+  } finally { s.cleanup(); }
+});
+
+void test('upgrading an existing queue retains verified details instead of rehydrating every PR', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  try {
+    await s.service.queue(true, false);
+    const file = path.join(s.deps.directory(), 'workbench.json');
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+    const { createHash } = await import('node:crypto');
+    saved.discoveryKey = createHash('sha256').update(JSON.stringify([
+      'pr-inactivity-v1', 30, [], 'fixture', [], true, 'all',
+    ])).digest('hex');
+    delete saved.credentialKey;
+    delete saved.listings;
+    fs.writeFileSync(file, JSON.stringify(saved));
+    let reads = 0;
+    Object.assign(s.deps.client().pulls, { get: () => { reads++; return Promise.resolve({ data: s.pr }); } });
+    await createWorkbenchService(s.deps).queue(true, false);
+    assert.equal(reads, 0, 'The old scope fingerprint verifies that this credential populated the saved details');
   } finally { s.cleanup(); }
 });

@@ -48,6 +48,7 @@ export interface QueueItem {
   attention: 'updated' | 'requested' | 'other';
 }
 export interface WorkbenchQueue {
+  sync?: { status: 'idle' | 'checking' | 'paused' | 'error'; checkedAt?: number; retryAt?: number };
   mutedPrs?: import('./muted-prs').MutedPr[];
   starredPrs?: import('./starred-prs').StarredPr[];
   starredItems?: QueueItem[];

@@ -195,7 +195,7 @@ void test('discovery skips old unrelated details, retains old stack context and 
     service.starPrs({ members: [star], starred: true });
     const queue = await service.queue(true);
     assert.ok(
-      queries.length === 3 && queries.every((q) => q.includes('updated:>=2026-09-24T12:00:00Z')),
+      queries.length === 3 && queries.every((q) => q.includes('updated:>=2026-09-24T00:00:00Z')),
       JSON.stringify({ queries, warnings: queue.warnings })
     );
     assert.deepEqual(

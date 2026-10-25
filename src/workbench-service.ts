@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
+import { withGitHubPriority } from '../lib/github-scheduler';
 import type { Octokit } from '@octokit/rest';
 import {
   getGitHubClient,
@@ -27,7 +28,7 @@ import {
   type GitHubBackoffError,
 } from '../lib/github-client';
 import { getPrMetadata, parsePrUrl, getChangedFiles } from '../lib/github';
-import { createDiscoveryListings, type DiscoveryListings, type ListedPull } from '../lib/github-discovery';
+import { createDiscoveryListings, nextDiscoveryListings, type DiscoveryListings, type ListedPull } from '../lib/github-discovery';
 import { getProvider } from '../lib/provider';
 import {
   groupSubjects,
@@ -45,6 +46,7 @@ import type { Preferences, ReviewHistoryEntry, PrSearchResult, PrMetadata } from
 
 interface State {
   account: string;
+  credentialKey?: string;
   archivedRepos?: string[];
   retainedInactiveIds?: string[];
   subjects: ReviewSubject[];
@@ -57,6 +59,8 @@ interface State {
   discoveredAt?: number;
   discoveryKey?: string;
   discoveryWarnings?: string[];
+  listings?: DiscoveryListings;
+  parentLookups?: Record<string, { checkedAt: number; urls: string[]; ambiguous?: boolean }>;
   discoveryProgress?: {
     key: string;
     members: ReviewMember[];
@@ -104,19 +108,20 @@ export function createWorkbenchService(deps: Deps) {
   let lastAccount: string | null = null;
   let lastDiscoveryKey: string | undefined;
   let warnings: string[] = [];
+  let sync: WorkbenchQueue['sync'];
   let running: AbortController | undefined;
   let runningKey: string | undefined;
   let pumping = false;
   const requestedBriefings = new Set<string>();
   const requestKey = (key: string) => `${deps.auth().login ?? 'guest'}:${key}`;
   const cachePath = () => path.join(deps.directory(), 'workbench.json');
-  const discoveryKey = (involvement = normalizeQueueFilters(load().filters).involvement) =>
+  const discoveryKey = (involvement = normalizeQueueFilters(load().filters).involvement, legacy = false) =>
     createHash('sha256')
       .update(
         JSON.stringify([
           'pr-inactivity-v1',
           normalizePrInactivityDays(deps.preferences().prInactivityDays),
-          stars.load(deps.auth().login ?? 'guest').map(entry => entry.member.url).sort(),
+          ...(legacy ? [stars.load(deps.auth().login ?? 'guest').map(entry => entry.member.url).sort()] : []),
           deps.auth().token,
           [...deps.preferences().watchedRepos].sort(),
           deps.preferences().ignoreDependabotPrs !== false,
@@ -258,6 +263,7 @@ export function createWorkbenchService(deps: Deps) {
       starredItems,
       mutedPrs,
       warnings,
+      sync: sync ?? { status: 'idle', checkedAt: s.discoveredAt },
       remaining: Math.max(0, limit() - s.used),
       filters,
       savedViews: { ...structuredClone(views), counts },
@@ -293,13 +299,20 @@ export function createWorkbenchService(deps: Deps) {
     const discoverySettings = discoveryKey();
     const mineOnly = normalizeQueueFilters(s.filters).involvement === 'mine';
     const pending = s.discoveryProgress?.key === discoverySettings ? s.discoveryProgress : undefined;
+    const credentialKey = createHash('sha256').update(token).digest('hex');
+    const legacyCredentials = !s.credentialKey && s.discoveryKey === discoveryKey(undefined, true);
+    if (s.credentialKey !== credentialKey && !legacyCredentials && !pending && s.discoveryKey !== discoverySettings) {
+      s.checkedAt = {};
+      s.parentLookups = {};
+    }
+    s.credentialKey = credentialKey;
     // Retry continues an interrupted discovery; a completed refresh starts fresh.
     if (force && !pending) githubCacheFor(octokit)?.revalidate();
     warnings = [];
     const checkedAt = { ...s.checkedAt, ...pending?.checkedAt };
     const checkAllowance = () => {
       if (discoveryKey() !== discoverySettings || deps.auth().login !== login) throw new DiscoverySuperseded();
-      const paused = githubClients.backoff(token, true);
+      const paused = githubClients.backoff(token, true, ['core', 'search']);
       if (paused) throw paused;
     };
     const prefs = deps.preferences();
@@ -311,8 +324,19 @@ export function createWorkbenchService(deps: Deps) {
     ]);
     const members = new Map<string, ReviewMember>();
     const completed = new Map((pending?.members ?? []).map((m) => [m.url, m] as const));
-    const listingState = pending?.listings ?? { searches: {}, repos: {} };
+    const listingState = pending?.listings ?? nextDiscoveryListings(
+      !force && s.discoveryKey === discoverySettings ? s.listings : undefined, now());
     let finished = false;
+    let dirty = false;
+    const publish = () => {
+      if (!dirty) return;
+      if (deps.auth().login !== login || discoveryKey() !== discoverySettings) return;
+      // Keep unseen members until reconciliation completes; partial results must not erase stacks.
+      const merged = new Map(s.subjects.flatMap(subject => subject.members.map(member => [member.url, member] as const)));
+      for (const [url, member] of members) merged.set(url, member);
+      s.subjects = groupSubjects([...merged.values()].filter(member => !isArchived(member)), s.overrides, s.subjects);
+      dirty = false;
+    };
     const checkpoint = () => {
       if (finished || discoveryKey() !== discoverySettings || deps.auth().login !== login) return;
       s.discoveryProgress = {
@@ -326,7 +350,7 @@ export function createWorkbenchService(deps: Deps) {
     const listings = createDiscoveryListings(octokit, listingState, {
       login,
       includeAssigned: true,
-      updatedSince: days ? new Date(Math.floor((now() - days * 86400000) / 1000) * 1000).toISOString().replace('.000Z', 'Z') : undefined,
+      updatedSince: days ? new Date(Math.floor((now() - days * 86400000) / 86400000) * 86400000).toISOString().replace('.000Z', 'Z') : undefined,
       now: now(),
       beforeRead: checkAllowance,
       save: checkpoint,
@@ -383,6 +407,7 @@ export function createWorkbenchService(deps: Deps) {
         }
       }
       // Explicit bookmarks remain discovery seeds even when their activity is old.
+      const discovered = new Set(seeds.keys());
       for (const { member } of stars.load(s.account)) {
         if (member.state === 'open' && !member.merged && !isArchived(member) && !mutedUrls().has(member.url))
           seeds.set(member.url, member);
@@ -424,13 +449,16 @@ export function createWorkbenchService(deps: Deps) {
         }
         const cached = previousMembers.get(url);
         const updatedAt = listed?.updated_at ?? seeds.get(url)?.updatedAt;
+        const closed = Object.values(listingState.repos).some(repo => repo.closed?.includes(url));
         if (
           (!force || completed.has(url)) &&
           cached &&
+          Object.prototype.hasOwnProperty.call(checkedAt, url) &&
           updatedAt === cached.updatedAt &&
-          (completed.has(url) || now() - (checkedAt[url] ?? 0) < 15 * 60_000) &&
+          !closed &&
+          (completed.has(url) || discovered.has(url) || !!listed || now() - (checkedAt[url] ?? 0) < 15 * 60_000) &&
           (!listed ||
-            (cached.headSha === listed.head.sha &&
+            (cached.state === 'open' && cached.headSha === listed.head.sha &&
               cached.baseSha === listed.base.sha &&
               cached.baseBranch === listed.base.ref))
         ) {
@@ -442,6 +470,7 @@ export function createWorkbenchService(deps: Deps) {
           const member = await fetchMember(octokit, url, role ?? current?.role);
           if (member.repoArchived) { setArchiveState(member.repo, true); return; }
           members.set(url, member);
+          dirty = true;
           checkedAt[url] = now();
           completed.set(url, member);
         } catch (error) {
@@ -471,14 +500,20 @@ export function createWorkbenchService(deps: Deps) {
       }
       // On a long cooldown, resume with the oldest/unread details first so a large
       // queue can make progress even when previously completed details have expired.
-      const entries = [...urls].sort((a, b) => (checkedAt[a[0]] ?? 0) - (checkedAt[b[0]] ?? 0));
+      const listedByUrl = new Map(Object.values(listingState.repos).flatMap(repo => repo.items.map(pr => [pr.html_url, pr] as const)));
+      const entries = [...urls].sort((a, b) => {
+        const changed = (url: string) => !previousMembers.has(url) || seeds.get(url)?.updatedAt !== previousMembers.get(url)?.updatedAt;
+        return Number(changed(b[0])) - Number(changed(a[0]));
+      });
       const total = entries.length;
       progress('Updating pull request details', { completed: 0, total, unit: 'PRs' });
       for (let i = 0; i < total; i += 5) {
         // Drain the batch before saving or pausing; Promise.all can reject while
         // other requests are still completing and updating the checkpoint.
-        const results = await Promise.allSettled(entries.slice(i, i + 5).map(([url, role]) => add(url, role)));
-        checkpoint();
+        const results = await Promise.allSettled(entries.slice(i, i + 5).map(([url, role]) => add(url, role, listedByUrl.get(url))));
+        // add() updates dirty across the awaited batch.
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        if (dirty) { publish(); checkpoint(); }
         for (const result of results) if (result.status === 'rejected') throw result.reason;
         progress('Updating pull request details', { completed: Math.min(i + 5, total), total, unit: 'PRs' });
       }
@@ -528,6 +563,13 @@ export function createWorkbenchService(deps: Deps) {
             if (ref === data[0]?.base.repo.default_branch) continue;
             if ([...members.values()].some((m) => m.headRepo === fullName && m.headBranch === ref)) continue;
             checkAllowance();
+            const key = `${fullName}:${ref}`;
+            const cachedParents = s.parentLookups?.[key];
+            if (!force && cachedParents && now() - cachedParents.checkedAt < 30 * 60_000) {
+              if (cachedParents.ambiguous) warnings.push(`More than one earlier PR matches ${fullName}:${ref}. Check which PRs belong together.`);
+              for (const url of cachedParents.urls) await add(url);
+              continue;
+            }
             const { data: parents } = await octokit.pulls.list({
               owner,
               repo,
@@ -535,6 +577,7 @@ export function createWorkbenchService(deps: Deps) {
               head: `${owner}:${ref}`,
               per_page: 10,
             });
+            (s.parentLookups ??= {})[key] = { checkedAt: now(), urls: parents.length === 1 ? [parents[0].html_url] : [], ambiguous: parents.length > 1 };
             if (parents.length === 1) await add(parents[0].html_url);
             else if (parents.length > 1)
               warnings.push(`More than one earlier PR matches ${fullName}:${ref}. Check which PRs belong together.`);
@@ -578,6 +621,7 @@ export function createWorkbenchService(deps: Deps) {
       s.discoveredAt = lastRefresh;
       s.discoveryKey = discoverySettings;
       s.discoveryWarnings = warnings;
+      s.listings = listingState;
       s.checkedAt = Object.fromEntries(
         s.subjects
           .flatMap((subject) => subject.members.map((member) => member.url))
@@ -600,6 +644,7 @@ export function createWorkbenchService(deps: Deps) {
     if (!token || !login) return { items: [], warnings: [], remaining: 0 };
     const settings = discoveryKey();
     if (lastAccount !== login || lastDiscoveryKey !== settings) {
+      sync = undefined;
       lastAccount = login;
       lastDiscoveryKey = settings;
       const saved = load();
@@ -620,14 +665,16 @@ export function createWorkbenchService(deps: Deps) {
       warnings = lastRefresh && Array.isArray(saved.discoveryWarnings) ? saved.discoveryWarnings : [];
     }
     const id = `github:${login}`;
+    const tracked = deps.activities?.list().some(task => task.id === id && (task.status === 'running' || task.status === 'paused'));
     const paused =
       cooldown?.account === login && cooldown.error.retryAt > now()
         ? cooldown.error
-        : githubClients.backoff(token, true);
+        : githubClients.backoff(token, true, ['core', 'search']);
     if (paused) {
+      sync = { status: 'paused', checkedAt: load().discoveredAt, retryAt: paused.retryAt };
       const detail = `${paused.message} Updates will resume automatically while the queue is open.`;
       warnings = [detail];
-      if (!deps.activities?.list().some((task) => task.id === id && task.status === 'paused')) {
+      if (((force && revalidate) || tracked || !load().discoveredAt) && !deps.activities?.list().some((task) => task.id === id && task.status === 'paused')) {
         deps.activities?.start({ id, kind: 'github', title: 'Updating GitHub information', detail }, {});
         deps.activities?.pause(id, detail);
       }
@@ -635,20 +682,25 @@ export function createWorkbenchService(deps: Deps) {
     }
     const resuming = cooldown?.account === login;
     cooldown = undefined;
-    if (!force && !resuming && now() - lastRefresh < 5 * 60_000) {
+    if (!force && !resuming && now() - lastRefresh < 2 * 60_000) {
       void pump();
       return view();
     }
-    deps.activities?.start(
+    const visibleActivity = (force && revalidate) || tracked || !load().discoveredAt;
+    sync = { status: 'checking', checkedAt: load().discoveredAt };
+    if (visibleActivity) deps.activities?.start(
       { id, kind: 'github', title: 'Updating GitHub information', detail: 'Finding your pull requests' },
       { retry: () => queue(true) }
     );
-    refresh = discover((detail, progress) => deps.activities?.update(id, detail, progress), revalidate)
+    refresh = withGitHubPriority(force && revalidate ? 'foreground' : 'background', () => discover((detail, progress) => {
+      if (visibleActivity) deps.activities?.update(id, detail, progress);
+    }, revalidate))
       .then((result) => {
         if (deps.auth().login !== login) {
-          deps.activities?.finish(id, 'cancelled', 'GitHub account changed.');
+          if (visibleActivity) deps.activities?.finish(id, 'cancelled', 'GitHub account changed.');
         } else {
-          deps.activities?.finish(
+          sync = { status: result.warnings.length ? 'error' : 'idle', checkedAt: load().discoveredAt };
+          if (visibleActivity) deps.activities?.finish(
             id,
             'completed',
             result.warnings.length
@@ -657,11 +709,12 @@ export function createWorkbenchService(deps: Deps) {
             result.warnings
           );
         }
-        return result;
+        return { ...result, sync };
       })
       .catch((error: unknown) => {
         if (error instanceof DiscoverySuperseded) {
-          deps.activities?.finish(
+          sync = { status: 'idle', checkedAt: load().discoveredAt };
+          if (visibleActivity) deps.activities?.finish(
             id,
             'cancelled',
             'Queue scope changed. The next update will use your current filters.'
@@ -671,16 +724,18 @@ export function createWorkbenchService(deps: Deps) {
         const limited = githubRateLimit(error, now());
         if (limited) {
           cooldown = { account: login, error: limited };
+          sync = { status: 'paused', checkedAt: load().discoveredAt, retryAt: limited.retryAt };
           const detail = `${limited.message} Updates will resume automatically while the queue is open.`;
           warnings = [detail];
-          deps.activities?.pause(id, detail);
+          if (visibleActivity) deps.activities?.pause(id, detail);
           return view();
         }
         const message = error instanceof Error ? error.message : String(error);
+        sync = { status: 'error', checkedAt: load().discoveredAt };
         const detail = load().subjects.length
           ? `Could not update GitHub information. Showing your saved queue. ${message}`
           : `Could not update GitHub information. Retry to load your queue. ${message}`;
-        deps.activities?.finish(id, 'failed', detail);
+        if (visibleActivity) deps.activities?.finish(id, 'failed', detail);
         warnings = [detail];
         lastRefresh = now();
         throw error;
@@ -702,7 +757,7 @@ export function createWorkbenchService(deps: Deps) {
         ![...requestedBriefings].some((k) => k.startsWith(`${deps.auth().login}:`))) ||
       !deps.auth().token ||
       (cooldown && cooldown.error.retryAt > now()) ||
-      githubClients.backoff(deps.auth().token, true)
+      githubClients.backoff(deps.auth().token, true, ['core'])
     )
       return;
     pumping = true;
@@ -745,13 +800,15 @@ export function createWorkbenchService(deps: Deps) {
       s.briefs[k] = { key: k, status: 'generating', updatedAt: new Date().toISOString() };
       save();
       const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-briefing-'));
+      let generationStarted = false;
       try {
         const octokit = deps.client?.() ?? getGitHubClient(deps.auth().token);
         const context = [];
         for (const m of subject.members) {
           controller.signal.throwIfAborted();
           const { owner, repo, pullNumber } = parsePrUrl(m.url);
-          const files = await getChangedFiles(octokit, owner, repo, pullNumber);
+          const files = await withGitHubPriority(manualItem ? 'foreground' : 'background',
+            () => getChangedFiles(octokit, owner, repo, pullNumber));
           context.push({
             pr: m.url,
             title: m.title,
@@ -761,7 +818,8 @@ export function createWorkbenchService(deps: Deps) {
         }
         controller.signal.throwIfAborted();
         const assertRevision = async () => {
-          const current = await Promise.all(subject.members.map((m) => fetchMember(octokit, m.url, m.role)));
+          const current = await withGitHubPriority(manualItem ? 'foreground' : 'background',
+            () => Promise.all(subject.members.map((m) => fetchMember(octokit, m.url, m.role))));
           if (fingerprint({ ...subject, members: current }) !== fingerprint(subject))
             throw new Error('This change updated during briefing. Refresh the queue for a new briefing.');
         };
@@ -776,6 +834,7 @@ export function createWorkbenchService(deps: Deps) {
         if (!includeSubject(subject) || key(subject) !== k) controller.abort(new BriefingPaused());
         controller.signal.throwIfAborted();
         let output = 0;
+        generationStarted = true;
         const raw = await (deps.provider ?? getProvider)(p.provider).generate({
           model: p.model,
           thinking: p.thinking,
@@ -817,10 +876,15 @@ export function createWorkbenchService(deps: Deps) {
           updatedAt: new Date().toISOString(),
         };
       } catch (error) {
+        const limited = githubRateLimit(error, now());
+        if (limited) {
+          cooldown = { account: s.account, error: limited };
+          if (!generationStarted) s.used = Math.max(0, s.used - 1);
+        }
         s.briefs[k] = {
           key: k,
           status:
-            controller.signal.reason instanceof BriefingPaused
+            limited || controller.signal.reason instanceof BriefingPaused
               ? 'paused'
               : controller.signal.reason instanceof BriefingCancelled
                 ? 'cancelled'

@@ -10,6 +10,7 @@ import {
   fetchGitHubLogin,
   githubCacheFor,
 } from '../lib/github-client';
+import { withGitHubPriority } from '../lib/github-scheduler';
 
 function harness(respond: (url: string, headers: Headers) => Response) {
   let now = 1_000_000;
@@ -323,14 +324,14 @@ void test('cache entry count is bounded and validators expire after a week', asy
     return json({ value: 'saved' }, 200, { etag: '"v1"' });
   });
   const client = h.pool.client('one');
-  for (let i = 0; i < 201; i++) await client.request(`GET /entry/${i}`);
-  await client.request('GET /entry/200');
-  assert.equal(h.calls.length, 201);
+  for (let i = 0; i < 2001; i++) await client.request(`GET /entry/${i}`);
+  await client.request('GET /entry/2000');
+  assert.equal(h.calls.length, 2001);
   await client.request('GET /entry/0');
-  assert.equal(h.calls.length, 202, 'The oldest entry was evicted');
+  assert.equal(h.calls.length, 2002, 'The oldest entry was evicted');
   h.advance(7 * 24 * 60 * 60_000);
-  await client.request('GET /entry/200');
-  assert.equal(h.calls.length, 203, 'Old validators are not retained indefinitely');
+  await client.request('GET /entry/2000');
+  assert.equal(h.calls.length, 2003, 'Old validators are not retained indefinitely');
 });
 
 void test('sign-out prevents an already-running read from repopulating the persisted cache', async () => {
@@ -380,4 +381,124 @@ void test('failed writes invalidate cached reads without being replayed', async 
   await assert.rejects(client.request('POST /write', { data: {} }), /Service unavailable/);
   assert.deepEqual((await client.request('GET /test')).data, { value: 2 });
   assert.equal(h.calls.length, 3);
+});
+
+void test('fresh cache hits bypass a blocked network request', async () => {
+  let release!: () => void;
+  let started!: () => void;
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const entered = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const pool = createGitHubClientPool({
+    minSpacingMs: 0,
+    fetch: (async (url: string) => {
+      if (url.endsWith('/slow')) {
+        started();
+        await barrier;
+      }
+      return json({ value: 'saved' });
+    }) as typeof fetch,
+  });
+  const client = pool.client('fixture');
+  await client.request('GET /cached');
+  const slow = client.request('GET /slow');
+  await entered;
+  let served = false;
+  const cached = client.request('GET /cached').then(() => {
+    served = true;
+  });
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(served, true, 'Fresh local reads must not wait for network work');
+  } finally {
+    release();
+    await Promise.all([slow, cached]);
+  }
+});
+
+void test('comment writes invalidate their PR without evicting unrelated PRs', async () => {
+  const h = harness(() => json({ value: 'saved' }));
+  const client = h.pool.client('fixture');
+  await client.request('GET /repos/o/r/pulls/1');
+  await client.request('GET /repos/o/r/pulls/2');
+  await client.request('POST /repos/o/r/issues/1/comments', { body: 'Comment' });
+  await client.request('GET /repos/o/r/pulls/2');
+  assert.equal(h.calls.length, 3, 'Unrelated PR stays fresh');
+  await client.request('GET /repos/o/r/pulls/1');
+  assert.equal(h.calls.length, 4, 'Written PR is revalidated');
+});
+
+void test('foreground requests overtake queued background reads while network access remains serial', async () => {
+  const order: string[] = [];
+  let release!: () => void;
+  let entered!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const pool = createGitHubClientPool({
+    minSpacingMs: 0,
+    fetch: (async (url: string) => {
+      const path = new URL(url).pathname;
+      order.push(path);
+      if (path === '/first') {
+        entered();
+        await blocked;
+      }
+      return json({});
+    }) as typeof fetch,
+  });
+  const client = pool.client('fixture');
+  const first = withGitHubPriority('background', () => client.request('GET /first'));
+  await started;
+  const second = withGitHubPriority('background', () => client.request('GET /second'));
+  const foreground = client.request('GET /foreground');
+  // Let Octokit's async hooks enqueue both requests before releasing the network.
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(order, ['/first']);
+  release();
+  await Promise.all([first, second, foreground]);
+  assert.deepEqual(order, ['/first', '/foreground', '/second']);
+});
+
+void test('background budget reservations are enforced by the shared scheduler', async () => {
+  const h = harness(() =>
+    json({}, 200, {
+      'x-ratelimit-resource': 'core',
+      'x-ratelimit-remaining': '50',
+      'x-ratelimit-limit': '5000',
+      'x-ratelimit-reset': '1100',
+    })
+  );
+  const client = h.pool.client('fixture');
+  await client.request('GET /budget');
+  await assert.rejects(
+    withGitHubPriority('background', () => client.request('GET /background')),
+    GitHubBackoffError
+  );
+  await client.request('GET /foreground');
+  assert.equal(h.calls.length, 2);
+});
+
+void test('primary limits pause their own resource without blocking other GitHub APIs', async () => {
+  const h = harness((url) =>
+    url.includes('/search/')
+      ? json({ message: 'API rate limit exceeded' }, 403, {
+          'x-ratelimit-resource': 'search',
+          'x-ratelimit-remaining': '0',
+          'x-ratelimit-limit': '30',
+          'x-ratelimit-reset': '1100',
+        })
+      : json({ value: 'available' })
+  );
+  const client = h.pool.client('fixture');
+  await assert.rejects(client.request('GET /search/issues'), GitHubBackoffError);
+  assert.deepEqual((await client.request('GET /repos/o/r/pulls/1')).data, { value: 'available' });
+  await assert.rejects(client.request('GET /search/issues'), GitHubBackoffError);
+  assert.equal(h.calls.length, 2);
 });

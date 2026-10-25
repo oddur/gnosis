@@ -1381,7 +1381,7 @@ async function fetchPrStatus(prUrl: string, force = false): Promise<PrStatus | n
       checks: [] as CiCheck[],
       conclusion: 'neutral' as const,
     })),
-    getQueueSignals(octokit, [{ url: prUrl, headSha: prData.headSha }], { force }).then(
+    getQueueSignals(octokit, [{ url: prUrl, headSha: prData.headSha }], { force, active: true }).then(
       ([value]): QueueSignals | undefined => value
     ),
   ]);

@@ -1,4 +1,5 @@
 import { normalizePrInactivityDays } from '../../lib/pr-inactivity';
+import { GitHubSyncStatus } from '../../components/GitHubSyncStatus';
 import { PrMuteMenu } from '../../components/PrMuteMenu';
 import { MutedPrs } from '../../components/MutedPrs';
 import { isMutedReview } from '../../lib/muted-prs';
@@ -359,10 +360,13 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
         setError(String(e));
         setLoading(false);
       });
-    const timer = setInterval(() => void refresh(), 4000);
+    const poll = () => { if (document.visibilityState !== 'hidden') void refresh(); };
+    const timer = setInterval(poll, 4000);
+    document.addEventListener('visibilitychange', poll);
     return () => {
       alive.current = false;
       clearInterval(timer);
+      document.removeEventListener('visibilitychange', poll);
     };
   }, [refresh]);
   useEffect(() => {
@@ -407,9 +411,11 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
     );
     setStatusErrors({});
     let force = lastStatusAttempt.current !== statusAttempt;
+    let refreshingStatus = false;
     lastStatusAttempt.current = statusAttempt;
     const refreshStatuses = () => {
-      if (statusSubject) {
+      if (statusSubject && !refreshingStatus && document.visibilityState !== 'hidden') {
+        refreshingStatus = true;
         setStatusRefreshing(true);
         const refreshNow = force;
         force = false;
@@ -419,6 +425,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
             status: await window.electronAPI.getPrStatus(m.url, refreshNow),
           }))
         ).then((results) => {
+          refreshingStatus = false;
           if (!cancelled) {
             setStatusRefreshing(false);
             results.forEach((r, i) => {
@@ -445,10 +452,38 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
       }
     };
     refreshStatuses();
-    const timer = setInterval(refreshStatuses, 60000);
+    const timer = setInterval(refreshStatuses, 120000);
+    document.addEventListener('visibilitychange', refreshStatuses);
+    let refreshingSignals = false;
+    const refreshSignals = async () => {
+      if (!statusSubject || refreshingSignals || document.visibilityState === 'hidden') return;
+      refreshingSignals = true;
+      try {
+        for (let i = 0; i < statusSubject.members.length && !cancelled; i += 25) {
+          const values = await window.electronAPI.getQueueSignals(
+            statusSubject.members.slice(i, i + 25).map(m => ({ url: m.url, headSha: m.headSha })), { active: true });
+          // Cleanup can run while the IPC request above is pending.
+          // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+          if (cancelled) return;
+          if (auth?.login) publishQueueSignals(auth.login, values);
+          setStatuses(previous => {
+            const next = { ...previous };
+            for (const signals of values) {
+              const status = next[signals.url];
+              if (status) next[signals.url] = { ...status, signals, ciConclusion: signals.checks.state };
+            }
+            return next;
+          });
+        }
+      } catch { /* Keep the last checked status; the shared client owns backoff. */ }
+      finally { refreshingSignals = false; }
+    };
+    const signalTimer = setInterval(() => void refreshSignals(), 30000);
     return () => {
       cancelled = true;
       clearInterval(timer);
+      clearInterval(signalTimer);
+      document.removeEventListener('visibilitychange', refreshStatuses);
     };
   }, [
     selected,
@@ -940,6 +975,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, comman
               ))}
             </select>
           )}
+          <GitHubSyncStatus sync={queue.sync} onRefresh={() => void refresh(true)} />
           <button
             className="workbench-command-trigger"
             onClick={() => commandCenter?.open()}
