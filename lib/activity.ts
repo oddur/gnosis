@@ -1,8 +1,9 @@
 export type ActivityStatus = 'queued' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
 export interface ActivityTask {
   id: string;
-  kind: 'review' | 'briefing' | 'exploration' | 'github' | 'file-chat';
+  kind: 'review' | 'briefing' | 'exploration' | 'github' | 'file-chat' | 'pr-action';
   title: string;
+  account?: string;
   detail: string;
   model?: string;
   status: ActivityStatus;

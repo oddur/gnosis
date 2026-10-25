@@ -11,6 +11,7 @@ const kindLabels = {
   exploration: 'Interactive explanation',
   github: 'GitHub update',
   'file-chat': 'File question',
+  'pr-action': 'GitHub action',
 };
 const completedLabels = {
   review: 'Explanation ready',
@@ -80,6 +81,10 @@ export function ActivityDrawer({
           if (alive.current && version === refreshVersion.current) {
             setTasks(next);
             for (const task of newCompletions(next)) {
+              if (task.kind === 'pr-action') {
+                toast.add({ title: task.title, description: task.detail, type: task.status === 'failed' ? 'error' : 'success' });
+                continue;
+              }
               const id = toast.add({
                 title: task.kind === 'exploration' ? 'Interactive explanation ready' : 'Review ready',
                 description: task.kind === 'exploration' ? `${task.title} · ${task.detail}` : task.title,
@@ -267,7 +272,7 @@ export function ActivityDrawer({
                       <span>
                         {task.status === 'failed'
                           ? 'Failed'
-                          : task.status === 'completed' && task.kind !== 'github'
+                          : task.status === 'completed' && task.kind !== 'github' && task.kind !== 'pr-action'
                             ? completedLabels[task.kind]
                             : task.detail}
                         {task.status === 'running' && task.progress
@@ -301,7 +306,7 @@ export function ActivityDrawer({
                           Retry
                         </button>
                       )}
-                      {task.status === 'completed' && task.kind !== 'github' && task.kind !== 'file-chat' && (
+                      {task.status === 'completed' && task.kind !== 'github' && task.kind !== 'file-chat' && task.kind !== 'pr-action' && (
                         <button disabled={pending.has(task.id)} onClick={() => void act(task, 'open')}>
                           {openLabels[task.kind]}
                         </button>

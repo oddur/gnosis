@@ -98,6 +98,9 @@ declare global {
       offChatProgress: () => void;
       onChatToolUse: (callback: (toolName: string) => void) => void;
       offChatToolUse: () => void;
+      getPrActionState: (url: string, force?: boolean) => Promise<import('../lib/pr-actions').PrActionState>;
+      getStackMergePlan: (urls: string[]) => Promise<import('../lib/pr-actions').PrMergePlan>;
+      performPrAction: (request: import('../lib/pr-actions').PrActionRequest) => Promise<import('../lib/pr-actions').PrActionResult>;
       submitReview: (req: SubmitReviewRequest) => Promise<{ reviewUrl: string; droppedCommentCount: number }>;
       checkPrFreshness: (prUrl: string, headSha: string | undefined) => Promise<FreshnessResult>;
       loadPreferences: () => Promise<Preferences>;

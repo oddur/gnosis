@@ -1,3 +1,4 @@
+import { PrActions } from './PrActions';
 import { ReviewBreadcrumbProvider, useReviewBreadcrumbs } from '../lib/review-breadcrumbs';
 import { ReviewBreadcrumbs } from './ReviewBreadcrumbs';
 import type { ComponentProps } from 'react';
@@ -301,6 +302,7 @@ function PrSummaryContent({
             />
           </button>
         </div>
+        {stacked && <PrActions member={item.subject.members[item.subject.members.length - 1]} stackMembers={item.subject.members} onChanged={onRetryStatus} />}
         <Tabs.List className="pr-overview-tabs" aria-label="PR overview">
           <Tabs.Trigger value="summary">Summary</Tabs.Trigger>
           <Tabs.Trigger value="changes">Changes</Tabs.Trigger>

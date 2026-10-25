@@ -401,12 +401,15 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
     const poll = () => { if (initialized.current && document.visibilityState !== 'hidden') void refresh(); };
     const timer = setInterval(poll, 4000);
     document.addEventListener('visibilitychange', poll);
+    const afterPrAction = () => { void refresh(); setStatusAttempt(n => n + 1); };
+    window.addEventListener('gnosis-pr-action-completed', afterPrAction);
     return () => {
       alive.current = false;
       refreshVersion.current++;
       queueRefresh.current = null;
       clearInterval(timer);
       document.removeEventListener('visibilitychange', poll);
+      window.removeEventListener('gnosis-pr-action-completed', afterPrAction);
     };
   }, [refresh, initialize]);
   useEffect(() => {

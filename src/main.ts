@@ -1,3 +1,6 @@
+import { createPrActionsService } from './pr-actions-service';
+import { createPrMergeMonitor } from './pr-merge-monitor';
+import type { PrActionRequest } from '../lib/pr-actions';
 import { requestGitHubCacheClear, applyPendingGitHubCacheClear } from './github-cache-reset';
 import { withGitHubPriority, githubPriority } from '../lib/github-scheduler';
 import type { InspectionRevision, InspectionLoadOptions } from '../lib/pr-changes';
@@ -2214,8 +2217,9 @@ const workbench = createWorkbenchService({
 let activeForegroundChats = 0;
 const dismissedBriefings = new Map<string,string>();
 ipcMain.handle('list-activity', () => {
+  prMergeMonitor.tick();
   const hiddenReviews = new Set(readReviewsIndex().filter(entry => workbench.isMutedReview(entry)).map(entry => entry.id));
-  return [...activities.list().filter(task => !task.reviewId || !hiddenReviews.has(task.reviewId)), ...workbench.activity().filter(t=>dismissedBriefings.get(t.id)!==t.updatedAt)];
+  return [...activities.list().filter(task => (!task.account || task.account === cachedLogin) && (!task.reviewId || !hiddenReviews.has(task.reviewId))), ...workbench.activity().filter(t=>dismissedBriefings.get(t.id)!==t.updatedAt)];
 });
 ipcMain.handle('activity-action', async (_event, id:string, action:ActivityAction) => {
   if (!['cancel','retry','dismiss'].includes(action)) throw new Error('Invalid task action.');
@@ -2453,6 +2457,50 @@ handleInteractive('submit-review', async (_event, req: SubmitReviewRequest) => {
   const result = await submitPrReview(client, req, loadPreferences().reviewSignature);
   reviewThreads.invalidate(client, req.prUrl);
   return result;
+});
+
+const prActions = createPrActionsService();
+async function refreshActionTargets(client: ReturnType<typeof getGitHubClient>, urls: string[]) {
+  for (const url of urls) {
+    const { owner, repo, pullNumber } = parsePrUrl(url);
+    const metadata = await getPrMetadata(client, owner, repo, pullNumber, true);
+    // Do not reconcile an old account's result into the newly signed-in account.
+    if (client !== getGitHubClient(getResolvedToken())) return;
+    workbench.updatePrMetadata(metadata);
+  }
+}
+const prMergeMonitor = createPrMergeMonitor({
+  directory: () => app.getPath('userData'),
+  auth: () => ({ login: cachedLogin, client: getResolvedToken() ? getGitHubClient(getResolvedToken()) : null }),
+  activity: activities, poll: (client, operation) => prActions.poll(client, operation), changed: refreshActionTargets,
+});
+handleInteractive('get-pr-action-state', (_event, url: string, force: boolean) => prActions.read(discussionClient(), url, force));
+handleInteractive('get-stack-merge-plan', (_event, urls: string[]) => prActions.stackPlan(discussionClient(), urls, true));
+handleInteractive('perform-pr-action', async (_event, request: PrActionRequest) => {
+  const client = discussionClient();
+  const token = getResolvedToken();
+  if (!token) throw new Error('Connect GitHub before changing a PR.');
+  const login = cachedLogin ?? await resolveGitHubLogin(token);
+  const title = request.kind === 'merge' ? 'Merging PRs' : request.kind.startsWith('update-') ? 'Updating PR branch' : 'Updating auto-merge';
+  const id = `pr-action:${crypto.randomUUID()}`;
+  activities.start({ id, kind: 'pr-action', account: login, title, detail: 'Checking the confirmed revisions and GitHub permissions.' }, {});
+  try {
+    const result = await prActions.act(client, request);
+    if (result.operation) {
+      activities.finish(id, 'cancelled', 'Following the submitted merge in Activity.');
+      try { prMergeMonitor.track(login, `Merging ${request.revisions.length} PR${request.revisions.length === 1 ? '' : 's'}`, result.operation); }
+      catch { result.message += ' Progress could not be saved locally. Check the PR on GitHub if you restart Gnosis.'; }
+      prMergeMonitor.tick();
+    } else {
+      try { await refreshActionTargets(client, request.revisions.map(r => r.url)); }
+      catch { result.message += ' Local status could not be refreshed yet; the next GitHub sync will reconcile it.'; }
+      activities.finish(id, 'completed', result.message);
+    }
+    return result;
+  } catch (error) {
+    activities.finish(id, 'failed', error instanceof Error ? error.message : String(error));
+    throw error;
+  }
 });
 
 const prChanges = createPrChangesService();
