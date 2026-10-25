@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 void app.whenReady().then(async () => {
   const window = new BrowserWindow({
     width: 1280,
@@ -203,7 +204,9 @@ void app.whenReady().then(async () => {
     await capture('error');
     await js('window.failComparison=false');
     await click('Retry');
-    await wait("!document.querySelector('[role=alert]') && !!document.querySelector('.changes-file-header')");
+    await wait(
+      "!document.querySelector('[role=alert]') && document.querySelector('.commit-detail-title')?.textContent.includes('Keep retry boundaries intact') && document.querySelector('.commit-detail')?.textContent.includes('klang/engine #121') && !!document.querySelector('.changes-file-header')"
+    );
     await js("document.querySelector('.commit-detail summary').click()");
     await wait(
       "document.querySelector('.commit-detail details').open && document.querySelector('.commit-messages').textContent.includes('Committed by')"
@@ -213,8 +216,11 @@ void app.whenReady().then(async () => {
     app.exit(0);
   } catch (error) {
     console.error(error);
-    fs.writeFileSync('/tmp/commits-failure.png', (await window.webContents.capturePage()).toPNG());
-    console.error(await js('document.body.innerText'));
-    app.exit(1);
+    try {
+      fs.writeFileSync(path.join(os.tmpdir(), 'commits-failure.png'), (await window.webContents.capturePage()).toPNG());
+      console.error(await js('document.body.innerText'));
+    } finally {
+      app.exit(1);
+    }
   }
 });
