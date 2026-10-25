@@ -5,6 +5,7 @@ import { normalizeD2Diagram, diagramFrameCaption } from '../lib/diagram-spec';
 import { D2_RECIPES } from '../lib/d2-recipes';
 import generated from './fixtures/d2-generated.json';
 import { prepareD2Source } from '../lib/d2-source';
+import { compileD2Source } from '../lib/d2-compile';
 import { namespaceSVG } from '../lib/svg-ids';
 import { resolveD2Icons } from '../lib/d2-icons';
 import { generateSlide, generateReviewGuide, planReview } from '../lib/agent';
@@ -175,5 +176,39 @@ void test('planner, whole-review and topic writer share the diagram contract and
     assert.match(call.systemPrompt, /scenarios\.compare/);
     assert.match(call.content, /"d2Diagram"/);
     assert.doesNotMatch(call.content, /"mermaidDiagram"/);
+  }
+});
+
+void test('saved diagrams with literal SQL placeholders render without changing labels or D2 variables', async () => {
+  const d2 = new D2();
+  try {
+    const source = [
+      'vars: { name: expected }',
+      'query: "WHERE id = $1 AND owner = $2"',
+      'unicode: "Résumé 😀 costs $10"',
+      "single: 'Literal $name and ${not_a_variable}'",
+      'block: |md\nKeep $1 and ${code} literal\n|',
+      'variable: "${name}"',
+      'steps: { after: { query.label: "WHERE id = $1 (selected)" } }',
+    ].join('\n');
+    for (const dark of [false, true]) {
+      const compiled = await compileD2Source(d2, source, dark);
+      const labels = compiled.diagram.shapes.map((shape) => ('label' in shape ? shape.label : ''));
+      assert.ok(labels.includes('WHERE id = $1 AND owner = $2'));
+      assert.ok(labels.includes('Résumé 😀 costs $10'));
+      assert.ok(labels.includes('Literal $name and ${not_a_variable}'));
+      assert.ok(labels.includes('Keep $1 and ${code} literal'));
+      assert.ok(labels.includes('expected'));
+      const after = compiled.diagram.steps?.[0];
+      assert.ok(after);
+      assert.ok(after.shapes.some((shape) => 'label' in shape && shape.label === 'WHERE id = $1 (selected)'));
+      assert.match(await d2.render(after, { ...compiled.renderOptions, noXMLTag: true }), /WHERE id = \$1/);
+    }
+    const alreadyEscaped = await compileD2Source(d2, 'query: "WHERE id = \\$1"', false);
+    assert.ok(alreadyEscaped.diagram.shapes.some((shape) => 'label' in shape && shape.label === 'WHERE id = $1'));
+    await assert.rejects(compileD2Source(d2, 'query: "${missing}"', false));
+    await assert.rejects(compileD2Source(d2, 'query: {', false));
+  } finally {
+    await d2.dispose();
   }
 });

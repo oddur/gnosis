@@ -1,7 +1,7 @@
 import type { D2, Diagram } from '@d2lang/d2';
 import DOMPurify from 'dompurify';
 import { D2_ICON_NAMES, d2IconData } from './d2-icons';
-import { prepareD2Source } from './d2-source';
+import { compileD2Source } from './d2-compile';
 
 export interface D2Frame {
   id: string;
@@ -74,7 +74,7 @@ export function renderD2(source: string, dark: boolean): Promise<D2Render> {
         throw new Error('Diagram rendering was cancelled.');
       }
       client = d2;
-      const compiled = await d2.compile(prepareD2Source(source, dark), { layout: 'tala' });
+      const compiled = await compileD2Source(d2, source, dark);
       if (
         compiled.diagram.layers?.length ||
         [...(compiled.diagram.steps ?? []), ...(compiled.diagram.scenarios ?? [])].some(

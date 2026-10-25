@@ -137,6 +137,14 @@ void app.whenReady().then(async () => {
     await click('Close');
     win.setSize(1280, 800);
     await click('Try your own D2');
+    const sqlSource = 'query: "WHERE id = $1"';
+    await js(
+      `(()=>{const e=document.querySelector('textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,${JSON.stringify(sqlSource)});e.dispatchEvent(new Event('input',{bubbles:true}))})()`
+    );
+    await click('Render with TALA');
+    await wait("document.querySelector('.d2-preview svg')?.textContent.includes('WHERE id = $1')");
+    assert.equal(await js("!!document.querySelector('.d2-source [role=alert]')"), false);
+    assert.equal(await js("document.querySelector('textarea').value"), sqlSource);
     await js(
       `(()=>{const e=document.querySelector('textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,'a: {');e.dispatchEvent(new Event('input',{bubbles:true}))})()`
     );

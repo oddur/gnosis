@@ -32,6 +32,7 @@ Return d2Diagram as {"source": string, "caption": string, "steps": [{"board": st
 - Caption board identifiers must exactly match "overview", "steps.after" or "scenarios.receive". Include an overview caption plus a caption for each board. Captions attach by identifier, not by array position.
 - Update an existing edge with (a -> b)[0].style.stroke-width: 4. Edge indices start at zero for each source/target pair. Delete an edge in a cumulative step with (a -> b)[0]: null. Repeating a -> b creates an additional edge instead of editing it.
 - Keep sequence actors and messages in the overview when using focus scenarios. Activation span names must match in each message. Quote labels containing punctuation; keep prose out of D2 keys. Escape source newlines/quotes correctly inside JSON.
+- Literal dollar signs are common in code and SQL but special in D2. Use single-quoted D2 labels for SQL placeholders, shell variables or prices: query: 'WHERE id = $1'. In double-quoted or bare labels, escape the literal dollar with a backslash (and double that backslash when encoding JSON). Reserve D2 variable substitution for deliberately declared variables; JavaScript template expressions belong in literal labels.
 - Silently check source references, edge indices, board IDs, inherited state and captions before returning. Do not claim a diagram was rendered or verified unless a tool actually did so.
 
 COMPILER-CHECKED SYNTAX RECIPES
