@@ -515,7 +515,9 @@ void app.whenReady().then(async () => {
     })()`);
     await click('Open PR overview');
     await wait("!!document.querySelector('.pr-summary-page')");
-    await click('Generate AI explanation');
+    await js("[...document.querySelectorAll('[role=tab]')].find(tab => tab.textContent === 'Explanation').click()");
+    await wait("!!document.querySelector('.explanation-empty')");
+    await click('Generate explanation');
     await wait('window.electronAPI.loadPreferences().then(p => p.firstRunSeen)');
     await click('Work queue');
     await wait("document.querySelectorAll('.queue-item').length === 7 && !document.querySelector('.getting-started')");
@@ -885,7 +887,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js("!!document.querySelector('.activity-task [role=progressbar]')"), true);
     await capture('exploration-background');
     await js('document.querySelector(\'[aria-label="Close activity"]\').click()');
-    await click('Back');
+    await click('Work queue');
     await wait("!!document.querySelector('.queue-list')");
     await js("document.querySelector('.queue-search input').focus()");
     await js('window.finishExploration()');
