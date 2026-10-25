@@ -192,7 +192,7 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
-    scrollbar-color: oklch(0.45 0.01 65) transparent;
+    scrollbar-color: color-mix(in srgb, var(--muted-foreground) 60%, var(--background)) transparent;
     -webkit-tap-highlight-color: transparent;
     -webkit-touch-callout: none;
   }
@@ -612,12 +612,12 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: oklch(0.45 0.01 65 / 60%);
+  background: color-mix(in srgb, var(--muted-foreground) 60%, var(--background));
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: oklch(0.55 0.012 65 / 80%);
+  background: var(--muted-foreground);
 }
 
 ::-webkit-scrollbar-corner {
@@ -751,7 +751,7 @@
   inset: 0;
   pointer-events: none;
   z-index: 0;
-  background-color: oklch(0.55 0.14 15 / 22%);
+  background-color: color-mix(in srgb,var(--ring) 20%,transparent);
   animation: check-highlight-fade 1.5s ease-out forwards;
   will-change: opacity;
 }
@@ -1567,20 +1567,15 @@ ul.review-focus-content > li::before {
   background: oklch(0.65 0.012 65 / 5%);
 }
 
-/* ─── Reduced motion ─────────────────────────────────────────
-   Honor the OS preference. Every transition and animation in
-   the app collapses to instantaneous changes for users who
-   asked for it. The progress bar still updates — it just
-   snaps instead of sliding. */
+/* Reduced motion removes travel and repeated movement, while status text,
+   progress values, focus, and the selected-code highlight remain visible. */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.001ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.001ms !important;
-    scroll-behavior: auto !important;
-  }
+  *, *::before, *::after { scroll-behavior:auto !important; }
+  .slide-enter,.animate-fade-in-up,.animate-fade-in,.animate-spin,.animate-pulse,
+  [data-slot=dialog-overlay],[data-slot=dialog-content],[data-slot=sheet-overlay],
+  [data-slot=sheet-content],[data-slot=tooltip-content] { animation:none !important; }
+  .chat-sheet>div,.loading-progress-fill { transition:none !important; }
+  .check-highlight::after { animation:none; opacity:1; }
 }
 
 /* Review workbench: compact task UI, shared across queue and review. */
@@ -1828,7 +1823,6 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 @media(max-width:1100px) { .workbench-sidebar{width:160px;} .briefing-panel{width:320px;} .account-name{display:none;} .queue-state{display:none;} }
 @media(max-width:850px) { .workbench-sidebar{width:52px;padding:16px 6px;} .workbench-sidebar button{font-size:0;justify-content:center;padding:10px;} .workbench-sidebar .nav-count,.workbench-nav-heading{display:none;} .workbench-sidebar button svg{width:18px;height:18px;flex-shrink:0;} .briefing-panel{max-width:50%;width:320px;} .queue-toolbar{padding:18px;} .workbench-header{padding:10px 14px;} .model-select{max-width:190px;} .overview-columns{grid-template-columns:1fr;} }
 @media(max-width:620px) { .queue-content:has(.briefing-panel) .queue-list{display:none;} .briefing-panel{width:100%;max-width:100%;border-left:0;} .queue-toolbar p{display:none;} .queue-filters{padding:0 12px 12px;flex-wrap:wrap;} .workbench-overview{padding:16px;} .review-toolbar select{max-width:200px;} }
-@media(prefers-reduced-motion:reduce) { .workbench-home *, .workbench-review * { scroll-behavior:auto!important; animation-duration:.01ms!important; transition-duration:.01ms!important; } }
 
 
 /* A stable status bar keeps background work visible without moving page content. */
@@ -2194,3 +2188,27 @@ body:has(.activity-drawer) .app-toasts { bottom:auto; top:64px; }
 .settings-save-error button,.settings-load-error button { color:var(--ring); text-decoration:underline; text-underline-offset:3px; }
 .settings-load-error button { margin-top:8px; }
 .settings-search-error { margin-top:6px; font-size:var(--type-control); line-height:1.6; color:var(--color-danger); }
+
+/* Finish shared controls without changing the workbench's density. */
+:root { color-scheme:light; }
+:root.dark { color-scheme:dark; }
+input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacity:1; }
+.command-palette { min-height:0; }
+.command-search { flex-shrink:0; margin:0 20px 12px; padding:8px 10px; border:1px solid var(--input); border-radius:5px; background:var(--background); font-size:var(--type-body); min-width:0; }
+.command-results { min-height:0; overflow:auto; padding:0 8px 8px; }
+.command-group { padding:12px 12px 6px; font-size:var(--type-caption); color:var(--muted-foreground); font-weight:600; }
+.command-option { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:9px 12px; border-radius:4px; font-size:var(--type-control); cursor:pointer; }
+.command-option>span { min-width:0; overflow-wrap:anywhere; }
+.command-option kbd { flex-shrink:0; }
+.command-option[data-active=true] { color:var(--accent-foreground); background:var(--accent); }
+.command-guidance { display:flex; flex-wrap:wrap; gap:8px 16px; padding:10px 20px; border-top:1px solid var(--border); font-size:var(--type-caption); color:var(--muted-foreground); flex-shrink:0; }
+.shortcut-groups { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; }
+.shortcut-groups h3 { font-size:var(--type-control); font-weight:600; margin-bottom:8px; }
+.shortcut-groups dl>div { display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding:7px 0; font-size:var(--type-control); border-bottom:1px solid var(--border); }
+.shortcut-groups dt { min-width:0; }
+.shortcut-groups dd { flex-shrink:0; }
+.review-bottom-nav>div { min-width:0; max-width:28vw; text-align:center; }
+.review-bottom-nav>button { border-radius:4px; padding:2px 4px; }
+.review-bottom-nav>button:hover:not(:disabled) { background:var(--accent); }
+.review-bottom-nav>button:disabled { opacity:.5; }
+@media(max-width:620px) { .shortcut-groups{grid-template-columns:1fr;gap:20px;} .review-bottom-nav>div{max-width:34vw;} }

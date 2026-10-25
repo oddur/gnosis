@@ -312,15 +312,16 @@ export function SlideChatSheet({
                 onKeyDown={handleKeyDown}
                 aria-label="Question about this topic"
                 dir="auto"
-                placeholder="Ask a question about this slide…"
+                placeholder="Ask about this topic…"
                 rows={2}
-                className="flex-1 resize-none bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground transition-colors"
+                className="flex-1 min-w-0 resize-none bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground transition-colors"
               />
               <button
                 onClick={handleSend}
                 disabled={isStreaming || !input.trim()}
                 className="shrink-0 p-2 text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-default transition-colors"
-                aria-label="Send"
+                aria-label="Send question"
+                title={isStreaming ? 'Waiting for the current answer' : 'Send question (Enter)'}
               >
                 {isStreaming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               </button>

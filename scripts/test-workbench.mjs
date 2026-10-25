@@ -7,6 +7,7 @@ import path from 'node:path';
 import process from 'node:process';
 import electron from 'electron';
 import { setTimeout, clearTimeout } from 'node:timers';
+const polish = process.argv.includes('--polish');
 const hardening = process.argv.includes('--hardening');
 const auth = process.argv.includes('--auth');
 const onboarding = process.argv.includes('--onboarding');
@@ -22,21 +23,23 @@ try {
   const outfile = path.join(dir, 'test.cjs');
   await build({
     entryPoints: [
-      hardening
-        ? 'tests/hardening-browser.ts'
-        : auth
-          ? 'tests/github-auth-browser.ts'
-          : onboarding
-            ? 'tests/onboarding-browser.ts'
-            : images
-              ? 'tests/review-images-browser.ts'
-              : prSummary
-                ? 'tests/pr-summary-browser.ts'
-                : threads
-                  ? 'tests/review-threads-browser.ts'
-                  : splitDiff
-                    ? 'tests/split-diff-browser.ts'
-                    : 'tests/workbench-browser.ts',
+      polish
+        ? 'tests/polish-browser.ts'
+        : hardening
+          ? 'tests/hardening-browser.ts'
+          : auth
+            ? 'tests/github-auth-browser.ts'
+            : onboarding
+              ? 'tests/onboarding-browser.ts'
+              : images
+                ? 'tests/review-images-browser.ts'
+                : prSummary
+                  ? 'tests/pr-summary-browser.ts'
+                  : threads
+                    ? 'tests/review-threads-browser.ts'
+                    : splitDiff
+                      ? 'tests/split-diff-browser.ts'
+                      : 'tests/workbench-browser.ts',
     ],
     outfile,
     bundle: true,

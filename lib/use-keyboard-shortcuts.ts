@@ -57,7 +57,18 @@ export function useKeyboardShortcuts(map: ShortcutMap, options: Options = {}) {
     let lastKeyTime = 0;
 
     function handleKeyDown(e: KeyboardEvent) {
-      if (isTypingTarget(e.target)) return;
+      // Dialogs and popovers own their keys. Review shortcuts must not move the
+      // underlying topic while a user operates a modal, select, or resize handle.
+      const target = e.target instanceof Element ? e.target : null;
+      if (
+        e.defaultPrevented ||
+        e.isComposing ||
+        isTypingTarget(e.target) ||
+        target?.closest('[role="dialog"], [role="alertdialog"], [role="menu"]')
+      ) {
+        lastKey = null;
+        return;
+      }
 
       const signature = buildSignature(e);
       const now = Date.now();

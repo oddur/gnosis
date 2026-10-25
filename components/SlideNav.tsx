@@ -75,7 +75,11 @@ export function SlideNav({
             {isOverview
               ? 'Overview'
               : `Topic ${current.toString().padStart(2, '0')} of ${total.toString().padStart(2, '0')}`}
-            {reviewedCount > 0 && ` · ${reviewedCount} topics reviewed`}
+            {reviewedCount > 0 && (
+              <span className="block">
+                {reviewedCount} {reviewedCount === 1 ? 'topic' : 'topics'} reviewed
+              </span>
+            )}
           </span>
           {showSubmitInCenter && (
             <button

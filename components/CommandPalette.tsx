@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 
 export interface Command {
   id: string;
@@ -15,12 +16,6 @@ interface Props {
   commands: Command[];
   placeholder?: string;
 }
-
-// Quiet editorial command palette. No fills, no fancy chrome — just
-// a centered card with a bottom-bordered input and a list of options.
-// Each command can declare a `group` so the list reads like a table
-// of contents (Reading / Reviewing / Anywhere). Up/Down navigate,
-// Enter executes, Esc dismisses, click-outside dismisses.
 
 function fuzzyMatch(query: string, text: string): boolean {
   if (!query) return true;
@@ -40,20 +35,11 @@ export function CommandPalette({ open, onClose, commands, placeholder = 'Run a c
   const listRef = useRef<HTMLUListElement>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
 
-  // Reset state every time the palette opens, and remember/restore
-  // focus on the element that opened it.
+  const listId = useId();
   useEffect(() => {
     if (open) {
       setQuery('');
       setActiveIndex(0);
-      previouslyFocused.current = document.activeElement as HTMLElement | null;
-      // Focus the input after the next paint so the keystroke that
-      // opened the palette doesn't bleed into the input.
-      const id = requestAnimationFrame(() => inputRef.current?.focus());
-      return () => {
-        cancelAnimationFrame(id);
-        previouslyFocused.current?.focus();
-      };
     }
   }, [open]);
 
@@ -83,6 +69,7 @@ export function CommandPalette({ open, onClose, commands, placeholder = 'Run a c
   }, [flatOrder.length]);
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.nativeEvent.isComposing) return;
     if (e.key === 'Escape') {
       e.preventDefault();
       onClose();
@@ -118,62 +105,80 @@ export function CommandPalette({ open, onClose, commands, placeholder = 'Run a c
     }
   }, [activeIndex, open]);
 
-  if (!open) return null;
-
   return (
-    <div
-      role="dialog"
-      aria-label="Command palette"
-      aria-modal="true"
-      className="fixed inset-0 z-50 flex items-start justify-center px-8 pt-[18vh] pb-12 bg-background/85 backdrop-blur-[2px]"
-      onClick={onClose}
+    <Dialog
+      open={open}
+      onOpenChange={(value) => {
+        if (!value) onClose();
+      }}
     >
-      <div
-        className="w-full max-w-xl bg-background border border-border flex flex-col"
-        onClick={(e) => e.stopPropagation()}
+      <DialogContent
+        className="command-palette sm:max-w-xl gap-0 p-0 overflow-hidden flex flex-col"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          previouslyFocused.current = document.activeElement as HTMLElement | null;
+          inputRef.current?.focus();
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          if (!document.querySelector('[role="dialog"][data-state="open"]')) previouslyFocused.current?.focus();
+        }}
       >
+        <DialogHeader className="px-5 pt-5 pb-3 text-left">
+          <DialogTitle>Commands</DialogTitle>
+          <DialogDescription>Find a topic or an action for this review.</DialogDescription>
+        </DialogHeader>
         <input
           ref={inputRef}
+          role="combobox"
+          aria-label="Search commands"
+          aria-expanded={true}
+          aria-autocomplete="list"
+          aria-controls={listId}
+          aria-activedescendant={flatOrder[activeIndex] ? `${listId}-${activeIndex}` : undefined}
           type="text"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setActiveIndex(0);
+          }}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
-          className="bg-transparent border-0 border-b border-border px-5 py-4 text-base placeholder:text-muted-foreground/60 transition-colors"
+          className="command-search"
         />
-
-        <ul ref={listRef} className="max-h-[50vh] overflow-y-auto py-2">
-          {grouped.length === 0 && (
-            <li className="px-5 py-4 slide-meta">No matching commands.</li>
-          )}
-          {grouped.map(([group, list]) => (
-            <li key={group || 'ungrouped'}>
+        <ul id={listId} role="listbox" aria-label="Commands" ref={listRef} className="command-results">
+          {grouped.map(([group, list], groupIndex) => (
+            <li key={group || 'ungrouped'} role="presentation">
               {group && (
-                <p className="slide-meta px-5 pt-3 pb-1 uppercase tracking-wide opacity-60">{group}</p>
+                <p id={`${listId}-group-${groupIndex}`} className="command-group">
+                  {group}
+                </p>
               )}
-              <ul>
+              <ul
+                role="group"
+                aria-labelledby={group ? `${listId}-group-${groupIndex}` : undefined}
+                aria-label={group ? undefined : 'Actions'}
+              >
                 {list.map((cmd) => {
                   const flatIdx = flatOrder.indexOf(cmd);
                   const isActive = flatIdx === activeIndex;
                   return (
-                    <li key={cmd.id}>
-                      <button
-                        type="button"
-                        data-active={isActive}
-                        onMouseEnter={() => setActiveIndex(flatIdx)}
-                        onClick={() => {
-                          onClose();
-                          cmd.perform();
-                        }}
-                        className={`w-full flex items-center justify-between gap-4 px-5 py-2 text-left text-sm transition-colors ${
-                          isActive
-                            ? 'bg-muted/50 text-foreground'
-                            : 'text-foreground/85 hover:bg-muted/30'
-                        }`}
-                      >
-                        <span>{cmd.label}</span>
-                        {cmd.hint && <span className="slide-meta">{cmd.hint}</span>}
-                      </button>
+                    <li
+                      key={cmd.id}
+                      id={`${listId}-${flatIdx}`}
+                      role="option"
+                      aria-selected={isActive}
+                      data-active={isActive}
+                      className="command-option"
+                      onMouseEnter={() => setActiveIndex(flatIdx)}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        onClose();
+                        cmd.perform();
+                      }}
+                    >
+                      <span>{cmd.label}</span>
+                      {cmd.hint && <kbd className="kbd">{cmd.hint}</kbd>}
                     </li>
                   );
                 })}
@@ -181,7 +186,17 @@ export function CommandPalette({ open, onClose, commands, placeholder = 'Run a c
             </li>
           ))}
         </ul>
-      </div>
-    </div>
+        {grouped.length === 0 && (
+          <p role="status" className="px-5 py-6 text-sm text-muted-foreground">
+            No matching commands. Try a topic name or action.
+          </p>
+        )}
+        <p className="command-guidance">
+          <span>↑ ↓ to choose</span>
+          <span>Enter to run</span>
+          <span>Esc to close</span>
+        </p>
+      </DialogContent>
+    </Dialog>
   );
 }
