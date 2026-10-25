@@ -73,11 +73,11 @@ export interface InlineExplanation {
   text: string;
 }
 
-/** Prototype D2 source with optional captions aligned to root + native steps/scenarios. */
+/** Saved D2 source; named captions identify the overview or a native board path. */
 export interface D2DiagramSpec {
   source: string;
   caption?: string;
-  steps?: { title: string; description: string }[];
+  steps?: { board?: string; title: string; description: string }[];
 }
 
 export interface Slide {
@@ -172,6 +172,7 @@ export interface TopicPlan {
   dependsOn: string[];
   order: number;
   narrativeBrief: string; // 1-2 sentence direction for the writer
+  diagramBrief?: string | null; // Concept and visual approach, verified by the writer against source.
 }
 
 export interface PlannerOutput {

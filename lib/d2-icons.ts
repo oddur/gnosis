@@ -1,4 +1,4 @@
-/** Small, bundled role icons for the D2 prototype. No remote asset requests. */
+/** Small, bundled role icons for explanation diagrams. No remote asset requests. */
 const paths: Record<string, string> = {
   user: '<circle cx="12" cy="7" r="4"/><path d="M4 22v-3a8 8 0 0 1 16 0v3"/>',
   server:
@@ -11,13 +11,14 @@ const paths: Record<string, string> = {
 };
 export const D2_ICON_NAMES = Object.keys(paths);
 export function d2IconData(name: string, dark: boolean): string {
-  if (!paths[name]) throw new Error(`Unknown diagram icon: ${name}`);
+  if (!Object.prototype.hasOwnProperty.call(paths, name)) throw new Error(`Unknown diagram icon: ${name}`);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="${dark ? '#b6ccff' : '#284eaf'}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${paths[name]}</svg>`;
   return `data:image/svg+xml;base64,${btoa(svg)}`;
 }
 export function resolveD2Icons(source: string, dark: boolean): string {
   return source.replace(
-    /icon:\s*["']?gnosis:([a-z]+)["']?/g,
-    (_, name: string) => `icon: "${d2IconData(name, dark)}"; icon.near: center-left; label.near: center-right`
+    /((?:[A-Za-z_][\w-]*\.)*)icon:\s*["']?gnosis:([a-z]+)["']?/g,
+    (_, prefix: string, name: string) =>
+      `${prefix}icon: "${d2IconData(name, dark)}"; ${prefix}icon.near: center-left; ${prefix}label.near: center-right`
   );
 }

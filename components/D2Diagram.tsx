@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Maximize2, Pause, Play, RotateCcw } from 'lucide-react';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
-import { MermaidViewport } from './MermaidViewport';
-import { renderD2, type D2Render } from '../lib/d2';
+import { DiagramViewport } from './DiagramViewport';
+import { renderD2, cachedD2, type D2Render } from '../lib/d2';
 import type { D2DiagramSpec } from '../lib/types';
+import { normalizeD2Diagram, diagramFrameCaption } from '../lib/diagram-spec';
+import { namespaceSVG } from '../lib/svg-ids';
 
-/** Prototype replacement for generated Mermaid diagrams; legacy content keeps its renderer. */
+/** Rich diagrams in the explanation pane, with optional guided board playback. */
 export function D2Diagram({
   diagram,
   title = 'Diagram',
@@ -18,21 +20,29 @@ export function D2Diagram({
   expanded?: boolean;
   onExpandedChange?: (open: boolean) => void;
 }) {
+  const safe = useMemo(() => normalizeD2Diagram(diagram), [diagram]);
+  const source = safe?.source ?? '';
+  const instanceId = useId().replace(/[^a-zA-Z0-9]/g, '');
+  const [retry, setRetry] = useState(0);
   const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'));
-  const [result, setResult] = useState<{ key: string; rendered?: D2Render; error?: string }>();
+  const key = JSON.stringify([source, dark]);
+  const [result, setResult] = useState<{ key: string; rendered?: D2Render; error?: string } | undefined>(() => {
+    const rendered = cachedD2(source, dark);
+    return rendered ? { key, rendered } : undefined;
+  });
   const [step, setStep] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [localOpen, setLocalOpen] = useState(false);
   const [motion, setMotion] = useState(false);
   const expandButton = useRef<HTMLButtonElement>(null);
-  const key = JSON.stringify([diagram.source, dark]);
   const current = result?.key === key ? result : undefined;
   const frames = current?.rendered?.frames ?? [];
   const index = Math.min(step, Math.max(0, frames.length - 1));
   const frame = frames.length > 0 ? frames[index] : undefined;
   const open = expanded ?? localOpen;
   const setOpen = onExpandedChange ?? setLocalOpen;
-  const caption = diagram.steps?.[index];
+  const caption = safe ? diagramFrameCaption(safe, frame?.id ?? '', index) : undefined;
+  const svg = useMemo(() => (frame ? namespaceSVG(frame.svg, instanceId) : ''), [frame, instanceId]);
   useEffect(() => {
     const observer = new MutationObserver(() => setDark(document.documentElement.classList.contains('dark')));
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
@@ -43,7 +53,13 @@ export function D2Diagram({
     setStep(0);
     setPlaying(false);
     setMotion(false);
-    void renderD2(diagram.source, dark).then(
+    if (!source) {
+      setResult({ key, error: 'The saved diagram is incomplete. Regenerate this explanation to replace it.' });
+      return;
+    }
+    const rendered = cachedD2(source, dark);
+    setResult(rendered ? { key, rendered } : undefined);
+    void renderD2(source, dark).then(
       (rendered) => {
         if (!cancelled) setResult({ key, rendered });
       },
@@ -54,7 +70,7 @@ export function D2Diagram({
     return () => {
       cancelled = true;
     };
-  }, [key, diagram.source, dark]);
+  }, [key, source, dark, retry]);
   useEffect(() => {
     if (!playing || frames.length < 2) return;
     const timer = window.setTimeout(() => {
@@ -77,9 +93,10 @@ export function D2Diagram({
   }, []);
   function go(next: number) {
     setPlaying(false);
+    setMotion(false);
     setStep(next);
   }
-  const hasMotion = /animated:\s*true/.test(diagram.source);
+  const hasMotion = frames.some((item) => item.animated);
   const controls = (
     <div className="d2-playback" role="group" aria-label="Diagram walkthrough">
       {frames.length > 1 && (
@@ -139,7 +156,7 @@ export function D2Diagram({
       {frames.length > 1 && (
         <strong>{caption?.title || (index === 0 ? 'Overview' : frame?.name.replace(/_/g, ' '))}</strong>
       )}
-      {(caption?.description || diagram.caption) && <p>{caption?.description || diagram.caption}</p>}
+      {(caption?.description || safe?.caption) && <p>{caption?.description || safe?.caption}</p>}
     </div>
   );
   return (
@@ -155,11 +172,7 @@ export function D2Diagram({
             aria-expanded={open}
             onClick={() => setOpen(true)}
           >
-            <div
-              key={index}
-              className="mermaid-preview-canvas d2-frame"
-              dangerouslySetInnerHTML={{ __html: frame.svg }}
-            />
+            <div key={index} className="mermaid-preview-canvas d2-frame" dangerouslySetInnerHTML={{ __html: svg }} />
             <span className="mermaid-expand">
               <Maximize2 size={14} /> Expand diagram
             </span>
@@ -169,14 +182,23 @@ export function D2Diagram({
         </>
       ) : (
         <div className="d2-render-state" role="status">
-          {current?.error ? 'This diagram could not render. Inspect its source below.' : 'Laying out diagram…'}
+          {current?.error ? (
+            <>
+              <span>Diagram unavailable. You can still read the explanation and code.</span>
+              <Button variant="outline" size="sm" onClick={() => setRetry((value) => value + 1)}>
+                Retry diagram
+              </Button>
+            </>
+          ) : (
+            'Laying out diagram…'
+          )}
         </div>
       )}
       <details className="mermaid-source d2-source">
         <summary>D2 source{current?.error ? ' · render error' : ''}</summary>
         {current?.error && <p role="alert">{current.error}</p>}
         <pre>
-          <code>{diagram.source}</code>
+          <code>{source}</code>
         </pre>
       </details>
       <Dialog
@@ -184,6 +206,7 @@ export function D2Diagram({
         onOpenChange={(value) => {
           setOpen(value);
           setPlaying(false);
+          setMotion(false);
         }}
       >
         <DialogContent
@@ -196,10 +219,17 @@ export function D2Diagram({
           }}
         >
           <DialogTitle className="mermaid-dialog-title">{title}</DialogTitle>
+          {open && !frame && (
+            <div className="d2-render-state" role="status">
+              {current?.error
+                ? 'Diagram unavailable. Close this viewer to retry or inspect the source.'
+                : 'Laying out diagram…'}
+            </div>
+          )}
           {open && frame && (
             <>
               <div className="d2-expanded-body">
-                <MermaidViewport svg={frame.svg} />
+                <DiagramViewport svg={svg} frameKey={frame.id} />
                 {frame.notes.length > 0 && (
                   <aside className="d2-notes" aria-label="Diagram annotations">
                     <h3>What to notice</h3>

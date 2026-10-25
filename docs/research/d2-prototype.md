@@ -1,5 +1,7 @@
 # D2/TALA diagram prototype
 
+Historical prototype record. The prototype remains on `prototype/d2-tala-diagrams`; the incorporated feature is documented in [D2 explanations](../d2-explanations.md). The commands below apply after checking out the prototype branch.
+
 Question: can D2 produce clearer, richer explanations inside Gnosis, with useful architecture boundaries, icons, sequence annotations and intentional playback?
 
 This is a throwaway evaluation on `prototype/d2-tala-diagrams`, built above the Mermaid workspace layer. It is not a decision to remove Mermaid from saved reviews or GitHub descriptions.

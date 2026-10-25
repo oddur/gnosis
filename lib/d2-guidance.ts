@@ -1,20 +1,40 @@
-/** Prototype prompt: native D2 syntax, TALA layout, offline icons, optional board walkthrough. */
-export const D2_DIRECTIVE = `D2 DIAGRAM (optional): Use D2 with TALA to explain a non-obvious relationship, invariant, protocol, or architectural change. Usefulness is the barometer, not diagram count. Return null if a diagram adds no understanding.
-- Return d2Diagram: {"source": string, "caption": string, "steps": [{"title": string, "description": string}]} or null. Source is valid D2 without Markdown fences. Do NOT generate Mermaid.
-- Prefer architecture diagrams with nested containers for ownership/runtime/trust boundaries. TALA supports direction: right/down at each container. Label connections with what moves or what must hold. Use shape: cylinder for persistent data, queue/page/class/sql_table only when they clarify the concept. Keep labels short; choose a balanced layout.
-- For interactions use shape: sequence_diagram. Declare all actors first, in reading order. Connections appear in source order. Notes use unconnected children of an actor: app.note: "Pin displayed SHA". Activation spans use actor child objects connected by messages. Use native sequence groups for meaningful phases, never invent events or guarantees.
-- Icons are bundled and offline: icon: gnosis:user, gnosis:server, gnosis:database, gnosis:queue, gnosis:cloud, gnosis:shield, gnosis:code. Use them for semantic component roles, not decoration. Do not use external URLs, imports, custom images, HTML, links or data URIs.
-- Explain subtle details with tooltip: "Why this boundary or invariant matters" on nodes/edges. These appear as readable annotations in the expanded viewer. Use the caption for the central takeaway. Avoid repeating obvious labels.
-- Use style.animated: true on a few edges when direction/concurrency matters. Motion starts only when the reviewer chooses Play or Animate flow. The static diagram must remain understandable.
-- For a meaningful walkthrough, use native steps: { board_name: { changes } } (each inherits the previous) or scenarios: { board_name: { changes } } (each inherits the root). Prefer scenarios for a sequence: retain all actors/messages and emphasize relevant edges with style.stroke-width: 4 so the layout stays stable. A connection override is (app -> api)[0].style.stroke-width: 4. Do not recreate the same edge accidentally.
-- Supply steps metadata in the rendered order: root/overview first, then top-level steps, then top-level scenarios. Each needs a short title and an insightful description explaining causality, state, a failure condition, or a reviewer question. Three to five frames usually suffice; maximum 12. Omit steps metadata for a static diagram. Do not nest boards.
-- Before/after architectural changes can use steps; delete a connection with (a -> b)[0]: null. Show new ownership and failure boundaries, not just new boxes.
-- Use native D2 text, notes, containers and tooltips. Leave theme, padding, fonts and background to the app. Avoid explicit colors; use emphasis, edge weight, shape and grouping. Fit the concept into a laptop preview; split genuinely large concepts across slides instead of making a tall wall of nodes.
-Example source:
-direction: right
-api: API { icon: gnosis:server }
-jobs: Durable jobs { shape: cylinder; icon: gnosis:database; tooltip: "Persist before acknowledging so a crash cannot lose accepted work." }
-worker: Worker { icon: gnosis:code }
-api -> jobs: persist
-jobs -> worker: claim { style.animated: true }
-Always ground the diagram in the supplied code. Clearly distinguish existing behavior from proposed changes. Never imply atomicity, persistence, retries, ordering or authorization that the code does not establish.`;
+import { D2_RECIPES } from './d2-recipes';
+
+export const D2_PLANNER_DIRECTIVE = `DIAGRAM PLAN: In diagramBrief, identify the hardest relationship, invariant or transition that a visual could explain in this topic, and suggest architecture, sequence, before/after, or algorithm-state walkthrough. Name the reviewer question it answers. For temporal or stateful behavior, suggest the meaningful phases, including a failure/boundary case if supported. Coordinate across topics: put a system overview in the foundation and focused details in later topics rather than repeating the same graph. Return null when prose/code are clearer. The hunk index is incomplete evidence: suggest questions, not invented architecture or guarantees; the writer must verify the plan against source.`;
+
+export const D2_DIRECTIVE = `EXPLANATION DIAGRAMS — D2 + TALA
+Treat the diagram as part of the explanation, not decoration after the prose. Show what a reviewer would otherwise have to simulate mentally. Usefulness, not diagram count, is the barometer. A static overview can be right; for a non-obvious exchange, algorithm, state transition or migration, prefer a guided walkthrough that reveals the causal story. Omit d2Diagram (null) when it would merely redraw a list of functions or repeat obvious code.
+
+CHOOSE THE VISUAL GRAMMAR
+- Architecture: nested containers for ownership, execution, storage, trust or transaction boundaries. Label edges with the actual payload/operation. Use per-container direction: right/down to balance the graph. A boundary means something: do not group solely by filename or draw every class.
+- Sequence: shape: sequence_diagram for ordering, concurrency, callbacks, acknowledgements and races. Declare actors first. Messages follow source order. Connect actor child objects for activation spans (api.run); unconnected children are notes (api.guard). Explain where state becomes authoritative, who can race, or who observes failure. Prefer one compact exchange of roughly 3–5 meaningful messages. When comparing success/conflict/retry outcomes, reuse the same actors and messages in scenarios and update their labels; do not duplicate the entire exchange in the overview. If both full exchanges are essential, split them into focused topics instead of a tall call trace.
+- Before/after: use native steps for a changed dependency or responsibility. Label which state is old and which is new. Make the changed guarantee and failure boundary visible.
+- Algorithm/state: choose small concrete inputs, then show how variables, queue contents, pointers or candidates change at the decisive steps. Keep entity identities and positions stable when possible. Include the stopping condition, capacity limit, tie-break or failure case that the code actually handles. A flowchart of function names is not an algorithm explanation.
+- Data/contracts: use class or sql_table shapes only if fields/relationships carry the explanation; otherwise use ordinary nodes. Use shape: cylinder only for actual persisted state; show an in-memory Map/cache as a rectangle unless disk backing is established. Explain cardinality/ownership only when supported by source.
+
+USE MOTION AND ANNOTATION TO EXPLAIN
+- A walkthrough needs a complete overview, then meaningful changes of state or focus. Use native scenarios when spotlighting different parts of the same sequence/architecture: each inherits the overview, keeping actor/message positions stable. Use native steps when state accumulates: each inherits its predecessor.
+- Emphasize the active edge or node with style.stroke-width: 4, and reset emphasis in later cumulative steps. Steps inherit ALL earlier labels, annotations, edges and styles: clear a tooltip with node.tooltip: "" when it no longer applies, reset old edge/node stroke widths, and remove obsolete messages. When switching to an independent input or alternative path, prefer scenarios or explicitly reset the full state. Change labels to show concrete state when useful. Do not animate unrelated nodes or add a frame for every trivial line.
+- style.animated: true on an edge communicates active traffic or direction, not event order or a timing guarantee. Playback and flow animation start only when the reviewer chooses them; the paused diagram must remain understandable. No automatic motion or custom CSS/JavaScript.
+- Use tooltip: "..." for a non-obvious invariant, consequence, race, or source-grounded reviewer question. Gnosis exposes these as readable annotations in the expanded viewer. Put essential ordering/conditions directly on edges or short notes, not only in tooltips. Do not paraphrase a node name as its annotation.
+- The caption states the diagram's takeaway. Each frame description explains WHY that state or transition matters and what changed. Never use empty captions such as "Step 2" or "The next stage". Reference the exact relevant symbol/file when it helps connect the visual to the code.
+
+GROUNDING AND READABILITY
+- Verify the planner's diagramBrief against the supplied diff and source. Do not invent actors, retries, persistence, atomicity, ordering, authorization or exactly-once effects. Distinguish observed behavior from a risk or proposed design. For stacks, preserve which PR introduces the relevant change.
+- Choose one central question per diagram. Use short labels, named conditions, clear rejoining/failure paths and balanced directions. Keep the overview understandable in a laptop pane; expansion provides inspection, not a license to make an unreadable wall of nodes. Use as many useful diagrams across topics as needed.
+- Icons identify roles: icon: gnosis:user, gnosis:server, gnosis:database, gnosis:queue, gnosis:cloud, gnosis:shield, gnosis:code. These are bundled offline. Use them selectively. No external URLs, imports, custom images, links, data URIs or HTML.
+- Gnosis owns fonts, theme, background and layout engine. Avoid explicit colors, theme configuration, absolute positioning and source-specified animation/export options. TALA lays out architecture/ordinary graphs; D2 uses its specialized sequence layout for sequences.
+
+OUTPUT AND SYNTAX CONTRACT
+Return d2Diagram as {"source": string, "caption": string, "steps": [{"board": string, "title": string, "description": string}]} or null. Use [] for a static diagram's steps. Source is valid D2, without Markdown fences; never place Mermaid syntax in this field.
+- For an ordinary graph specify direction: right or down. For a sequence use shape: sequence_diagram. Keys can be simple stable identifiers with human-readable labels: worker: "Batch worker".
+- Native boards: steps: { after: { changes } } or scenarios: { receive: { changes } }. Only top-level steps/scenarios are supported; no nested boards or layers. The renderer has a 12-frame safety limit including the overview; choose fewer meaningful frames rather than filling the limit.
+- Caption board identifiers must exactly match "overview", "steps.after" or "scenarios.receive". Include an overview caption plus a caption for each board. Captions attach by identifier, not by array position.
+- Update an existing edge with (a -> b)[0].style.stroke-width: 4. Edge indices start at zero for each source/target pair. Delete an edge in a cumulative step with (a -> b)[0]: null. Repeating a -> b creates an additional edge instead of editing it.
+- Keep sequence actors and messages in the overview when using focus scenarios. Activation span names must match in each message. Quote labels containing punctuation; keep prose out of D2 keys. Escape source newlines/quotes correctly inside JSON.
+- Silently check source references, edge indices, board IDs, inherited state and captions before returning. Do not claim a diagram was rendered or verified unless a tool actually did so.
+
+COMPILER-CHECKED SYNTAX RECIPES
+These demonstrate D2 grammar and visual techniques, NOT facts about the PR. Adapt to the supplied source; never copy their durability, compare-and-set or concurrency guarantees without evidence.
+${D2_RECIPES.map((recipe) => `${recipe.name}:\n${recipe.source}`).join('\n')}
+For the sequence recipe, caption board IDs are overview, scenarios.compare, scenarios.conflict. For the algorithm recipe they are overview, steps.reserve_a, steps.capacity_reached. Give each a source-grounded explanation of the invariant or decision, not a narration of its arrows.`;

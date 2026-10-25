@@ -2,28 +2,36 @@ import { useState } from 'react';
 import { ArrowLeft, ArrowRight, Moon, Sun } from 'lucide-react';
 import { D2Diagram } from '../../components/D2Diagram';
 import { Button } from '../../components/ui/button';
-import { D2_EXAMPLES } from '../../lib/d2-prototype-examples';
+import { D2_EXAMPLES } from './d2-examples';
+import generated from './d2-generated.json';
+const examples = new URLSearchParams(location.search).has('generated') ? generated : D2_EXAMPLES;
+const labels: Record<string, string> = {
+  architecture: 'Architecture',
+  sequence: 'Sequence',
+  change: 'Before & after',
+  algorithm: 'Algorithm',
+};
 
 /** Throwaway engine evaluation, sharing the real explanation diagram component. */
-export function D2PrototypePage() {
+export function DiagramGallery() {
   const initial = new URLSearchParams(location.search).get('variant');
   const [index, setIndex] = useState(
     Math.max(
       0,
-      D2_EXAMPLES.findIndex((item) => item.id === initial)
+      examples.findIndex((item) => item.id === initial)
     )
   );
   const [dark, setDark] = useState(document.documentElement.classList.contains('dark'));
   const [source, setSource] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [editing, setEditing] = useState(false);
-  const example = D2_EXAMPLES[index];
+  const example = examples[index];
   function choose(next: number) {
     setIndex(next);
     setSource(null);
     setEditing(false);
     const url = new URL(location.href);
-    url.searchParams.set('variant', D2_EXAMPLES[next].id);
+    url.searchParams.set('variant', examples[next].id);
     history.replaceState(null, '', url);
   }
   return (
@@ -47,7 +55,7 @@ export function D2PrototypePage() {
       <header className="d2-prototype-header">
         <div>
           <h1>Diagrams that explain the change</h1>
-          <p>D2 + TALA prototype · illustrative examples · rendered locally</p>
+          <p>D2 + TALA · illustrative examples · rendered locally</p>
         </div>
         <Button
           variant="outline"
@@ -62,14 +70,14 @@ export function D2PrototypePage() {
         </Button>
       </header>
       <nav className="d2-prototype-tabs" aria-label="Diagram examples">
-        {D2_EXAMPLES.map((item, i) => (
+        {examples.map((item, i) => (
           <Button
             key={item.id}
             variant={i === index ? 'secondary' : 'ghost'}
             aria-current={i === index ? 'page' : undefined}
             onClick={() => choose(i)}
           >
-            {['Architecture', 'Sequence', 'Before & after'][i]}
+            {labels[item.id]}
           </Button>
         ))}
       </nav>
@@ -122,7 +130,7 @@ export function D2PrototypePage() {
           <ArrowLeft />
         </Button>
         <span>
-          {index + 1} / 3 · {['Architecture', 'Sequence', 'Before & after'][index]}
+          {index + 1} / 3 · {labels[example.id]}
         </span>
         <Button variant="ghost" size="icon-sm" aria-label="Next example" onClick={() => choose((index + 1) % 3)}>
           <ArrowRight />

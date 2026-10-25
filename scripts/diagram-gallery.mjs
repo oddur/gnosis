@@ -11,7 +11,7 @@ import electron from 'electron';
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-d2-prototype-'));
 const server = await createServer({ configFile: 'vite.renderer.config.ts', server: { host: '127.0.0.1', port: 0 } });
 await server.listen();
-const url = `http://127.0.0.1:${server.httpServer.address().port}/?d2-prototype`;
+const url = `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/d2.html${process.argv.includes('--generated') ? '?generated' : ''}`;
 const main = path.join(dir, 'main.cjs');
 // 'electron' must resolve to Electron's builtin inside the child process.
 fs.writeFileSync(
@@ -20,7 +20,7 @@ fs.writeFileSync(
 const {app, BrowserWindow}=require('electron');
 app.setPath('userData', ${JSON.stringify(path.join(dir, 'data'))});
 app.whenReady().then(async()=>{
- const win=new BrowserWindow({width:1280,height:850,title:'Gnosis — D2/TALA prototype',webPreferences:{sandbox:true,contextIsolation:true,backgroundThrottling:false}});
+ const win=new BrowserWindow({width:1280,height:850,title:'Gnosis — D2/TALA gallery',webPreferences:{sandbox:true,contextIsolation:true,backgroundThrottling:false}});
  win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
  win.webContents.on('console-message',(event)=>{if(event.level==='error')console.error(event.message)});
  await win.loadURL(${JSON.stringify(url)});
@@ -30,7 +30,7 @@ app.on('window-all-closed',()=>app.quit());
 );
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
-console.log(`D2/TALA prototype: ${url}`);
+console.log(`D2/TALA gallery: ${url}`);
 const child = spawn(electron, [main, '--remote-debugging-port=9336'], { env, stdio: 'inherit' });
 const close = async () => {
   child.kill();

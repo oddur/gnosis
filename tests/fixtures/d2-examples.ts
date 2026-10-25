@@ -1,4 +1,4 @@
-import type { D2DiagramSpec } from './types';
+import type { D2DiagramSpec } from '../../lib/types';
 
 /** Illustrative examples, not claims about a particular PR or Gnosis internals. */
 export const D2_EXAMPLES: { id: string; title: string; summary: string; diagram: D2DiagramSpec }[] = [

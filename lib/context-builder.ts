@@ -24,9 +24,7 @@ function renderClaudeContextSection(ctx: ProjectClaudeContext | null | undefined
   }
   if (ctx.commands.length > 0) {
     parts.push(
-      '<custom_commands>\n' +
-        ctx.commands.map((c) => `- /${c.name} — ${c.summary}`).join('\n') +
-        '\n</custom_commands>'
+      '<custom_commands>\n' + ctx.commands.map((c) => `- /${c.name} — ${c.summary}`).join('\n') + '\n</custom_commands>'
     );
   }
   if (ctx.agents.length > 0) {
@@ -234,7 +232,7 @@ export function buildPlannerContext(
   changedFiles: ChangedFile[],
   hunkIndex: string,
   excludedFilesSummary?: string,
-  claudeContext?: ProjectClaudeContext | null,
+  claudeContext?: ProjectClaudeContext | null
 ): string {
   const totalAdditions = changedFiles.reduce((s, f) => s + f.additions, 0);
   const totalDeletions = changedFiles.reduce((s, f) => s + f.deletions, 0);
@@ -269,11 +267,9 @@ export function buildTopicContext(
   prDescription: string,
   storyArc: string,
   allTopics: TopicPlan[],
-  claudeContext?: ProjectClaudeContext | null,
+  claudeContext?: ProjectClaudeContext | null
 ): string {
-  const relevantHunks = topic.hunkIds
-    .map((id) => hunkMap.get(id))
-    .filter((h): h is IndexedHunk => h !== undefined);
+  const relevantHunks = topic.hunkIds.map((id) => hunkMap.get(id)).filter((h): h is IndexedHunk => h !== undefined);
 
   // Collect affected file paths
   const affectedFiles = new Set(relevantHunks.map((h) => h.filePath));
@@ -289,6 +285,7 @@ export function buildTopicContext(
   let ctx = `<story_arc>${storyArc}</story_arc>
 
 <narrative_brief>${topic.narrativeBrief}</narrative_brief>
+${topic.diagramBrief ? `\n<diagram_brief>${topic.diagramBrief}</diagram_brief>\n` : ''}
 
 ${claudeSection ? claudeSection + '\n\n' : ''}${depBriefs ? `<prior_topics>\nThis slide builds on:\n${depBriefs}\n</prior_topics>\n\n` : ''}<topic>
 Title: ${topic.title}
@@ -337,7 +334,7 @@ PR Description: ${prDescription || '(none)'}
     // Include neighbor if any affected file likely imports it
     const base = path.replace(/\.[^.]+$/, '');
     const isRelevant = [...affectedFiles].some(
-      (f) => fileContents[f]?.includes(base) || headFileContents[f]?.includes(base),
+      (f) => fileContents[f]?.includes(base) || headFileContents[f]?.includes(base)
     );
     if (isRelevant) {
       neighborSection += `  <file path="${path}">\n${truncateFileContent(content, MAX_FILE_LINES)}\n  </file>\n`;

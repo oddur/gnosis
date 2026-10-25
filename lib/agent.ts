@@ -1,4 +1,5 @@
-import { D2_DIRECTIVE } from './d2-guidance';
+import { D2_DIRECTIVE, D2_PLANNER_DIRECTIVE } from './d2-guidance';
+import { normalizeD2Diagram } from './diagram-spec';
 import { FILE_SUMMARY_DIRECTIVE } from './file-summaries';
 import { INLINE_EXPLANATION_DIRECTIVE } from './inline-explanations';
 import { getProvider } from './provider';
@@ -124,7 +125,7 @@ The JSON must match this schema exactly:
       "fileSummaries": [{ "filePath": string, "summary": string }],
       "inlineExplanations": [{ "filePath": string, "line": number, "side": "LEFT" | "RIGHT", "code": string, "text": string }],
       "dependsOn": string[],
-      "d2Diagram": { "source": string, "caption": string, "steps"?: [{ "title": string, "description": string }] } | null,
+      "d2Diagram": { "source": string, "caption": string, "steps": [{ "board": string, "title": string, "description": string }] } | null,
       "explainerIdea": { "title": string, "description": string } | null,
       "importance": "critical" | "important" | "minor",
       "reviewChecks": [
@@ -325,6 +326,7 @@ export async function generateReviewGuide(opts: GenerateReviewGuideOptions): Pro
     }
 
     parsed.prUrl = prUrl;
+    for (const slide of parsed.slides) slide.d2Diagram = normalizeD2Diagram(slide.d2Diagram);
 
     return parsed;
   }
@@ -366,6 +368,8 @@ STORY ARC: Write a 2-3 sentence narrative thread that connects all topics into a
 
 NARRATIVE BRIEF per topic: Write a 1-2 sentence direction for each topic's slide writer. Explain what angle to take, what to emphasize, and how this topic relates to others. Example: "This introduces the core Token type that all subsequent auth changes depend on. Emphasize the design choices in the token structure and expiry handling."
 
+${D2_PLANNER_DIRECTIVE}
+
 RISK: Assess based on: auth/payment/data model changes = high; new features with tests = medium; refactoring with coverage = low; docs/config = low.
 
 IMPORTANCE per topic:
@@ -393,7 +397,8 @@ Respond with JSON matching this schema exactly:
       "hunkIds": ["hunk-0", "hunk-3", ...],
       "dependsOn": [],
       "order": 1,
-      "narrativeBrief": string
+      "narrativeBrief": string,
+      "diagramBrief": string | null
     }
   ]
 }`;
@@ -492,7 +497,7 @@ Write the slide content for this topic. Respond with JSON matching this schema e
   "contextSnippets": string[],
   "fileSummaries": [{ "filePath": string, "summary": string }],
   "inlineExplanations": [{ "filePath": string, "line": number, "side": "LEFT" | "RIGHT", "code": string, "text": string }],
-  "d2Diagram": { "source": string, "caption": string, "steps"?: [{ "title": string, "description": string }] } | null,
+  "d2Diagram": { "source": string, "caption": string, "steps": [{ "board": string, "title": string, "description": string }] } | null,
   "explainerIdea": { "title": string, "description": string } | null,
   "reviewChecks": [
     {
@@ -595,6 +600,7 @@ export async function generateSlide(opts: GenerateSlideOptions): Promise<WriterS
       throw new Error('Writer response missing required fields (narrative)');
     }
 
+    parsed.d2Diagram = normalizeD2Diagram(parsed.d2Diagram);
     return parsed;
   }
 
