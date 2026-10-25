@@ -7,6 +7,8 @@ import path from 'node:path';
 import process from 'node:process';
 import electron from 'electron';
 import { setTimeout, clearTimeout } from 'node:timers';
+const diffContext = process.argv.includes('--diff-context');
+const explanation = process.argv.includes('--explanation');
 const diffSpeed = process.argv.includes('--diff-speed');
 const commits = process.argv.includes('--commits');
 const changes = process.argv.includes('--changes');
@@ -30,7 +32,7 @@ try {
   const outfile = path.join(dir, 'test.cjs');
   await build({
     entryPoints: [
-      diffSpeed ? 'tests/diff-navigation-browser.ts' : commits ? 'tests/pr-commits-browser.ts' : changes ? 'tests/pr-changes-browser.ts' : queueMetadata ? 'tests/queue-metadata-browser.ts' : authors ? 'tests/github-author-browser.ts' : commandCenter ? 'tests/command-center-browser.ts' : performance ? 'tests/queue-performance-browser.ts' : polish
+      diffContext ? 'tests/diff-context-browser.ts' : explanation ? 'tests/explanation-tab-browser.ts' : diffSpeed ? 'tests/diff-navigation-browser.ts' : commits ? 'tests/pr-commits-browser.ts' : changes ? 'tests/pr-changes-browser.ts' : queueMetadata ? 'tests/queue-metadata-browser.ts' : authors ? 'tests/github-author-browser.ts' : commandCenter ? 'tests/command-center-browser.ts' : performance ? 'tests/queue-performance-browser.ts' : polish
         ? 'tests/polish-browser.ts'
         : hardening
           ? 'tests/hardening-browser.ts'

@@ -1,9 +1,10 @@
+import { publishDiffAppearance } from '../lib/use-diff-appearance';
 import type { Preferences } from '../lib/types';
 import { useId } from 'react';
 import { Popover } from 'radix-ui';
 import { SlidersHorizontal } from 'lucide-react';
 import { Button } from './ui/button';
-import { DEFAULT_DIFF_APPEARANCE, type DiffAppearance } from '@/lib/review-diff';
+import { DEFAULT_DIFF_APPEARANCE, diffContextLines, type DiffAppearance } from '@/lib/review-diff';
 
 const inlineDescriptions: Record<DiffAppearance['inline'], string> = {
   'word-alt': 'Highlights whole words using enhanced matching.',
@@ -25,6 +26,11 @@ export function DiffAppearanceMenu({
   onChange: (value: DiffAppearance) => void;
 }) {
   const descriptionId = useId();
+  const contextDescriptionId = useId();
+  const change = (next: DiffAppearance) => {
+    publishDiffAppearance(next);
+    onChange(next);
+  };
   return (
     <Popover.Root>
       <Popover.Trigger asChild>
@@ -59,12 +65,33 @@ export function DiffAppearanceMenu({
                 <option value="split">Split</option>
               </select>
             </label>
+            <div>
+              <label className="flex items-center justify-between gap-3">
+                Show surrounding lines
+                <select
+                  aria-label="Show surrounding lines"
+                  aria-describedby={contextDescriptionId}
+                  className="rounded border bg-background px-2 py-1"
+                  value={diffContextLines(value)}
+                  onChange={(e) => change({ ...value, contextLines: Number(e.target.value) })}
+                >
+                  {[1, 3, 5, 10, 20, 50].map((count) => (
+                    <option key={count} value={count}>
+                      {count}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p id={contextDescriptionId} className="text-xs text-muted-foreground leading-relaxed mt-1">
+                Lines before and after each change, where available. You can reveal more in the diff.
+              </p>
+            </div>
             <label className="flex items-center justify-between gap-3">
               Change indicators
               <select
                 className="rounded border bg-background px-2 py-1"
                 value={value.indicators}
-                onChange={(e) => onChange({ ...value, indicators: e.target.value as DiffAppearance['indicators'] })}
+                onChange={(e) => change({ ...value, indicators: e.target.value as DiffAppearance['indicators'] })}
               >
                 <option value="classic">+ / − signs</option>
                 <option value="bars">Bars</option>
@@ -77,7 +104,7 @@ export function DiffAppearanceMenu({
                 className="rounded border bg-background px-2 py-1"
                 value={value.inline}
                 aria-describedby={descriptionId}
-                onChange={(e) => onChange({ ...value, inline: e.target.value as DiffAppearance['inline'] })}
+                onChange={(e) => change({ ...value, inline: e.target.value as DiffAppearance['inline'] })}
               >
                 <option value="word-alt">Word-Alt</option>
                 <option value="word">Word</option>
@@ -102,12 +129,12 @@ export function DiffAppearanceMenu({
                   type="checkbox"
                   className="size-4 accent-[var(--ring)]"
                   checked={value[key]}
-                  onChange={(e) => onChange({ ...value, [key]: e.target.checked })}
+                  onChange={(e) => change({ ...value, [key]: e.target.checked })}
                 />
               </label>
             ))}
           </div>
-          <Button variant="ghost" size="sm" className="mt-4" onClick={() => onChange({ ...DEFAULT_DIFF_APPEARANCE })}>
+          <Button variant="ghost" size="sm" className="mt-4" onClick={() => change({ ...DEFAULT_DIFF_APPEARANCE })}>
             Reset appearance
           </Button>
         </Popover.Content>

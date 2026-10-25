@@ -12,6 +12,9 @@ import { applyTheme } from '../lib/theme';
 import type { ReviewGuide } from '../lib/types';
 import { Toaster } from '../components/ui/toast';
 
+import { isLocalUrl } from '../lib/local-url';
+import { rememberExplanation, loadExplanation, type ExplanationDestination } from '../lib/explanation-workspace';
+
 type Page = 'home' | 'review';
 
 export function App() {
@@ -23,6 +26,7 @@ export function App() {
     destination: Extract<SearchDestination, { kind: 'review' }>;
     nonce: number;
   }>();
+  const [explanationDestination, setExplanationDestination] = useState<ExplanationDestination>();
   const [page, setPage] = useState<Page>('home');
   const [activityOpen, setActivityOpen] = useState(false);
   const [destination, setDestination] = useState<{
@@ -49,8 +53,18 @@ export function App() {
     setHomeCommand(undefined);
     setDestination((d) => ({ nonce: d.nonce + 1 }));
     setPrefillPrUrl(undefined);
-    setReview(r);
-    setPage('review');
+    rememberExplanation(r);
+    if (isLocalUrl(r.prUrl)) {
+      setExplanationDestination(undefined);
+      setReview(r);
+      setPage('review');
+    } else {
+      setExplanationDestination({
+        review: r,
+        command: { destination: { kind: 'review', reviewId: r.reviewId ?? '' }, nonce: Date.now() },
+      });
+      setPage('home');
+    }
   }, []);
 
   async function openActivity(task: ActivityTask) {
@@ -63,22 +77,17 @@ export function App() {
       return;
     }
     if (!task.reviewId) throw new Error('This task has no saved review.');
-    const loaded = await window.electronAPI.loadReview(task.reviewId);
-    setReview(loaded);
-    setPage('review');
-    setReviewCommand({
-      destination: {
-        kind: 'review',
-        reviewId: task.reviewId,
-        slideId: task.slideId,
-        explore: task.kind === 'exploration',
-      },
-      nonce: Date.now(),
+    await navigate({
+      kind: 'review',
+      reviewId: task.reviewId,
+      slideId: task.slideId,
+      explore: task.kind === 'exploration',
     });
     setActivityOpen(false);
   }
 
   function handleBack() {
+    setExplanationDestination(undefined);
     setHomeCommand(undefined);
     setReviewCommand(undefined);
     setReview(null);
@@ -86,6 +95,7 @@ export function App() {
   }
 
   function handleReReview(prUrl: string) {
+    setExplanationDestination(undefined);
     setHomeCommand(undefined);
     setReviewCommand(undefined);
     setPrefillPrUrl(prUrl);
@@ -111,11 +121,17 @@ export function App() {
       return;
     }
     if (target.kind === 'review') {
-      const loaded =
-        review?.reviewId === target.reviewId ? review : await window.electronAPI.loadReview(target.reviewId);
-      setReview(loaded);
-      setPage('review');
-      setReviewCommand({ destination: target, nonce: Date.now() });
+      const loaded = review?.reviewId === target.reviewId ? review : await loadExplanation(target.reviewId);
+      setHomeCommand(undefined);
+      if (isLocalUrl(loaded.prUrl)) {
+        setExplanationDestination(undefined);
+        setReview(loaded);
+        setPage('review');
+        setReviewCommand({ destination: target, nonce: Date.now() });
+      } else {
+        setExplanationDestination({ review: loaded, command: { destination: target, nonce: Date.now() } });
+        setPage('home');
+      }
       return;
     }
     let resolved = target;
@@ -220,11 +236,12 @@ export function App() {
       <div id="main-content">
         {page === 'home' && (
           <HomePage
-            key={destination.nonce}
             onReviewReady={handleReviewReady}
             prefillPrUrl={prefillPrUrl}
             initialSubjectId={destination.subjectId}
             commandDestination={homeCommand}
+            explanationDestination={explanationDestination}
+            onShowActivity={() => setActivityOpen(true)}
           />
         )}
         {page === 'review' && review && (

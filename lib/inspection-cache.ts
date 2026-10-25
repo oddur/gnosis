@@ -17,9 +17,10 @@ export const inspectionFileRequest = (snapshot: PrChanges, file: PrChangeFile) =
 export const commitPositionId = (subjectId: string, snapshot?: PrChanges) =>
   `commit:${subjectId}:${snapshot?.url ?? ''}:${snapshot?.comparisonBase ?? ''}:${snapshot?.metadata.headSha ?? ''}`;
 const previews = new Map<string, FileDiffMetadata | null>();
-export function previewFor(key: string, file: PrChangeFile) {
+export function previewFor(key: string, file: PrChangeFile, contextLines = 3) {
+  key = `${key}:context:${contextLines}`;
   if (!previews.has(key)) {
-    previews.set(key, prChangePreview(file) ?? null);
+    previews.set(key, prChangePreview(file, contextLines) ?? null);
     while (previews.size > 64) {
       const oldest = previews.keys().next().value;
       if (oldest === undefined) break;

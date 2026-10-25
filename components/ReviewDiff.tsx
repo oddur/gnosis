@@ -11,6 +11,7 @@ import { readableCodeTheme } from '@/lib/code-contrast';
 import { CODE_THEMES } from '@/lib/constants';
 import {
   DEFAULT_DIFF_APPEARANCE,
+  diffContextLines,
   prepareReviewHunk,
   reviewContextRanges,
   sliceReviewHunk,
@@ -104,7 +105,10 @@ function ReviewHunk({
     }),
     [prepared]
   );
-  const [active, setActive] = useSessionDraft<Location | null>(`comment-location:${slideIndex}:${filePath}:${hunk.hunkHeader}`, null);
+  const [active, setActive] = useSessionDraft<Location | null>(
+    `comment-location:${slideIndex}:${filePath}:${hunk.hunkHeader}`,
+    null
+  );
   const theme = useMemo(() => {
     const classes = extractShikiStyles(hunk.renderedHtml).preClass.split(' ');
     return CODE_THEMES.find((t) => classes.includes(t.id))?.id ?? 'aurora-x';
@@ -274,8 +278,8 @@ function FoldableReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: D
     return result;
   }, [prepared, props.pinnedLines, props.pendingComments, props.filePath, props.threads, props.inlineExplanations]);
   const ranges = useMemo(
-    () => (prepared ? reviewContextRanges(prepared.lines, pinned, revealed) : []),
-    [prepared, pinned, revealed]
+    () => (prepared ? reviewContextRanges(prepared.lines, pinned, revealed, diffContextLines(props.appearance)) : []),
+    [prepared, pinned, revealed, props.appearance?.contextLines]
   );
   // New/deleted files contain changes on every line; never fold their content.
   if (!prepared || prepared.singleSide || (!ranges.some((range) => range.hidden) && !revealed.size)) {
@@ -400,14 +404,23 @@ export function ReviewDiff({ hunks, ...props }: Props) {
 }
 
 /** Keep the renderer's shadow DOM boundary out of review navigation. */
-export function findReviewLine(container: HTMLElement, filePath: string, line: number, side?: DiffSide): HTMLElement | null {
+export function findReviewLine(
+  container: HTMLElement,
+  filePath: string,
+  line: number,
+  side?: DiffSide
+): HTMLElement | null {
   const roots: (HTMLElement | ShadowRoot)[] = [
     container,
     ...Array.from(container.querySelectorAll('diffs-container')).flatMap((el) =>
       el.shadowRoot ? [el.shadowRoot] : []
     ),
   ];
-  for (const attr of side==='LEFT'?['data-base-line']:side==='RIGHT'?['data-line-number']:['data-line-number', 'data-base-line']) {
+  for (const attr of side === 'LEFT'
+    ? ['data-base-line']
+    : side === 'RIGHT'
+      ? ['data-line-number']
+      : ['data-line-number', 'data-base-line']) {
     for (const root of roots) {
       const result = root.querySelector<HTMLElement>(`[data-file-path="${CSS.escape(filePath)}"][${attr}="${line}"]`);
       if (result) return result;

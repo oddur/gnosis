@@ -1,3 +1,10 @@
+import {
+  readDiscussion,
+  refreshDiscussion,
+  peekDiscussion,
+  subscribeDiscussions,
+  replaceDiscussionThread,
+} from './review-discussion-cache';
 import { useEffect, useRef, useState } from 'react';
 import type { GitHubReviewThread, GitHubReviewThreads } from './review-threads';
 interface Discussion {
@@ -6,7 +13,9 @@ interface Discussion {
 }
 /** One cached discussion read per PR supplies every file's comments and counts. */
 export function usePrDiscussions(urls: string[]) {
-  const [discussions, setDiscussions] = useState<Record<string, Discussion | undefined>>({});
+  const [discussions, setDiscussions] = useState<Record<string, Discussion | undefined>>(() =>
+    Object.fromEntries(urls.map((url) => [url, { data: peekDiscussion(url) }]))
+  );
   const versions = useRef(new Map<string, number>());
   const alive = useRef(true);
   const sequence = useRef(0);
@@ -19,7 +28,7 @@ export function usePrDiscussions(urls: string[]) {
   async function load(url: string, refresh: boolean) {
     const version = nextVersion(url);
     try {
-      const data = await window.electronAPI.getReviewThreads(url, refresh);
+      const data = await (refresh ? refreshDiscussion(url) : readDiscussion(url));
       if (alive.current && versions.current.get(url) === version)
         setDiscussions((old) => ({ ...old, [url]: { data } }));
     } catch {
@@ -45,26 +54,19 @@ export function usePrDiscussions(urls: string[]) {
       versions.current.clear();
     };
   }, [signature]);
+  useEffect(
+    () =>
+      subscribeDiscussions((url, data) => {
+        if (urls.includes(url)) {
+          nextVersion(url);
+          setDiscussions((old) => ({ ...old, [url]: { data } }));
+        }
+      }),
+    [signature]
+  );
   return {
     discussions,
     refresh: (url: string) => load(url, true),
-    replace: (url: string, thread: GitHubReviewThread) => {
-      if (!alive.current) return;
-      nextVersion(url);
-      setDiscussions((old) => {
-        const data = old[url]?.data;
-        return data
-          ? {
-              ...old,
-              [url]: {
-                data: {
-                  ...data,
-                  threads: data.threads.map((t) => (t.id === thread.id ? thread : t)).filter((t) => t.comments.length),
-                },
-              },
-            }
-          : old;
-      });
-    },
+    replace: (url: string, thread: GitHubReviewThread) => replaceDiscussionThread(url, thread),
   };
 }

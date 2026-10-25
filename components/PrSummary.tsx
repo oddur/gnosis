@@ -1,14 +1,16 @@
+import { PrExplanation } from './PrExplanation';
+import type { ExplanationDestination } from '../lib/explanation-workspace';
+import type { ReviewHistoryEntry } from '../lib/types';
 import { Tabs } from 'radix-ui';
 import { PrCommitsView } from './PrCommitsView';
 import { PrChangesView } from './PrChangesView';
 import type { Preferences } from '../lib/types';
 import { GitHubAuthor } from './GitHubAuthor';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, ChevronLeft, ChevronRight, ExternalLink, Layers } from 'lucide-react';
-import { Button } from './ui/button';
+import { ArrowLeft, ChevronLeft, ChevronRight, ExternalLink, Layers } from 'lucide-react';
 import { Markdown } from './Markdown';
 import { PrSubjectDetails } from './PrSubjectDetails';
-import { fingerprint, type QueueItem } from '../lib/workbench';
+import { type QueueItem } from '../lib/workbench';
 import type { PrStatus } from '../lib/types';
 import { timeAgo } from '../lib/utils';
 
@@ -28,7 +30,9 @@ export function PrSummary({
   statusErrors,
   onBack,
   onGenerate,
-  onOpenReview,
+  explanationDestination,
+  explanations,
+  onShowActivity,
   onRetryStatus,
   onAiSetup,
   onGitHubAuth,
@@ -37,8 +41,8 @@ export function PrSummary({
   shortcutsEnabled = true,
 }: {
   item: QueueItem;
-  tab: 'summary' | 'changes' | 'commits';
-  onTabChange: (tab: 'summary' | 'changes' | 'commits') => void;
+  tab: 'summary' | 'changes' | 'commits' | 'explanation';
+  onTabChange: (tab: 'summary' | 'changes' | 'commits' | 'explanation') => void;
   preferences: Preferences | null;
   starting: boolean;
   error: string;
@@ -46,7 +50,9 @@ export function PrSummary({
   statusErrors: Record<string, string>;
   onBack: () => void;
   onGenerate: () => void;
-  onOpenReview: () => void;
+  explanationDestination?: ExplanationDestination;
+  explanations: ReviewHistoryEntry[];
+  onShowActivity: () => void;
   onRetryStatus: () => void;
   onAiSetup?: () => void;
   onGitHubAuth?: () => void;
@@ -123,6 +129,7 @@ export function PrSummary({
   useEffect(() => {
     if (!shortcutsEnabled) return;
     const keydown = (event: KeyboardEvent) => {
+      if (tab === 'explanation' && event.key !== 'Escape') return;
       if (event.composedPath().some((node) => node instanceof Element && node.matches('.pr-changes'))) return;
       if (event.defaultPrevented || event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target instanceof HTMLElement ? event.target : null;
@@ -149,16 +156,13 @@ export function PrSummary({
     };
     window.addEventListener('keydown', keydown);
     return () => window.removeEventListener('keydown', keydown);
-  }, [navigation, onBack, shortcutsEnabled, activeUrl, position]);
-  const running = starting || item.review?.status === 'generating';
-  const ready = item.review?.status === 'completed';
-  const current = ready && item.review?.snapshot?.fingerprint === fingerprint(item.subject);
+  }, [navigation, onBack, shortcutsEnabled, activeUrl, position, tab]);
   return (
     <Tabs.Root
       value={tab}
       onValueChange={(value) => {
         if (tab === 'summary') remember();
-        onTabChange(value as 'summary' | 'changes' | 'commits');
+        onTabChange(value as 'summary' | 'changes' | 'commits' | 'explanation');
       }}
       asChild
     >
@@ -190,23 +194,6 @@ export function PrSummary({
                 <ChevronRight size={16} />
               </button>
             </nav>
-            <div className="pr-summary-actions">
-              {ready && !current && (
-                <Button variant="outline" size="sm" onClick={onOpenReview}>
-                  Open previous AI explanation
-                </Button>
-              )}
-              <Button size="sm" disabled={running} onClick={current ? onOpenReview : onGenerate}>
-                {running
-                  ? 'Generating AI explanation…'
-                  : current
-                    ? 'Open AI explanation'
-                    : ready
-                      ? 'Update AI explanation'
-                      : 'Generate AI explanation'}
-                {!running && <ArrowRight size={14} />}
-              </Button>
-            </div>
           </div>
         </div>
         <header className="pr-overview-heading">
@@ -240,6 +227,7 @@ export function PrSummary({
           <Tabs.Trigger value="summary">Summary</Tabs.Trigger>
           <Tabs.Trigger value="changes">Changes</Tabs.Trigger>
           <Tabs.Trigger value="commits">Commits</Tabs.Trigger>
+          <Tabs.Trigger value="explanation">Explanation</Tabs.Trigger>
         </Tabs.List>
         <Tabs.Content value="changes" className="pr-changes-tab">
           {preferences && (
@@ -264,52 +252,30 @@ export function PrSummary({
             />
           )}
         </Tabs.Content>
+        <Tabs.Content value="explanation" className="pr-changes-tab" forceMount>
+          <PrExplanation
+            item={item}
+            entries={explanations}
+            destination={explanationDestination}
+            active={tab === 'explanation' && shortcutsEnabled}
+            preferences={preferences}
+            starting={starting}
+            error={error}
+            onGenerate={onGenerate}
+            onAiSetup={onAiSetup}
+            onGitHubAuth={onGitHubAuth}
+            onShowActivity={onShowActivity}
+            onBack={back}
+            onOpenChanges={() => onTabChange('changes')}
+          />
+        </Tabs.Content>
         <Tabs.Content value="summary" className="pr-summary-content" ref={page} onScroll={remember}>
           <div className="pr-summary-body">
-            <div className="pr-explanation-help">
-              <span>AI explanations walk through the changes alongside the code.</span>
-              {!current && !running && onAiSetup && (
-                <button className="workbench-help-link" onClick={onAiSetup}>
-                  AI setup
-                </button>
-              )}
-              <span className="pr-summary-shortcuts">
-                <kbd>j</kbd>/<kbd>k</kbd> next/previous · <kbd>Esc</kbd> queue
-              </span>
-            </div>
             {item.subject.warnings.map((warning) => (
               <p key={warning} className="workbench-notice" role="status">
                 {warning}
               </p>
             ))}
-            {running && (
-              <p role="status" className="workbench-notice">
-                Your AI explanation is running in the background. Track progress in Activity while you keep reading.
-              </p>
-            )}
-            {error && (
-              <div role="alert" className="workbench-notice error">
-                <p>Could not open or generate the AI explanation. Your PR description is still available.</p>
-                {/GitHub.*(?:access|sign.in)|token|Resource not accessible/i.test(error) ? (
-                  <>
-                    <p>{error}</p>
-                    {onGitHubAuth && (
-                      <button className="workbench-help-link" onClick={onGitHubAuth}>
-                        Check GitHub access
-                      </button>
-                    )}
-                  </>
-                ) : (
-                  <details>
-                    <summary>Error details</summary>
-                    <p>{error}</p>
-                  </details>
-                )}
-              </div>
-            )}
-            {item.review?.status === 'failed' && (
-              <p className="workbench-notice">The AI explanation could not be completed. Generate it again to retry.</p>
-            )}
             {item.briefing?.status === 'ready' && (
               <details className="pr-briefing" open>
                 <summary>AI briefing</summary>

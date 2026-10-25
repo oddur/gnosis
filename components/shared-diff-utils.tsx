@@ -120,6 +120,12 @@ export function InlineCommentForm({
   draftKey?: string;
 }) {
   const [body, setBody] = useSessionDraft(`inline:${draftKey ?? initialBody ?? 'new'}`, initialBody ?? '');
+  const [error, setError] = useState('');
+  function save() {
+    if (!body.trim()) return;
+    try { onSubmit(body.trim()); setBody(''); setError(''); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Could not save your comment. Your text is still here.'); }
+  }
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -129,7 +135,7 @@ export function InlineCommentForm({
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
-      if (body.trim()) { onSubmit(body.trim());setBody(''); }
+      save();
     }
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -147,11 +153,12 @@ export function InlineCommentForm({
         placeholder="Leave a comment... (Cmd+Enter to add, Esc to cancel)"
         className="w-full min-h-[60px] bg-transparent text-sm font-mono resize-y border rounded p-2 focus:outline-none focus:ring-1 focus:ring-ring"
       />
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       <div className="flex justify-end gap-1.5 mt-1.5">
         <Button variant="ghost" size="sm" onClick={onCancel}>
           Cancel
         </Button>
-        <Button size="sm" onClick={() => {if(body.trim()){onSubmit(body.trim());setBody('');}}} disabled={!body.trim()}>
+        <Button size="sm" onClick={save} disabled={!body.trim()}>
           Add comment
         </Button>
       </div>
