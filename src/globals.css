@@ -2212,3 +2212,16 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .review-bottom-nav>button:hover:not(:disabled) { background:var(--accent); }
 .review-bottom-nav>button:disabled { opacity:.5; }
 @media(max-width:620px) { .shortcut-groups{grid-template-columns:1fr;gap:20px;} .review-bottom-nav>div{max-width:34vw;} }
+
+/* File links are standalone controls in review lists and headers. */
+.file-path-link { min-height:24px; border-radius:3px; }
+.file-path-link:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+@media (pointer:coarse) {
+  .file-path-link,.review-file-expand,.review-file-viewed { min-height:44px; }
+  .review-file-expand { min-width:44px; }
+}
+@media (max-width:620px) {
+  .review-toolbar > select { flex:1; min-width:0; max-width:100%; }
+  .review-toolbar label { min-width:0; flex-wrap:wrap; }
+  .review-toolbar label select { min-width:0; max-width:100%; flex:1; }
+}
