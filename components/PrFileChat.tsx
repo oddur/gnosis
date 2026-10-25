@@ -17,7 +17,7 @@ export function PrFileChat({
   selection: string;
   onClose: () => void;
 }) {
-  const key = fileRevisionKey(request.url, request.path, request.baseSha, request.headSha);
+  const key = `${request.comparison ? 'commit:' : ''}${fileRevisionKey(request.url, request.path, request.baseSha, request.headSha)}`;
   const chat = useFileChat(key);
   const [question, setQuestion] = useState('');
   return (
@@ -29,7 +29,8 @@ export function PrFileChat({
         </Button>
       </header>
       <p className="changes-chat-source">
-        {request.path} · {request.headSha.slice(0, 7)}
+        {request.path} · {request.comparison && `${request.baseSha.slice(0, 7)} → `}
+        {request.headSha.slice(0, 7)}
       </p>
       <div className="changes-chat-messages" aria-live="polite">
         {!chat.messages.length && <p>Ask how this change works, what it affects, or what to check during review.</p>}

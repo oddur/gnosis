@@ -1,10 +1,26 @@
 import { DiffStats } from './DiffStats';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { createPrFileCache } from '../lib/pr-file-cache';
-import { prChangePreview, prPreviewSelection } from '../lib/pr-change-preview';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import {
+  inspectionFiles as fileCache,
+  fileIsReady,
+  prepareFile,
+  prefetchInspection,
+  commitPositionId,
+  previewFor,
+} from '../lib/inspection-cache';
+import { prPreviewSelection } from '../lib/pr-change-preview';
 import { FileDiff, MultiFileDiff } from '@pierre/diffs/react';
-import type { DiffFileInput, FileDiffOptions, FileDiffMetadata, SelectedLineRange } from '@pierre/diffs';
-import { PanelLeft, ArrowLeft, ArrowRight, RefreshCw, MessageSquare, ExternalLink } from 'lucide-react';
+import type { DiffFileInput, FileDiffOptions, SelectedLineRange } from '@pierre/diffs';
+import {
+  ChevronDown,
+  ChevronRight,
+  PanelLeft,
+  ArrowLeft,
+  ArrowRight,
+  RefreshCw,
+  MessageSquare,
+  ExternalLink,
+} from 'lucide-react';
 import { ChangesFileTree } from './ChangesFileTree';
 import { DiffAppearanceMenu } from './DiffAppearanceMenu';
 import { useChangesComments } from './useChangesComments';
@@ -36,20 +52,6 @@ interface Position {
   selected: string;
   scroll: Record<string, number>;
 }
-const fileCache = createPrFileCache((request) => window.electronAPI.getPrChangeFile(request));
-const previews = new Map<string, FileDiffMetadata>();
-function previewFor(key: string, file: PrChangeFile) {
-  let preview = previews.get(key);
-  if (!preview) {
-    preview = prChangePreview(file);
-    if (preview) {
-      previews.set(key, preview);
-      const oldest = previews.keys().next().value;
-      if (previews.size > 32 && oldest) previews.delete(oldest);
-    }
-  }
-  return preview;
-}
 const positions = new Map<string, Position>();
 const memory = new Map<string, PrChanges[]>();
 function loadPosition(id: string): Position {
@@ -68,12 +70,42 @@ function loadPosition(id: string): Position {
   return saved;
 }
 const viewKey = (e: Entry) =>
-  fileRevisionKey(e.snapshot.url, e.file.path, e.snapshot.metadata.baseSha, e.snapshot.metadata.headSha);
+  `${e.snapshot.comparison ? 'commit:' : ''}${fileRevisionKey(e.snapshot.url, e.file.path, e.snapshot.metadata.baseSha, e.snapshot.metadata.headSha)}`;
 
-export function PrChangesView({ subject, preferences }: { subject: ReviewSubject; preferences: Preferences }) {
-  const [position] = useState(() => loadPosition(subject.id));
-  const [snapshots, setSnapshots] = useState<PrChanges[]>(() => memory.get(subject.id) ?? []);
+export interface CommitWorkspace {
+  snapshot?: PrChanges;
+  sidebar: ReactNode;
+  header: ReactNode;
+  status: ReactNode;
+  tools: ReactNode;
+  fileStatus: string;
+  filesOpen: boolean;
+  toggleFiles: () => void;
+  onOpenCurrentFile: (url: string, path: string) => void;
+}
+export function PrChangesView({
+  subject,
+  preferences,
+  commit,
+  initialFile,
+}: {
+  subject: ReviewSubject;
+  preferences: Preferences;
+  commit?: CommitWorkspace;
+  initialFile?: { url: string; path: string };
+}) {
+  const positionId = commit ? commitPositionId(subject.id, commit.snapshot) : subject.id;
+  const [position] = useState(() => loadPosition(positionId));
+  const [loadedSnapshots, setSnapshots] = useState<PrChanges[]>(() => memory.get(subject.id) ?? []);
+  const snapshots = useMemo(
+    () => (commit ? (commit.snapshot ? [commit.snapshot] : []) : loadedSnapshots),
+    [commit?.snapshot, !!commit, loadedSnapshots]
+  );
   const [selected, setSelected] = useState(position.selected);
+  const [openingFile, setOpeningFile] = useState('');
+  const [navigationError, setNavigationError] = useState<{ key: string; message: string }>();
+  const fileNavigation = useRef(0);
+  const hoverCancel = useRef<() => void>(() => {});
   const [loading, setLoading] = useState(false),
     [error, setError] = useState(''),
     [newer, setNewer] = useState(false),
@@ -105,7 +137,7 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
   const [loadedFile, setLoadedFile] = useState<{ key: string; data: PrFileContents }>(),
     [fileError, setFileError] = useState(''),
     [fileAttempt, setFileAttempt] = useState(0);
-  const discussion = usePrDiscussions(subject.members.map((member) => member.url));
+  const discussion = usePrDiscussions(commit ? [] : subject.members.map((member) => member.url));
   const [chatOpen, setChatOpen] = useState(false),
     [selection, setSelection] = useState('');
   const [range, setRange] = useState<SelectedLineRange | null>(null);
@@ -115,12 +147,13 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
     generation = useRef(0);
   const persist = () => {
     try {
-      localStorage.setItem(`gnosis-changes-position:${subject.id}`, JSON.stringify(position));
+      localStorage.setItem(`gnosis-changes-position:${positionId}`, JSON.stringify(position));
     } catch {
       /* Session position remains. */
     }
   };
   async function load(refresh: boolean) {
+    if (commit) return;
     const current = ++generation.current;
     setLoading(true);
     setError('');
@@ -148,11 +181,13 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
     return () => {
       alive.current = false;
       generation.current++;
+      fileNavigation.current++;
+      hoverCancel.current();
     };
   }, [subject.id]);
   const revision = snapshots.map((s) => `${s.url}:${changesRevision(s.metadata)}`).join('|');
   useEffect(() => {
-    if (!snapshots.length) return;
+    if (commit || !snapshots.length) return;
     let cancelled = false;
     const check = async () => {
       if (document.visibilityState === 'hidden') return;
@@ -177,14 +212,14 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
     () =>
       snapshots.flatMap((snapshot, index) => {
         const prefix =
-          subject.kind === 'stack'
+          subject.kind === 'stack' && !commit
             ? `${String(index + 1).padStart(2, '0')} · ${snapshot.metadata.baseRepo?.replace('/', ' · ') ?? 'PR'} #${snapshot.url.split('/').pop()}/`
             : '';
         return [...snapshot.files]
           .sort((a, b) => a.path.localeCompare(b.path))
           .map((file) => ({ key: prefix + file.path, snapshot, file }));
       }),
-    [snapshots, subject.kind]
+    [snapshots, subject.kind, !!commit]
   );
   const entry =
     entries.find((e) => e.key === selected) ?? entries.find((e) => !progress.isFileViewed(viewKey(e))) ?? entries.at(0);
@@ -197,6 +232,7 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
         path: entry.file.path,
         baseSha: entry.snapshot.metadata.baseSha,
         headSha: entry.snapshot.metadata.headSha,
+        comparison: entry.snapshot.comparison,
       }
     : null;
   const preview = useMemo(() => (entry ? previewFor(activeKey, entry.file) : undefined), [activeKey, entry?.file]);
@@ -219,8 +255,53 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
       })),
     [entries, unviewed, viewedSignature, discussion.discussions]
   );
+  useEffect(() => {
+    if (!initialFile) return;
+    const match = entries.find(
+      (e) =>
+        e.snapshot.url === initialFile.url &&
+        (e.file.path === initialFile.path || e.file.previousPath === initialFile.path)
+    );
+    if (match) select(match.key);
+    else if (snapshots.length)
+      setError(`“${initialFile.path}” is not in the current PR changes. Choose another file to comment on.`);
+  }, [initialFile, entries]);
   // Keep selection/scroll independent of tabs, queue navigation, and background discovery.
+  function warmFile(key: string) {
+    const target = entries.find((e) => e.key === key);
+    if (!target || fileIsReady(target.snapshot, target.file)) return () => {};
+    return prefetchInspection(viewKey(target), () => prepareFile(target.snapshot, target.file, true));
+  }
+  useEffect(() => {
+    if (!entry) return;
+    const index = entries.indexOf(entry);
+    const cancel = [index + 1, index + 2, index - 1].flatMap((i) => (entries[i] ? [warmFile(entries[i].key)] : []));
+    return () => cancel.forEach((stop) => stop());
+  }, [activeKey, entries]);
   function select(key: string) {
+    const target = entries.find((e) => e.key === key);
+    if (!target) return;
+    const id = ++fileNavigation.current;
+    setNavigationError(undefined);
+    if (fileIsReady(target.snapshot, target.file)) {
+      setOpeningFile('');
+      applySelection(key);
+      return;
+    }
+    setOpeningFile(key);
+    void prepareFile(target.snapshot, target.file)
+      .then(() => {
+        if (alive.current && fileNavigation.current === id) applySelection(key);
+      })
+      .catch((error: unknown) => {
+        if (alive.current && fileNavigation.current === id)
+          setNavigationError({ key, message: error instanceof Error ? error.message : String(error) });
+      })
+      .finally(() => {
+        if (alive.current && fileNavigation.current === id) setOpeningFile('');
+      });
+  }
+  function applySelection(key: string) {
     if (viewport.current && entry) position.scroll[activeKey] = viewport.current.scrollTop;
     position.selected = key;
     persist();
@@ -243,6 +324,7 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
         baseSha: entry.snapshot.metadata.baseSha,
         headSha: entry.snapshot.metadata.headSha,
         path: entry.file.path,
+        comparison: entry.snapshot.comparison,
       })
       .then((value) => {
         if (!cancelled) setLoadedFile({ key: activeKey, data: value });
@@ -301,7 +383,8 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
   const other = matching.filter((t) => !inline.includes(t));
   const refreshThreads = discussion.refresh;
   const comments = useChangesComments({
-    snapshot: entry?.snapshot,
+    enabled: !commit,
+    snapshot: commit ? undefined : entry?.snapshot,
     path: entry?.file.path,
     activeKey,
     inline,
@@ -404,7 +487,7 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
   return (
     <section
       className="pr-changes"
-      aria-label="PR changes"
+      aria-label={commit ? 'Commit changes' : 'PR changes'}
       onKeyDown={(e) => {
         if (e.key !== 'Escape' || chatOpen) e.stopPropagation();
       }}
@@ -412,29 +495,39 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
       <div className="changes-toolbar">
         <Button variant="ghost" size="sm" onClick={() => setTreeOpen((v) => !v)} aria-expanded={treeOpen}>
           <PanelLeft size={15} />
-          Files <span>{entries.length}</span>
+          {commit ? (
+            'Commits & files'
+          ) : (
+            <>
+              Files <span>{entries.length}</span>
+            </>
+          )}
         </Button>
-        <span className="changes-progress">
-          {entries.filter((e) => progress.isFileViewed(viewKey(e))).length} / {entries.length} viewed
-        </span>
+        {(!commit || commit.snapshot) && (
+          <span className="changes-progress">
+            {entries.filter((e) => progress.isFileViewed(viewKey(e))).length} / {entries.length} viewed
+          </span>
+        )}
         <span className="changes-toolbar-spacer" />
-        {comments.controls}
-        <label className="sr-only" htmlFor="changes-layout">
-          Diff layout
-        </label>
-        <select
-          id="changes-layout"
-          value={prefs.diffLayout}
-          onChange={(e) => savePreferences({ diffLayout: e.target.value as Preferences['diffLayout'] })}
-        >
-          <option value="split">Split</option>
-          <option value="unified">Unified</option>
-        </select>
-        <DiffAppearanceMenu value={appearance} onChange={(diffAppearance) => savePreferences({ diffAppearance })} />
-        <Button variant="ghost" size="sm" disabled={loading} onClick={() => void load(true)}>
-          <RefreshCw size={14} />
-          {loading ? 'Loading…' : 'Update changes'}
-        </Button>
+        {openingFile && (
+          <span className="changes-progress" role="status">
+            Opening {openingFile.split('/').pop()}…
+          </span>
+        )}
+        {commit?.tools}
+        {!commit && comments.controls}
+        <DiffAppearanceMenu
+          layout={prefs.diffLayout}
+          onLayoutChange={(diffLayout) => savePreferences({ diffLayout })}
+          value={appearance}
+          onChange={(diffAppearance) => savePreferences({ diffAppearance })}
+        />
+        {!commit && (
+          <Button variant="ghost" size="sm" disabled={loading} onClick={() => void load(true)}>
+            <RefreshCw size={14} />
+            {loading ? 'Loading…' : 'Update changes'}
+          </Button>
+        )}
       </div>
       {newer && (
         <div className="changes-notice" role="status">
@@ -450,33 +543,66 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
           {error && <button onClick={() => void load(true)}>Retry</button>}
         </div>
       )}
-      {comments.panel}
+      {navigationError && (
+        <div className="changes-notice" role="alert">
+          Could not open {navigationError.key}. {navigationError.message}
+          <button onClick={() => select(navigationError.key)}>Retry</button>
+        </div>
+      )}
+      {!commit && comments.panel}
       <div
         className={`changes-workspace${treeOpen ? '' : ' tree-hidden'}${chatOpen ? ' chat-open' : ''}`}
         style={{ '--changes-tree-width': `${treeWidth}px` } as CSSProperties}
       >
         {treeOpen && (
-          <aside className="changes-tree-pane" aria-label="File browser">
-            <div className="changes-tree-controls">
-              <input
-                aria-label="Find changed files"
-                placeholder="Find a file…"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-              <label>
-                <input type="checkbox" checked={unviewed} onChange={(e) => setUnviewed(e.target.checked)} />
-                Unviewed only
-              </label>
-            </div>
-            {loading && !snapshots.length ? (
-              <p role="status">Loading changed files…</p>
-            ) : !visible.length ? (
-              <p role="status">
-                {unviewed ? 'All files viewed. Turn off Unviewed only to browse again.' : 'No changed files.'}
-              </p>
-            ) : (
-              <ChangesFileTree entries={treeEntries} selected={entry?.key ?? ''} query={query} onSelect={select} />
+          <aside className={`changes-tree-pane${commit ? ' commits-sidebar' : ''}`} aria-label="File browser">
+            {commit?.sidebar}
+            {commit && (
+              <button className="commit-section-toggle" onClick={commit.toggleFiles} aria-expanded={commit.filesOpen}>
+                {commit.filesOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />} Changed files{' '}
+                <span>{commit.snapshot ? entries.length : '—'}</span>
+              </button>
+            )}
+            {(!commit || commit.filesOpen) && (
+              <>
+                <div className="changes-tree-controls">
+                  {!commit && (
+                    <input
+                      aria-label="Find changed files"
+                      placeholder="Find a file…"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                    />
+                  )}
+                  <label>
+                    <input type="checkbox" checked={unviewed} onChange={(e) => setUnviewed(e.target.checked)} />
+                    Unviewed only
+                  </label>
+                </div>
+                {commit && !commit.snapshot ? (
+                  <p className="commit-inherited" role="status">
+                    {commit.fileStatus}
+                  </p>
+                ) : loading && !snapshots.length ? (
+                  <p role="status">Loading changed files…</p>
+                ) : !visible.length ? (
+                  <p role="status">
+                    {unviewed ? 'All files viewed. Turn off Unviewed only to browse again.' : 'No changed files.'}
+                  </p>
+                ) : (
+                  <ChangesFileTree
+                    entries={treeEntries}
+                    selected={entry?.key ?? ''}
+                    query={query}
+                    onSelect={select}
+                    onPreview={(key) => {
+                      hoverCancel.current();
+                      hoverCancel.current = warmFile(key);
+                    }}
+                    showComments={!commit}
+                  />
+                )}
+              </>
             )}
           </aside>
         )}
@@ -526,13 +652,16 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
           />
         )}
         <div className="changes-diff-pane">
+          {commit?.header}
           {entry && (
             <header className="changes-file-header">
               <div>
-                <span className="changes-source">
-                  {entry.snapshot.metadata.baseRepo} #{entry.snapshot.url.split('/').pop()} ·{' '}
-                  {entry.snapshot.metadata.headSha.slice(0, 7)}
-                </span>
+                {!commit && (
+                  <span className="changes-source">
+                    {entry.snapshot.metadata.baseRepo} #{entry.snapshot.url.split('/').pop()} ·{' '}
+                    {entry.snapshot.metadata.headSha.slice(0, 7)}
+                  </span>
+                )}
                 <h2 title={entry.file.path}>
                   {entry.file.previousPath && <span>{entry.file.previousPath} → </span>}
                   {entry.file.path}
@@ -571,15 +700,27 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
                 <Button variant="outline" size="sm" onClick={() => mark(true)}>
                   Viewed & next
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={!range || !comments.writable}
-                  onClick={() => range && comments.begin(range)}
-                  title="Select lines in the diff to comment"
-                >
-                  <MessageSquare size={14} /> Comment
-                </Button>
+                {!commit && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={!range || !comments.writable}
+                    onClick={() => range && comments.begin(range)}
+                    title="Select lines in the diff to comment"
+                  >
+                    <MessageSquare size={14} /> Comment
+                  </Button>
+                )}
+                {commit && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    title="Open current file in Changes to comment"
+                    onClick={() => commit.onOpenCurrentFile(entry.snapshot.url, entry.file.path)}
+                  >
+                    Comment in Changes
+                  </Button>
+                )}
                 <Button variant="ghost" size="sm" onClick={() => ask(selectedCode())}>
                   <MessageSquare size={14} />
                   Ask about this
@@ -598,7 +739,8 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
               }
             }}
           >
-            {!entry && !loading && <p className="changes-empty">Select a file to inspect its changes.</p>}
+            {commit?.status}
+            {!entry && !loading && !commit && <p className="changes-empty">Select a file to inspect its changes.</p>}
             {entry && !contents && !preview && !fileError && (
               <div className="changes-loading" role="status">
                 Loading file contents…
@@ -665,7 +807,7 @@ export function PrChangesView({ subject, preferences }: { subject: ReviewSubject
                 />
               )}
             </div>
-            {entry && (
+            {entry && !commit && (
               <div className="changes-discussion-tools">
                 <Button variant="ghost" size="sm" onClick={() => void refreshThreads(entry.snapshot.url)}>
                   Refresh comments

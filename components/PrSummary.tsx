@@ -1,4 +1,5 @@
 import { Tabs } from 'radix-ui';
+import { PrCommitsView } from './PrCommitsView';
 import { PrChangesView } from './PrChangesView';
 import type { Preferences } from '../lib/types';
 import { GitHubAuthor } from './GitHubAuthor';
@@ -36,8 +37,8 @@ export function PrSummary({
   shortcutsEnabled = true,
 }: {
   item: QueueItem;
-  tab: 'summary' | 'changes';
-  onTabChange: (tab: 'summary' | 'changes') => void;
+  tab: 'summary' | 'changes' | 'commits';
+  onTabChange: (tab: 'summary' | 'changes' | 'commits') => void;
   preferences: Preferences | null;
   starting: boolean;
   error: string;
@@ -60,6 +61,7 @@ export function PrSummary({
   positions: Map<string, PrReadingPosition>;
   shortcutsEnabled?: boolean;
 }) {
+  const [initialFile, setInitialFile] = useState<{ url: string; path: string }>();
   const heading = useRef<HTMLHeadingElement>(null);
   const page = useRef<HTMLDivElement>(null);
   const restoring = useRef(false);
@@ -156,11 +158,11 @@ export function PrSummary({
       value={tab}
       onValueChange={(value) => {
         if (tab === 'summary') remember();
-        onTabChange(value as 'summary' | 'changes');
+        onTabChange(value as 'summary' | 'changes' | 'commits');
       }}
       asChild
     >
-      <main className={`pr-summary-page ${stacked ? 'is-stack' : ''} ${tab === 'changes' ? 'showing-changes' : ''}`}>
+      <main className={`pr-summary-page ${stacked ? 'is-stack' : ''} ${tab !== 'summary' ? 'showing-changes' : ''}`}>
         <div className="pr-summary-toolbar">
           <div className="pr-summary-toolbar-inner">
             <button onClick={back} className="pr-back" title="Return to work queue (Esc)">
@@ -237,9 +239,30 @@ export function PrSummary({
         <Tabs.List className="pr-overview-tabs" aria-label="PR overview">
           <Tabs.Trigger value="summary">Summary</Tabs.Trigger>
           <Tabs.Trigger value="changes">Changes</Tabs.Trigger>
+          <Tabs.Trigger value="commits">Commits</Tabs.Trigger>
         </Tabs.List>
         <Tabs.Content value="changes" className="pr-changes-tab">
-          {preferences && <PrChangesView key={item.subject.id} subject={item.subject} preferences={preferences} />}
+          {preferences && (
+            <PrChangesView
+              key={item.subject.id}
+              subject={item.subject}
+              preferences={preferences}
+              initialFile={initialFile}
+            />
+          )}
+        </Tabs.Content>
+        <Tabs.Content value="commits" className="pr-changes-tab">
+          {preferences && (
+            <PrCommitsView
+              key={item.subject.id}
+              subject={item.subject}
+              preferences={preferences}
+              onOpenCurrentFile={(url, path) => {
+                setInitialFile({ url, path });
+                onTabChange('changes');
+              }}
+            />
+          )}
         </Tabs.Content>
         <Tabs.Content value="summary" className="pr-summary-content" ref={page} onScroll={remember}>
           <div className="pr-summary-body">

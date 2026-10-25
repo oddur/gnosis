@@ -33,3 +33,22 @@ void test('failed reads retry and contents are bounded by memory budget', async 
   assert.equal(cache.peek(request), undefined);
   assert.equal(cache.peek({ ...request, path: 'second.ts' }), value);
 });
+
+void test('a foreground click can continue when a speculative read stops at the background budget reserve', async () => {
+  const calls: boolean[] = [];
+  let rejectPrefetch: (error: Error) => void = () => {};
+  const cache = createPrFileCache(async (_request, background) => {
+    calls.push(!!background);
+    if (background)
+      await new Promise<void>((_resolve, reject) => {
+        rejectPrefetch = reject;
+      });
+    return value;
+  });
+  const speculative = cache.read(request, true);
+  const foreground = cache.read(request);
+  rejectPrefetch(new Error('Background budget reserve'));
+  await assert.rejects(speculative);
+  assert.deepEqual(await foreground, value);
+  assert.deepEqual(calls, [true, false]);
+});
