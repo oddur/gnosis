@@ -90,7 +90,7 @@ void app.whenReady().then(async () => {
       true,
       'Author Markdown stays beneath the app heading hierarchy'
     );
-    assert.equal(await js("document.querySelector('.pr-markdown').getBoundingClientRect().width <= 550"), true);
+    assert.equal(await js("Math.abs(document.querySelector('.pr-markdown').getBoundingClientRect().width-document.querySelector('.pr-description').getBoundingClientRect().width)<1"), true, 'Author description fills the main column');
     assert.equal(await js("document.querySelectorAll('.pr-description table').length"), 1);
     assert.equal(await js("document.querySelectorAll('.pr-description input[type=checkbox]').length"), 2);
     assert.equal(await js(`Array.from(document.querySelectorAll('.pr-description input[type=checkbox]')).every(box => box.disabled && box.getAttribute('aria-label')?.trim().length > 3)`), true, 'Read-only task boxes announce the task text');
@@ -181,6 +181,8 @@ void app.whenReady().then(async () => {
       q.items.find(i=>i.subject.title.includes('Fix reconnect')).subject.members[0].description=window.originalDescription;
     })()`);
     await wait("document.querySelectorAll('.pr-description .mermaid-diagram').length===1");
+    await wait("!!document.querySelector('.pr-description .mermaid-preview > div > svg')");
+    await js("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
     await js("document.querySelector('.pr-summary-page').scrollTop = 420");
     await js('document.querySelector(\'[aria-label="Next change"]\').click()');
     await wait("document.querySelector('.pr-summary-content h1')?.textContent.includes('Reduce allocations')");

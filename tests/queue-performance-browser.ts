@@ -54,7 +54,8 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('[data-queue-id=\"synthetic-500\"] .queue-row-main').getAttribute('aria-pressed')==='true'");
     await js("document.querySelector('[data-queue-id=\"synthetic-500\"] .queue-disclosure').click()");
     await wait("document.querySelectorAll('[data-queue-id=\"synthetic-500\"] .queue-member').length===3");
-    assert.ok(await js(`(()=>{const a=document.querySelector('[data-queue-id="synthetic-500"]'),b=document.querySelector('[data-queue-id="synthetic-501"]');return !b||a.getBoundingClientRect().bottom<=b.getBoundingClientRect().top+1})()`), 'Expanded stack cannot overlap the next row');
+    // ResizeObserver delivers measurements after the expanded children mount.
+    await wait(`(()=>{const a=document.querySelector('[data-queue-id="synthetic-500"]'),b=document.querySelector('[data-queue-id="synthetic-501"]');return !b||a.getBoundingClientRect().bottom<=b.getBoundingClientRect().top+1})()`);
     await js("document.querySelector('[data-queue-id=\"synthetic-500\"] .queue-row-main').focus()");
     for (let i = 0; i < 25; i++) {
       await js("document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}))");

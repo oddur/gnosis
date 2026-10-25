@@ -1,4 +1,5 @@
 import type { GitHubProfile } from '../lib/github-profile';
+import type { QueueSignalRequest, QueueSignals } from '../lib/queue-signals';
 import type { LocalSearchResponse } from './command-search-service';
 import type { GitHubDevicePrompt } from '../lib/github-auth';
 import type { QueueViewAction } from '../lib/saved-views';
@@ -28,6 +29,7 @@ import type {
 
 contextBridge.exposeInMainWorld('electronAPI', {
   getGitHubProfile: (login:string):Promise<GitHubProfile> => ipcRenderer.invoke('get-github-profile',login),
+  getQueueSignals: (requests: QueueSignalRequest[]): Promise<QueueSignals[]> => ipcRenderer.invoke('get-queue-signals', requests),
   commandSearch: (query: string, includeBots = false, recentIds: string[] = []): Promise<LocalSearchResponse> => ipcRenderer.invoke('command-search', query, includeBots, recentIds),
   commandGitHubSearch: (query: string): Promise<PrSearchResult[]> => ipcRenderer.invoke('command-github-search', query),
   listActivity: (): Promise<ActivityTask[]> => ipcRenderer.invoke('list-activity'),

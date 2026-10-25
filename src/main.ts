@@ -1,4 +1,6 @@
 import { createGitHubProfileService } from './github-profile-service';
+import { createQueueSignalsService } from './queue-signals-service';
+import type { QueueSignalRequest } from '../lib/queue-signals';
 import { githubCachedResponses } from '../lib/github-client';
 import { createCommandSearchService } from './command-search-service';
 import type { QueueViewAction } from '../lib/saved-views';
@@ -2348,6 +2350,12 @@ ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
 });
 
 const getGitHubProfile = createGitHubProfileService();
+const getQueueSignals = createQueueSignalsService();
+ipcMain.handle('get-queue-signals', (_event, requests: QueueSignalRequest[]) => {
+  const token = getResolvedToken();
+  if (!token) return [];
+  return getQueueSignals(getGitHubClient(token), requests);
+});
 ipcMain.handle('get-github-profile', (_event, login:string) => {
   const token=getResolvedToken();
   if(!token)throw new Error('Connect GitHub to load profile details.');

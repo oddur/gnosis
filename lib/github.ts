@@ -36,6 +36,7 @@ export async function getPrMetadata(
   const { data } = await octokit.pulls.get({ owner, repo, pull_number: pullNumber });
   return {
     title: data.title,
+    commentCount: data.comments,
     description: data.body ?? '',
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- GitHub API can return null
     author: data.user?.login ?? 'unknown',
