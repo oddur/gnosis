@@ -84,7 +84,7 @@ void app.whenReady().then(async () => {
     );
     await openPalette();
     await fill('zzzzzzzzzzzzzzzz');
-    await wait("document.querySelector('.command-palette')?.textContent.includes('No matching commands')");
+    await wait("document.querySelector('.command-palette')?.textContent.includes('No local matches')");
     assert.equal(await js("document.querySelector('[role=combobox]').hasAttribute('aria-activedescendant')"), false);
     await fill('settings');
     await key('Enter');

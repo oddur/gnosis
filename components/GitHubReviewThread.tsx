@@ -1,3 +1,4 @@
+import { useSessionDraft } from '../lib/session-drafts';
 import { useId, useState } from 'react';
 import { MessageSquare, Check, ChevronRight } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -12,8 +13,8 @@ interface Props {
 }
 
 export function GitHubReviewThread({ thread, reason, onAction }: Props) {
-  const [replying, setReplying] = useState(false);
-  const [draft, setDraft] = useState('');
+  const [replying, setReplying] = useSessionDraft(`thread-replying:${thread.id}`,false);
+  const [draft, setDraft] = useSessionDraft(`thread-reply:${thread.id}`, '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const inputId = useId();
@@ -34,7 +35,7 @@ export function GitHubReviewThread({ thread, reason, onAction }: Props) {
   }
   const first = thread.comments.length ? thread.comments[0] : undefined;
   return (
-    <details className="github-thread" open={!thread.isResolved}>
+    <details className="github-thread" data-thread-id={thread.id} open={!thread.isResolved}>
       <summary>
         <ChevronRight className="github-thread-chevron" size={12} aria-hidden="true" />
         {thread.isResolved ? <Check size={14} aria-hidden="true" /> : <MessageSquare size={14} aria-hidden="true" />}

@@ -1,3 +1,4 @@
+import type { LocalSearchResponse } from './command-search-service';
 import type { GitHubDevicePrompt } from '../lib/github-auth';
 import type { QueueViewAction } from '../lib/saved-views';
 import type { QueueFilters } from '../lib/queue-filters';
@@ -26,6 +27,8 @@ import type {
 declare global {
   interface Window {
     electronAPI: {
+      commandSearch: (query: string, includeBots?: boolean, recentIds?: string[]) => Promise<LocalSearchResponse>;
+      commandGitHubSearch: (query: string) => Promise<PrSearchResult[]>;
       listActivity: () => Promise<ActivityTask[]>;
       activityAction: (id:string, action:ActivityAction) => Promise<void>;
       workbenchViewAction: (action: QueueViewAction) => Promise<WorkbenchQueue>;

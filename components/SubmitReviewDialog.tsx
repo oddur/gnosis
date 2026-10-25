@@ -1,3 +1,4 @@
+import { useSessionDraft } from '../lib/session-drafts';
 import { useState, useEffect } from 'react';
 import { AlertTriangle, Check, ExternalLink, MessageSquare, ShieldCheck, ShieldX } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -24,7 +25,7 @@ interface Props {
 export function SubmitReviewDialog({ open, onOpenChange, comments, prUrl, headSha, isOwnPr, onSubmit }: Props) {
   const target = prUrl.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
   const destination = target ? `${target[1]}/${target[2]} #${target[3]}` : prUrl;
-  const [body, setBody] = useState('');
+  const [body, setBody] = useSessionDraft(`submission:${prUrl}:${headSha ?? ''}`, '');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successUrl, setSuccessUrl] = useState<string | null>(null);

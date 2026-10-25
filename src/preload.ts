@@ -1,3 +1,4 @@
+import type { LocalSearchResponse } from './command-search-service';
 import type { GitHubDevicePrompt } from '../lib/github-auth';
 import type { QueueViewAction } from '../lib/saved-views';
 import type { QueueFilters } from '../lib/queue-filters';
@@ -25,6 +26,8 @@ import type {
 } from '../lib/types';
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  commandSearch: (query: string, includeBots = false, recentIds: string[] = []): Promise<LocalSearchResponse> => ipcRenderer.invoke('command-search', query, includeBots, recentIds),
+  commandGitHubSearch: (query: string): Promise<PrSearchResult[]> => ipcRenderer.invoke('command-github-search', query),
   listActivity: (): Promise<ActivityTask[]> => ipcRenderer.invoke('list-activity'),
   activityAction: (id:string, action:ActivityAction): Promise<void> => ipcRenderer.invoke('activity-action',id,action),
   workbenchViewAction: (action: QueueViewAction): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-view-action', action),

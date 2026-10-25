@@ -1,3 +1,7 @@
+import { rememberCommandDestination } from '../../lib/command-recents';
+import { useCommandCenter, useCommandScope } from '../../lib/command-center';
+import type { SearchDestination } from '../../lib/command-search';
+import { useSessionDraft } from '../../lib/session-drafts';
 import type { VirtualItem } from '@tanstack/react-virtual';
 import { VirtualReviewQueue } from '../../components/VirtualReviewQueue';
 import { GitHubIcon } from '../../lib/constants';
@@ -64,6 +68,7 @@ interface Props {
   onReviewReady: (review: ReviewGuide) => void;
   prefillPrUrl?: string;
   initialSubjectId?: string;
+  commandDestination?: { destination: Extract<SearchDestination, { kind: 'home' }>; nonce: number };
 }
 const labels = {
   updated: 'Changed since AI explanation',
@@ -71,7 +76,9 @@ const labels = {
   other: 'Other changes',
 };
 
-export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Props) {
+export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId, commandDestination }: Props) {
+  const commandCenter = useCommandCenter();
+  const handledCommand = useRef<number>(0);
   const [auth, setAuth] = useState<{ authenticated: boolean; login: string | null } | null>(null);
   const [prefs, setPrefs] = useState<Preferences | null>(null);
   const [queue, setQueue] = useState<WorkbenchQueue>({ items: [], warnings: [], remaining: 0 });
@@ -172,7 +179,11 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   const [summaryErrors, setSummaryErrors] = useState<Record<string, string>>({});
   const [openingPr, setOpeningPr] = useState(false);
   const [openedItem, setOpenedItem] = useState<QueueItem | null>(null);
-  const readingPositions = useRef(new Map<string, PrReadingPosition>());
+  const [positions] = useSessionDraft('queue-reading-positions', () => new Map<string, PrReadingPosition>());
+  useEffect(() => {
+    if (openedItem) rememberCommandDestination(auth?.login ?? 'local', `subject:${openedItem.subject.id}`);
+  }, [openedItem?.subject.id, auth?.login]);
+  const readingPositions = useRef(positions);
   const [requestedReviews, setRequestedReviews] = useState<Record<string, string>>({});
   const [parentUrl, setParentUrl] = useState('');
   const [childUrl, setChildUrl] = useState('');
@@ -183,7 +194,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   const searchInput = useRef<HTMLInputElement>(null);
   const queueScrollElement = useRef<HTMLElement>(null);
   const queueMeasurements = useRef<VirtualItem[]>([]);
-  const queueScrollOffset = useRef(0);
+  const [queueScrollOffset] = useSessionDraft('queue-scroll', () => ({ current: 0 }));
   const pendingRowFocus = useRef<string | null>(null);
   const attachQueueScroll = useCallback((element: HTMLElement | null) => {
     queueScrollElement.current = element;
@@ -195,12 +206,18 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
   const selectedItem = queue.items.find(
     (i) => i.subject.id === selected && matchesQueueFilters(i, filters, Date.now(), auth?.login)
   );
-  const summarySource = openedItem && (queue.items.find((item) => item.subject.id === openedItem.subject.id) ?? openedItem);
+  const summarySource =
+    openedItem && (queue.items.find((item) => item.subject.id === openedItem.subject.id) ?? openedItem);
   const summaryItem = summarySource && {
     ...summarySource,
-    review: history.find((entry) => entry.id === requestedReviews[summarySource.subject.id]) ??
-      history.find((entry) => entry.snapshot?.subject.id === summarySource.subject.id ||
-      (!entry.snapshot && entry.prUrl === summarySource.subject.members[0].url)) ?? summarySource.review,
+    review:
+      history.find((entry) => entry.id === requestedReviews[summarySource.subject.id]) ??
+      history.find(
+        (entry) =>
+          entry.snapshot?.subject.id === summarySource.subject.id ||
+          (!entry.snapshot && entry.prUrl === summarySource.subject.members[0].url)
+      ) ??
+      summarySource.review,
   };
   const statusSubject = summaryItem?.subject ?? selectedItem?.subject;
   const briefingSelection = prefs ? briefingModel(prefs) : undefined;
@@ -390,7 +407,11 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
       if (openedItem) setSummaryErrors((previous) => ({ ...previous, [requestKey]: message }));
       else setError(message);
     } finally {
-      setPendingStarts((previous) => { const next = new Set(previous); next.delete(requestKey); return next; });
+      setPendingStarts((previous) => {
+        const next = new Set(previous);
+        next.delete(requestKey);
+        return next;
+      });
     }
   };
   const open = async (entry: ReviewHistoryEntry) => {
@@ -465,17 +486,35 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
       const match = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:[/?#].*)?$/.exec(url.trim());
       if (!match) throw new Error('Enter a GitHub PR URL, such as https://github.com/owner/repo/pull/123.');
       const canonical = `https://github.com/${match[1]}/${match[2]}/pull/${match[3]}`;
-      const cached = queue.items.find((item) => item.subject.members.some((m) => m.url.toLowerCase() === canonical.toLowerCase()));
+      const cached = queue.items.find((item) =>
+        item.subject.members.some((m) => m.url.toLowerCase() === canonical.toLowerCase())
+      );
       if (cached) {
         setOpenedItem(cached);
         setSelected(cached.subject.id);
       } else {
         const meta = await window.electronAPI.getPrMetadata(canonical);
         const repo = `${match[1]}/${match[2]}`;
-        setOpenedItem({ attention: 'other', subject: {
-          id: canonical, kind: 'pr', title: meta.title, edges: [], warnings: [],
-          members: [{ ...meta, number: Number(match[3]), repo, headRepo: meta.headRepo ?? repo, baseRepo: meta.baseRepo ?? repo, role: 'watched' }],
-        } });
+        setOpenedItem({
+          attention: 'other',
+          subject: {
+            id: canonical,
+            kind: 'pr',
+            title: meta.title,
+            edges: [],
+            warnings: [],
+            members: [
+              {
+                ...meta,
+                number: Number(match[3]),
+                repo,
+                headRepo: meta.headRepo ?? repo,
+                baseRepo: meta.baseRepo ?? repo,
+                role: 'watched',
+              },
+            ],
+          },
+        });
       }
       setShowUrl(false);
       setUrl('');
@@ -485,6 +524,78 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
       setOpeningPr(false);
     }
   };
+  useEffect(() => {
+    if (!commandDestination || !prefs || loading || handledCommand.current === commandDestination.nonce) return;
+    handledCommand.current = commandDestination.nonce;
+    const target = commandDestination.destination;
+    setError('');
+    if (target.subject) {
+      setOpenedItem(target.subject);
+      setSelected(target.subject.subject.id);
+      return;
+    }
+    setOpenedItem(null);
+    if (target.settings) {
+      openSettings(target.settings as SettingsSection);
+      return;
+    }
+    if (target.local) {
+      setLocalOpen(true);
+      return;
+    }
+    if (target.viewId) {
+      setSavedView(false);
+      void viewAction({ type: 'activate', id: target.viewId }).catch(() => {});
+      return;
+    }
+    if (target.repo) {
+      setSavedView(false);
+      updateFilters({ ...DEFAULT_QUEUE_FILTERS, repo: target.repo });
+      return;
+    }
+    if (target.section) {
+      setSavedView(target.section === 'saved');
+      if (target.section !== 'saved')
+        updateFilters({
+          attention: target.section === 'updated' || target.section === 'requested' ? target.section : 'all',
+          kind: target.section === 'stacks' ? 'stack' : 'all',
+        });
+    }
+  }, [commandDestination, prefs, loading]);
+  const commandItem = summaryItem ?? selectedItem;
+  useCommandScope('home', [
+    ...(commandItem && queue.items.some((item) => item.subject.id === commandItem.subject.id)
+      ? [
+          {
+            id: 'context:briefing',
+            label: `Create briefing · ${commandItem.subject.title}`,
+            group: 'Uses your briefing model · tracked in Activity',
+            perform: async () => {
+              await window.electronAPI.workbenchBriefing(commandItem.subject.id);
+              await refresh();
+            },
+          },
+        ]
+      : []),
+    ...(commandItem
+      ? [
+          {
+            id: 'context:review',
+            label: `Generate AI review · ${commandItem.subject.title}`,
+            group: 'Uses your selected model · tracked in Activity',
+            perform: () =>
+              start(
+                commandItem.subject.members[0].url,
+                queue.items.some((item) => item.subject.id === commandItem.subject.id)
+                  ? commandItem.subject
+                  : undefined,
+                undefined,
+                commandItem.subject.scope === 'single'
+              ),
+          },
+        ]
+      : []),
+  ]);
   const moveSelection = (direction: number) => {
     const index = orderedItems.findIndex((item) => item.subject.id === selected);
     const next = orderedItems.at(
@@ -564,8 +675,7 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                   pendingRowFocus.current = null;
                   node.focus({ preventScroll: true });
                 }
-              }
-              else rowButtons.current.delete(s.id);
+              } else rowButtons.current.delete(s.id);
             }}
             aria-pressed={active}
             tabIndex={
@@ -585,7 +695,10 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
               setSelected(s.id);
               setStatuses({});
             }}
-            onDoubleClick={() => { setError(''); setOpenedItem(item); }}
+            onDoubleClick={() => {
+              setError('');
+              setOpenedItem(item);
+            }}
           >
             <span className="queue-title-line">
               <span className="queue-title">{s.title}</span>
@@ -657,7 +770,9 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
       <section className="workbench-connect">
         <h2>Connect GitHub</h2>
         <p>Sign in to load your GitHub review requests. Local reviews work without a GitHub connection.</p>
-        <Button size="sm" onClick={() => setAuthOpen(true)}>Sign in to GitHub</Button>
+        <Button size="sm" onClick={() => setAuthOpen(true)}>
+          Sign in to GitHub
+        </Button>
         <p>Use browser sign-in, a sign-in code, or a personal access token.</p>
       </section>
     ) : null;
@@ -708,22 +823,46 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
               ))}
             </select>
           )}
+          <button
+            className="workbench-command-trigger"
+            onClick={() => commandCenter?.open()}
+            title="Search and navigate (⌘K / Ctrl K)"
+          >
+            <Search size={15} />
+            <span>Search</span>
+            <kbd className="kbd">{window.electronAPI.platform === 'darwin' ? '⌘ K' : 'Ctrl K'}</kbd>
+          </button>
           <WorkbenchHelp onGettingStarted={replayGettingStarted} />
           <button className="workbench-icon" title="Settings" aria-label="Settings" onClick={() => openSettings()}>
             <Settings size={17} />
           </button>
-          <button className="workbench-help-trigger" aria-label={auth?.login ? `GitHub account: ${auth.login}` : 'Connect GitHub'} data-github-account title={auth?.login ? `GitHub: ${auth.login}` : 'Connect GitHub'} onClick={() => setAuthOpen(true)}><GitHubIcon width={16} height={16} /><span className="account-name">{auth?.login ?? 'Connect GitHub'}</span></button>
+          <button
+            className="workbench-help-trigger"
+            aria-label={auth?.login ? `GitHub account: ${auth.login}` : 'Connect GitHub'}
+            data-github-account
+            title={auth?.login ? `GitHub: ${auth.login}` : 'Connect GitHub'}
+            onClick={() => setAuthOpen(true)}
+          >
+            <GitHubIcon width={16} height={16} />
+            <span className="account-name">{auth?.login ?? 'Connect GitHub'}</span>
+          </button>
         </div>
       </header>
       <UpdateBanner />
-      {summaryItem ? <PrSummary
+      {summaryItem ? (
+        <PrSummary
         key={summaryItem.subject.id}
         item={summaryItem}
         positions={readingPositions.current}
         shortcutsEnabled={!settings && !localOpen && !authOpen && !connectionRequired}
-        navigation={{ index: summaryIndex, total: orderedItems.length, viewName: activeQueueView?.name ?? 'Current filtered view',
+          navigation={{
+            index: summaryIndex,
+            total: orderedItems.length,
+            viewName: activeQueueView?.name ?? 'Current filtered view',
           previous: summaryIndex > 0 ? orderedItems[summaryIndex - 1].subject.title : undefined,
-          next: summaryIndex >= 0 ? orderedItems[summaryIndex + 1]?.subject.title : undefined, move: moveSummary }}
+            next: summaryIndex >= 0 ? orderedItems[summaryIndex + 1]?.subject.title : undefined,
+            move: moveSummary,
+          }}
         starting={pendingStarts.has(summaryItem.subject.id)}
         error={summaryErrors[summaryItem.subject.id] || error}
         statuses={statuses}
@@ -732,14 +871,23 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
           setOpenedItem(null);
           requestAnimationFrame(() => rowButtons.current.get(selected ?? '')?.focus({ preventScroll: true }));
         }}
-        onGenerate={() => void start(summaryItem.subject.members[0].url,
+          onGenerate={() =>
+            void start(
+              summaryItem.subject.members[0].url,
           queue.items.some((item) => item.subject.id === summaryItem.subject.id) ? summaryItem.subject : undefined,
-          undefined, summaryItem.subject.scope === 'single')}
-        onOpenReview={() => { if (summaryItem.review) void open(summaryItem.review); }}
+              undefined,
+              summaryItem.subject.scope === 'single'
+            )
+          }
+          onOpenReview={() => {
+            if (summaryItem.review) void open(summaryItem.review);
+          }}
         onRetryStatus={() => setStatusAttempt((n) => n + 1)}
         onAiSetup={() => openSettings('integrations')}
         onGitHubAuth={() => setAuthOpen(true)}
-      /> : <div className="workbench-body">
+        />
+      ) : (
+        <div className="workbench-body">
         <nav className="workbench-sidebar" aria-label="Workspace">
           <p className="workbench-nav-heading">Reviews</p>
           {[
@@ -894,7 +1042,9 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
             <div className="workbench-notice error" role="alert">
               <AlertCircle size={16} />
               <span>{error}</span>
-              {/GitHub.*(?:access|sign.in)|token|Resource not accessible/i.test(error) && <button onClick={() => setAuthOpen(true)}>Check GitHub access</button>}
+                {/GitHub.*(?:access|sign.in)|token|Resource not accessible/i.test(error) && (
+                  <button onClick={() => setAuthOpen(true)}>Check GitHub access</button>
+                )}
               <button aria-label="Dismiss error" onClick={() => setError('')}>
                 <X size={14} />
               </button>
@@ -970,9 +1120,11 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
             <span
               className="queue-count"
               aria-live="polite"
-              title={section === 'saved'
+                title={
+                  section === 'saved'
                 ? 'AI explanations saved on this computer'
-                : 'Each stack counts as one item. Counts use loaded GitHub data; built-in sidebar totals do not apply your other filters.'}
+                    : 'Each stack counts as one item. Counts use loaded GitHub data; built-in sidebar totals do not apply your other filters.'
+                }
             >
               {section === 'saved' ? `${saved.length} reviews` : `${items.length} of ${queue.items.length} items`}
             </span>
@@ -995,13 +1147,19 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
           )}
           {section !== 'saved' && (
             <p className="sr-only" id="queue-keyboard-help">
-              <kbd>↑</kbd> <kbd>↓</kbd> or <kbd>j</kbd> <kbd>k</kbd> select · <kbd>Enter</kbd> open ·{' '}
-              <kbd>/</kbd> search
+                <kbd>↑</kbd> <kbd>↓</kbd> or <kbd>j</kbd> <kbd>k</kbd> select · <kbd>Enter</kbd> open · <kbd>/</kbd>{' '}
+                search
             </p>
           )}
           <div className="queue-content">
-            <section className="queue-list" aria-label="Review queue" ref={attachQueueScroll}
-              onScroll={(event) => { queueScrollOffset.current = event.currentTarget.scrollTop; }}>
+              <section
+                className="queue-list"
+                aria-label="Review queue"
+                ref={attachQueueScroll}
+                onScroll={(event) => {
+                  queueScrollOffset.current = event.currentTarget.scrollTop;
+                }}
+              >
               {!gettingStartedVisible && githubConnection}
               {gettingStartedVisible && (
                 <GettingStarted
@@ -1084,8 +1242,15 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                   </div>
                 )
               ) : items.length ? (
-                <VirtualReviewQueue items={orderedItems} labels={labels} selected={selected}
-                  scrollElement={queueScrollElement} measurements={queueMeasurements} initialOffset={queueScrollOffset.current} renderRow={row} />
+                  <VirtualReviewQueue
+                    items={orderedItems}
+                    labels={labels}
+                    selected={selected}
+                    scrollElement={queueScrollElement}
+                    measurements={queueMeasurements}
+                    initialOffset={queueScrollOffset.current}
+                    renderRow={row}
+                  />
               ) : gettingStartedVisible && !queueFailed ? null : (
                 <div className="queue-empty">
                   <Inbox size={24} />
@@ -1177,17 +1342,23 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                   </p>
                 )}
                 <div className="briefing-actions">
-                  <Button
-                    size="sm"
-                    onClick={() => activate(selectedItem)}
-                  >
+                    <Button size="sm" onClick={() => activate(selectedItem)}>
                     {selectedItem.review?.status === 'completed' &&
                     selectedItem.review.snapshot?.fingerprint === fingerprint(selectedItem.subject)
                       ? 'Open AI explanation'
                       : 'Open PR overview'}
                     <ArrowRight size={14} />
                   </Button>
-                  {selectedItem.review?.status === 'completed' && <button onClick={() => { setError(''); setOpenedItem(selectedItem); }}>Author description</button>}
+                    {selectedItem.review?.status === 'completed' && (
+                      <button
+                        onClick={() => {
+                          setError('');
+                          setOpenedItem(selectedItem);
+                        }}
+                      >
+                        Author description
+                      </button>
+                    )}
                   {selectedItem.review?.status === 'completed' &&
                     selectedItem.review.snapshot?.fingerprint !== fingerprint(selectedItem.subject) && (
                       <button onClick={() => selectedItem.review && void open(selectedItem.review)}>
@@ -1327,10 +1498,23 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                           </div>
                         )}
                         {selectedItem.subject.kind === 'stack' && (
-                          <button onClick={() => {
+                            <button
+                              onClick={() => {
                             setError('');
-                            setOpenedItem({ attention: selectedItem.attention, subject: { id: m.url, kind: 'pr', scope: 'single', title: m.title, members: [m], edges: [], warnings: [] } });
-                          }}>
+                                setOpenedItem({
+                                  attention: selectedItem.attention,
+                                  subject: {
+                                    id: m.url,
+                                    kind: 'pr',
+                                    scope: 'single',
+                                    title: m.title,
+                                    members: [m],
+                                    edges: [],
+                                    warnings: [],
+                                  },
+                                });
+                              }}
+                            >
                             Open this PR
                           </button>
                         )}
@@ -1349,8 +1533,8 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                     Correct stack grouping
                   </summary>
                   <p>
-                    A parent PR contains work that another PR builds on. Choose the dependent PR and paste its parent’s
-                    full GitHub URL.
+                      A parent PR contains work that another PR builds on. Choose the dependent PR and paste its
+                      parent’s full GitHub URL.
                   </p>
                   <input
                     aria-label="Parent PR URL"
@@ -1375,7 +1559,11 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
                     Link parent
                   </Button>
                   {selectedItem.subject.edges.map((e) => (
-                    <button key={e.child} disabled={grouping} onClick={() => void correct('unlink', e.parent, e.child)}>
+                      <button
+                        key={e.child}
+                        disabled={grouping}
+                        onClick={() => void correct('unlink', e.parent, e.child)}
+                      >
                       Separate #{e.child.split('/').at(-1)} from #{e.parent.split('/').at(-1)}
                     </button>
                   ))}
@@ -1396,7 +1584,8 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
               {prefs.autoBriefings !== false && (
                 <span>
                   {filters.briefingScope === 'matches' ? 'Matches only' : 'Matches first'}
-                  {' · '}{queue.remaining} attempts left today
+                    {' · '}
+                    {queue.remaining} attempts left today
                 </span>
               )}
               <button className="workbench-help-link ml-auto" onClick={() => openSettings('queue')}>
@@ -1405,7 +1594,8 @@ export function HomePage({ onReviewReady, prefillPrUrl, initialSubjectId }: Prop
             </footer>
           )}
         </main>
-      </div>}
+        </div>
+      )}
       <GitHubAuthDialog
         open={authOpen || connectionRequired}
         connectionRequired={connectionRequired}

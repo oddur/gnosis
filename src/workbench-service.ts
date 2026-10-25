@@ -97,6 +97,8 @@ export function createWorkbenchService(deps: Deps) {
   let running: AbortController | undefined;
   let runningKey: string | undefined;
   let pumping = false;
+  const requestedBriefings = new Set<string>();
+  const requestKey = (key: string) => `${deps.auth().login ?? 'guest'}:${key}`;
   const cachePath = () => path.join(deps.directory(), 'workbench.json');
   const discoveryKey = (involvement = normalizeQueueFilters(load().filters).involvement) =>
     createHash('sha256')
@@ -152,35 +154,40 @@ export function createWorkbenchService(deps: Deps) {
       (m) => m.state === 'open' && (deps.preferences().ignoreDependabotPrs === false || !isDependabot(m.author))
     );
   }
-  function view(): WorkbenchQueue {
+  function view(includeHidden = false): WorkbenchQueue {
     const s = load();
     const history = deps.history();
     const filters = normalizeQueueFilters(s.filters);
     const selection = modelSettings();
-    const items = s.subjects.filter(includeSubject).map((subject) => {
-      const review =
-        history.find((h) => (h.snapshot?.subject.id ?? h.prUrl) === subject.id) ??
-        history.find((h) => subject.members.some((m) => m.url === h.prUrl));
-      const k = key(subject, selection);
-      const cached = s.briefs[k];
-      const briefing = cached ?? {
-        key: k,
-        status:
-          deps.preferences().autoBriefings !== false && s.used < limit() ? ('queued' as const) : ('paused' as const),
-        updatedAt: new Date().toISOString(),
-      };
-      const item = { subject, review, briefing, attention: attentionFor(subject, review) };
-      if (
-        (!cached || briefing.status === 'paused') &&
-        ((filters.involvement === 'mine' &&
-          !subject.members.some(
-            (member) => member.state === 'open' && !member.merged && isMyPr(member, deps.auth().login)
-          )) ||
-          (filters.briefingScope === 'matches' && !matchesQueueFilters(item, filters, now(), deps.auth().login)))
-      )
-        return { ...item, briefing: { ...briefing, status: 'paused' as const, pauseReason: 'filter' as const } };
-      return item;
-    });
+    const items = s.subjects
+      .filter((subject) => includeHidden || includeSubject(subject))
+      .map((subject) => {
+        const review =
+          history.find((h) => (h.snapshot?.subject.id ?? h.prUrl) === subject.id) ??
+          history.find((h) => subject.members.some((m) => m.url === h.prUrl));
+        const k = key(subject, selection);
+        const cached = s.briefs[k];
+        const briefing = cached ?? {
+          key: k,
+          status:
+            (deps.preferences().autoBriefings !== false || requestedBriefings.has(requestKey(k))) && s.used < limit()
+              ? ('queued' as const)
+              : ('paused' as const),
+          updatedAt: new Date().toISOString(),
+        };
+        const item = { subject, review, briefing, attention: attentionFor(subject, review) };
+        if (
+          !requestedBriefings.has(requestKey(k)) &&
+          (!cached || briefing.status === 'paused') &&
+          ((filters.involvement === 'mine' &&
+            !subject.members.some(
+              (member) => member.state === 'open' && !member.merged && isMyPr(member, deps.auth().login)
+            )) ||
+            (filters.briefingScope === 'matches' && !matchesQueueFilters(item, filters, now(), deps.auth().login)))
+        )
+          return { ...item, briefing: { ...briefing, status: 'paused' as const, pauseReason: 'filter' as const } };
+        return item;
+      });
     const order = { updated: 0, requested: 1, other: 2 };
     items.sort(
       (a, b) =>
@@ -593,7 +600,8 @@ export function createWorkbenchService(deps: Deps) {
     if (
       pumping ||
       deps.busy() ||
-      deps.preferences().autoBriefings === false ||
+      (deps.preferences().autoBriefings === false &&
+        ![...requestedBriefings].some((k) => k.startsWith(`${deps.auth().login}:`))) ||
       !deps.auth().token ||
       (cooldown && cooldown.error.retryAt > now()) ||
       githubClients.backoff(deps.auth().token, true)
@@ -610,9 +618,14 @@ export function createWorkbenchService(deps: Deps) {
             (member) => member.state === 'open' && !member.merged && isMyPr(member, deps.auth().login)
           )
       );
-      const item = prioritizeBriefings(candidates, filters, now(), deps.auth().login).find(
-        (i) => !s.briefs[key(i.subject)] || s.briefs[key(i.subject)]?.status === 'paused'
-      );
+      const manualItem = view().items.find((i) => requestedBriefings.has(requestKey(key(i.subject))));
+      const item =
+        manualItem ??
+        (deps.preferences().autoBriefings === false
+          ? undefined
+          : prioritizeBriefings(candidates, filters, now(), deps.auth().login).find(
+              (i) => !s.briefs[key(i.subject)] || s.briefs[key(i.subject)]?.status === 'paused'
+            ));
       if (!item || s.used >= limit()) return;
       const p = modelSettings();
       const subject = item.subject,
@@ -622,7 +635,12 @@ export function createWorkbenchService(deps: Deps) {
       runningKey = k;
       const timeout = setTimeout(() => controller.abort(new Error('Briefing exceeded 90 seconds.')), 90000);
       const preempt = setInterval(() => {
-        if (deps.busy() || deps.preferences().autoBriefings === false || !includeSubject(subject) || key(subject) !== k)
+        if (
+          deps.busy() ||
+          (!manualItem && deps.preferences().autoBriefings === false) ||
+          !includeSubject(subject) ||
+          key(subject) !== k
+        )
           controller.abort(new BriefingPaused());
       }, 500);
       s.used++;
@@ -713,6 +731,7 @@ export function createWorkbenchService(deps: Deps) {
           updatedAt: new Date().toISOString(),
         };
       } finally {
+        if (s.briefs[k].status !== 'paused') requestedBriefings.delete(`${s.account}:${k}`);
         clearTimeout(timeout);
         clearInterval(preempt);
         fs.rmSync(cwd, { recursive: true, force: true });
@@ -725,6 +744,7 @@ export function createWorkbenchService(deps: Deps) {
     }
   }
   return {
+    cached: () => view(true),
     queue,
     viewAction(action: QueueViewAction) {
       if (!deps.auth().login || !deps.auth().token) throw new Error('Connect GitHub to manage saved views.');
@@ -791,6 +811,7 @@ export function createWorkbenchService(deps: Deps) {
       const sub = load().subjects.find((s) => s.id === id);
       if (!sub) return;
       const k = key(sub);
+      requestedBriefings.delete(requestKey(k));
       if (runningKey === k) running?.abort(new BriefingCancelled());
       load().briefs[k] = { key: k, status: 'cancelled', updatedAt: new Date().toISOString() };
       save();
@@ -823,8 +844,16 @@ export function createWorkbenchService(deps: Deps) {
       save();
       return queue(true);
     },
-    retry(id: string) {
+    retry(id: string, explicit = false) {
       const sub = load().subjects.find((s) => s.id === id);
+      if (explicit) {
+        if (!sub || !includeSubject(sub))
+          throw new Error('This PR is no longer available for briefing. Refresh the queue and try again.');
+        if (load().used >= limit())
+          throw new Error('The daily briefing limit is reached. Increase it in Settings → Work queue or try tomorrow.');
+        if (runningKey === key(sub)) return view();
+        requestedBriefings.add(requestKey(key(sub)));
+      }
       if (sub) {
         load().briefs = Object.fromEntries(Object.entries(load().briefs).filter(([k]) => k !== key(sub)));
         save();

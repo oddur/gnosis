@@ -1,3 +1,4 @@
+import { useSessionScroll, useSessionDraft } from '../lib/session-drafts';
 import { ReviewImageDiff } from './ReviewImageDiff';
 import { imageMimeType } from '../lib/review-images';
 import { sourceForPath } from '../lib/workbench';
@@ -429,6 +430,9 @@ export function SlideView({
   showInlineExplanations = true,
   onShowInlineExplanationsChange,
 }: Props) {
+  const narrativeScroll = useSessionScroll(`${slide.id}:narrative`);
+  const codeScroll = useSessionScroll(`${slide.id}:code`);
+  const focusScroll = useSessionScroll(`${slide.id}:focus`);
   const typeConfig = safeConfigLookup(slideTypeConfig, slide.slideType, slideTypeConfig.foundation);
   const Icon = typeConfig.icon;
   const groupedHunks = groupHunksByFile(slide.diffHunks);
@@ -438,7 +442,7 @@ export function SlideView({
   }
   const rightPanelRef = useRef<HTMLDivElement>(null);
   const fileContentId = useId();
-  const [fileExpansion, setFileExpansion] = useState<Record<string, boolean>>({});
+  const [fileExpansion, setFileExpansion] = useSessionDraft<Record<string, boolean>>(`file-expansion:${slide.id}`, {});
   const [explanationNotice, setExplanationNotice] = useState('');
   const inlineExplanations = useMemo(
     () =>
@@ -812,13 +816,13 @@ export function SlideView({
           </Button>
         </div>
         <div hidden={narrowPane !== 'explanation'} className="flex-1 min-h-0 overflow-hidden">
-          <div hidden={!!leftSlot} className="h-full overflow-y-auto">
+          <div {...narrativeScroll} hidden={!!leftSlot} className="h-full overflow-y-auto">
             {narrativeContent}
           </div>
           {leftSlot && <div className="review-tool-slot">{leftSlot}</div>}
         </div>
         <div hidden={narrowPane !== 'code'} className="flex-1 min-h-0 overflow-hidden">
-          <div hidden={!!rightSlot} className="h-full overflow-y-auto">
+          <div {...codeScroll} hidden={!!rightSlot} className="h-full overflow-y-auto">
             {diffContent}
           </div>
           {rightSlot && <div className="review-tool-slot">{rightSlot}</div>}
@@ -831,14 +835,14 @@ export function SlideView({
     return (
       <PanelGroup orientation="horizontal" className="flex flex-1 overflow-hidden">
         <Panel defaultSize={40} minSize={25} className="overflow-hidden min-h-0">
-          <div hidden={!!leftSlot} className="h-full overflow-y-auto">
+          <div {...narrativeScroll} hidden={!!leftSlot} className="h-full overflow-y-auto">
             {narrativeContent}
           </div>
           {leftSlot && <div className="review-tool-slot">{leftSlot}</div>}
         </Panel>
         <PanelResizeHandle className="w-px bg-border hover:bg-[var(--ring)]/40 transition-colors cursor-col-resize" />
         <Panel defaultSize={60} minSize={30} className="overflow-hidden min-h-0">
-          <div hidden={!!rightSlot} className="h-full overflow-y-auto">
+          <div {...codeScroll} hidden={!!rightSlot} className="h-full overflow-y-auto">
             {diffContent}
           </div>
           {rightSlot && <div className="review-tool-slot">{rightSlot}</div>}
@@ -851,7 +855,7 @@ export function SlideView({
   // single scrollable column. Ideal for complex sections where both
   // the narrative and the diff need horizontal space.
   return (
-    <div className="flex-1 overflow-y-auto">
+    <div {...focusScroll} className="flex-1 overflow-y-auto">
       {narrativeContent}
       <div className="border-t border-border">{diffContent}</div>
     </div>

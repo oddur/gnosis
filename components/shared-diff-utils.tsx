@@ -1,3 +1,4 @@
+import { useSessionDraft } from '../lib/session-drafts';
 import { useState, useRef, useEffect } from 'react';
 import { Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -111,12 +112,14 @@ export function InlineCommentForm({
   onSubmit,
   onCancel,
   initialBody,
+  draftKey,
 }: {
   onSubmit: (body: string) => void;
   onCancel: () => void;
   initialBody?: string;
+  draftKey?: string;
 }) {
-  const [body, setBody] = useState(initialBody ?? '');
+  const [body, setBody] = useSessionDraft(`inline:${draftKey ?? initialBody ?? 'new'}`, initialBody ?? '');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -126,7 +129,7 @@ export function InlineCommentForm({
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
-      if (body.trim()) onSubmit(body.trim());
+      if (body.trim()) { onSubmit(body.trim());setBody(''); }
     }
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -148,7 +151,7 @@ export function InlineCommentForm({
         <Button variant="ghost" size="sm" onClick={onCancel}>
           Cancel
         </Button>
-        <Button size="sm" onClick={() => body.trim() && onSubmit(body.trim())} disabled={!body.trim()}>
+        <Button size="sm" onClick={() => {if(body.trim()){onSubmit(body.trim());setBody('');}}} disabled={!body.trim()}>
           Add comment
         </Button>
       </div>
@@ -170,6 +173,7 @@ export function CommentBubble({
   if (editing) {
     return (
       <InlineCommentForm
+        draftKey={comment.id}
         initialBody={comment.body}
         onSubmit={(body) => {
           onEdit(comment.id, body);

@@ -2228,3 +2228,63 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 
 /* Full-width explanations keep a comfortable reading measure on narrow-pane layouts. */
 .review-narrative > .slide-prose,.review-narrative .markdown-body { max-width:75ch; }
+
+/* App-wide command center: dense results, a steady preview, and one keyboard path. */
+.workbench-command-trigger { display:inline-flex;align-items:center;gap:8px;padding:5px 9px;border:1px solid var(--border);border-radius:5px;font-size:var(--type-control);color:var(--muted-foreground); }
+.workbench-command-trigger:hover { color:var(--foreground);background:var(--accent); }
+.global-command-dialog { width:min(900px,calc(100vw - 32px));max-width:none!important;padding:0;gap:0;overflow:hidden;border-radius:12px;max-height:calc(100dvh - 40px);background:var(--popover); }
+.global-command { border-radius:inherit;min-height:0;color:var(--foreground); }
+.global-command-search { display:flex;align-items:center;padding:6px 16px 6px 4px;gap:12px;border-bottom:1px solid var(--border); }
+.global-command-search [data-slot=command-input-wrapper] { flex:1;border:0;height:48px; }
+.global-command-search input { font-size:16px;height:48px;color:var(--foreground); }
+.global-command-search input::placeholder { color:var(--muted-foreground);opacity:1; }
+.global-command-search svg { color:var(--muted-foreground);opacity:1; }
+.global-command-scope { display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 16px;border-bottom:1px solid var(--border);font-size:12px;color:var(--muted-foreground); }
+.global-command-scope>span,.global-command-scope label { display:flex;align-items:center;gap:7px; }
+.global-command-scope label { cursor:pointer;min-height:24px; }
+.global-command-scope input { accent-color:var(--primary); }
+.global-command-body { display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);height:min(440px,55dvh);min-height:150px; }
+.global-command-results { max-height:none;min-width:0;scroll-padding:8px;overflow-y:auto; }
+.global-command [cmdk-group-heading] { color:var(--muted-foreground);font-size:12px;font-weight:600;padding:10px 10px 6px; }
+.global-command [cmdk-item] { align-items:flex-start;gap:10px;min-height:42px;padding:10px;border-radius:5px;cursor:pointer; }
+.global-command [cmdk-item]>svg { margin-top:2px;flex-shrink:0;color:var(--muted-foreground); }
+.global-command [cmdk-item][data-selected=true] { background:var(--accent);color:var(--accent-foreground); }
+.global-command [cmdk-item][data-selected=true]>svg { color:var(--accent-foreground); }
+.global-command-result-copy { display:flex;flex-direction:column;gap:4px;min-width:0;flex:1; }
+.global-command-result-copy strong { font-size:14px;font-weight:550;line-height:1.45;overflow-wrap:anywhere; }
+.global-command-result-copy>span,.global-command-result-copy small { font-size:12px;line-height:1.5;color:var(--muted-foreground);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:1;overflow:hidden;overflow-wrap:anywhere; }
+.global-command-result-copy small { -webkit-line-clamp:2; }
+.global-command-kind { font-size:11px;color:var(--muted-foreground);flex-shrink:0;text-transform:capitalize; }
+.global-command mark { color:inherit;background:transparent;font-weight:700;text-decoration:underline;text-decoration-color:var(--ring);text-underline-offset:3px; }
+.global-command-more[cmdk-item] { color:var(--ring);font-size:12px;min-height:28px;padding:4px 10px 6px 36px; }
+.global-command-preview { display:flex;flex-direction:column;align-items:flex-start;gap:16px;min-width:0;overflow:auto;border-left:1px solid var(--border);background:var(--background);padding:20px; }
+.global-command-preview h2 { font-size:18px;line-height:1.45;font-weight:600;overflow-wrap:anywhere;letter-spacing:-.015em; }
+.global-command-preview-meta { display:flex;justify-content:space-between;width:100%;font-size:12px;color:var(--muted-foreground);text-transform:capitalize; }
+.global-command-source { font-size:12px;color:var(--muted-foreground);overflow-wrap:anywhere; }
+.global-command-match { font-size:14px;line-height:1.7;overflow-wrap:anywhere;white-space:pre-wrap; }
+.global-command-preview-actions { display:flex;flex-wrap:wrap;gap:8px;margin-top:auto;padding-top:12px; }
+.global-command-footer { display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 14px;border-top:1px solid var(--border);font-size:12px;color:var(--muted-foreground);min-height:45px; }
+.global-command-footer>span { display:flex;align-items:center;gap:8px; }
+.global-command-empty { display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:24px 16px;color:var(--muted-foreground);font-size:14px;line-height:1.6; }
+.global-command-empty strong { color:var(--foreground);font-weight:550; }
+.global-command-error { padding:10px 16px;color:var(--color-danger);font-size:13px;border-top:1px solid var(--border); }
+.global-command-warning { padding:8px 16px;font-size:12px;color:var(--muted-foreground); }
+.global-command-warning summary { cursor:pointer; }
+.search-arrival { outline:2px solid var(--ring);outline-offset:3px; }
+@media(max-width:700px) {
+ .global-command-body { grid-template-columns:minmax(0,1fr);height:min(420px,60dvh); }
+ .global-command-preview { display:none; }
+ .global-command-tip { display:none!important; }
+ .workbench-command-trigger>span { display:none; }
+ .global-command-footer { flex-wrap:wrap; }
+}
+
+/* Keep the selected result's actions visible while its excerpt scrolls. */
+.global-command-preview > * { flex-shrink:0; }
+.global-command-preview h2 { display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden; }
+.global-command-source { display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden; }
+.global-command-preview .global-command-match { flex:1;min-height:0;overflow:auto; }
+.global-command-empty[cmdk-item] { opacity:1;padding:24px 16px;cursor:default; }
+.global-command-code { font-family:var(--font-mono);font-size:var(--type-caption);line-height:var(--leading-code);white-space:pre;overflow:auto;tab-size:2;margin-top:12px; }
+.global-command-code:first-child { margin-top:0; }
+.global-command-code code { font:inherit; }
