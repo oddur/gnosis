@@ -47,7 +47,7 @@ export function mergeReadiness(
     details.push(
       `GitHub requires this branch to be up to date with ${base}. Rebase onto ${base}, or merge ${base} into this PR branch, then let required checks run again.`
     );
-  if (status.isDraft) details.push('Mark this PR ready for review on GitHub before merging.');
+  if (status.isDraft) details.push('Mark this PR ready for review before merging.');
   if (status.reviewDecision === 'CHANGES_REQUESTED')
     details.push('Changes have been requested. Address the review and obtain the required approval.');
   if (status.reviewDecision === 'REVIEW_REQUIRED')

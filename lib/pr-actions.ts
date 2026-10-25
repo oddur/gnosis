@@ -1,5 +1,12 @@
 export type MergeMethod = 'MERGE' | 'SQUASH' | 'REBASE';
-export type PrActionKind = 'merge' | 'enable-auto' | 'disable-auto' | 'update-merge' | 'update-rebase';
+export type PrActionKind =
+  | 'merge'
+  | 'enable-auto'
+  | 'disable-auto'
+  | 'update-merge'
+  | 'update-rebase'
+  | 'mark-ready'
+  | 'convert-draft';
 export interface PrActionRevision {
   url: string;
   headSha: string;
@@ -29,6 +36,7 @@ export interface PrActionState extends PrActionMember {
   canEnableAuto: boolean;
   canDisableAuto: boolean;
   canUpdateBranch: boolean;
+  canChangeDraft: boolean;
   mergeQueue: boolean;
   inMergeQueue: boolean;
   stack: {
@@ -72,7 +80,7 @@ export function mergeBlockedReason(state: PrActionState): string | undefined {
   if (state.archived) return 'This repository is archived.';
   if (state.state !== 'OPEN') return state.state === 'MERGED' ? 'This PR is already merged.' : 'This PR is closed.';
   if (!state.canWrite) return 'You need write permission to merge this PR.';
-  if (state.isDraft) return 'Mark this PR ready for review on GitHub first.';
+  if (state.isDraft) return 'Mark this PR ready for review first.';
   if (state.inMergeQueue) return 'This PR is already in the merge queue.';
   if (state.mergeable === 'CONFLICTING') return 'Resolve merge conflicts before merging.';
   // Stack policy is evaluated atomically by GitHub, including its ultimate base branch.
@@ -100,4 +108,24 @@ export function singleMergePlan(state: PrActionState): PrMergePlan {
           ? 'Every PR to merge must be open and ready for review.'
           : mergeBlockedReason(state),
   };
+}
+
+export function draftActionBlockedReason(
+  state: PrActionState,
+  kind: 'mark-ready' | 'convert-draft'
+): string | undefined {
+  if (state.archived || state.state !== 'OPEN') return 'Only open PRs in active repositories can change draft status.';
+  if (!state.canChangeDraft) return 'Only the PR author or someone with write permission can change draft status.';
+  if (state.isDraft !== (kind === 'mark-ready'))
+    return state.isDraft
+      ? 'This PR is already a draft. Refresh its status.'
+      : 'This PR is already ready for review. Refresh its status.';
+}
+
+export function branchUpdateBlockedReason(state: PrActionState): string | undefined {
+  if (state.archived || state.state !== 'OPEN') return 'Only open PRs in active repositories can update their branch.';
+  if (state.mergeable === 'CONFLICTING' || state.mergeState === 'DIRTY')
+    return 'Resolve merge conflicts locally or on GitHub before updating this branch.';
+  if (!state.canUpdateBranch)
+    return 'This branch is up to date, cannot be updated automatically, or you do not have permission.';
 }

@@ -6,6 +6,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { SearchableSelect } from './SearchableSelect';
 import {
   mergeBlockedReason,
+  draftActionBlockedReason,
+  branchUpdateBlockedReason,
   singleMergePlan,
   mergeMethodLabels,
   type MergeMethod,
@@ -119,6 +121,7 @@ export function PrActions({
       : state?.mergeQueue
         ? 'Add to merge queue…'
         : 'Merge PR…';
+  const updateBlocked = state ? branchUpdateBlockedReason(state) : 'Checking GitHub permissions…';
   const active = state?.state === 'OPEN' && !state.archived;
   const kind = dialog?.kind;
   const members = plan ? (kind === 'merge' ? plan.members : [plan.target]) : [];
@@ -135,9 +138,13 @@ export function PrActions({
         ? 'Enable auto-merge'
         : kind === 'disable-auto'
           ? 'Disable auto-merge'
-          : kind === 'update-rebase'
-            ? 'Update branch with rebase'
-            : 'Update branch with merge commit';
+          : kind === 'mark-ready'
+            ? 'Mark ready for review'
+            : kind === 'convert-draft'
+              ? 'Convert to draft'
+              : kind === 'update-rebase'
+                ? 'Update branch with rebase'
+                : 'Update branch with merge commit';
   const actionBlock = plan
     ? kind === 'merge'
       ? plan.blockedReason
@@ -151,9 +158,9 @@ export function PrActions({
           ? !plan.target.canDisableAuto
             ? 'You cannot disable auto-merge on this PR.'
             : undefined
-          : !plan.target.canUpdateBranch
-            ? 'This branch is up to date, cannot be updated automatically, or you do not have permission.'
-            : undefined
+          : kind === 'mark-ready' || kind === 'convert-draft'
+            ? draftActionBlockedReason(plan.target, kind)
+            : branchUpdateBlockedReason(plan.target)
     : undefined;
   const showMethod = kind === 'enable-auto' || (kind === 'merge' && !plan?.mergeQueue);
   async function submit() {
@@ -228,7 +235,7 @@ export function PrActions({
             </Button>
             <DropdownMenu.Root>
               <DropdownMenu.Trigger asChild>
-                <Button size="sm" variant="outline" disabled={loading || busy || !active || !state.canUpdateBranch}>
+                <Button size="sm" variant="outline" disabled={loading || busy || !!updateBlocked} title={updateBlocked}>
                   <GitBranch size={14} />
                   Update branch
                   <ChevronDown size={13} />
@@ -251,16 +258,35 @@ export function PrActions({
                 </DropdownMenu.Content>
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void open(state?.isDraft ? 'mark-ready' : 'convert-draft')}
+              disabled={loading || busy || !active || !state.canChangeDraft}
+              title={
+                state && !state.canChangeDraft
+                  ? 'Only the PR author or someone with write permission can change draft status.'
+                  : undefined
+              }
+            >
+              {state?.isDraft ? 'Mark ready for review…' : 'Convert to draft…'}
+            </Button>
             <button
               className="workbench-icon"
               aria-label="Refresh PR actions"
               title="Refresh permissions and merge options"
               disabled={loading || busy}
-              onClick={() => void refresh()}
+              onClick={() => {
+                void refresh();
+                onChanged?.();
+              }}
             >
               <RefreshCw size={14} className={loading ? 'motion-safe:animate-spin' : undefined} />
             </button>
           </div>
+          {state && (state.mergeable === 'CONFLICTING' || state.mergeState === 'DIRTY') && (
+            <p className="pr-action-note">{updateBlocked}</p>
+          )}
           {state?.autoMerge && (
             <p className="pr-action-note">
               Auto-merge is on · {mergeMethodLabels[state.autoMerge]}. GitHub will merge when requirements are met.
@@ -348,6 +374,13 @@ export function PrActions({
                 <p className="pr-action-note">
                   GitHub checks every PR’s requirements. All listed PRs merge together, or none do.
                   {plan.mergeQueue ? ' They will enter the base branch’s merge queue.' : ''}
+                </p>
+              )}
+              {(kind === 'mark-ready' || kind === 'convert-draft') && (
+                <p className="pr-action-note">
+                  {kind === 'mark-ready'
+                    ? 'This PR will be ready for review. It will still need to meet GitHub’s requirements before merging.'
+                    : 'Draft PRs cannot be merged. Mark it ready for review again when the work is ready.'}
                 </p>
               )}
               {kind === 'enable-auto' && (

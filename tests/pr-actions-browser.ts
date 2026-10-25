@@ -37,13 +37,15 @@ void app.whenReady().then(async () => {
     await wait("document.querySelectorAll('.queue-item').length===7");
     // All writes are mocks; this suite cannot change a real GitHub PR.
     await js(`(async()=>{
-      window.writes=[];window.actionTasks=[];window.nativeStack=false;window.failAction=false;window.denyWrite=false;window.changedHead=false;
+      window.writes=[];window.actionTasks=[];window.nativeStack=false;window.failAction=false;window.denyWrite=false;window.changedHead=false;window.conflicts=false;
       const q=await window.electronAPI.workbenchQueue();window.queue=q;
       const originalActivity=window.electronAPI.listActivity;window.electronAPI.listActivity=async()=>[...await originalActivity(),...window.actionTasks];
-      window.actionState=url=>{const member=q.items.flatMap(i=>i.subject.members).find(m=>m.url===url);if(!member)throw Error('Unknown mock PR');const stack=q.items.find(i=>i.subject.members.some(m=>m.url===url)&&i.subject.kind==='stack');return {...member,account:'oddur',id:'PR_'+member.number,checkedAt:Date.now(),state:member.merged?'MERGED':'OPEN',headSha:window.changedHead?'changed-head':member.headSha,headRepo:member.repo,repository:member.repo,archived:false,canWrite:!window.denyWrite,mergeable:'MERGEABLE',mergeState:'CLEAN',methods:['SQUASH','MERGE','REBASE'],defaultMethod:'SQUASH',autoMerge:member.autoMerge?.method??null,canEnableAuto:true,canDisableAuto:true,canUpdateBranch:true,mergeQueue:false,inMergeQueue:false,stack:stack&&window.nativeStack?{number:8,baseBranch:'main',complete:true,mergeQueue:false,members:stack.subject.members.map(m=>({...m,state:'OPEN'}))}:null};};
+      window.actionState=url=>{const member=q.items.flatMap(i=>i.subject.members).find(m=>m.url===url);if(!member)throw Error('Unknown mock PR');const stack=q.items.find(i=>i.subject.members.some(m=>m.url===url)&&i.subject.kind==='stack');return {...member,account:'oddur',id:'PR_'+member.number,checkedAt:Date.now(),state:member.merged?'MERGED':'OPEN',headSha:window.changedHead?'changed-head':member.headSha,headRepo:member.repo,repository:member.repo,archived:false,canWrite:!window.denyWrite,mergeable:window.conflicts?'CONFLICTING':'MERGEABLE',mergeState:window.conflicts?'DIRTY':'CLEAN',methods:['SQUASH','MERGE','REBASE'],defaultMethod:'SQUASH',autoMerge:member.autoMerge?.method??null,canEnableAuto:true,canDisableAuto:true,canUpdateBranch:true,canChangeDraft:!window.denyWrite,mergeQueue:false,inMergeQueue:false,stack:stack&&window.nativeStack?{number:8,baseBranch:'main',complete:true,mergeQueue:false,members:stack.subject.members.map(m=>({...m,state:'OPEN'}))}:null};};
+      const originalStatus=window.electronAPI.getPrStatus;
+      window.electronAPI.getPrStatus=async(...args)=>{const result=await originalStatus(...args);const state=window.actionState(args[0]);return {...result,isDraft:state.isDraft,signals:{...result.signals,checkedAt:Date.now(),readiness:{...result.signals.readiness,isDraft:state.isDraft,mergeable:state.mergeable,mergeState:state.mergeState}}};};
       window.electronAPI.getPrActionState=async(url)=>window.actionState(url);
       window.electronAPI.getStackMergePlan=async urls=>{const members=urls.map(window.actionState);return {target:members.at(-1),members,baseBranch:members[0].baseBranch,methods:['SQUASH','MERGE','REBASE'],mergeQueue:false,createStack:!window.nativeStack};};
-      window.electronAPI.performPrAction=async request=>{window.writes.push(request);if(window.failAction)throw Error('This PR changed since confirmation. Refresh the action and inspect the new revision.');await new Promise(r=>setTimeout(r,120));const m=q.items.flatMap(i=>i.subject.members).find(m=>m.url===request.url);if(request.kind==='enable-auto')m.autoMerge={method:request.method};if(request.kind==='disable-auto')m.autoMerge=null;
+      window.electronAPI.performPrAction=async request=>{window.writes.push(request);if(window.failAction)throw Error('This PR changed since confirmation. Refresh the action and inspect the new revision.');await new Promise(r=>setTimeout(r,120));const m=q.items.flatMap(i=>i.subject.members).find(m=>m.url===request.url);if(request.kind==='enable-auto')m.autoMerge={method:request.method};if(request.kind==='disable-auto')m.autoMerge=null;if(request.kind==='convert-draft')m.isDraft=true;if(request.kind==='mark-ready')m.isDraft=false;
         if(request.kind==='merge'&&request.revisions.length>1){window.actionTasks.push({id:'merge-operation',kind:'pr-action',title:'Merging 3 PRs',detail:'GitHub is processing the merge.',status:'running',updatedAt:new Date().toISOString(),canCancel:false,canRetry:false});return {status:'pending',message:'GitHub is processing the merge. Follow its progress in Activity.'};}
         return {status:'completed',message:request.kind==='merge'?'Merged on GitHub.':'GitHub action completed.'};};
     })()`);
@@ -59,6 +61,54 @@ void app.whenReady().then(async () => {
     await capture('merge-light-1280');
     await click('Cancel');
     assert.equal(await js('window.writes.length'), 0);
+    await click('Convert to draft…');
+    await wait("document.querySelector('.pr-action-members')?.children.length===1");
+    assert.equal(await js('!!document.querySelector(\'[aria-label="Merge method"]\')'), false);
+    await capture('convert-draft-light-1280');
+    await click('Convert to draft');
+    await wait("!document.querySelector('.pr-action-dialog')");
+    await wait("[...document.querySelectorAll('button')].some(b=>b.textContent==='Mark ready for review…')");
+    assert.equal(await js('window.writes.at(-1).kind'), 'convert-draft');
+    assert.equal(await js("document.querySelector('.pr-action-controls button').disabled"), true);
+    await wait("document.querySelector('.pr-readiness')?.textContent.includes('Draft PR')");
+    await capture('draft-summary-light-1280');
+    await click('Mark ready for review…');
+    await wait("document.querySelector('.pr-action-members')?.children.length===1");
+    await capture('mark-ready-light-1280');
+    await js("document.documentElement.classList.add('dark')");
+    win.setSize(640, 800);
+    await capture('mark-ready-dark-640');
+    await click('Mark ready for review');
+    await wait("!document.querySelector('.pr-action-dialog')");
+    await wait("document.querySelector('.pr-action-controls button')?.disabled===false");
+    assert.equal(await js('window.writes.at(-1).kind'), 'mark-ready');
+    win.setSize(1280, 800);
+    await js("document.documentElement.classList.remove('dark')");
+    await js('window.conflicts=true');
+    await click('Refresh PR actions');
+    await wait("[...document.querySelectorAll('button')].find(b=>b.textContent==='Update branch').disabled");
+    assert.match(await js<string>("document.querySelector('.pr-actions').textContent"), /Resolve merge conflicts/);
+    await capture('conflicts-light-1280');
+    await js('window.conflicts=false');
+    await click('Refresh PR actions');
+    await wait("![...document.querySelectorAll('button')].find(b=>b.textContent==='Update branch').disabled");
+    await click('Update branch');
+    await wait("!!document.querySelector('[role=menuitem]')");
+    await js('window.conflicts=true');
+    await js(
+      "[...document.querySelectorAll('[role=menuitem]')].find(e=>e.textContent.startsWith('Update with rebase')).click()"
+    );
+    await wait("document.querySelector('.pr-action-dialog')?.textContent.includes('Resolve merge conflicts')");
+    assert.equal(
+      await js(
+        "[...document.querySelectorAll('.pr-action-dialog button')].find(b=>b.textContent==='Update branch with rebase').disabled"
+      ),
+      true
+    );
+    await capture('conflicts-confirmation-light-1280');
+    await click('Cancel');
+    await js('window.conflicts=false');
+    await click('Refresh PR actions');
     await click('Enable auto-merge…');
     await wait('!!document.querySelector(\'[aria-label="Merge method"]\')');
     await click('Enable auto-merge');

@@ -7,7 +7,7 @@ import type {
   PrActionState,
   PrMergePlan,
 } from '../lib/pr-actions';
-import { singleMergePlan } from '../lib/pr-actions';
+import { singleMergePlan, draftActionBlockedReason, branchUpdateBlockedReason } from '../lib/pr-actions';
 
 const METHODS: MergeMethod[] = ['MERGE', 'SQUASH', 'REBASE'];
 const memberFields = 'url number title headRefName headRefOid baseRefName baseRefOid state isDraft';
@@ -30,6 +30,7 @@ interface GraphPr extends GraphMember {
   viewerCanEnableAutoMerge: boolean;
   viewerCanDisableAutoMerge: boolean;
   viewerCanUpdateBranch: boolean;
+  viewerDidAuthor: boolean;
   autoMergeRequest: { mergeMethod: MergeMethod } | null;
   mergeQueue: { id: string } | null;
   isInMergeQueue: boolean;
@@ -94,6 +95,7 @@ function normalize(repo: GraphRepo, checkedAt: number, account: string): PrActio
     canEnableAuto: pr.viewerCanEnableAutoMerge,
     canDisableAuto: pr.viewerCanDisableAutoMerge,
     canUpdateBranch: pr.viewerCanUpdateBranch,
+    canChangeDraft: pr.viewerDidAuthor || ['WRITE', 'MAINTAIN', 'ADMIN'].includes(repo.viewerPermission ?? ''),
     mergeQueue: !!pr.mergeQueue,
     inMergeQueue: pr.isInMergeQueue,
     stack: pr.stack
@@ -152,7 +154,7 @@ export function createPrActionsService(now = Date.now) {
         `query($owner:String!,$repo:String!,$number:Int!){viewer{login} repository(owner:$owner,name:$repo){
       nameWithOwner isArchived viewerPermission viewerDefaultMergeMethod mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed
       pullRequest(number:$number){ ${memberFields} id headRepository{nameWithOwner} mergeable mergeStateStatus
-        viewerCanEnableAutoMerge viewerCanDisableAutoMerge viewerCanUpdateBranch autoMergeRequest{mergeMethod} mergeQueue{id} isInMergeQueue
+        viewerCanEnableAutoMerge viewerCanDisableAutoMerge viewerCanUpdateBranch viewerDidAuthor autoMergeRequest{mergeMethod} mergeQueue{id} isInMergeQueue
         stack{number baseRefName entries(first:100){totalCount nodes{position pullRequest{${memberFields} mergeQueue{id}}}}}
       }}}`,
         { owner, repo, number: pull_number }
@@ -206,7 +208,17 @@ export function createPrActionsService(now = Date.now) {
   async function act(client: Octokit, req: PrActionRequest): Promise<PrActionResult> {
     const a = account(client);
     prActionTarget(req.url);
-    if (!['merge', 'enable-auto', 'disable-auto', 'update-merge', 'update-rebase'].includes(req.kind))
+    if (
+      ![
+        'merge',
+        'enable-auto',
+        'disable-auto',
+        'update-merge',
+        'update-rebase',
+        'mark-ready',
+        'convert-draft',
+      ].includes(req.kind)
+    )
       throw new Error('Unknown PR action.');
     if (!Array.isArray(req.revisions) || !req.revisions.length || req.revisions.length > 100)
       throw new Error('Confirm the PR revisions before continuing.');
@@ -326,6 +338,21 @@ export function createPrActionsService(now = Date.now) {
           );
         return { status: 'merged', message: 'Merged on GitHub.' };
       }
+      if (req.kind === 'mark-ready' || req.kind === 'convert-draft') {
+        const reason = draftActionBlockedReason(state, req.kind);
+        if (reason) throw new Error(reason);
+        // These mutations accept only the PR ID; revision/account checks happen above.
+        const draft = req.kind === 'convert-draft';
+        const field = draft ? 'convertPullRequestToDraft' : 'markPullRequestReadyForReview';
+        const inputType = draft ? 'ConvertPullRequestToDraftInput' : 'MarkPullRequestReadyForReviewInput';
+        const response = await client.graphql<Record<string, { pullRequest: { isDraft: boolean } | null } | null>>(
+          `mutation($input:${inputType}!){${field}(input:$input){pullRequest{isDraft}}}`,
+          { input: { pullRequestId: state.id } }
+        );
+        if (response[field]?.pullRequest?.isDraft !== draft)
+          throw new Error('GitHub did not confirm the draft status change. Refresh this PR before trying again.');
+        return { status: 'completed', message: draft ? 'PR converted to draft.' : 'PR marked ready for review.' };
+      }
       if (req.kind === 'enable-auto') {
         if (state.stack) throw new Error('GitHub does not support auto-merge for native stacked PRs.');
         if (!state.canEnableAuto) throw new Error('GitHub does not allow enabling auto-merge for this PR right now.');
@@ -347,10 +374,8 @@ export function createPrActionsService(now = Date.now) {
         );
         return { status: 'completed', message: 'Auto-merge disabled.' };
       }
-      if (!state.canUpdateBranch)
-        throw new Error(
-          'GitHub cannot update this branch. It may already be current, have conflicts, or require additional permissions.'
-        );
+      const updateBlocked = branchUpdateBlockedReason(state);
+      if (updateBlocked) throw new Error(updateBlocked);
       await client.graphql(
         'mutation($input:UpdatePullRequestBranchInput!){updatePullRequestBranch(input:$input){pullRequest{headRefOid}}}',
         { input: { ...input, updateMethod: req.kind === 'update-rebase' ? 'REBASE' : 'MERGE' } }

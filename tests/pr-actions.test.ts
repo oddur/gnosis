@@ -34,6 +34,7 @@ function fixture(native = false) {
     viewerCanEnableAutoMerge: true,
     viewerCanDisableAutoMerge: true,
     viewerCanUpdateBranch: true,
+    viewerDidAuthor: false,
     autoMergeRequest: null as null | { mergeMethod: string },
     mergeQueue: null as null | { id: string },
     isInMergeQueue: false,
@@ -71,6 +72,10 @@ function fixture(native = false) {
         };
       }
       writes.push({ query, params });
+      if (query.includes('MarkPullRequestReadyForReviewInput'))
+        return { markPullRequestReadyForReview: { pullRequest: { isDraft: false } } };
+      if (query.includes('ConvertPullRequestToDraftInput'))
+        return { convertPullRequestToDraft: { pullRequest: { isDraft: true } } };
       if (query.includes('MergePullRequestInput')) return { mergePullRequest: { pullRequest: { merged: true } } };
       if (query.includes('EnqueuePullRequestInput'))
         return { enqueuePullRequest: { mergeQueueEntry: { id: 'queue-1' } } };
@@ -167,7 +172,7 @@ void test('both branch update methods pin the confirmed SHA and enforce permissi
       updateMethod: method,
     });
     f.prs[0].viewerCanUpdateBranch = false;
-    await assert.rejects(f.service.act(f.client, await f.request(1, kind)), /cannot update/);
+    await assert.rejects(f.service.act(f.client, await f.request(1, kind)), /cannot be updated/);
     assert.equal(f.writes.length, 1);
   }
 });
@@ -419,5 +424,69 @@ void test('terminal atomic merge rejection ends monitoring without resubmitting'
     assert.equal(activities.list()[0].status, 'failed');
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+void test('draft status changes support authors without write access and affect only the selected stacked PR', async () => {
+  for (const kind of ['mark-ready', 'convert-draft'] as const) {
+    const f = fixture(true);
+    f.repo.viewerPermission = 'READ';
+    f.prs[1].viewerDidAuthor = true;
+    f.prs[1].isDraft = kind === 'mark-ready';
+    const result = await f.service.act(f.client, await f.request(2, kind));
+    assert.equal(result.status, 'completed');
+    assert.equal(f.writes.length, 1);
+    assert.deepEqual(f.writes[0].params.input, { pullRequestId: 'PR_2' });
+    assert.match(
+      f.writes[0].query,
+      kind === 'mark-ready' ? /MarkPullRequestReadyForReviewInput/ : /ConvertPullRequestToDraftInput/
+    );
+  }
+});
+void test('draft changes enforce current permissions, state and revision without replaying writes', async () => {
+  for (const change of ['permission', 'closed', 'archived', 'head', 'account', 'already-draft']) {
+    const f = fixture(),
+      req = await f.request(1, 'convert-draft');
+    if (change === 'permission') f.repo.viewerPermission = 'READ';
+    if (change === 'closed') f.prs[0].state = 'CLOSED';
+    if (change === 'archived') f.repo.isArchived = true;
+    if (change === 'head') f.prs[0].headRefOid = 'new-head';
+    if (change === 'account') f.setAccount('other');
+    if (change === 'already-draft') f.prs[0].isDraft = true;
+    await assert.rejects(f.service.act(f.client, req));
+    assert.equal(f.writes.length, 0, change);
+  }
+  const ready = fixture();
+  await assert.rejects(ready.service.act(ready.client, await ready.request(1, 'mark-ready')), /already ready/);
+  assert.equal(ready.writes.length, 0);
+});
+void test('draft mutations require a confirmed result and never replay GitHub errors', async () => {
+  for (const mode of ['missing', 'wrong-status', 'denied']) {
+    const f = fixture(),
+      req = await f.request(1, 'convert-draft'),
+      original = f.client.graphql;
+    let writes = 0;
+    f.client.graphql = (async (query: string, params: Record<string, unknown>) => {
+      if (!query.startsWith('mutation')) return original(query, params);
+      writes++;
+      if (mode === 'denied') throw Error('GitHub rejected draft conversion');
+      return mode === 'missing' ? {} : { convertPullRequestToDraft: { pullRequest: { isDraft: false } } };
+    }) as typeof f.client.graphql;
+    await assert.rejects(f.service.act(f.client, req), /did not confirm|rejected draft/);
+    assert.equal(writes, 1);
+  }
+});
+
+void test('branch updates stop before a write when fresh GitHub state reports conflicts', async () => {
+  for (const kind of ['update-merge', 'update-rebase'] as const) {
+    for (const conflict of ['CONFLICTING', 'DIRTY']) {
+      const f = fixture(),
+        req = await f.request(1, kind);
+      // GitHub may still grant permission to update despite an unmergeable branch.
+      if (conflict === 'CONFLICTING') f.prs[0].mergeable = 'CONFLICTING';
+      else f.prs[0].mergeStateStatus = 'DIRTY';
+      await assert.rejects(f.service.act(f.client, req), /Resolve merge conflicts/);
+      assert.equal(f.writes.length, 0);
+    }
   }
 });
