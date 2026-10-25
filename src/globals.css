@@ -2225,3 +2225,6 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
   .review-toolbar label { min-width:0; flex-wrap:wrap; }
   .review-toolbar label select { min-width:0; max-width:100%; flex:1; }
 }
+
+/* Full-width explanations keep a comfortable reading measure on narrow-pane layouts. */
+.review-narrative > .slide-prose,.review-narrative .markdown-body { max-width:75ch; }
