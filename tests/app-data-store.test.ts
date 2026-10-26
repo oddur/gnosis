@@ -91,3 +91,125 @@ test('writes do not use synchronous filesystem operations on the host thread', a
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('browser drafts and file progress import once and survive edits, deletion, clearing and restart', async () => {
+  const dir = fixture();
+  let store = createAppDataStore();
+  const key = 'gnosis-changes-drafts:alice:https://github.com/o/r/pull/1';
+  const local = 'gnosis-changes-drafts:local:local:/working-copy';
+  const draft = { id: 'note', body: 'Keep this note', headSha: 'head', baseSha: 'base', baseBranch: 'main' };
+  const legacy = {
+    [key]: JSON.stringify([draft]),
+    [local]: JSON.stringify([{ ...draft, id: 'local' }]),
+    'gnosis-file-progress:v1': JSON.stringify({ aliases: { revision: 'content' }, marks: { content: true } }),
+  };
+  try {
+    await store.open(dir);
+    const imported = await store.loadReviewState(legacy);
+    assert.deepEqual(imported[key], [draft]);
+    await store.saveReviewState({ key, value: [] });
+    await store.saveFileProgress({
+      aliases: { otherRevision: 'otherContent' },
+      marks: { content: false, otherContent: true },
+    });
+    await store.clearGitHub();
+    await store.close();
+    store = createAppDataStore();
+    await store.open(dir);
+    const restored = await store.loadReviewState(legacy);
+    assert.deepEqual(restored[key], [], 'old browser copies must not resurrect deleted drafts');
+    assert.deepEqual(restored[local], [{ ...draft, id: 'local' }]);
+    assert.deepEqual(restored['gnosis-file-progress:v1'], {
+      aliases: { revision: 'content', otherRevision: 'otherContent' },
+      marks: { content: false, otherContent: true },
+    });
+    await assert.rejects(store.saveReviewState({ key: 'unrelated-app-data', value: {} }), /Invalid/);
+  } finally {
+    await store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+test('a malformed browser import rolls back as a unit and can be retried', async () => {
+  const dir = fixture(),
+    store = createAppDataStore();
+  try {
+    await store.open(dir);
+    await assert.rejects(store.loadReviewState({ 'gnosis-drafts:valid': '[]', 'gnosis-drafts:bad': 'not json' }));
+    const restored = await store.loadReviewState({ 'gnosis-drafts:valid': '[{"body":"recovered"}]' });
+    assert.deepEqual(restored['gnosis-drafts:valid'], [{ body: 'recovered' }]);
+  } finally {
+    await store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a failed queue transaction retains the latest snapshot and can be retried', async () => {
+  const dir = fixture();
+  let store = createAppDataStore();
+  try {
+    await store.open(dir);
+    store.write('workbench:alice', queue());
+    await store.flush();
+    const db = new DatabaseSync(path.join(dir, 'workbench.sqlite'));
+    db.exec(
+      "CREATE TRIGGER fail_write BEFORE INSERT ON records BEGIN SELECT RAISE(ABORT,'simulated disk failure'); END"
+    );
+    const next = { ...queue(), used: 7 };
+    store.write('workbench:alice', next);
+    await assert.rejects(store.flush(), /simulated disk failure/);
+    db.exec('DROP TRIGGER fail_write');
+    db.close();
+    await store.flush();
+    await store.close();
+    store = createAppDataStore();
+    await store.open(dir);
+    assert.equal((store.read('workbench:alice') as { used: number }).used, 7);
+  } finally {
+    await store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('clearing GitHub data removes derived search rows without deleting review progress', async () => {
+  const dir = fixture(),
+    store = createAppDataStore();
+  try {
+    await store.open(dir);
+    await store.search({
+      account: 'alice',
+      query: 'cached',
+      includeBots: false,
+      recentIds: [],
+      muted: [],
+      ignoreBots: true,
+      input: {
+        directory: dir,
+        account: 'alice',
+        queue: { items: [], warnings: [], remaining: 0 },
+        history: [],
+        muted: [],
+        ignoreBots: true,
+        threads: {},
+        cachedResponses: [
+          {
+            url: 'https://api.github.com/repos/o/r/pulls/1',
+            data: { title: 'cached PR', body: 'private description', user: { login: 'alice' } },
+          },
+        ],
+      },
+    });
+    const db = new DatabaseSync(path.join(dir, 'workbench.sqlite'));
+    assert.ok(Number(db.prepare('SELECT count(*) AS n FROM search_documents').get()?.n) > 0);
+    await store.saveFileProgress({ aliases: {}, marks: { reviewed: true } });
+    await store.clearGitHub();
+    assert.equal(db.prepare('SELECT count(*) AS n FROM search_documents').get()?.n, 0);
+    assert.equal(
+      ((await store.loadReviewState({}))['gnosis-file-progress:v1'] as { marks: { reviewed: boolean } }).marks.reviewed,
+      true
+    );
+    db.close();
+  } finally {
+    await store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

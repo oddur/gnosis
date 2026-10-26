@@ -1,3 +1,4 @@
+import { readReviewState, writeReviewState } from './renderer-review-state';
 import { useSyncExternalStore } from 'react';
 import type { PendingReviewComment } from './types';
 import { isLocalUrl } from './local-url';
@@ -17,7 +18,7 @@ export function readReviewDrafts(account: string, url: string): ChangesReviewDra
   const key = keyFor(account, url);
   if (!values.has(key)) {
     try {
-      const data: unknown = JSON.parse(localStorage.getItem(key) ?? '[]');
+      const data: unknown = readReviewState(key) ?? [];
       values.set(
         key,
         Array.isArray(data)
@@ -44,18 +45,29 @@ export function readReviewDrafts(account: string, url: string): ChangesReviewDra
   }
   return values.get(key) ?? empty;
 }
-export function updateReviewDrafts(
+const pending = new Map<string, Promise<void>>();
+export async function updateReviewDrafts(
   account: string,
   url: string,
   fn: (current: ChangesReviewDraft[]) => ChangesReviewDraft[]
-) {
+): Promise<void> {
   if (!url || (!account && !isLocalUrl(url))) throw new Error('Connect GitHub to save review comments.');
-  const key = keyFor(account, url),
-    next = fn(readReviewDrafts(account, url));
-  localStorage.setItem(key, JSON.stringify(next));
-  values.set(key, next);
-  version++;
-  listeners.forEach((callback) => callback());
+  const key = keyFor(account, url);
+  const save = (pending.get(key) ?? Promise.resolve())
+    .catch(() => {})
+    .then(async () => {
+      const next = fn(readReviewDrafts(account, url));
+      await writeReviewState(key, next);
+      values.set(key, next);
+      version++;
+      listeners.forEach((callback) => callback());
+    });
+  pending.set(key, save);
+  try {
+    await save;
+  } finally {
+    if (pending.get(key) === save) pending.delete(key);
+  }
 }
 export const subscribeReviewDrafts = (callback: () => void) => {
   listeners.add(callback);

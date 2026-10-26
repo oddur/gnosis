@@ -1,3 +1,4 @@
+import type { ReviewStateWrite, FileProgressPatch } from '../lib/review-state';
 import type { MarkPrReadRequest } from '../lib/pr-read-state';
 import type { PreparedInventories } from '../lib/pr-inspection-cache';
 import type { InspectionRevision, InspectionLoadOptions } from '../lib/pr-changes';
@@ -49,6 +50,10 @@ declare global {
       getQueueSignals: (requests: QueueSignalRequest[], options?: QueueSignalOptions) => Promise<QueueSignals[]>;
       commandSearch: (query: string, includeBots?: boolean, recentIds?: string[]) => Promise<LocalSearchResponse>;
       commandGitHubSearch: (query: string) => Promise<PrSearchResult[]>;
+      reviewStateStorageVersion: 1;
+      loadReviewState: (legacy: Record<string,string>) => Promise<Record<string,unknown>>;
+      saveReviewState: (value: ReviewStateWrite) => Promise<void>;
+      saveFileProgress: (value: FileProgressPatch) => Promise<void>;
       listActivity: () => Promise<ActivityTask[]>;
       activityAction: (id:string, action:ActivityAction) => Promise<void>;
       workbenchSnapshot: () => Promise<WorkbenchQueue>;

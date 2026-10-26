@@ -1,3 +1,4 @@
+import { readReviewState, writeReviewState } from './renderer-review-state';
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import {
   readReviewDrafts,
@@ -21,9 +22,9 @@ export function useExplanationComments(review: ReviewGuide, account: string) {
     return { path: found.path, member: found.member ?? members[0] };
   };
   const addComment = useCallback(
-    (params: Omit<PendingReviewComment, 'id'>) => {
+    async (params: Omit<PendingReviewComment, 'id'>) => {
       const { path, member } = source(params.filePath);
-      updateReviewDrafts(account, member.url, (list) => [
+      await updateReviewDrafts(account, member.url, (list) => [
         ...list,
         {
           ...params,
@@ -38,18 +39,18 @@ export function useExplanationComments(review: ReviewGuide, account: string) {
     [account, review]
   );
   const removeComment = useCallback(
-    (id: string) => {
+    async (id: string) => {
       for (const member of members)
         if (readReviewDrafts(account, member.url).some((d) => d.id === id))
-          updateReviewDrafts(account, member.url, (list) => list.filter((d) => d.id !== id));
+          await updateReviewDrafts(account, member.url, (list) => list.filter((d) => d.id !== id));
     },
     [account, review]
   );
   const editComment = useCallback(
-    (id: string, body: string) => {
+    async (id: string, body: string) => {
       for (const member of members)
         if (readReviewDrafts(account, member.url).some((d) => d.id === id))
-          updateReviewDrafts(account, member.url, (list) => list.map((d) => (d.id === id ? { ...d, body } : d)));
+          await updateReviewDrafts(account, member.url, (list) => list.map((d) => (d.id === id ? { ...d, body } : d)));
     },
     [account, review]
   );
@@ -57,30 +58,33 @@ export function useExplanationComments(review: ReviewGuide, account: string) {
   useEffect(() => {
     if (!account && !isLocalUrl(review.prUrl)) return;
     const key = `gnosis-drafts:${subjectForReview(review)}:${review.snapshot?.fingerprint ?? review.headSha}`;
-    try {
-      const legacy: PendingReviewComment[] = JSON.parse(localStorage.getItem(key) ?? '[]') as PendingReviewComment[];
-      if (!Array.isArray(legacy) || !legacy.length) return;
-      for (const draft of legacy) {
-        const { path, member } = source(draft.filePath);
-        updateReviewDrafts(account, member.url, (list) =>
-          list.some((d) => d.id === draft.id)
-            ? list
-            : [
-                ...list,
-                {
-                  ...draft,
-                  filePath: path,
-                  headSha: member.headSha,
-                  baseSha: member.baseSha,
-                  baseBranch: member.baseBranch,
-                },
-              ]
-        );
+    const migrate = async () => {
+      try {
+        const legacy = (readReviewState(key) ?? []) as PendingReviewComment[];
+        if (!Array.isArray(legacy) || !legacy.length) return;
+        for (const draft of legacy) {
+          const { path, member } = source(draft.filePath);
+          await updateReviewDrafts(account, member.url, (list) =>
+            list.some((d) => d.id === draft.id)
+              ? list
+              : [
+                  ...list,
+                  {
+                    ...draft,
+                    filePath: path,
+                    headSha: member.headSha,
+                    baseSha: member.baseSha,
+                    baseBranch: member.baseBranch,
+                  },
+                ]
+          );
+        }
+        await writeReviewState(key, null);
+      } catch {
+        /* Keep the original drafts when migration cannot finish. */
       }
-      localStorage.removeItem(key);
-    } catch {
-      /* Keep the original drafts when migration cannot finish. */
-    }
+    };
+    void migrate();
   }, [account, review]);
   const comments: ChangesReviewDraft[] = members.flatMap((member) =>
     readReviewDrafts(account, member.url)

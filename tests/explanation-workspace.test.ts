@@ -32,24 +32,24 @@ const draft: ChangesReviewDraft = {
   codeSnippet: '',
   slideIndex: 1,
 };
-void test('one pending review spans views while accounts, PRs, and original revisions stay separate', () => {
-  updateReviewDrafts('alice', 'pr1', (list) => [...list, draft]);
+void test('one pending review spans views while accounts, PRs, and original revisions stay separate', async () => {
+  await updateReviewDrafts('alice', 'pr1', (list) => [...list, draft]);
   assert.deepEqual(readReviewDrafts('alice', 'pr1'), [draft]);
   assert.deepEqual(readReviewDrafts('bob', 'pr1'), []);
   assert.deepEqual(readReviewDrafts('alice', 'pr2'), []);
-  updateReviewDrafts('alice', 'pr1', (list) => list.map((d) => ({ ...d, body: 'Edited in Changes.' })));
+  await updateReviewDrafts('alice', 'pr1', (list) => list.map((d) => ({ ...d, body: 'Edited in Changes.' })));
   assert.equal(readReviewDrafts('alice', 'pr1')[0].headSha, 'head');
   assert.equal(readReviewDrafts('alice', 'pr1')[0].body, 'Edited in Changes.');
-  assert.throws(() => updateReviewDrafts('', 'pr1', (list) => [...list, draft]), /Connect GitHub/);
+  await assert.rejects(() => updateReviewDrafts('', 'pr1', (list) => [...list, draft]), /Connect GitHub/);
 });
-void test('a failed draft write preserves the last saved review', () => {
-  updateReviewDrafts('alice', 'full-disk', () => [draft]);
+void test('a failed draft write preserves the last saved review', async () => {
+  await updateReviewDrafts('alice', 'full-disk', () => [draft]);
   const save = localStorage.setItem.bind(localStorage);
   localStorage.setItem = () => {
     throw Error('Disk full');
   };
   try {
-    assert.throws(() => updateReviewDrafts('alice', 'full-disk', () => []), /Disk full/);
+    await assert.rejects(() => updateReviewDrafts('alice', 'full-disk', () => []), /Disk full/);
   } finally {
     localStorage.setItem = save;
   }
@@ -150,11 +150,7 @@ void test('signed-out local explanations migrate, edit, and retain notes indepen
     assert.ok(notes);
     return notes;
   };
-  const update = (work: () => void) =>
-    act(() => {
-      work();
-      return Promise.resolve();
-    });
+  const update = (work: () => void | Promise<void>) => act(async () => { await work(); });
   let root = createRoot(container);
   try {
     await update(() => root.render(createElement(Harness, { account: '' })));

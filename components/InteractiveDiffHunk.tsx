@@ -68,8 +68,8 @@ function InteractiveHunk({
     setActiveFormLine({ line: lineInfo.lineNumber, side: lineInfo.side });
   }
 
-  function handleSubmitComment(body: string, lineInfo: DiffLineInfo) {
-    onAddComment({
+  async function handleSubmitComment(body: string, lineInfo: DiffLineInfo) {
+    await onAddComment({
       filePath,
       line: lineInfo.lineNumber,
       side: lineInfo.side,

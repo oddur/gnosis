@@ -1,3 +1,4 @@
+import type { ReviewStateWrite, FileProgressPatch } from '../lib/review-state';
 import type { SearchRequest, LocalSearchResponse } from './command-search-service';
 import { Worker } from 'node:worker_threads';
 import path from 'node:path';
@@ -14,7 +15,7 @@ export function createAppDataStore() {
   let failure: Error | undefined;
   let values: Record<string, unknown> | undefined;
   let scheduled = false;
-  let writing: Promise<void> = Promise.resolve();
+  let writing: Promise<void> | undefined;
   const updates = new Map<string, unknown>();
   const pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
   function call<T>(method: string, args?: unknown): Promise<T> {
@@ -38,21 +39,29 @@ export function createAppDataStore() {
     if (!values) throw new Error('Saved work is still loading');
     return values;
   }
-  function flush(): Promise<void> {
-    if (failure) return Promise.reject(failure);
-    if (!updates.size) return writing;
+  async function flush(): Promise<void> {
+    if (failure) throw failure;
+    if (writing) {
+      await writing;
+      if (updates.size) await flush();
+      return;
+    }
+    if (!updates.size) return;
     const batch = [...updates];
     updates.clear();
     // postMessage clones now, before callers can mutate the in-memory state again.
-    const result = call<unknown>('write', batch);
-    writing = writing.then(async () => {
-      await result;
-    });
-    void result.catch(() => {});
-    void writing.catch((error: unknown) => {
-      failure = new Error(`Could not save your work: ${String(error)}`);
-    });
-    return writing;
+    writing = call<unknown>('write', batch)
+      .then(() => {})
+      .catch((error: unknown) => {
+        // Keep the latest snapshot for retry after a recoverable disk/lock failure.
+        for (const [name, value] of batch) if (!updates.has(name)) updates.set(name, values?.[name] ?? value);
+        throw error;
+      })
+      .finally(() => {
+        writing = undefined;
+      });
+    await writing;
+    if (updates.size) await flush();
   }
   return {
     async open(directory: string) {
@@ -98,6 +107,13 @@ export function createAppDataStore() {
       }
     },
     flush,
+    loadReviewState: (legacy: Record<string, string>) => call<Record<string, unknown>>('review-load', legacy),
+    saveReviewState: async (value: ReviewStateWrite) => {
+      await call('review-save', value);
+    },
+    saveFileProgress: async (value: FileProgressPatch) => {
+      await call('progress-save', value);
+    },
     search: (request: SearchRequest) => call<LocalSearchResponse>('search', request),
     async clearGitHub() {
       await flush();
@@ -106,13 +122,10 @@ export function createAppDataStore() {
     async close() {
       if (!worker) return;
       const active = worker;
-      try {
-        await flush();
-        await call('close');
-      } finally {
-        worker = undefined;
-        await active.terminate();
-      }
+      await flush();
+      await call('close');
+      worker = undefined;
+      await active.terminate();
     },
   };
 }

@@ -94,7 +94,7 @@ void app.whenReady().then(async () => {
       const {updateReviewDrafts}=await import('/lib/changes-review-drafts.ts');
       const member=(await window.electronAPI.workbenchQueue()).items.flatMap(i=>i.subject.members).find(m=>m.number===120);
       const draft={id:'shared-review-draft',filePath:'src/worker.ts',body:'Explain the retry boundary.',line:35,side:'RIGHT',hunkHeader:'',codeSnippet:'await queue.retry(command);',slideIndex:0,headSha:member.headSha,baseSha:member.baseSha,baseBranch:member.baseBranch};
-      updateReviewDrafts('oddur',member.url,()=>[draft,{...draft,id:'second',body:'Can this retry run after cancellation?',line:38},{...draft,id:'third',filePath:'src/command-queue.ts',body:'Please document the ownership of this queue.',line:12,side:'LEFT',codeSnippet:''}]);
+      await updateReviewDrafts('oddur',member.url,()=>[draft,{...draft,id:'second',body:'Can this retry run after cancellation?',line:38},{...draft,id:'third',filePath:'src/command-queue.ts',body:'Please document the ownership of this queue.',line:12,side:'LEFT',codeSnippet:''}]);
     })()`);
     await click('Review PR #120 (3)');
     await wait("document.querySelector('[role=dialog]')?.textContent.includes('Explain the retry boundary.')");
@@ -147,7 +147,7 @@ void app.whenReady().then(async () => {
     await js(`(async()=>{
       const {updateReviewDrafts}=await import('/lib/changes-review-drafts.ts');
       const member=(await window.electronAPI.workbenchQueue()).items.flatMap(i=>i.subject.members).find(m=>m.number===121);
-      updateReviewDrafts('oddur',member.url,()=>[{id:'stale-review-draft',filePath:'src/worker.ts',body:'Keep this earlier note.',line:35,side:'RIGHT',hunkHeader:'',codeSnippet:'',slideIndex:0,headSha:'old-sha',baseSha:member.baseSha,baseBranch:member.baseBranch}]);
+      await updateReviewDrafts('oddur',member.url,()=>[{id:'stale-review-draft',filePath:'src/worker.ts',body:'Keep this earlier note.',line:35,side:'RIGHT',hunkHeader:'',codeSnippet:'',slideIndex:0,headSha:'old-sha',baseSha:member.baseSha,baseBranch:member.baseBranch}]);
     })()`);
     await menuAction(js, 'Stack actions', 'Review PR #121…');
     await wait("document.querySelector('.changes-drafts')?.textContent.includes('Keep this earlier note.')");

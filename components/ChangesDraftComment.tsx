@@ -12,13 +12,15 @@ export function ChangesDraftComment({
   onEditingChange,
 }: {
   comment: PendingReviewComment;
-  onEdit: (id: string, body: string) => void;
-  onRemove: (id: string) => void;
+  onEdit: (id: string, body: string) => void | Promise<void>;
+  onRemove: (id: string) => void | Promise<void>;
   disabled?: boolean;
   onEditingChange?: (id: string, editing: boolean) => void;
 }) {
   const [editing, setEditing] = useSessionDraft(`changes-draft-editing:${comment.id}`, false);
   const [error, setError] = useState('');
+  const [saving,setSaving] = useState(false);
+  disabled = disabled || saving;
   const [body, setBody] = useSessionDraft(`changes-draft-edit:${comment.id}`, comment.body);
   const id = useId();
   useEffect(() => {
@@ -29,16 +31,17 @@ export function ChangesDraftComment({
     <div className="changes-draft-comment">
       {editing ? (
         <form
-          onSubmit={(e) => {
+          onSubmit={async (e) => {
             e.preventDefault();
             if (disabled || !body.trim()) return;
+            setSaving(true);
             try {
-              onEdit(comment.id, body.trim());
+              await onEdit(comment.id, body.trim());
               setEditing(false);
               setError('');
             } catch {
               setError('Could not save this edit. Your text is still here.');
-            }
+            } finally {setSaving(false);}
           }}
         >
           <label htmlFor={id}>Edit draft comment</label>
@@ -101,13 +104,14 @@ export function ChangesDraftComment({
               variant="ghost"
               size="sm"
               disabled={disabled}
-              onClick={() => {
+              onClick={async () => {
+                setSaving(true);
                 try {
-                  onRemove(comment.id);
+                  await onRemove(comment.id);
                   setError('');
                 } catch {
                   setError('Could not remove this draft. Try again.');
-                }
+                } finally {setSaving(false);}
               }}
             >
               Remove draft

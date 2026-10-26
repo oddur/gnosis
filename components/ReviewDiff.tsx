@@ -208,11 +208,11 @@ function ReviewHunk({
             <InlineCommentForm
               draftKey={`${filePath}:${slideIndex}:${location.side}:${location.line}`}
               onCancel={() => setActive(null)}
-              onSubmit={(body) => {
+              onSubmit={async (body) => {
                 const info = prepared.lines.find(
                   (l) => (location.side === 'LEFT' ? l.baseLineNumber : l.headLineNumber) === location.line
                 );
-                commentCallbacks.onAddComment({
+                await commentCallbacks.onAddComment({
                   filePath,
                   ...location,
                   body,

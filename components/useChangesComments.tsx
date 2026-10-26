@@ -71,18 +71,18 @@ export function useChangesComments({
     d.baseSha === snapshot.metadata.baseSha &&
     d.baseBranch === snapshot.metadata.baseBranch;
   const stale = drafts.filter((d) => !current(d));
-  function change(fn: (list: ChangesReviewDraft[]) => ChangesReviewDraft[]) {
+  async function change(fn: (list: ChangesReviewDraft[]) => ChangesReviewDraft[]) {
     try {
-      update(fn);
+      await update(fn);
       setError('');
     } catch {
       setError('Could not save your drafts on this computer. Free some disk space and try again.');
       throw new Error('Could not save your drafts.');
     }
   }
-  const remove = (id: string) => {
+  const remove = async (id: string) => {
     try {
-      change((list) => list.filter((d) => d.id !== id));
+      await change((list) => list.filter((d) => d.id !== id));
     } catch {
       /* shown above */
     }
@@ -178,7 +178,7 @@ export function useChangesComments({
               await window.electronAPI.createReviewComment(req);
               await refresh(url);
             } else
-              change((list) => [
+              await change((list) => [
                 ...list,
                 { id: crypto.randomUUID(), filePath: path, hunkHeader: '', codeSnippet: '', slideIndex: 0, ...req },
               ]);
@@ -314,7 +314,7 @@ export function useChangesComments({
                   const ids = new Set(targetDrafts.map((d) => d.id));
                   // Once GitHub succeeds, a refresh failure must never offer a duplicate submission.
                   try {
-                    change((list) => list.filter((d) => !ids.has(d.id)));
+                    await change((list) => list.filter((d) => !ids.has(d.id)));
                   } catch {
                     setError(
                       'Review posted. Could not remove the local drafts; remove them before starting another review.'
