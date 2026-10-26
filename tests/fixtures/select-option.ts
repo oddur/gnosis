@@ -37,7 +37,11 @@ Object.assign(window, {
     control.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 }));
     control.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0, detail: 1 }));
     for (let i = 0; i < 160; i++) {
-      const option = [...document.querySelectorAll<HTMLElement>('[data-slot="combobox-item"]')].find(
+      // A closing popup can remain mounted after Escape. Wait for the reopened
+      // combobox to own focus before clicking, rather than selecting its old DOM.
+      const popup = document.querySelector<HTMLElement>('[data-slot="combobox-content"][data-open]');
+      const ready = control.getAttribute('aria-expanded') === 'true' && popup?.contains(document.activeElement);
+      const option = ready && popup && [...popup.querySelectorAll<HTMLElement>('[data-slot="combobox-item"]')].find(
         (item) => item.dataset.value === value
       );
       if (option) {
@@ -46,7 +50,7 @@ Object.assign(window, {
           if (!control.isConnected || (control.value === value && control.getAttribute('aria-expanded') === 'false')) return;
           await new Promise((resolve) => setTimeout(resolve, 25));
         }
-        throw Error(`Selection did not commit: ${value}`);
+        throw Error(`Selection did not commit: ${value}; value=${control.value}; expanded=${control.getAttribute('aria-expanded')}; focus=${document.activeElement?.outerHTML}`);
       }
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
