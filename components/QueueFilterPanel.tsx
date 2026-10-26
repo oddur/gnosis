@@ -1,3 +1,4 @@
+import { SearchableSelect } from './SearchableSelect';
 import { normalizePrInactivityDays } from '../lib/pr-inactivity';
 import { useId } from 'react';
 import type { QueueItem } from '../lib/workbench';
@@ -105,6 +106,15 @@ export function QueueFilterPanel({
         {fields.map((field) => (
           <label key={field.key} htmlFor={`${id}-${field.key}`}>
             <span>{field.label}</span>
+            {field.key === 'author' || field.key === 'label' ? (
+              <SearchableSelect
+                id={`${id}-${field.key}`}
+                label={field.label}
+                value={filters[field.key]}
+                options={field.options.map(([value, label]) => ({ value, label }))}
+                onValueChange={value => onChange({ [field.key]: value })}
+              />
+            ) : (
             <select
               id={`${id}-${field.key}`}
               className="workbench-select"
@@ -124,6 +134,7 @@ export function QueueFilterPanel({
                 </option>
               ))}
             </select>
+            )}
           </label>
         ))}
       </div>

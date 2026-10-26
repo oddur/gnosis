@@ -87,7 +87,7 @@ void app.whenReady().then(async () => {
     await click('Check again');
     await wait("document.querySelector('.getting-started-setup').textContent.includes('found. Make sure')");
     await js(
-      `(()=>{const s=document.querySelector('[aria-label="Review model"]');s.value=[...s.options].find(o=>o.value.startsWith('codex:')).value;s.dispatchEvent(new Event('change',{bubbles:true}));})()`
+      `window.selectOption('[aria-label="Review model"]', 'codex:gpt-6.1-sol')`
     );
     await wait("document.querySelector('.getting-started-setup').textContent.includes('Codex found')");
     await click('AI setup');

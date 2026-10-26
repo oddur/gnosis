@@ -246,7 +246,7 @@ void app.whenReady().then(async () => {
     window.setSize(980, 700);
     await wait("getComputedStyle(document.querySelector('.pr-stack-select')).display === 'flex'");
     await js(
-      "(()=>{const s=document.querySelector('.pr-stack-select select');s.selectedIndex=1;s.dispatchEvent(new Event('change',{bubbles:true}));})()"
+      "window.selectOption('.pr-stack-select [data-slot=combobox-trigger]', 'https://github.com/klang/engine/pull/121')"
     );
     assert.match(await js<string>("document.querySelector('.pr-details-heading h2').textContent"), /#121/);
     await capture('pr-summary-stack-laptop');

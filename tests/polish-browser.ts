@@ -30,7 +30,7 @@ void app.whenReady().then(async () => {
   };
   const fill = (value: string) =>
     js(
-      `(()=>{const e=document.querySelector('[role=combobox]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}))})()`
+      `(()=>{const e=document.querySelector('.command-palette input[role=combobox]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}))})()`
     );
   const capture = async (name: string) => {
     await js('document.fonts.ready');
@@ -65,11 +65,11 @@ void app.whenReady().then(async () => {
     await capture('commands-light');
     await js("document.documentElement.classList.add('dark')");
     await capture('commands-dark');
-    const first = await js("document.querySelector('[role=combobox]').getAttribute('aria-activedescendant')");
+    const first = await js("document.querySelector('.command-palette input[role=combobox]').getAttribute('aria-activedescendant')");
     await key('Down');
-    assert.notEqual(await js("document.querySelector('[role=combobox]').getAttribute('aria-activedescendant')"), first);
+    assert.notEqual(await js("document.querySelector('.command-palette input[role=combobox]').getAttribute('aria-activedescendant')"), first);
     await js(
-      "document.querySelector('[role=combobox]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',isComposing:true,bubbles:true}))"
+      "document.querySelector('.command-palette input[role=combobox]').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',isComposing:true,bubbles:true}))"
     );
     assert.ok(await js("!!document.querySelector('.command-palette')"), 'IME Enter must not execute a command');
     for (let i = 0; i < 4; i++) {
@@ -85,7 +85,7 @@ void app.whenReady().then(async () => {
     await openPalette();
     await fill('zzzzzzzzzzzzzzzz');
     await wait("document.querySelector('.command-palette')?.textContent.includes('No local matches')");
-    assert.equal(await js("document.querySelector('[role=combobox]').hasAttribute('aria-activedescendant')"), false);
+    assert.equal(await js("document.querySelector('.command-palette input[role=combobox]').hasAttribute('aria-activedescendant')"), false);
     await fill('settings');
     await key('Enter');
     await wait("!!document.querySelector('.settings-tabs')");

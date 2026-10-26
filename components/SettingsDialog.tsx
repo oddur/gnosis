@@ -1,3 +1,4 @@
+import { SearchableSelect } from './SearchableSelect';
 import { Button } from './ui/button';
 import { PrInactivitySetting } from './PrInactivitySetting';
 import { normalizePrInactivityDays, DEFAULT_PR_INACTIVITY_DAYS } from '../lib/pr-inactivity';
@@ -378,6 +379,10 @@ export function SettingsDialog({
         className="settings-dialog bg-card sm:max-w-2xl"
         showCloseButton={!saving && !saveError}
         onEscapeKeyDown={(event) => {
+          if (event.target instanceof Element && event.target.closest('[data-slot="combobox-content"]')) {
+            event.preventDefault();
+            return;
+          }
           // Radix handles Escape in document capture, before a search field's key handler.
           if (showSuggestions) {
             event.preventDefault();
@@ -743,27 +748,21 @@ export function SettingsDialog({
                 </div>
               </section>
 
-              <label className="settings-field">
-                Code font
-                <select value={codeFont} onChange={(e) => handleSelectFont(e.target.value as CodeFont)}>
-                  {CODE_FONTS.map((f) => (
-                    <option key={f.id} value={f.id}>
-                      {f.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="settings-field">
-                Code theme
-                <select value={codeTheme} onChange={(e) => handleSelectTheme(e.target.value as CodeTheme)}>
-                  {CODE_THEMES.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.label}
-                    </option>
-                  ))}
-                </select>
+              <div className="settings-field">
+                <label htmlFor="settings-code-font">Code font</label>
+                <SearchableSelect id="settings-code-font" label="Code font" value={codeFont}
+                  options={CODE_FONTS.map(option => ({ value: option.id, label: option.label }))}
+                  onValueChange={value => handleSelectFont(value as CodeFont)}
+                />
+              </div>
+              <div className="settings-field">
+                <label htmlFor="settings-code-theme">Code theme</label>
+                <SearchableSelect id="settings-code-theme" label="Code theme" value={codeTheme}
+                  options={CODE_THEMES.map(option => ({ value: option.id, label: option.label }))}
+                  onValueChange={value => handleSelectTheme(value as CodeTheme)}
+                />
                 <span className="text-xs text-muted-foreground">Code colors are independent of the app theme.</span>
-              </label>
+              </div>
             </Tabs.Content>
             <Tabs.Content value="integrations" className="settings-panel">
               <section className="flex flex-col items-start gap-3" aria-labelledby="github-cache-title">
