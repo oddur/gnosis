@@ -467,13 +467,21 @@ void app.whenReady().then(async () => {
       input.dispatchEvent(new Event('input', {bubbles:true}));
     })()`);
     await wait("document.body.textContent.includes('No PRs match these filters')");
-    await click('Clear filters');
-    await wait("document.querySelector('[aria-label=\"Search PRs and stacks\"]').value === ''");
-    await js('document.querySelector(\'[title="Saved reviews"]\').click()');
-    await wait("document.body.textContent.includes('No saved reviews yet')");
-    await js('document.querySelector(\'[title="Review queue"]\').click()');
+    // Fail the debounced filter save too: retry must recover pending filters,
+    // not leave every later queue response blocked by the unsaved change.
     await js('void (window.fixtureQueue = window.electronAPI.workbenchQueue)');
     await js("void (window.electronAPI.workbenchQueue = () => Promise.reject(new Error('Fixture network failure')))");
+    await js('void (window.failedFilterSaves = 0)');
+    await js('void (window.fixtureSetFilters = window.electronAPI.workbenchSetFilters)');
+    await js('void (window.electronAPI.workbenchSetFilters = async (...args) => { try { return await window.fixtureSetFilters(...args); } catch (e) { window.failedFilterSaves++; throw e; } })');
+    await click('Clear filters');
+    await wait("document.querySelector('[aria-label=\"Search PRs and stacks\"]').value === ''");
+    await wait("document.body.textContent.includes('Could not save queue filters')");
+    await js('document.querySelector(\'[title="Saved reviews"]\').click()');
+    await wait("document.body.textContent.includes('No saved reviews yet')");
+    await js('void (window.previousFailedSaves = window.failedFilterSaves)');
+    await js('document.querySelector(\'[title="Review queue"]\').click()');
+    await wait('window.failedFilterSaves > window.previousFailedSaves');
     await js('document.querySelector(\'[aria-label="Refresh queue"]\').click()');
     await wait("document.body.textContent.includes('Queue could not be loaded')");
     await js('void (window.electronAPI.workbenchQueue = window.fixtureQueue)');
