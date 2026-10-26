@@ -1,3 +1,4 @@
+import type { SqliteSearchIndex } from './sqlite-search-index';
 import { isMutedReview } from '../lib/muted-prs';
 import fs from 'node:fs/promises';
 import { isCacheRecord } from '../lib/github-cache';
@@ -17,6 +18,7 @@ import type { ReviewGuide, ReviewHistoryEntry } from '../lib/types';
 import type { GitHubReviewThreads } from '../lib/review-threads';
 
 interface Deps {
+  index?: SqliteSearchIndex;
   mutedUrls?: () => ReadonlySet<string>;
   cachedResponses?: () => { url: string; data: unknown }[];
   directory: () => string;
@@ -41,6 +43,8 @@ export function createCommandSearchService(deps: Deps) {
   let indexed: { account: string; signature: string; documents: SearchDocument[]; warnings: string[] } | undefined;
   let building: Promise<void> | undefined;
   let httpDocuments: SearchDocument[] = [];
+  let indexedInputs: unknown[] = [];
+
   async function refresh() {
     const queue = deps.queue(),
       history = deps
@@ -134,8 +138,10 @@ export function createCommandSearchService(deps: Deps) {
               : []
         )
       );
+      const threadInputs: unknown[] = [];
       for (const url of urls) {
         const threads = deps.threads(url);
+        threadInputs.push(threads);
         if (threads) {
           const group = base.find(
             (d) =>
@@ -171,19 +177,27 @@ export function createCommandSearchService(deps: Deps) {
           )
       );
       const bots = includeBots || !deps.ignoreBots();
-      const hits = query.trim()
-        ? searchDocuments(visibleDocs, query, bots)
-        : visibleDocs
-            .filter(
-              (d) =>
-                (['pr', 'stack', 'view', 'repository'].includes(d.kind) || recentIds.includes(d.id)) && (bots || !d.bot)
-            )
-            .sort((a, b) => {
-              const ai = recentIds.indexOf(a.id),
-                bi = recentIds.indexOf(b.id);
-              return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi);
-            })
-            .map((document) => searchHit(document));
+      const inputs = [indexed, httpDocuments, currentMutes, deps.history(), ...threadInputs];
+      if (inputs.length !== indexedInputs.length || inputs.some((input, i) => input !== indexedInputs[i])) {
+        deps.index?.replace(deps.account(), visibleDocs);
+        indexedInputs = inputs;
+      }
+      const hits = deps.index
+        ? deps.index.search(deps.account(), query, bots, recentIds)
+        : query.trim()
+          ? searchDocuments(visibleDocs, query, bots)
+          : visibleDocs
+              .filter(
+                (d) =>
+                  (['pr', 'stack', 'view', 'repository'].includes(d.kind) || recentIds.includes(d.id)) &&
+                  (bots || !d.bot)
+              )
+              .sort((a, b) => {
+                const ai = recentIds.indexOf(a.id),
+                  bi = recentIds.indexOf(b.id);
+                return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi);
+              })
+              .map((document) => searchHit(document));
       return {
         account: deps.account(),
         hits: hits.slice(0, 120).map((h) => ({ ...h, document: { ...h.document, text: h.snippet, code: undefined } })),
@@ -285,4 +299,90 @@ export function cachedGitHubDocuments(
       });
   }
   return docs;
+}
+
+export interface SearchInput {
+  directory: string;
+  queue: WorkbenchQueue;
+  history: ReviewHistoryEntry[];
+  account: string;
+  ignoreBots: boolean;
+  muted: string[];
+  cachedResponses: { url: string; data: unknown }[];
+  threads: Record<string, GitHubReviewThreads>;
+}
+export interface SearchRequest {
+  input?: SearchInput;
+  account: string;
+  query: string;
+  includeBots: boolean;
+  recentIds: string[];
+  muted: string[];
+  ignoreBots: boolean;
+}
+/** Only gather snapshots on refresh; parsing, indexing, ranking and snippets stay in the worker. */
+export function createWorkerCommandSearchService(
+  deps: Deps,
+  search: (request: SearchRequest) => Promise<LocalSearchResponse>
+) {
+  let refreshed = 0,
+    indexedAccount: string | undefined;
+  let refreshing: Promise<LocalSearchResponse> | undefined;
+  return {
+    async search(query: string, includeBots = false, recentIds: string[] = []) {
+      if (typeof query !== 'string' || query.length > 1000) throw Error('Use a search of 1,000 characters or fewer.');
+      const account = deps.account(),
+        muted = [...(deps.mutedUrls?.() ?? [])];
+      const request: SearchRequest = { account, query, includeBots, recentIds, muted, ignoreBots: deps.ignoreBots() };
+      if (account !== indexedAccount || Date.now() - refreshed > 2000) {
+        const queue = deps.queue(),
+          history = deps.history(),
+          cachedResponses = deps.cachedResponses?.() ?? [];
+        const urls = new Set([
+          ...queue.items.flatMap((item) => item.subject.members.map((member) => member.url)),
+          ...history.map((entry) => entry.prUrl),
+        ]);
+        for (const response of cachedResponses) {
+          const match = /\/repos\/([^/]+)\/([^/]+)\/(?:pulls|issues)\/(\d+)/.exec(response.url);
+          if (match) urls.add(`https://github.com/${match[1]}/${match[2]}/pull/${match[3]}`);
+        }
+        const threads: SearchInput['threads'] = {};
+        for (const url of urls) {
+          const value = deps.threads(url);
+          if (value) threads[url] = value;
+        }
+        request.input = {
+          directory: deps.directory(),
+          queue,
+          history,
+          account,
+          ignoreBots: request.ignoreBots,
+          muted,
+          cachedResponses,
+          threads,
+        };
+        indexedAccount = account;
+        refreshed = Date.now();
+      }
+      if (!request.input && refreshing) await refreshing;
+      const running = search(request);
+      if (request.input) {
+        refreshing = running;
+        void running
+          .finally(() => {
+            if (refreshing === running) refreshing = undefined;
+          })
+          .catch(() => {});
+      }
+      try {
+        const result = await running;
+        return deps.account() === account
+          ? result
+          : { account: deps.account(), hits: [], total: 0, ignoreBots: deps.ignoreBots(), warnings: [] };
+      } catch (error) {
+        refreshed = 0;
+        throw error;
+      }
+    },
+  };
 }
