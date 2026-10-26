@@ -30,7 +30,14 @@ export async function applyPendingGitHubCacheClear(directory: string, clearBrows
     fs.writeFileSync(file + '.tmp', JSON.stringify({ ...retained, subjects: [] }), { mode: 0o600 });
     fs.renameSync(file + '.tmp', file);
   }
-  for (const name of ['github-cache.json', 'github-cache.json.tmp', 'workbench.json.tmp'])
+  for (const name of [
+    'github-cache.json',
+    'github-cache.json.tmp',
+    'github-cache.sqlite',
+    'github-cache.sqlite-wal',
+    'github-cache.sqlite-shm',
+    'workbench.json.tmp',
+  ])
     fs.rmSync(path.join(directory, name), { force: true });
   await clearBrowserCache();
   // Keep the request after a failure so the next launch can retry safely.

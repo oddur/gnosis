@@ -1,9 +1,10 @@
+import { flushCaches, closeCaches } from './cache-test-pool';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createGitHubClientPool } from '../lib/github-client';
+import { createGitHubClientPool } from './cache-test-pool';
 import { createReviewThreadService } from '../src/review-thread-service';
 import { threadPlacementReason, threadSource, type GitHubReviewThread } from '../lib/review-threads';
 import { memberPrefix, type ReviewMember } from '../lib/workbench';
@@ -231,10 +232,12 @@ void test('complete discussion snapshots survive restart, expire, and respect ex
       : response(pr(page([{ ...thread, isResolved: resolved, comments: page([comment]) }])));
   try {
     const first = harness(handler);
-    first.pool.setStorage(file);
+    await flushCaches();
+    await first.pool.setStorage(file);
     await createReviewThreadService(() => now).list(first.pool.client('one'), review.prUrl);
     const restarted = harness(handler);
-    restarted.pool.setStorage(file);
+    await flushCaches();
+    await restarted.pool.setStorage(file);
     const service = createReviewThreadService(() => now);
     const client = restarted.pool.client('one');
     assert.equal((await service.list(client, review.prUrl)).threads.length, 1);
@@ -248,7 +251,8 @@ void test('complete discussion snapshots survive restart, expire, and respect ex
     assert.equal(restarted.calls.length, 3, 'A different credential must fetch its own discussions');
     await service.act(client, { prUrl: review.prUrl, threadId: 'T1', action: 'resolve' });
     const afterWrite = harness(handler);
-    afterWrite.pool.setStorage(file);
+    await flushCaches();
+    await afterWrite.pool.setStorage(file);
     assert.equal(
       (await createReviewThreadService(() => now).list(afterWrite.pool.client('one'), review.prUrl)).threads[0]
         .isResolved,
@@ -257,10 +261,12 @@ void test('complete discussion snapshots survive restart, expire, and respect ex
     assert.equal(afterWrite.calls.length, 1, 'The pre-mutation snapshot was removed from disk');
     afterWrite.pool.forget('one');
     const afterLogout = harness(handler);
-    afterLogout.pool.setStorage(file);
+    await flushCaches();
+    await afterLogout.pool.setStorage(file);
     await createReviewThreadService(() => now).list(afterLogout.pool.client('one'), review.prUrl);
     assert.equal(afterLogout.calls.length, 1);
   } finally {
+    await closeCaches();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -274,13 +280,16 @@ void test('a failed discussion page never persists an incomplete thread snapshot
         ? response({ errors: [{ message: 'Unavailable page' }] })
         : response(pr(page([{ ...thread, comments: page([comment]) }], 'next')))
     );
-    first.pool.setStorage(file);
+    await flushCaches();
+    await first.pool.setStorage(file);
     await assert.rejects(createReviewThreadService().list(first.pool.client('one'), review.prUrl), /Unavailable page/);
     const restart = harness(() => response(pr(page([{ ...thread, comments: page([comment]) }]))));
-    restart.pool.setStorage(file);
+    await flushCaches();
+    await restart.pool.setStorage(file);
     await createReviewThreadService().list(restart.pool.client('one'), review.prUrl);
     assert.equal(restart.calls.length, 1);
   } finally {
+    await closeCaches();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

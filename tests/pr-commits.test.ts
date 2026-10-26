@@ -1,9 +1,10 @@
+import { flushCaches, closeCaches } from './cache-test-pool';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createGitHubClientPool, githubCacheFor } from '../lib/github-client';
+import { createGitHubClientPool, githubCacheFor } from './cache-test-pool';
 import { createPrCommitsService } from '../src/pr-commits-service';
 import { ownedCommits, selectedCommits, type CommitSelection } from '../lib/pr-commits';
 import type { ReviewSubject } from '../lib/workbench';
@@ -249,7 +250,8 @@ void test('commit lists, comparisons, and opened files survive restart; latest c
     const f = fixture(),
       client = f.pool.client('one'),
       service = createPrCommitsService();
-    f.pool.setStorage(path.join(dir, 'cache.json'));
+    await flushCaches();
+    await f.pool.setStorage(path.join(dir, 'cache.json'));
     const list = await service.list(client, url),
       result = await service.comparison(client, selection(2));
     const request = { url, path: 'new.ts', baseSha: sha(1), headSha: sha(2), comparison: selection(2) };
@@ -260,7 +262,8 @@ void test('commit lists, comparisons, and opened files survive restart; latest c
         throw Error('Must not fetch');
       }) as typeof fetch,
     });
-    pool.setStorage(path.join(dir, 'cache.json'));
+    await flushCaches();
+    await pool.setStorage(path.join(dir, 'cache.json'));
     const reopened = createPrCommitsService(),
       next = pool.client('one');
     assert.equal(JSON.stringify(await reopened.list(next, url)), JSON.stringify(list));
@@ -272,6 +275,7 @@ void test('commit lists, comparisons, and opened files survive restart; latest c
     await recovered.list(client, url);
     assert.equal((await recovered.comparison(client, selection(3))).metadata.headSha, sha(3));
   } finally {
+    await closeCaches();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

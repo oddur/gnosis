@@ -654,7 +654,7 @@ void app.whenReady().then(async () => {
     app.exit(1);
     return;
   }
-  githubClients.setStorage(path.join(app.getPath('userData'), 'github-budget.json'));
+  await githubClients.setStorage(path.join(app.getPath('userData'), 'github-budget.json'));
 
   // Expose packaged state to preload via env var (before creating windows)
   process.env.APP_IS_PACKAGED = app.isPackaged ? '1' : '0';
@@ -688,6 +688,8 @@ void app.whenReady().then(async () => {
   });
 });
 
+let cacheFlushed = false;
+let cacheFlushing = false;
 app.on('before-quit', (event) => {
   if (!quitConfirmed && activeGenerations.size > 0) {
     event.preventDefault();
@@ -712,6 +714,16 @@ app.on('before-quit', (event) => {
     updateHistoryEntry(id, { status: 'failed', error: 'App quit during generation' });
   }
   activeGenerations.clear();
+  if (!cacheFlushed) {
+    event.preventDefault();
+    if (!cacheFlushing) {
+      cacheFlushing = true;
+      void Promise.race([githubClients.closeStorage(), new Promise(resolve => setTimeout(resolve, 1500))])
+        .catch((error: unknown) => console.warn('Cache flush failed:', error))
+        .finally(() => { cacheFlushed = true; app.quit(); });
+    }
+    return;
+  }
   destroyTray();
 });
 

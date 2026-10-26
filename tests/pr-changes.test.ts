@@ -1,9 +1,10 @@
+import { flushCaches, closeCaches } from './cache-test-pool';
 import test from 'node:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-import { createGitHubClientPool } from '../lib/github-client';
+import { createGitHubClientPool } from './cache-test-pool';
 import { createPrChangesService } from '../src/pr-changes-service';
 import { GitHubDiffSource, getPrDiff } from '../lib/github';
 import { preparedDiff } from '../lib/prepared-pr';
@@ -185,7 +186,8 @@ void test('cached inventories and opened contents survive a process restart with
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-changes-cache-'));
   try {
     const f = fixture();
-    f.pool.setStorage(path.join(dir, 'github-state.json'));
+    await flushCaches();
+    await f.pool.setStorage(path.join(dir, 'github-state.json'));
     const service = createPrChangesService(),
       client = f.pool.client('one');
     const saved = await service.manifest(client, url);
@@ -199,7 +201,8 @@ void test('cached inventories and opened contents survive a process restart with
         throw Error('Offline');
       }) as typeof fetch,
     });
-    restarted.setStorage(path.join(dir, 'github-state.json'));
+    await flushCaches();
+    await restarted.setStorage(path.join(dir, 'github-state.json'));
     const reader = createPrChangesService(),
       reopened = restarted.client('one');
     assert.equal(JSON.stringify(reader.cached(reopened, url, saved.metadata)), JSON.stringify(saved));
@@ -208,6 +211,7 @@ void test('cached inventories and opened contents survive a process restart with
     assert.deepEqual(await reader.content(reopened, request), content);
     assert.equal(reads, 0);
   } finally {
+    await closeCaches();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -226,9 +230,12 @@ void test('large patch inventories remain pinned in memory when too large for di
 });
 
 void test('guided generation reuses the exact prepared revision, including renamed SVG source and absent sides', async () => {
-  const f = fixture(), client = f.pool.client('one'), service = createPrChangesService();
+  const f = fixture(),
+    client = f.pool.client('one'),
+    service = createPrChangesService();
   const snapshot = await service.manifest(client, url);
-  for (const file of snapshot.files) await service.content(client, { url, path: file.path, baseSha: 'base', headSha: 'head1' });
+  for (const file of snapshot.files)
+    await service.content(client, { url, path: file.path, baseSha: 'base', headSha: 'head1' });
   await service.prepareReview(client, url, snapshot.metadata);
   const start = f.reads.length;
   const source = new GitHubDiffSource(url, null, client);
@@ -245,10 +252,15 @@ void test('guided generation reuses the exact prepared revision, including renam
   assert.equal(f.reads.length - start, 2, 'Generation can verify the revision again before saving');
   const other = new GitHubDiffSource(url, null, f.pool.client('two'));
   await other.getChangedFiles();
-  assert.ok(f.reads.slice(start + 2).some(u => u.pathname.endsWith('/files')), 'Another account cannot reuse this snapshot');
+  assert.ok(
+    f.reads.slice(start + 2).some((u) => u.pathname.endsWith('/files')),
+    'Another account cannot reuse this snapshot'
+  );
 });
 void test('new discovery revision bypasses saved latest and stale HTTP diff; old prepared revision stays pinned', async () => {
-  const f = fixture(), client = f.pool.client('one'), service = createPrChangesService();
+  const f = fixture(),
+    client = f.pool.client('one'),
+    service = createPrChangesService();
   const old = await service.manifest(client, url);
   await service.prepareReview(client, url, old.metadata);
   // Also seed the mutable HTTP diff endpoint before changing the PR.
@@ -266,7 +278,9 @@ void test('new discovery revision bypasses saved latest and stale HTTP diff; old
   assert.equal(await new GitHubDiffSource(url, null, client).getDiff(), 'diff for head3');
 });
 void test('a moving revision cannot poison the prepared review diff cache', async () => {
-  const f = fixture(), client = f.pool.client('one'), service = createPrChangesService();
+  const f = fixture(),
+    client = f.pool.client('one'),
+    service = createPrChangesService();
   const snapshot = await service.manifest(client, url);
   f.moveDuringDiff();
   await assert.rejects(service.prepareReview(client, url, snapshot.metadata), /changed while/);
@@ -288,7 +302,7 @@ void test('refresh reuses immutable files but persists reopened and retargeted P
   assert.equal(reopened.comparisonBase, closed.comparisonBase);
   assert.ok(reopened.fetchedAt >= closed.fetchedAt);
   assert.equal(
-    f.reads.slice(start).filter(u => u.pathname.endsWith('/files') || u.pathname.includes('/compare/')).length,
+    f.reads.slice(start).filter((u) => u.pathname.endsWith('/files') || u.pathname.includes('/compare/')).length,
     0
   );
   const reader = createPrChangesService();
