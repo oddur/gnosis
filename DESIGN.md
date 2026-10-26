@@ -204,6 +204,10 @@ Reduced motion removes these transitions while preserving progress and status in
 Pair concise errors with recovery actions. Put detailed diagnostics behind disclosure controls.
 Show saved-summary freshness and fallback status explicitly. Preserve useful content while a background task runs.
 
+### Explanation diagrams
+
+D2 diagrams use a fitted, bordered preview within the explanation pane. Named navigation and the active explanation support manual inspection. The existing dialog expands the diagram into the shared pan-and-zoom viewer. Its active explanation sits beside the canvas and moves below it at narrow widths. Additional notes start collapsed. Focus changes highlight exact entities on a stable board while preserving layout and zoom. Explicit walkthroughs offer optional auto-play. Maps, comparisons, and older diagrams without a declared kind use named views without auto-play. Surrounding controls, surfaces, and text use the workbench system. SVG typography and diagram colors stay scoped to the diagram. Reduced motion removes animation and transitions. Source disclosure and a local retry keep errors recoverable. Saved Mermaid diagrams retain their renderer and share the inspection viewer. See [D2 explanation behavior](docs/d2-explanations.md).
+
 Implementation references: [global styles](src/globals.css), [review panes](components/SlideView.tsx), and [code highlighting](lib/highlight.ts).
 Sidecar snippets illustrate the primitives without a React or Tailwind runtime; application components remain the implementation source.
 

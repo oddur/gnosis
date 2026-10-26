@@ -2690,3 +2690,80 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .commit-viewed-complete { border-top:1px solid var(--border); }
 .commit-viewed-complete strong { font-size:var(--type-control); }
 .commit-viewed-complete p { margin:8px 0 12px;color:var(--muted-foreground); }
+
+/* D2/TALA prototype: preserve the review workbench and let the diagram lead. */
+.d2-diagram { margin:16px 0;min-width:0; }
+.d2-preview { border:1px solid var(--border);background:var(--card); }
+.d2-preview:hover { background:var(--card);border-color:var(--ring); }
+.d2-playback { display:flex;align-items:center;flex-wrap:wrap;gap:4px;padding:8px 0; }
+.d2-step-count { color:var(--muted-foreground);font-size:var(--type-caption);font-variant-numeric:tabular-nums;min-width:5ch;text-align:center; }
+.d2-caption { min-height:4.5em;font-size:var(--type-body);line-height:1.6; }
+.d2-caption strong { font-weight:600; }
+.d2-caption p { margin:4px 0 0;max-width:70ch; }
+.d2-source { margin-top:12px; }
+.d2-source pre { max-height:280px;overflow:auto;font-size:var(--type-control);padding:12px;background:var(--muted); }
+.d2-render-state { display:flex;min-height:240px;align-items:center;justify-content:center;color:var(--muted-foreground);font-size:var(--type-control); }
+.d2-expanded-body { display:flex;flex:1;min-height:0; }
+.d2-notes { flex:0 0 280px;overflow:auto;padding:16px;border-left:1px solid var(--border); }
+.d2-notes h3 { font-size:var(--type-body);font-weight:600;margin:0 0 20px; }
+.d2-notes > div + div { margin-top:20px;padding-top:16px;border-top:1px solid var(--border); }
+.d2-notes strong { font-size:var(--type-control);font-weight:600; }
+.d2-notes p { font-size:var(--type-control);line-height:1.65;margin:6px 0 0; }
+.d2-expanded-footer { padding:8px 20px 16px;border-top:1px solid var(--border);flex:none; }
+.d2-expanded-footer .d2-caption { min-height:4.5em; }
+[data-motion=false] svg * { animation-play-state:paused !important; }
+.d2-frame, .diagram-frame { animation:d2-frame-in 200ms ease-out; }
+@keyframes d2-frame-in { from { opacity:.65; } to { opacity:1; } }
+@media (prefers-reduced-motion:reduce) { .d2-frame, .diagram-frame, .d2-diagram svg *, .d2-dialog svg * { animation:none !important;transition:none !important; } }
+@media (max-width:900px) { .d2-notes { flex-basis:220px; } }
+@media (max-width:700px) { .d2-expanded-body { flex-direction:column; }.d2-notes { flex:0 1 120px;border-left:0;border-top:1px solid var(--border); }.d2-expanded-footer { padding:8px 12px; }.d2-caption { font-size:var(--type-control); } }
+.d2-preview .mermaid-preview-canvas { height:var(--mermaid-preview-height,min(320px,40dvh)); }
+.d2-render-state { flex-direction:column;gap:12px;text-align:center;padding:16px; }
+
+/* Guided diagrams: preserve the map while attention moves between named views. */
+.d2-view-nav { display:flex;flex-wrap:wrap;gap:4px;margin:0 0 12px; }
+.d2-view-nav button { display:flex;align-items:baseline;gap:8px;min-width:0;max-width:100%;padding:7px 9px;border:1px solid transparent;border-radius:4px;text-align:left;font-size:var(--type-control);line-height:1.5;color:var(--foreground);overflow-wrap:anywhere; }
+.d2-view-nav button:hover { background:var(--secondary); }
+.d2-view-nav button[aria-current] { background:var(--accent);color:var(--accent-foreground);border-color:var(--border);font-weight:600; }
+.d2-view-nav button:focus-visible { outline:2px solid var(--ring);outline-offset:2px; }
+.d2-view-number { flex:none;font-variant-numeric:tabular-nums; }
+.d2-caption { padding:8px 0;min-height:0; }
+.d2-caption > strong { font-size:var(--type-body); }
+.d2-caption .d2-change { margin:10px 0; }
+.d2-notes { flex-basis:320px; }
+.d2-notes .d2-view-nav { display:flex;flex-direction:column;padding-bottom:16px;border-bottom:1px solid var(--border); }
+.d2-notes .d2-view-nav button { width:100%; }
+.d2-notes .d2-caption p { font-size:var(--type-body);line-height:1.65; }
+.d2-notes .d2-caption > strong { font-size:var(--type-body); }
+.d2-additional-notes { margin-top:20px;padding-top:12px;border-top:1px solid var(--border);font-size:var(--type-control); }
+.d2-additional-notes > div { margin-top:16px; }
+.d2-additional-notes summary,.d2-differences summary { cursor:pointer;line-height:1.6; }
+.d2-differences { margin-top:12px;font-size:var(--type-control); }
+.d2-differences dl { margin:8px 0 0; }
+.d2-differences dl > div { margin:8px 0;padding:8px 0;border-top:1px solid var(--border); }
+.d2-differences dt { overflow-wrap:anywhere;font-weight:500; }
+.d2-differences dd { display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:4px 0 0;overflow-wrap:anywhere; }
+.d2-differences dd svg { flex:none; }
+.d2-diagram [data-d2-focus="active"] > .shape > *, .d2-dialog [data-d2-focus="active"] > .shape > * { stroke:var(--primary);stroke-width:4!important; }
+.d2-diagram [data-d2-focus="active"] > path.connection, .d2-dialog [data-d2-focus="active"] > path.connection { stroke:var(--primary);stroke-width:4!important; }
+.d2-diagram [data-d2-focus="active"] > text, .d2-dialog [data-d2-focus="active"] > text { fill:var(--foreground);font-weight:700; }
+.d2-diagram [data-d2-focus="context"] > .shape, .d2-dialog [data-d2-focus="context"] > .shape { opacity:.5; }
+.d2-diagram [data-d2-focus="context"] > path.connection, .d2-dialog [data-d2-focus="context"] > path.connection { stroke:var(--muted-foreground); }
+.d2-diagram [data-d2-focus] > .shape, .d2-dialog [data-d2-focus] > .shape { transition:opacity 180ms ease-out; }
+[data-motion="true"] [data-d2-focus="active"] > path.connection { stroke-dasharray:8 6;animation:d2-guided-flow 900ms linear infinite; }
+@keyframes d2-guided-flow { to { stroke-dashoffset:-28; } }
+@media (max-width:900px) { .d2-notes { flex-basis:280px; } }
+@media (max-width:700px) {
+  .d2-notes { flex:0 1 42%;min-height:160px; }
+  .d2-notes .d2-view-nav { flex-direction:row; }
+  .d2-notes .d2-view-nav button { width:auto; }
+  .d2-expanded-footer { padding:4px 8px; }
+}
+@media (prefers-reduced-motion:reduce) {
+  .d2-diagram [data-d2-focus] > .shape,.d2-dialog [data-d2-focus] > .shape { transition:none; }
+  [data-motion="true"] [data-d2-focus="active"] > path.connection { animation:none; }
+}
+
+.d2-diagram [data-d2-focus="active"] > .shape > *, .d2-dialog [data-d2-focus="active"] > .shape > * { fill:var(--accent); }
+.d2-diagram [data-d2-focus="active"] > marker polygon, .d2-dialog [data-d2-focus="active"] > marker polygon { fill:var(--primary); }
+.d2-code-link { padding-left:0; }

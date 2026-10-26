@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { Maximize2 } from 'lucide-react';
-import { MermaidViewport } from './MermaidViewport';
+import { DiagramViewport } from './DiagramViewport';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { renderMermaid } from '../lib/mermaid';
 
@@ -109,7 +109,7 @@ export function MermaidDiagram({
           }}
         >
           <DialogTitle className="mermaid-dialog-title">{title}</DialogTitle>
-          {open && current?.svg && <MermaidViewport svg={current.svg} />}
+          {open && current?.svg && <DiagramViewport svg={current.svg} />}
         </DialogContent>
       </Dialog>
     </figure>

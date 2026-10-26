@@ -1,5 +1,6 @@
 import type { PrMetadata, ChangedFile, ProjectClaudeContext, TopicPlan } from './types';
 import type { IndexedHunk } from './diff-parse';
+import { normalizeDiagramBrief } from './diagram-spec';
 
 const CHARS_PER_TOKEN = 4;
 const MAX_TOKENS = 150_000;
@@ -24,9 +25,7 @@ function renderClaudeContextSection(ctx: ProjectClaudeContext | null | undefined
   }
   if (ctx.commands.length > 0) {
     parts.push(
-      '<custom_commands>\n' +
-        ctx.commands.map((c) => `- /${c.name} — ${c.summary}`).join('\n') +
-        '\n</custom_commands>'
+      '<custom_commands>\n' + ctx.commands.map((c) => `- /${c.name} — ${c.summary}`).join('\n') + '\n</custom_commands>'
     );
   }
   if (ctx.agents.length > 0) {
@@ -234,7 +233,7 @@ export function buildPlannerContext(
   changedFiles: ChangedFile[],
   hunkIndex: string,
   excludedFilesSummary?: string,
-  claudeContext?: ProjectClaudeContext | null,
+  claudeContext?: ProjectClaudeContext | null
 ): string {
   const totalAdditions = changedFiles.reduce((s, f) => s + f.additions, 0);
   const totalDeletions = changedFiles.reduce((s, f) => s + f.deletions, 0);
@@ -269,11 +268,9 @@ export function buildTopicContext(
   prDescription: string,
   storyArc: string,
   allTopics: TopicPlan[],
-  claudeContext?: ProjectClaudeContext | null,
+  claudeContext?: ProjectClaudeContext | null
 ): string {
-  const relevantHunks = topic.hunkIds
-    .map((id) => hunkMap.get(id))
-    .filter((h): h is IndexedHunk => h !== undefined);
+  const relevantHunks = topic.hunkIds.map((id) => hunkMap.get(id)).filter((h): h is IndexedHunk => h !== undefined);
 
   // Collect affected file paths
   const affectedFiles = new Set(relevantHunks.map((h) => h.filePath));
@@ -285,10 +282,28 @@ export function buildTopicContext(
     .map((t) => `- "${t.title}" (${t.slideType}): ${t.narrativeBrief}`)
     .join('\n');
 
+  const brief = normalizeDiagramBrief(topic.diagramBrief);
+  // Parallel writers share planned coverage, not claims about text already generated.
+  const diagramPlan = allTopics
+    .filter((other) => other.title !== topic.title)
+    .flatMap((other) => {
+      const planned = normalizeDiagramBrief(other.diagramBrief);
+      if (!planned) return [];
+      return [
+        {
+          topic: other.title,
+          ...(typeof planned === 'string'
+            ? { brief: planned.slice(0, 500) }
+            : { question: planned.question, takeaway: planned.takeaway, essentialConcepts: planned.essentialConcepts }),
+        },
+      ];
+    });
   const claudeSection = renderClaudeContextSection(claudeContext);
   let ctx = `<story_arc>${storyArc}</story_arc>
 
 <narrative_brief>${topic.narrativeBrief}</narrative_brief>
+<diagram_brief>${brief ? (typeof brief === 'string' ? brief : JSON.stringify(brief)) : 'No diagram planned. Omit it unless the source reveals a useful visual explanation.'}</diagram_brief>
+${diagramPlan.length ? `\n<diagram_coverage_plan>Planned coverage in other topics, not completed explanations. Avoid re-teaching these questions. Verify all claims against your source; do not claim the reader has already seen a generated diagram.\n${JSON.stringify(diagramPlan)}\n</diagram_coverage_plan>\n` : ''}
 
 ${claudeSection ? claudeSection + '\n\n' : ''}${depBriefs ? `<prior_topics>\nThis slide builds on:\n${depBriefs}\n</prior_topics>\n\n` : ''}<topic>
 Title: ${topic.title}
@@ -337,7 +352,8 @@ PR Description: ${prDescription || '(none)'}
     // Include neighbor if any affected file likely imports it
     const base = path.replace(/\.[^.]+$/, '');
     const isRelevant = [...affectedFiles].some(
-      (f) => fileContents[f]?.includes(base) || headFileContents[f]?.includes(base),
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- file records can omit either revision at runtime
+      (f) => fileContents[f]?.includes(base) || headFileContents[f]?.includes(base)
     );
     if (isRelevant) {
       neighborSection += `  <file path="${path}">\n${truncateFileContent(content, MAX_FILE_LINES)}\n  </file>\n`;

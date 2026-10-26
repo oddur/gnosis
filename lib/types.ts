@@ -73,6 +73,23 @@ export interface InlineExplanation {
   text: string;
 }
 
+/** Saved D2 source; named captions identify the overview or a native board path. */
+export interface D2DiagramSpec {
+  source: string;
+  caption?: string;
+  kind?: 'map' | 'walkthrough' | 'comparison';
+  steps?: {
+    board?: string;
+    title: string;
+    description: string;
+    /** Exact D2 node or connection identifiers to spotlight on a shared board. */
+    focus?: string[];
+    /** The meaningful event or difference from the previous view. */
+    change?: string;
+    evidence?: { filePath: string; startLine: number };
+  }[];
+}
+
 export interface Slide {
   id: string;
   slideNumber: number;
@@ -88,6 +105,7 @@ export interface Slide {
   inlineExplanations?: InlineExplanation[];
   dependsOn: string[];
   mermaidDiagram?: string | null;
+  d2Diagram?: D2DiagramSpec | null;
   reviewChecks?: ReviewCheck[];
   educationNotes?: EducationNote[];
   // AI-assigned importance. "critical" = auth, data integrity, API
@@ -116,6 +134,7 @@ export interface AISlide {
   inlineExplanations?: InlineExplanation[];
   dependsOn: string[];
   mermaidDiagram?: string | null;
+  d2Diagram?: D2DiagramSpec | null;
   reviewChecks?: ReviewCheck[];
   educationNotes?: EducationNote[];
   importance?: SlideImportance;
@@ -154,6 +173,16 @@ export interface AIReviewGuide {
   webSources?: WebSource[];
 }
 
+/** A proposed teaching goal, verified by the writer against the actual source. */
+export interface DiagramBrief {
+  question: string;
+  takeaway: string;
+  assumedKnowledge: string[];
+  essentialConcepts: string[];
+  omit: string[];
+  visualApproach: string;
+}
+
 // Planner output for two-phase review generation
 export interface TopicPlan {
   title: string;
@@ -163,6 +192,7 @@ export interface TopicPlan {
   dependsOn: string[];
   order: number;
   narrativeBrief: string; // 1-2 sentence direction for the writer
+  diagramBrief?: DiagramBrief | string | null; // Strings preserve plans saved by earlier versions.
 }
 
 export interface PlannerOutput {
@@ -181,6 +211,7 @@ export interface WriterSlideOutput {
   reviewFocus: string | null;
   contextSnippets: string[];
   mermaidDiagram?: string | null;
+  d2Diagram?: D2DiagramSpec | null;
   reviewChecks?: ReviewCheck[];
   educationNotes?: EducationNote[];
   explainerIdea?: ExplainerIdea | null;

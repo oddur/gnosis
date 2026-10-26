@@ -20,6 +20,7 @@ import { normalizeInlineExplanations } from '@/lib/inline-explanations';
 import { FilePathLink } from '@/components/FilePathLink';
 import { Markdown } from '@/components/Markdown';
 import { MermaidDiagram } from '@/components/MermaidDiagram';
+import { D2Diagram } from '@/components/D2Diagram';
 import { CODE_THEMES, slideTypeConfig, safeConfigLookup } from '@/lib/constants';
 import {
   buildAgentPrompt,
@@ -512,7 +513,26 @@ export function SlideView({
 
       <Markdown className="slide-prose select-text">{slide.narrative}</Markdown>
 
-      {slide.mermaidDiagram && <MermaidDiagram chart={slide.mermaidDiagram} title={slide.title} expanded={diagramOpen} onExpandedChange={setDiagramOpen} />}
+      {slide.d2Diagram?.source ? (
+        <D2Diagram
+          key={slide.id}
+          diagram={slide.d2Diagram}
+          title={slide.title}
+          expanded={diagramOpen}
+          onExpandedChange={setDiagramOpen}
+          canShowCode={(source) => isAnchorable({ ...source, text: '' }, anchorable)}
+          onShowCode={(source) => handleCheckClick({ ...source, text: '' })}
+        />
+      ) : (
+        slide.mermaidDiagram && (
+          <MermaidDiagram
+            chart={slide.mermaidDiagram}
+            title={slide.title}
+            expanded={diagramOpen}
+            onExpandedChange={setDiagramOpen}
+          />
+        )
+      )}
 
       {onExplore &&
         (slide.explainerIdea ||
@@ -688,7 +708,6 @@ export function SlideView({
         </p>
       )}
 
-
       {groupedHunks.length === 0 && (
         <div className="flex flex-col gap-1.5">
           <p className="editorial-label text-sm">Background topic.</p>
@@ -703,7 +722,7 @@ export function SlideView({
         const viewed = viewedFiles?.has(filePath) ?? false;
         const expanded = fileExpansion[filePath] ?? !viewed;
         const contentId = `${fileContentId}-${index}`;
-        const lfsResource = hunks.some(hunk => hunk.content.includes(LFS_VERSION));
+        const lfsResource = hunks.some((hunk) => hunk.content.includes(LFS_VERSION));
         const fileDiff = (
           <ReviewFileDiscussion
             inlineExplanations={
@@ -759,7 +778,13 @@ export function SlideView({
                   enabled={expanded}
                   diffLayout={diffLayout}
                   diffAppearance={diffAppearance}
-                  diffTheme={CODE_THEMES.find(theme => extractShikiStyles(hunks[0]?.renderedHtml ?? '').preClass.split(' ').includes(theme.id))?.id ?? 'aurora-x'}
+                  diffTheme={
+                    CODE_THEMES.find((theme) =>
+                      extractShikiStyles(hunks[0]?.renderedHtml ?? '')
+                        .preClass.split(' ')
+                        .includes(theme.id)
+                    )?.id ?? 'aurora-x'
+                  }
                 />
               )}
               {(imageMimeType(filePath) || lfsResource) && hunks.length > 0 ? (

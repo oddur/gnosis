@@ -1,10 +1,20 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Minus, Plus, Scan } from 'lucide-react';
 import { Button } from './ui/button';
+import { namespaceSVG } from '../lib/svg-ids';
 
 /** A dedicated inspection surface: fit by default, readable scale on demand. */
-export function MermaidViewport({ svg }: { svg: string }) {
+export function DiagramViewport({
+  svg,
+  frameKey,
+  onEntitySelect,
+}: {
+  svg: string;
+  frameKey?: string;
+  onEntitySelect?: (id: string) => void;
+}) {
   const hintId = useId();
+  const instanceId = useId().replace(/[^a-zA-Z0-9]/g, '');
   const viewport = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ width: 0, height: 0 });
   const [zoom, setZoom] = useState<number | 'fit'>('fit');
@@ -21,13 +31,12 @@ export function MermaidViewport({ svg }: { svg: string }) {
         .map(Number) ?? [];
     const valid = Number.isFinite(parts[2]) && parts[2] > 0 && Number.isFinite(parts[3]) && parts[3] > 0;
     // The preview remains mounted. Give this copy its own marker/style IDs.
-    const id = root.getAttribute('id');
     return {
       width: valid ? parts[2] : 640,
       height: valid ? parts[3] : 480,
-      svg: id ? svg.split(id).join(`${id}-expanded`) : svg,
+      svg: namespaceSVG(svg, instanceId),
     };
-  }, [svg]);
+  }, [svg, instanceId]);
   useLayoutEffect(() => {
     const el = viewport.current;
     if (!el) return;
@@ -76,7 +85,7 @@ export function MermaidViewport({ svg }: { svg: string }) {
     return () => window.removeEventListener('blur', stop);
   }, []);
   return (
-    <div className="mermaid-viewer">
+    <div className="mermaid-viewer" data-selectable={!!onEntitySelect}>
       <div className="mermaid-controls" role="group" aria-label="Diagram zoom">
         <Button
           variant="ghost"
@@ -145,13 +154,24 @@ export function MermaidViewport({ svg }: { svg: string }) {
           event.currentTarget.scrollLeft = current.left + current.x - event.clientX;
           event.currentTarget.scrollTop = current.top + current.y - event.clientY;
         }}
-        onPointerUp={(event) => stopDragging(event.pointerId)}
+        onPointerUp={(event) => {
+          const current = drag.current;
+          const clicked = current && Math.hypot(event.clientX - current.x, event.clientY - current.y) < 5;
+          stopDragging(event.pointerId);
+          if (clicked && onEntitySelect) {
+            // Pointer capture retargets the event to the viewport; hit-test the actual element.
+            const element = document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-d2-entity]');
+            const id = element?.getAttribute('data-d2-entity');
+            if (id && element && event.currentTarget.contains(element)) onEntitySelect(id);
+          }
+        }}
         onPointerCancel={(event) => stopDragging(event.pointerId)}
         onLostPointerCapture={(event) => stopDragging(event.pointerId)}
       >
         <div className="mermaid-pan-surface" style={{ width, height }}>
           <div
-            className="mermaid-zoom-art"
+            key={frameKey}
+            className={`mermaid-zoom-art${frameKey ? ' diagram-frame' : ''}`}
             style={{ width: art.width * scale, height: art.height * scale, left, top }}
             dangerouslySetInnerHTML={{ __html: art.svg }}
           />

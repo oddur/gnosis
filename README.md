@@ -29,7 +29,7 @@ It runs locally and uses the [Claude Code CLI](https://claude.ai/code) or [Codex
 - **Review history** — past reviews are saved locally and grouped by PR on the home screen
 - **Clickable review checks** — click a "what to check" item to scroll directly to the relevant code in the diff
 - **Large file filtering** — automatically detects and excludes large generated files (lockfiles, bundles) from the review to keep the AI focused on meaningful changes
-- **Mermaid diagrams** — slides can include architecture and flow diagrams, viewable in fullscreen
+- **D2 diagrams and walkthroughs** — explanations can include architecture maps, annotated sequences, algorithm states, and animated paths with step-by-step playback. Saved Mermaid diagrams remain readable. [Diagram generation and evaluation](docs/d2-explanations.md).
 - **Interactive explanations** — select **Explore** on a slide to generate an animated SVG example. Step through an algorithm, adjust its inputs, and inspect the supporting code.
 - **Risk assessment** — each review is rated low/medium/high risk based on what changed
 - **Clickable file paths** — diff header file paths link directly to the file on GitHub

@@ -1,0 +1,19 @@
+.d2-prototype { height:100dvh;overflow:auto;background:var(--background);color:var(--foreground);padding:24px 32px 72px; }
+.d2-prototype-header { display:flex;align-items:center;justify-content:space-between;gap:20px; }
+.d2-prototype-header h1 { font-size:22px;font-weight:650;letter-spacing:-.02em;margin:0; }
+.d2-prototype-header p { font-size:var(--type-control);color:var(--muted-foreground);margin:6px 0 0; }
+.d2-prototype-tabs { display:flex;gap:6px;padding:20px 0 12px;border-bottom:1px solid var(--border); }
+.d2-prototype-workspace { display:grid;grid-template-columns:minmax(260px, .7fr) minmax(0,1.5fr);gap:32px;padding-top:24px; }
+.d2-prototype-context h2 { font-size:22px;font-weight:600;line-height:1.35;text-wrap:balance; }
+.d2-prototype-context p { font-size:var(--type-body);line-height:1.65;margin:16px 0;max-width:65ch; }
+.d2-prototype-context > p:first-of-type { font-size:var(--type-control);color:var(--muted-foreground); }
+.d2-prototype-preview .d2-diagram { margin:0; }
+.d2-prototype-preview { --mermaid-preview-height:min(440px,52dvh);min-width:0; }
+.d2-prototype-context form { margin-top:16px; }
+.d2-prototype-context label { display:block;font-size:var(--type-control);margin-bottom:8px; }
+.d2-prototype-context textarea { display:block;width:100%;height:260px;resize:vertical;border:1px solid var(--input);border-radius:var(--radius-md);background:var(--card);padding:12px;font-family:var(--font-mono);font-size:13px;margin-bottom:12px; }
+.d2-prototype-context textarea:focus-visible { outline:2px solid var(--ring); }
+.d2-prototype-switcher { position:fixed;bottom:16px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:12px;border:1px solid var(--border);border-radius:var(--radius-md);background:var(--popover);padding:4px;font-size:var(--type-control); }
+@media (max-width:900px) { .d2-prototype { padding:20px 20px 72px; }.d2-prototype-workspace { grid-template-columns:1fr;gap:20px; }.d2-prototype-context > p { margin:8px 0; }.d2-prototype-preview { --mermaid-preview-height:340px; } }
+.d2-prototype-preview { --mermaid-preview-height:min(360px,44dvh); }
+@media (max-width:900px) { .d2-prototype-switcher { display:none; } }

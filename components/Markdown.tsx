@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import { nameMarkdownTasks } from '../lib/markdown-tasks';
 import { scopeMarkdownHeadings } from '../lib/markdown-headings';
 import { MermaidDiagram } from './MermaidDiagram';
+import { D2Diagram } from './D2Diagram';
 
 interface Props {
   children: string;
@@ -142,6 +143,14 @@ const components: Components = {
 
 function GitHubCodeBlock({ children }: ComponentProps<'pre'>) {
   const code = Children.toArray(children)[0];
+  if (
+    isValidElement<ComponentProps<'code'>>(code) &&
+    code.props.className?.split(/\s+/).includes('language-d2') &&
+    typeof code.props.children === 'string'
+  ) {
+    return <D2Diagram diagram={{ source: code.props.children.trimEnd() }} />;
+  }
+
   if (
     isValidElement<ComponentProps<'code'>>(code) &&
     code.props.className?.split(/\s+/).includes('language-mermaid') &&
