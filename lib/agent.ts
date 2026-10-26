@@ -1,3 +1,4 @@
+import { MERMAID_DIRECTIVE } from './mermaid-guidance';
 import { FILE_SUMMARY_DIRECTIVE } from './file-summaries';
 import { INLINE_EXPLANATION_DIRECTIVE } from './inline-explanations';
 import { getProvider } from './provider';
@@ -55,12 +56,7 @@ Anchor each check to a location when you honestly can:
 
 REVIEW FOCUS: The markdown-prose rendering of the same 2–4 checks as a bullet list. Same items, same standard — just formatted for reading.
 
-MERMAID DIAGRAM (optional): Include a Mermaid diagram when it genuinely helps the reviewer understand the flow or structure. Omit it (null) when the change is simple or the diagram would add clutter.
-- Use sequenceDiagram for request/response flows, async calls, event handling, or service interactions
-- Use flowchart TD for conditional logic, branching, or state transitions
-- Use classDiagram for data model changes or new type hierarchies
-- Keep diagrams small: 5–8 nodes max. Label edges clearly. Omit obvious steps.
-- The diagram should show the BEHAVIOUR, not just list the classes in the diff
+${MERMAID_DIRECTIVE}
 
 WRITING STYLE (apply to all text fields — narrative, reviewFocus, summary, riskRationale):
 - Short sentences. Plain words. No jargon when plain English works.
@@ -485,7 +481,7 @@ Anchor when you can:
 
 REVIEW FOCUS: Markdown-bullet-list rendering of the same checks. Same items, same standard.
 
-MERMAID DIAGRAM: Include only when it genuinely helps understanding (sequence diagrams for flows, flowcharts for branching, class diagrams for data models). Keep small: 5–8 nodes max. Omit (null) when not useful.
+${MERMAID_DIRECTIVE}
 
 Respond with valid JSON only. No explanation outside the JSON.`;
 
