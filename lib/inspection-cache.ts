@@ -24,12 +24,13 @@ export const inspectionData = createPrInspectionCache({
   changes: (r, refresh, background) => window.electronAPI.getPrChanges(r.url, refresh, { revision: r, background }),
   commits: (r, refresh, background) => window.electronAPI.getPrCommits(r.url, refresh, { revision: r, background }),
   file: (snapshot, file) => inspectionFiles.read(inspectionFileRequest(snapshot, file), true),
-  comparison: async (list) => {
-    const selection = latestCommitSelection(list);
-    if (selection) await readComparison(selection, '', true);
-  },
+  comparison: (list, commit) => readComparison({
+    url: list.url, prBaseSha: list.metadata.baseSha, prHeadSha: list.metadata.headSha,
+    firstSha: commit.sha, lastSha: commit.sha,
+  }, '', true),
   review: (snapshot) => window.electronAPI.preparePrReview(snapshot.url, snapshot.metadata),
-  visible: () => document.visibilityState !== 'hidden',
+  // Background requests remain rate-limited; minimizing the window need not stop preparation.
+  visible: () => true,
   prioritize: (urls) => {
     inspectionFiles.prioritize(urls);
     comparisonPriorities = new Map(urls.map((url, index) => [url, index]));

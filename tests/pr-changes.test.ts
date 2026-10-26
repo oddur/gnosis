@@ -269,8 +269,8 @@ void test('new discovery revision bypasses saved latest and stale HTTP diff; old
   const next = await service.manifest(client, url, false, { revision: { baseSha: 'base', headSha: 'head2' } });
   assert.equal(next.metadata.headSha, 'head2');
   await service.prepareReview(client, url, next.metadata);
-  assert.equal(preparedDiff(client, url, old.metadata), 'diff for head1');
-  assert.equal(preparedDiff(client, url, next.metadata), 'diff for head2');
+  assert.equal(await preparedDiff(client, url, old.metadata), 'diff for head1');
+  assert.equal(await preparedDiff(client, url, next.metadata), 'diff for head2');
   const source = new GitHubDiffSource(url, null, client);
   assert.equal(await source.getDiff(), 'diff for head2');
   f.move('head3');
@@ -284,7 +284,7 @@ void test('a moving revision cannot poison the prepared review diff cache', asyn
   const snapshot = await service.manifest(client, url);
   f.moveDuringDiff();
   await assert.rejects(service.prepareReview(client, url, snapshot.metadata), /changed while/);
-  assert.equal(preparedDiff(client, url, snapshot.metadata), undefined);
+  assert.equal(await preparedDiff(client, url, snapshot.metadata), undefined);
 });
 
 void test('refresh reuses immutable files but persists reopened and retargeted PR metadata', async () => {

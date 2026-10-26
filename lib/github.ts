@@ -682,7 +682,7 @@ export class GitHubDiffSource implements DiffSource {
   private comparisonBase: Promise<string> | null = null;
   getComparisonBase(): Promise<string> {
     this.comparisonBase ??= this.getMetadata().then(async meta => {
-      const prepared = preparedChanges(this.octokit, this.key, meta);
+      const prepared = await preparedChanges(this.octokit, this.key, meta);
       if (prepared) return prepared.comparisonBase;
       const { data } = await this.octokit.repos.compareCommits({ owner: this.owner, repo: this.repo, base: meta.baseSha, head: meta.headSha });
       return data.merge_base_commit.sha;
@@ -698,13 +698,13 @@ export class GitHubDiffSource implements DiffSource {
   }
 
   async getDiff(changedFiles?: ChangedFile[]): Promise<string> {
-    const cached = preparedDiff(this.octokit, this.key, await this.getMetadata());
+    const cached = await preparedDiff(this.octokit, this.key, await this.getMetadata());
     if (cached !== undefined) return cached;
     return getPrDiff(this.octokit, this.owner, this.repo, this.pullNumber, changedFiles, true);
   }
 
   async getChangedFiles(): Promise<ChangedFile[]> {
-    const cached = preparedChanges(this.octokit, this.key, await this.getMetadata());
+    const cached = await preparedChanges(this.octokit, this.key, await this.getMetadata());
     if (cached) return cached.files.map(file => ({ filename: file.path, previous_filename: file.previousPath,
       status: file.status, additions: file.additions, deletions: file.deletions, patch: file.patch }));
     return getChangedFiles(this.octokit, this.owner, this.repo, this.pullNumber, true);
@@ -712,9 +712,9 @@ export class GitHubDiffSource implements DiffSource {
 
   async getFileContent(filePath: string, ref: 'base' | 'head'): Promise<string | null> {
     const meta = await this.getMetadata();
-    const snapshot = preparedChanges(this.octokit, this.key, meta);
+    const snapshot = await preparedChanges(this.octokit, this.key, meta);
     const file = snapshot?.files.find(file => file.path === filePath || (ref === 'base' && file.previousPath === filePath));
-    const contents = file && preparedFile(this.octokit, { url: this.key, path: file.path, baseSha: meta.baseSha, headSha: meta.headSha });
+    const contents = file && await preparedFile(this.octokit, { url: this.key, path: file.path, baseSha: meta.baseSha, headSha: meta.headSha });
     if (contents) {
       const side = ref === 'base' ? contents.before : contents.after;
       if (side.kind === 'text') return side.content;

@@ -18,6 +18,9 @@ void app.whenReady().then(async () => {
     await win.loadURL(url);
     await wait("document.querySelectorAll('.queue-item').length===7");
     await js(`(async()=>{
+      const cache=(await import('/lib/inspection-cache.ts')).inspectionData;
+      const setTargets=cache.setTargets;
+      cache.setTargets=(...args)=>{window.preloadIntent=args[2];return setTargets(...args)};
       const original=await window.electronAPI.workbenchQueue();
       const pr=original.items.find(i=>i.subject.kind==='pr');
       const stack=original.items.find(i=>i.subject.kind==='stack');
@@ -50,8 +53,12 @@ void app.whenReady().then(async () => {
       }
     })()`);
     await wait("!!document.querySelector('[data-queue-id=\"synthetic-500\"]')");
+    await js("document.querySelector('[data-queue-id=\"synthetic-500\"]').scrollIntoView({block:'center'})");
+    await wait("window.preloadIntent?.visible?.some(url=>url.includes('/pull/10500'))");
+    assert.ok(await js("!window.preloadIntent.visible.some(url=>url.endsWith('/pull/10000'))"), 'Offscreen selected rows are not counted as visible');
     await js("document.querySelector('[data-queue-id=\"synthetic-500\"] .queue-row-main').click()");
     await wait("document.querySelector('[data-queue-id=\"synthetic-500\"] .queue-row-main').getAttribute('aria-pressed')==='true'");
+    await wait("window.preloadIntent?.active?.some(url=>url.includes('/pull/10500'))");
     await js("document.querySelector('[data-queue-id=\"synthetic-500\"] .queue-disclosure').click()");
     await wait("document.querySelectorAll('[data-queue-id=\"synthetic-500\"] .queue-member').length===3");
     // ResizeObserver delivers measurements after the expanded children mount.

@@ -200,9 +200,9 @@ void test('invalid membership, parents, reverse ranges, wrong baseline, and file
   await assert.rejects(service.comparison(client, selection(1, 3)), /ancestry/);
   await service.comparison(client, selection(2));
   const request = { url, path: 'nope', baseSha: sha(1), headSha: sha(2), comparison: selection(2) };
-  assert.throws(() => service.find(client, request), /Reload/);
-  assert.throws(() => service.find(client, { ...request, path: 'new.ts', baseSha: sha(0) }), /Reload/);
-  assert.throws(() => service.find(f.pool.client('two'), { ...request, path: 'new.ts' }), /Reload/);
+  await assert.rejects(() => service.find(client, request), /Reload/);
+  await assert.rejects(() => service.find(client, { ...request, path: 'new.ts', baseSha: sha(0) }), /Reload/);
+  await assert.rejects(() => service.find(f.pool.client('two'), { ...request, path: 'new.ts' }), /Reload/);
 });
 void test('incomplete inventories, racing pushes, and file caps never present a partial comparison as complete', async () => {
   for (const kind of ['incomplete', 'unstable'] as const) {

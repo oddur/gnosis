@@ -194,3 +194,54 @@ void test('refreshing 25 PR signals does not serialize or synchronously rewrite 
     await f.cleanup();
   }
 });
+
+void test('prepared downloads survive memory eviction and restart, including files over 1 MB', async () => {
+  const f = fixture();
+  try {
+    const cache = await f.open(), account = cache.scope(scope);
+    account.set('pr-file:v2:first', 'first');
+    // More than the 2,000-entry memory bound; the disk archive retains these.
+    for (let i = 0; i < 2010; i++) account.set(`pr-file:v2:${i}`, `file-${i}`);
+    const large = 'x'.repeat(1_100_000);
+    account.set('pr-file:v2:large', large);
+    assert.equal(account.get('pr-file:v2:first', valid), undefined);
+    assert.equal(account.get('pr-file:v2:large', valid), undefined);
+    assert.equal(await account.getPrepared('pr-file:v2:first', valid), 'first');
+    assert.equal(await account.getPrepared('pr-file:v2:large', valid), large);
+    await cache.close();
+    const next = await f.open();
+    assert.equal(await next.scope(scope).getPrepared('pr-file:v2:first', valid), 'first');
+    assert.equal(await next.scope(scope).getPrepared('pr-file:v2:large', valid), large);
+    assert.equal(await next.scope('b'.repeat(64)).getPrepared('pr-file:v2:large', valid), undefined);
+    next.scope(scope).delete('pr-file:v2:large');
+    assert.equal(await next.scope(scope).getPrepared('pr-file:v2:large', valid), undefined);
+    next.scope(scope).clear();
+    assert.equal(await next.scope(scope).getPrepared('pr-file:v2:first', valid), undefined, 'Sign-out clears disk-only records');
+  } finally { await f.cleanup(); }
+});
+
+void test('disk cache limits evict oldest prepared content and apply immediately', async () => {
+  const f = fixture(), storage = createCacheStorage();
+  try {
+    await storage.open({ file: path.join(f.dir, 'github-cache.sqlite'), legacy: f.file, now: 1000,
+      maxBytes: 32000000, maxEntryBytes: 1000000, maxEntries: 2000, retention: 10000, preparedBytes: 1500 });
+    const put = (key: string, time: number) => ({ id: `${scope}:${hash(key)}`, prepared: true, onlyPrepared: true,
+      payload: JSON.stringify({ scope, key: hash(key), savedAt: time, value: 'x'.repeat(500) }) });
+    await storage.write([put('one', 800), put('two', 900), put('three', 1000)]);
+    assert.equal(await storage.readPrepared(`${scope}:${hash('one')}`, 1000), undefined);
+    assert.ok(await storage.readPrepared(`${scope}:${hash('two')}`, 1000));
+    await storage.setPreparedLimit(750, 1000);
+    assert.equal(await storage.readPrepared(`${scope}:${hash('two')}`, 1000), undefined);
+    assert.ok(await storage.readPrepared(`${scope}:${hash('three')}`, 1000));
+    await storage.setPreparedLimit(1500, 1000);
+    await storage.write([put('four', 1000)]);
+    assert.ok(await storage.readPrepared(`${scope}:${hash('three')}`, 1000));
+    assert.ok(await storage.readPrepared(`${scope}:${hash('four')}`, 1000));
+  } finally { await storage.close(); await f.cleanup(); }
+});
+
+void test('cache size defaults to 512 MB and accepts only supported budgets', async () => {
+  const { normalizeGitHubCacheMB, GITHUB_CACHE_SIZES_MB } = await import('../lib/github-cache-settings');
+  for (const invalid of [undefined, null, '1024', NaN, -1, 0, 32, Infinity]) assert.equal(normalizeGitHubCacheMB(invalid), 512);
+  for (const size of GITHUB_CACHE_SIZES_MB) assert.equal(normalizeGitHubCacheMB(size), size);
+});

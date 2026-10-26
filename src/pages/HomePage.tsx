@@ -321,6 +321,10 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
   // Publish attachment so the virtualizer measures the remounted queue before paint.
   const [queueScrollElement, setQueueScrollElement] = useState<HTMLElement | null>(null);
   const queueMeasurements = useRef<VirtualItem[]>([]);
+  const [visibleQueueIds, setVisibleQueueIds] = useState<string[]>([]);
+  const updateVisibleQueueIds = useCallback((ids: string[]) => {
+    setVisibleQueueIds(previous => previous.length === ids.length && previous.every((id, i) => id === ids[i]) ? previous : ids);
+  }, []);
   const [queueScrollOffset] = useSessionDraft('queue-scroll', () => ({ current: 0 }));
   const pendingRowFocus = useRef<string | null>(null);
   const attachQueueScroll = useCallback((element: HTMLElement | null) => {
@@ -693,16 +697,25 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
   // prevents routine metadata/CI updates from repeating content downloads.
   const inspectionTargets = [...(statusSubject?.members ?? []),
     ...orderedItems.flatMap(item => item.subject.members), ...queue.items.flatMap(item => item.subject.members)];
-  const inspectionKey = JSON.stringify(inspectionTargets.map(member => ({ url: member.url, baseSha: member.baseSha, headSha: member.headSha })));
+  const inspectionKey = JSON.stringify({
+    targets: inspectionTargets.map(member => ({ url: member.url, baseSha: member.baseSha, headSha: member.headSha })),
+    intent: {
+      active: statusSubject?.members.map(member => member.url) ?? [],
+      visible: orderedItems.filter(item => visibleQueueIds.includes(item.subject.id)).flatMap(item => item.subject.members.map(member => member.url)),
+      view: orderedItems.flatMap(item => item.subject.members.map(member => member.url)),
+    },
+  });
   useEffect(() => {
     if (!auth) return;
-    const preload = () => inspectionData.setTargets(auth.authenticated ? auth.login : null,
-      JSON.parse(inspectionKey) as { url: string; baseSha: string; headSha: string }[]);
+    const preload = () => {
+      const { targets, intent } = JSON.parse(inspectionKey) as { targets: Parameters<typeof inspectionData.setTargets>[1]; intent: Parameters<typeof inspectionData.setTargets>[2] };
+      inspectionData.setTargets(auth.authenticated ? auth.login : null, targets, intent);
+    };
     preload();
     document.addEventListener('visibilitychange', preload);
     return () => document.removeEventListener('visibilitychange', preload);
   }, [auth?.authenticated, auth?.login, inspectionKey]);
-  useEffect(() => () => inspectionData.stop(), []);
+
   const originName = savedView ? 'Saved reviews' : activeQueueView?.name ??
     ({ saved: 'Saved reviews', all: 'Review queue', starred: 'Starred', requested: 'Review requests', updated: 'Updated PRs', stacks: 'Stacks', other: 'Other changes' }[section]);
   const originSignature = JSON.stringify({ name: originName, reviews: savedView ? saved.map(entry => ({ id: entry.id, title: entry.prTitle })) : [] });
@@ -1610,6 +1623,7 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
                     labels={labels}
                     selected={selected}
                     scrollElement={queueScrollElement}
+                    onVisibleItemsChange={updateVisibleQueueIds}
                     measurements={queueMeasurements}
                     initialOffset={queueScrollOffset.current}
                     renderRow={row}

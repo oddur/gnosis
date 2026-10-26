@@ -138,7 +138,7 @@ export function createPrCommitsService() {
     const value = map(client).get(key) ?? githubCacheFor(client)?.get(key, valid)?.value;
     return valid(value) ? value : undefined;
   }
-  function save(client: Octokit, key: string, value: unknown, version: number | undefined) {
+  function remember(client: Octokit, key: string, value: unknown) {
     const m = map(client);
     m.set(key, value);
     while (m.size > 150) {
@@ -146,6 +146,9 @@ export function createPrCommitsService() {
       if (first === undefined) break;
       m.delete(first);
     }
+  }
+  function save(client: Octokit, key: string, value: unknown, version: number | undefined) {
+    remember(client, key, value);
     const cache = githubCacheFor(client);
     if (cache?.version() === version) cache?.set(key, value);
   }
@@ -167,16 +170,17 @@ export function createPrCommitsService() {
     const t = target(url);
     return share(client, `list:${url}:${refresh}:${options.revision ? changesRevision(options.revision) : ''}`, async () => {
       const version = githubCacheFor(client)?.version();
-      const saved = read(client, latestKey(url), isList);
+      const exact = options.revision && await githubCacheFor(client)?.getPrepared(listKey(url, options.revision.baseSha, options.revision.headSha), isList);
+      const saved = exact ?? read(client, latestKey(url), isList);
       if (saved && !refresh && (!options.revision || changesRevision(saved.metadata) === changesRevision(options.revision))) {
-        map(client).set(listKey(url, saved.metadata.baseSha, saved.metadata.headSha), saved);
+        remember(client, listKey(url, saved.metadata.baseSha, saved.metadata.headSha), saved);
         return saved;
       }
       const metadata = await getPrMetadata(client, t.owner, t.repo, t.pull_number, true);
       const key = listKey(url, metadata.baseSha, metadata.headSha);
-      const known = read(client, key, isList);
+      const known = read(client, key, isList) ?? await githubCacheFor(client)?.getPrepared(key, isList);
       if (known) {
-        map(client).set(key, known);
+        remember(client, key, known);
         const current = { ...known, metadata };
         save(client, latestKey(url), current, version);
         return current;
@@ -240,10 +244,11 @@ export function createPrCommitsService() {
       if (!/^[a-f0-9]{40}$/i.test(sha)) throw new Error('Choose full commit references from the PR commit list.');
     const key = `commit-comparison:v1:${hash(commitSelectionKey(selection))}`;
     return share(client, key, async () => {
-      const cached = read(client, key, isComparison);
-      if (cached) return cached;
+      const cached = read(client, key, isComparison) ?? await githubCacheFor(client)?.getPrepared(key, isComparison);
+      if (cached) { remember(client, key, cached); return cached; }
       const version = githubCacheFor(client)?.version();
-      const catalog = read(client, listKey(selection.url, selection.prBaseSha, selection.prHeadSha), isList);
+      const catalogKey = listKey(selection.url, selection.prBaseSha, selection.prHeadSha);
+      const catalog = read(client, catalogKey, isList) ?? await githubCacheFor(client)?.getPrepared(catalogKey, isList);
       if (!catalog) throw new Error('Reload the PR commit list before opening this comparison.');
       const chosen = selectedCommits(catalog, selection),
         first = chosen[0],
@@ -306,11 +311,11 @@ export function createPrCommitsService() {
       return snapshot;
     });
   }
-  function find(client: Octokit, request: PrFileRequest) {
+  async function find(client: Octokit, request: PrFileRequest) {
     if (!request.comparison || request.comparison.url !== request.url)
       throw new Error('Select a commit comparison first.');
     const key = `commit-comparison:v1:${hash(commitSelectionKey(request.comparison))}`;
-    const snapshot = read(client, key, isComparison),
+    const snapshot = read(client, key, isComparison) ?? await githubCacheFor(client)?.getPrepared(key, isComparison),
       file = snapshot?.files.find((f) => f.path === request.path);
     if (
       !snapshot ||
@@ -322,6 +327,8 @@ export function createPrCommitsService() {
     return { snapshot, file };
   }
   return {
+    restore: (client: Octokit, url: string, revision: { baseSha: string; headSha: string }) =>
+      githubCacheFor(client)?.getPrepared(listKey(url, revision.baseSha, revision.headSha), isList),
     cached(client: Octokit, url: string, revision: { baseSha: string; headSha: string }) {
       return read(client, listKey(url, revision.baseSha, revision.headSha), isList) ?? read(client, latestKey(url), isList);
     },
@@ -329,7 +336,7 @@ export function createPrCommitsService() {
     comparison,
     find,
     async content(client: Octokit, request: PrFileRequest, beforeRequest?: () => void) {
-      const { snapshot, file } = find(client, request);
+      const { snapshot, file } = await find(client, request);
       return loadFile(client, request, snapshot, file, beforeRequest);
     },
   };

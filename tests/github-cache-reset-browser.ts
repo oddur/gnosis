@@ -28,6 +28,10 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('[role=dialog] [role=tab]')");
     await click('Integrations');
     await wait("!!document.querySelector('#github-cache-title')");
+    assert.match(await js<string>("document.querySelector('#github-cache-size').textContent"), /512 MB/);
+    await js("window.selectOption('#github-cache-size','1024')");
+    await wait("document.querySelector('#github-cache-size').textContent.includes('1 GB')");
+    await wait("window.electronAPI.loadPreferences().then(p => p.githubCacheSizeMB === 1024)");
     assert.match(
       await js<string>("document.querySelector('#github-cache-title').parentElement.textContent"),
       /Saved reviews, briefings, bookmarks, settings, and sign-in stay/

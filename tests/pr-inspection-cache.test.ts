@@ -2,10 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPrInspectionCache } from '../lib/pr-inspection-cache';
 import type { InspectionRevision, PrChanges } from '../lib/pr-changes';
-import type { PrCommits } from '../lib/pr-commits';
+import type { PrCommits, PrCommit } from '../lib/pr-commits';
 import type { PrMetadata } from '../lib/types';
 const r = { url: 'https://github.com/o/r/pull/1', baseSha: 'base', headSha: 'head' };
-function fixture() {
+function fixture(options: { commits?: number; comparisonFiles?: boolean; onFile?: (snapshot: PrChanges, file: string) => Promise<void> } = {}) {
   const calls: string[] = [];
   let now = 1000,
     fail = false,
@@ -35,17 +35,19 @@ function fixture() {
         version: 1,
         url: revision.url,
         metadata: changes(revision).metadata,
-        commits: [],
+        commits: Array.from({ length: options.commits ?? 1 }, (_, i) => ({ sha: `commit-${i}` } as PrCommit)),
         fetchedAt: now,
       } as PrCommits);
     },
-    comparison: (list) => {
-      calls.push(`comparison:${list.metadata.headSha}`);
-      return Promise.resolve();
+    comparison: (list, commit) => {
+      calls.push(`comparison:${list.metadata.headSha}:${commit.sha}`);
+      if (!options.comparisonFiles) return Promise.resolve(undefined);
+      return Promise.resolve({ ...changes({ ...r, url: list.url, headSha: list.metadata.headSha }),
+        files: [{ path: `history-${commit.sha}.ts`, status: 'modified', changeId: commit.sha, additions: 1, deletions: 0 }] });
     },
     file: (snapshot, file) => {
       calls.push(`file:${snapshot.metadata.headSha}:${file.path}`);
-      return fail ? Promise.reject(new Error('API allowance')) : Promise.resolve();
+      return fail ? Promise.reject(new Error('API allowance')) : options.onFile?.(snapshot, file.path) ?? Promise.resolve();
     },
     review: (snapshot) => {
       calls.push(`review:${snapshot.metadata.headSha}`);
@@ -76,7 +78,7 @@ void test('discovery preloads tab data and every changed file; unchanged revisio
     assert.ok(f.cache.peekChanges(r));
     assert.ok(f.cache.peekCommits(r));
     assert.equal(f.calls.filter((call) => call.startsWith('file:')).length, 3);
-    assert.ok(f.calls.includes('comparison:head'));
+    assert.ok(f.calls.includes('comparison:head:commit-0'));
     assert.ok(f.calls.includes('review:head'));
     const count = f.calls.length;
     f.cache.setTargets('one', [r]);
@@ -146,7 +148,7 @@ void test('account changes discard late responses and stop the old preload chain
       return Promise.reject(new Error('must not run'));
     },
     file: () => Promise.resolve(),
-    comparison: () => Promise.resolve(),
+    comparison: () => Promise.resolve(undefined),
     review: () => Promise.resolve(),
     visible: () => true,
   });
@@ -212,7 +214,7 @@ void test('restores saved inventories before a cold PR can block the worker on G
         release = () => reject(new Error('offline'));
       }),
     commits: () => Promise.reject(new Error('offline')),
-    comparison: () => Promise.resolve(),
+    comparison: () => Promise.resolve(undefined),
     file: () => Promise.resolve(),
     review: () => Promise.resolve(),
     visible: () => true,
@@ -233,4 +235,72 @@ void test('restores saved inventories before a cold PR can block the worker on G
   } finally {
     cache.stop();
   }
+});
+
+void test('active PR completes before visible PRs, then current view, then the backlog', async () => {
+  const f = fixture({ commits: 3, comparisonFiles: true });
+  const revisions = ['backlog', 'view', 'visible', 'active'].map((headSha, i) => ({ ...r, url: `${r.url}${i}`, headSha }));
+  try {
+    f.cache.setTargets('one', revisions, { active: [revisions[3].url], visible: [revisions[2].url], view: [revisions[1].url] });
+    await f.cache.flush();
+    for (const [first, second] of [['active', 'visible'], ['visible', 'view'], ['view', 'backlog']]) {
+      assert.ok(f.calls.indexOf(`file:${first}:history-commit-0.ts`) < f.calls.indexOf(`changes:${second}`));
+    }
+    assert.equal(f.calls.filter(call => call.startsWith('comparison:')).length, 12, 'Every commit, not just the newest');
+    assert.equal(f.calls.filter(call => call.includes(':history-')).length, 12, 'Every commit file');
+    assert.ok(f.calls.indexOf('comparison:active:commit-2') < f.calls.indexOf('comparison:active:commit-1'));
+    const count = f.calls.length;
+    f.cache.setTargets('one', revisions, { active: [revisions[3].url] });
+    await f.cache.flush();
+    assert.equal(f.calls.length, count, 'Priority changes do not repeat completed downloads');
+  } finally { f.cache.stop(); }
+});
+
+void test('selection changes interrupt the backlog after the in-flight file; unfinished work resumes', async () => {
+  let release!: () => void;
+  let entered!: () => void;
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  let blocked = false;
+  const f = fixture({ onFile: async (snapshot) => {
+    if (snapshot.metadata.headSha === 'head' && !blocked) {
+      blocked = true; entered(); await new Promise<void>(resolve => { release = resolve; });
+    }
+  } });
+  const second = { ...r, url: r.url + '2', headSha: 'second' };
+  try {
+    f.cache.setTargets('one', [r, second]);
+    const loading = f.cache.flush();
+    await waiting;
+    f.cache.setTargets('one', [r, second], { active: [second.url] });
+    release(); await loading;
+    assert.ok(f.calls.indexOf('review:second') < f.calls.indexOf('file:head:second.ts'));
+    assert.equal(f.calls.filter(call => call === 'file:head:first.ts').length, 1);
+    assert.ok(f.calls.includes('review:head'), 'Lower-priority work eventually finishes');
+  } finally { f.cache.stop(); }
+});
+
+void test('new revisions preserve cached content and only schedule the changed PR', async () => {
+  const f = fixture({ commits: 2 });
+  const second = { ...r, url: r.url + '2', headSha: 'second' };
+  try {
+    f.cache.setTargets('one', [r, second]); await f.cache.flush();
+    f.calls.length = 0;
+    const next = { ...r, headSha: 'updated' };
+    f.cache.setTargets('one', [next, second]);
+    assert.equal(f.cache.peekChanges(next)?.metadata.headSha, 'head', 'Keep usable content during preparation');
+    await f.cache.flush();
+    assert.ok(f.calls.length > 0);
+    assert.ok(f.calls.every(call => call.includes(':updated')));
+    assert.equal(f.cache.peekChanges(next)?.metadata.headSha, 'updated');
+  } finally { f.cache.stop(); }
+});
+
+void test('queues larger than the inventory memory limit still prepare every PR', async () => {
+  const f = fixture();
+  try {
+    const revisions = Array.from({ length: 1002 }, (_, i) => ({ ...r, url: `${r.url}/${i}`, headSha: `head-${i}` }));
+    f.cache.setTargets('one', revisions);
+    await f.cache.flush();
+    assert.equal(new Set(f.calls.filter(call => call.startsWith('review:'))).size, revisions.length);
+  } finally { f.cache.stop(); }
 });
