@@ -16,7 +16,7 @@ import type { CommitSelection } from '../lib/pr-commits';
 import { createPrChangesService } from './pr-changes-service';
 import type { FileChatRequest, PrFileRequest } from '../lib/pr-changes';
 import { createGitHubProfileService } from './github-profile-service';
-import { createQueueSignalsService } from './queue-signals-service';
+import { createQueueSignalsService, cachedQueueSignals } from './queue-signals-service';
 import type { QueueSignalRequest, QueueSignalOptions, QueueSignals } from '../lib/queue-signals';
 import { githubCachedResponses } from '../lib/github-client';
 import { createWorkerCommandSearchService } from './command-search-service';
@@ -2254,6 +2254,7 @@ function formatMs(ms: number): string {
 const workbench = createWorkbenchService({
   storage: appData,
   signals: (client, requests) => getQueueSignals(client, requests),
+  cachedSignals: requests => { const token = getResolvedToken(); return token ? cachedQueueSignals(getGitHubClient(token), requests) : []; },
   activities,
   directory: () => app.getPath('userData'),
   auth: () => ({ token: getResolvedToken(), login: cachedLogin }),

@@ -691,6 +691,37 @@ void test('briefings use persisted filters without fetching GitHub again, with a
   }
 });
 
+void test('automatic briefings follow the saved sort without another discovery request', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  const child = { ...structuredClone(s.pr), html_url: 'https://github.com/owner/repo/pull/2', title: 'ZZZ last title' };
+  child.head.ref = 'second-change';
+  const generated: string[] = [];
+  let reads = 0;
+  Object.assign(s.deps.client().pulls, {
+    get: (args: { pull_number: number }) => { reads++; return Promise.resolve({ data: args.pull_number === 2 ? child : s.pr }); },
+    list: (args: { head?: string }) => Promise.resolve({ data: args.head ? [] : [s.pr, child] }),
+  });
+  s.prefs.watchedRepos = ['owner/repo'];
+  s.prefs.briefingDailyLimit = 3;
+  s.deps.provider = (() => ({ generate: (req: { content: string }) => {
+    generated.push((JSON.parse(req.content) as { members: { pr: string }[] }).members[0].pr);
+    return Promise.resolve('{"summary":"Ready"}');
+  } })) as unknown as typeof getProvider;
+  const service = createWorkbenchService(s.deps);
+  try {
+    await service.queue();
+    const before = reads;
+    service.setFilters({ sort: { key: 'title', direction: 'desc', starredFirst: false } });
+    assert.equal(reads, before, 'Sorting must not rediscover GitHub PRs');
+    s.prefs.autoBriefings = true;
+    for (let i = 0; i < 100 && generated.length < 2; i++) {
+      await service.queue();
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.deepEqual(generated, [child.html_url, s.pr.html_url]);
+  } finally { s.cleanup(); }
+});
+
 void test('filter changes preserve a running briefing and apply to the next automatic task', async () => {
   let release = () => {};
   const gate = new Promise<void>((resolve) => {
@@ -710,7 +741,7 @@ void test('filter changes preserve a running briefing and apply to the next auto
     s.prefs.autoBriefings = true;
     await s.service.queue();
     await generating;
-    s.service.setFilters({ author: 'nobody' });
+    s.service.setFilters({ author: 'nobody', sort: { key: 'title', direction: 'desc', starredFirst: false } });
     release();
     const q = await settle(s.service, 'ready');
     assert.equal(q.items[0].briefing?.summary, 'Finished current work');
@@ -1281,7 +1312,7 @@ void test('saved-view counts use saved filters and switching views shares discov
     const created = s.service.viewAction({ type: 'create', name: 'All PRs' });
     const id = created.savedViews?.activeId;
     assert.ok(id);
-    const modified = s.service.setFilters({ author: 'nobody' });
+    const modified = s.service.setFilters({ author: 'nobody', sort: { key: 'title', direction: 'desc', starredFirst: false } });
     assert.equal(modified.savedViews?.counts[id], 1, 'Count uses the saved filters, not the empty draft');
     const second = s.service.viewAction({ type: 'create', name: 'Nobody' });
     assert.equal(second.savedViews?.counts[second.savedViews.activeId ?? ''], 0);

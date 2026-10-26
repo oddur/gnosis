@@ -80,6 +80,7 @@ When a PR base or head SHA changes, discovery schedules that revision for prepar
 5. The remaining discovered queue.
 
 Read-state changes update these priorities without repeating completed preparation. Stack members use their individual unread states.
+The selected [list sort](pr-list-sorting.md) sets the order within these priority groups for PRs in the current view.
 
 Within each priority group, file and commit lists come first. Preparation then downloads the newest commit, changed files, review diff, and older commits.
 Every individual commit and its files are eligible. Custom commit ranges, alternate merge parents, and LFS downloads remain on demand.

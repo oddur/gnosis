@@ -74,7 +74,7 @@ export function SavedViewsNav({
   return (
     <section className="saved-views-nav" aria-label="Saved views">
       <p className="workbench-nav-heading">Saved views</p>
-      {!state.views.length && <p className="saved-views-empty">Choose “Save view…” to reuse your filters.</p>}
+      {!state.views.length && <p className="saved-views-empty">Choose “Save view…” to reuse your filters and sort order.</p>}
       {state.views.map((view, index) => (
         <Popover.Root
           key={view.id}
@@ -220,9 +220,9 @@ export function SaveViewControls({
           <span
             className="view-modified"
             role="status"
-            title="These filters differ from the saved view. Save changes to update it, or restore its saved filters."
+            title="The filters or sort order differ from the saved view. Save changes to update it, or restore the saved view."
           >
-            Filters changed
+            {JSON.stringify(view.filters.sort) !== JSON.stringify(filters.sort) ? 'View changed' : 'Filters changed'}
           </span>
           <button
             disabled={busy}

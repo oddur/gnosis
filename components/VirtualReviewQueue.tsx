@@ -1,3 +1,4 @@
+import { useListScrollAnchor } from '../lib/use-list-order';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { defaultRangeExtractor, useVirtualizer, type VirtualItem } from '@tanstack/react-virtual';
 import type { QueueItem } from '../lib/workbench';
@@ -10,18 +11,20 @@ interface Props {
   initialOffset: number;
   measurements: RefObject<VirtualItem[]>;
   renderRow: (item: QueueItem) => ReactNode;
+  grouped?: boolean;
+  starredFirst?: boolean;
   onVisibleItemsChange?: (ids: string[]) => void;
 }
 
 /** Keep expanded stacks measured and the keyboard selection mounted in large queues. */
-export function VirtualReviewQueue({ items, labels, selected, scrollElement, initialOffset, measurements, renderRow, onVisibleItemsChange }: Props) {
+export function VirtualReviewQueue({ items, labels, selected, scrollElement, initialOffset, measurements, renderRow, onVisibleItemsChange, grouped = true, starredFirst = true }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const [margin, setMargin] = useState(0);
   const [focused, setFocused] = useState<string | null>(null);
   const virtual = items.length > 80;
   const selectedIndex = items.findIndex((item) => item.subject.id === selected);
   const focusedIndex = items.findIndex((item) => item.subject.id === focused);
-  const category = (item: QueueItem) => item.starred ? 'starred' : item.attention;
+  const category = (item: QueueItem) => item.starred && starredFirst ? 'starred' : item.attention;
   const counts = new Map<QueueItem['attention'] | 'starred', number>();
   for (const item of items) counts.set(category(item), (counts.get(category(item)) ?? 0) + 1);
   const rowKey = useCallback((index: number) => items[index].subject.id, [items]);
@@ -42,6 +45,7 @@ export function VirtualReviewQueue({ items, labels, selected, scrollElement, ini
       ...(focusedIndex >= 0 ? [focusedIndex] : []),
     ])].sort((a, b) => a - b),
   });
+  useListScrollAnchor(scrollElement, items.map(item => item.subject.id), selected, index => { if (virtual && index >= 0) virtualizer.scrollToIndex(index, { align: 'start' }); });
   useLayoutEffect(() => () => {
     measurements.current = virtualizer.takeSnapshot();
   }, [virtualizer, measurements]);
@@ -98,7 +102,7 @@ export function VirtualReviewQueue({ items, labels, selected, scrollElement, ini
     const group = category(item);
     const first = index === 0 || category(items[index - 1]) !== group;
     return <>
-      {first && <h2 className="queue-section-title">{labels[group] ?? 'Starred'} <span>{counts.get(group)}</span></h2>}
+      {grouped && first && <h2 className="queue-section-title">{labels[group] ?? 'Starred'} <span>{counts.get(group)}</span></h2>}
       {renderRow(item)}
     </>;
   };

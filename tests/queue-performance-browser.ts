@@ -21,18 +21,19 @@ void app.whenReady().then(async () => {
       const cache=(await import('/lib/inspection-cache.ts')).inspectionData;
       const setTargets=cache.setTargets;
       cache.setTargets=(...args)=>{window.preloadIntent=args[2];return setTargets(...args)};
-      const original=await window.electronAPI.workbenchQueue();
+      const originalQueue=window.electronAPI.workbenchQueue;
+      const original=await originalQueue();
       const pr=original.items.find(i=>i.subject.kind==='pr');
       const stack=original.items.find(i=>i.subject.kind==='stack');
       const items=Array.from({length:1000},(_,i)=>{
         const item=structuredClone(i===500?stack:pr);
         item.subject.id='synthetic-'+i;
         item.subject.title='Synthetic PR '+i+(i%7===0?' with a very long title that wraps when the briefing pane opens and the queue becomes narrower':'');
-        item.subject.members=item.subject.members.map((m,j)=>({...m,id:'member-'+i+'-'+j,number:10000+i+j,url:'https://github.com/fixture/audit/pull/'+(10000+i+j)}));
+        item.subject.members=item.subject.members.map((m,j)=>({...m,title:'Synthetic PR '+i,id:'member-'+i+'-'+j,number:10000+i+j,url:'https://github.com/fixture/audit/pull/'+(10000+i+j)}));
         item.attention=i<300?'updated':i<700?'requested':'other';
         return item;
       });
-      window.electronAPI.workbenchQueue=async()=>({...original,items});
+      window.electronAPI.workbenchQueue=async()=>({...await originalQueue(),items});
       window.syntheticQueue=items;
       document.querySelector('.queue-toolbar button[aria-label]').click();
     })()`);
@@ -69,6 +70,15 @@ void app.whenReady().then(async () => {
       await wait(`document.activeElement?.closest('[data-queue-id]')?.dataset.queueId==='synthetic-${501+i}'`);
     }
     assert.ok(await js(`(()=>{const r=document.activeElement.getBoundingClientRect(),q=document.querySelector('.queue-list').getBoundingClientRect();return r.top>=q.top&&r.bottom<=q.bottom+1})()`), 'Keyboard selection scrolls into view');
+    await js("document.querySelector('[aria-label^=\"Sort: \"]').click()");
+    await js("window.selectOption('#pr-sort-key','title')");
+    await click('Done');
+    await wait("window.electronAPI.workbenchQueue().then(q=>q.filters.sort.key==='title')");
+    const selectedOffset = await js<number>("document.querySelector('[data-queue-id=\"synthetic-525\"]').getBoundingClientRect().top-document.querySelector('.queue-list').getBoundingClientRect().top");
+    await js("window.syntheticQueue[525].subject.members[0].title='Synthetic PR 50.5';document.querySelector('.queue-toolbar button[aria-label]').click()");
+    await wait("document.querySelector('[data-queue-id=\"synthetic-525\"]').dataset.index==='51'");
+    await new Promise(resolve => setTimeout(resolve, 700));
+    await wait(`Math.abs(document.querySelector('[data-queue-id="synthetic-525"]').getBoundingClientRect().top-document.querySelector('.queue-list').getBoundingClientRect().top-${selectedOffset})<5`);
     const offset = await js<number>("document.querySelector('.queue-list').scrollTop");
     await js("document.querySelector('.queue-toolbar button[aria-label]').click()");
     await new Promise((resolve) => setTimeout(resolve, 300));

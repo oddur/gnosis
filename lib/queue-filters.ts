@@ -1,6 +1,9 @@
+import { DEFAULT_PR_SORT, normalizePrListSort, sortQueueItems, type PrListSort } from './pr-list-sort';
+import type { QueueSignals } from './queue-signals';
 import { fingerprint, type QueueItem, type ReviewMember } from './workbench';
 
 export interface QueueFilters {
+  sort: PrListSort;
   starredOnly: boolean;
   unreadOnly: boolean;
   involvement: 'all' | 'mine';
@@ -17,6 +20,7 @@ export interface QueueFilters {
   briefingScope: 'matches' | 'all';
 }
 export const DEFAULT_QUEUE_FILTERS: QueueFilters = {
+  sort: DEFAULT_PR_SORT,
   starredOnly: false,
   unreadOnly: false,
   involvement: 'all',
@@ -41,6 +45,7 @@ export function normalizeQueueFilters(value: unknown): QueueFilters {
   const days = (key: string) =>
     RECENCY_DAYS.includes(raw[key] as (typeof RECENCY_DAYS)[number]) ? Number(raw[key]) : 0;
   return {
+    sort: normalizePrListSort(raw.sort),
     starredOnly: raw.starredOnly === true,
     unreadOnly: raw.unreadOnly === true,
     involvement: choice('involvement', ['all', 'mine'], 'all'),
@@ -110,7 +115,7 @@ export function matchesQueueFilters(
 }
 export function activeQueueFilterCount(filters: QueueFilters) {
   return (Object.keys(DEFAULT_QUEUE_FILTERS) as (keyof QueueFilters)[]).filter(
-    (key) => key !== 'briefingScope' && filters[key] !== DEFAULT_QUEUE_FILTERS[key]
+    (key) => key !== 'briefingScope' && key !== 'sort' && filters[key] !== DEFAULT_QUEUE_FILTERS[key]
   ).length;
 }
 /** Stable partition preserves the queue's review priority within each group. */
@@ -118,8 +123,10 @@ export function prioritizeBriefings(
   items: QueueItem[],
   filters: QueueFilters,
   now = Date.now(),
-  login?: string | null
+  login?: string | null,
+  signals: QueueSignals[] = []
 ): QueueItem[] {
+  items = sortQueueItems(items, filters.sort, signals);
   const matching = items.filter((item) => matchesQueueFilters(item, filters, now, login));
   return filters.briefingScope === 'matches'
     ? matching

@@ -337,6 +337,7 @@ export interface StartReviewResult {
 export type { ClaudeModel, CodexModel, ModelId, Provider } from './models';
 
 export interface Preferences {
+  savedReviewSort?: import('./pr-list-sort').PrListSort;
   githubCacheSizeMB?: number;
   ignoreDependabotPrs?: boolean;
   /** Days since the last PR update; zero disables the global inactivity limit. */

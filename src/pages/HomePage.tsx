@@ -1,3 +1,7 @@
+import { PrListSortControl } from '../../components/PrListSortControl';
+import { normalizePrListSort, sortQueueItems, sortSavedReviews, type PrListSort } from '../../lib/pr-list-sort';
+import { useListOrder, useListScrollAnchor } from '../../lib/use-list-order';
+import { useCachedQueueSignals } from '../../lib/use-queue-signals';
 import { PrReadContext, type ViewedPr } from '../../lib/pr-read-context';
 import { UnreadPrMarker } from '../../components/UnreadPrMarker';
 import { SearchableSelect } from '../../components/SearchableSelect';
@@ -21,7 +25,6 @@ import type { VirtualItem } from '@tanstack/react-virtual';
 import { VirtualReviewQueue } from '../../components/VirtualReviewQueue';
 import { GitHubIcon } from '../../lib/constants';
 import { PrLabels } from '../../components/PrLabels';
-import { orderQueueItems, starredFirst } from '../../lib/starred-prs';
 import { PrSummary, type PrReadingPosition, type PrReviewRequest } from '../../components/PrSummary';
 import { publishQueueSignals } from '../../lib/use-queue-signals';
 import { SavedViewsNav, SaveViewControls } from '../../components/SavedQueueViews';
@@ -118,6 +121,7 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
   const [error, setError] = useState('');
   const [filters, setFilters] = useState<QueueFilters>(DEFAULT_QUEUE_FILTERS);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [savedSortOverride, setSavedSortOverride] = useState<PrListSort>();
   const [savedQuery, setSavedQuery] = useSessionDraft('queue-saved-query', '');
   const [viewBusy, setViewBusy] = useState(false);
   const viewBusyRef = useRef(false);
@@ -243,7 +247,7 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
   const setQuery = (value: string) => (section === 'saved' ? setSavedQuery(value) : updateFilters({ query: value }));
   const setRepo = (value: string) => updateFilters({ repo: value });
   const resetFilters = () => {
-    updateFilters({ ...DEFAULT_QUEUE_FILTERS, briefingScope: filters.briefingScope });
+    updateFilters({ ...DEFAULT_QUEUE_FILTERS, sort: filters.sort, briefingScope: filters.briefingScope });
     setSavedView(false);
   };
   const [selected, setSelected] = useState<string | null>(
@@ -605,9 +609,10 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
       cancelled = true;
     };
   }, [fallbackReview?.id, fallbackReview?.savedAt]);
+  const selectionFilterKey = JSON.stringify({ ...filters, sort: undefined });
   useEffect(() => {
     rowButtons.current.get(selected ?? '')?.scrollIntoView({ block: 'nearest' });
-  }, [selected, loading, section, filters]);
+  }, [selected, loading, section, selectionFilterKey]);
   const savePrefs = async (next: Preferences) => {
     await window.electronAPI.savePreferences(next);
     setPrefs(next);
@@ -684,25 +689,34 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
   const repos = [
     ...new Set([...queueItems.flatMap((i) => i.subject.members.map((m) => m.repo)), ...(repo === 'all' ? [] : [repo])]),
   ].sort();
-  const saved = useMemo(
-    () =>
-      starredFirst(
-        visibleHistory.filter((h) => `${h.prTitle} ${h.prUrl}`.toLowerCase().includes(query.toLowerCase())),
-        (entry) => (entry.snapshot?.subject.members ?? [{ url: entry.prUrl }]).some((m) => starredUrls.has(m.url))
-      ),
-    [visibleHistory, query, starredUrls]
-  );
-  const orderedItems = orderQueueItems(items);
+  const savedSort = savedSortOverride ?? normalizePrListSort(prefs?.savedReviewSort, true);
+  const sortSignals = useCachedQueueSignals(auth?.login ?? null,
+    [...queueItems.flatMap(item => item.subject.members), ...(savedView ? visibleHistory.flatMap(entry => entry.snapshot?.subject.members ?? []) : [])],
+    (savedView ? savedSort : filters.sort).key === 'status');
+  const saved = useListOrder(sortSavedReviews(
+    visibleHistory.filter(h => `${h.prTitle} ${h.prUrl}`.toLowerCase().includes(query.toLowerCase())), savedSort, starredUrls, sortSignals), entry => entry.id);
+  const orderedItems = useListOrder(sortQueueItems(items, filters.sort, sortSignals), item => item.subject.id);
+  useListScrollAnchor(section === 'saved' ? queueScrollElement : null, saved.map(entry => entry.id));
+  const changeSort = (sort: PrListSort) => {
+    if (section !== 'saved') { updateFilters({ sort }); return; }
+    setSavedSortOverride(sort);
+    void enqueueWrite(async () => {
+      const current = await window.electronAPI.loadPreferences();
+      await window.electronAPI.savePreferences({ ...current, savedReviewSort: sort });
+      setPrefs(previous => previous ? { ...previous, savedReviewSort: sort } : previous);
+    }).catch(() => setError('Could not save the sort order. Choose it again to retry.'));
+  };
   // Active and visible PRs, unread work, current view, then the remaining queue. Revision identity
   // prevents routine metadata/CI updates from repeating content downloads.
+  const orderedBacklog = sortQueueItems(queue.items, filters.sort, sortSignals);
   const inspectionTargets = [...(statusSubject?.members ?? []),
-    ...orderedItems.flatMap(item => item.subject.members), ...queue.items.flatMap(item => item.subject.members)];
+    ...orderedItems.flatMap(item => item.subject.members), ...orderedBacklog.flatMap(item => item.subject.members)];
   const inspectionKey = JSON.stringify({
     targets: inspectionTargets.map(member => ({ url: member.url, baseSha: member.baseSha, headSha: member.headSha })),
     intent: {
       active: statusSubject?.members.map(member => member.url) ?? [],
       visible: orderedItems.filter(item => visibleQueueIds.includes(item.subject.id)).flatMap(item => item.subject.members.map(member => member.url)),
-      unread: [...new Set([...orderedItems, ...queue.items].flatMap(item => item.unreadUrls ?? []))],
+      unread: [...new Set([...orderedItems, ...orderedBacklog].flatMap(item => item.unreadUrls ?? []))],
       view: orderedItems.flatMap(item => item.subject.members.map(member => member.url)),
     },
   });
@@ -846,7 +860,7 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
     }
     if (target.repo) {
       setSavedView(false);
-      updateFilters({ ...DEFAULT_QUEUE_FILTERS, repo: target.repo });
+      updateFilters({ ...DEFAULT_QUEUE_FILTERS, sort: filters.sort, repo: target.repo });
       return;
     }
     if (target.section) {
@@ -1488,6 +1502,7 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
                 </Popover.Portal>
               </Popover.Root>
             )}
+            <PrListSortControl value={section === 'saved' ? savedSort : filters.sort} onChange={changeSort} savedReviews={section === 'saved'} disabled={viewBusy} />
             {section !== 'saved' && auth?.authenticated && (
               <EntryActions label="Review queue actions" groups={[[{
                 label: 'Mark visible PRs as read',
@@ -1578,7 +1593,7 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
                             await refresh();
                           }
                         } }],
-                    ]}>{actions => <div className="saved-row">
+                    ]}>{actions => <div className="saved-row" data-queue-id={entry.id}>
                       <div className="queue-row-content" onClick={event=>{if((event.target as HTMLElement).closest('a,button')||entry.status==='generating')return;void (entry.status==='failed' ? start(entry.prUrl) : open(entry));}}>
                       <button
                         className="queue-row-main"
@@ -1621,6 +1636,8 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
               ) : items.length ? (
                   <VirtualReviewQueue
                     items={orderedItems}
+                    grouped={filters.sort.key === 'priority'}
+                    starredFirst={filters.sort.starredFirst}
                     labels={labels}
                     selected={selected}
                     scrollElement={queueScrollElement}
