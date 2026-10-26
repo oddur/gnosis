@@ -1,3 +1,4 @@
+import { initializeReviewState } from '../lib/renderer-review-state';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { applyTheme } from '../lib/theme';
@@ -25,4 +26,13 @@ if (window.electronAPI.isPackaged) {
 const container = document.getElementById('root');
 if (!container) throw new Error('No #root element found');
 
-createRoot(container).render(<App />);
+const root = createRoot(container);
+async function start() {
+  try { await initializeReviewState(); root.render(<App />); }
+  catch (error) {
+    root.render(<main role="alert" className="p-8 max-w-xl"><h1>Could not load saved review progress</h1>
+      <p className="my-4">Your existing drafts have been kept. {error instanceof Error ? error.message : String(error)}</p>
+      <button className="underline" onClick={() => void start()}>Retry</button></main>);
+  }
+}
+void start();

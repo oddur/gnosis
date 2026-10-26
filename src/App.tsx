@@ -18,6 +18,15 @@ import { rememberExplanation, loadExplanation, type ExplanationDestination } fro
 type Page = 'home' | 'review';
 
 export function App() {
+  useEffect(() => {
+    const failed = (event: Event) => {
+      const {message,retry} = (event as CustomEvent<{message:string;retry:()=>Promise<void>}>).detail;
+      toast.add({type:'error',title:'Could not save review progress',description:message,
+        actionProps:{children:'Retry',onClick:()=>{void retry().catch(()=>toast.add({type:'error',title:'Progress still could not be saved',description:'Check available disk space and try again.'}));}}});
+    };
+    window.addEventListener('gnosis-storage-error',failed);
+    return () => window.removeEventListener('gnosis-storage-error',failed);
+  }, []);
   const [homeCommand, setHomeCommand] = useState<{
     destination: Extract<SearchDestination, { kind: 'home' }>;
     nonce: number;

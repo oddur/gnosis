@@ -1,3 +1,9 @@
+import {
+  FILE_PROGRESS_KEY,
+  isReviewStateKey,
+  type FileProgressPatch,
+  type ReviewStateWrite,
+} from '../lib/review-state';
 import { createSqliteSearchIndex } from './sqlite-search-index';
 import { createCommandSearchService, type SearchRequest, type SearchInput } from './command-search-service';
 import { parentPort } from 'node:worker_threads';
@@ -14,6 +20,9 @@ type Request = { id: number } & (
   | { method: 'write'; args: [string, unknown][] }
   | { method: 'close' | 'clear-github'; args?: undefined }
   | { method: 'search'; args: SearchRequest }
+  | { method: 'review-load'; args: Record<string, string> }
+  | { method: 'review-save'; args: ReviewStateWrite }
+  | { method: 'progress-save'; args: FileProgressPatch }
 );
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
@@ -30,6 +39,29 @@ function transaction<T>(fn: () => T): T {
 }
 /** Separate queue subjects, briefings and unread receipts into independently updated rows. */
 function rows(name: string, value: unknown): Map<string, string> {
+  if (name.startsWith('renderer:')) {
+    const result = new Map<string, string>();
+    if (name === 'renderer:' + FILE_PROGRESS_KEY) {
+      if (!record(value) || !record(value.aliases) || !record(value.marks)) throw new Error('Invalid file progress');
+      result.set('header', '{}');
+      for (const [key, v] of Object.entries(value.aliases)) {
+        if (typeof v !== 'string') throw new Error('Invalid file alias');
+        result.set('alias:' + key, JSON.stringify(v));
+      }
+      for (const [key, v] of Object.entries(value.marks)) {
+        if (typeof v !== 'boolean') throw new Error('Invalid viewed mark');
+        result.set('mark:' + key, JSON.stringify(v));
+      }
+    } else if (name.startsWith('renderer:gnosis-changes-drafts:')) {
+      if (!Array.isArray(value)) throw new Error('Invalid saved drafts');
+      result.set('header', '{}');
+      for (const [index, draft] of value.entries()) {
+        if (!record(draft) || typeof draft.id !== 'string') throw new Error('Invalid draft');
+        result.set('draft:' + draft.id, JSON.stringify({ index, value: draft }));
+      }
+    } else result.set('header', JSON.stringify(value));
+    return result;
+  }
   if (!record(value)) throw new Error(`Invalid saved state: ${name}`);
   const header = { ...value },
     result = new Map<string, string>();
@@ -59,6 +91,22 @@ function read(name: string): unknown {
   const header = saved.find((row) => row.id === 'header');
   if (!header) throw new Error(`Incomplete saved state: ${name}`);
   const value = JSON.parse(header.payload) as Record<string, unknown>;
+  if (name === 'renderer:' + FILE_PROGRESS_KEY) {
+    return {
+      aliases: Object.fromEntries(
+        saved.filter((row) => row.id.startsWith('alias:')).map((row) => [row.id.slice(6), JSON.parse(row.payload)])
+      ),
+      marks: Object.fromEntries(
+        saved.filter((row) => row.id.startsWith('mark:')).map((row) => [row.id.slice(5), JSON.parse(row.payload)])
+      ),
+    };
+  }
+  if (name.startsWith('renderer:gnosis-changes-drafts:'))
+    return saved
+      .filter((row) => row.id.startsWith('draft:'))
+      .map((row) => JSON.parse(row.payload) as { index: number; value: unknown })
+      .sort((a, b) => a.index - b.index)
+      .map((row) => row.value);
   if (name.startsWith('workbench:')) {
     value.subjects = saved
       .filter((row) => row.id.startsWith('subject:'))
@@ -89,7 +137,9 @@ function write(name: string, value: unknown) {
 }
 function states() {
   return Object.fromEntries(
-    (db.prepare('SELECT DISTINCT name FROM records').all() as { name: string }[]).map(({ name }) => [name, read(name)])
+    (db.prepare("SELECT DISTINCT name FROM records WHERE name NOT LIKE 'renderer:%'").all() as { name: string }[]).map(
+      ({ name }) => [name, read(name)]
+    )
   );
 }
 let searchInput: SearchInput | undefined;
@@ -127,6 +177,9 @@ port.on('message', (request: Request) => {
         });
       } else if (method === 'clear-github') {
         transaction(() => {
+          // Search also contains derived GitHub text; it can be rebuilt from surviving saved reviews.
+          if (db.prepare("SELECT name FROM sqlite_master WHERE name='search_documents'").get())
+            db.exec('DELETE FROM search_documents');
           for (const { name } of db
             .prepare("SELECT DISTINCT name FROM records WHERE name LIKE 'workbench:%'")
             .all() as {
@@ -141,7 +194,56 @@ port.on('message', (request: Request) => {
             write(name, { ...retained, subjects: [] });
           }
         });
+        searchService = undefined;
+        searchInput = undefined;
         result = states();
+      } else if (method === 'review-load') {
+        if (!db.prepare('SELECT id FROM migrations WHERE id=?').get('review-state-v1'))
+          transaction(() => {
+            for (const [key, value] of Object.entries(args)) {
+              if (!isReviewStateKey(key) || typeof value !== 'string' || value.length > 32_000_000)
+                throw new Error('Invalid saved review data');
+              if (!db.prepare('SELECT id FROM records WHERE name=? LIMIT 1').get('renderer:' + key))
+                write('renderer:' + key, JSON.parse(value));
+            }
+            db.prepare('INSERT INTO migrations VALUES (?)').run('review-state-v1');
+          });
+        result = Object.fromEntries(
+          (
+            db.prepare("SELECT DISTINCT name FROM records WHERE name LIKE 'renderer:%'").all() as { name: string }[]
+          ).map(({ name }) => [name.slice(9), read(name)])
+        );
+      } else if (method === 'review-save') {
+        if (!isReviewStateKey(args.key) || JSON.stringify(args.value).length > 32_000_000)
+          throw new Error('Invalid review data');
+        transaction(() => {
+          if (args.value === null) db.prepare('DELETE FROM records WHERE name=?').run('renderer:' + args.key);
+          else write('renderer:' + args.key, args.value);
+        });
+      } else if (method === 'progress-save') {
+        if (
+          !record(args.aliases) ||
+          !record(args.marks) ||
+          Object.keys(args.aliases).length > 10000 ||
+          Object.keys(args.marks).length > 10000
+        )
+          throw new Error('Invalid file progress');
+        transaction(() => {
+          const name = 'renderer:' + FILE_PROGRESS_KEY;
+          db.prepare("INSERT OR IGNORE INTO records(name,id,payload) VALUES(?,'header','{}')").run(name);
+          const put = db.prepare(
+            'INSERT INTO records(name,id,payload) VALUES(?,?,?) ON CONFLICT(name,id) DO UPDATE SET payload=excluded.payload'
+          );
+          for (const [key, value] of Object.entries(args.aliases)) {
+            if (key.length > 10000 || typeof value !== 'string' || value.length > 10000)
+              throw new Error('Invalid file alias');
+            put.run(name, 'alias:' + key, JSON.stringify(value));
+          }
+          for (const [key, value] of Object.entries(args.marks)) {
+            if (key.length > 10000 || typeof value !== 'boolean') throw new Error('Invalid viewed mark');
+            put.run(name, 'mark:' + key, JSON.stringify(value));
+          }
+        });
       } else if (method === 'search') {
         if (args.input) searchInput = args.input;
         if (!searchInput || searchInput.account !== args.account)

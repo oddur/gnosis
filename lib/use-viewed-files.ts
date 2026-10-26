@@ -1,3 +1,4 @@
+import { readReviewState, writeReviewState } from './renderer-review-state';
 import { useEffect } from 'react';
 import { sourceForPath, subjectForReview } from './workbench';
 import type { ReviewGuide } from './types';
@@ -5,6 +6,7 @@ import { fileRevisionKey } from './pr-changes';
 import { useFileProgress, registerChangeProgress } from './file-view-progress';
 
 /** Shared per-file progress. A new manifest preserves only unchanged review content. */
+const migratedLegacyViews = new Set<string>();
 export function useViewedFiles(review: ReviewGuide) {
   const progress = useFileProgress();
   const revision = review.snapshot?.fingerprint ?? review.headSha ?? review.reviewId ?? '';
@@ -23,14 +25,23 @@ export function useViewedFiles(review: ReviewGuide) {
     ...review.slides.flatMap((s) => [...s.affectedFiles, ...s.diffHunks.map((h) => h.filePath)]),
   ]);
   useEffect(() => {
-    try {
-      const old: unknown = JSON.parse(localStorage.getItem(oldKey) ?? '[]');
-      if (Array.isArray(old))
-        for (const path of old) if (typeof path === 'string') progress.markFileViewed(keyFor(path), true);
-      localStorage.removeItem(oldKey);
-    } catch {
-      /* Old progress is optional. */
-    }
+    const migrate = async () => {
+      if (migratedLegacyViews.has(oldKey)) return;
+      migratedLegacyViews.add(oldKey);
+      try {
+        const old: unknown = readReviewState(oldKey) ?? [];
+        if (!Array.isArray(old)) return;
+        const saved = await Promise.all(
+          old
+            .filter((path): path is string => typeof path === 'string')
+            .map((path) => progress.markFileViewed(keyFor(path), true))
+        );
+        if (saved.every(Boolean)) await writeReviewState(oldKey, null);
+      } catch {
+        /* Keep legacy progress if persistence fails. */
+      }
+    };
+    void migrate();
     const members = review.snapshot?.subject.members ?? [
       { url: review.prUrl, baseSha: review.baseSha, headSha: review.headSha },
     ];

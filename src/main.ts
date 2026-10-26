@@ -1,3 +1,4 @@
+import type { ReviewStateWrite, FileProgressPatch } from '../lib/review-state';
 import { createAppDataStore } from './app-data-store';
 import type { MarkPrReadRequest } from '../lib/pr-read-state';
 import { createPrActionsService } from './pr-actions-service';
@@ -721,9 +722,17 @@ app.on('before-quit', (event) => {
     event.preventDefault();
     if (!cacheFlushing) {
       cacheFlushing = true;
-      void Promise.race([Promise.all([githubClients.closeStorage(), appData.close()]), new Promise(resolve => setTimeout(resolve, 1500))])
-        .catch((error: unknown) => console.warn('Cache flush failed:', error))
-        .finally(() => { cacheFlushed = true; app.quit(); });
+      // User drafts and progress must finish before quitting; only disposable cache has a deadline.
+      void appData.close()
+        .then(() => Promise.race([githubClients.closeStorage(), new Promise(resolve => setTimeout(resolve, 1500))])
+          .catch((error: unknown) => console.warn('Disposable cache flush failed:',error)))
+        .then(() => { cacheFlushed = true; app.quit(); })
+        .catch(async (error: unknown) => {
+          cacheFlushing = false;
+          const {response} = await dialog.showMessageBox({type:'warning',buttons:['Keep open','Quit without saving'],defaultId:0,cancelId:0,
+            message:'Some changes could not be saved',detail:`${error instanceof Error ? error.message : String(error)}\nFree some disk space, then try quitting again.`});
+          if(response === 1) {cacheFlushed = true;app.quit();}
+        });
     }
     return;
   }
@@ -2249,6 +2258,9 @@ const workbench = createWorkbenchService({
 });
 let activeForegroundChats = 0;
 const dismissedBriefings = new Map<string,string>();
+ipcMain.handle('load-review-state', (_event, legacy: Record<string,string>) => appData.loadReviewState(legacy));
+ipcMain.handle('save-review-state', (_event, value: ReviewStateWrite) => appData.saveReviewState(value));
+ipcMain.handle('save-file-progress', (_event, value: FileProgressPatch) => appData.saveFileProgress(value));
 ipcMain.handle('list-activity', () => {
   prMergeMonitor.tick();
   const hiddenReviews = new Set(readReviewsIndex().filter(entry => workbench.isMutedReview(entry)).map(entry => entry.id));

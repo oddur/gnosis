@@ -1,3 +1,4 @@
+import type { ReviewStateWrite, FileProgressPatch } from '../lib/review-state';
 import type { MarkPrReadRequest } from '../lib/pr-read-state';
 import type { PreparedInventories } from '../lib/pr-inspection-cache';
 import type { InspectionRevision, InspectionLoadOptions } from '../lib/pr-changes';
@@ -48,6 +49,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getQueueSignals: (requests: QueueSignalRequest[], options?: QueueSignalOptions): Promise<QueueSignals[]> => ipcRenderer.invoke('get-queue-signals', requests, options),
   commandSearch: (query: string, includeBots = false, recentIds: string[] = []): Promise<LocalSearchResponse> => ipcRenderer.invoke('command-search', query, includeBots, recentIds),
   commandGitHubSearch: (query: string): Promise<PrSearchResult[]> => ipcRenderer.invoke('command-github-search', query),
+  reviewStateStorageVersion: 1 as const,
+  loadReviewState: (legacy: Record<string,string>): Promise<Record<string,unknown>> => ipcRenderer.invoke('load-review-state',legacy),
+  saveReviewState: (value: ReviewStateWrite): Promise<void> => ipcRenderer.invoke('save-review-state',value),
+  saveFileProgress: (value: FileProgressPatch): Promise<void> => ipcRenderer.invoke('save-file-progress',value),
   listActivity: (): Promise<ActivityTask[]> => ipcRenderer.invoke('list-activity'),
   activityAction: (id:string, action:ActivityAction): Promise<void> => ipcRenderer.invoke('activity-action',id,action),
   workbenchMarkPrRead: (request: MarkPrReadRequest): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-mark-pr-read', request),

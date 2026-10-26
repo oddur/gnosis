@@ -14,9 +14,9 @@ export interface CommentCallbacks {
     hunkHeader: string;
     codeSnippet: string;
     slideIndex: number;
-  }) => void;
-  onRemoveComment: (id: string) => void;
-  onEditComment: (id: string, body: string) => void;
+  }) => void | Promise<void>;
+  onRemoveComment: (id: string) => void | Promise<void>;
+  onEditComment: (id: string, body: string) => void | Promise<void>;
 }
 
 /**
@@ -114,17 +114,22 @@ export function InlineCommentForm({
   initialBody,
   draftKey,
 }: {
-  onSubmit: (body: string) => void;
+  onSubmit: (body: string) => void | Promise<void>;
   onCancel: () => void;
   initialBody?: string;
   draftKey?: string;
 }) {
   const [body, setBody] = useSessionDraft(`inline:${draftKey ?? initialBody ?? 'new'}`, initialBody ?? '');
   const [error, setError] = useState('');
-  function save() {
-    if (!body.trim()) return;
-    try { onSubmit(body.trim()); setBody(''); setError(''); }
+  const [saving,setSaving] = useState(false);
+  const pendingSave = useRef(false);
+  async function save() {
+    if (pendingSave.current || !body.trim()) return;
+    pendingSave.current = true;
+    setSaving(true);
+    try { await onSubmit(body.trim()); setBody(''); setError(''); }
     catch (e) { setError(e instanceof Error ? e.message : 'Could not save your comment. Your text is still here.'); }
+    finally {pendingSave.current = false;setSaving(false);}
   }
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -133,9 +138,10 @@ export function InlineCommentForm({
   }, []);
 
   function handleKeyDown(e: React.KeyboardEvent) {
+    if (pendingSave.current) return;
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
-      save();
+      void save();
     }
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -147,6 +153,7 @@ export function InlineCommentForm({
     <div className="mx-2 my-1.5 border rounded-md bg-muted/30 p-2">
       <textarea
         ref={textareaRef}
+        disabled={saving}
         value={body}
         onChange={(e) => setBody(e.target.value)}
         onKeyDown={handleKeyDown}
@@ -155,10 +162,10 @@ export function InlineCommentForm({
       />
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       <div className="flex justify-end gap-1.5 mt-1.5">
-        <Button variant="ghost" size="sm" onClick={onCancel}>
+        <Button variant="ghost" size="sm" disabled={saving} onClick={onCancel}>
           Cancel
         </Button>
-        <Button size="sm" onClick={save} disabled={!body.trim()}>
+        <Button size="sm" onClick={() => void save()} disabled={saving || !body.trim()}>
           Add comment
         </Button>
       </div>
@@ -172,18 +179,19 @@ export function CommentBubble({
   onEdit,
 }: {
   comment: PendingReviewComment;
-  onRemove: (id: string) => void;
-  onEdit: (id: string, body: string) => void;
+  onRemove: (id: string) => void | Promise<void>;
+  onEdit: (id: string, body: string) => void | Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
+  const [error,setError] = useState('');
 
   if (editing) {
     return (
       <InlineCommentForm
         draftKey={comment.id}
         initialBody={comment.body}
-        onSubmit={(body) => {
-          onEdit(comment.id, body);
+        onSubmit={async (body) => {
+          await onEdit(comment.id, body);
           setEditing(false);
         }}
         onCancel={() => setEditing(false)}
@@ -193,6 +201,7 @@ export function CommentBubble({
 
   return (
     <div className="pending-comment-block mx-2 my-1 border rounded-md p-2 flex gap-2 group">
+      {error && <p role="alert">{error}</p>}
       <pre className="pending-comment-block-text flex-1 text-xs font-mono whitespace-pre-wrap break-words">
         {comment.body}
       </pre>
@@ -206,7 +215,7 @@ export function CommentBubble({
           <Pencil className="h-3 w-3" />
         </button>
         <button
-          onClick={() => onRemove(comment.id)}
+          onClick={() => { void Promise.resolve().then(()=>onRemove(comment.id)).catch(()=>setError('Could not remove this draft. Try again.')); }}
           className="p-0.5 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive"
           title="Delete"
           aria-label="Delete comment"

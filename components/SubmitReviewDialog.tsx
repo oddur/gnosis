@@ -20,8 +20,8 @@ interface Props {
   prUrl: string;
   headSha?: string;
   isOwnPr: boolean;
-  onEditComment?: (id: string, body: string) => void;
-  onRemoveComment?: (id: string) => void;
+  onEditComment?: (id: string, body: string) => void | Promise<void>;
+  onRemoveComment?: (id: string) => void | Promise<void>;
   onSubmit: (event: ReviewEvent, body: string) => Promise<{ reviewUrl: string; droppedCommentCount: number }>;
 }
 

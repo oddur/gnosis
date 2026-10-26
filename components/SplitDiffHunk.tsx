@@ -128,8 +128,8 @@ function SplitHunk({
     setActiveFormKey(`${info.lineNumber}:${info.side}`);
   }
 
-  function handleSubmitComment(body: string, info: DiffLineInfo) {
-    commentCallbacks?.onAddComment({
+  async function handleSubmitComment(body: string, info: DiffLineInfo) {
+    await commentCallbacks?.onAddComment({
       filePath,
       line: info.lineNumber,
       side: info.side,
