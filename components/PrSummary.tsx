@@ -329,7 +329,7 @@ function PrSummaryContent({
           <SubjectReviewStatus subject={item.subject} signals={signals} checking={!signalsLoaded && !!account} />
           <ReadinessBadge readiness={readiness} reviewStatusShown />
           <ReadinessCheckedAt readiness={readiness} />
-          {tab === 'summary' && <div className="pr-summary-review-actions">{summaryReview.controls}</div>}
+          <div className="pr-summary-review-actions" inert={tab !== 'summary'} style={{ visibility: tab === 'summary' ? 'visible' : 'hidden' }}>{summaryReview.controls}</div>
         </div>
         {stacked && <PrActions member={item.subject.members[item.subject.members.length - 1]} stackMembers={item.subject.members} onChanged={onRetryStatus} />}
         <Tabs.List className="pr-overview-tabs" aria-label="PR overview">

@@ -731,7 +731,7 @@ void app.whenReady().then(async () => {
     };
     const manageView = async (name: string, action: string) => {
       await js(
-        `(() => { const trigger = document.querySelector('[aria-label="Manage '+${JSON.stringify(name)}+'"]'); trigger.focus(); trigger.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); })()`
+        `(() => { const trigger = document.querySelector('[aria-label="Manage '+${JSON.stringify(name)}+'"]'); trigger.focus(); trigger.dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowDown', bubbles:true})); })()`
       );
       await wait("!!document.querySelector('[role=menu]')");
       await js(
