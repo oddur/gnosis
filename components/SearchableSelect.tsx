@@ -22,8 +22,11 @@ export function SearchableSelect({
   label,
   id,
   className,
+  popupClassName,
   disabled,
   describedBy,
+  triggerLabel,
+  current,
   placeholder = 'Choose an option',
 }: {
   options: SelectionOption[];
@@ -32,8 +35,11 @@ export function SearchableSelect({
   label: string;
   id?: string;
   className?: string;
+  popupClassName?: string;
   disabled?: boolean;
   describedBy?: string;
+  triggerLabel?: string;
+  current?: boolean;
   placeholder?: string;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
@@ -57,7 +63,7 @@ export function SearchableSelect({
       }}
       open={open}
       onOpenChange={(next) => {
-        if (next) setContainer(trigger.current?.closest<HTMLElement>('[role="dialog"], .queue-filter-popover') ?? null);
+        if (next) setContainer(trigger.current?.closest<HTMLElement>('[role="dialog"]:not(.breadcrumb-overflow-menu), .queue-filter-popover') ?? null);
         setOpen(next);
         setQuery('');
       }}
@@ -72,6 +78,7 @@ export function SearchableSelect({
         value={value}
         aria-label={label}
         aria-describedby={describedBy}
+        aria-current={current ? 'page' : undefined}
         className={className}
         title={labels.get(value) ?? placeholder}
         onKeyDown={(event) => {
@@ -90,14 +97,14 @@ export function SearchableSelect({
           event.preventBaseUIHandler();
           event.preventDefault();
           event.stopPropagation();
-          setContainer(trigger.current?.closest<HTMLElement>('[role="dialog"], .queue-filter-popover') ?? null);
+          setContainer(trigger.current?.closest<HTMLElement>('[role="dialog"]:not(.breadcrumb-overflow-menu), .queue-filter-popover') ?? null);
           setQuery(event.key);
           setOpen(true);
         }}
       >
-        {labels.get(value) ?? placeholder}
+        {triggerLabel ?? labels.get(value) ?? placeholder}
       </ComboboxTrigger>
-      <ComboboxContent container={container}>
+      <ComboboxContent container={container} className={popupClassName}>
         <ComboboxInput aria-label={`Search ${label.toLowerCase()}`} placeholder="Type to search…" />
         <ComboboxEmpty>No matches. Try another search.</ComboboxEmpty>
         <ComboboxList>

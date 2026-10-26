@@ -28,6 +28,7 @@ export function App() {
   }>();
   const [explanationDestination, setExplanationDestination] = useState<ExplanationDestination>();
   const [page, setPage] = useState<Page>('home');
+  const [reviewOrigin, setReviewOrigin] = useState<{ name: string; reviews: { id: string; title: string }[] }>({ name: 'Work queue', reviews: [] });
   const navigationVersion = useRef(0);
   const [activityOpen, setActivityOpen] = useState(false);
   const [destination, setDestination] = useState<{
@@ -288,6 +289,7 @@ export function App() {
         {page === 'home' && (
           <HomePage
             onReviewReady={handleReviewReady}
+            onReviewOriginChange={setReviewOrigin}
             prefillPrUrl={prefillPrUrl}
             initialSubjectId={destination.subjectId}
             commandDestination={homeCommand}
@@ -302,6 +304,8 @@ export function App() {
             <ReviewPage
               key={`${review.reviewId ?? review.prUrl}:${review.snapshot?.fingerprint ?? review.headSha ?? ''}`}
               review={review}
+              origin={reviewOrigin}
+              onSelectReview={id => void navigate({ kind: 'review', reviewId: id })}
               commandDestination={reviewCommand}
               onBack={handleBack}
               onReReview={handleReReview}

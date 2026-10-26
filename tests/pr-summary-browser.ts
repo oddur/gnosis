@@ -244,9 +244,10 @@ void app.whenReady().then(async () => {
     assert.match(await js<string>("document.querySelector('.pr-member-relationship').textContent"), /Builds on #121/);
     await capture('pr-summary-stack');
     window.setSize(980, 700);
-    await wait("getComputedStyle(document.querySelector('.pr-stack-select')).display === 'flex'");
+    if (!await js("!!document.querySelector('[aria-label=\"PR in stack\"]')")) await click('Show full review hierarchy');
+    await wait("!!document.querySelector('[aria-label=\"PR in stack\"]')");
     await js(
-      "window.selectOption('.pr-stack-select [data-slot=combobox-trigger]', 'https://github.com/klang/engine/pull/121')"
+      "window.selectOption('[aria-label=\"PR in stack\"]', 'https://github.com/klang/engine/pull/121')"
     );
     assert.match(await js<string>("document.querySelector('.pr-details-heading h2').textContent"), /#121/);
     await capture('pr-summary-stack-laptop');
