@@ -143,6 +143,7 @@ export function createGitHubClientPool(options: Options = {}) {
   };
   return {
     backoff,
+    setCacheSizeMB: (value: unknown) => snapshots.setSizeMB(value),
     flushStorage: () => snapshots.flush(),
     closeStorage: () => snapshots.close(),
     async setStorage(file: string) {

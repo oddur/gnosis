@@ -1,5 +1,5 @@
 import { changesRevision, type InspectionRevision, type PrChanges, type PrChangeFile } from './pr-changes';
-import type { PrCommits } from './pr-commits';
+import type { PrCommits, PrCommit } from './pr-commits';
 
 const key = (revision: InspectionRevision) => `${revision.url}@${changesRevision(revision)}`;
 export interface PreparedInventories {
@@ -11,7 +11,7 @@ interface Dependencies {
   changes: (revision: InspectionRevision, refresh: boolean, background: boolean) => Promise<PrChanges>;
   commits: (revision: InspectionRevision, refresh: boolean, background: boolean) => Promise<PrCommits>;
   file: (snapshot: PrChanges, file: PrChangeFile) => Promise<unknown>;
-  comparison: (list: PrCommits) => Promise<unknown>;
+  comparison: (list: PrCommits, commit: PrCommit) => Promise<PrChanges | undefined>;
   review: (snapshot: PrChanges) => Promise<unknown>;
   visible: () => boolean;
   now?: () => number;
@@ -26,9 +26,18 @@ interface Job {
   revision: InspectionRevision;
   stage: number;
   file: number;
+  commit: number;
+  comparison?: PrChanges;
+  comparisonFile: number;
   retryAt: number;
   failures: number;
 }
+export interface InspectionPriorities {
+  active?: string[];
+  visible?: string[];
+  view?: string[];
+}
+
 /** Revision-aware tab data and one background work step at a time. No React mount is required. */
 export function createPrInspectionCache(deps: Dependencies) {
   const now = deps.now ?? Date.now;
@@ -41,6 +50,8 @@ export function createPrInspectionCache(deps: Dependencies) {
   let scope: string | null = null,
     epoch = 0;
   let order: string[] = [];
+  let priorities = new Map<string, number>();
+  let activeUrls = new Set<string>();
   let stopped = false;
   let running: Promise<void> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -106,15 +117,45 @@ export function createPrInspectionCache(deps: Dependencies) {
       return;
     }
     const saved = values.get(key(r));
-    // Discovery moved while GitHub supplied a newer consistent snapshot. Wait for its new identity.
     if (!saved?.changes || !saved.commits) {
-      completed.add(key(r));
-      jobs.delete(key(r));
+      const current = latest.get(r.url);
+      if ([current?.changes, current?.commits].some(value => value && changesRevision(value.metadata) !== changesRevision(r))) {
+        // Discovery moved while GitHub supplied a newer snapshot; wait for its identity.
+        finish(job, generation);
+      } else {
+        // A large queue can evict an inventory from memory before its files run.
+        // Restore that inventory from disk instead of treating it as completed.
+        job.stage = 0;
+      }
       return;
     }
-    if (job.stage === 2) {
-      await deps.comparison(saved.commits);
-      job.stage++;
+    if (job.stage === 2 || job.stage === 5) {
+      // Newest first, with a scheduling boundary after each comparison and file.
+      const commit = saved.commits.commits.at(-1 - job.commit);
+      if (!commit) {
+        if (job.stage === 2) job.stage++;
+        else finish(job, generation);
+        return;
+      }
+      if (!job.comparison) {
+        try {
+          job.comparison = (await deps.comparison(saved.commits, commit)) || undefined;
+        } catch (error) {
+          if (!unsupported(error)) throw error;
+        }
+        if (job.comparison) return;
+      } else {
+        const file = job.comparison.files.at(job.comparisonFile);
+        if (file) {
+          await prepareFile(job.comparison, file);
+          job.comparisonFile++;
+          return;
+        }
+      }
+      job.comparison = undefined;
+      job.comparisonFile = 0;
+      job.commit++;
+      if (job.stage === 2) job.stage++;
       return;
     }
     if (job.stage === 3) {
@@ -123,21 +164,27 @@ export function createPrInspectionCache(deps: Dependencies) {
         job.stage++;
         return;
       }
-      try {
-        await deps.file(saved.changes, file);
-      } catch (error) {
-        // Unsupported binary/oversized files must not block other files. Network errors retry.
-        if (!/too large|binary file|not UTF-8|no text preview|Not Found|\b404\b/i.test(String(error))) throw error;
-      }
+      await prepareFile(saved.changes, file);
       job.file++;
       return;
     }
     await deps.review(saved.changes);
-    if (generation === epoch && jobs.get(key(r)) === job) {
-      completed.add(key(r));
-      jobs.delete(key(r));
+    job.stage++;
+  }
+  function unsupported(error: unknown) {
+    return /too large|binary file|not UTF-8|no text preview|Not Found|\b404\b|file limit/i.test(String(error));
+  }
+  async function prepareFile(snapshot: PrChanges, file: PrChangeFile) {
+    try { await deps.file(snapshot, file); }
+    catch (error) { if (!unsupported(error)) throw error; }
+  }
+  function finish(job: Job, generation: number) {
+    if (generation === epoch && jobs.get(key(job.revision)) === job) {
+      completed.add(key(job.revision));
+      jobs.delete(key(job.revision));
     }
   }
+
   function kick(delay = 100) {
     if (stopped || !scope || timer || running || !jobs.size || !deps.visible()) return;
     timer = setTimeout(() => {
@@ -150,7 +197,14 @@ export function createPrInspectionCache(deps: Dependencies) {
     const generation = epoch;
     const active = () => !stopped && !!scope && generation === epoch && deps.visible();
     const promise = (async () => {
+      let steps = 0;
       while (active()) {
+        // Disk/memory hits can resolve immediately. Let navigation and viewport
+        // updates run instead of consuming a long chain of renderer microtasks.
+        if (++steps % 16 === 0) {
+          await new Promise(resolve => setTimeout(resolve, 0));
+          if (!active()) break;
+        }
         const missing = order.filter((id) => !restored.has(id)).flatMap((id) => jobs.get(id)?.revision ?? []);
         if (deps.restore && missing.length) {
           try {
@@ -166,8 +220,12 @@ export function createPrInspectionCache(deps: Dependencies) {
           if (!active()) break;
         }
         const ready = order.map((id) => jobs.get(id)).filter((job): job is Job => !!job && job.retryAt <= now());
-        // Prepare lightweight tab inventories across the queue before deep file downloads.
-        const job = ready.find((job) => job.stage === 0) ?? ready.find((job) => job.stage === 1) ?? ready.at(0);
+        // Re-evaluate intent between every operation. Within a tier, make both tab
+        // inventories available before deep downloads; never let the backlog delay an active PR.
+        const tier = (job: Job) => priorities.get(job.revision.url) ?? 3;
+        const highest = ready.reduce((best, job) => Math.min(best, tier(job)), Infinity);
+        const preferred = ready.filter(job => tier(job) === highest);
+        const job = preferred.find(job => job.stage < 2) ?? preferred.at(0);
         if (!job) break;
         try {
           await step(job, generation);
@@ -192,7 +250,7 @@ export function createPrInspectionCache(deps: Dependencies) {
     readCommits,
     peekChanges: (r: InspectionRevision) => values.get(key(r))?.changes ?? latest.get(r.url)?.changes,
     peekCommits: (r: InspectionRevision) => values.get(key(r))?.commits ?? latest.get(r.url)?.commits,
-    setTargets(account: string | null, targets: InspectionRevision[]) {
+    setTargets(account: string | null, targets: InspectionRevision[], intent: InspectionPriorities = {}) {
       stopped = false;
       if (scope !== account) {
         epoch++;
@@ -203,20 +261,31 @@ export function createPrInspectionCache(deps: Dependencies) {
         completed.clear();
         restored.clear();
         pending.clear();
+        activeUrls.clear();
         deps.reset?.();
       }
       const unique = new Map<string, InspectionRevision>();
       for (const r of targets) if (!unique.has(r.url)) unique.set(r.url, r);
-      const nextOrder = account ? [...unique.values()].map(key) : [];
-      // A newly selected PR may have fallen out of the bounded file cache.
-      if (nextOrder[0] && nextOrder[0] !== order[0]) completed.delete(nextOrder[0]);
+      priorities = new Map();
+      [intent.active, intent.visible, intent.view].forEach((urls, tier) => {
+        for (const url of urls ?? []) if (!priorities.has(url)) priorities.set(url, tier);
+      });
+      const ranked = [...unique.values()].sort((a, b) =>
+        (priorities.get(a.url) ?? 3) - (priorities.get(b.url) ?? 3));
+      const nextOrder = account ? ranked.map(key) : [];
+      // Rehydrate a newly active PR from disk if it has left the bounded memory cache.
+      for (const url of intent.active ?? []) {
+        const revision = unique.get(url);
+        if (revision && !activeUrls.has(url)) completed.delete(key(revision));
+      }
+      activeUrls = new Set(intent.active);
       order = nextOrder;
-      deps.prioritize?.(account ? [...unique.keys()] : []);
+      deps.prioritize?.(account ? ranked.map(r => r.url) : []);
       const wanted = new Set(order);
       for (const id of jobs.keys()) if (!wanted.has(id)) jobs.delete(id);
       for (const r of unique.values())
         if (account && !completed.has(key(r)) && !jobs.has(key(r)))
-          jobs.set(key(r), { revision: r, stage: 0, file: 0, retryAt: 0, failures: 0 });
+          jobs.set(key(r), { revision: r, stage: 0, file: 0, commit: 0, comparisonFile: 0, retryAt: 0, failures: 0 });
       // Bound bookkeeping too; deleted/replaced revisions cannot stay forever.
       for (const id of completed) if (!wanted.has(id)) completed.delete(id);
       for (const id of restored) if (!wanted.has(id)) restored.delete(id);

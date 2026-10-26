@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { defaultRangeExtractor, useVirtualizer, type VirtualItem } from '@tanstack/react-virtual';
 import type { QueueItem } from '../lib/workbench';
 
@@ -10,10 +10,11 @@ interface Props {
   initialOffset: number;
   measurements: RefObject<VirtualItem[]>;
   renderRow: (item: QueueItem) => ReactNode;
+  onVisibleItemsChange?: (ids: string[]) => void;
 }
 
 /** Keep expanded stacks measured and the keyboard selection mounted in large queues. */
-export function VirtualReviewQueue({ items, labels, selected, scrollElement, initialOffset, measurements, renderRow }: Props) {
+export function VirtualReviewQueue({ items, labels, selected, scrollElement, initialOffset, measurements, renderRow, onVisibleItemsChange }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const [margin, setMargin] = useState(0);
   const [focused, setFocused] = useState<string | null>(null);
@@ -57,6 +58,40 @@ export function VirtualReviewQueue({ items, labels, selected, scrollElement, ini
     for (const sibling of parent.children) if (sibling !== element) observer.observe(sibling);
     return () => observer.disconnect();
   }, [virtual, scrollElement]);
+
+  useEffect(() => {
+    const list = container.current;
+    if (!list || !scrollElement || !onVisibleItemsChange) return;
+    const visible = new Set<Element>();
+    const observed = new Set<Element>();
+    let previous = '';
+    const publish = () => {
+      const ids = [...list.children].filter(row => visible.has(row))
+        .map(row => (row as HTMLElement).dataset.queueId).filter((id): id is string => !!id);
+      const signature = JSON.stringify(ids);
+      if (signature !== previous) { previous = signature; onVisibleItemsChange(ids); }
+    };
+    const observer = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        if (entry.isIntersecting && entry.intersectionRect.height > 0) visible.add(entry.target);
+        else visible.delete(entry.target);
+      }
+      publish();
+    }, { root: scrollElement });
+    const observeRows = () => {
+      for (const row of observed) if (row.parentElement !== list) {
+        observer.unobserve(row); observed.delete(row); visible.delete(row);
+      }
+      for (const row of list.children) if (!observed.has(row)) {
+        observed.add(row); observer.observe(row);
+      }
+      publish();
+    };
+    observeRows();
+    const mutations = new MutationObserver(observeRows);
+    mutations.observe(list, { childList: true });
+    return () => { observer.disconnect(); mutations.disconnect(); onVisibleItemsChange([]); };
+  }, [scrollElement, onVisibleItemsChange]);
 
   const render = (index: number) => {
     const item = items[index];

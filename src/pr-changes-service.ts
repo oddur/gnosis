@@ -54,10 +54,10 @@ export function createPrChangesService() {
     const oldest = values.keys().next().value;
     if (values.size > 200 && oldest) values.delete(oldest);
   }
-  function find(client: Octokit, req: PrFileRequest) {
+  async function find(client: Octokit, req: PrFileRequest) {
     validateURL(req.url);
     const key = snapshotKey(req.url, `${req.baseSha}:${req.headSha}`);
-    const snapshot = snapshots.get(client)?.get(key) ?? githubCacheFor(client)?.get(key, isSnapshot)?.value;
+    const snapshot = snapshots.get(client)?.get(key) ?? await githubCacheFor(client)?.getPrepared(key, isSnapshot);
     const file = snapshot?.files.find((f) => f.path === req.path);
     if (!snapshot || !file) throw new Error('Reload this PR’s file list before opening the file.');
     return { snapshot, file };
@@ -68,14 +68,15 @@ export function createPrChangesService() {
       const cache = githubCacheFor(client),
         version = cache?.version();
       const latestKey = snapshotKey(url, 'latest');
-      const saved = snapshots.get(client)?.get(latestKey) ?? cache?.get(latestKey, isSnapshot)?.value;
+      const exact = options.revision && await cache?.getPrepared(snapshotKey(url, changesRevision(options.revision)), isSnapshot);
+      const saved = exact ?? snapshots.get(client)?.get(latestKey) ?? cache?.get(latestKey, isSnapshot)?.value;
       if (saved && !refresh && (!options.revision || changesRevision(saved.metadata) === changesRevision(options.revision))) {
         remember(client, saved);
         return saved;
       }
       const metadata = await getPrMetadata(client, owner, repo, pullNumber, true);
       const key = snapshotKey(url, changesRevision(metadata));
-      const existing = snapshots.get(client)?.get(key) ?? cache?.get(key, isSnapshot)?.value;
+      const existing = snapshots.get(client)?.get(key) ?? await cache?.getPrepared(key, isSnapshot);
       if (existing) {
         // File content is immutable at these SHAs; PR state and branch names are not.
         const refreshed = { ...existing, metadata, fetchedAt: Date.now() };
@@ -131,11 +132,16 @@ export function createPrChangesService() {
   }
   const loadFile = createSnapshotFileLoader();
   async function content(client: Octokit, req: PrFileRequest, beforeRequest?: () => void) {
-    const { snapshot, file } = find(client, req);
+    const { snapshot, file } = await find(client, req);
     return loadFile(client, req, snapshot, file, beforeRequest);
   }
 
   return {
+    async restore(client: Octokit, url: string, revision: { baseSha: string; headSha: string }) {
+      const saved = await githubCacheFor(client)?.getPrepared(snapshotKey(url, changesRevision(revision)), isSnapshot);
+      if (saved) remember(client, saved);
+      return saved;
+    },
     cached(client: Octokit, url: string, revision: { baseSha: string; headSha: string }) {
       const cache = githubCacheFor(client);
       const exact = snapshotKey(url, changesRevision(revision)), latest = snapshotKey(url, 'latest');
@@ -146,7 +152,7 @@ export function createPrChangesService() {
     content,
     find,
     async prepareReview(client: Octokit, url: string, revision: Pick<PrChanges['metadata'], 'baseSha' | 'headSha'>) {
-      if (preparedDiff(client, url, revision) !== undefined) return;
+      if (await preparedDiff(client, url, revision) !== undefined) return;
       return share(client, `review:${url}:${changesRevision(revision)}`, async () => {
         const { owner, repo, pullNumber } = validateURL(url);
         const cache = githubCacheFor(client), version = cache?.version();

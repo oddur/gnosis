@@ -1,3 +1,4 @@
+import { GITHUB_CACHE_SIZES_MB, DEFAULT_GITHUB_CACHE_MB, normalizeGitHubCacheMB } from '../lib/github-cache-settings';
 import { SearchableSelect } from './SearchableSelect';
 import { Button } from './ui/button';
 import { PrInactivitySetting } from './PrInactivitySetting';
@@ -139,6 +140,7 @@ export function SettingsDialog({
 }: Props) {
   const [clearingCache, setClearingCache] = useState(false);
   const [cacheError, setCacheError] = useState('');
+  const [cacheSizeMB, setCacheSizeMB] = useState(DEFAULT_GITHUB_CACHE_MB);
   const [setupError, setSetupError] = useState('');
   const [logsError, setLogsError] = useState('');
   async function clearGitHubCache() {
@@ -225,6 +227,7 @@ export function SettingsDialog({
         setAutoBriefings(prefs.autoBriefings !== false);
         setIgnoreDependabotPrs(prefs.ignoreDependabotPrs !== false);
         setPrInactivityDays(normalizePrInactivityDays(prefs.prInactivityDays));
+        setCacheSizeMB(normalizeGitHubCacheMB(prefs.githubCacheSizeMB));
         setWatchedRepos(prefs.watchedRepos);
         setNotifications(prefs.notifications);
         setTrayEnabled(prefs.trayEnabled);
@@ -767,6 +770,14 @@ export function SettingsDialog({
             <Tabs.Content value="integrations" className="settings-panel">
               <section className="flex flex-col items-start gap-3" aria-labelledby="github-cache-title">
                 <h3 id="github-cache-title" className="text-sm font-medium">GitHub cache</h3>
+                <div className="settings-field">
+                  <label htmlFor="github-cache-size">Disk cache size</label>
+                  <SearchableSelect id="github-cache-size" label="Disk cache size" value={String(cacheSizeMB)}
+                    options={GITHUB_CACHE_SIZES_MB.map(size => ({ value: String(size), label: `${size >= 1024 ? `${size / 1024} GB` : `${size} MB`}${size === DEFAULT_GITHUB_CACHE_MB ? ' (default)' : ''}` }))}
+                    onValueChange={value => { const size = normalizeGitHubCacheMB(Number(value)); setCacheSizeMB(size); saveField({ githubCacheSizeMB: size }); }}
+                  />
+                  <p className="settings-description">Keep more changes, commits, and images ready to open. Older downloads are removed when the cache is full. Takes effect immediately; saved reviews and drafts are kept.</p>
+                </div>
                 <p className="settings-description">
                   Remove downloaded PR details, changes, commits, comments, statuses, and images. Gnosis restarts
                   and fetches them again as needed. Saved reviews, briefings, bookmarks, settings, and sign-in stay.

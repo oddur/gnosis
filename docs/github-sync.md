@@ -9,7 +9,7 @@ The workbench checks discovery every two minutes. Personal searches cover author
 These searches remain complete so removed assignments and review requests leave the queue promptly. Daily search boundaries preserve reusable HTTP validators.
 The exact inactivity setting still applies locally before detail requests.
 
-Repository discovery stores a compact index in `workbench.json`. After the first pass, it requests PRs in update order, including closed PRs.
+Repository discovery stores a compact index in `workbench.sqlite`. After the first pass, it requests PRs in update order, including closed PRs.
 The update window overlaps the previous start time by two minutes. Pagination stops after reaching older updates.
 A full repository reconciliation runs every thirty minutes. Explicit refreshes and changed discovery settings also cause full reconciliation.
 
@@ -42,7 +42,12 @@ The scheduler reserves API allowance for interaction. Background requests pause 
 Primary limits apply separately to REST, search, and GraphQL. Secondary limits pause all network work for the credential.
 Server retry deadlines and exponential backoff still apply. Writes are never replayed automatically.
 
-The persistent HTTP cache permits 2,000 entries and 32 MB. Each entry has a 1 MB limit and a seven-day retention limit.
+The HTTP response cache permits 2,000 entries and 32 MB. Each response has a 1 MB limit and a seven-day retention limit.
+Prepared changes, commits, files, and review diffs also use a separate SQLite table. Memory eviction does not delete these prepared downloads.
+The total downloaded-content budget defaults to 512 MB. **Settings → Integrations → GitHub cache → Disk cache size** offers 128 MB through 4 GB.
+The HTTP cache uses 32 MB of that budget. Prepared downloads use the remainder, with 30-day retention and a 24 MB entry limit.
+Size changes take effect immediately. The cache removes the oldest prepared downloads first. SQLite indexes and temporary journal files add disk overhead.
+SQLite reads, writes, parsing, and retention run in a backend worker. The renderer keeps a smaller working set.
 The cache stores response data and validators, without authentication headers or credentials.
 PR comment and review routes invalidate the affected PR and repository listings. Unrelated PR details remain fresh.
 Unscoped writes, including GraphQL mutations without a known PR, conservatively invalidate freshness across the account.
@@ -66,25 +71,30 @@ Diffs and file contents retain their separate revision-based caches.
 
 ## Preparing PR revisions
 
-Discovery starts a quiet preload when a PR's base or head SHA changes. The selected PR or stack goes first, followed by the filtered queue and remaining queue.
-A local-only restore pass loads saved inventories before network work starts. Missing file lists are prepared across the queue first, followed by commit lists.
-Deeper work then prepares the newest commit comparison, all changed-file contents, and full review diff in priority order.
-Only one preload step runs at a time. All requests use background priority and the shared GitHub allowance and backoff rules.
-Hidden windows pause between steps. Failed steps retry with increasing delays, without repeating completed steps.
-Unsupported files do not block other files. Preparing a revision never starts AI generation.
+When a PR base or head SHA changes, discovery schedules that revision for preparation. Priorities follow user activity:
 
-Changes and Commits read prepared data from a shared renderer cache. The main process saves revision-specific data in the existing account cache.
-Opening a prepared tab needs no file-list download. An open diff stays on its displayed revision until the reviewer selects **Update changes**.
-Normal metadata and CI updates do not repeat downloads when the base and head SHAs remain unchanged.
+1. The selected PR or stack.
+2. PRs visible in the queue viewport.
+3. Other PRs in the current filtered view.
+4. The remaining discovered queue.
 
-Guided reviews check the current PR revision, then reuse that revision's prepared file list, comparison base, full diff, and file contents.
-Generation checks the revision again before saving. Files from forks use their source repository, and renamed files retain both paths.
-Additional context, such as neighboring files and history, can still require requests.
+Within each priority group, file and commit lists come first. Preparation then downloads the newest commit, changed files, review diff, and older commits.
+Every individual commit and its files are eligible. Custom commit ranges, alternate merge parents, and LFS downloads remain on demand.
+One preparation operation runs at a time. The scheduler checks priorities between operations, so a new selection moves ahead of unfinished work.
+The current operation finishes before priorities change. Completed operations do not repeat after a pause or a priority change.
+Background requests respect the shared GitHub allowance, reserved interactive capacity, and backoff. Failed operations retry with increasing delays.
+Unsupported previews do not block other files. Preparation continues during navigation and while the window is hidden. It never starts AI generation.
 
-Preloading is bounded by API allowance and cache capacity. A first download, an evicted entry, an oversized file, or an unprepared historical commit can still require loading.
-The renderer retains up to 32 MB of file contents and 128 files. Eviction favors the selected PR, then the current view.
-Selecting a different PR prepares it again if its files were evicted. The persistent cache limits above remain unchanged.
-Account changes clear renderer data and discard late responses from the previous account. Navigation pauses the worker without clearing prepared data.
+A local restore pass loads saved inventories before network work starts. Changes and Commits use prepared data immediately when available.
+An open diff keeps its displayed revision until the reviewer selects **Update changes**. Preparation of a newer revision does not replace displayed code.
+Metadata and CI updates do not repeat content downloads for unchanged base and head SHAs.
+Guided reviews check the current revision, then reuse its prepared file list, comparison base, full diff, and file contents.
+Generation checks the revision again before saving. Fork files retain their source repository. Renamed files retain both paths.
+
+The renderer retains up to 32 MB and 128 files. Eviction favors active PRs, visible PRs, and the current view.
+When the selected PR leaves memory, preparation restores it from SQLite. Account changes clear renderer data and discard late responses.
+Preparation can finish the eligible queue within the available API allowance and disk budget. A smaller budget can evict earlier downloads.
+Cold data, new revisions, expired or evicted downloads, and unsupported previews can still require loading or a fallback.
 
 ## Clearing downloaded data
 

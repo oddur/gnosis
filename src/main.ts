@@ -1,3 +1,4 @@
+import { normalizeGitHubCacheMB, DEFAULT_GITHUB_CACHE_MB } from '../lib/github-cache-settings';
 import type { ReviewStateWrite, FileProgressPatch } from '../lib/review-state';
 import { createAppDataStore } from './app-data-store';
 import type { MarkPrReadRequest } from '../lib/pr-read-state';
@@ -658,6 +659,7 @@ void app.whenReady().then(async () => {
     app.exit(1);
     return;
   }
+  await githubClients.setCacheSizeMB(loadPreferences().githubCacheSizeMB);
   await githubClients.setStorage(path.join(app.getPath('userData'), 'github-budget.json'));
 
   // Expose packaged state to preload via env var (before creating windows)
@@ -946,6 +948,7 @@ function getPreferencesPath() {
 }
 
 const DEFAULT_PREFERENCES: Preferences = {
+  githubCacheSizeMB: DEFAULT_GITHUB_CACHE_MB,
   ignoreDependabotPrs: true,
   prInactivityDays: DEFAULT_PR_INACTIVITY_DAYS,
   instructions: '',
@@ -998,6 +1001,7 @@ function loadPreferences(): Preferences {
     }
     // Preserve the existing choice about automatic generation during migration.
     if (!('autoBriefings' in stored)) stored.autoBriefings = stored.proactiveMode === true;
+    stored.githubCacheSizeMB = normalizeGitHubCacheMB(stored.githubCacheSizeMB);
     stored.prInactivityDays = normalizePrInactivityDays(stored.prInactivityDays);
     const selection = normalizeModelSelection(stored.provider, stored.model);
     const proactive = normalizeModelSelection(stored.proactiveProvider, stored.proactiveModel, true);
@@ -1013,7 +1017,7 @@ function loadPreferences(): Preferences {
 }
 
 function savePreferences(prefs: Preferences): void {
-  fs.writeFileSync(getPreferencesPath(), JSON.stringify({ ...prefs, prInactivityDays: normalizePrInactivityDays(prefs.prInactivityDays) }, null, 2));
+  fs.writeFileSync(getPreferencesPath(), JSON.stringify({ ...prefs, githubCacheSizeMB: normalizeGitHubCacheMB(prefs.githubCacheSizeMB), prInactivityDays: normalizePrInactivityDays(prefs.prInactivityDays) }, null, 2));
 }
 
 // ── MCP tools constants ─────────────────────────────────────────
@@ -1183,7 +1187,8 @@ ipcMain.handle('load-preferences', () => {
   return loadPreferences();
 });
 
-ipcMain.handle('save-preferences', (_event, prefs: Preferences) => {
+ipcMain.handle('save-preferences', async (_event, prefs: Preferences) => {
+  await githubClients.setCacheSizeMB(prefs.githubCacheSizeMB);
   savePreferences(prefs);
   applyBinaryOverrides(prefs);
   // Restart polling so the new proactiveMode value takes effect immediately
@@ -2581,11 +2586,11 @@ ipcMain.handle('clear-github-cache', () => {
   app.exit(0);
 });
 // Local-only restore: never let a network-bound PR delay saved inventories for the rest of the queue.
-ipcMain.handle('prepared-inventories', (_event, revisions: InspectionRevision[]) => {
+ipcMain.handle('prepared-inventories', async (_event, revisions: InspectionRevision[]) => {
   const client = changesClient();
   return {
-    changes: revisions.flatMap(r => prChanges.cached(client, r.url, r) ?? []),
-    commits: revisions.flatMap(r => prCommits.cached(client, r.url, r) ?? []),
+    changes: (await Promise.all(revisions.map(async r => await prChanges.restore(client, r.url, r) ?? prChanges.cached(client, r.url, r)))).flatMap(value => value ?? []),
+    commits: (await Promise.all(revisions.map(async r => await prCommits.restore(client, r.url, r) ?? prCommits.cached(client, r.url, r)))).flatMap(value => value ?? []),
   };
 });
 ipcMain.handle('pr-changes', (_event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) => withGitHubPriority(options.background ? 'background' : 'interactive', () => prChanges.manifest(changesClient(), url, refresh, options)));
@@ -2607,7 +2612,7 @@ ipcMain.handle('ask-pr-file', async (_event, request: FileChatRequest) => {
   if (!request.question.trim() || request.question.length > 20000) throw new Error('Enter a question under 20,000 characters.');
   const client = changesClient();
   const source = request.comparison ? prCommits : prChanges;
-  const { snapshot, file } = source.find(client, request);
+  const { snapshot, file } = await source.find(client, request);
   const contents = await source.content(client, request);
   workbench.interrupt(); activeForegroundChats++;
   const controller = new AbortController();

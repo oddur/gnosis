@@ -40,10 +40,9 @@ export function createSnapshotFileLoader(lfs = lfsResources) {
         const cache = githubCacheFor(client),
           version = cache?.version();
         const key = preparedFileKey(req);
-        const saved = cache?.get(
-          key,
-          (v): v is PrFileContents => isCacheRecord(v) && isCacheRecord(v.before) && isCacheRecord(v.after)
-        );
+        const savedValue = await cache?.getPrepared(key,
+          (v): v is PrFileContents => isCacheRecord(v) && isCacheRecord(v.before) && isCacheRecord(v.after));
+        const saved = savedValue ? { value: savedValue } : undefined;
         if (saved && (!req.downloadLfs || ![saved.value.before, saved.value.after].some((s) => s.kind === 'lfs')))
           return saved.value;
         const lfsSides = new Set<boolean>();

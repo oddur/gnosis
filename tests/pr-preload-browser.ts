@@ -55,6 +55,10 @@ void app.whenReady().then(async () => {
       [],
       'Commit catalog was prepared by discovery'
     );
+    await js("[...document.querySelectorAll('.commit-row')].find(row => row.textContent.includes('Keep retry boundaries intact')).click()");
+    await wait("document.querySelector('.commit-detail-title')?.textContent.includes('Keep retry boundaries intact')");
+    assert.deepEqual(await js('window.loadingFlashes'), [], 'Older commits also open from prepared content');
+    assert.deepEqual(await js('window.inspectionReads'), [], 'All individual commit diffs were preloaded');
     await click('Changes');
     await wait("!!document.querySelector('.changes-file-header')");
     // Supply a new revision and visibly different file contents, without remounting Changes.

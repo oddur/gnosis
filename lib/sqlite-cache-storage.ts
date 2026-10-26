@@ -4,6 +4,10 @@ export interface CacheWrite {
   id: string;
   payload?: string | null;
   revalidate?: boolean;
+  prepared?: boolean;
+  onlyPrepared?: boolean;
+  deletePrepared?: boolean;
+  clearPrepared?: boolean;
 }
 /** Only the worker opens the database, imports legacy JSON, or waits for disk locks. */
 export function createCacheStorage() {
@@ -54,7 +58,10 @@ export function createCacheStorage() {
       maxEntryBytes: number;
       maxEntries: number;
       retention: number;
+      preparedBytes?: number;
     }) => call('open', args),
+    setPreparedLimit: (bytes: number, now: number) => call('prepared-limit', { bytes, now }),
+    readPrepared: (id: string, now: number) => call('prepared-read', { id, now }),
     write: (operations: CacheWrite[]) => call('write', operations),
     async close() {
       try {
