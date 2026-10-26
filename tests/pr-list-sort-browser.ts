@@ -6,7 +6,10 @@ import path from 'node:path';
 
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({ width: 1100, height: 760, show: true, webPreferences: { backgroundThrottling: false } });
-  const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
+  const js = async <T = unknown>(code: string): Promise<T> => {
+    try { return await win.webContents.executeJavaScript(code) as T; }
+    catch (error) { throw new Error(`${code}\n${String(error)}`); }
+  };
   const wait = async (expression: string) => {
     for (let i = 0; i < 200; i++) {
       if (await js(expression)) return;
@@ -26,6 +29,25 @@ void app.whenReady().then(async () => {
     await win.loadURL(url);
     await wait("document.querySelectorAll('.queue-item').length===7");
     assert.ok(await js("!!document.querySelector('[aria-label=\"Sort: Priority\"]')"));
+    await js("document.querySelector('[aria-label=\"Sort: Priority\"]').click()");
+    await js(`(()=>{const b=document.querySelector('#pr-sort-key');b.focus();
+      b.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerType:'mouse',button:0}));
+      b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));
+      b.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,button:0}));
+      b.dispatchEvent(new MouseEvent('click',{bubbles:true,button:0,detail:1}));})()`);
+    await wait("!!document.querySelector('[data-slot=combobox-list]')");
+    const popup = await js<{ options: number; visible: number; height: number }>(`(()=>{
+      const list=document.querySelector('[data-slot=combobox-list]'),bounds=list.getBoundingClientRect();
+      const options=[...list.querySelectorAll('[data-slot=combobox-item]')];
+      return {options:options.length,height:bounds.height,visible:options.filter(e=>{
+        const r=e.getBoundingClientRect();return r.top>=bounds.top&&r.bottom<=bounds.bottom&&document.elementFromPoint(r.left+12,(r.top+r.bottom)/2)?.closest('[data-slot=combobox-item]')===e;
+      }).length};
+    })()`);
+    assert.equal(popup.options, 9);
+    assert.ok(popup.visible >= 5, 'Sort options must be visible without scrolling a one-row list: '+JSON.stringify(popup));
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+    await wait("document.querySelector('#pr-sort-key').getAttribute('aria-expanded')==='false'");
     await sort('title');
     assert.equal(await js("document.querySelectorAll('.queue-section-title').length"), 0);
     const ascending = await rows();

@@ -39,15 +39,16 @@ function ComboboxInput({ className, ...props }: ComboboxPrimitive.Input.Props) {
 function ComboboxContent({
   className,
   container,
+  collisionBoundary,
   ...props
-}: ComboboxPrimitive.Popup.Props & { container?: HTMLElement | null }) {
+}: ComboboxPrimitive.Popup.Props & { container?: HTMLElement | null; collisionBoundary?: ComboboxPrimitive.Positioner.Props['collisionBoundary'] }) {
   return (
     <ComboboxPrimitive.Portal container={container ?? undefined}>
       <ComboboxPrimitive.Positioner
         sideOffset={4}
         align="start"
         positionMethod="fixed"
-        collisionBoundary={container ?? undefined}
+        collisionBoundary={collisionBoundary ?? container ?? undefined}
         collisionPadding={8}
         className="selection-positioner"
       >

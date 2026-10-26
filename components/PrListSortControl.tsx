@@ -18,7 +18,7 @@ export function PrListSortControl({ value, onChange, savedReviews = false, disab
       }}>
         <div className="flex flex-col gap-3 p-4">
           <strong className="text-sm">Sort {savedReviews ? 'saved reviews' : 'PRs and stacks'}</strong>
-          <SearchableSelect label="Sort by" id="pr-sort-key" value={value.key}
+          <SearchableSelect popupBoundary="viewport" label="Sort by" id="pr-sort-key" value={value.key}
             options={Object.entries(PR_SORT_LABELS).filter(([key]) => savedReviews || key !== 'generated').map(([value, label]) => ({ value, label }))}
             onValueChange={key => onChange({ ...value, key: key as PrSortKey, direction: defaultSortDirection(key as PrSortKey) })} />
           {reversibleSort(value.key) && <button className="queue-filter-toggle" aria-label={`Sort direction: ${sortDirectionLabel(value)}`}
