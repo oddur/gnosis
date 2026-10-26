@@ -2491,6 +2491,20 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 }
 
 /* Shared merge readiness: explicit wording, with color as a secondary signal. */
+.queue-metadata { display:flex; flex-direction:column; gap:6px; min-width:0; }
+.queue-status-line { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; min-height:26px; }
+.pr-review-statuses { display:inline-flex; flex-wrap:wrap; align-items:center; gap:4px 6px; min-width:0; }
+.pr-review-status { display:inline-flex; align-items:center; gap:6px; min-width:0; max-width:100%; padding:3px 7px; border-radius:4px; font-size:var(--type-caption); font-weight:650; line-height:20px; color:var(--muted-foreground); background:color-mix(in srgb, currentColor 9%, var(--background)); font-variant-numeric:tabular-nums; }
+.pr-review-status svg { flex-shrink:0; }
+.pr-review-status > span { overflow-wrap:anywhere; }
+.pr-review-status.is-success { color:var(--color-success); }
+.pr-review-status.is-danger { color:var(--color-danger); }
+.pr-review-status.is-warning { color:var(--color-warning); }
+.pr-review-status.is-info { color:var(--color-info); }
+.pr-merge-status .pr-review-status { font-size:var(--type-control); }
+.pr-stack-nav .pr-review-status { margin-top:6px; }
+.pr-member-review-status { margin:0 0 10px; }
+.pr-summary-review-actions { display:flex; align-items:center; gap:8px; margin-left:auto; }
 .merge-readiness-badge { display:inline-flex; align-items:center; gap:6px; min-width:0; font-size:var(--type-caption); font-weight:600; color:var(--muted-foreground); }
 .merge-readiness-badge svg { flex-shrink:0; }
 .merge-readiness-badge>span { overflow-wrap:anywhere; }
@@ -2498,7 +2512,7 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .merge-readiness-badge.is-danger { color:var(--color-danger); }
 .merge-readiness-badge.is-warning { color:var(--color-warning); }
 .merge-readiness-checked { color:var(--muted-foreground); font-size:var(--type-caption); }
-.pr-merge-status { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; padding:0 24px 10px; }
+.pr-merge-status { display:flex; flex-wrap:wrap; flex-shrink:0; align-items:center; gap:8px 16px; padding:0 var(--pr-frame-inset) 10px; }
 .pr-merge-status>button { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; flex-shrink:0; color:var(--muted-foreground); border-radius:4px; }
 .pr-merge-status>button:hover:not(:disabled) { color:var(--foreground); background:var(--accent); }
 .pr-merge-status>button:disabled { cursor:wait; }
@@ -2520,7 +2534,7 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .pr-title-with-star .pr-star-button { margin-top:2px; }
 .pr-details-heading>div:first-child { flex:1; }
 
-/* Muting uses the same compact actions and rows as the work queue. */
+/* Muting uses the same compact actions and rows as the review queue. */
 .pr-mute-menu { max-width: 260px; }
 .pr-mute-menu [role="menuitem"] { display: flex; align-items: center; gap: 8px; }
 .pr-mute-menu p { margin: 6px 8px; font-size: 12px; line-height: 1.5; color: var(--muted-foreground); }
@@ -2685,7 +2699,7 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .commit-stream-content { position:relative;width:100%; }
 .commit-stream-file { min-width:0;border-bottom:8px solid var(--muted);background:var(--background); }
 .commit-stream-file > .changes-file-header { position:sticky;top:0;z-index:2;background:var(--background);border-bottom:1px solid var(--border); }
-.commit-stream-file > .changes-code-scroll { overflow:visible;flex:none;scrollbar-gutter:auto; }
+.commit-stream-file-body > .changes-code-scroll { overflow:visible;flex:none;scrollbar-gutter:auto; }
 .commit-diff-stream:focus-visible { outline:2px solid var(--ring);outline-offset:-2px; }
 .commit-viewed-complete { border-top:1px solid var(--border); }
 .commit-viewed-complete strong { font-size:var(--type-control); }
@@ -2767,3 +2781,104 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .d2-diagram [data-d2-focus="active"] > .shape > *, .d2-dialog [data-d2-focus="active"] > .shape > * { fill:var(--accent); }
 .d2-diagram [data-d2-focus="active"] > marker polygon, .d2-dialog [data-d2-focus="active"] > marker polygon { fill:var(--primary); }
 .d2-code-link { padding-left:0; }
+
+/* Entry actions share one catalog across context and overflow menus. */
+.entry-menu-positioner { z-index: 80; }
+.entry-menu {
+  min-width: 210px;
+  max-width: min(320px, var(--available-width));
+  max-height: var(--available-height);
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  outline: none;
+}
+.entry-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 32px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 20px;
+  cursor: default;
+  outline: none;
+}
+.entry-menu-item svg { flex-shrink: 0; }
+.entry-menu-item[data-highlighted] { background: var(--accent); color: var(--accent-foreground); }
+.entry-menu-item[data-disabled] { opacity: .45; }
+.entry-menu-item[data-destructive] { color: var(--destructive); }
+.entry-menu-separator { height: 1px; margin: 4px; background: var(--border); }
+.entry-menu-trigger { flex-shrink: 0; }
+.entry-star-marker { display: inline-flex; align-items: center; color: var(--muted-foreground); }
+
+.saved-view-actions { display: flex; min-width: 0; }
+.workbench-sidebar .saved-view-actions .entry-menu-trigger { width: 100%; min-width: 0; padding-inline: 0; }
+
+/* Review composition: one scroll region and one explicit submit action. */
+.review-submit-dialog { display:flex; flex-direction:column; gap:0; padding:0; width:calc(100% - 2rem); max-width:640px; max-height:84dvh; top:8dvh; overflow:hidden; }
+.review-submit-dialog .review-submit-header { flex:none; padding:20px 24px 16px; gap:6px; text-align:left; border-bottom:1px solid var(--border); }
+.review-submit-dialog .submission-destination { display:flex; flex-wrap:wrap; align-items:center; gap:4px 16px; padding:0; border:0; background:transparent; font-size:var(--type-caption); color:var(--muted-foreground); }
+.review-submit-dialog .submission-destination a { display:inline-flex; gap:6px; margin:0; font-size:var(--type-control); font-weight:500; }
+.review-submit-dialog .submission-destination code { font-size:inherit; }
+.review-submit-body { display:flex; flex-direction:column; gap:20px; min-height:0; overflow-y:auto; padding:16px 24px 20px; scrollbar-gutter:stable; }
+.review-decision { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.review-decision legend,.review-submit-message>label,.review-submit-comments>h3 { font-size:var(--type-control); font-weight:600; margin-bottom:8px; }
+.review-decision-option { display:flex; align-items:flex-start; gap:10px; padding:8px 10px; border-radius:4px; cursor:pointer; }
+.review-decision-option:hover { background:var(--secondary); }
+.review-decision-option[data-selected=true] { background:var(--accent); }
+.review-decision-option:has(input:focus-visible) { outline:2px solid var(--ring); outline-offset:1px; }
+.review-decision-option input:focus-visible { outline:none; }
+.review-decision-option:has(input:disabled) { cursor:default; color:var(--muted-foreground); }
+.review-decision-option input { width:15px; height:15px; margin-top:3px; flex-shrink:0; accent-color:var(--primary); }
+.review-decision-option>span { min-width:0; }
+.review-decision-option strong { display:block; font-size:var(--type-control); font-weight:600; line-height:1.5; }
+.review-decision-option>span>span { display:block; color:var(--muted-foreground); font-size:var(--type-caption); line-height:1.5; }
+.review-submit-message { display:flex; flex-direction:column; gap:6px; }
+.review-submit-message>label { display:flex; align-items:baseline; gap:8px; margin:0; }
+.review-submit-message>label>span,.review-submit-comments h3>span { font-size:var(--type-caption); color:var(--muted-foreground); font-weight:400; }
+.review-submit-message textarea { border:1px solid var(--input); border-radius:5px; padding:10px 12px; min-height:92px; width:100%; resize:vertical; background:var(--background); color:var(--foreground); font-size:var(--type-control); line-height:1.6; }
+.review-submit-message textarea::placeholder { color:var(--muted-foreground); opacity:1; }
+.review-submit-hint { font-size:var(--type-caption); line-height:1.5; color:var(--muted-foreground); }
+.review-submit-comments { min-width:0; }
+.review-submit-file { border-top:1px solid var(--border); }
+.review-submit-file:last-child { border-bottom:1px solid var(--border); }
+.review-submit-file>summary { display:flex; align-items:center; gap:8px; padding:10px 0; cursor:pointer; font-size:var(--type-control); font-weight:500; list-style:none; }
+.review-submit-file>summary::-webkit-details-marker { display:none; }
+.review-submit-file>summary>svg { flex-shrink:0; }
+.review-submit-file[open]>summary>svg { transform:rotate(90deg); }
+.review-submit-file>summary>span:not(.review-submit-file-count) { overflow-wrap:anywhere; min-width:0; }
+.review-submit-file-count { margin-left:auto; font-size:var(--type-caption); color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
+.review-submit-comment { padding:0 0 12px 22px; }
+.review-submit-comment+.review-submit-comment { padding-top:12px; border-top:1px solid var(--border); }
+.review-submit-line { font-size:var(--type-caption); color:var(--muted-foreground); margin-bottom:6px; }
+.review-submit-snippet { margin:0 0 8px; white-space:pre-wrap; overflow-wrap:anywhere; font-size:var(--type-code); line-height:1.5; padding:6px 8px; background:var(--secondary); border-radius:4px; }
+.review-submit-comment .changes-draft-comment { border:0; padding:0; background:transparent; }
+.review-submit-comment-text { font-size:var(--type-control); line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; }
+.review-submit-comment .github-comment-body { font-size:var(--type-control); line-height:1.6; }
+.review-submit-comment .changes-comment-buttons { justify-content:flex-start; margin-top:4px; gap:4px; }
+.review-submit-signature { display:flex; align-items:center; gap:8px; font-size:var(--type-caption); color:var(--muted-foreground); cursor:pointer; }
+.review-submit-signature input { flex-shrink:0; accent-color:var(--primary); }
+.review-submit-notice { display:flex; gap:8px; font-size:var(--type-control); line-height:1.5; color:var(--color-warning); }
+.review-submit-notice svg { flex-shrink:0; margin-top:2px; }
+.review-submit-error { color:var(--color-danger); font-size:var(--type-control); line-height:1.5; }
+.review-submit-dialog .review-submit-footer { flex:none; display:flex; flex-direction:row; align-items:center; justify-content:space-between; gap:12px; border-top:1px solid var(--border); padding:14px 24px; }
+.review-submit-footer>div { display:flex; gap:8px; flex-shrink:0; margin-left:auto; }
+@media(max-width:520px) {
+  .review-submit-dialog .review-submit-header { padding-inline:16px; }
+  .review-submit-body { padding-inline:16px; }
+  .review-submit-dialog .review-submit-footer { padding-inline:16px; flex-wrap:wrap; }
+}
+
+/* Unread updates: reserve bold type for information not yet opened. */
+.queue-item .queue-title, .queue-member .queue-member-title { font-weight:400; }
+.queue-item.is-unread .queue-title, .queue-member.is-unread .queue-member-title { font-weight:650; }
+.pr-unread-dot { display:inline-block; flex:none; width:8px; height:8px; border-radius:50%; background:var(--primary); }
+.queue-row-heading > .pr-unread-dot { margin-top:8px; }
+.pr-unread-dot:focus-visible { outline:2px solid var(--ring); outline-offset:4px; }
+.queue-unread-filter { display:flex; align-items:center; gap:8px; padding:12px 0; font-size:var(--type-control); }
+.queue-unread-filter input { accent-color:var(--primary); }

@@ -84,7 +84,7 @@ void app.whenReady().then(async () => {
       5,
       'Hiding generated explanations preserves GitHub discussions'
     );
-    await click('Work queue');
+    await click('Review queue');
     await wait("!!document.querySelector('.queue-list')");
     await click('Open AI explanation');
     await wait("!!document.querySelector('.inline-explanations-toggle input')");
@@ -215,7 +215,7 @@ void app.whenReady().then(async () => {
       review.slides[0].diffHunks.push(structuredClone(hunk));
       document.body.dataset.discussionStale='false';
     })()`);
-    await click('Work queue');
+    await click('Review queue');
     await wait("!!document.querySelector('.queue-list')");
     await click('Open AI explanation');
     await wait("!!document.querySelector('.github-discussion-refresh')");
@@ -260,7 +260,7 @@ void app.whenReady().then(async () => {
       const review = await window.electronAPI.loadReview('workbench-review');
       review.snapshot = {...review.snapshot, fingerprint: 'new-revision', subject: {...review.snapshot.subject, members: review.snapshot.subject.members.map(member => ({...member, headSha: member.headSha + '-updated'}))}};
     })()`);
-    await click('Work queue');
+    await click('Review queue');
     await wait("!!document.querySelector('.queue-list')");
     await click('Open AI explanation');
     await wait("!!document.querySelector('.review-file-viewed input')");

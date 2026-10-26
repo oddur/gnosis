@@ -1,8 +1,9 @@
+import { usePrReadVisit } from '../lib/pr-read-context';
 import { PrActions } from './PrActions';
 import { ReviewBreadcrumbProvider, useReviewBreadcrumbs } from '../lib/review-breadcrumbs';
 import { ReviewBreadcrumbs } from './ReviewBreadcrumbs';
 import type { ComponentProps } from 'react';
-import { PrMuteMenu } from './PrMuteMenu';
+import { PrEntryActions, PrStarMarker, type PrGenerationActionsFor } from './PrEntryActions';
 import { PrExplanation } from './PrExplanation';
 import type { ExplanationDestination } from '../lib/explanation-workspace';
 import type { ReviewHistoryEntry } from '../lib/types';
@@ -12,7 +13,7 @@ import { PrChangesView } from './PrChangesView';
 import type { Preferences } from '../lib/types';
 import { GitHubAuthor } from './GitHubAuthor';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, ExternalLink, Layers, RefreshCw } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ExternalLink, Layers } from 'lucide-react';
 import { Markdown } from './Markdown';
 import { PrSubjectDetails } from './PrSubjectDetails';
 import { type QueueItem } from '../lib/workbench';
@@ -21,7 +22,14 @@ import { timeAgo } from '../lib/utils';
 import { useQueueSignals } from '../lib/use-queue-signals';
 import { subjectReadiness } from '../lib/merge-readiness';
 import { ReadinessBadge, ReadinessCheckedAt } from './MergeReadiness';
-import { PrStarButton } from './PrStarButton';
+import { SubjectReviewStatus } from './PrReviewStatus';
+import { useChangesComments } from './useChangesComments';
+import type { ReviewMember } from '../lib/workbench';
+
+export interface PrReviewRequest {
+  id: string;
+  member: ReviewMember;
+}
 
 export interface PrReadingPosition {
   memberUrl: string;
@@ -47,6 +55,10 @@ function PrSummaryContent({
   statusErrors,
   onBack,
   onGenerate,
+  generationActions,
+  onReview,
+  reviewRequest,
+  onReviewRequestHandled,
   explanationDestination,
   explanations,
   onShowActivity,
@@ -75,6 +87,10 @@ function PrSummaryContent({
   statusErrors: Record<string, string>;
   onBack: () => void;
   onGenerate: () => void;
+  generationActions?: PrGenerationActionsFor;
+  onReview?: (member: ReviewMember) => void;
+  reviewRequest?: PrReviewRequest;
+  onReviewRequestHandled?: () => void;
   explanationDestination?: ExplanationDestination;
   explanations: ReviewHistoryEntry[];
   onShowActivity: () => void;
@@ -94,6 +110,7 @@ function PrSummaryContent({
   positions: Map<string, PrReadingPosition>;
   shortcutsEnabled?: boolean;
 }) {
+  usePrReadVisit(item.subject.members, tab === 'summary', 'summary');
   const [initialFile, setInitialFile] = useState<{ url: string; path: string }>();
   const heading = useRef<HTMLHeadingElement>(null);
   const page = useRef<HTMLDivElement>(null);
@@ -107,7 +124,34 @@ function PrSummaryContent({
   const activeUrl = item.subject.members.find((m) => m.url === memberUrl)?.url ?? item.subject.members[0].url;
   const stacked = item.subject.members.length > 1;
   const first = item.subject.members[0];
-  const { ref: statusRef, values: signals } = useQueueSignals(
+  const activeMember = item.subject.members.find(m => m.url === activeUrl) ?? first;
+  // Capture the revision the menu targeted, even if discovery advances while opening the dialog.
+  const reviewMember = reviewRequest?.member.url === activeUrl ? reviewRequest.member : activeMember;
+  const summaryReview = useChangesComments({
+    snapshot: { version: 1, url: reviewMember.url, metadata: reviewMember, comparisonBase: reviewMember.baseSha, files: [], fetchedAt: 0 },
+    activeKey: `summary:${reviewMember.url}`,
+    inline: [],
+    replaceThread: () => {},
+    refresh: () => { onRetryStatus(); return Promise.resolve(); },
+    onOpenChanges: (path) => {
+      setInitialFile({ url: reviewMember.url, path });
+      onTabChange('changes');
+    },
+  });
+  const handledReviewRequest = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (reviewRequest && item.subject.members.some(m => m.url === reviewRequest.member.url)) {
+      setMemberUrl(reviewRequest.member.url);
+    }
+  }, [reviewRequest?.id]);
+  useEffect(() => {
+    if (!reviewRequest || handledReviewRequest.current === reviewRequest.id ||
+      reviewRequest.member.url !== activeUrl || !summaryReview.ready) return;
+    handledReviewRequest.current = reviewRequest.id;
+    summaryReview.openReview();
+    onReviewRequestHandled?.();
+  }, [reviewRequest, activeUrl, summaryReview.ready, summaryReview.openReview, onReviewRequestHandled]);
+  const { ref: statusRef, values: signals, loaded: signalsLoaded } = useQueueSignals(
     account,
     item.subject.members.map((m) => ({ url: m.url, headSha: m.headSha }))
   );
@@ -243,18 +287,15 @@ function PrSummaryContent({
             </nav>
           </div>
         </div>
-        <header className="pr-overview-heading">
+        <PrEntryActions {...generationActions?.(item.subject.members)} onReview={onReview} reviewDisabled={!account} members={item.subject.members} starredUrls={starredUrls}
+          busy={starBusy || muteBusy || statusRefreshing} onStarChange={onStarChange} onMute={onMute}
+          onRefresh={onRetryStatus}>{actions => <header className="pr-overview-heading">
           <div className="pr-title-with-star">
             <h1 ref={heading} tabIndex={-1}>
               {item.subject.title}
             </h1>
-            <PrStarButton
-              members={item.subject.members}
-              starredUrls={starredUrls}
-              busy={starBusy}
-              onChange={onStarChange}
-            />
-            <PrMuteMenu members={item.subject.members} busy={muteBusy} onMute={onMute} />
+            <PrStarMarker members={item.subject.members} starredUrls={starredUrls} />
+            {actions}
           </div>
           {starError && (
             <p role="alert" className="text-sm text-destructive">
@@ -283,24 +324,12 @@ function PrSummaryContent({
               </a>
             )}
           </div>
-        </header>
-        <div ref={statusRef} className="pr-merge-status" aria-label="Merge readiness">
-          <ReadinessBadge readiness={readiness} />
+        </header>}</PrEntryActions>
+        <div ref={statusRef} className="pr-merge-status" aria-label="PR status">
+          <SubjectReviewStatus subject={item.subject} signals={signals} checking={!signalsLoaded && !!account} />
+          <ReadinessBadge readiness={readiness} reviewStatusShown />
           <ReadinessCheckedAt readiness={readiness} />
-          <button
-            type="button"
-            aria-label="Refresh status"
-            title={statusRefreshing ? 'Refreshing status…' : 'Refresh status'}
-            aria-busy={statusRefreshing}
-            disabled={statusRefreshing}
-            onClick={onRetryStatus}
-          >
-            <RefreshCw
-              size={14}
-              aria-hidden="true"
-              className={statusRefreshing ? 'motion-safe:animate-spin' : undefined}
-            />
-          </button>
+          {tab === 'summary' && <div className="pr-summary-review-actions">{summaryReview.controls}</div>}
         </div>
         {stacked && <PrActions member={item.subject.members[item.subject.members.length - 1]} stackMembers={item.subject.members} onChanged={onRetryStatus} />}
         <Tabs.List className="pr-overview-tabs" aria-label="PR overview">
@@ -351,6 +380,7 @@ function PrSummaryContent({
         </Tabs.Content>
         <Tabs.Content value="summary" className="pr-summary-content" ref={page} onScroll={remember}>
           <div className="pr-summary-body">
+            {summaryReview.panel}
             {item.subject.warnings.map((warning) => (
               <p key={warning} className="workbench-notice" role="status">
                 {warning}
@@ -363,6 +393,9 @@ function PrSummaryContent({
               </details>
             )}
             <PrSubjectDetails
+              generationActions={generationActions}
+              onReview={onReview}
+              reviewDisabled={!account}
               starredUrls={starredUrls}
               starBusy={starBusy}
               onStarChange={onStarChange}
@@ -370,6 +403,7 @@ function PrSummaryContent({
               muteBusy={muteBusy}
               signals={signals}
               compactIdentity
+              statusChecking={!signalsLoaded && !!account}
               subject={item.subject}
               activeUrl={activeUrl}
               onSelect={(url) => {

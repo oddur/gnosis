@@ -34,7 +34,7 @@ void test('saved filters and per-view drafts are independent through switching, 
   assert.equal(activeViewFilters(state).createdWithin, 7);
   assert.equal(viewIsModified(state.views[0]), false);
   state = applyViewAction(state, { type: 'activate', id: null }, newId);
-  assert.equal(activeViewFilters(state).createdWithin, 30, 'Work queue keeps its own filters');
+  assert.equal(activeViewFilters(state).createdWithin, 30, 'Review queue keeps its own filters');
 });
 void test('names, ordering and deletion are deterministic and invalid actions do not mutate state', () => {
   let id = 0;

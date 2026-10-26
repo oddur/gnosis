@@ -39,6 +39,7 @@ export async function getPrMetadata(
   return {
     title: data.title,
     commentCount: data.comments,
+    reviewCommentCount: data.review_comments,
     description: data.body ?? '',
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- GitHub API can return null
     author: data.user?.login ?? 'unknown',

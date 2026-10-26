@@ -104,3 +104,42 @@ void test('slide writers can correct planner titles while retaining structured t
     assert.equal(slide.reviewFocus, null);
   }
 });
+
+void test('disabled suggestions remove both model output formats without removing explanations', async (t) => {
+  const result = {
+    narrative: 'Only the current owner can finish the job.',
+    reviewFocus: '- Check for stale ownership.',
+    reviewChecks: [{ text: 'Check for stale ownership.', filePath: null, startLine: null }],
+    inlineExplanations: [{ text: 'The generation check rejects an old owner.' }],
+  };
+  const calls: GenerateOptions[] = [];
+  t.mock.method(getProvider('codex'), 'generate', (options: GenerateOptions) => {
+    calls.push(options);
+    return Promise.resolve(
+      JSON.stringify({
+        ...result,
+        prTitle: 'Ownership',
+        summary: 'Guard ownership.',
+        riskLevel: 'low',
+        slides: [result],
+      })
+    );
+  });
+  for (const enabled of [false, true]) {
+    const options = { providerName: 'codex' as const, model: DEFAULT_CODEX_MODEL, reviewSuggestions: enabled };
+    const slide = await generateSlide({ ...options, topicContext: 'Synthetic ownership change' });
+    const review = await generateReviewGuide({
+      ...options,
+      contextPackage: 'Synthetic ownership change',
+      prUrl: 'https://github.com/example/repo/pull/1',
+    });
+    for (const output of [slide, review.slides[0]]) {
+      assert.equal(output.reviewFocus, enabled ? result.reviewFocus : null);
+      assert.deepEqual(output.reviewChecks, enabled ? result.reviewChecks : []);
+      assert.equal(output.narrative, result.narrative);
+      assert.deepEqual(output.inlineExplanations, result.inlineExplanations);
+    }
+  }
+  for (const call of calls.slice(0, 2))
+    assert.match(call.systemPrompt, /Set "reviewFocus" to null and "reviewChecks" to \[\]/);
+});

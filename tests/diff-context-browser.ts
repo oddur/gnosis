@@ -63,7 +63,7 @@ void app.whenReady().then(async () => {
     await js(
       `document.querySelector('[role=dialog]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`
     );
-    await click('Work queue');
+    await click('Review queue');
     await js("document.querySelector('.queue-item:has(.queue-disclosure) .queue-row-main').click()");
     await click('Open AI explanation');
     await wait("!!document.querySelector('.workbench-overview')");

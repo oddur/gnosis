@@ -23,7 +23,8 @@ interface PullSignals {
   baseRef: { compare: { behindBy: number } | null } | null;
   mergeQueue: { id: string } | null;
   mergeQueueEntry: { state: string } | null;
-  comments: { totalCount: number };
+  comments: { totalCount: number; nodes?: { id: string; createdAt: string; author: { login: string } | null }[] };
+  reviews?: { nodes: { id: string; url?: string; submittedAt: string | null; state: string; author: { login: string } | null }[] };
   commits: {
     nodes: {
       commit: {
@@ -122,7 +123,9 @@ export function createQueueSignalsService(now = Date.now) {
       headRefOid state isDraft mergeable mergeStateStatus reviewDecision baseRefName baseRefOid
       baseRef { compare(headRef:${JSON.stringify(request.headSha)}) { behindBy } }
       mergeQueue { id } mergeQueueEntry { state }
-      comments { totalCount } commits(last:1) { nodes { commit { statusCheckRollup { state contexts {
+      comments(last:1) { totalCount nodes { id createdAt author { login } } }
+      reviews(last:1,states:[APPROVED,CHANGES_REQUESTED,COMMENTED,DISMISSED]) { nodes { id url submittedAt state author { login } } }
+      commits(last:1) { nodes { commit { statusCheckRollup { state contexts {
         totalCount checkRunCountsByState { state count } statusContextCountsByState { state count }
       } } } } }
     } }`
@@ -145,6 +148,10 @@ export function createQueueSignalsService(now = Date.now) {
             ...request,
             checkedAt: now(),
             comments: pr.comments.totalCount,
+            activity: {
+              comment: pr.comments.nodes?.[0] ? { id: pr.comments.nodes[0].id, at: pr.comments.nodes[0].createdAt, author: pr.comments.nodes[0].author?.login ?? '' } : undefined,
+              review: pr.reviews?.nodes[0]?.submittedAt ? { id: pr.reviews.nodes[0].url ?? pr.reviews.nodes[0].id, state: pr.reviews.nodes[0].state, at: pr.reviews.nodes[0].submittedAt, author: pr.reviews.nodes[0].author?.login ?? '' } : undefined,
+            },
             readiness: pr.mergeStateStatus
               ? {
                   state: pr.state,

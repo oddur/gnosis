@@ -1,3 +1,4 @@
+import { menuAction } from './entry-menu-helpers';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -18,6 +19,9 @@ void app.whenReady().then(async () => {
     throw Error(`Timed out: ${code}`);
   };
   const click = async (label: string) => {
+    if (/^(Unstar|Star) PR #/.test(label)) {
+      return menuAction(js, `Actions for PR #${label.split('#')[1]}`, label);
+    }
     await js(
       `(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.getBoundingClientRect().width&&(b.textContent.trim()===${JSON.stringify(label)}||b.getAttribute('aria-label')===${JSON.stringify(label)}||b.getAttribute('title')===${JSON.stringify(label)}));if(!b)throw Error('Missing '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
     );
@@ -49,7 +53,7 @@ void app.whenReady().then(async () => {
     await click('Star PR #152');
     await menu('Actions for PR #152', 'Mute PR');
     await wait("document.querySelectorAll('.queue-item').length===6");
-    assert.equal(await js('!!document.querySelector(\'[aria-label="Unstar PR #152"]\')'), false);
+    assert.equal(await js('!!document.querySelector(\'[aria-label="Actions for PR #152"]\')'), false);
     await click('Muted PRs');
     await wait("document.querySelectorAll('.muted-pr-list li').length===1");
     await capture('desktop');
@@ -60,9 +64,9 @@ void app.whenReady().then(async () => {
     await click('Unmute PR #152');
     await wait("document.querySelector('.muted-prs h2')?.textContent==='No muted PRs'");
     await capture('empty');
-    await click('Work queue');
+    await click('Review queue');
     await wait("document.querySelectorAll('.queue-item').length===7");
-    assert.ok(await js('!!document.querySelector(\'[aria-label="Unstar PR #152"]\')'));
+    assert.ok(await js('!!document.querySelector(\'[aria-label="Actions for PR #152"]\')'));
     await js("[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Add trace')).click()");
     await click('Open PR overview');
     await wait("!!document.querySelector('.pr-overview-heading')");
@@ -72,11 +76,11 @@ void app.whenReady().then(async () => {
     );
     await click('Muted PRs');
     await click('Unmute PR #152');
-    await click('Work queue');
+    await click('Review queue');
     await js("document.querySelector('.queue-disclosure').click()");
     await menu('Actions for PR #121', 'Mute PR');
     await wait("document.querySelectorAll('.queue-member').length===2");
-    assert.equal(await js('!!document.querySelector(\'[aria-label="Star PR #121"]\')'), false);
+    assert.equal(await js('!!document.querySelector(\'[aria-label="Actions for PR #121"]\')'), false);
     await menu('Stack actions', 'Mute stack');
     await wait("!document.querySelector('.queue-disclosure')");
     await click('Muted PRs');

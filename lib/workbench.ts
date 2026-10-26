@@ -40,6 +40,7 @@ export interface Briefing {
   updatedAt: string;
 }
 export interface QueueItem {
+  unreadUrls?: string[];
   starred?: boolean;
   starredUrls?: string[];
   subject: ReviewSubject;
@@ -48,6 +49,7 @@ export interface QueueItem {
   attention: 'updated' | 'requested' | 'other';
 }
 export interface WorkbenchQueue {
+  readStates?: Partial<Record<string, import('./pr-read-state').PrReadState>>;
   sync?: { status: 'idle' | 'checking' | 'paused' | 'error'; checkedAt?: number; retryAt?: number };
   mutedPrs?: import('./muted-prs').MutedPr[];
   starredPrs?: import('./starred-prs').StarredPr[];

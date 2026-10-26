@@ -18,7 +18,7 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onThemeChange?: (theme: string) => void;
-  // Reopens the optional setup panel in the work queue.
+  // Reopens the optional setup panel in the review queue.
   onReplayOnboarding?: () => void;
 }
 
@@ -784,7 +784,7 @@ export function SettingsDialog({
                   it in your terminal.
                 </p>
                 <p>
-                  Choose its model at the top of the work queue. GitHub sign-in connects your PRs; it does not sign you
+                  Choose its model at the top of the review queue. GitHub sign-in connects your PRs; it does not sign you
                   in to the AI tool.
                 </p>
                 <div className="ai-setup-links">

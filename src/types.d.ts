@@ -1,3 +1,4 @@
+import type { MarkPrReadRequest } from '../lib/pr-read-state';
 import type { PreparedInventories } from '../lib/pr-inspection-cache';
 import type { InspectionRevision, InspectionLoadOptions } from '../lib/pr-changes';
 import type { MutePrRequest } from '../lib/muted-prs';
@@ -52,6 +53,8 @@ declare global {
       activityAction: (id:string, action:ActivityAction) => Promise<void>;
       workbenchSnapshot: () => Promise<WorkbenchQueue>;
       workbenchMutePrs: (request: MutePrRequest) => Promise<WorkbenchQueue>;
+      workbenchMarkPrRead: (request: MarkPrReadRequest) => Promise<WorkbenchQueue>;
+      onPrReadStateChanged: (callback: () => void) => () => void;
       workbenchStarPrs: (request: StarPrRequest) => Promise<WorkbenchQueue>;
       workbenchViewAction: (action: QueueViewAction) => Promise<WorkbenchQueue>;
       workbenchSetFilters: (filters: QueueFilters) => Promise<WorkbenchQueue>;

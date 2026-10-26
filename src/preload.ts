@@ -1,3 +1,4 @@
+import type { MarkPrReadRequest } from '../lib/pr-read-state';
 import type { PreparedInventories } from '../lib/pr-inspection-cache';
 import type { InspectionRevision, InspectionLoadOptions } from '../lib/pr-changes';
 import type { MutePrRequest } from '../lib/muted-prs';
@@ -49,6 +50,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   commandGitHubSearch: (query: string): Promise<PrSearchResult[]> => ipcRenderer.invoke('command-github-search', query),
   listActivity: (): Promise<ActivityTask[]> => ipcRenderer.invoke('list-activity'),
   activityAction: (id:string, action:ActivityAction): Promise<void> => ipcRenderer.invoke('activity-action',id,action),
+  workbenchMarkPrRead: (request: MarkPrReadRequest): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-mark-pr-read', request),
+  onPrReadStateChanged: (callback: () => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('pr-read-state-changed', handler);
+    return () => ipcRenderer.removeListener('pr-read-state-changed', handler);
+  },
   workbenchSnapshot: (): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-snapshot'),
   workbenchMutePrs: (request: MutePrRequest): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-mute-prs', request),
   workbenchStarPrs: (request: StarPrRequest): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-star-prs', request),

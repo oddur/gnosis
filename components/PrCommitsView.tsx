@@ -1,3 +1,4 @@
+import { usePrReadVisit } from '../lib/pr-read-context';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Copy, ExternalLink, RefreshCw } from 'lucide-react';
 import {
@@ -51,6 +52,7 @@ export function PrCommitsView({
   const [lists, setLists] = useState(() =>
     subject.members.flatMap((member) => inspectionData.peekCommits(member) ?? [])
   );
+  usePrReadVisit(lists.map(list => ({ url: list.url, headSha: list.metadata.headSha })));
   const [selection, setSelection] = useState(() => {
     const saved = position.selection;
     const list = lists.find((list) => list.url === saved?.url);

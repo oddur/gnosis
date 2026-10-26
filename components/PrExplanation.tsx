@@ -1,3 +1,4 @@
+import { usePrReadVisit } from '../lib/pr-read-context';
 import { useEffect, useState } from 'react';
 import { ReviewPage } from '../src/pages/ReviewPage';
 import { ReviewDraftScope, useSessionDraft } from '../lib/session-drafts';
@@ -82,6 +83,7 @@ export function PrExplanation({
       cancelled = true;
     };
   }, [wanted, retry]);
+  usePrReadVisit(review ? (review.snapshot?.subject.members ?? [{ url: review.prUrl, headSha: review.headSha ?? '' }]) : !wanted ? item.subject.members : [], active, !review && !wanted ? 'empty-explanation' : undefined);
   const running = starting || item.review?.status === 'generating';
   const failed = item.review?.status === 'failed';
   const newer = completed && review && completed.id !== review.reviewId;

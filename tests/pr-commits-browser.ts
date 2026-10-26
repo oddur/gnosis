@@ -211,7 +211,7 @@ void app.whenReady().then(async () => {
     await capture('dark');
     await js("document.documentElement.classList.remove('dark')");
     // Stack grouping omits inherited identical SHAs but keeps sibling/unique work.
-    await click('Work queue');
+    await click('Review queue');
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
@@ -272,7 +272,9 @@ void app.whenReady().then(async () => {
     );
     // Viewed collapses the body; filtering removes it from both navigation and the stream.
     await js("document.querySelector('.commit-stream-row[data-active=true] .changes-file-actions input').click()");
-    await wait('!document.querySelector(\'.commit-stream-row[data-file="src/new.ts"] .changes-code\')');
+    await wait(
+      '(document.querySelector(\'.commit-stream-row[data-file="src/new.ts"] .changes-code\')?.getClientRects().length ?? 0)===0'
+    );
     await js("document.querySelector('.changes-tree-controls input').click()");
     await wait('!document.querySelector(\'.commit-stream-row[data-file="src/new.ts"]\')');
     await capture('unviewed');
@@ -287,7 +289,12 @@ void app.whenReady().then(async () => {
     await capture('all-viewed');
     await click('Show all files');
     await wait("document.querySelectorAll('.commit-stream-row').length===5");
-    assert.equal(await js("document.querySelectorAll('.commit-stream-row .changes-code').length"), 0);
+    assert.equal(
+      await js(
+        "[...document.querySelectorAll('.commit-stream-row .changes-code')].filter(e=>e.getClientRects().length>0).length"
+      ),
+      0
+    );
     // PR groups can collapse; inherited source links reveal the owning PR.
     await js("document.querySelector('.commit-pr-heading').click()");
     await wait("document.querySelector('.commit-pr-heading').getAttribute('aria-expanded')==='false'");

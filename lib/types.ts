@@ -480,6 +480,8 @@ export interface PrMetadata {
   repoArchived?: boolean;
   /** Conversation comments, excluding inline review threads. Optional for older snapshots. */
   commentCount?: number;
+  /** Inline review comments, including replies; supplied by the existing PR detail read. */
+  reviewCommentCount?: number;
   changedFileCount?: number;
   additions?: number;
   deletions?: number;

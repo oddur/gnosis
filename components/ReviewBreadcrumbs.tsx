@@ -92,6 +92,7 @@ export function ReviewBreadcrumbs({ base, scope }: { base: ReviewCrumb[]; scope:
                     <Popover.Portal>
                       <Popover.Content
                         className="breadcrumb-overflow-menu"
+                        data-combobox-container="outside"
                         align="start"
                         sideOffset={6}
                         onInteractOutside={(event) => {

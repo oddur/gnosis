@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import {
   Combobox,
+  findComboboxContainer,
   ComboboxContent,
   ComboboxEmpty,
   ComboboxInput,
@@ -63,7 +64,7 @@ export function SearchableSelect({
       }}
       open={open}
       onOpenChange={(next) => {
-        if (next) setContainer(trigger.current?.closest<HTMLElement>('[role="dialog"]:not(.breadcrumb-overflow-menu), .queue-filter-popover') ?? null);
+        if (next) setContainer(findComboboxContainer(trigger.current));
         setOpen(next);
         setQuery('');
       }}
@@ -97,7 +98,7 @@ export function SearchableSelect({
           event.preventBaseUIHandler();
           event.preventDefault();
           event.stopPropagation();
-          setContainer(trigger.current?.closest<HTMLElement>('[role="dialog"]:not(.breadcrumb-overflow-menu), .queue-filter-popover') ?? null);
+          setContainer(findComboboxContainer(trigger.current));
           setQuery(event.key);
           setOpen(true);
         }}

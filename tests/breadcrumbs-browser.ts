@@ -55,7 +55,7 @@ void app.whenReady().then(async () => {
     await click('Open PR overview');
     await wait('!!document.querySelector(\'[aria-label="Review location"]\')');
     const rootLabel = () => js<string>("document.querySelector('[data-slot=breadcrumb-list] button').textContent");
-    assert.equal(await rootLabel(), 'Work queue');
+    assert.equal(await rootLabel(), 'Review queue');
     const rowHeight = await js<number>(
       "document.querySelector('.pr-summary-toolbar-inner').getBoundingClientRect().height"
     );
@@ -148,7 +148,7 @@ void app.whenReady().then(async () => {
     );
     await choose('PR or stack', standalone);
     await wait(`document.querySelector('[aria-label="File in comparison"]')?.value===${JSON.stringify(worker)}`);
-    await click('Work queue');
+    await click('Review queue');
     await wait("!!document.querySelector('.queue-row-main')");
     // Origin names actual built-in view, preserving it on return.
     await js(

@@ -225,14 +225,14 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.generationCalls.length'), 1);
     await click('Summary');
     assert.equal(await js("!!document.querySelector('.pr-description')"), true, 'Description remains readable while generating');
-    await click('Work queue');
+    await click('Review queue');
     await wait("!!document.querySelector('.queue-list')");
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Reduce allocations')).click()"
     );
     await click('Open PR overview');
     assert.match(await js<string>("document.querySelector('.pr-description').textContent"), /No description provided/);
-    await click('Work queue');
+    await click('Review queue');
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
@@ -259,7 +259,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelectorAll('.pr-summary-page .pr-details').length"), 1);
     await click('Explanation');
     await wait("!!document.querySelector('.overview-topic')");
-    await click('Work queue');
+    await click('Review queue');
     await wait("!!document.querySelector('.queue-list')");
     await click('Open PR');
     await js(`(()=>{
@@ -276,7 +276,7 @@ void app.whenReady().then(async () => {
       true,
       'Unqueued PRs do not jump into an unrelated view'
     );
-    await click('Work queue');
+    await click('Review queue');
     await js(`(async()=>{
       const q=await window.electronAPI.workbenchQueue(); const item=q.items[0];
       const base=item.subject.members[0];

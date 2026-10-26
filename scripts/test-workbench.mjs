@@ -7,6 +7,9 @@ import path from 'node:path';
 import process from 'node:process';
 import electron from 'electron';
 import { setTimeout, clearTimeout } from 'node:timers';
+const unread = process.argv.includes('--unread');
+const reviewEntryPoints = process.argv.includes('--review-entry-points');
+const contextMenus = process.argv.includes('--context-menus');
 const d2 = process.argv.includes('--d2');
 const mermaid = process.argv.includes('--mermaid');
 const prActions = process.argv.includes('--pr-actions');
@@ -48,7 +51,7 @@ try {
   const outfile = path.join(dir, 'test.cjs');
   await build({
     entryPoints: [
-      d2 ? 'tests/d2-browser.ts' : mermaid ? 'tests/mermaid-browser.ts' : prActions ? 'tests/pr-actions-browser.ts' : breadcrumbs ? 'tests/breadcrumbs-browser.ts' : lfs ? 'tests/git-lfs-browser.ts' : selections ? 'tests/searchable-selection-browser.ts' : shellHardening ? 'tests/shell-hardening-browser.ts' : setupHardening ? 'tests/setup-hardening-browser.ts' : inspectionHardening ? 'tests/inspection-hardening-browser.ts' : cacheReset ? 'tests/github-cache-reset-browser.ts' : preload ? 'tests/pr-preload-browser.ts' : sync ? 'tests/github-sync-browser.ts' : inactivity ? 'tests/pr-inactivity-browser.ts' : mutes ? 'tests/muted-prs-browser.ts' : stars ? 'tests/starred-prs-browser.ts' : readiness ? 'tests/merge-readiness-browser.ts' : diffContext ? 'tests/diff-context-browser.ts' : explanation ? 'tests/explanation-tab-browser.ts' : diffSpeed ? 'tests/diff-navigation-browser.ts' : commits ? 'tests/pr-commits-browser.ts' : changes ? 'tests/pr-changes-browser.ts' : queueMetadata ? 'tests/queue-metadata-browser.ts' : authors ? 'tests/github-author-browser.ts' : commandCenter ? 'tests/command-center-browser.ts' : performance ? 'tests/queue-performance-browser.ts' : polish
+      unread ? 'tests/unread-prs-browser.ts' : reviewEntryPoints ? 'tests/review-entry-points-browser.ts' : contextMenus ? 'tests/context-menus-browser.ts' : d2 ? 'tests/d2-browser.ts' : mermaid ? 'tests/mermaid-browser.ts' : prActions ? 'tests/pr-actions-browser.ts' : breadcrumbs ? 'tests/breadcrumbs-browser.ts' : lfs ? 'tests/git-lfs-browser.ts' : selections ? 'tests/searchable-selection-browser.ts' : shellHardening ? 'tests/shell-hardening-browser.ts' : setupHardening ? 'tests/setup-hardening-browser.ts' : inspectionHardening ? 'tests/inspection-hardening-browser.ts' : cacheReset ? 'tests/github-cache-reset-browser.ts' : preload ? 'tests/pr-preload-browser.ts' : sync ? 'tests/github-sync-browser.ts' : inactivity ? 'tests/pr-inactivity-browser.ts' : mutes ? 'tests/muted-prs-browser.ts' : stars ? 'tests/starred-prs-browser.ts' : readiness ? 'tests/merge-readiness-browser.ts' : diffContext ? 'tests/diff-context-browser.ts' : explanation ? 'tests/explanation-tab-browser.ts' : diffSpeed ? 'tests/diff-navigation-browser.ts' : commits ? 'tests/pr-commits-browser.ts' : changes ? 'tests/pr-changes-browser.ts' : queueMetadata ? 'tests/queue-metadata-browser.ts' : authors ? 'tests/github-author-browser.ts' : commandCenter ? 'tests/command-center-browser.ts' : performance ? 'tests/queue-performance-browser.ts' : polish
         ? 'tests/polish-browser.ts'
         : hardening
           ? 'tests/hardening-browser.ts'

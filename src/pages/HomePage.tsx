@@ -1,9 +1,12 @@
+import { PrReadContext, type ViewedPr } from '../../lib/pr-read-context';
+import { UnreadPrMarker } from '../../components/UnreadPrMarker';
 import { SearchableSelect } from '../../components/SearchableSelect';
 import { applyTheme } from '../../lib/theme';
 import { normalizePrInactivityDays } from '../../lib/pr-inactivity';
 import { GitHubSyncStatus } from '../../components/GitHubSyncStatus';
 import { inspectionData } from '../../lib/inspection-cache';
-import { PrMuteMenu } from '../../components/PrMuteMenu';
+import { EntryActions } from '../../components/EntryActions';
+import { PrEntryActions, PrStarMarker, prEntryActionGroups, type PrGenerationActionsFor } from '../../components/PrEntryActions';
 import { MutedPrs } from '../../components/MutedPrs';
 import { isMutedReview } from '../../lib/muted-prs';
 import { setDiscussionAccount } from '../../lib/review-discussion-cache';
@@ -18,9 +21,8 @@ import type { VirtualItem } from '@tanstack/react-virtual';
 import { VirtualReviewQueue } from '../../components/VirtualReviewQueue';
 import { GitHubIcon } from '../../lib/constants';
 import { PrLabels } from '../../components/PrLabels';
-import { PrStarButton } from '../../components/PrStarButton';
 import { orderQueueItems, starredFirst } from '../../lib/starred-prs';
-import { PrSummary, type PrReadingPosition } from '../../components/PrSummary';
+import { PrSummary, type PrReadingPosition, type PrReviewRequest } from '../../components/PrSummary';
 import { publishQueueSignals } from '../../lib/use-queue-signals';
 import { SavedViewsNav, SaveViewControls } from '../../components/SavedQueueViews';
 import type { QueueViewAction } from '../../lib/saved-views';
@@ -98,6 +100,7 @@ const labels = {
 
 export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, initialSubjectId, commandDestination, explanationDestination, onShowActivity }: Props) {
   const [overviewTab,setOverviewTab] = useState<'summary'|'changes'|'commits'|'explanation'>('summary');
+  const [reviewRequest, setReviewRequest] = useState<PrReviewRequest>();
   const commandCenter = useCommandCenter();
   const handledCommand = useRef<number>(0);
   const [auth, setAuth] = useState<{ authenticated: boolean; login: string | null } | null>(null);
@@ -153,7 +156,7 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
       setQueue(next);
       setError('');
     } catch (error) {
-      const message = `Could not save starred PRs: ${error instanceof Error ? error.message : String(error)}. Your stars have not changed. Try the star button again.`;
+      const message = `Could not save starred PRs: ${error instanceof Error ? error.message : String(error)}. Your stars have not changed. Try the star action again.`;
       setError(message);
       setStarError(message);
     } finally {
@@ -266,6 +269,42 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
   const [summaryErrors, setSummaryErrors] = useState<Record<string, string>>({});
   const [openingPr, setOpeningPr] = useState(false);
   const [openedItem, setOpenedItem] = useState<QueueItem | null>(null);
+  const [readBusy, setReadBusy] = useState(false);
+  const readAccount = useRef(auth?.login);
+  readAccount.current = auth?.login;
+  const readVisit = useRef<{ id: string | undefined; manual: Set<string> }>({ id: undefined, manual: new Set() });
+  const visitId = openedItem ? `${auth?.login}:${openedItem.subject.id}` : undefined;
+  if (readVisit.current.id !== visitId) readVisit.current = { id: visitId, manual: new Set() };
+  const changeRead = async (urls: string[], read: boolean, displayed?: ViewedPr[]) => {
+    const account = auth?.login;
+    if (!account) return;
+    const receipts = urls.flatMap(url => {
+      const receipt = queue.readStates?.[url];
+      return receipt ? [{ ...receipt, headSha: displayed?.find(pr => pr.url === url)?.headSha ?? receipt.headSha }] : [];
+    });
+    if (!receipts.length) return;
+    // Reserve manual intent before the asynchronous write, so content loading
+    // later in this visit cannot undo it.
+    if (!read) urls.forEach(url => readVisit.current.manual.add(url));
+    setReadBusy(true);
+    try {
+      const result = await enqueueWrite(() => window.electronAPI.workbenchMarkPrRead({ account, receipts, read }));
+      if (alive.current && readAccount.current === account && result.readStates) setQueue(previous => ({ ...previous, readStates: result.readStates, savedViews: result.savedViews,
+        items: previous.items.map(item => ({ ...item, unreadUrls: item.subject.members.filter(m => result.readStates?.[m.url]?.unread.length).map(m => m.url) })),
+        starredItems: previous.starredItems?.map(item => ({ ...item, unreadUrls: item.subject.members.filter(m => result.readStates?.[m.url]?.unread.length).map(m => m.url) })),
+      }));
+    } catch (error) {
+      setError(`Could not save unread progress: ${error instanceof Error ? error.message : String(error)}. Try marking the PR again.`);
+    } finally { setReadBusy(false); }
+  };
+  useEffect(() => {
+    if (!auth?.authenticated) return;
+    let live = true;
+    const stop = window.electronAPI.onPrReadStateChanged(() => {
+      void window.electronAPI.workbenchSnapshot().then(result => { if (live) setQueue(result); }).catch(() => {});
+    });
+    return () => { live = false; stop(); };
+  }, [auth?.authenticated, auth?.login]);
   const [positions] = useSessionDraft('queue-reading-positions', () => new Map<string, PrReadingPosition>());
   useEffect(() => {
     if (openedItem) rememberCommandDestination(auth?.login ?? 'local', `subject:${openedItem.subject.id}`);
@@ -569,7 +608,7 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
   };
   const start = async (target: string, subject?: ReviewSubject, localTools?: boolean, standalone = false) => {
     if (!prefs) return;
-    const requestKey = subject?.id ?? openedItem?.subject.id ?? target;
+    const requestKey = subject?.id ?? (standalone ? target : openedItem?.subject.id) ?? target;
     if (startingReviews.current.has(requestKey)) return;
     startingReviews.current.add(requestKey);
     setError('');
@@ -594,14 +633,14 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
         claudeContext: prefs.claudeContext,
         localTools,
       });
-      if (openedItem) setRequestedReviews((previous) => ({ ...previous, [openedItem.subject.id]: result.reviewId }));
+      if (openedItem) setRequestedReviews((previous) => ({ ...previous, [requestKey]: result.reviewId }));
       if (!prefs.firstRunSeen || showGettingStarted) void dismissGettingStarted();
       setShowUrl(false);
       setUrl('');
       await refresh();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      if (openedItem) setSummaryErrors((previous) => ({ ...previous, [requestKey]: message }));
+      if (openedItem?.subject.id === requestKey) setSummaryErrors((previous) => ({ ...previous, [requestKey]: message }));
       else setError(message);
     } finally {
       startingReviews.current.delete(requestKey);
@@ -632,7 +671,9 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
     void refresh(true);
   };
   const queueItems = filters.starredOnly ? (queue.starredItems ?? []) : queue.items;
-  const items = queueItems.filter((item) => matchesQueueFilters(item, filters, Date.now(), auth?.login));
+  const items = queueItems.filter((item) => matchesQueueFilters(item,
+    filters.unreadOnly && openedItem?.subject.id === item.subject.id ? { ...filters, unreadOnly: false } : filters,
+    Date.now(), auth?.login));
   const repos = [
     ...new Set([...queueItems.flatMap((i) => i.subject.members.map((m) => m.repo)), ...(repo === 'all' ? [] : [repo])]),
   ].sort();
@@ -660,7 +701,7 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
   }, [auth?.authenticated, auth?.login, inspectionKey]);
   useEffect(() => () => inspectionData.stop(), []);
   const originName = savedView ? 'Saved reviews' : activeQueueView?.name ??
-    ({ saved: 'Saved reviews', all: 'Work queue', starred: 'Starred', requested: 'Review requests', updated: 'Updated PRs', stacks: 'Stacks', other: 'Other changes' }[section]);
+    ({ saved: 'Saved reviews', all: 'Review queue', starred: 'Starred', requested: 'Review requests', updated: 'Updated PRs', stacks: 'Stacks', other: 'Other changes' }[section]);
   const originSignature = JSON.stringify({ name: originName, reviews: savedView ? saved.map(entry => ({ id: entry.id, title: entry.prTitle })) : [] });
   useEffect(() => { onReviewOriginChange?.(JSON.parse(originSignature) as { name: string; reviews: { id: string; title: string }[] }); }, [originSignature, onReviewOriginChange]);
   const summaryChoices = savedView
@@ -875,12 +916,66 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
       setGrouping(false);
     }
   };
+  const generationActions: PrGenerationActionsFor = (members) => {
+    const candidates = [...queue.items, ...(queue.starredItems ?? [])];
+    const exact = candidates.find(item => item.subject.members.length === members.length &&
+      item.subject.members.every(member => members.some(m => m.url === member.url)));
+    // Briefings belong to queue entries. A member of a stack shares its stack briefing.
+    const briefingItem = queue.items.find(item => item.subject.id === exact?.subject.id) ??
+      (members.length === 1 ? queue.items.find(item => item.subject.members.some(m => m.url === members[0].url)) : undefined);
+    const requestKey = exact?.subject.id ?? members[0]?.url;
+    const explanationRunning = visibleHistory.some(entry => entry.status === 'generating' &&
+      (exact ? matchesExplanation(entry, exact.subject) : entry.prUrl === members[0]?.url));
+    return {
+      onGenerateExplanation: () => start(members[0].url, exact?.subject, undefined, !exact && members.length === 1),
+      explanationDisabled: !prefs || !members.length || pendingStarts.has(requestKey) || explanationRunning,
+      onGenerateBriefing: async () => {
+        if (!briefingItem) return;
+        await window.electronAPI.workbenchBriefing(briefingItem.subject.id);
+        await refresh();
+      },
+      briefingDisabled: !auth?.authenticated || !briefingItem || briefingItem.briefing?.status === 'generating',
+      stackBriefing: members.length === 1 && (briefingItem?.subject.members.length ?? 0) > 1,
+    };
+  };
+  const requestPrReview = (member: QueueItem['subject']['members'][number]) => {
+    const parent = [...queue.items, ...(queue.starredItems ?? []), ...(openedItem ? [openedItem] : [])]
+      .find(item => item.subject.members.some(m => m.url === member.url));
+    const item: QueueItem = parent ?? {
+      attention: 'other',
+      subject: { id: member.url, kind: 'pr', title: member.title, members: [member], edges: [], warnings: [] },
+    };
+    setSelected(item.subject.id);
+    setOpenedItem(item);
+    setOverviewTab('summary');
+    setReviewRequest({ id: crypto.randomUUID(), member: { ...member } });
+  };
+  const entryActions = (members: QueueItem['subject']['members']) => ({
+    members, starredUrls, busy: starBusy || muteBusy,
+    ...generationActions(members),
+    unread: members.some(member => queue.readStates?.[member.url]?.unread.length),
+    onReadChange: auth?.login && members.some(member => queue.readStates?.[member.url]) ? (read: boolean) => changeRead(members.map(member => member.url), read) : undefined,
+    onReview: requestPrReview,
+    reviewDisabled: !auth?.authenticated,
+    onStarChange: changeStars,
+    onMute: (members: QueueItem['subject']['members']) => changeMutes(members, true),
+    onRefresh: async () => {
+      const results = await Promise.allSettled(members.map(async member => {
+        const status = await window.electronAPI.getPrStatus(member.url, true);
+        cachedStatuses.current.set(`${auth?.login}:${member.url}@${member.headSha}`, status);
+        if (auth?.login && status.signals) publishQueueSignals(auth.login, [status.signals]);
+        setStatuses(previous => ({ ...previous, [member.url]: status }));
+      }));
+      const failed = results.find(result => result.status === 'rejected');
+      if (failed?.status === 'rejected') throw failed.reason;
+    },
+  });
   function row(item: QueueItem) {
     const s = item.subject,
       active = selected === s.id;
     return (
-      <div key={s.id} className={`queue-item ${active ? 'is-selected' : ''}`}>
-        <div className="queue-row">
+      <div key={s.id} className={`queue-item ${active ? 'is-selected' : ''} ${item.unreadUrls?.length ? 'is-unread' : ''}`}>
+        <PrEntryActions {...entryActions(s.members)}>{actions => <div className="queue-row">
           {s.kind !== 'stack' ? <span className="queue-pr-gutter"><PrStateIcon member={s.members[0]} /></span> : <button
             className="queue-disclosure"
             aria-label={`${expanded.has(s.id) ? 'Collapse' : 'Expand'} ${s.title}`}
@@ -941,8 +1036,9 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
               <PrLabels members={s.members} limit={3} />
             </span>
           </button>
-          <PrStarButton members={s.members} starredUrls={starredUrls} busy={starBusy} onChange={(members, value) => void changeStars(members, value)} />
-          <PrMuteMenu members={s.members} busy={muteBusy} onMute={members => void changeMutes(members, true)} />
+          <UnreadPrMarker urls={s.members.map(member => member.url)} />
+          <PrStarMarker members={s.members} starredUrls={starredUrls} />
+          {actions}
           {(item.review?.status === 'generating' ||
             item.review?.status === 'completed' ||
             item.briefing?.status === 'generating') && (
@@ -969,11 +1065,11 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
             <QueueMetadata subject={s} account={auth?.login ?? null} />
             {item.briefing?.summary && <span className="queue-summary">{item.briefing.summary}</span>}
           </div>
-        </div>
+        </div>}</PrEntryActions>
         {expanded.has(s.id) && (
           <div id={`members-${s.id}`}>
             {s.members.map((m) => (
-              <div key={m.url} className="queue-member">
+              <PrEntryActions key={m.url} {...entryActions([m])}>{actions => <div className={`queue-member ${queue.readStates?.[m.url]?.unread.length ? 'is-unread' : ''}`}>
                 <PrStateIcon member={m} />
                 <div className="queue-member-content">
                   <button className="queue-member-title" onClick={() => setSelected(s.id)}>
@@ -982,9 +1078,9 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
                   </button>
                   <QueueMetadata subject={{ id: m.url, kind: 'pr', title: m.title, members: [m], edges: [], warnings: [] }} account={auth?.login ?? null} />
                 </div>
-                <PrStarButton members={[m]} starredUrls={starredUrls} busy={starBusy} onChange={(members, value) => void changeStars(members, value)} />
-          <PrMuteMenu members={[m]} busy={muteBusy} onMute={members => void changeMutes(members, true)} />
-              </div>
+                <UnreadPrMarker urls={[m.url]} />
+                <PrStarMarker members={[m]} starredUrls={starredUrls} />{actions}
+              </div>}</PrEntryActions>
             ))}
           </div>
         )}
@@ -1016,6 +1112,9 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
     ) : null;
 
   return (
+    <PrReadContext.Provider value={{ states: queue.readStates ?? {}, busy: readBusy, change: changeRead,
+      viewed: revisions => { const eligible = revisions.filter(pr => !readVisit.current.manual.has(pr.url)); void changeRead(eligible.map(pr => pr.url), true, eligible); },
+    }}>
     <div className="workbench-home">
       <header className="workbench-header">
         <a
@@ -1076,6 +1175,10 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
         <PrSummary
         key={summaryItem.subject.id}
         item={summaryItem}
+        generationActions={generationActions}
+        onReview={requestPrReview}
+        reviewRequest={reviewRequest}
+        onReviewRequestHandled={() => setReviewRequest(undefined)}
         starredUrls={starredUrls}
         starBusy={starBusy}
         starError={muteError || starError}
@@ -1129,7 +1232,7 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
         <nav className="workbench-sidebar" aria-label="Workspace">
           <p className="workbench-nav-heading">Reviews</p>
           {[
-            ['all', 'Work queue', Inbox],
+            ['all', 'Review queue', Inbox],
             ['starred', 'Starred', Star],
             ['requested', 'Review requests', GitPullRequest],
             ['updated', 'Updated PRs', RefreshCw],
@@ -1222,7 +1325,7 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
                   : activeQueueView
                     ? activeQueueView.name
                     : section === 'all'
-                      ? 'Work queue'
+                      ? 'Review queue'
                       : section === 'stacks'
                         ? 'Stacks'
                         : labels[section]}
@@ -1347,6 +1450,7 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
                 <Popover.Portal>
                   <Popover.Content
                     className="queue-filter-popover"
+                    data-combobox-container="inside"
                     align="end"
                     sideOffset={8}
                     collisionPadding={16}
@@ -1366,6 +1470,15 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
                   </Popover.Content>
                 </Popover.Portal>
               </Popover.Root>
+            )}
+            {section !== 'saved' && auth?.authenticated && (
+              <EntryActions label="Review queue actions" groups={[[{
+                label: 'Mark visible PRs as read',
+                disabled: readBusy || !items.some(item => item.unreadUrls?.length),
+                run: () => changeRead([...new Set(items.flatMap(item => item.subject.members
+                  .filter(member => matchesQueueFilters({ ...item, subject: { ...item.subject, members: [member] } }, filters, Date.now(), auth.login))
+                  .map(member => member.url)))], true),
+              }]]} />
             )}
             {section !== 'saved' && auth?.authenticated && queue.savedViews && (
               <SaveViewControls view={activeQueueView} filters={filters} busy={viewBusy} onAction={viewAction} />
@@ -1437,7 +1550,18 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
               ) : section === 'saved' ? (
                 saved.length ? (
                   saved.map((entry) => (
-                    <div className="saved-row" key={entry.id}>
+                    <EntryActions key={entry.id} label={`Actions for ${entry.prTitle}`} groups={[
+                      ...prEntryActionGroups(entryActions(entry.snapshot?.subject.members ?? [])),
+                      [{ label: 'Export review', icon: <Download size={15} />, disabled: entry.status === 'generating',
+                        run: () => window.electronAPI.exportReview(entry.id) }],
+                      [{ label: 'Delete saved review', icon: <Trash2 size={15} />, destructive: true,
+                        disabled: entry.status === 'generating', run: async () => {
+                          if (confirm('Delete this saved review?')) {
+                            await window.electronAPI.deleteReview(entry.id);
+                            await refresh();
+                          }
+                        } }],
+                    ]}>{actions => <div className="saved-row">
                       <div className="queue-row-content" onClick={event=>{if((event.target as HTMLElement).closest('a,button')||entry.status==='generating')return;void (entry.status==='failed' ? start(entry.prUrl) : open(entry));}}>
                       <button
                         className="queue-row-main"
@@ -1459,29 +1583,9 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
                         </span>
                         {entry.error && <span className="text-xs text-destructive">{entry.error}</span>}
                       </div>
-                      {!!entry.snapshot?.subject.members.length && <><PrStarButton members={entry.snapshot.subject.members} starredUrls={starredUrls} busy={starBusy} onChange={(members, value) => void changeStars(members, value)} /><PrMuteMenu members={entry.snapshot.subject.members} busy={muteBusy} onMute={members => void changeMutes(members, true)} /></>}
-                      {entry.status !== 'generating' && (
-                        <button
-                          className="workbench-icon"
-                          aria-label={`Export ${entry.prTitle}`}
-                          onClick={() =>
-                            void window.electronAPI.exportReview(entry.id).catch((e: unknown) => setError(String(e)))
-                          }
-                        >
-                          <Download size={15} />
-                        </button>
-                      )}
-                      <button
-                        className="workbench-icon"
-                        aria-label={`Delete ${entry.prTitle}`}
-                        onClick={() => {
-                          if (confirm('Delete this saved review?'))
-                            void window.electronAPI.deleteReview(entry.id).then(() => refresh());
-                        }}
-                      >
-                        <Trash2 size={15} />
-                      </button>
-                    </div>
+                      <PrStarMarker members={entry.snapshot?.subject.members ?? []} starredUrls={starredUrls} />
+                      {actions}
+                    </div>}</EntryActions>
                   ))
                 ) : (
                   <div className="queue-empty">
@@ -1522,7 +1626,7 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
                             : 'No pull requests in your queue'}
                   </h2>
                   <p>
-                    {initializationFailed ? 'Your account and settings could not be read. Retry loading them to restore your work queue.' : section === 'starred' && !queue.starredPrs?.length ? 'Star a PR from the work queue or its overview to keep it here and pin it above other PRs.' : queueFailed
+                    {initializationFailed ? 'Your account and settings could not be read. Retry loading them to restore your review queue.' : section === 'starred' && !queue.starredPrs?.length ? 'Star a PR from the review queue or its overview to keep it here and pin it above other PRs.' : queueFailed
                       ? 'Try loading the queue again. You can still open a PR by URL or a saved review.'
                       : filterCount > 0
                         ? 'Try fewer filters or a wider date range. One open PR must match every filter; its whole stack stays visible.'
@@ -1531,7 +1635,7 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
                             ? 'You are using local mode. Review a repository on this computer.'
                             : 'Connect GitHub above, or review local changes from the sidebar.'
                           : section !== 'all'
-                            ? 'Try the full work queue to see other changes.'
+                            ? 'Try the full review queue to see other changes.'
                             : normalizePrInactivityDays(prefs?.prInactivityDays)
                               ? `No matching PRs were active within ${normalizePrInactivityDays(prefs?.prInactivityDays)} days. Starred PRs are included. Adjust the inactivity limit in Settings, or open a PR by URL.`
                               : 'Open a pull request by URL, or add repositories to follow in Settings. Dependabot PRs are hidden by default.'}
@@ -1555,7 +1659,7 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
                       : filterCount > 0
                         ? 'Clear filters'
                         : section !== 'all'
-                          ? 'Show work queue'
+                          ? 'Show review queue'
                           : !auth?.authenticated
                             ? 'Review local changes'
                             : 'Queue settings'}
@@ -1901,5 +2005,6 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
         }}
       />
     </div>
+    </PrReadContext.Provider>
   );
 }

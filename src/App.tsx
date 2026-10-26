@@ -28,7 +28,7 @@ export function App() {
   }>();
   const [explanationDestination, setExplanationDestination] = useState<ExplanationDestination>();
   const [page, setPage] = useState<Page>('home');
-  const [reviewOrigin, setReviewOrigin] = useState<{ name: string; reviews: { id: string; title: string }[] }>({ name: 'Work queue', reviews: [] });
+  const [reviewOrigin, setReviewOrigin] = useState<{ name: string; reviews: { id: string; title: string }[] }>({ name: 'Review queue', reviews: [] });
   const navigationVersion = useRef(0);
   const [activityOpen, setActivityOpen] = useState(false);
   const [destination, setDestination] = useState<{
@@ -211,7 +211,7 @@ export function App() {
   const commands: AppCommand[] = [
     {
       id: 'nav:queue',
-      label: 'Go to work queue',
+      label: 'Go to review queue',
       keywords: 'home inbox all',
       perform: () => navigate({ kind: 'home', section: 'all' }),
     },

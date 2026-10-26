@@ -63,6 +63,7 @@ interface Props {
   onFileViewedChange?: (filePath: string, viewed: boolean) => void;
   onContinue?: () => void;
   nextTopicTitle?: string | null;
+  showReviewSuggestions?: boolean;
   showInlineExplanations?: boolean;
   onShowInlineExplanationsChange?: (show: boolean) => void;
 }
@@ -398,6 +399,7 @@ export function SlideView({
   onFileViewedChange,
   onContinue,
   nextTopicTitle,
+  showReviewSuggestions = true,
   showInlineExplanations = true,
   onShowInlineExplanationsChange,
 }: Props) {
@@ -599,26 +601,28 @@ export function SlideView({
         </ul>
       )}
 
-      <div className="editorial-callout select-text">
-        {renderReviewChecks(
-          slide.reviewChecks,
-          slide.reviewFocus,
-          anchorable,
-          handleCheckClick,
-          slide.id,
-          slide.title,
-          prUrl,
-          checkedChecks,
-          onToggleCheck,
-          review
-        )}
-        {anchorMiss && (
-          <p className="slide-meta mt-2" role="status" aria-live="polite">
-            Line {anchorMiss.line} in <span className="font-mono">{anchorMiss.filePath}</span> isn't in this slide's
-            visible diff.
-          </p>
-        )}
-      </div>
+      {showReviewSuggestions && (
+        <div className="editorial-callout select-text">
+          {renderReviewChecks(
+            slide.reviewChecks,
+            slide.reviewFocus,
+            anchorable,
+            handleCheckClick,
+            slide.id,
+            slide.title,
+            prUrl,
+            checkedChecks,
+            onToggleCheck,
+            review
+          )}
+          {anchorMiss && (
+            <p className="slide-meta mt-2" role="status" aria-live="polite">
+              Line {anchorMiss.line} in <span className="font-mono">{anchorMiss.filePath}</span> isn't in this slide's
+              visible diff.
+            </p>
+          )}
+        </div>
+      )}
 
       {slide.contextSnippets.length > 0 && (
         <details className="group select-text">
