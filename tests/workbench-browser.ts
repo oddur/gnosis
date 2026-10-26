@@ -31,6 +31,7 @@ void app.whenReady().then(async () => {
     throw new Error('Timed out: ' + expression);
   };
   const click = async (text: string) => {
+    await wait(`[...document.querySelectorAll('button')].some(b=>b.checkVisibility({visibilityProperty:true})&&b.textContent.trim()===${JSON.stringify(text)})`);
     await js(
       `(()=>{const b=[...document.querySelectorAll('button')].filter(b=>b.checkVisibility({visibilityProperty:true})).find(b=>b.textContent.trim()===${JSON.stringify(text)});if(!b)throw new Error('Missing button: '+${JSON.stringify(text)});b.click();})()`
     );
@@ -253,7 +254,7 @@ void app.whenReady().then(async () => {
       true
     );
     await capture('review-narrow');
-    await click('Explanation');
+    await js("[...document.querySelectorAll('[aria-label=\"Review pane\"] button')].find(b=>b.textContent.trim()==='Explanation').click()");
     await click('Open interactive explanation');
     await wait("!!document.querySelector('.review-tool-slot iframe')");
     assert.equal(
