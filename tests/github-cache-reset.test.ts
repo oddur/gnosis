@@ -46,6 +46,8 @@ void test('clear runs before restart initialization and removes late writes whil
     // The departing process could still finish an HTTP request after the button click.
     f.write('github-cache.json', { lateResponse: 'must not survive restart' });
     f.write('github-cache.json.tmp', { pending: true });
+    for (const name of ['github-cache.sqlite', 'github-cache.sqlite-wal', 'github-cache.sqlite-shm'])
+      f.write(name, 'disposable');
     let browserClears = 0;
     assert.equal(
       await applyPendingGitHubCacheClear(f.directory, () => {
@@ -56,6 +58,8 @@ void test('clear runs before restart initialization and removes late writes whil
     );
     assert.equal(f.exists('github-cache.json'), false);
     assert.equal(f.exists('github-cache.json.tmp'), false);
+    for (const name of ['github-cache.sqlite', 'github-cache.sqlite-wal', 'github-cache.sqlite-shm'])
+      assert.equal(f.exists(name), false);
     assert.deepEqual(f.read('workbench.json'), { ...saved, subjects: [] });
     for (const name of retained) assert.deepEqual(f.read(name), { marker: name, reset: 123456 });
     assert.equal(browserClears, 1);

@@ -1,3 +1,5 @@
+import { githubCachedResponses } from '../lib/github-client';
+import { flushCaches, closeCaches } from './cache-test-pool';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -9,7 +11,7 @@ import {
   GitHubBackoffError,
   fetchGitHubLogin,
   githubCacheFor,
-} from '../lib/github-client';
+} from './cache-test-pool';
 import { withGitHubPriority } from '../lib/github-scheduler';
 
 function harness(respond: (url: string, headers: Headers) => Response) {
@@ -132,17 +134,20 @@ void test('cooldowns and verified usernames survive restart without storing cred
     const h = harness(() =>
       json({ message: 'API rate limit exceeded' }, 403, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1100' })
     );
-    h.pool.setStorage(file);
+    await flushCaches();
+    await h.pool.setStorage(file);
     h.pool.rememberLogin('secret-token', 'reviewer');
     await assert.rejects(h.pool.client('secret-token').users.getAuthenticated(), GitHubBackoffError);
     assert.equal(fs.readFileSync(file, 'utf8').includes('secret-token'), false);
     const restart = harness(() => json({ login: 'reviewer' }));
-    restart.pool.setStorage(file);
+    await flushCaches();
+    await restart.pool.setStorage(file);
     assert.equal(restart.pool.savedLogin('secret-token'), 'reviewer');
     await assert.rejects(restart.pool.client('secret-token').users.getAuthenticated(), GitHubBackoffError);
     assert.equal(restart.calls.length, 0);
     assert.equal(restart.pool.savedLogin('different-token'), undefined);
   } finally {
+    await closeCaches();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -196,17 +201,22 @@ void test('fresh responses survive restart; stale responses revalidate and refre
       : json({ value: 'saved' }, 200, { etag: '"v1"', 'cache-control': 'private, max-age=60' });
   try {
     const original = harness(respond);
-    original.pool.setStorage(file);
+    await flushCaches();
+    await original.pool.setStorage(file);
     await original.pool.client('secret-token').request('GET /test');
-    const content = fs.readFileSync(path.join(dir, 'github-cache.json'), 'utf8');
+    await flushCaches();
+    const content =
+      fs.readFileSync(path.join(dir, 'github-cache.sqlite'), 'utf8') +
+      fs.readFileSync(path.join(dir, 'github-cache.sqlite-wal'), 'utf8');
     assert.equal(content.includes('secret-token'), false);
     assert.equal(content.includes('authorization'), false);
     // Windows exposes only the writable bit, not POSIX owner/group permissions.
     if (process.platform !== 'win32') {
-      assert.equal(fs.statSync(path.join(dir, 'github-cache.json')).mode & 0o777, 0o600);
+      assert.equal(fs.statSync(path.join(dir, 'github-cache.sqlite')).mode & 0o777, 0o600);
     }
     const restart = harness(respond);
-    restart.pool.setStorage(file);
+    await flushCaches();
+    await restart.pool.setStorage(file);
     const client = restart.pool.client('secret-token');
     const first = await client.request('GET /test');
     assert.deepEqual(first.data, { value: 'saved' });
@@ -218,7 +228,8 @@ void test('fresh responses survive restart; stale responses revalidate and refre
     assert.equal(restart.calls.length, 1);
     const again = harness(respond);
     again.advance(60_001);
-    again.pool.setStorage(file);
+    await flushCaches();
+    await again.pool.setStorage(file);
     await again.pool.client('secret-token').request('GET /test');
     assert.equal(again.calls.length, 0, 'A 304 refreshes the persisted freshness window');
     await again.pool.client('another-token').request('GET /test');
@@ -229,6 +240,7 @@ void test('fresh responses survive restart; stale responses revalidate and refre
     await again.pool.client('secret-token').request('GET /test', { headers: { 'x-github-api-version': '2099-01-01' } });
     assert.equal(again.calls.length, 3, 'Representations and API versions have separate cache entries');
   } finally {
+    await closeCaches();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -239,7 +251,8 @@ void test('explicit refresh bypasses fresh reads and writes and sign-out invalid
   try {
     let value = 1;
     const h = harness(() => json({ value }, 200, { etag: '"v1"' }));
-    h.pool.setStorage(file);
+    await flushCaches();
+    await h.pool.setStorage(file);
     const client = h.pool.client('one');
     await client.request('GET /test');
     value = 2;
@@ -253,15 +266,18 @@ void test('explicit refresh bypasses fresh reads and writes and sign-out invalid
     assert.equal(h.calls.length, 3, 'Queue refresh can invalidate freshness while retaining validators');
     await client.request('POST /test', { data: {} });
     const restart = harness(() => json({ value: 3 }, 200, { etag: '"v2"' }));
-    restart.pool.setStorage(file);
+    await flushCaches();
+    await restart.pool.setStorage(file);
     assert.deepEqual((await restart.pool.client('one').request('GET /test')).data, { value: 3 });
     assert.equal(restart.calls.length, 1);
     restart.pool.forget('one');
     const signedIn = harness(() => json({ value: 4 }));
-    signedIn.pool.setStorage(file);
+    await flushCaches();
+    await signedIn.pool.setStorage(file);
     assert.deepEqual((await signedIn.pool.client('one').request('GET /test')).data, { value: 4 });
     assert.equal(signedIn.calls.length, 1);
   } finally {
+    await closeCaches();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -305,15 +321,14 @@ void test('corrupt persisted responses are ignored and oversized responses are n
   try {
     fs.writeFileSync(path.join(dir, 'github-cache.json'), '{invalid');
     const h = harness(() => json({ value: 'x'.repeat(1_000_001) }, 200, { etag: '"large"' }));
-    h.pool.setStorage(file);
+    await flushCaches();
+    await h.pool.setStorage(file);
     await h.pool.client('one').request('GET /test');
     await h.pool.client('one').request('GET /test');
     assert.equal(h.calls.length, 2);
-    assert.deepEqual(
-      (JSON.parse(fs.readFileSync(path.join(dir, 'github-cache.json'), 'utf8')) as { entries: unknown[] }).entries,
-      []
-    );
+    assert.deepEqual(githubCachedResponses(h.pool.client('one')), []);
   } finally {
+    await closeCaches();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
@@ -354,18 +369,21 @@ void test('sign-out prevents an already-running read from repopulating the persi
     }) as typeof fetch,
   });
   try {
-    pool.setStorage(file);
+    await flushCaches();
+    await pool.setStorage(file);
     const pending = pool.client('one').request('GET /test');
     await entered;
     pool.forget('one');
     release();
     await pending;
     const restart = harness(() => json({ value: 'new' }));
-    restart.pool.setStorage(file);
+    await flushCaches();
+    await restart.pool.setStorage(file);
     assert.deepEqual((await restart.pool.client('one').request('GET /test')).data, { value: 'new' });
     assert.equal(restart.calls.length, 1);
   } finally {
     release();
+    await closeCaches();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -4,7 +4,14 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createGitHubCache, isCacheRecord, type GitHubCache } from './github-cache';
-import { createGitHubScheduler, githubPriority, githubPriorityScope, createGitHubWork, joinGitHubWork, type GitHubWork } from './github-scheduler';
+import {
+  createGitHubScheduler,
+  githubPriority,
+  githubPriorityScope,
+  createGitHubWork,
+  joinGitHubWork,
+  type GitHubWork,
+} from './github-scheduler';
 
 const clientCaches = new WeakMap<Octokit, GitHubCache>();
 export const githubCacheFor = (client: Octokit) => clientCaches.get(client);
@@ -136,9 +143,11 @@ export function createGitHubClientPool(options: Options = {}) {
   };
   return {
     backoff,
-    setStorage(file: string) {
+    flushStorage: () => snapshots.flush(),
+    closeStorage: () => snapshots.close(),
+    async setStorage(file: string) {
       storage = file;
-      snapshots.setStorage(path.join(path.dirname(file), 'github-cache.json'));
+      await snapshots.setStorage(path.join(path.dirname(file), 'github-cache.json'));
       try {
         const record = (value: unknown): Record<string, unknown> | undefined =>
           value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -292,7 +301,9 @@ export function createGitHubClientPool(options: Options = {}) {
           lastRequest = now();
           // A failed write may still have reached GitHub. Invalidate without replaying it.
           const invalidateWrite = () => {
-            const lfsDownload = endpoint.method === 'POST' && new URL(endpoint.url).hostname === 'github.com' &&
+            const lfsDownload =
+              endpoint.method === 'POST' &&
+              new URL(endpoint.url).hostname === 'github.com' &&
               /^\/[\w.-]+\/[\w.-]+\.git\/info\/lfs\/objects\/batch$/.test(new URL(endpoint.url).pathname) &&
               (requestOptions.data as { operation?: string } | undefined)?.operation === 'download';
             if (get || graphRead || lfsDownload) return;
