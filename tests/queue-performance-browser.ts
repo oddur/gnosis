@@ -68,7 +68,33 @@ void app.whenReady().then(async () => {
     assert.ok(Math.abs(await js<number>("document.querySelector('.queue-list').scrollTop") - offset) < 2, 'Cache refresh retains scroll position');
     await click('Open PR overview');
     await wait("!!document.querySelector('.pr-summary-page')");
-    await js("document.querySelector('.pr-summary-page button').click()");
+    const returnFrames = await js<Array<{ rows: number; visible: number; loading: boolean }>>(`new Promise(resolve => {
+      const frames = [];
+      // Returning must use the queue already in memory, even if backend reads stall.
+      const methods = ['workbenchQueue', 'workbenchSnapshot'];
+      const originals = methods.map(name => window.electronAPI[name]);
+      methods.forEach(name => { window.electronAPI[name] = () => new Promise(() => {}); });
+      document.querySelector('.pr-summary-page button').click();
+      function sample() {
+        const queue = document.querySelector('.queue-list');
+        if (queue) {
+          const bounds = queue.getBoundingClientRect();
+          const rows = [...queue.querySelectorAll('.queue-item')];
+          frames.push({ rows: rows.length, visible: rows.filter(row => {
+            const rect = row.getBoundingClientRect();
+            return rect.bottom > bounds.top && rect.top < bounds.bottom;
+          }).length, loading: queue.textContent.includes('Loading') });
+        }
+        if (frames.length === 12) {
+          methods.forEach((name, index) => { window.electronAPI[name] = originals[index]; });
+          resolve(frames);
+        }
+        else requestAnimationFrame(sample);
+      }
+      requestAnimationFrame(sample);
+    })`);
+    assert.ok(returnFrames.every(frame => frame.visible > 0 && !frame.loading),
+      'Returning to the queue must never paint blank: ' + JSON.stringify(returnFrames));
     await wait("!!document.querySelector('.queue-list')");
     await wait("!!document.querySelector('[data-queue-id=\"synthetic-525\"]')");
     await wait(`Math.abs(document.querySelector('.queue-list').scrollTop-${offset})<5`);
