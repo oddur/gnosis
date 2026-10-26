@@ -39,11 +39,18 @@ void app.whenReady().then(async () => {
     window.focus();
     await wait("document.visibilityState==='visible'");
     await js('document.fonts.ready');
-    await new Promise((r) => setTimeout(r, 300));
+    await new Promise((r) => setTimeout(r, 700));
+    fs.writeFileSync(
+      path.join(os.tmpdir(), 'gnosis-commits-' + name + '.json'),
+      await js<string>(
+        `JSON.stringify({scroll:[...document.querySelectorAll('.changes-code-scroll')].map(e=>({top:e.scrollTop,height:e.clientHeight,scrollHeight:e.scrollHeight,rect:e.getBoundingClientRect().toJSON(),overflow:getComputedStyle(e).overflow})),rows:[...document.querySelectorAll('.commit-stream-row')].map(e=>({file:e.dataset.file,rect:e.getBoundingClientRect().toJSON(),header:e.querySelector('header')?.getBoundingClientRect().toJSON(),content:e.querySelector('.changes-code')?.getBoundingClientRect().toJSON()}))},null,2)`
+      )
+    );
     fs.writeFileSync(path.join(shots, name + '.png'), (await window.webContents.capturePage()).toPNG());
   };
   try {
     await window.loadURL(`${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary`);
+    await js("document.title='Gnosis — automated commit-view checks'");
     window.webContents.setZoomFactor(1);
     await wait("document.querySelectorAll('.queue-item').length===7");
     await js("(async()=>{await (await import('/lib/inspection-cache.ts')).inspectionData.flush()})()");
@@ -67,7 +74,11 @@ void app.whenReady().then(async () => {
       'Historical comparisons must not load current review threads'
     );
     await wait("!!document.querySelector('.review-image-diff')");
-    assert.equal(await js("window.compareReads.filter(s=>s.lastSha==='e'.repeat(39)+'0').length"), 0, 'The newest commit comparison was prepared before opening Commits');
+    assert.equal(
+      await js("window.compareReads.filter(s=>s.lastSha==='e'.repeat(39)+'0').length"),
+      0,
+      'The newest commit comparison was prepared before opening Commits'
+    );
     assert.equal(await js("!!document.querySelector('.changes-toolbar select')"), false);
     await click('Diff appearance');
     await wait('!!document.querySelector(\'[role=dialog] [aria-label="Diff layout"]\')');
@@ -112,11 +123,20 @@ void app.whenReady().then(async () => {
     );
     await js("window.openFile('worker.ts')");
     await wait(
-      "document.querySelector('.changes-file-header h2')?.textContent==='src/worker.ts' && window.deepAll('[data-line]').length>0"
+      "(document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2') ?? document.querySelector('.changes-file-header h2'))?.textContent==='src/worker.ts' && window.deepAll('[data-line]').length>0"
     );
     assert.equal(await js("!!document.querySelector('.changes-loading')"), false);
     assert.equal(await js("!!document.querySelector('.changes-comment-composer')"), false);
-    await click('Ask about this');
+    await wait(
+      "document.querySelector('.commit-stream-row[data-active=true] .changes-file-header').getBoundingClientRect().top < document.querySelector('.commit-diff-stream').getBoundingClientRect().bottom"
+    );
+    assert.ok(
+      (await js<number>("document.querySelectorAll('.commit-stream-row').length")) > 1,
+      'One scroll surface contains multiple file diffs'
+    );
+    await js(
+      "[...document.querySelectorAll('.commit-stream-row[data-active=true] button')].find(b=>b.textContent.trim()==='Ask about this').click()"
+    );
     await input('.changes-chat textarea', 'What is preserved here?');
     await js("document.querySelector('.changes-chat form').requestSubmit()");
     await wait("document.querySelector('.changes-chat-messages')?.textContent.includes('exact comparison')");
@@ -125,19 +145,32 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.chatReads[0].path'), 'src/worker.ts');
     await capture('chat');
     await click('Close file conversation');
-    await js("document.querySelector('.changes-file-actions input[type=checkbox]').click()");
+    await js(
+      "(document.querySelector('.commit-stream-row[data-active=true] .changes-file-actions input[type=checkbox]') ?? document.querySelector('.changes-file-actions input[type=checkbox]')).click()"
+    );
     assert.match(await js<string>("document.querySelector('.changes-progress').textContent"), /1 \/ 5/);
     // Persistent selection, file, and Viewed state when returning from Summary.
     await click('Summary');
     await click('Commits');
-    await wait("document.querySelector('.changes-file-header h2')?.textContent==='src/worker.ts'");
-    assert.equal(await js("document.querySelector('.changes-file-actions input[type=checkbox]').checked"), true);
-    await click('Comment in Changes');
     await wait(
-      "document.querySelector('[role=tab][data-state=active]')?.textContent==='Changes' && document.querySelector('.changes-file-header h2')?.textContent==='src/worker.ts'"
+      "(document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2') ?? document.querySelector('.changes-file-header h2'))?.textContent==='src/worker.ts'"
     );
     assert.equal(
-      await js("document.querySelector('.changes-file-actions input[type=checkbox]').checked"),
+      await js(
+        "(document.querySelector('.commit-stream-row[data-active=true] .changes-file-actions input[type=checkbox]') ?? document.querySelector('.changes-file-actions input[type=checkbox]')).checked"
+      ),
+      true
+    );
+    await js(
+      "[...document.querySelectorAll('.commit-stream-row[data-active=true] button')].find(b=>b.textContent.trim()==='Comment in Changes').click()"
+    );
+    await wait(
+      "document.querySelector('[role=tab][data-state=active]')?.textContent==='Changes' && (document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2') ?? document.querySelector('.changes-file-header h2'))?.textContent==='src/worker.ts'"
+    );
+    assert.equal(
+      await js(
+        "(document.querySelector('.commit-stream-row[data-active=true] .changes-file-actions input[type=checkbox]') ?? document.querySelector('.changes-file-actions input[type=checkbox]')).checked"
+      ),
       false,
       'Historical Viewed must not mark full-PR files'
     );
@@ -155,7 +188,9 @@ void app.whenReady().then(async () => {
       "[...document.querySelectorAll('button')].some(b=>b.textContent.includes('Update commits')&&!b.disabled)"
     );
     assert.equal(await js('window.commitReads.at(-1)[1]'), true);
-    await js("document.querySelector('.changes-file-actions input[type=checkbox]').click()");
+    await js(
+      "(document.querySelector('.commit-stream-row[data-active=true] .changes-file-actions input[type=checkbox]') ?? document.querySelector('.changes-file-actions input[type=checkbox]')).click()"
+    );
     for (const width of [1280, 1024, 640, 1616]) {
       const height = width === 1616 ? 1200 : 800;
       window.setContentSize(width, height);
@@ -212,11 +247,91 @@ void app.whenReady().then(async () => {
       "document.querySelector('.commit-detail details').open && document.querySelector('.commit-messages').textContent.includes('Committed by')"
     );
     await capture('details');
+    // Scrolling changes the current file, and headers remain sticky within their own diff.
+    await js("window.openFile('new.ts')");
+    await wait("document.querySelector('.commit-stream-row[data-active=true]')?.dataset.file==='src/new.ts'");
+    await js(
+      "const el=document.querySelector('.commit-diff-stream');el.dispatchEvent(new WheelEvent('wheel',{deltaY:150,bubbles:true}));el.scrollTop+=150"
+    );
+    await new Promise((r) => setTimeout(r, 200));
+    assert.ok(
+      await js<boolean>(
+        "Math.abs(document.querySelector('.commit-stream-row[data-active=true] .changes-file-header').getBoundingClientRect().top-document.querySelector('.commit-diff-stream').getBoundingClientRect().top)<3"
+      ),
+      'File header sticks while scrolling its code'
+    );
+    await capture('stream-scrolled');
+    const savedScroll = await js<number>("document.querySelector('.commit-diff-stream').scrollTop");
+    await click('Summary');
+    await click('Commits');
+    await wait("document.querySelector('.commit-stream-row[data-active=true]')?.dataset.file==='src/new.ts'");
+    await new Promise((r) => setTimeout(r, 400));
+    assert.ok(
+      Math.abs((await js<number>("document.querySelector('.commit-diff-stream').scrollTop")) - savedScroll) < 5,
+      'Restore reading offset in the comparison'
+    );
+    // Viewed collapses the body; filtering removes it from both navigation and the stream.
+    await js("document.querySelector('.commit-stream-row[data-active=true] .changes-file-actions input').click()");
+    await wait('!document.querySelector(\'.commit-stream-row[data-file="src/new.ts"] .changes-code\')');
+    await js("document.querySelector('.changes-tree-controls input').click()");
+    await wait('!document.querySelector(\'.commit-stream-row[data-file="src/new.ts"]\')');
+    await capture('unviewed');
+    for (let i = 0; i < 5; i++) {
+      const next = await js<boolean>(
+        "(()=>{const b=[...document.querySelectorAll('.commit-stream-row button')].find(b=>b.textContent.trim()==='Viewed & next');if(!b)return false;b.click();return true})()"
+      );
+      if (!next) break;
+      await new Promise((r) => setTimeout(r, 120));
+    }
+    await wait("document.querySelector('.commit-viewed-complete')?.textContent.includes('All files viewed')");
+    await capture('all-viewed');
+    await click('Show all files');
+    await wait("document.querySelectorAll('.commit-stream-row').length===5");
+    assert.equal(await js("document.querySelectorAll('.commit-stream-row .changes-code').length"), 0);
+    // PR groups can collapse; inherited source links reveal the owning PR.
+    await js("document.querySelector('.commit-pr-heading').click()");
+    await wait("document.querySelector('.commit-pr-heading').getAttribute('aria-expanded')==='false'");
+    await capture('stack-collapsed');
+    await js("document.querySelector('.commit-source-links button').click()");
+    await wait("document.querySelector('.commit-pr-heading').getAttribute('aria-expanded')==='true'");
+    // A large comparison restores a distant file while mounting only a small visible window.
+    await js(String.raw`(async()=>{
+      const {mountLargeComparison}=await import('/tests/fixtures/commit-stream.tsx');
+      const queue=await window.electronAPI.workbenchQueue();const subject={...queue.items[0].subject,id:'large-commit-stream-test',kind:'pr',members:[queue.items[0].subject.members[0]],edges:[]};
+      const selection=window.compareReads[0];const original=await window.electronAPI.getCommitComparison(selection);
+      const snapshot={...original,metadata:{...original.metadata,headSha:'large-stream-head'},comparison:{...selection,lastSha:'large-stream-head'},files:Array.from({length:120},(_,i)=>({path:'src/file'+String(i).padStart(3,'0')+'.ts',status:'modified',additions:1,deletions:1,changeId:'file-'+i,patch:'@@ -1 +1 @@\n-old\n+new'}))};
+      const preferences={...await window.electronAPI.loadPreferences(),diffLayout:'unified',diffAppearance:{contextLines:3}};
+      window.largeFilesBefore=window.fileReads.length;
+      mountLargeComparison(subject,snapshot,preferences);
+    })()`);
+    await wait(
+      "document.querySelector('#large-stream-test .commit-stream-row[data-active=true]')?.dataset.file==='src/file119.ts'"
+    );
+    await new Promise((r) => setTimeout(r, 500));
+    assert.ok(
+      (await js<number>("document.querySelectorAll('#large-stream-test .commit-stream-row').length")) < 15,
+      'A large commit does not mount every diff'
+    );
+    assert.equal(
+      await js('window.fileReads.length'),
+      await js('window.largeFilesBefore'),
+      'Complete patches do not trigger a full-content download for every file'
+    );
+    await capture('large-commit');
+    await js(
+      "(()=>{const el=document.querySelector('#large-stream-test .commit-diff-stream');el.dispatchEvent(new WheelEvent('wheel',{deltaY:-1000,bubbles:true}));el.scrollTop=0})()"
+    );
+    await wait(
+      "document.querySelector('#large-stream-test .commit-stream-row[data-active=true]')?.dataset.file==='src/file000.ts'"
+    );
     console.log('Commits browser checks passed');
     app.exit(0);
   } catch (error) {
     console.error(error);
     try {
+      window.show();
+      window.focus();
+      await new Promise((r) => setTimeout(r, 300));
       fs.writeFileSync(path.join(os.tmpdir(), 'commits-failure.png'), (await window.webContents.capturePage()).toPNG());
       console.error(await js('document.body.innerText'));
     } finally {

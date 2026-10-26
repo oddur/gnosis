@@ -2651,3 +2651,30 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .pr-action-message summary { cursor:pointer; font-size:13px; }
 .pr-action-message p { color:var(--muted-foreground); font-size:13px; margin-block:8px; }
 .pr-action-message input,.pr-action-message textarea { padding:8px; background:var(--background); color:var(--foreground); border:1px solid var(--input); border-radius:4px; font:inherit; margin-bottom:10px; }
+
+/* Commits keep PR ownership visible; file diffs share one continuous scroll surface. */
+.commit-pr-group + .commit-pr-group { border-top:1px solid var(--border);margin-top:8px;padding-top:8px; }
+.commit-pr-heading { display:flex;align-items:flex-start;gap:7px;width:100%;padding:10px 12px;text-align:left;background:var(--muted);border-block:1px solid var(--border); }
+.commit-pr-heading > svg { flex-shrink:0;margin-top:3px; }
+.commit-pr-heading > span { min-width:0;flex:1; }
+.commit-pr-heading strong { display:block;font-size:var(--type-control);line-height:1.5; }
+.commit-pr-heading small { display:block;margin-top:2px;color:var(--muted-foreground);font-size:var(--type-caption);line-height:1.5;overflow-wrap:anywhere; }
+.commit-pr-heading > .commit-pr-count { flex:0 0 auto; font-size:var(--type-caption);color:var(--muted-foreground);font-variant-numeric:tabular-nums; }
+.commit-pr-commits { padding-left:12px; }
+.commit-pr-commits .commit-row { padding:12px;border-bottom:1px solid var(--border); }
+.commit-row-title { line-height:1.5;font-weight:600; }
+.commit-row-meta { margin-top:6px;gap:6px; }
+.commit-row-meta time::before { content:'·';margin-right:6px; }
+.commit-row[aria-pressed=true] { box-shadow:inset 2px 0 var(--primary); }
+.commit-pr-group button:focus-visible { outline:2px solid var(--ring);outline-offset:-2px; }
+.commit-source-links { display:flex;flex-wrap:wrap;gap:4px 6px;padding:8px 12px;font-size:var(--type-caption);color:var(--muted-foreground); }
+.commit-source-links button { color:var(--primary);text-decoration:underline;text-underline-offset:3px; }
+.commit-diff-stream { position:relative;overflow-anchor:none; }
+.commit-stream-content { position:relative;width:100%; }
+.commit-stream-file { min-width:0;border-bottom:8px solid var(--muted);background:var(--background); }
+.commit-stream-file > .changes-file-header { position:sticky;top:0;z-index:2;background:var(--background);border-bottom:1px solid var(--border); }
+.commit-stream-file > .changes-code-scroll { overflow:visible;flex:none;scrollbar-gutter:auto; }
+.commit-diff-stream:focus-visible { outline:2px solid var(--ring);outline-offset:-2px; }
+.commit-viewed-complete { border-top:1px solid var(--border); }
+.commit-viewed-complete strong { font-size:var(--type-control); }
+.commit-viewed-complete p { margin:8px 0 12px;color:var(--muted-foreground); }

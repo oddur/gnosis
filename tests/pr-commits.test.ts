@@ -301,6 +301,14 @@ void test('stack deduplication follows ancestors, not siblings; range uses chron
     [0, 1, 1]
   );
   assert.deepEqual(
+    groups.map((g) => g.inheritedFrom.map((source) => [source.member.url, source.count])),
+    [[], [[url, 1]], [[url, 1]]]
+  );
+  assert.deepEqual(
+    groups.map((g) => g.parents.map((parent) => parent.url)),
+    [[], [url], [url]]
+  );
+  assert.deepEqual(
     selectedCommits(list, selection(1, 3)).map((c) => c.sha),
     [sha(1), sha(2), sha(3)]
   );
@@ -338,7 +346,9 @@ void test('speculative reads respect the background budget while cached comparis
 });
 
 void test('a newly discovered revision bypasses the previous saved commit catalog', async () => {
-  const f = fixture(), service = createPrCommitsService(), client = f.pool.client('one');
+  const f = fixture(),
+    service = createPrCommitsService(),
+    client = f.pool.client('one');
   await service.list(client, url);
   f.move();
   const next = await service.list(client, url, false, { revision: { baseSha: sha(0), headSha: sha(999) } });

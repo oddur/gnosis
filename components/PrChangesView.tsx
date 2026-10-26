@@ -1,3 +1,4 @@
+import { CommitDiffStream, type CommitDiffStreamHandle } from './CommitDiffStream';
 import { useReviewBreadcrumbs, type ReviewCrumb } from '../lib/review-breadcrumbs';
 import { LfsDownload } from './LfsDownload';
 import { useDiffAppearance } from '../lib/use-diff-appearance';
@@ -96,16 +97,24 @@ export function PrChangesView({
   preferences,
   commit,
   initialFile,
+  embedded,
 }: {
   subject: ReviewSubject;
   preferences: Preferences;
   commit?: CommitWorkspace;
   initialFile?: { url: string; path: string };
+  embedded?: { file: PrChangeFile; onViewedNext: () => void; onAsk: (text: string) => void };
 }) {
   const positionId = commit ? commitPositionId(subject.id, commit.snapshot) : subject.id;
-  const [position] = useState(() => loadPosition(positionId));
-  const [loadedSnapshots, setSnapshots] = useState<PrChanges[]>(() => subject.members.flatMap(member =>
-    inspectionData.peekChanges(member) ?? []));
+  const continuous = !!commit && !embedded;
+  const stream = useRef<CommitDiffStreamHandle>(null);
+  const [chatEntry, setChatEntry] = useState<Entry>();
+  const [position] = useState<Position>(() =>
+    embedded ? { selected: embedded.file.path, scroll: {} } : loadPosition(positionId)
+  );
+  const [loadedSnapshots, setSnapshots] = useState<PrChanges[]>(() =>
+    subject.members.flatMap((member) => inspectionData.peekChanges(member) ?? [])
+  );
   const snapshots = useMemo(
     () => (commit ? (commit.snapshot ? [commit.snapshot] : []) : loadedSnapshots),
     [commit?.snapshot, !!commit, loadedSnapshots]
@@ -144,8 +153,9 @@ export function PrChangesView({
         provider: preferences.provider,
         model: preferences.model,
         codeTheme: preferences.codeTheme,
+        ...(embedded ? { diffLayout: preferences.diffLayout, diffAppearance: preferences.diffAppearance } : {}),
       })),
-    [preferences.provider, preferences.model, preferences.codeTheme]
+    [preferences.provider, preferences.model, preferences.codeTheme, preferences.diffLayout, preferences.diffAppearance]
   );
   const progress = useFileProgress();
   const [loadedFile, setLoadedFile] = useState<{ key: string; data: PrFileContents }>(),
@@ -190,8 +200,8 @@ export function PrChangesView({
   }
   useEffect(() => {
     alive.current = true;
-    if (loadedSnapshots.length === subject.members.length) loadedSnapshots.forEach(registerChangeProgress);
-    else void load(false);
+    if (!commit && loadedSnapshots.length === subject.members.length) loadedSnapshots.forEach(registerChangeProgress);
+    else if (!commit) void load(false);
     return () => {
       alive.current = false;
       generation.current++;
@@ -229,7 +239,8 @@ export function PrChangesView({
           subject.kind === 'stack' && !commit
             ? `${String(index + 1).padStart(2, '0')} · ${snapshot.metadata.baseRepo?.replace('/', ' · ') ?? 'PR'} #${snapshot.url.split('/').pop()}/`
             : '';
-        return [...snapshot.files]
+        return snapshot.files
+          .filter((file) => !embedded || file.path === embedded.file.path)
           .sort((a, b) => a.path.localeCompare(b.path))
           .map((file) => ({ key: prefix + file.path, snapshot, file }));
       }),
@@ -256,21 +267,30 @@ export function PrChangesView({
   const contents =
     (request ? fileCache.peek(request) : undefined) ?? (loadedFile?.key === activeKey ? loadedFile.data : undefined);
   const [lfsDownload, setLfsDownload] = useState<{ key: string; busy: boolean; error?: string }>();
-  const lfsSides = contents ? [contents.before, contents.after].filter(side => side.kind === 'lfs') : [];
+  const lfsSides = contents ? [contents.before, contents.after].filter((side) => side.kind === 'lfs') : [];
   async function downloadLfs() {
     if (!request || (lfsDownload?.key === activeKey && lfsDownload.busy)) return;
     setLfsDownload({ key: activeKey, busy: true });
     try {
       const data = await fileCache.read({ ...request, downloadLfs: true });
       if (alive.current && currentFile.current === activeKey) setLoadedFile({ key: activeKey, data });
-      if (alive.current) setLfsDownload(previous => previous?.key === activeKey ? { key: activeKey, busy: false } : previous);
+      if (alive.current)
+        setLfsDownload((previous) => (previous?.key === activeKey ? { key: activeKey, busy: false } : previous));
     } catch (e) {
-      if (alive.current) setLfsDownload(previous => previous?.key === activeKey
-        ? { key: activeKey, busy: false, error: e instanceof Error ? e.message : String(e) } : previous);
+      if (alive.current)
+        setLfsDownload((previous) =>
+          previous?.key === activeKey
+            ? { key: activeKey, busy: false, error: e instanceof Error ? e.message : String(e) }
+            : previous
+        );
     }
   }
   const visible = entries.filter((e) => !unviewed || !progress.isFileViewed(viewKey(e)));
   const viewedSignature = visible.map((e) => (progress.isFileViewed(viewKey(e)) ? '1' : '0')).join('');
+  const streamFiles = useMemo(
+    () => visible.map((e) => ({ key: e.key, file: e.file, viewed: progress.isFileViewed(viewKey(e)) })),
+    [entries, unviewed, viewedSignature]
+  );
   const treeEntries = useMemo(
     () =>
       visible.map((e) => ({
@@ -329,7 +349,7 @@ export function PrChangesView({
     return prefetchInspection(viewKey(target), () => prepareFile(target.snapshot, target.file, true));
   }
   useEffect(() => {
-    if (!entry) return;
+    if (!entry || embedded) return;
     const index = entries.indexOf(entry);
     const cancel = [index + 1, index + 2, index - 1].flatMap((i) => (entries[i] ? [warmFile(entries[i].key)] : []));
     return () => cancel.forEach((stop) => stop());
@@ -337,6 +357,12 @@ export function PrChangesView({
   function select(key: string) {
     const target = entries.find((e) => e.key === key);
     if (!target) return;
+    if (continuous) {
+      setSelected(key);
+      stream.current?.scrollToFile(key);
+      if (window.innerWidth <= 700) setTreeOpen(false);
+      return;
+    }
     const id = ++fileNavigation.current;
     setNavigationError(undefined);
     if (fileIsReady(target.snapshot, target.file) || unsupportedFiles.current.has(viewKey(target))) {
@@ -361,19 +387,45 @@ export function PrChangesView({
         if (alive.current && fileNavigation.current === id) setOpeningFile('');
       });
   }
-  useReviewBreadcrumbs(commit ? 'commits' : 'changes', [
-    ...(commit?.breadcrumbs ?? []),
-    ...(!commit && subject.kind === 'stack' && entry ? [{
-      id: 'member', label: `#${entry.snapshot.url.split('/').pop()}`,
-      pickerLabel: 'PR in stack', value: entry.snapshot.url,
-      options: subject.members.map(member => ({ value: member.url, label: `#${member.number} · ${member.title}` })),
-      select: (url: string) => { const next = entries.find(e => e.snapshot.url === url); if (next) select(next.key); },
-    }] : []),
-    ...(entry ? [{ id: 'file', label: entry.file.path, pickerLabel: 'File in comparison', value: entry.key,
-      options: entries.filter(e => e.snapshot.url === entry.snapshot.url).map(e => ({ value: e.key, label: e.file.path })),
-      select,
-    }] : []),
-  ]);
+  useReviewBreadcrumbs(
+    commit ? 'commits' : 'changes',
+    [
+      ...(commit?.breadcrumbs ?? []),
+      ...(!commit && subject.kind === 'stack' && entry
+        ? [
+            {
+              id: 'member',
+              label: `#${entry.snapshot.url.split('/').pop()}`,
+              pickerLabel: 'PR in stack',
+              value: entry.snapshot.url,
+              options: subject.members.map((member) => ({
+                value: member.url,
+                label: `#${member.number} · ${member.title}`,
+              })),
+              select: (url: string) => {
+                const next = entries.find((e) => e.snapshot.url === url);
+                if (next) select(next.key);
+              },
+            },
+          ]
+        : []),
+      ...(entry
+        ? [
+            {
+              id: 'file',
+              label: entry.file.path,
+              pickerLabel: 'File in comparison',
+              value: entry.key,
+              options: entries
+                .filter((e) => e.snapshot.url === entry.snapshot.url)
+                .map((e) => ({ value: e.key, label: e.file.path })),
+              select,
+            },
+          ]
+        : []),
+    ],
+    !embedded
+  );
   function applySelection(key: string) {
     if (viewport.current && entry) position.scroll[activeKey] = viewport.current.scrollTop;
     position.selected = key;
@@ -384,7 +436,7 @@ export function PrChangesView({
     if (window.innerWidth <= 700) setTreeOpen(false);
   }
   useEffect(() => {
-    if (!entry) return;
+    if (!entry || continuous || (embedded && progress.isFileViewed(activeKey))) return;
     let cancelled = false;
     setLoadedFile((previous) => (previous?.key === activeKey ? previous : undefined));
     setSelection('');
@@ -421,10 +473,10 @@ export function PrChangesView({
     return () => {
       cancelled = true;
     };
-  }, [activeKey, fileAttempt, contextLines]);
+  }, [activeKey, fileAttempt, contextLines, embedded ? progress.isFileViewed(activeKey) : false]);
   useLayoutEffect(() => {
     const el = viewport.current;
-    if (!el || (!contents && !preview)) return;
+    if (embedded || continuous || !el || (!contents && !preview)) return;
     const desired = position.scroll[activeKey] ?? 0;
     const restore = () => {
       el.scrollTop = desired;
@@ -460,7 +512,8 @@ export function PrChangesView({
     threads?.threads.filter((t) => t.path === entry?.file.path || t.path === entry?.file.previousPath) ?? [];
   const inline = matching.filter(
     (t) =>
-      !contents?.lfs && !t.isOutdated &&
+      !contents?.lfs &&
+      !t.isOutdated &&
       t.line !== null &&
       threads?.headSha === entry?.snapshot.metadata.headSha &&
       (t.diffSide === 'RIGHT' || threads?.baseSha === entry?.snapshot.metadata.baseSha)
@@ -480,8 +533,9 @@ export function PrChangesView({
   const options: FileDiffOptions<(typeof annotations)[number]['metadata'], undefined> = {
     enableGutterUtility: comments.writable && !contents?.lfs,
     onGutterUtilityClick: contents?.lfs ? undefined : comments.begin,
-    onLineNumberClick: contents?.lfs ? undefined : (event) =>
-      comments.begin({ start: event.lineNumber, end: event.lineNumber, side: event.annotationSide }),
+    onLineNumberClick: contents?.lfs
+      ? undefined
+      : (event) => comments.begin({ start: event.lineNumber, end: event.lineNumber, side: event.annotationSide }),
     theme: `gnosis-${CODE_THEMES.some((t) => t.id === prefs.codeTheme) ? prefs.codeTheme : 'github-dark'}`,
     themeType: 'dark',
     diffStyle: entry?.file.status === 'added' || entry?.file.status === 'deleted' ? 'unified' : prefs.diffLayout,
@@ -516,7 +570,9 @@ export function PrChangesView({
   };
   const files: DiffFileInput | undefined = useMemo(
     () =>
-      contents && ![contents.before, contents.after].some(side => side.kind === 'lfs') && (contents.before.kind === 'text' || contents.after.kind === 'text')
+      contents &&
+      ![contents.before, contents.after].some((side) => side.kind === 'lfs') &&
+      (contents.before.kind === 'text' || contents.after.kind === 'text')
         ? ({
             oldFile:
               contents.before.kind === 'text'
@@ -546,6 +602,10 @@ export function PrChangesView({
   function mark(andNext: boolean) {
     if (!entry) return;
     progress.markFileViewed(activeKey, true);
+    if (embedded) {
+      if (andNext) embedded.onViewedNext();
+      return;
+    }
     if (andNext || unviewed) {
       const next = [...entries.slice(fileIndex + 1), ...entries.slice(0, fileIndex)].find(
         (e) => !progress.isFileViewed(viewKey(e))
@@ -554,6 +614,10 @@ export function PrChangesView({
     }
   }
   function ask(text = selection) {
+    if (embedded) {
+      embedded.onAsk(text);
+      return;
+    }
     setSelection(text);
     setChatOpen(true);
   }
@@ -570,6 +634,224 @@ export function PrChangesView({
           .join('\n')}`
       : '';
   };
+  const fileHeader = entry && (
+    <header className="changes-file-header">
+      <div>
+        {!commit && (
+          <span className="changes-source">
+            {entry.snapshot.metadata.baseRepo} #{entry.snapshot.url.split('/').pop()} ·{' '}
+            {entry.snapshot.metadata.headSha.slice(0, 7)}
+          </span>
+        )}
+        <h2 title={entry.file.path}>
+          {entry.file.previousPath && <span>{entry.file.previousPath} → </span>}
+          {entry.file.path}
+        </h2>
+        <span className="changes-file-stats">
+          {entry.file.status} · <DiffStats additions={entry.file.additions} deletions={entry.file.deletions} />
+        </span>
+      </div>
+      <div className="changes-file-actions">
+        {!embedded && (
+          <>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Previous file"
+              disabled={fileIndex <= 0}
+              onClick={() => select(entries[fileIndex - 1].key)}
+            >
+              <ArrowLeft size={14} />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Next file"
+              disabled={fileIndex >= entries.length - 1}
+              onClick={() => select(entries[fileIndex + 1].key)}
+            >
+              <ArrowRight size={14} />
+            </Button>
+          </>
+        )}
+        <label>
+          <input
+            type="checkbox"
+            checked={viewed}
+            onChange={(e) => (e.target.checked ? mark(false) : progress.markFileViewed(activeKey, false))}
+          />
+          Viewed
+        </label>
+        <Button variant="outline" size="sm" data-viewed-next onClick={() => mark(true)}>
+          Viewed & next
+        </Button>
+        {!commit && (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={!range || !comments.writable || contents?.lfs}
+            onClick={() => range && !contents?.lfs && comments.begin(range)}
+            title="Select lines in the diff to comment"
+          >
+            <MessageSquare size={14} /> Comment
+          </Button>
+        )}
+        {commit && (
+          <Button
+            variant="ghost"
+            size="sm"
+            title="Open current file in Changes to comment"
+            onClick={() => commit.onOpenCurrentFile(entry.snapshot.url, entry.file.path)}
+          >
+            Comment in Changes
+          </Button>
+        )}
+        <Button variant="ghost" size="sm" onClick={() => ask(selectedCode())}>
+          <MessageSquare size={14} />
+          Ask about this
+        </Button>
+      </div>
+    </header>
+  );
+  const fileContent = (
+    <div
+      className="changes-code-scroll"
+      ref={viewport}
+      onScroll={(e) => {
+        if (entry && (contents || preview)) {
+          position.selected = entry.key;
+          position.scroll[activeKey] = e.currentTarget.scrollTop;
+          persist();
+        }
+      }}
+    >
+      {!embedded && commit?.status}
+      {!entry && !loading && !commit && <p className="changes-empty">Select a file to inspect its changes.</p>}
+      {entry && !contents && !preview && !fileError && (
+        <div className="changes-loading" role="status">
+          Loading file contents…
+        </div>
+      )}
+      {fileError && (
+        <div className="changes-empty" role="alert">
+          <p>{fileError}</p>
+          {!isUnsupportedPreview(fileError) &&
+            (preview ? (
+              <p>
+                Could not load more surrounding lines.{' '}
+                <button className="underline" onClick={() => setFileAttempt((n) => n + 1)}>
+                  Retry
+                </button>
+              </p>
+            ) : (
+              <Button variant="outline" size="sm" onClick={() => setFileAttempt((n) => n + 1)}>
+                Retry
+              </Button>
+            ))}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void window.electronAPI.openExternal(`${entry?.snapshot.url}/files`)}
+          >
+            Open on GitHub <ExternalLink size={14} />
+          </Button>
+        </div>
+      )}
+      {lfsSides.length > 0 && (
+        <LfsDownload
+          pointers={lfsSides.map((side) => side.pointer)}
+          busy={lfsDownload?.key === activeKey && lfsDownload.busy}
+          error={lfsDownload?.key === activeKey ? lfsDownload.error : undefined}
+          onDownload={() => void downloadLfs()}
+        />
+      )}
+      {contents?.lfs && files && (
+        <p className="changes-notice">
+          Downloaded Git LFS contents. GitHub line comments refer to the pointer file; use the file discussion for this
+          resource.
+        </p>
+      )}
+      <div ref={code} className="changes-code">
+        <ReviewSelectionActions containerRef={code} resetKey={activeKey} onAsk={ask} />
+        {preview && !(contextLines > 3 && files) && (
+          <FileDiff
+            key={activeKey}
+            fileDiff={preview}
+            options={options}
+            lineAnnotations={annotations}
+            renderAnnotation={comments.renderAnnotation}
+            style={
+              {
+                '--diffs-font-family': 'var(--font-mono)',
+                '--diffs-font-size': 'var(--type-code)',
+                '--diffs-line-height': 'var(--leading-code)',
+              } as CSSProperties
+            }
+          />
+        )}
+        {files && (!preview || contextLines > 3) && (
+          <MultiFileDiff
+            key={activeKey}
+            {...files}
+            options={options}
+            lineAnnotations={annotations}
+            renderAnnotation={comments.renderAnnotation}
+            style={
+              {
+                '--diffs-font-family': 'var(--font-mono)',
+                '--diffs-font-size': 'var(--type-code)',
+                '--diffs-line-height': 'var(--leading-code)',
+              } as CSSProperties
+            }
+          />
+        )}
+        {contents && !lfsSides.length && (contents.before.kind === 'image' || contents.after.kind === 'image') && (
+          <ReviewImageDiff
+            enabled
+            filePath={entry?.file.path ?? ''}
+            comparison={{ before: imageSide(true), after: imageSide(false) }}
+          />
+        )}
+      </div>
+      {entry && !commit && (
+        <div className="changes-discussion-tools">
+          <Button variant="ghost" size="sm" onClick={() => void refreshThreads(entry.snapshot.url)}>
+            Refresh comments
+          </Button>
+        </div>
+      )}
+      {threadError && (
+        <p className="changes-notice">
+          {threadError}
+          <button onClick={() => entry && void refreshThreads(entry.snapshot.url)}>Retry</button>
+        </p>
+      )}
+      {!!other.length && (
+        <section className="changes-other-threads">
+          <h3>Other discussions on this file</h3>
+          <p>These comments refer to a different revision or no longer have an inline location.</p>
+          {other.map(comments.renderThread)}
+        </section>
+      )}
+    </div>
+  );
+  if (embedded)
+    return (
+      <section className="commit-stream-file" aria-label={entry?.file.path}>
+        {fileHeader}
+        {!viewed && fileContent}
+      </section>
+    );
+  const chatRequest =
+    continuous && chatEntry
+      ? {
+          url: chatEntry.snapshot.url,
+          path: chatEntry.file.path,
+          baseSha: chatEntry.snapshot.metadata.baseSha,
+          headSha: chatEntry.snapshot.metadata.headSha,
+          comparison: chatEntry.snapshot.comparison,
+        }
+      : request;
   return (
     <section
       className="pr-changes"
@@ -686,6 +968,7 @@ export function PrChangesView({
                       hoverCancel.current = warmFile(key);
                     }}
                     showComments={!commit}
+                    revealSelected={continuous}
                   />
                 )}
               </>
@@ -707,197 +990,68 @@ export function PrChangesView({
         )}
         <div className="changes-diff-pane">
           {commit?.header}
-          {entry && (
-            <header className="changes-file-header">
-              <div>
-                {!commit && (
-                  <span className="changes-source">
-                    {entry.snapshot.metadata.baseRepo} #{entry.snapshot.url.split('/').pop()} ·{' '}
-                    {entry.snapshot.metadata.headSha.slice(0, 7)}
-                  </span>
-                )}
-                <h2 title={entry.file.path}>
-                  {entry.file.previousPath && <span>{entry.file.previousPath} → </span>}
-                  {entry.file.path}
-                </h2>
-                <span className="changes-file-stats">
-                  {entry.file.status} · <DiffStats additions={entry.file.additions} deletions={entry.file.deletions} />
-                </span>
-              </div>
-              <div className="changes-file-actions">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Previous file"
-                  disabled={fileIndex <= 0}
-                  onClick={() => select(entries[fileIndex - 1].key)}
-                >
-                  <ArrowLeft size={14} />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Next file"
-                  disabled={fileIndex >= entries.length - 1}
-                  onClick={() => select(entries[fileIndex + 1].key)}
-                >
-                  <ArrowRight size={14} />
-                </Button>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={viewed}
-                    onChange={(e) => (e.target.checked ? mark(false) : progress.markFileViewed(activeKey, false))}
-                  />
-                  Viewed
-                </label>
-                <Button variant="outline" size="sm" onClick={() => mark(true)}>
-                  Viewed & next
-                </Button>
-                {!commit && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={!range || !comments.writable || contents?.lfs}
-                    onClick={() => range && !contents?.lfs && comments.begin(range)}
-                    title="Select lines in the diff to comment"
-                  >
-                    <MessageSquare size={14} /> Comment
-                  </Button>
-                )}
-                {commit && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    title="Open current file in Changes to comment"
-                    onClick={() => commit.onOpenCurrentFile(entry.snapshot.url, entry.file.path)}
-                  >
-                    Comment in Changes
-                  </Button>
-                )}
-                <Button variant="ghost" size="sm" onClick={() => ask(selectedCode())}>
-                  <MessageSquare size={14} />
-                  Ask about this
-                </Button>
-              </div>
-            </header>
-          )}
-          <div
-            className="changes-code-scroll"
-            ref={viewport}
-            onScroll={(e) => {
-              if (entry && (contents || preview)) {
-                position.selected = entry.key;
-                position.scroll[activeKey] = e.currentTarget.scrollTop;
+          {continuous ? (
+            <CommitDiffStream
+              ref={stream}
+              files={streamFiles}
+              selected={entry?.key ?? ''}
+              initialPosition={{ key: position.selected, offset: position.scroll[activeKey] ?? 0 }}
+              onPosition={(key, offset) => {
+                const target = entries.find((e) => e.key === key);
+                if (!target) return;
+                position.selected = key;
+                position.scroll[viewKey(target)] = offset;
                 persist();
+                setSelected((previous) => (previous === key ? previous : key));
+              }}
+              renderFile={(key, next) => {
+                const e = entries.find((e) => e.key === key);
+                if (!e) return null;
+                return (
+                  <PrChangesView
+                    subject={subject}
+                    preferences={prefs}
+                    commit={commit}
+                    embedded={{
+                      file: e.file,
+                      onViewedNext: next,
+                      onAsk: (text) => {
+                        setChatEntry(e);
+                        setSelection(text);
+                        setChatOpen(true);
+                      },
+                    }}
+                  />
+                );
+              }}
+              completion={
+                <>
+                  {commit.status}
+                  {entries.length > 0 && entries.every((e) => progress.isFileViewed(viewKey(e))) && (
+                    <div className="changes-empty commit-viewed-complete" role="status">
+                      <strong>All files viewed</strong>
+                      <p>You’ve finished this comparison. Choose another commit to continue.</p>
+                      {unviewed && (
+                        <Button variant="outline" size="sm" onClick={() => setUnviewed(false)}>
+                          Show all files
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                </>
               }
-            }}
-          >
-            {commit?.status}
-            {!entry && !loading && !commit && <p className="changes-empty">Select a file to inspect its changes.</p>}
-            {entry && !contents && !preview && !fileError && (
-              <div className="changes-loading" role="status">
-                Loading file contents…
-              </div>
-            )}
-            {fileError && (
-              <div className="changes-empty" role="alert">
-                <p>{fileError}</p>
-                {!isUnsupportedPreview(fileError) &&
-                  (preview ? (
-                    <p>
-                      Could not load more surrounding lines.{' '}
-                      <button className="underline" onClick={() => setFileAttempt((n) => n + 1)}>
-                        Retry
-                      </button>
-                    </p>
-                  ) : (
-                    <Button variant="outline" size="sm" onClick={() => setFileAttempt((n) => n + 1)}>
-                      Retry
-                    </Button>
-                  ))}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => void window.electronAPI.openExternal(`${entry?.snapshot.url}/files`)}
-                >
-                  Open on GitHub <ExternalLink size={14} />
-                </Button>
-              </div>
-            )}
-            {lfsSides.length > 0 && <LfsDownload pointers={lfsSides.map(side => side.pointer)}
-              busy={lfsDownload?.key === activeKey && lfsDownload.busy}
-              error={lfsDownload?.key === activeKey ? lfsDownload.error : undefined}
-              onDownload={() => void downloadLfs()} />}
-            {contents?.lfs && files && <p className="changes-notice">Downloaded Git LFS contents. GitHub line comments refer to the pointer file; use the file discussion for this resource.</p>}
-            <div ref={code} className="changes-code">
-              <ReviewSelectionActions containerRef={code} resetKey={activeKey} onAsk={ask} />
-              {preview && !(contextLines > 3 && files) && (
-                <FileDiff
-                  key={activeKey}
-                  fileDiff={preview}
-                  options={options}
-                  lineAnnotations={annotations}
-                  renderAnnotation={comments.renderAnnotation}
-                  style={
-                    {
-                      '--diffs-font-family': 'var(--font-mono)',
-                      '--diffs-font-size': 'var(--type-code)',
-                      '--diffs-line-height': 'var(--leading-code)',
-                    } as CSSProperties
-                  }
-                />
-              )}
-              {files && (!preview || contextLines > 3) && (
-                <MultiFileDiff
-                  key={activeKey}
-                  {...files}
-                  options={options}
-                  lineAnnotations={annotations}
-                  renderAnnotation={comments.renderAnnotation}
-                  style={
-                    {
-                      '--diffs-font-family': 'var(--font-mono)',
-                      '--diffs-font-size': 'var(--type-code)',
-                      '--diffs-line-height': 'var(--leading-code)',
-                    } as CSSProperties
-                  }
-                />
-              )}
-              {contents && !lfsSides.length && (contents.before.kind === 'image' || contents.after.kind === 'image') && (
-                <ReviewImageDiff
-                  enabled
-                  filePath={entry?.file.path ?? ''}
-                  comparison={{ before: imageSide(true), after: imageSide(false) }}
-                />
-              )}
-            </div>
-            {entry && !commit && (
-              <div className="changes-discussion-tools">
-                <Button variant="ghost" size="sm" onClick={() => void refreshThreads(entry.snapshot.url)}>
-                  Refresh comments
-                </Button>
-              </div>
-            )}
-            {threadError && (
-              <p className="changes-notice">
-                {threadError}
-                <button onClick={() => entry && void refreshThreads(entry.snapshot.url)}>Retry</button>
-              </p>
-            )}
-            {!!other.length && (
-              <section className="changes-other-threads">
-                <h3>Other discussions on this file</h3>
-                <p>These comments refer to a different revision or no longer have an inline location.</p>
-                {other.map(comments.renderThread)}
-              </section>
-            )}
-          </div>
+            />
+          ) : (
+            <>
+              {fileHeader}
+              {fileContent}
+            </>
+          )}
         </div>
-        {chatOpen && request && (
+        {chatOpen && chatRequest && (
           <PrFileChat
-            key={activeKey}
-            request={request}
+            key={continuous && chatEntry ? viewKey(chatEntry) : activeKey}
+            request={chatRequest}
             preferences={prefs}
             selection={selection}
             onClose={() => setChatOpen(false)}

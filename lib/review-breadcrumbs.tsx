@@ -48,7 +48,7 @@ export function ReviewBreadcrumbProvider({ children }: { children: ReactNode }) 
   return <BreadcrumbContext.Provider value={trails}>{children}</BreadcrumbContext.Provider>;
 }
 /** Each workspace owns its location. Hidden explanation tabs cannot overwrite another tab's trail. */
-export function useReviewBreadcrumbs(scope: string, crumbs: ReviewCrumb[]) {
+export function useReviewBreadcrumbs(scope: string, crumbs: ReviewCrumb[], enabled = true) {
   const trails = useContext(BreadcrumbContext);
   const current = useRef(crumbs);
   current.current = crumbs;
@@ -56,7 +56,7 @@ export function useReviewBreadcrumbs(scope: string, crumbs: ReviewCrumb[]) {
     crumbs.map(({ navigate, select, ...crumb }) => ({ ...crumb, navigable: !!navigate, selectable: !!select }))
   );
   useLayoutEffect(() => {
-    if (!trails) return;
+    if (!trails || !enabled) return;
     const owner = {};
     trails.set(
       scope,
@@ -68,7 +68,7 @@ export function useReviewBreadcrumbs(scope: string, crumbs: ReviewCrumb[]) {
       }))
     );
     return () => trails.remove(scope, owner);
-  }, [trails, scope, signature]);
+  }, [trails, scope, signature, enabled]);
 }
 const empty: ReviewCrumb[] = [];
 export function useReviewTrail(scope: string) {
