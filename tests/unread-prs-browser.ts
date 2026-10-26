@@ -152,11 +152,11 @@ void app.whenReady().then(async () => {
     const setReadStatus = (value: string) => js(`(()=>{const label=[...document.querySelectorAll('.queue-filter-fields label')].find(e=>e.textContent.startsWith('Read status'));const select=label.querySelector('select');select.value=${JSON.stringify(value)};select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
     await setReadStatus('read');
     await wait("document.querySelectorAll('.queue-item').length===6");
-    await js("window.selectOption('[aria-label=\"GitHub label\"]','critical')");
+    await js("window.selectLabels(['critical'])");
     await wait("document.querySelectorAll('.queue-item').length===0");
     await setReadStatus('unread');
     await wait("document.querySelectorAll('.queue-item').length===1");
-    await wait("window.electronAPI.workbenchSnapshot().then(q=>q.filters.readStatus==='unread'&&q.filters.label==='critical')");
+    await wait("window.electronAPI.workbenchSnapshot().then(q=>q.filters.readStatus==='unread'&&q.filters.labels.names.includes('critical'))");
     win.setSize(1100, 760);
     await js("document.documentElement.classList.add('dark')");
     await capture('read-status-label-filters-dark');

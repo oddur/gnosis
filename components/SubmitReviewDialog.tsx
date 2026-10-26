@@ -53,22 +53,22 @@ export function SubmitReviewDialog({
   const pending = useRef(false);
   const decisionId = useId();
   const [decision, setDecision] = useState<ReviewEvent>('COMMENT');
-  const [editingIds, setEditingIds] = useState<Set<string>>(() => new Set());
-  const onEditingChange = useCallback((id: string, editing: boolean) => {
-    setEditingIds((previous) => {
-      if (previous.has(id) === editing) return previous;
+  const [busyDraftIds, setBusyDraftIds] = useState<Set<string>>(() => new Set());
+  const onDraftBusyChange = useCallback((id: string, busy: boolean) => {
+    setBusyDraftIds((previous) => {
+      if (previous.has(id) === busy) return previous;
       const next = new Set(previous);
-      if (editing) next.add(id);
+      if (busy) next.add(id);
       else next.delete(id);
       return next;
     });
   }, []);
-  const editing = comments.some((comment) => editingIds.has(comment.id));
+  const draftsBusy = comments.some((comment) => busyDraftIds.has(comment.id));
   const needsMessage = decision !== 'APPROVE' && !comments.length;
   const canSubmit =
     !submitting &&
     signatureState === 'ready' &&
-    !editing &&
+    !draftsBusy &&
     !(isOwnPr && decision !== 'COMMENT') &&
     (!needsMessage || !!body.trim());
   const decisions: { value: ReviewEvent; label: string; description: string }[] = [
@@ -126,7 +126,7 @@ export function SubmitReviewDialog({
   }
 
   async function handleSubmit(event: ReviewEvent) {
-    if (pending.current || signaturePending.current || signatureState !== 'ready' || successUrl || editing) return;
+    if (pending.current || signaturePending.current || signatureState !== 'ready' || successUrl || draftsBusy) return;
     if (event !== 'COMMENT' && isOwnPr) return;
     if (event !== 'APPROVE' && !comments.length && !body.trim()) return;
     pending.current = true;
@@ -323,7 +323,7 @@ export function SubmitReviewDialog({
                           onEdit={onEditComment}
                           onRemove={onRemoveComment}
                           disabled={submitting}
-                          onEditingChange={onEditingChange}
+                          onBusyChange={onDraftBusyChange}
                         />
                       ) : (
                         <p className="review-submit-comment-text">{comment.body}</p>
@@ -362,7 +362,7 @@ export function SubmitReviewDialog({
         </div>
         <DialogFooter className="review-submit-footer">
           <span className="review-submit-hint" role="status">
-            {submitting ? 'Posting to GitHub…' : editing ? 'Save or cancel your comment edit before submitting.' : ''}
+            {submitting ? 'Posting to GitHub…' : draftsBusy ? 'Finish editing or removing draft comments before submitting.' : ''}
           </span>
           <div>
             <Button variant="outline" size="sm" onClick={handleClose} disabled={submitting}>

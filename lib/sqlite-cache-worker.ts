@@ -78,8 +78,8 @@ parentPort.on('message', ({ id, method, args }) => {
         const remove = db.prepare('DELETE FROM cache WHERE id=?');
         const revalidate = db.prepare("UPDATE cache SET payload=json_set(payload,'$.revalidate',json('true')) WHERE id=?");
         const prepare = db.prepare('INSERT OR REPLACE INTO prepared(id,payload,saved_at,bytes) VALUES (?,?,?,?)');
-        let preparedAt;
-        for (const operation of args) {
+        let prepared = false;
+        for (const operation of args.operations) {
           if (operation.deletePrepared) {
             db.prepare('DELETE FROM prepared WHERE id=?').run(operation.id);
             continue;
@@ -91,7 +91,7 @@ parentPort.on('message', ({ id, method, args }) => {
           if (operation.prepared && operation.payload) {
             const entry = JSON.parse(operation.payload);
             prepare.run(operation.id, operation.payload, entry.savedAt, Buffer.byteLength(operation.payload));
-            preparedAt = Math.max(preparedAt ?? 0, entry.savedAt);
+            prepared = true;
           }
           if (operation.onlyPrepared) continue;
           if (operation.revalidate) revalidate.run(operation.id);
@@ -99,7 +99,8 @@ parentPort.on('message', ({ id, method, args }) => {
           else if (operation.prepared && Buffer.byteLength(operation.payload) > memoryEntryBytes) remove.run(operation.id);
           else put.run(operation.id, operation.payload);
         }
-        if (preparedAt !== undefined) trimPrepared(preparedAt);
+        // Restored hot entries retain their original age; they must not move the clock backwards.
+        if (prepared) trimPrepared(args.now);
         db.exec('COMMIT');
       } catch (error) { db.exec('ROLLBACK'); throw error; }
     } else if (method === 'close') { db?.close(); db = undefined; }

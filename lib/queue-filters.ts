@@ -1,3 +1,4 @@
+import { DEFAULT_LABEL_FILTER, normalizeLabelFilter, labelFilterActive, matchesLabelFilter, describeLabelFilter, type PrLabelFilter } from './pr-label-filter';
 import { DEFAULT_PR_SORT, normalizePrListSort, sortQueueItems, type PrListSort } from './pr-list-sort';
 import type { QueueSignals } from './queue-signals';
 import { fingerprint, type QueueItem, type ReviewMember } from './workbench';
@@ -13,7 +14,7 @@ export interface QueueFilters {
   status: 'all' | 'ready' | 'draft';
   createdWithin: number;
   updatedWithin: number;
-  label: string;
+  labels: PrLabelFilter;
   kind: 'all' | 'stack' | 'pr';
   explanation: 'all' | 'none' | 'ready' | 'outdated' | 'generating' | 'failed';
   attention: 'all' | QueueItem['attention'];
@@ -30,7 +31,7 @@ export const DEFAULT_QUEUE_FILTERS: QueueFilters = {
   status: 'all',
   createdWithin: 0,
   updatedWithin: 0,
-  label: 'all',
+  labels: DEFAULT_LABEL_FILTER,
   kind: 'all',
   explanation: 'all',
   attention: 'all',
@@ -52,7 +53,7 @@ export function normalizeQueueFilters(value: unknown): QueueFilters {
     query: text('query', ''),
     repo: text('repo', 'all'),
     author: text('author', 'all'),
-    label: text('label', 'all'),
+    labels: normalizeLabelFilter(raw.labels ?? raw.label),
     status: choice('status', ['all', 'ready', 'draft'], 'all'),
     createdWithin: days('createdWithin'),
     updatedWithin: days('updatedWithin'),
@@ -105,7 +106,7 @@ export function matchesQueueFilters(
       (filters.author === 'all' || m.author === filters.author) &&
       (filters.status === 'all' ||
         (m.state === 'open' && !m.merged && (filters.status === 'draft' ? m.isDraft : !m.isDraft))) &&
-      (filters.label === 'all' || m.labels.includes(filters.label)) &&
+      matchesLabelFilter(m.labels, filters.labels) &&
       recent(m.createdAt, filters.createdWithin) &&
       recent(m.updatedAt, filters.updatedWithin) &&
       `${subject.title} ${m.title} ${m.repo} #${m.number} ${m.author}`
@@ -115,7 +116,7 @@ export function matchesQueueFilters(
 }
 export function activeQueueFilterCount(filters: QueueFilters) {
   return (Object.keys(DEFAULT_QUEUE_FILTERS) as (keyof QueueFilters)[]).filter(
-    (key) => key !== 'briefingScope' && key !== 'sort' && filters[key] !== DEFAULT_QUEUE_FILTERS[key]
+    (key) => key === 'labels' ? labelFilterActive(filters.labels) : key !== 'briefingScope' && key !== 'sort' && filters[key] !== DEFAULT_QUEUE_FILTERS[key]
   ).length;
 }
 /** Stable partition preserves the queue's review priority within each group. */
@@ -144,7 +145,7 @@ export function describeQueueFilters(filters: QueueFilters): { key: keyof QueueF
     status: filters.status === 'draft' ? 'Draft PRs' : 'Open, not draft',
     createdWithin: `Created: last ${filters.createdWithin} days`,
     updatedWithin: `Updated: last ${filters.updatedWithin} days`,
-    label: `Label: ${filters.label}`,
+    labels: describeLabelFilter(filters.labels),
     kind: filters.kind === 'stack' ? 'Stacks' : 'Standalone PRs',
     explanation: `AI explanation: ${
       {
@@ -164,6 +165,6 @@ export function describeQueueFilters(filters: QueueFilters): { key: keyof QueueF
     }[filters.attention],
   };
   return (Object.keys(labels) as (keyof QueueFilters)[])
-    .filter((key) => filters[key] !== DEFAULT_QUEUE_FILTERS[key])
+    .filter((key) => key === 'labels' ? labelFilterActive(filters.labels) : filters[key] !== DEFAULT_QUEUE_FILTERS[key])
     .map((key) => ({ key, label: labels[key] ?? '' }));
 }

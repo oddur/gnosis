@@ -393,6 +393,13 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
         };
     if (force) setRefreshing(true);
     try {
+      // A failed filter save leaves local edits pending and blocks stale queue
+      // responses. An explicit retry must save those edits before reloading.
+      if (force && pendingFilters.current) {
+        const pending = pendingFilters.current;
+        await enqueueWrite(() => window.electronAPI.workbenchSetFilters(pending));
+        if (version === filterVersion.current) pendingFilters.current = null;
+      }
       // Only the first load needs an immediate snapshot. Later polls already have
       // a visible queue; fetching both would transfer and render it twice.
       if (!filtersLoaded.current) await window.electronAPI.workbenchSnapshot().then(next => { applyQueue(next); if (current() && next.items.length) setLoading(false); }).catch(() => {});

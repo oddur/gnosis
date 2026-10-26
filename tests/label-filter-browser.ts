@@ -1,0 +1,86 @@
+import assert from 'node:assert/strict';
+import { app, BrowserWindow } from 'electron';
+import fs from 'node:fs';
+import path from 'node:path';
+
+void app.whenReady().then(async () => {
+  const win = new BrowserWindow({ width: 1100, height: 760, show: true, webPreferences: { backgroundThrottling: false } });
+  const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
+  const wait = async (code: string) => {
+    for (let i = 0; i < 160; i++) { if (await js(code)) return; await new Promise(r => setTimeout(r, 40)); }
+    throw Error('Timed out: ' + code + '\n' + JSON.stringify(await js("({query:document.querySelector('[data-slot=combobox-input]')?.value,items:[...document.querySelectorAll('[data-slot=combobox-item]')].map(e=>({key:e.dataset.value,text:e.textContent,highlight:e.hasAttribute('data-highlighted')}))})")));
+  };
+  const click = (selector: string) => js(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)throw Error('Missing '+${JSON.stringify(selector)});e.focus();e.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerType:'mouse',button:0}));e.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));e.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,button:0}));e.click();})()`);
+  const key = (keyCode: string) => { win.webContents.sendInputEvent({ type: 'keyDown', keyCode }); win.webContents.sendInputEvent({ type: 'keyUp', keyCode }); };
+  const fill = (value: string) => js(`(()=>{const e=document.querySelector('[data-slot=combobox-input]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'}));})()`);
+  const capture = async (name: string) => {
+    await js('document.fonts.ready');
+    await new Promise(r => setTimeout(r, 150));
+    const dir = path.resolve('.impeccable/review/label-tags'); fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, name + '.png'), (await win.webContents.capturePage()).toPNG());
+  };
+  try {
+    const url = process.env.GNOSIS_WORKBENCH_URL;
+    if (!url) throw Error('Missing fixture URL');
+    await win.loadURL(url + '?labels');
+    win.focus();
+    await wait("document.querySelectorAll('.queue-item').length===7");
+    await click('.queue-filter-toggle');
+    await click('[aria-label="GitHub labels"]');
+    await wait("document.activeElement?.getAttribute('aria-label')==='Search GitHub labels'");
+    const options = await js<{ count: number; visible: number }>(`(()=>{const list=document.querySelector('[data-slot=combobox-list]'),r=list.getBoundingClientRect();const items=[...list.querySelectorAll('[data-slot=combobox-item]')];return {count:items.length,visible:items.filter(e=>{const b=e.getBoundingClientRect();return b.top>=r.top&&b.bottom<=r.bottom&&document.elementFromPoint(b.left+12,(b.top+b.bottom)/2)?.closest('[data-slot=combobox-item]')===e}).length}})()`);
+    assert.ok(options.count >= 8 && options.visible >= 4, JSON.stringify(options));
+    await fill('BUG');
+    await wait("document.querySelector('[data-slot=combobox-item][data-highlighted]')?.dataset.value==='label:bug'");
+    key('Enter');
+    await wait("!!document.querySelector('[aria-label=\"Remove label bug\"]')");
+    assert.equal(await js("document.querySelector('[aria-label=\"GitHub labels\"]').getAttribute('aria-expanded')"), 'true');
+    assert.equal(await js("getComputedStyle(document.querySelector('.queue-label-tag')).backgroundColor"), 'rgb(215, 58, 74)');
+    await fill('critical');
+    await wait("document.querySelector('[data-slot=combobox-item][data-highlighted]')?.dataset.value==='label:critical'");
+    key('Enter');
+    await wait("document.querySelectorAll('.queue-label-tag').length===2");
+    key('Escape');
+    await wait("!document.querySelector('.queue-label-popup')");
+    assert.ok(await js("!!document.querySelector('[aria-label=\"Queue filters\"]')"), 'Escape keeps Filters open');
+    await wait("document.querySelectorAll('.queue-item').length===2");
+    await js("[...document.querySelectorAll('.queue-label-match button')].find(b=>b.textContent==='All').click()");
+    await wait("document.querySelectorAll('.queue-item').length===0");
+    await js("[...document.querySelectorAll('.queue-label-match button')].find(b=>b.textContent==='Any').click()");
+    await wait("document.querySelectorAll('.queue-item').length===2");
+    await capture('labels-light');
+    await js("document.documentElement.classList.add('dark')");
+    await click('[aria-label="GitHub labels"]');
+    await capture('labels-open-dark');
+    key('Escape');
+    await wait("!document.querySelector('.queue-label-popup')");
+    await click('[aria-label="Close filters"]');
+    await js("[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Save view…').click()");
+    await wait("!!document.querySelector('.view-name-form input')");
+    await js("(()=>{const e=document.querySelector('.view-name-form input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'Bugs or critical');e.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'}));})()");
+    await js("document.querySelector('.view-name-form').requestSubmit()");
+    await wait("document.querySelector('.queue-toolbar h1')?.textContent==='Bugs or critical'");
+    win.reload();
+    await wait("document.querySelectorAll('.queue-item').length===2");
+    await click('.queue-filter-toggle');
+    await wait("document.querySelectorAll('.queue-label-tag').length===2");
+    await click('[aria-label="Remove label critical"]');
+    await wait("document.querySelectorAll('.queue-item').length===1");
+    assert.equal(await js("document.querySelector('.queue-label-match')"), null);
+    await click('[aria-label="GitHub labels"]');
+    await click('[data-slot="combobox-item"][data-value="unlabelled"]');
+    await wait("!!document.querySelector('[aria-label=\"Remove no-labels filter\"]')");
+    assert.equal(await js("document.querySelectorAll('.queue-label-tag').length"), 1);
+    await click('.queue-label-footer button');
+    await wait("document.querySelectorAll('.queue-item').length===3");
+    await click('.queue-label-clear');
+    await wait("document.querySelectorAll('.queue-item').length===7");
+    await js("window.selectLabels(['a-very-long-label-name-for-layout-validation'])");
+    win.setSize(800, 700);
+    await capture('labels-narrow');
+    assert.ok(await js("document.documentElement.scrollWidth<=innerWidth"));
+    assert.ok(await js("(()=>{const e=document.querySelector('.queue-label-tags');return e.scrollWidth<=e.clientWidth+1})()"));
+    console.log('Label tags passed: colored badges, keyboard multi-selection, unclipped popup, Any/All, exclusive No labels, removal, saved views and narrow layout.');
+    win.destroy(); app.exit(0);
+  } catch (error) { console.error(error); win.destroy(); app.exit(1); }
+});

@@ -222,9 +222,19 @@ void app.whenReady().then(async () => {
     );
     assert.equal(await js('document.querySelectorAll(".commit-row").length'), 7);
     await capture('stack');
-    // Recover a failed comparison without downloading unrelated commits.
+    // Exercise a cold comparison: normal queue preloading now prepares every commit.
+    // Keep the displayed snapshot, but clear the fixture's renderer cache before injecting failure.
     const previousTitle = await js("document.querySelector('.commit-detail-title').textContent");
-    await js("window.failComparison=true;document.querySelectorAll('.commit-row')[4].click()");
+    await js(`(async()=>{
+      const {inspectionData}=await import('/lib/inspection-cache.ts');
+      const queue=await window.electronAPI.workbenchQueue();
+      inspectionData.setTargets(null,[]);
+      inspectionData.stop();
+      // Keep tab inventories warm so the rest of this test still exercises saved navigation.
+      await Promise.all(queue.items.flatMap(item=>item.subject.members).map(member=>inspectionData.readCommits(member)));
+      window.failComparison=true;
+      document.querySelectorAll('.commit-row')[4].click();
+    })()`);
     await wait("document.querySelector('[role=alert]')?.textContent.includes('Comparison unavailable')");
     assert.equal(
       await js("document.querySelector('.changes-tree-pane').textContent.includes('No changed files')"),

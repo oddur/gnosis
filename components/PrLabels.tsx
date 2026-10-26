@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react';
 import type { ReviewMember } from '../lib/workbench';
 import type { PrLabel } from '../lib/types';
 
-function colors(color?: string): CSSProperties | undefined {
+export function prLabelColors(color?: string): CSSProperties | undefined {
   if (!color || !/^[0-9a-f]{6}$/i.test(color)) return;
   const rgb = [0, 2, 4].map((offset) => {
     const channel = parseInt(color.slice(offset, offset + 2), 16) / 255;
@@ -48,7 +48,7 @@ export function PrLabels({
   return (
     <span className="pr-labels" role="group" aria-label={members.length > 1 ? 'Labels across this stack' : 'PR labels'}>
       {visible.map((label) => (
-        <span key={label.name} className="pr-label" style={colors(label.color)} title={describe(label)}>
+        <span key={label.name} className="pr-label" style={prLabelColors(label.color)} title={describe(label)}>
           {label.name}
         </span>
       ))}

@@ -1,6 +1,9 @@
 import test from 'node:test';
+import { normalizeLabelFilter } from '../lib/pr-label-filter';
 import assert from 'node:assert/strict';
 import {
+  activeQueueFilterCount,
+  describeQueueFilters,
   DEFAULT_QUEUE_FILTERS,
   matchesQueueFilters,
   normalizeQueueFilters,
@@ -44,7 +47,7 @@ void test('combined member filters match one open PR and preserve the full stack
   assert.equal(
     matchesQueueFilters(
       stack,
-      { ...DEFAULT_QUEUE_FILTERS, author: 'bob', status: 'draft', label: 'bug', kind: 'stack' },
+      { ...DEFAULT_QUEUE_FILTERS, author: 'bob', status: 'draft', labels: normalizeLabelFilter('bug'), kind: 'stack' },
       now
     ),
     true
@@ -125,7 +128,7 @@ void test('my PRs includes authorship, assignments, and review requests on the s
   assert.equal(matchesQueueFilters(item([member(1)]), filters, now, null), false);
   assert.equal(matchesQueueFilters(item([member(1, { merged: true, state: 'closed' })]), filters, now, 'alice'), false);
   const stack = item([member(1), member(2, { baseBranch: 'pr-1', author: 'bob', labels: ['bug'] })]);
-  assert.equal(matchesQueueFilters(stack, { ...filters, label: 'bug' }, now, 'alice'), false);
+  assert.equal(matchesQueueFilters(stack, { ...filters, labels: normalizeLabelFilter('bug') }, now, 'alice'), false);
   assert.equal(matchesQueueFilters(stack, filters, now, 'alice'), true);
   assert.equal(stack.subject.members.length, 2);
   assert.deepEqual(prioritizeBriefings([item([member(3, { author: 'bob' })]), stack], filters, now, 'alice'), [stack]);
@@ -138,12 +141,34 @@ void test('read status and labels must match the same PR, with saved-view migrat
   const filters = normalizeQueueFilters({ readStatus: 'read', label: 'bug' });
   assert.equal(matchesQueueFilters(stack, filters), true);
   assert.equal(matchesQueueFilters(stack, { ...filters, readStatus: 'unread' }), false);
-  assert.equal(matchesQueueFilters(stack, { ...filters, readStatus: 'unread', label: 'feature' }), true);
-  assert.equal(matchesQueueFilters(stack, { ...filters, label: 'feature' }), false);
+  assert.equal(matchesQueueFilters(stack, { ...filters, readStatus: 'unread', labels: normalizeLabelFilter('feature') }), true);
+  assert.equal(matchesQueueFilters(stack, { ...filters, labels: normalizeLabelFilter('feature') }), false);
   assert.deepEqual(prioritizeBriefings([stack], filters), [stack]);
   assert.deepEqual(prioritizeBriefings([stack], { ...filters, readStatus: 'unread' }), []);
   assert.equal(normalizeQueueFilters({ unreadOnly: true }).readStatus, 'unread');
   assert.equal(normalizeQueueFilters({ unreadOnly: true, readStatus: 'all' }).readStatus, 'all');
   assert.equal(normalizeQueueFilters({ readStatus: 'invalid' }).readStatus, 'all');
   assert.deepEqual(normalizeQueueFilters(JSON.parse(JSON.stringify(filters))), filters);
+});
+
+void test('label tags match any or all names on one member, and No labels stays exclusive', () => {
+  const stack = item([member(1, { labels: ['bug', 'urgent'] }), member(2, { baseBranch: 'pr-1', labels: ['feature'] })]);
+  const filters = normalizeQueueFilters({ labels: { names: ['bug', 'feature'] } });
+  assert.equal(matchesQueueFilters(stack, filters), true);
+  assert.equal(matchesQueueFilters(stack, { ...filters, labels: { ...filters.labels, match: 'all' } }), false);
+  assert.equal(matchesQueueFilters(stack, { ...filters, labels: normalizeLabelFilter({ names: ['BUG', 'urgent'], match: 'all' }) }), true);
+  assert.equal(matchesQueueFilters(stack, { ...filters, labels: normalizeLabelFilter({ unlabelled: true }) }), false);
+  assert.equal(matchesQueueFilters(item([member(3)]), { ...filters, labels: normalizeLabelFilter({ unlabelled: true }) }), true);
+  assert.deepEqual(normalizeLabelFilter({ names: ['bug', 'BUG', '', null, 'feature'], match: 'all' }).names, ['bug', 'feature']);
+  assert.deepEqual(normalizeLabelFilter({ names: ['bug'], unlabelled: true }).names, []);
+  assert.deepEqual(normalizeLabelFilter({ names: ['all', 'No labels'] }).names, ['all', 'No labels']);
+});
+
+void test('label selections count as one filter and describe Any, All and No labels accurately', () => {
+  assert.equal(activeQueueFilterCount(normalizeQueueFilters({})), 0);
+  assert.equal(activeQueueFilterCount(normalizeQueueFilters({ labels: { names: [], match: 'all' } })), 0);
+  const filters = normalizeQueueFilters({ labels: { names: ['bug', 'feature'], match: 'all' } });
+  assert.equal(activeQueueFilterCount(filters), 1);
+  assert.deepEqual(describeQueueFilters(filters), [{ key: 'labels', label: 'Labels (all): bug, feature' }]);
+  assert.deepEqual(describeQueueFilters(normalizeQueueFilters({ labels: { unlabelled: true } })), [{ key: 'labels', label: 'No labels' }]);
 });
