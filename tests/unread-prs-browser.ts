@@ -65,6 +65,16 @@ void app.whenReady().then(async () => {
     app.focus({ steal: true });
     win.focus();
     await wait("document.querySelectorAll('.queue-item').length===7");
+    await js(`(async()=>{
+      const cache=(await import('/lib/inspection-cache.ts')).inspectionData;
+      const setTargets=cache.setTargets;
+      cache.setTargets=(...args)=>{window.preloadIntent=args[2];return setTargets(...args)};
+      document.dispatchEvent(new Event('visibilitychange'));
+    })()`);
+    await wait("window.preloadIntent?.unread?.length===2");
+    assert.deepEqual(await js('window.preloadIntent.unread.slice().sort()'), [
+      'https://github.com/klang/engine/pull/121', 'https://github.com/klang/engine/pull/152',
+    ], 'Only unread stack members and PRs receive the unread preload priority');
     assert.equal(await js("document.querySelectorAll('.queue-item.is-unread').length"), 2);
     await js(
       "document.querySelector('[aria-label=\"Actions for PR #152\"]').closest('.queue-item').querySelector('.queue-row-main').click()"
@@ -86,8 +96,10 @@ void app.whenReady().then(async () => {
     await js("document.documentElement.classList.remove('dark')");
     await open(152);
     await wait(`${unread(152)}.then(n=>n===0)`);
+    await wait("!window.preloadIntent.unread.includes('https://github.com/klang/engine/pull/152')");
     await js("window.dispatchEvent(new Event('fixture-new-commit'))");
     await wait(`${unread(152)}.then(n=>n===1)`);
+    await wait("window.preloadIntent.unread.includes('https://github.com/klang/engine/pull/152')");
     await new Promise((r) => setTimeout(r, 150));
     assert.equal(await js(unread(152)), 1, 'Refreshing an open summary does not acknowledge new commits');
     await menuAction(js, 'Actions for PR #152', 'Mark as read');

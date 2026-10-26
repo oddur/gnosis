@@ -35,6 +35,7 @@ interface Job {
 export interface InspectionPriorities {
   active?: string[];
   visible?: string[];
+  unread?: string[];
   view?: string[];
 }
 
@@ -222,7 +223,7 @@ export function createPrInspectionCache(deps: Dependencies) {
         const ready = order.map((id) => jobs.get(id)).filter((job): job is Job => !!job && job.retryAt <= now());
         // Re-evaluate intent between every operation. Within a tier, make both tab
         // inventories available before deep downloads; never let the backlog delay an active PR.
-        const tier = (job: Job) => priorities.get(job.revision.url) ?? 3;
+        const tier = (job: Job) => priorities.get(job.revision.url) ?? 4;
         const highest = ready.reduce((best, job) => Math.min(best, tier(job)), Infinity);
         const preferred = ready.filter(job => tier(job) === highest);
         const job = preferred.find(job => job.stage < 2) ?? preferred.at(0);
@@ -267,11 +268,11 @@ export function createPrInspectionCache(deps: Dependencies) {
       const unique = new Map<string, InspectionRevision>();
       for (const r of targets) if (!unique.has(r.url)) unique.set(r.url, r);
       priorities = new Map();
-      [intent.active, intent.visible, intent.view].forEach((urls, tier) => {
+      [intent.active, intent.visible, intent.unread, intent.view].forEach((urls, tier) => {
         for (const url of urls ?? []) if (!priorities.has(url)) priorities.set(url, tier);
       });
       const ranked = [...unique.values()].sort((a, b) =>
-        (priorities.get(a.url) ?? 3) - (priorities.get(b.url) ?? 3));
+        (priorities.get(a.url) ?? 4) - (priorities.get(b.url) ?? 4));
       const nextOrder = account ? ranked.map(key) : [];
       // Rehydrate a newly active PR from disk if it has left the bounded memory cache.
       for (const url of intent.active ?? []) {

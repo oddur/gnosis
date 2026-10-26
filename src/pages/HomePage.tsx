@@ -693,7 +693,7 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
     [visibleHistory, query, starredUrls]
   );
   const orderedItems = orderQueueItems(items);
-  // The active PR, current view, then the remaining queue. Revision identity
+  // Active and visible PRs, unread work, current view, then the remaining queue. Revision identity
   // prevents routine metadata/CI updates from repeating content downloads.
   const inspectionTargets = [...(statusSubject?.members ?? []),
     ...orderedItems.flatMap(item => item.subject.members), ...queue.items.flatMap(item => item.subject.members)];
@@ -702,6 +702,7 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
     intent: {
       active: statusSubject?.members.map(member => member.url) ?? [],
       visible: orderedItems.filter(item => visibleQueueIds.includes(item.subject.id)).flatMap(item => item.subject.members.map(member => member.url)),
+      unread: [...new Set([...orderedItems, ...queue.items].flatMap(item => item.unreadUrls ?? []))],
       view: orderedItems.flatMap(item => item.subject.members.map(member => member.url)),
     },
   });
