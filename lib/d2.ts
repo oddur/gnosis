@@ -2,7 +2,8 @@ import type { D2, Diagram } from '@d2lang/d2';
 import DOMPurify from 'dompurify';
 import { D2_ICON_NAMES, d2IconData } from './d2-icons';
 import { compileD2Source } from './d2-compile';
-import { tagDiagramEntities, type DiagramEntity } from './d2-presentation';
+import { alignD2FrameBounds, tagDiagramEntities, type DiagramEntity } from './d2-presentation';
+import { d2LayoutKey } from './d2-layout';
 
 export interface D2Frame {
   id: string;
@@ -11,6 +12,7 @@ export interface D2Frame {
   svg: string;
   entities: DiagramEntity[];
   notes: { subject: string; text: string }[];
+  layoutId?: string;
 }
 export interface D2Render {
   frames: D2Frame[];
@@ -97,7 +99,10 @@ export function renderD2(source: string, dark: boolean): Promise<D2Render> {
       ].filter(({ board }) => !board.isFolderOnly);
       if (boards.length > 12) throw new Error('Use at most 12 walkthrough frames.');
       const frames: D2Frame[] = [];
+      const layouts = new Map<string, string>();
       for (const { id, board } of boards) {
+        const key = d2LayoutKey(board);
+        if (!layouts.has(key)) layouts.set(key, `layout-${layouts.size}`);
         for (const edge of board.connections) edge.italic = false;
         const svg = await d2.render(board, {
           ...compiled.renderOptions,
@@ -120,6 +125,7 @@ export function renderD2(source: string, dark: boolean): Promise<D2Render> {
         }));
         frames.push({
           id,
+          layoutId: layouts.get(key),
           animated: [...board.shapes, ...board.connections].some((item) => item.animated),
           name: board.name || 'Overview',
           svg: cleanSVG(svg, entities),
@@ -132,6 +138,7 @@ export function renderD2(source: string, dark: boolean): Promise<D2Render> {
             })),
         });
       }
+      alignD2FrameBounds(frames);
       return { frames, milliseconds: Math.round(performance.now() - start) };
     })();
     return Promise.race([

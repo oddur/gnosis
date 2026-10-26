@@ -19,7 +19,7 @@ The explicit `kind` controls the navigation:
 | `comparison` | Before/after or alternative outcomes | Named views without auto-play |
 | Missing | Older saved diagrams | Named views without auto-play |
 
-Auto-play starts only through “Auto-play steps” and advances every 6.5 seconds. Pause, manual navigation, dialog dismissal, source navigation, and a hidden window stop auto-play and flow animation. Reduced motion removes animation and transitions. The paused view contains the complete explanation. Native board changes fade in, but arbitrary layouts do not morph between states.
+Auto-play starts only through “Auto-play steps” and advances every 6.5 seconds. Pause, manual navigation, dialog dismissal, source navigation, and a hidden window stop auto-play and flow animation. Reduced motion removes animation and transitions. The paused view contains the complete explanation. Steps with the same layout keep the same canvas. A different graph fades in without motion between unrelated positions.
 
 ## Generation and saved metadata
 
@@ -71,6 +71,10 @@ When adjacent views use different boards, “What changed in the drawing” list
 ## Rendering and recovery
 
 D2 0.9.0, including TALA, runs through the pinned `@d2lang/d2` 0.1.34 WASM worker. TALA lays out ordinary graphs. D2 uses its specialized sequence layout for sequences. Gnosis owns fonts, theme, and padding.
+
+Native steps and scenarios with the same graph share node positions, node sizes, and connection routes. The renderer reserves space for their largest labels before it shows the first frame. Each frame keeps its own text, highlights, and notes. Font sizes stay the same across all boards. Both SVG viewports use shared bounds, so label and stroke changes do not change the fitted scale.
+
+This also applies to saved explanations without regeneration. Added or removed entities, changed connections, and changed shape structures retain separate layouts. If the compiler rejects a sizing constraint, the renderer keeps the original diagram. The extra layout pass runs in the D2 worker and uses the existing timeout and cache.
 
 The renderer caches completed output by source and theme, separately from presentation metadata. Changes to focus or captions do not trigger compilation. Limits apply to entry count and SVG bytes. Revisiting a cached diagram can show it immediately. The cache lasts for the application session. The saved review retains source and metadata.
 

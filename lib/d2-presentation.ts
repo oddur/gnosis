@@ -20,6 +20,47 @@ export interface DiagramView {
   differences: { label: string; before: string; after: string }[];
 }
 
+/** D2 wraps its drawing in an inner SVG with its own origin. Align both SVG
+ * viewports; changing only the outer viewBox still moves the drawing inside it.
+ */
+export function alignD2FrameBounds(frames: D2Frame[]) {
+  const groups = new Map<string, D2Frame[]>();
+  for (const frame of frames) {
+    if (!frame.layoutId) continue;
+    const group = groups.get(frame.layoutId) ?? [];
+    group.push(frame);
+    groups.set(frame.layoutId, group);
+  }
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const drawings = group.flatMap((frame) => {
+      const root = new DOMParser().parseFromString(frame.svg, 'image/svg+xml').documentElement;
+      const inner = root.querySelector(':scope > svg');
+      const bounds = inner
+        ?.getAttribute('viewBox')
+        ?.trim()
+        .split(/[\s,]+/)
+        .map(Number);
+      if (!inner || !bounds || bounds.length !== 4 || !bounds.every(Number.isFinite)) return [];
+      return [{ frame, root, inner, bounds }];
+    });
+    if (drawings.length !== group.length) continue;
+    const x = Math.min(...drawings.map((d) => d.bounds[0]));
+    const y = Math.min(...drawings.map((d) => d.bounds[1]));
+    const width = Math.max(...drawings.map((d) => d.bounds[0] + d.bounds[2])) - x;
+    const height = Math.max(...drawings.map((d) => d.bounds[1] + d.bounds[3])) - y;
+    for (const { frame, root, inner } of drawings) {
+      root.setAttribute('viewBox', `0 0 ${width} ${height}`);
+      inner.setAttribute('viewBox', `${x} ${y} ${width} ${height}`);
+      inner.setAttribute('width', String(width));
+      inner.setAttribute('height', String(height));
+      const background = inner.querySelector(':scope > rect');
+      for (const [key, value] of Object.entries({ x, y, width, height })) background?.setAttribute(key, String(value));
+      frame.svg = new XMLSerializer().serializeToString(root);
+    }
+  }
+}
+
 /** Presentation metadata never causes an additional layout or compiler request. */
 export function diagramViews(spec: D2DiagramSpec, frames: D2Frame[]): DiagramView[] {
   const guided = spec.steps?.some((step) => step.focus?.length);
