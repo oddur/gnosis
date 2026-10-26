@@ -225,3 +225,14 @@ void test('failed writes preserve prior read progress in memory and on disk', ()
     h.cleanup();
   }
 });
+
+void test('observing unchanged metadata does not clone the complete unread state on every queue poll', (t) => {
+  const h = harness();
+  try {
+    const members = Array.from({ length: 100 }, (_, i) => member(i + 1));
+    h.store.observe('me', members, true);
+    const clone = t.mock.method(globalThis, 'structuredClone');
+    assert.equal(h.store.observe('me', members, true), false);
+    assert.equal(clone.mock.callCount(), 0);
+  } finally { t.mock.restoreAll(); h.cleanup(); }
+});

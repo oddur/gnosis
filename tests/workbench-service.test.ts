@@ -1659,3 +1659,40 @@ test('normal discovery detects new reviews on read PRs hidden by the unread filt
     assert.equal(calls, 2);
   } finally { s.cleanup(); }
 });
+
+test('activity polling reads preferences once per projection and builds the queue once', async () => {
+  const s = setup(async () => { throw new Error('Daily limit must prevent generation'); }, false);
+  try {
+    await s.service.queue();
+    const file = path.join(s.deps.directory(), 'workbench.json');
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const subject = saved.subjects[0];
+    saved.subjects = Array.from({ length: 100 }, (_, i) => ({ ...subject, id: `subject-${i}`,
+      members: subject.members.map((m: ReviewMember) => ({ ...m, url: `https://github.com/owner/repo/pull/${i + 1}`, number: i + 1 })) }));
+    fs.writeFileSync(file, JSON.stringify(saved));
+    let preferences = 0, history = 0;
+    const service = createWorkbenchService({ ...s.deps,
+      preferences: () => { preferences++; return { ...s.prefs, autoBriefings: true, briefingDailyLimit: 0 }; },
+      history: () => { history++; return []; },
+    });
+    service.activity();
+    preferences = 0; history = 0;
+    service.activity();
+    assert.equal(history, 1, 'one activity poll must not build three full queues');
+    assert.ok(preferences <= 10, `read preferences ${preferences} times for 100 PRs`);
+  } finally { s.cleanup(); }
+});
+
+test('unchanged PR metadata does not rewrite the queue file', async (t) => {
+  const s = setup(async () => '', false);
+  try {
+    const queue = await s.service.queue();
+    const metadata = queue.items[0].subject.members[0];
+    const writes = t.mock.method(fs, 'writeFileSync');
+    s.service.updatePrMetadata(metadata);
+    assert.equal(writes.mock.callCount(), 0);
+    s.service.updatePrMetadata({ ...metadata, title: 'Updated title' });
+    assert.ok(writes.mock.callCount() > 0);
+    assert.equal(s.service.snapshot().items[0].subject.members[0].title, 'Updated title');
+  } finally { t.mock.restoreAll(); s.cleanup(); }
+});
