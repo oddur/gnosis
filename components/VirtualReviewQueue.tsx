@@ -6,7 +6,7 @@ interface Props {
   items: QueueItem[];
   labels: Record<QueueItem['attention'], string> & { starred?: string };
   selected: string | null;
-  scrollElement: RefObject<HTMLElement | null>;
+  scrollElement: HTMLElement | null;
   initialOffset: number;
   measurements: RefObject<VirtualItem[]>;
   renderRow: (item: QueueItem) => ReactNode;
@@ -26,7 +26,7 @@ export function VirtualReviewQueue({ items, labels, selected, scrollElement, ini
   const rowKey = useCallback((index: number) => items[index].subject.id, [items]);
   const virtualizer = useVirtualizer({
     count: items.length,
-    getScrollElement: () => scrollElement.current,
+    getScrollElement: () => scrollElement,
     getItemKey: rowKey,
     estimateSize: () => 104,
     overscan: 5,
@@ -45,7 +45,7 @@ export function VirtualReviewQueue({ items, labels, selected, scrollElement, ini
     measurements.current = virtualizer.takeSnapshot();
   }, [virtualizer, measurements]);
   useLayoutEffect(() => {
-    const parent = scrollElement.current;
+    const parent = scrollElement;
     const element = container.current;
     if (!parent || !element || !virtual) return;
     const measure = () => setMargin(element.getBoundingClientRect().top - parent.getBoundingClientRect().top + parent.scrollTop);

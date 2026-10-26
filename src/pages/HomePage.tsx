@@ -318,12 +318,13 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
   const [statusAttempt, setStatusAttempt] = useState(0);
   const [savedSummary, setSavedSummary] = useState<{ id: string; summary: string; focus: string } | null>(null);
   const searchInput = useRef<HTMLInputElement>(null);
-  const queueScrollElement = useRef<HTMLElement>(null);
+  // Publish attachment so the virtualizer measures the remounted queue before paint.
+  const [queueScrollElement, setQueueScrollElement] = useState<HTMLElement | null>(null);
   const queueMeasurements = useRef<VirtualItem[]>([]);
   const [queueScrollOffset] = useSessionDraft('queue-scroll', () => ({ current: 0 }));
   const pendingRowFocus = useRef<string | null>(null);
   const attachQueueScroll = useCallback((element: HTMLElement | null) => {
-    queueScrollElement.current = element;
+    setQueueScrollElement(element);
     if (element) element.scrollTop = queueScrollOffset.current;
   }, []);
   const rowButtons = useRef(new Map<string, HTMLButtonElement>());
