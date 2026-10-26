@@ -1,3 +1,4 @@
+import { createAppDataStore } from './app-data-store';
 import type { MarkPrReadRequest } from '../lib/pr-read-state';
 import { createPrActionsService } from './pr-actions-service';
 import { createPrMergeMonitor } from './pr-merge-monitor';
@@ -645,12 +646,14 @@ function setupAutoUpdater() {
   setInterval(() => autoUpdater.checkForUpdates(), 4 * 60 * 60 * 1_000);
 }
 
+const appData = createAppDataStore();
 void app.whenReady().then(async () => {
   setupLogging();
   try {
-    await applyPendingGitHubCacheClear(app.getPath('userData'), () => session.defaultSession.clearCache());
+    await appData.open(app.getPath('userData'));
+    await applyPendingGitHubCacheClear(app.getPath('userData'), () => session.defaultSession.clearCache(), () => appData.clearGitHub());
   } catch (error) {
-    dialog.showErrorBox('Could not clear GitHub cache', error instanceof Error ? error.message : String(error));
+    dialog.showErrorBox('Could not open saved data', error instanceof Error ? error.message : String(error));
     app.exit(1);
     return;
   }
@@ -718,7 +721,7 @@ app.on('before-quit', (event) => {
     event.preventDefault();
     if (!cacheFlushing) {
       cacheFlushing = true;
-      void Promise.race([githubClients.closeStorage(), new Promise(resolve => setTimeout(resolve, 1500))])
+      void Promise.race([Promise.all([githubClients.closeStorage(), appData.close()]), new Promise(resolve => setTimeout(resolve, 1500))])
         .catch((error: unknown) => console.warn('Cache flush failed:', error))
         .finally(() => { cacheFlushed = true; app.quit(); });
     }
@@ -2235,6 +2238,7 @@ function formatMs(ms: number): string {
 }
 
 const workbench = createWorkbenchService({
+  storage: appData,
   signals: (client, requests) => getQueueSignals(client, requests),
   activities,
   directory: () => app.getPath('userData'),
@@ -2281,8 +2285,9 @@ ipcMain.handle('workbench-queue', async (_event, force: boolean) => {
 });
 ipcMain.handle('workbench-snapshot', () => workbench.snapshot());
 ipcMain.handle('workbench-mute-prs', (_event, request: MutePrRequest) => { const queue = workbench.mutePrs(request); rebuildTrayMenu(); return queue; });
-ipcMain.handle('workbench-mark-pr-read', (_event, request: MarkPrReadRequest) => {
+ipcMain.handle('workbench-mark-pr-read', async (_event, request: MarkPrReadRequest) => {
   const result = workbench.markPrRead(request);
+  await appData.flush();
   broadcastToAllWindows('pr-read-state-changed');
   return result;
 });

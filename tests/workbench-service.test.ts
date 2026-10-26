@@ -1696,3 +1696,23 @@ test('unchanged PR metadata does not rewrite the queue file', async (t) => {
     assert.equal(s.service.snapshot().items[0].subject.members[0].title, 'Updated title');
   } finally { t.mock.restoreAll(); s.cleanup(); }
 });
+
+test('the real queue and unread store recover from SQLite without consulting legacy files', async () => {
+  const { createAppDataStore } = await import('../src/app-data-store');
+  const s = setup(async () => '', false);
+  let storage = createAppDataStore();
+  try {
+    await s.service.queue();
+    await storage.open(s.deps.directory());
+    let service = createWorkbenchService({ ...s.deps, storage });
+    const member = service.snapshot().items[0].subject.members[0];
+    service.updatePrMetadata({ ...member, headSha: 'sqlite-head' });
+    await storage.close();
+    fs.writeFileSync(path.join(s.deps.directory(),'workbench.json'),'legacy data is no longer read');
+    storage = createAppDataStore(); await storage.open(s.deps.directory());
+    service = createWorkbenchService({ ...s.deps, storage });
+    const restored = service.snapshot();
+    assert.equal(restored.items[0].subject.members[0].headSha,'sqlite-head');
+    assert.ok(restored.readStates?.[member.url]?.unread.includes('commits'));
+  } finally { await storage.close(); s.cleanup(); }
+});

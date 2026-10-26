@@ -1,3 +1,4 @@
+import type { StateStorage } from './app-data-store';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
@@ -37,7 +38,7 @@ interface State {
 }
 const validUrl = (url: string) => /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(url);
 /** Durable user progress. Cache eviction and stack regrouping never change its identity. */
-export function createPrReadStore(directory: () => string, now = Date.now) {
+export function createPrReadStore(directory: () => string, now = Date.now, storage?: StateStorage) {
   const accounts = new Map<string, State>();
   const file = (account: string) =>
     path.join(directory(), `pr-read-${createHash('sha256').update(account.toLowerCase()).digest('hex')}.json`);
@@ -47,7 +48,9 @@ export function createPrReadStore(directory: () => string, now = Date.now) {
       let state: State = { initialized: false, entries: {} };
       try {
         // Validate persisted data before trusting its shape.
-        const parsed = JSON.parse(fs.readFileSync(file(account), 'utf8')) as State;
+        const saved = storage ? storage.read(path.basename(file(account))) : JSON.parse(fs.readFileSync(file(account), 'utf8'));
+        if (saved === undefined) throw Object.assign(new Error('No saved progress'), { code: 'ENOENT' });
+        const parsed = saved as State;
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime JSON validation
         if (typeof parsed.initialized !== 'boolean' || !parsed.entries || typeof parsed.entries !== 'object')
           throw Error('Invalid read state');
@@ -87,9 +90,12 @@ export function createPrReadStore(directory: () => string, now = Date.now) {
       next = structuredClone(previous);
     fn(next);
     if (JSON.stringify(next) === JSON.stringify(previous)) return false;
-    fs.mkdirSync(directory(), { recursive: true });
-    fs.writeFileSync(file(account) + '.tmp', JSON.stringify(next), { mode: 0o600 });
-    fs.renameSync(file(account) + '.tmp', file(account));
+    if (storage) storage.write(path.basename(file(account)), next);
+    else {
+      fs.mkdirSync(directory(), { recursive: true });
+      fs.writeFileSync(file(account) + '.tmp', JSON.stringify(next), { mode: 0o600 });
+      fs.renameSync(file(account) + '.tmp', file(account));
+    }
     accounts.set(account.toLowerCase(), next);
     return true;
   }

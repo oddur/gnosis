@@ -1,3 +1,4 @@
+import type { StateStorage } from './app-data-store';
 import { createPrReadStore } from './pr-read-store';
 import type { MarkPrReadRequest } from '../lib/pr-read-state';
 import type { QueueSignals, QueueSignalRequest } from '../lib/queue-signals';
@@ -79,6 +80,7 @@ export type WorkbenchPreferences = Pick<
 > &
   Partial<Pick<Preferences, 'proactiveReviewOverrides' | 'proactiveProvider' | 'proactiveModel' | 'proactiveThinking'>>;
 interface Deps {
+  storage?: StateStorage;
   directory: () => string;
   auth: () => { token: string | null; login: string | null };
   preferences: () => WorkbenchPreferences;
@@ -103,7 +105,7 @@ class BriefingPaused extends Error {
 }
 export function createWorkbenchService(deps: Deps) {
   const now = deps.now ?? Date.now;
-  const reads = createPrReadStore(deps.directory, now);
+  const reads = createPrReadStore(deps.directory, now, deps.storage);
   const readBaselines = new Set<string>();
   const savedViews = createSavedViewStore(deps.directory);
   const stars = createStarredPrStore(deps.directory, now);
@@ -141,7 +143,7 @@ export function createWorkbenchService(deps: Deps) {
     const account = deps.auth().login ?? 'guest';
     if (!state || state.account !== account) {
       try {
-        state = JSON.parse(fs.readFileSync(cachePath(), 'utf8')) as State;
+        state = (deps.storage ? deps.storage.read(`workbench:${account.toLowerCase()}`) : JSON.parse(fs.readFileSync(cachePath(), 'utf8'))) as State;
         for (const brief of Object.values(state.briefs))
           if (brief?.status === 'generating') {
             brief.status = 'failed';
@@ -162,6 +164,7 @@ export function createWorkbenchService(deps: Deps) {
     return state;
   }
   function save() {
+    if (deps.storage) { deps.storage.write(`workbench:${load().account.toLowerCase()}`, load()); return; }
     fs.mkdirSync(deps.directory(), { recursive: true });
     const temp = cachePath() + '.tmp';
     fs.writeFileSync(temp, JSON.stringify(load()));

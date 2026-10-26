@@ -16,7 +16,7 @@ export function requestGitHubCacheClear(directory: string) {
   fs.mkdirSync(directory, { recursive: true });
   fs.writeFileSync(path.join(directory, marker), '1', { mode: 0o600 });
 }
-export async function applyPendingGitHubCacheClear(directory: string, clearBrowserCache: () => Promise<void>) {
+export async function applyPendingGitHubCacheClear(directory: string, clearBrowserCache: () => Promise<void>, clearStoredQueue?: () => Promise<void>) {
   const request = path.join(directory, marker);
   if (!fs.existsSync(request)) return false;
   const state = savedWorkbench(directory);
@@ -39,6 +39,7 @@ export async function applyPendingGitHubCacheClear(directory: string, clearBrows
     'workbench.json.tmp',
   ])
     fs.rmSync(path.join(directory, name), { force: true });
+  await clearStoredQueue?.();
   await clearBrowserCache();
   // Keep the request after a failure so the next launch can retry safely.
   fs.rmSync(request);
