@@ -1,3 +1,5 @@
+import { createSqliteSearchIndex } from './sqlite-search-index';
+import { createCommandSearchService, type SearchRequest, type SearchInput } from './command-search-service';
 import { parentPort } from 'node:worker_threads';
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
@@ -11,6 +13,7 @@ type Request = { id: number } & (
   | { method: 'open'; args: { directory: string } }
   | { method: 'write'; args: [string, unknown][] }
   | { method: 'close' | 'clear-github'; args?: undefined }
+  | { method: 'search'; args: SearchRequest }
 );
 const record = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === 'object' && !Array.isArray(value);
@@ -89,55 +92,86 @@ function states() {
     (db.prepare('SELECT DISTINCT name FROM records').all() as { name: string }[]).map(({ name }) => [name, read(name)])
   );
 }
-port.on('message', ({ id, method, args }: Request) => {
-  try {
-    let result: unknown;
-    if (method === 'open') {
-      fs.mkdirSync(args.directory, { recursive: true });
-      const file = path.join(args.directory, 'workbench.sqlite');
-      db = new DatabaseSync(file);
-      opened = true;
-      if (process.platform !== 'win32') fs.chmodSync(file, 0o600);
-      db.exec(
-        'PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=2000; CREATE TABLE IF NOT EXISTS records (name TEXT NOT NULL,id TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(name,id)); CREATE TABLE IF NOT EXISTS migrations (id TEXT PRIMARY KEY)'
-      );
-      if (!db.prepare('SELECT id FROM migrations WHERE id=?').get('legacy-state-v1'))
+let searchInput: SearchInput | undefined;
+let searchService: ReturnType<typeof createCommandSearchService> | undefined;
+let chain = Promise.resolve();
+port.on('message', (request: Request) => {
+  chain = chain.then(async () => {
+    const { id, method, args } = request;
+    try {
+      let result: unknown;
+      if (method === 'open') {
+        fs.mkdirSync(args.directory, { recursive: true });
+        const file = path.join(args.directory, 'workbench.sqlite');
+        db = new DatabaseSync(file);
+        opened = true;
+        if (process.platform !== 'win32') fs.chmodSync(file, 0o600);
+        db.exec(
+          'PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=2000; CREATE TABLE IF NOT EXISTS records (name TEXT NOT NULL,id TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(name,id)); CREATE TABLE IF NOT EXISTS migrations (id TEXT PRIMARY KEY)'
+        );
+        if (!db.prepare('SELECT id FROM migrations WHERE id=?').get('legacy-state-v1'))
+          transaction(() => {
+            for (const name of fs.readdirSync(args.directory)) {
+              if (name !== 'workbench.json' && !/^pr-read-[a-f0-9]{64}\.json$/.test(name)) continue;
+              const value: unknown = JSON.parse(fs.readFileSync(path.join(args.directory, name), 'utf8'));
+              if (!record(value)) throw new Error(`Could not migrate ${name}. Original data has been kept.`);
+              const key = name === 'workbench.json' ? `workbench:${String(value.account).toLowerCase()}` : name;
+              write(key, value);
+            }
+            db.prepare('INSERT INTO migrations VALUES (?)').run('legacy-state-v1');
+          });
+        result = states();
+      } else if (method === 'write') {
         transaction(() => {
-          for (const name of fs.readdirSync(args.directory)) {
-            if (name !== 'workbench.json' && !/^pr-read-[a-f0-9]{64}\.json$/.test(name)) continue;
-            const value: unknown = JSON.parse(fs.readFileSync(path.join(args.directory, name), 'utf8'));
-            if (!record(value)) throw new Error(`Could not migrate ${name}. Original data has been kept.`);
-            const key = name === 'workbench.json' ? `workbench:${String(value.account).toLowerCase()}` : name;
-            write(key, value);
-          }
-          db.prepare('INSERT INTO migrations VALUES (?)').run('legacy-state-v1');
+          for (const [name, value] of args) write(name, value);
         });
-      result = states();
-    } else if (method === 'write') {
-      transaction(() => {
-        for (const [name, value] of args) write(name, value);
-      });
-    } else if (method === 'clear-github') {
-      transaction(() => {
-        for (const { name } of db.prepare("SELECT DISTINCT name FROM records WHERE name LIKE 'workbench:%'").all() as {
-          name: string;
-        }[]) {
-          const state = read(name) as Record<string, unknown>;
-          const retained = Object.fromEntries(
-            ['account', 'credentialKey', 'overrides', 'briefs', 'day', 'used', 'filters']
-              .filter((key) => key in state)
-              .map((key) => [key, state[key]])
-          );
-          write(name, { ...retained, subjects: [] });
-        }
-      });
-      result = states();
-    } else {
-      if (opened) db.close();
+      } else if (method === 'clear-github') {
+        transaction(() => {
+          for (const { name } of db
+            .prepare("SELECT DISTINCT name FROM records WHERE name LIKE 'workbench:%'")
+            .all() as {
+            name: string;
+          }[]) {
+            const state = read(name) as Record<string, unknown>;
+            const retained = Object.fromEntries(
+              ['account', 'credentialKey', 'overrides', 'briefs', 'day', 'used', 'filters']
+                .filter((key) => key in state)
+                .map((key) => [key, state[key]])
+            );
+            write(name, { ...retained, subjects: [] });
+          }
+        });
+        result = states();
+      } else if (method === 'search') {
+        if (args.input) searchInput = args.input;
+        if (!searchInput || searchInput.account !== args.account)
+          throw new Error('Search index is not ready for this account');
+        searchInput.muted = args.muted;
+        searchInput.ignoreBots = args.ignoreBots;
+        const current = () => {
+          if (!searchInput) throw new Error('Search data unavailable');
+          return searchInput;
+        };
+        if (!searchService)
+          searchService = createCommandSearchService({
+            index: createSqliteSearchIndex(db),
+            directory: () => current().directory,
+            queue: () => current().queue,
+            history: () => current().history,
+            account: () => current().account,
+            ignoreBots: () => current().ignoreBots,
+            mutedUrls: () => new Set(current().muted),
+            cachedResponses: () => current().cachedResponses,
+            threads: (url) => current().threads[url],
+          });
+        result = await searchService.search(args.query, args.includeBots, args.recentIds);
+      } else {
+        if (opened) db.close();
+      }
+      port.postMessage({ id, result });
+      if (method === 'close') port.close();
+    } catch (error) {
+      port.postMessage({ id, error: error instanceof Error ? error.message : String(error) });
     }
-    port.postMessage({ id, result });
-    if (method === 'close') port.close();
-  } catch (error) {
-    port.postMessage({ id, error: error instanceof Error ? error.message : String(error) });
-  }
+  });
 });

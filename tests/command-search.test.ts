@@ -251,3 +251,26 @@ void test('previews deduplicate stack descriptions and keep code separate from p
   const file=searchDocuments(reviewDocuments(review,entry,queue),'semaphore')[0];
   assert.equal(file.codeSnippet,'+ semaphore.release();');
 });
+
+
+void test('worker search reads saved files, persists its index and isolates accounts and current mutes', async () => {
+  const { createAppDataStore } = await import('../src/app-data-store');
+  const { createWorkerCommandSearchService } = await import('../src/command-search-service');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(),'gnosis-worker-search-'));
+  const storage=createAppDataStore();
+  let muted=new Set<string>(), account='maya';
+  try {
+    await fs.writeFile(path.join(dir,'saved.json'),JSON.stringify(review));
+    await storage.open(dir);
+    const service=createWorkerCommandSearchService({directory:()=>dir,queue:()=>queue,history:()=>[entry],
+      account:()=>account,ignoreBots:()=>true,threads:()=>undefined,mutedUrls:()=>muted},request=>storage.search(request));
+    const first=await service.search('semaphore.release');
+    assert.equal(first.hits[0].document.kind,'file');
+    assert.equal(first.hits[0].document.text.includes('DO NOT INDEX THIS HTML'),false);
+    muted=new Set([entry.prUrl]);
+    assert.equal((await service.search('semaphore')).hits.length,0);
+    account='sam'; muted=new Set();
+    assert.equal((await service.search('semaphore')).account,'sam');
+    assert.ok((await service.search('rqslots')).hits.length>0);
+  } finally {await storage.close();await fs.rm(dir,{recursive:true,force:true});}
+});

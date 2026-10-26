@@ -17,7 +17,7 @@ import { createGitHubProfileService } from './github-profile-service';
 import { createQueueSignalsService } from './queue-signals-service';
 import type { QueueSignalRequest, QueueSignalOptions, QueueSignals } from '../lib/queue-signals';
 import { githubCachedResponses } from '../lib/github-client';
-import { createCommandSearchService } from './command-search-service';
+import { createWorkerCommandSearchService } from './command-search-service';
 import type { QueueViewAction } from '../lib/saved-views';
 import { createActivityService } from './activity-service';
 import { createReviewThreadService } from './review-thread-service';
@@ -2452,7 +2452,7 @@ handleInteractive('get-github-profile', (_event, login:string) => {
   return getGitHubProfile(getGitHubClient(token),login);
 });
 const reviewThreads = createReviewThreadService();
-const commandSearch = createCommandSearchService({
+const commandSearch = createWorkerCommandSearchService({
   directory: getReviewsDir,
   cachedResponses: () => { const token=getResolvedToken(); return token?githubCachedResponses(getGitHubClient(token)):[]; },
   queue: () => workbench.cached(),
@@ -2461,7 +2461,7 @@ const commandSearch = createCommandSearchService({
   account: () => cachedLogin ?? 'local',
   ignoreBots: () => loadPreferences().ignoreDependabotPrs !== false,
   threads: (url) => { const token = getResolvedToken(); return token ? reviewThreads.cached(getGitHubClient(token), url) : undefined; },
-});
+}, request => appData.search(request));
 ipcMain.handle('command-search', (_event, query: string, includeBots: boolean, recentIds: string[]) =>
   commandSearch.search(query, includeBots === true, Array.isArray(recentIds) ? recentIds.filter(id=>typeof id==='string').slice(0,20) : []));
 handleInteractive('command-github-search', async (_event, query: string) => {

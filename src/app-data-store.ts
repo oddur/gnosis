@@ -1,3 +1,4 @@
+import type { SearchRequest, LocalSearchResponse } from './command-search-service';
 import { Worker } from 'node:worker_threads';
 import path from 'node:path';
 
@@ -97,6 +98,7 @@ export function createAppDataStore() {
       }
     },
     flush,
+    search: (request: SearchRequest) => call<LocalSearchResponse>('search', request),
     async clearGitHub() {
       await flush();
       values = await call<Record<string, unknown>>('clear-github');

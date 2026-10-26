@@ -170,7 +170,13 @@ export function SlideChatSheet({
 
   useEffect(() => {
     if (open) {
-      const timer = setTimeout(() => textareaRef.current?.focus(), 300);
+      const timer = setTimeout(() => {
+        const target = textareaRef.current;
+        const topDialog = [...document.querySelectorAll('[role="dialog"][data-state="open"]')]
+          .filter(dialog => dialog.checkVisibility()).at(-1);
+        // A palette opened during the sheet animation owns keyboard focus now.
+        if (target && (!topDialog || topDialog.contains(target))) target.focus();
+      }, 300);
       return () => clearTimeout(timer);
     }
   }, [open]);
