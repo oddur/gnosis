@@ -237,20 +237,20 @@ void test('restores saved inventories before a cold PR can block the worker on G
   }
 });
 
-void test('active PR completes before visible PRs, then current view, then the backlog', async () => {
+void test('active and visible PRs precede unread work, then current view and backlog', async () => {
   const f = fixture({ commits: 3, comparisonFiles: true });
-  const revisions = ['backlog', 'view', 'visible', 'active'].map((headSha, i) => ({ ...r, url: `${r.url}${i}`, headSha }));
+  const revisions = ['backlog', 'view', 'unread', 'visible', 'active'].map((headSha, i) => ({ ...r, url: `${r.url}${i}`, headSha }));
   try {
-    f.cache.setTargets('one', revisions, { active: [revisions[3].url], visible: [revisions[2].url], view: [revisions[1].url] });
+    f.cache.setTargets('one', revisions, { active: [revisions[4].url], visible: [revisions[3].url], unread: [revisions[2].url, revisions[3].url, revisions[4].url], view: [revisions[1].url] });
     await f.cache.flush();
-    for (const [first, second] of [['active', 'visible'], ['visible', 'view'], ['view', 'backlog']]) {
+    for (const [first, second] of [['active', 'visible'], ['visible', 'unread'], ['unread', 'view'], ['view', 'backlog']]) {
       assert.ok(f.calls.indexOf(`file:${first}:history-commit-0.ts`) < f.calls.indexOf(`changes:${second}`));
     }
-    assert.equal(f.calls.filter(call => call.startsWith('comparison:')).length, 12, 'Every commit, not just the newest');
-    assert.equal(f.calls.filter(call => call.includes(':history-')).length, 12, 'Every commit file');
+    assert.equal(f.calls.filter(call => call.startsWith('comparison:')).length, 15, 'Every commit, not just the newest');
+    assert.equal(f.calls.filter(call => call.includes(':history-')).length, 15, 'Every commit file');
     assert.ok(f.calls.indexOf('comparison:active:commit-2') < f.calls.indexOf('comparison:active:commit-1'));
     const count = f.calls.length;
-    f.cache.setTargets('one', revisions, { active: [revisions[3].url] });
+    f.cache.setTargets('one', revisions, { active: [revisions[4].url] });
     await f.cache.flush();
     assert.equal(f.calls.length, count, 'Priority changes do not repeat completed downloads');
   } finally { f.cache.stop(); }
@@ -302,5 +302,30 @@ void test('queues larger than the inventory memory limit still prepare every PR'
     f.cache.setTargets('one', revisions);
     await f.cache.flush();
     assert.equal(new Set(f.calls.filter(call => call.startsWith('review:'))).size, revisions.length);
+  } finally { f.cache.stop(); }
+});
+
+void test('marking work read demotes unfinished downloads without repeating completed files', async () => {
+  const other = { ...r, url: r.url + '2', headSha: 'unread' };
+  let changed = false;
+  const f = fixture({ onFile: () => {
+    if (!changed) {
+      changed = true;
+      // The first PR was read while its first file was in flight.
+      f.cache.setTargets('one', [r, other], { unread: [other.url] });
+    }
+    return Promise.resolve();
+  } });
+  try {
+    f.cache.setTargets('one', [r, other], { unread: [r.url] });
+    await f.cache.flush();
+    assert.equal(f.calls[0], 'changes:head');
+    assert.ok(f.calls.indexOf('review:unread') < f.calls.indexOf('file:head:second.ts'));
+    assert.equal(f.calls.filter(call => call === 'file:head:first.ts').length, 1);
+    assert.ok(f.calls.includes('review:head'), 'Read work still completes');
+    const count = f.calls.length;
+    f.cache.setTargets('one', [r, other], { unread: [r.url, other.url] });
+    await f.cache.flush();
+    assert.equal(f.calls.length, count, 'Marking completed work unread does not download it again');
   } finally { f.cache.stop(); }
 });

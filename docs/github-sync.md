@@ -75,8 +75,11 @@ When a PR base or head SHA changes, discovery schedules that revision for prepar
 
 1. The selected PR or stack.
 2. PRs visible in the queue viewport.
-3. Other PRs in the current filtered view.
-4. The remaining discovered queue.
+3. Unread PRs, including those outside the current filtered view.
+4. Other PRs in the current filtered view.
+5. The remaining discovered queue.
+
+Read-state changes update these priorities without repeating completed preparation. Stack members use their individual unread states.
 
 Within each priority group, file and commit lists come first. Preparation then downloads the newest commit, changed files, review diff, and older commits.
 Every individual commit and its files are eligible. Custom commit ranges, alternate merge parents, and LFS downloads remain on demand.
@@ -91,7 +94,7 @@ Metadata and CI updates do not repeat content downloads for unchanged base and h
 Guided reviews check the current revision, then reuse its prepared file list, comparison base, full diff, and file contents.
 Generation checks the revision again before saving. Fork files retain their source repository. Renamed files retain both paths.
 
-The renderer retains up to 32 MB and 128 files. Eviction favors active PRs, visible PRs, and the current view.
+The renderer retains up to 32 MB and 128 files. Eviction favors active PRs, visible PRs, unread PRs, and the current view.
 When the selected PR leaves memory, preparation restores it from SQLite. Account changes clear renderer data and discard late responses.
 Preparation can finish the eligible queue within the available API allowance and disk budget. A smaller budget can evict earlier downloads.
 Cold data, new revisions, expired or evicted downloads, and unsupported previews can still require loading or a fallback.
