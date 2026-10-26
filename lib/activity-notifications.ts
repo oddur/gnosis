@@ -5,8 +5,10 @@ export function createActivityCompletionTracker() {
   let initialized = false;
   const announced = new Map<string, string>();
   return (tasks: ActivityTask[]): ActivityTask[] => {
-    const completed = tasks.filter(
-      (task) => task.status === 'completed' && (task.kind === 'review' || task.kind === 'exploration') && task.reviewId
+    const completed = tasks.filter((task) =>
+      task.kind === 'pr-action'
+        ? task.status === 'completed' || task.status === 'failed'
+        : task.status === 'completed' && (task.kind === 'review' || task.kind === 'exploration') && !!task.reviewId
     );
     const fresh = initialized ? completed.filter((task) => announced.get(task.id) !== task.updatedAt) : [];
     for (const task of completed) announced.set(task.id, task.updatedAt);

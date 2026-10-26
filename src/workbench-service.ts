@@ -934,6 +934,13 @@ export function createWorkbenchService(deps: Deps) {
       stars.set(load().account, request);
       return view();
     },
+    updatePrMetadata(metadata: PrMetadata) {
+      const s = load();
+      s.subjects = s.subjects.map(subject => ({ ...subject, members: subject.members.map(member => member.url === metadata.url ? { ...member, ...metadata } : member) }));
+      const saved = stars.load(s.account).find(entry => entry.member.url === metadata.url);
+      if (saved) stars.update(s.account, [{ ...saved.member, ...metadata }]);
+      save();
+    },
     updateStarredMetadata(metadata: PrMetadata) {
       const account = deps.auth().login;
       if (!account) return;

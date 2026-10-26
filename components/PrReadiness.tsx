@@ -1,3 +1,4 @@
+import { PrActions } from './PrActions';
 import { DiffStats } from './DiffStats';
 import { ChevronDown, CircleCheck, CircleHelp, CircleAlert, Clock3, GitPullRequest } from 'lucide-react';
 import type { ReviewMember } from '../lib/workbench';
@@ -157,6 +158,7 @@ export function PrReadiness({
           )}
         </span>
       </div>
+      <PrActions key={member.url} member={member} onChanged={onRetry} />
       {error && (
         <div className="pr-status-error" role="status">
           <p>{githubFailureMessage(error)}</p>
