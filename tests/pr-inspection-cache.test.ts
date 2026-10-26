@@ -329,3 +329,42 @@ void test('marking work read demotes unfinished downloads without repeating comp
     assert.equal(f.calls.length, count, 'Marking completed work unread does not download it again');
   } finally { f.cache.stop(); }
 });
+
+void test('preload activity reports the current PR, pending counts, backoff, and completion', async () => {
+  let release!: () => void;
+  let entered!: () => void;
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  let blocked = false;
+  const f = fixture({ onFile: () => {
+    if (!blocked) {
+      blocked = true; entered();
+      return new Promise<void>(resolve => { release = resolve; });
+    }
+    return Promise.resolve();
+  } });
+  try {
+    assert.equal(f.cache.activity(), undefined);
+    f.cache.setTargets('one', [r]);
+    const loading = f.cache.flush();
+    await waiting;
+    const task = f.cache.activity();
+    assert.ok(task);
+    assert.equal(task.kind, 'preload');
+    assert.equal(task.status, 'running');
+    assert.match(task.detail, /o\/r #1.*Changed files/);
+    assert.deepEqual(task.progress, { completed: 0, total: 1, unit: 'PRs' });
+    release(); await loading;
+    assert.equal(f.cache.activity(), undefined, 'Completed preparation disappears instead of becoming a ready notification');
+    f.fail(true);
+    f.cache.setTargets('one', [{ ...r, headSha: 'new' }]);
+    await f.cache.flush();
+    assert.equal(f.cache.activity()?.status, 'paused');
+    assert.match(f.cache.activity()?.detail ?? '', /API allowance.*Retrying automatically/);
+    f.fail(false); f.advance(); await f.cache.flush();
+    assert.equal(f.cache.activity(), undefined);
+    f.cache.setTargets('one', [{ ...r, headSha: 'another' }]);
+    assert.ok(f.cache.activity());
+    f.cache.setTargets(null, []);
+    assert.equal(f.cache.activity(), undefined, 'Sign-out removes the old account activity');
+  } finally { f.cache.stop(); }
+});
