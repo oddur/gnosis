@@ -26,7 +26,7 @@ export function QueueFilterPanel({
   const labels = [
     ...new Set([...members.flatMap((m) => m.labels), ...(filters.label === 'all' ? [] : [filters.label])]),
   ].sort();
-  const fields: { key: Exclude<keyof QueueFilters, 'starredOnly' | 'unreadOnly'>; label: string; options: [string, string][] }[] = [
+  const fields: { key: Exclude<keyof QueueFilters, 'starredOnly' | 'unreadOnly' | 'sort'>; label: string; options: [string, string][] }[] = [
     {
       key: 'status',
       label: 'PR status',

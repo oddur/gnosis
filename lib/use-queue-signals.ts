@@ -134,3 +134,27 @@ export function useQueueSignals(scope: string | null, requests: QueueSignalReque
   }, [scope, key]);
   return { ref, values, loaded };
 }
+
+/** Observe cached status for sorting; this hook never requests a GitHub refresh. */
+export function useCachedQueueSignals(scope: string | null, requests: QueueSignalRequest[], enabled: boolean) {
+  const [state, setState] = useState<{ scope: string | null; key: string; values: QueueSignals[] }>({ scope: null, key: '', values: [] });
+  const key = enabled ? JSON.stringify(requests.map(({ url, headSha }) => ({ url, headSha }))) : '';
+  useEffect(() => {
+    setState({ scope, key, values: [] });
+    if (!scope || !key) return;
+    const members = JSON.parse(key) as QueueSignalRequest[];
+    const lifecycle = { cancelled: false };
+    const update = () => setState({ scope, key, values: members.flatMap(member => accounts.get(scope)?.entries.get(queueSignalKey(member))?.value ?? []) });
+    update();
+    updates.addEventListener(scope, update);
+    void (async () => {
+      for (let i = 0; i < members.length; i += 25) {
+        const cached = await window.electronAPI.getQueueSignals(members.slice(i, i + 25), { cachedOnly: true }).catch(() => []);
+        if (lifecycle.cancelled) return;
+        publishQueueSignals(scope, cached);
+      }
+    })();
+    return () => { lifecycle.cancelled = true; updates.removeEventListener(scope, update); };
+  }, [scope, key]);
+  return state.scope === scope && state.key === key ? state.values : [];
+}

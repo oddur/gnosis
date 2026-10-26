@@ -68,6 +68,11 @@ function isSignals(value: unknown): value is QueueSignals {
     typeof value.checks.passed === 'number'
   );
 }
+/** Read-only ordering input; never starts a GitHub request. */
+export function cachedQueueSignals(client: Octokit, requests: QueueSignalRequest[]): QueueSignals[] {
+  const cache = githubCacheFor(client);
+  return requests.flatMap(request => cache?.get(`queue-signals:v3:${queueSignalKey(request)}`, isSignals)?.value ?? []);
+}
 /** Visible-row reads, batched across repositories, with credential-scoped snapshots and backoff. */
 export function createQueueSignalsService(now = Date.now) {
   const accounts = new WeakMap<Octokit, { retryAt: number; pending: Map<string, GitHubWork<QueueSignals[]>> }>();

@@ -88,6 +88,7 @@ interface Deps {
   busy: () => boolean;
   activities?: ActivityService;
   client?: () => Octokit;
+  cachedSignals?: (requests: QueueSignalRequest[]) => QueueSignals[];
   signals?: (client: Octokit, requests: QueueSignalRequest[]) => Promise<QueueSignals[]>;
   provider?: typeof getProvider;
   now?: () => number;
@@ -825,7 +826,7 @@ export function createWorkbenchService(deps: Deps) {
         manualItem ??
         (preferences.autoBriefings === false
           ? undefined
-          : prioritizeBriefings(candidates, filters, now(), deps.auth().login).find(
+          : prioritizeBriefings(candidates, filters, now(), deps.auth().login, filters.sort.key === 'status' ? deps.cachedSignals?.(candidates.flatMap(item => item.subject.members)) : undefined).find(
               (i) => !s.briefs[key(i.subject, p)] || s.briefs[key(i.subject, p)]?.status === 'paused'
             ));
       if (!item || s.used >= limit(preferences)) return;

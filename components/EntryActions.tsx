@@ -1,4 +1,5 @@
-import { useRef, useState, type ReactElement, type ReactNode } from 'react';
+import { setEntryMenuOpen } from '../lib/entry-menu-state';
+import { useRef, useState, useLayoutEffect, type ReactElement, type ReactNode } from 'react';
 import { Menu } from '@base-ui/react/menu';
 import { MoreHorizontal } from 'lucide-react';
 import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from './ui/context-menu';
@@ -34,6 +35,12 @@ export function EntryActions({
   const busy = useRef(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuId = useRef(Symbol('entry-menu'));
+  useLayoutEffect(() => {
+    const id = menuId.current;
+    setEntryMenuOpen(id, menuOpen || contextOpen);
+    return () => setEntryMenuOpen(id, false);
+  }, [menuOpen, contextOpen]);
   const items = groups
     .filter((group) => group.length)
     .map((group, index) => (
