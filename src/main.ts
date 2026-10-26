@@ -1,3 +1,4 @@
+import type { MarkPrReadRequest } from '../lib/pr-read-state';
 import { createPrActionsService } from './pr-actions-service';
 import { createPrMergeMonitor } from './pr-merge-monitor';
 import type { PrActionRequest } from '../lib/pr-actions';
@@ -1404,7 +1405,9 @@ async function fetchPrStatus(prUrl: string, force = false): Promise<PrStatus | n
     ),
   ]);
   try {
-    workbench.updateStarredMetadata(prData);
+    if (getResolvedToken() !== token) return null;
+    workbench.updatePrMetadata(prData);
+    if (cachedLogin && signals && workbench.observeReadSignals(cachedLogin, [signals])) broadcastToAllWindows('pr-read-state-changed');
   } catch (error) {
     console.warn('Could not update the saved starred PR metadata:', error);
   }
@@ -2220,6 +2223,7 @@ function formatMs(ms: number): string {
 }
 
 const workbench = createWorkbenchService({
+  signals: (client, requests) => getQueueSignals(client, requests),
   activities,
   directory: () => app.getPath('userData'),
   auth: () => ({ token: getResolvedToken(), login: cachedLogin }),
@@ -2265,6 +2269,11 @@ ipcMain.handle('workbench-queue', async (_event, force: boolean) => {
 });
 ipcMain.handle('workbench-snapshot', () => workbench.snapshot());
 ipcMain.handle('workbench-mute-prs', (_event, request: MutePrRequest) => { const queue = workbench.mutePrs(request); rebuildTrayMenu(); return queue; });
+ipcMain.handle('workbench-mark-pr-read', (_event, request: MarkPrReadRequest) => {
+  const result = workbench.markPrRead(request);
+  broadcastToAllWindows('pr-read-state-changed');
+  return result;
+});
 ipcMain.handle('workbench-star-prs', (_event, request: StarPrRequest) => workbench.starPrs(request));
 ipcMain.handle('workbench-view-action', (_event, action: QueueViewAction) => workbench.viewAction(action));
 ipcMain.handle('workbench-set-filters', (_event, filters: unknown) => workbench.setFilters(filters));
@@ -2412,10 +2421,13 @@ ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
 
 const getGitHubProfile = createGitHubProfileService();
 const getQueueSignals = createQueueSignalsService();
-ipcMain.handle('get-queue-signals', (_event, requests: QueueSignalRequest[], options?: QueueSignalOptions) => {
+ipcMain.handle('get-queue-signals', async (_event, requests: QueueSignalRequest[], options?: QueueSignalOptions) => {
   const token = getResolvedToken();
   if (!token) return [];
-  return getQueueSignals(getGitHubClient(token), requests, options);
+  const account = cachedLogin;
+  const values = await getQueueSignals(getGitHubClient(token), requests, options);
+  if (account && workbench.observeReadSignals(account, values)) broadcastToAllWindows('pr-read-state-changed');
+  return values;
 });
 handleInteractive('get-github-profile', (_event, login:string) => {
   const token=getResolvedToken();
@@ -2455,19 +2467,27 @@ function discussionClient() {
 }
 handleInteractive('get-review-threads', (_event, prUrl: string, refresh: boolean) =>
   reviewThreads.list(discussionClient(), prUrl, refresh));
-handleInteractive('review-thread-action', (_event, req: ReviewThreadAction) =>
-  reviewThreads.act(discussionClient(), req));
+handleInteractive('review-thread-action', async (_event, req: ReviewThreadAction) => {
+  const account = cachedLogin;
+  const result = await reviewThreads.act(discussionClient(), req);
+  if (account && req.action === 'reply') workbench.noteOwnReview(account, req.prUrl, 1);
+  return result;
+});
 
 handleInteractive('review-comment-action', (_event, req: ReviewCommentAction) =>
   reviewThreads.comment(discussionClient(), req));
 handleInteractive('create-review-comment', async (_event, req: CreateReviewCommentRequest) => {
   const client = discussionClient();
+  const account = cachedLogin;
   await createReviewComment(client, req);
+  if (account) workbench.noteOwnReview(account, req.prUrl, 1);
   reviewThreads.invalidate(client, req.prUrl);
 });
 handleInteractive('submit-review', async (_event, req: SubmitReviewRequest) => {
   const client = discussionClient();
+  const account = cachedLogin;
   const result = await submitPrReview(client, req, loadPreferences().reviewSignature);
+  if (account) workbench.noteOwnReview(account, req.prUrl, req.comments.length - result.droppedCommentCount, result.reviewUrl);
   reviewThreads.invalidate(client, req.prUrl);
   return result;
 });
@@ -2479,7 +2499,7 @@ async function refreshActionTargets(client: ReturnType<typeof getGitHubClient>, 
     const metadata = await getPrMetadata(client, owner, repo, pullNumber, true);
     // Do not reconcile an old account's result into the newly signed-in account.
     if (client !== getGitHubClient(getResolvedToken())) return;
-    workbench.updatePrMetadata(metadata);
+    workbench.updatePrMetadata(metadata, true);
   }
 }
 const prMergeMonitor = createPrMergeMonitor({

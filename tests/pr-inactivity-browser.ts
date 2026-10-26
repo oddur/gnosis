@@ -1,3 +1,4 @@
+import { menuAction } from './entry-menu-helpers';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -18,6 +19,9 @@ void app.whenReady().then(async () => {
     throw Error(`Timed out: ${code}`);
   };
   const click = async (label: string) => {
+    if (/^(Unstar|Star) PR #/.test(label)) {
+      return menuAction(js, `Actions for PR #${label.split('#')[1]}`, label);
+    }
     await js(
       `(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.getBoundingClientRect().width&&(b.textContent.trim()===${JSON.stringify(label)}||b.getAttribute('aria-label')===${JSON.stringify(label)}||b.getAttribute('title')===${JSON.stringify(label)}));if(!b)throw Error('Missing '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
     );
@@ -48,7 +52,7 @@ void app.whenReady().then(async () => {
     await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&inactivity`);
     await wait("document.querySelectorAll('.queue-item').length===6");
     assert.equal(
-      await js('!!document.querySelector(\'[aria-label="Star PR #150"]\')'),
+      await js('!!document.querySelector(\'[aria-label="Actions for PR #150"]\')'),
       false,
       'Inactive standalone PR starts hidden'
     );

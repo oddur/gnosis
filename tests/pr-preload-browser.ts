@@ -30,7 +30,7 @@ void app.whenReady().then(async () => {
         const original=window.electronAPI[name];window.electronAPI[name]=async(...args)=>{window.inspectionReads.push({name,args});await new Promise(r=>setTimeout(r,250));return original(...args)};
       }
       window.deepAll=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(selector,e.shadowRoot))];
-      window.loadingFlashes=[];new MutationObserver(()=>{if(document.querySelector('.changes-loading')||document.querySelector('.commits-loading'))window.loadingFlashes.push(document.body.innerText)}).observe(document.body,{subtree:true,childList:true});
+      window.loadingFlashes=[];new MutationObserver(()=>{if([...document.querySelectorAll('.changes-loading,.commits-loading')].some(e=>{const r=e.getBoundingClientRect(),p=e.closest('.commit-diff-stream')?.getBoundingClientRect();return r.width>0&&r.height>0&&r.bottom>Math.max(0,p?.top??0)&&r.top<Math.min(innerHeight,p?.bottom??innerHeight)}))window.loadingFlashes.push(document.body.innerText)}).observe(document.body,{subtree:true,childList:true});
     })()`);
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()"
@@ -40,7 +40,7 @@ void app.whenReady().then(async () => {
     await click('Changes');
     await wait("!!document.querySelector('.review-image-diff')");
     await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='new.ts').click()");
-    await wait("document.querySelector('.changes-file-header h2')?.textContent==='src/new.ts'");
+    await wait("document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/new.ts'");
     assert.deepEqual(await js('window.loadingFlashes'), [], 'Prepared Changes opens without a loading phase');
     assert.deepEqual(await js('window.inspectionReads'), [], 'Prepared file selection needs no IPC content fetch');
     await click('Commits');

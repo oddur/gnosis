@@ -850,7 +850,7 @@ function ReviewPageContent({
 
       {!embedded && <div className="pr-summary-toolbar"><div className="pr-summary-toolbar-inner">
         <ReviewBreadcrumbs scope="explanation" base={[
-          { id: 'origin', label: origin?.name ?? 'Work queue', navigate: onBack },
+          { id: 'origin', label: origin?.name ?? 'Review queue', navigate: onBack },
           ...(isLocal ? [{ id: 'repository', label: review.prUrl.slice(6).split('#')[0].split('/').filter(Boolean).pop() ?? 'Local repository', title: review.prUrl }] : []),
           { id: 'review', label: review.prTitle, navigate: () => handleJumpTo(0),
             pickerLabel: 'Saved review', value: review.reviewId, options: origin?.reviews.map(r => ({ value: r.id, label: r.title })), select: onSelectReview },
@@ -939,6 +939,7 @@ function ReviewPageContent({
               onFileViewedChange={setFileViewed}
               onContinue={() => handleJumpTo(currentSlide < review.slides.length ? currentSlide + 1 : 0)}
               nextTopicTitle={nextTitle}
+              showReviewSuggestions={prefs?.reviewSuggestions !== false}
               showInlineExplanations={prefs?.showInlineExplanations !== false}
               onShowInlineExplanationsChange={handleShowInlineExplanationsChange}
               slide={review.slides[currentSlide - 1]}
@@ -978,7 +979,7 @@ function ReviewPageContent({
                     onOpenChange={setChatOpen}
                     slideId={review.slides[currentSlide - 1].id}
                     slideTitle={review.slides[currentSlide - 1].title}
-                    reviewFocus={review.slides[currentSlide - 1].reviewFocus}
+                    reviewFocus={prefs?.reviewSuggestions === false ? null : review.slides[currentSlide - 1].reviewFocus}
                     messages={slideChat.getMessages(currentSlide)}
                     isStreaming={slideChat.isStreaming}
                     onSend={(text) => void slideChat.send(currentSlide, text)}

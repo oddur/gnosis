@@ -37,7 +37,7 @@ void app.whenReady().then(async () => {
     await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
     await wait("document.querySelectorAll('.queue-item').length===7");
     await js(
-      `window.deepAll=(s,r=document)=>[...r.querySelectorAll(s),...[...r.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(s,e.shadowRoot))];window.contextCount=()=>window.deepAll('[data-line-type=context][data-column-number]',document.querySelector('.changes-code')).length;void 0;`
+      `window.deepAll=(s,r=document)=>[...r.querySelectorAll(s),...[...r.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(s,e.shadowRoot))];window.contextCount=()=>window.deepAll('[data-line-type=context][data-column-number]',document.querySelector('[data-file*="src/worker.ts"] .changes-code')).length;void 0;`
     );
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(e=>e.textContent.includes('Fix reconnect')).click()"
@@ -63,7 +63,7 @@ void app.whenReady().then(async () => {
     await js(
       `document.querySelector('[role=dialog]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`
     );
-    await click('Work queue');
+    await click('Review queue');
     await js("document.querySelector('.queue-item:has(.queue-disclosure) .queue-row-main').click()");
     await click('Open AI explanation');
     await wait("!!document.querySelector('.workbench-overview')");
@@ -86,7 +86,7 @@ void app.whenReady().then(async () => {
     console.error(e);
     console.log(
       await js(
-        `({count:window.contextCount?.(),lines:window.deepAll('[data-line-type]',document.querySelector('.changes-code')).map(e=>[e.tagName,e.getAttribute('data-line-type'),e.getAttribute('data-column-number')]).slice(0,50),text:document.querySelector('.changes-code')?.textContent})`
+        `({count:window.contextCount?.(),lines:window.deepAll('[data-line-type]',document.querySelector('[data-file*="src/worker.ts"] .changes-code')).map(e=>[e.tagName,e.getAttribute('data-line-type'),e.getAttribute('data-column-number')]).slice(0,50),text:document.querySelector('[data-file*="src/worker.ts"] .changes-code')?.textContent})`
       )
     );
     process.exitCode = 1;

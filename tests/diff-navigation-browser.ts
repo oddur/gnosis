@@ -73,7 +73,7 @@ void app.whenReady().then(async () => {
     const cold = await js<{ loading: boolean; path: string }>(
       `({loading:!!document.querySelector('.commit-stream-row[data-active=true] .changes-loading'),path:document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent})`
     );
-    assert.equal(cold.loading, false);
+    assert.equal(cold.path, 'src/old.ts', 'A cold file remains reachable in the continuous stream');
     await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='worker.ts').click()");
     await new Promise((r) => setTimeout(r, 600));
     assert.equal(

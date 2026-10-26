@@ -6,6 +6,15 @@ import { Combobox as ComboboxPrimitive } from '@base-ui/react/combobox';
 import { Check, ChevronDown, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
+/** Keep popups within modal focus boundaries. Overlays can opt in or pass through explicitly. */
+export function findComboboxContainer(trigger: HTMLElement | null): HTMLElement | null {
+  for (let element = trigger?.parentElement; element; element = element.parentElement) {
+    const boundary = element.getAttribute('data-combobox-container');
+    if (boundary === 'inside' || (element.getAttribute('role') === 'dialog' && boundary !== 'outside')) return element;
+  }
+  return null;
+}
+
 const Combobox = ComboboxPrimitive.Root;
 const ComboboxValue = ComboboxPrimitive.Value;
 

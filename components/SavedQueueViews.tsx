@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { DropdownMenu, Popover } from 'radix-ui';
-import { Bookmark, MoreHorizontal, GripVertical, X } from 'lucide-react';
+import { Popover } from 'radix-ui';
+import { EntryActions } from './EntryActions';
+import { Bookmark, GripVertical, X } from 'lucide-react';
 import { viewIsModified, type QueueViewAction, type QueueViewsSnapshot, type SavedQueueView } from '../lib/saved-views';
 import type { QueueFilters } from '../lib/queue-filters';
 
@@ -82,86 +83,79 @@ export function SavedViewsNav({
             if (!open) setRenaming(null);
           }}
         >
-          <Popover.Anchor asChild>
-            <div
-              className={`saved-view-row${dragging === view.id ? ' dragging' : ''}`}
-              onDragOver={(event) => {
-                if (dragging && !busy) event.preventDefault();
-              }}
-              onDrop={(event) => {
-                event.preventDefault();
-                if (dragging && !busy) act({ type: 'move', id: dragging, beforeId: view.id });
-                setDragging(null);
-              }}
-            >
-              <button
-                className="saved-view-drag"
-                draggable={!busy}
-                aria-label={`Drag ${view.name} to reorder`}
-                title="Drag to reorder; the view menu also has Move up and Move down"
-                disabled={busy}
-                onDragStart={(event) => {
-                  event.dataTransfer.setData('text/plain', view.id);
-                  event.dataTransfer.effectAllowed = 'move';
-                  setDragging(view.id);
+          <EntryActions
+            label={`Manage ${view.name}`}
+            buttonClassName="saved-view-menu-trigger"
+            restoreFocus={renaming !== view.id}
+            groups={[
+              [
+                { label: 'Rename', disabled: busy, run: () => setRenaming(view.id) },
+                { label: 'Duplicate', disabled: busy, run: () => onAction({ type: 'duplicate', id: view.id }) },
+                {
+                  label: 'Move up',
+                  disabled: busy || index === 0,
+                  run: () => onAction({ type: 'move', id: view.id, beforeId: state.views[index - 1].id }),
+                },
+                {
+                  label: 'Move down',
+                  disabled: busy || index === state.views.length - 1,
+                  run: () => onAction({ type: 'move', id: view.id, beforeId: state.views[index + 2]?.id ?? null }),
+                },
+              ],
+              [
+                {
+                  label: 'Delete view',
+                  destructive: true,
+                  disabled: busy,
+                  run: () => onAction({ type: 'delete', id: view.id }),
+                },
+              ],
+            ]}
+          >
+            {(actions) => (
+              <div
+                className={`saved-view-row${dragging === view.id ? ' dragging' : ''}`}
+                onDragOver={(event) => {
+                  if (dragging && !busy) event.preventDefault();
                 }}
-                onDragEnd={() => setDragging(null)}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  if (dragging && !busy) act({ type: 'move', id: dragging, beforeId: view.id });
+                  setDragging(null);
+                }}
               >
-                <GripVertical size={12} />
-              </button>
-              <button
-                className={`saved-view-link${active && state.activeId === view.id ? ' active' : ''}`}
-                aria-current={active && state.activeId === view.id ? 'page' : undefined}
-                title={`${view.name} — ${state.counts[view.id] ?? 0} PRs and stacks matching the saved filters, using cached GitHub data`}
-                disabled={busy}
-                onClick={() => act({ type: 'activate', id: view.id })}
-              >
-                <Bookmark size={15} />
-                <span className="saved-view-name">{view.name}</span>
-                <span className="saved-view-count">{state.counts[view.id] ?? 0}</span>
-              </button>
-              <DropdownMenu.Root>
-                <DropdownMenu.Trigger asChild>
-                  <button className="saved-view-menu-trigger" disabled={busy} aria-label={`Manage ${view.name}`}>
-                    <MoreHorizontal size={15} />
-                  </button>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Portal>
-                  <DropdownMenu.Content
-                    className="saved-view-menu"
-                    side="right"
-                    align="start"
-                    sideOffset={6}
-                    collisionPadding={12}
-                    onCloseAutoFocus={(event) => {
-                      if (renaming === view.id) event.preventDefault();
-                    }}
-                  >
-                    <DropdownMenu.Item onSelect={() => setRenaming(view.id)}>Rename</DropdownMenu.Item>
-                    <DropdownMenu.Item onSelect={() => act({ type: 'duplicate', id: view.id })}>
-                      Duplicate
-                    </DropdownMenu.Item>
-                    <DropdownMenu.Item
-                      disabled={index === 0}
-                      onSelect={() => act({ type: 'move', id: view.id, beforeId: state.views[index - 1].id })}
-                    >
-                      Move up
-                    </DropdownMenu.Item>
-                    <DropdownMenu.Item
-                      disabled={index === state.views.length - 1}
-                      onSelect={() => act({ type: 'move', id: view.id, beforeId: state.views[index + 2]?.id ?? null })}
-                    >
-                      Move down
-                    </DropdownMenu.Item>
-                    <DropdownMenu.Separator />
-                    <DropdownMenu.Item onSelect={() => act({ type: 'delete', id: view.id })}>
-                      Delete view
-                    </DropdownMenu.Item>
-                  </DropdownMenu.Content>
-                </DropdownMenu.Portal>
-              </DropdownMenu.Root>
-            </div>
-          </Popover.Anchor>
+                <button
+                  className="saved-view-drag"
+                  draggable={!busy}
+                  aria-label={`Drag ${view.name} to reorder`}
+                  title="Drag to reorder; the view menu also has Move up and Move down"
+                  disabled={busy}
+                  onDragStart={(event) => {
+                    event.dataTransfer.setData('text/plain', view.id);
+                    event.dataTransfer.effectAllowed = 'move';
+                    setDragging(view.id);
+                  }}
+                  onDragEnd={() => setDragging(null)}
+                >
+                  <GripVertical size={12} />
+                </button>
+                <button
+                  className={`saved-view-link${active && state.activeId === view.id ? ' active' : ''}`}
+                  aria-current={active && state.activeId === view.id ? 'page' : undefined}
+                  title={`${view.name} — ${state.counts[view.id] ?? 0} PRs and stacks matching the saved filters, using cached GitHub data`}
+                  disabled={busy}
+                  onClick={() => act({ type: 'activate', id: view.id })}
+                >
+                  <Bookmark size={15} />
+                  <span className="saved-view-name">{view.name}</span>
+                  <span className="saved-view-count">{state.counts[view.id] ?? 0}</span>
+                </button>
+                <Popover.Anchor asChild>
+                  <span className="saved-view-actions">{actions}</span>
+                </Popover.Anchor>
+              </div>
+            )}
+          </EntryActions>
           <Popover.Portal>
             <Popover.Content
               className="save-view-popover"

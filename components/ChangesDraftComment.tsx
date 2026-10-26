@@ -1,28 +1,37 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useSessionDraft } from '../lib/session-drafts';
 import { Button } from './ui/button';
-import type { ChangesReviewDraft } from '../lib/changes-review-drafts';
+import type { PendingReviewComment } from '../lib/types';
 export function ChangesDraftComment({
   comment,
   onEdit,
   onRemove,
+  disabled = false,
+  onEditingChange,
 }: {
-  comment: ChangesReviewDraft;
+  comment: PendingReviewComment;
   onEdit: (id: string, body: string) => void;
   onRemove: (id: string) => void;
+  disabled?: boolean;
+  onEditingChange?: (id: string, editing: boolean) => void;
 }) {
-  const [editing, setEditing] = useState(false),
-    [error, setError] = useState('');
+  const [editing, setEditing] = useSessionDraft(`changes-draft-editing:${comment.id}`, false);
+  const [error, setError] = useState('');
   const [body, setBody] = useSessionDraft(`changes-draft-edit:${comment.id}`, comment.body);
   const id = useId();
+  useEffect(() => {
+    onEditingChange?.(comment.id, editing);
+    return () => onEditingChange?.(comment.id, false);
+  }, [comment.id, editing, onEditingChange]);
   return (
     <div className="changes-draft-comment">
       {editing ? (
         <form
           onSubmit={(e) => {
             e.preventDefault();
+            if (disabled || !body.trim()) return;
             try {
               onEdit(comment.id, body.trim());
               setEditing(false);
@@ -39,14 +48,15 @@ export function ChangesDraftComment({
             maxLength={65536}
             autoFocus
             value={body}
+            disabled={disabled}
             onChange={(e) => setBody(e.target.value)}
           />
           {error && <p role="alert">{error}</p>}
           <div className="changes-comment-buttons">
-            <Button variant="ghost" size="sm" type="button" onClick={() => setEditing(false)}>
+            <Button variant="ghost" size="sm" type="button" disabled={disabled} onClick={() => setEditing(false)}>
               Cancel
             </Button>
-            <Button size="sm" disabled={!body.trim()}>
+            <Button size="sm" disabled={disabled || !body.trim()}>
               Save draft
             </Button>
           </div>
@@ -79,6 +89,7 @@ export function ChangesDraftComment({
             <Button
               variant="ghost"
               size="sm"
+              disabled={disabled}
               onClick={() => {
                 setBody(comment.body);
                 setEditing(true);
@@ -86,10 +97,23 @@ export function ChangesDraftComment({
             >
               Edit draft
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => onRemove(comment.id)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={disabled}
+              onClick={() => {
+                try {
+                  onRemove(comment.id);
+                  setError('');
+                } catch {
+                  setError('Could not remove this draft. Try again.');
+                }
+              }}
+            >
               Remove draft
             </Button>
           </div>
+          {error && <p role="alert">{error}</p>}
         </>
       )}
     </div>

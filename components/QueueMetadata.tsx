@@ -16,6 +16,7 @@ import { QUEUE_SIGNALS_TTL } from '../lib/queue-signals';
 import { timeAgo } from '../lib/utils';
 import { subjectReadiness } from '../lib/merge-readiness';
 import { ReadinessBadge } from './MergeReadiness';
+import { SubjectReviewStatus } from './PrReviewStatus';
 
 export function PrStateIcon({ member }: { member: ReviewMember }) {
   const state = member.merged ? 'merged' : member.state === 'closed' ? 'closed' : member.isDraft ? 'draft' : 'open';
@@ -81,41 +82,46 @@ export function QueueMetadata({ subject, account }: { subject: ReviewSubject; ac
     ? subject.members.reduce((latest, m) => (m.updatedAt > latest ? m.updatedAt : latest), member.updatedAt)
     : member.createdAt;
   return (
-    <div ref={ref} className="queue-metadata-line">
-      <div className="queue-meta">
-        <span className="queue-repository">{member.repo}</span>
-        <span className="queue-pr-origin">
-          {stack ? `${subject.members.length} PRs in stack · updated ` : `#${member.number} opened `}
-          <time dateTime={timestamp} title={new Date(timestamp).toLocaleString()}>
-            {timeAgo(timestamp)}
-          </time>
-          {!stack && (
-            <>
-              {' '}
-              by <GitHubAuthor login={member.author} />
-            </>
-          )}
-        </span>
-        <span
-          className={`queue-checks is-${state}${stale ? ' is-stale' : ''}`}
-          title={checkDescription}
-          aria-label={checkDescription}
-        >
-          <CheckIcon size={14} aria-hidden="true" />
-          {checkLabel}
-        </span>
-        <ReadinessBadge readiness={subjectReadiness(subject, values)} />
+    <div ref={ref} className="queue-metadata">
+      <div className="queue-status-line">
+        <SubjectReviewStatus subject={subject} signals={values} checking={!loaded && !!account} />
+        <ReadinessBadge readiness={subjectReadiness(subject, values)} reviewStatusShown />
       </div>
-      {comments !== undefined && comments > 0 && (
-        <span
-          className="queue-comments"
-          title={`${comments} conversation comment${comments === 1 ? '' : 's'}${stack ? ' across this stack' : ''}`}
-          aria-label={`${comments} conversation comments`}
-        >
-          <MessageSquare size={15} aria-hidden="true" />
-          {comments}
-        </span>
-      )}
+      <div className="queue-metadata-line">
+        <div className="queue-meta">
+          <span className="queue-repository">{member.repo}</span>
+          <span className="queue-pr-origin">
+            {stack ? `${subject.members.length} PRs in stack · updated ` : `#${member.number} opened `}
+            <time dateTime={timestamp} title={new Date(timestamp).toLocaleString()}>
+              {timeAgo(timestamp)}
+            </time>
+            {!stack && (
+              <>
+                {' '}
+                by <GitHubAuthor login={member.author} />
+              </>
+            )}
+          </span>
+          <span
+            className={`queue-checks is-${state}${stale ? ' is-stale' : ''}`}
+            title={checkDescription}
+            aria-label={checkDescription}
+          >
+            <CheckIcon size={14} aria-hidden="true" />
+            {checkLabel}
+          </span>
+        </div>
+        {comments !== undefined && comments > 0 && (
+          <span
+            className="queue-comments"
+            title={`${comments} conversation comment${comments === 1 ? '' : 's'}${stack ? ' across this stack' : ''}`}
+            aria-label={`${comments} conversation comments`}
+          >
+            <MessageSquare size={15} aria-hidden="true" />
+            {comments}
+          </span>
+        )}
+      </div>
     </div>
   );
 }

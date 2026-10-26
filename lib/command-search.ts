@@ -191,7 +191,7 @@ export function queueDocuments(queue: WorkbenchQueue): SearchDocument[] {
       id: `repo:${repo}`,
       kind: 'repository',
       title: repo,
-      text: 'Show this repository in the work queue',
+      text: 'Show this repository in the review queue',
       groupId: `repo:${repo}`,
       groupTitle: repo,
       source: 'Repository',

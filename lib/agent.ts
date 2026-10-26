@@ -9,6 +9,9 @@ import type { AIReviewGuide, ModelId, PlannerOutput, Provider, WriterSlideOutput
 
 // ── System prompt & schema constants ─────────────────────────────
 
+const REVIEW_SUGGESTIONS_DISABLED =
+  '\nREVIEW SUGGESTIONS DISABLED: Set "reviewFocus" to null and "reviewChecks" to [] for every slide. Do not generate "What to check" suggestions.\n';
+
 const SYSTEM_PROMPT = `You are an expert code reviewer helping a developer understand a pull request before they review it. Your job is to analyze the PR and produce a guided review — a sequence of "slides" that walks the reviewer through the changes in the best possible order.
 
 Guidelines for producing a great review guide:
@@ -263,9 +266,7 @@ export async function generateReviewGuide(opts: GenerateReviewGuideOptions): Pro
         `\n\n<reviewer_instructions>\nThe reviewer has provided custom instructions that MUST take priority over default style guidelines.\n${customInstructions}\n</reviewer_instructions>`
       : contextPackage + slideSchema + extraInstruction;
 
-    const reviewSuggestionsDirective = reviewSuggestions
-      ? ''
-      : `\nREVIEW SUGGESTIONS DISABLED: The reviewer has turned off review suggestions. Set "reviewFocus" to null for every slide. Do not generate any review focus content.\n`;
+    const reviewSuggestionsDirective = reviewSuggestions ? '' : REVIEW_SUGGESTIONS_DISABLED;
 
     const webResearchDirective = webResearch ? WEB_RESEARCH_DIRECTIVE : '';
     const educationDirective = educationMode ? EDUCATION_DIRECTIVE : '';
@@ -315,7 +316,13 @@ export async function generateReviewGuide(opts: GenerateReviewGuideOptions): Pro
     }
 
     parsed.prUrl = prUrl;
-    for (const slide of parsed.slides) slide.d2Diagram = normalizeD2Diagram(slide.d2Diagram);
+    for (const slide of parsed.slides) {
+      slide.d2Diagram = normalizeD2Diagram(slide.d2Diagram);
+      if (!reviewSuggestions) {
+        slide.reviewFocus = null;
+        slide.reviewChecks = [];
+      }
+    }
 
     return parsed;
   }
@@ -548,9 +555,7 @@ export async function generateSlide(opts: GenerateSlideOptions): Promise<WriterS
   } = opts;
   const provider = getProvider(providerName);
 
-  const reviewSuggestionsDirective = reviewSuggestions
-    ? ''
-    : '\nSet "reviewFocus" to null. Do not generate review focus content.\n';
+  const reviewSuggestionsDirective = reviewSuggestions ? '' : REVIEW_SUGGESTIONS_DISABLED;
   const educationDirective = educationMode ? EDUCATION_DIRECTIVE : '';
   const claudeContextDirective = hasClaudeContext ? CLAUDE_CONTEXT_DIRECTIVE : '';
 
@@ -598,6 +603,10 @@ export async function generateSlide(opts: GenerateSlideOptions): Promise<WriterS
       throw new Error('Writer response missing required fields (narrative)');
     }
 
+    if (!reviewSuggestions) {
+      parsed.reviewFocus = null;
+      parsed.reviewChecks = [];
+    }
     parsed.title = typeof parsed.title === 'string' ? parsed.title.trim() || undefined : undefined;
     parsed.d2Diagram = normalizeD2Diagram(parsed.d2Diagram);
     return parsed;

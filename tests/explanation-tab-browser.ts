@@ -20,7 +20,7 @@ void app.whenReady().then(async () => {
   };
   const click = async (label: string) => {
     await js(
-      `(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.getBoundingClientRect().width && (b.textContent.trim()===${JSON.stringify(label)}||b.getAttribute('aria-label')===${JSON.stringify(label)}));if(!b)throw Error('Missing '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
+      `(()=>{const b=[...document.querySelectorAll('button')].filter(b=>b.checkVisibility({visibilityProperty:true})).find(b=>b.getBoundingClientRect().width && (b.textContent.trim()===${JSON.stringify(label)}||b.getAttribute('aria-label')===${JSON.stringify(label)}));if(!b)throw Error('Missing '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
     );
     await new Promise((r) => setTimeout(r, 40));
   };
@@ -79,7 +79,7 @@ void app.whenReady().then(async () => {
       window.electronAPI.savePreferences=async prefs=>{await new Promise(r=>setTimeout(r,30));if(window.failDiffSave)throw Error('Disk full');return savePreferences(prefs)};
 
     })()`);
-    await click('Work queue');
+    await click('Review queue');
     await js("document.querySelector('.queue-item:has(.queue-disclosure) .queue-row-main').click()");
     await wait("[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='Open AI explanation')");
     await click('Open AI explanation');
@@ -261,7 +261,8 @@ void app.whenReady().then(async () => {
     );
     await click('Review PR #120');
     await wait("!!document.querySelector('[role=dialog]')");
-    await click('Approve PR');
+    await js("document.querySelector('input[type=radio][value=APPROVE]').click()");
+    await click('Submit review');
     await wait('window.reviewWrites.length===1');
     assert.deepEqual(
       await js(
@@ -280,7 +281,7 @@ void app.whenReady().then(async () => {
       `(async()=>{await window.selectOption('[aria-label="PR for review submission"]',window.savedReview.snapshot.subject.members[1].url);})()`
     );
     assert.equal(
-      await js("[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Review PR #121')).disabled"),
+      await js("[...document.querySelectorAll('button')].filter(b=>b.checkVisibility({visibilityProperty:true})).find(b=>b.textContent.includes('Review PR #121')).disabled"),
       false,
       'Drafts still belong to the displayed revision'
     );
@@ -305,12 +306,12 @@ void app.whenReady().then(async () => {
     );
     await wait("document.querySelector('.changes-notice')?.textContent.includes('earlier version')");
     assert.equal(
-      await js("[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Review PR #121')).disabled"),
+      await js("[...document.querySelectorAll('button')].filter(b=>b.checkVisibility({visibilityProperty:true})).find(b=>b.textContent.includes('Review PR #121')).disabled"),
       true,
       'Old drafts block submission after explicitly opening the new revision'
     );
     assert.equal(await js(`document.querySelector('[aria-label="Review topic"]').value`), priorTopic);
-    await click('Work queue');
+    await click('Review queue');
     // Notification destinations also work for historical PRs outside the queue.
     await js(
       `window.archived=structuredClone(window.savedReview);window.archived.reviewId='archived-review';window.archived.prUrl='https://github.com/klang/engine/pull/999';window.archived.prTitle='Archived standalone explanation';window.archived.snapshot.subject={...window.archived.snapshot.subject,id:window.archived.prUrl,kind:'pr',title:window.archived.prTitle,members:[{...window.archived.snapshot.subject.members[0],url:window.archived.prUrl,number:999,merged:true,state:'closed'}],edges:[]};window.electronAPI.loadReview=async id=>id==='archived-review'?window.archived:window.nextReview;window.dispatchEvent(new CustomEvent('fixture-review-navigate',{detail:'archived-review'}));`

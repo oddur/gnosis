@@ -23,7 +23,7 @@ void app.whenReady().then(async () => {
   };
   const click = async (label: string) => {
     await js(
-      `(()=>{const b=[...document.querySelectorAll('.commit-stream-row[data-active=true] button'),...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(label)} || b.getAttribute('aria-label')===${JSON.stringify(label)});if(!b)throw Error('Missing button '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
+      `(()=>{const b=[...document.querySelectorAll('.commit-stream-row[data-active=true] button'),...document.querySelectorAll('button')].filter(b=>b.checkVisibility({visibilityProperty:true})).find(b=>b.textContent.trim()===${JSON.stringify(label)} || b.getAttribute('aria-label')===${JSON.stringify(label)});if(!b)throw Error('Missing button '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
     );
     await new Promise((r) => setTimeout(r, 40));
   };
@@ -142,7 +142,69 @@ void app.whenReady().then(async () => {
       window.commentFile='src/worker.ts';window.commentLine=()=>window.deepAll('[data-column-number]',[...document.querySelectorAll('.commit-stream-row')].find(e=>e.dataset.file===window.commentFile)).find(e=>e.getAttribute('data-column-number')==='36'&&e.getAttribute('data-line-type')==='change-addition').click();})()`);
     await click('Refresh comments');
     await wait("[...document.querySelectorAll('.github-thread button')].some(b=>b.textContent==='Edit')");
+    assert.deepEqual(
+      await js(
+        `(()=>{const body=document.querySelector('.commit-stream-file-body > .changes-code-scroll');const style=getComputedStyle(body);return {overflow:style.overflow,scrollbarGutter:style.scrollbarGutter}})()`
+      ),
+      { overflow: 'visible', scrollbarGutter: 'auto' },
+      'File bodies use the comparison scroll surface'
+    );
+    // Viewed collapse and Unviewed-only filtering preserve the same live editor.
+    const toggleWorkerViewed = () =>
+      js(`document.querySelector('.commit-stream-row[data-file="src/worker.ts"] .changes-file-actions input').click()`);
+    const toggleUnviewed = () => js("document.querySelector('.changes-tree-controls input[type=checkbox]').click()");
+    await click('Edit');
+    await js(
+      "window.fill('.github-thread textarea','Unsaved edit survives Viewed.');window.editElement=document.querySelector('.github-thread textarea')"
+    );
+    await toggleWorkerViewed();
+    await wait('window.editElement.isConnected && window.editElement.getClientRects().length===0');
+    await toggleWorkerViewed();
+    await wait('window.editElement.getClientRects().length>0');
+    assert.equal(
+      await js(
+        "document.querySelector('.github-thread textarea')===window.editElement && window.editElement.value==='Unsaved edit survives Viewed.'"
+      ),
+      true
+    );
+    await toggleUnviewed();
+    await toggleWorkerViewed();
+    await wait(`document.querySelector('.commit-stream-row[data-file="src/worker.ts"]')?.hidden===true`);
+    assert.equal(await js('window.editElement.isConnected'), true, 'Filtering keeps the edited row mounted');
+    await toggleUnviewed();
+    await toggleWorkerViewed();
+    await wait('window.editElement.getClientRects().length>0');
+    assert.equal(
+      await js(
+        "document.querySelector('.github-thread textarea')===window.editElement && window.editElement.value==='Unsaved edit survives Viewed.'"
+      ),
+      true
+    );
+    await click('Cancel');
+    // Collapsing during a write must not reset its duplicate-submission guard.
+    await js(`window.savedReplyAction=window.electronAPI.reviewThreadAction;window.pendingReplyCalls=0;
+      window.electronAPI.reviewThreadAction=async()=>{window.pendingReplyCalls++;await new Promise((resolve,reject)=>window.rejectReply=()=>reject(Error('Reply failed; try again.')))};void 0`);
     await click('Reply');
+    await js(
+      "window.fill('.github-thread textarea','Pending reply survives Viewed.');window.replyElement=document.querySelector('.github-thread textarea')"
+    );
+    await click('Reply on GitHub');
+    await wait('window.pendingReplyCalls===1');
+    await toggleWorkerViewed();
+    await toggleWorkerViewed();
+    await wait('window.replyElement.getClientRects().length>0');
+    assert.equal(
+      await js(
+        "document.querySelector('.github-thread textarea')===window.replyElement && window.replyElement.disabled"
+      ),
+      true
+    );
+    await js("document.querySelector('.github-thread form').requestSubmit()");
+    assert.equal(await js('window.pendingReplyCalls'), 1);
+    await js('window.rejectReply()');
+    await wait("document.querySelector('.github-thread')?.textContent.includes('Reply failed; try again.')");
+    assert.equal(await js('window.replyElement.value'), 'Pending reply survives Viewed.');
+    await js('window.electronAPI.reviewThreadAction=window.savedReplyAction;void 0');
     await js("window.fill('.github-thread textarea','The retry stays inside the boundary.')");
     await click('Reply on GitHub');
     await wait("document.querySelector('.github-thread')?.textContent.includes('The retry stays')");
@@ -207,7 +269,7 @@ void app.whenReady().then(async () => {
     await click('Review PR #150 (1)');
     await wait("document.querySelector('[role=dialog]')?.textContent.includes('Keep the cancellation boundary')");
     await capture('comments-submit');
-    await click('Post comments');
+    await click('Submit review');
     await wait("document.querySelector('[role=dialog]')?.textContent.includes('Feedback submitted')");
     assert.equal(await js('window.reviewWrites[0].prUrl'), 'https://github.com/klang/engine/pull/150');
     assert.equal(await js('window.reviewWrites[0].comments.length'), 1);
@@ -317,7 +379,7 @@ void app.whenReady().then(async () => {
     await wait(
       "!!document.querySelector('.pr-summary-page.showing-changes') && document.querySelector('.pr-overview-heading h1')?.textContent.includes('Reduce allocations')"
     );
-    await click('Work queue');
+    await click('Review queue');
     await js(
       `window.threadReads=[];window.electronAPI.getReviewThreads=async url=>{window.threadReads.push(url);const count=Number(url.split('/').pop())-119;return {headSha:'head-'+(count-1),baseSha:'base-'+(count-1),threads:[{...window.discussion.threads[0],comments:Array.from({length:count},(_,i)=>({...window.discussion.threads[0].comments[0],id:'comment-'+i}))}]}};void 0;`
     );
@@ -370,7 +432,7 @@ void app.whenReady().then(async () => {
     await click('Add to review');
     await click('Review PR #121 (1)');
     await wait("!!document.querySelector('[role=dialog]')");
-    await click('Post comments');
+    await click('Submit review');
     await wait("document.querySelector('[role=dialog]')?.textContent.includes('Feedback submitted')");
     assert.equal(await js('window.reviewWrites.at(-1).prUrl'), 'https://github.com/klang/engine/pull/121');
     assert.equal(await js('window.reviewWrites.at(-1).comments[0].path'), 'src/worker.ts');
@@ -396,7 +458,7 @@ void app.whenReady().then(async () => {
     await click('Update changes');
     await wait("[...document.querySelectorAll('.changes-notice')].some(e=>e.textContent.includes('earlier version'))");
     assert.equal(
-      await js("[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Review PR #121')).disabled"),
+      await js("[...document.querySelectorAll('button')].filter(b=>b.checkVisibility({visibilityProperty:true})).find(b=>b.textContent.includes('Review PR #121')).disabled"),
       true
     );
     await click('Show drafts');
@@ -405,7 +467,7 @@ void app.whenReady().then(async () => {
     );
     await capture('comments-stale-drafts');
     await click('Remove draft');
-    await wait("![...document.querySelectorAll('button')].find(b=>b.textContent.includes('Review PR #121')).disabled");
+    await wait("![...document.querySelectorAll('button')].filter(b=>b.checkVisibility({visibilityProperty:true})).find(b=>b.textContent.includes('Review PR #121')).disabled");
     // Cold Changes inventories restore a distant file and keep mounts bounded.
     await js(String.raw`(async()=>{
       window.deepAll=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(selector,e.shadowRoot))];
@@ -459,7 +521,9 @@ void app.whenReady().then(async () => {
     await js(
       `(()=>{const input=document.querySelector('#large-stream-test .changes-file-actions input');input.click()})()`
     );
-    await wait(`!document.querySelector('#large-stream-test [data-file="src/file000.ts"] .changes-code')`);
+    await wait(
+      `(document.querySelector('#large-stream-test [data-file="src/file000.ts"] .changes-code')?.getClientRects().length ?? 0)===0`
+    );
     await js(
       `(()=>{const input=document.querySelector('#large-stream-test .changes-tree-controls input[type=checkbox]');input.click()})()`
     );

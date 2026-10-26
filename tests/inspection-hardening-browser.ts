@@ -139,12 +139,14 @@ void app.whenReady().then(async () => {
       "window.signatureSaves=[];window.signatureFail=true;window.writePrefs=window.electronAPI.savePreferences;window.electronAPI.savePreferences=async prefs=>{window.signatureSaves.push(prefs);if(window.signatureFail)throw Error('Disk full');return window.writePrefs(prefs)};window.posts=[];window.electronAPI.submitReview=r=>{window.posts.push(r);return new Promise(resolve=>{window.finishPost=()=>resolve({reviewUrl:r.prUrl+'#review',droppedCommentCount:0})})};void 0"
     );
     await click('Submit review');
+    await wait("!!document.querySelector('input[type=radio][value=APPROVE]')");
+    await js("document.querySelector('input[type=radio][value=APPROVE]').click()");
     await wait("!!document.querySelector('[role=dialog] input[type=checkbox]:not(:disabled)')");
     await js("document.querySelector('[role=dialog] input[type=checkbox]').click()");
     await wait("document.querySelector('[role=dialog] [role=alert]')?.textContent.includes('Could not save')");
     await fill('#review-summary', 'Keep the queue boundary explicit.');
     assert.equal(
-      await js("[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Approve PR').disabled"),
+      await js("[...document.querySelectorAll('.review-submit-footer button')].find(b=>b.textContent.trim()==='Submit review').disabled"),
       true
     );
     assert.equal(await js('window.posts.length'), 0);
@@ -156,10 +158,10 @@ void app.whenReady().then(async () => {
     assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
     await js('window.signatureFail=false');
     await click('Retry signature setting');
-    await wait("![...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Approve PR').disabled");
+    await wait("![...document.querySelectorAll('.review-submit-footer button')].find(b=>b.textContent.trim()==='Submit review').disabled");
     assert.equal(await js('window.signatureSaves.at(-1).reviewSignature'), true);
     await js(
-      "const approve=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Approve PR');approve.click();approve.click();void 0"
+      "const approve=[...document.querySelectorAll('.review-submit-footer button')].find(b=>b.textContent.trim()==='Submit review');approve.click();approve.click();void 0"
     );
     await wait('window.posts.length===1');
     assert.equal(await js("document.querySelector('#review-summary').disabled"), true);
@@ -171,10 +173,12 @@ void app.whenReady().then(async () => {
       "window.readPrefs=window.electronAPI.loadPreferences;window.electronAPI.loadPreferences=()=>Promise.reject(Error('Cannot read preferences'));void 0"
     );
     await click('Submit review');
+    await wait("!!document.querySelector('input[type=radio][value=APPROVE]')");
+    await js("document.querySelector('input[type=radio][value=APPROVE]').click()");
     await wait("document.querySelector('[role=dialog] [role=alert]')?.textContent.includes('Could not load')");
     await js('window.electronAPI.loadPreferences=window.readPrefs;void 0');
     await click('Retry signature setting');
-    await wait("![...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Approve PR').disabled");
+    await wait("![...document.querySelectorAll('.review-submit-footer button')].find(b=>b.textContent.trim()==='Submit review').disabled");
     await js("document.querySelector('[data-slot=dialog-close]').click()");
     // Full app: commit refresh must preserve navigation that happens while it is pending.
     win.setSize(1280, 850);

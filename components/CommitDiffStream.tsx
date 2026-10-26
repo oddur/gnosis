@@ -64,6 +64,14 @@ export function CommitDiffStream({
       ].sort((a, b) => a - b),
   });
   const items = virtual.getVirtualItems();
+  // A filter can hide an edited file while its reply or save is still in flight.
+  // Keep the same keyed row (and editor instances) mounted outside the measured list.
+  const rows = [
+    ...items.map((item) => ({ key: String(item.key), index: item.index, start: item.start, hidden: false })),
+    ...[...discussions]
+      .filter((key) => !files.some((file) => file.key === key))
+      .map((key) => ({ key, index: -1, start: 0, hidden: true })),
+  ];
   function jump(key: string, offset = 0, focus = false) {
     const index = current.current.files.findIndex((f) => f.key === key);
     if (index < 0) return;
@@ -143,19 +151,19 @@ export function CommitDiffStream({
       onScroll={remember}
     >
       <div className="commit-stream-content" style={{ height: virtual.getTotalSize() }}>
-        {items.map((item) => {
-          const file = files[item.index];
+        {rows.map((item) => {
           return (
             <div
               key={item.key}
-              ref={virtual.measureElement}
+              ref={item.hidden ? undefined : virtual.measureElement}
+              hidden={item.hidden}
               data-index={item.index}
-              data-file={file.key}
-              data-active={file.key === selected}
+              data-file={item.key}
+              data-active={!item.hidden && item.key === selected}
               className="commit-stream-row"
               style={{ position: 'absolute', top: item.start, left: 0, width: '100%' }}
             >
-              {renderFile(file.key, () => {
+              {renderFile(item.key, () => {
                 const next = [...files.slice(item.index + 1), ...files.slice(0, item.index)].find((f) => !f.viewed);
                 if (next) jump(next.key, 0, true);
               })}

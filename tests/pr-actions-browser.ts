@@ -161,7 +161,7 @@ void app.whenReady().then(async () => {
     await click('Refresh PR actions');
     await wait("document.querySelector('.pr-action-controls button').disabled");
     assert.equal(await js("window.writes.filter(w=>w.kind==='merge').length"), 1);
-    await click('Work queue');
+    await click('Review queue');
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );

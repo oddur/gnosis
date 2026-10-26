@@ -26,7 +26,7 @@ export function QueueFilterPanel({
   const labels = [
     ...new Set([...members.flatMap((m) => m.labels), ...(filters.label === 'all' ? [] : [filters.label])]),
   ].sort();
-  const fields: { key: Exclude<keyof QueueFilters, 'starredOnly'>; label: string; options: [string, string][] }[] = [
+  const fields: { key: Exclude<keyof QueueFilters, 'starredOnly' | 'unreadOnly'>; label: string; options: [string, string][] }[] = [
     {
       key: 'status',
       label: 'PR status',
@@ -102,6 +102,10 @@ export function QueueFilterPanel({
             : 'PRs involving you and from repositories added in Settings.'}
         </p>
       </div>
+      <label className="queue-unread-filter">
+        <input type="checkbox" checked={filters.unreadOnly} onChange={event => onChange({ unreadOnly: event.target.checked })} />
+        Unread updates only
+      </label>
       <div className="queue-filter-fields">
         {fields.map((field) => (
           <label key={field.key} htmlFor={`${id}-${field.key}`}>

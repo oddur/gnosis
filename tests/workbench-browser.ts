@@ -31,8 +31,9 @@ void app.whenReady().then(async () => {
     throw new Error('Timed out: ' + expression);
   };
   const click = async (text: string) => {
+    await wait(`[...document.querySelectorAll('button')].some(b=>b.checkVisibility({visibilityProperty:true})&&b.textContent.trim()===${JSON.stringify(text)})`);
     await js(
-      `(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(text)});if(!b)throw new Error('Missing button: '+${JSON.stringify(text)});b.click();})()`
+      `(()=>{const b=[...document.querySelectorAll('button')].filter(b=>b.checkVisibility({visibilityProperty:true})).find(b=>b.textContent.trim()===${JSON.stringify(text)});if(!b)throw new Error('Missing button: '+${JSON.stringify(text)});b.click();})()`
     );
   };
   const shots = process.env.GNOSIS_SCREENSHOT_DIR ?? path.join(os.tmpdir(), 'gnosis-workbench-screenshots');
@@ -203,8 +204,9 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.submission-destination')");
     assert.equal(
       await js("document.querySelector('.submission-destination a').textContent.trim()"),
-      'klang/engine #122'
+      'klang/engine'
     );
+    assert.match(await js<string>("document.querySelector('.review-submit-header').textContent"), /Review PR #122/);
     assert.equal(
       await js("document.querySelector('.submission-destination a').getAttribute('href')"),
       'https://github.com/klang/engine/pull/122'
@@ -252,7 +254,7 @@ void app.whenReady().then(async () => {
       true
     );
     await capture('review-narrow');
-    await click('Explanation');
+    await js("[...document.querySelectorAll('[aria-label=\"Review pane\"] button')].find(b=>b.textContent.trim()==='Explanation').click()");
     await click('Open interactive explanation');
     await wait("!!document.querySelector('.review-tool-slot iframe')");
     assert.equal(
@@ -469,7 +471,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('[aria-label=\"Search PRs and stacks\"]').value === ''");
     await js('document.querySelector(\'[title="Saved reviews"]\').click()');
     await wait("document.body.textContent.includes('No saved reviews yet')");
-    await js('document.querySelector(\'[title="Work queue"]\').click()');
+    await js('document.querySelector(\'[title="Review queue"]\').click()');
     await js('void (window.fixtureQueue = window.electronAPI.workbenchQueue)');
     await js("void (window.electronAPI.workbenchQueue = () => Promise.reject(new Error('Fixture network failure')))");
     await js('document.querySelector(\'[aria-label="Refresh queue"]\').click()');
@@ -505,11 +507,11 @@ void app.whenReady().then(async () => {
     })()`);
     await click('Open PR overview');
     await wait("!!document.querySelector('.pr-summary-page')");
-    await js("[...document.querySelectorAll('[role=tab]')].find(tab => tab.textContent === 'Explanation').click()");
+    await js("(()=>{const tab=[...document.querySelectorAll('[role=tab]')].find(tab => tab.textContent === 'Explanation');tab.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));tab.click()})()");
     await wait("!!document.querySelector('.explanation-empty')");
     await click('Generate explanation');
     await wait('window.electronAPI.loadPreferences().then(p => p.firstRunSeen)');
-    await click('Work queue');
+    await click('Review queue');
     await wait("document.querySelectorAll('.queue-item').length === 7 && !document.querySelector('.getting-started')");
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
@@ -730,7 +732,7 @@ void app.whenReady().then(async () => {
     };
     const manageView = async (name: string, action: string) => {
       await js(
-        `(() => { const trigger = document.querySelector('[aria-label="Manage '+${JSON.stringify(name)}+'"]'); trigger.focus(); trigger.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); })()`
+        `(() => { const trigger = document.querySelector('[aria-label="Manage '+${JSON.stringify(name)}+'"]'); trigger.focus(); trigger.dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowDown', bubbles:true})); })()`
       );
       await wait("!!document.querySelector('[role=menu]')");
       await js(
@@ -828,7 +830,7 @@ void app.whenReady().then(async () => {
     await wait(
       "document.querySelector('.queue-toolbar h1')?.textContent === 'Stacks' && document.querySelectorAll('.queue-item').length === 3"
     );
-    await navigate('Work queue');
+    await navigate('Review queue');
     await wait("document.querySelectorAll('.queue-item').length === 7");
     window.webContents.setZoomFactor(1.25);
     await capture('typeset-zoom-light');
@@ -877,7 +879,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js("!!document.querySelector('.activity-task [role=progressbar]')"), true);
     await capture('exploration-background');
     await js('document.querySelector(\'[aria-label="Close activity"]\').click()');
-    await click('Work queue');
+    await click('Review queue');
     await wait("!!document.querySelector('.queue-list')");
     await js("document.querySelector('.queue-search input').focus()");
     await js('window.finishExploration()');

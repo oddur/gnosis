@@ -1,5 +1,5 @@
 import { SearchableSelect } from './SearchableSelect';
-import { PrMuteMenu } from './PrMuteMenu';
+import { PrEntryActions, type PrGenerationActionsFor } from './PrEntryActions';
 import { PrDetails } from './PrDetails';
 import { memberReadiness } from './PrReadiness';
 import type { ReviewSubject } from '../lib/workbench';
@@ -7,7 +7,7 @@ import type { PrStatus } from '../lib/types';
 import type { QueueSignals } from '../lib/queue-signals';
 import { mergeReadiness } from '../lib/merge-readiness';
 import { ReadinessBadge } from './MergeReadiness';
-import { PrStarButton } from './PrStarButton';
+import { MemberReviewStatus } from './PrReviewStatus';
 
 export function PrSubjectDetails({
   subject,
@@ -17,20 +17,28 @@ export function PrSubjectDetails({
   statusErrors = {},
   onRetryStatus,
   compactIdentity = false,
+  statusChecking = false,
   signals = [],
   starredUrls,
   starBusy,
   onStarChange,
   onMute,
   muteBusy,
+  generationActions,
+  onReview,
+  reviewDisabled,
 }: {
   subject: ReviewSubject;
+  generationActions?: PrGenerationActionsFor;
+  onReview?: (member: ReviewSubject['members'][number]) => void;
+  reviewDisabled?: boolean;
   activeUrl: string;
   onSelect: (url: string) => void;
   statuses?: Partial<Record<string, PrStatus>>;
   statusErrors?: Record<string, string>;
   onRetryStatus?: () => void;
   compactIdentity?: boolean;
+  statusChecking?: boolean;
   signals?: QueueSignals[];
   starredUrls?: ReadonlySet<string>;
   starBusy?: boolean;
@@ -69,7 +77,9 @@ export function PrSubjectDetails({
                         #{m.number} {m.title}
                       </strong>
                       <small>{relationship(m.url)}</small>
+                      {onRetryStatus && <MemberReviewStatus member={m} signals={signals.find(s => s.url === m.url && s.headSha === m.headSha) ?? statuses[m.url]?.signals} checking={statusChecking && !statusErrors[m.url]} />}
                       <ReadinessBadge
+                        reviewStatusShown={!!onRetryStatus}
                         readiness={mergeReadiness(m, signals.find((s) => s.url === m.url) ?? statuses[m.url]?.signals)}
                       />
                     </span>
@@ -101,12 +111,15 @@ export function PrSubjectDetails({
             {subject.members.length} PRs
           </p>
         )}
+        {stacked && onRetryStatus && <div className="pr-member-review-status">
+          <MemberReviewStatus member={member} signals={signals.find(s => s.url === member.url && s.headSha === member.headSha) ?? statuses[member.url]?.signals} checking={statusChecking && !statusErrors[member.url]} />
+        </div>}
         <PrDetails
           key={member.url}
           member={member}
           starControl={
             stacked && starredUrls && onStarChange ? (
-              <><PrStarButton members={[member]} starredUrls={starredUrls} busy={starBusy} onChange={onStarChange} />{onMute && <PrMuteMenu members={[member]} busy={muteBusy} onMute={onMute} />}</>
+              <PrEntryActions {...generationActions?.([member])} onReview={onReview} reviewDisabled={reviewDisabled} members={[member]} starredUrls={starredUrls} busy={starBusy || muteBusy} onStarChange={onStarChange} onMute={onMute} />
             ) : undefined
           }
           showTitle={stacked}

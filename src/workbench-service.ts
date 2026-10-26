@@ -1,3 +1,6 @@
+import { createPrReadStore } from './pr-read-store';
+import type { MarkPrReadRequest } from '../lib/pr-read-state';
+import type { QueueSignals, QueueSignalRequest } from '../lib/queue-signals';
 import { normalizePrInactivityDays, matchesPrInactivity, isPrRecentlyUpdated } from '../lib/pr-inactivity';
 import { createMutedPrStore } from './muted-pr-store';
 import { isMutedReview, withoutMutedMembers, type MutePrRequest } from '../lib/muted-prs';
@@ -57,6 +60,7 @@ interface State {
   checkedAt?: Record<string, number>;
   filters?: QueueFilters;
   discoveredAt?: number;
+  unreadActivityPending?: string[];
   discoveryKey?: string;
   discoveryWarnings?: string[];
   listings?: DiscoveryListings;
@@ -81,6 +85,7 @@ interface Deps {
   busy: () => boolean;
   activities?: ActivityService;
   client?: () => Octokit;
+  signals?: (client: Octokit, requests: QueueSignalRequest[]) => Promise<QueueSignals[]>;
   provider?: typeof getProvider;
   now?: () => number;
 }
@@ -97,6 +102,8 @@ class BriefingPaused extends Error {
 }
 export function createWorkbenchService(deps: Deps) {
   const now = deps.now ?? Date.now;
+  const reads = createPrReadStore(deps.directory, now);
+  const readBaselines = new Set<string>();
   const savedViews = createSavedViewStore(deps.directory);
   const stars = createStarredPrStore(deps.directory, now);
   const mutes = createMutedPrStore(deps.directory, now);
@@ -182,6 +189,12 @@ export function createWorkbenchService(deps: Deps) {
   }
   function view(includeHidden = false): WorkbenchQueue {
     const s = load();
+    const allMembers = [...new Map([...stars.load(s.account).map(entry => entry.member), ...s.subjects.flatMap(subject => subject.members)].map(member => [member.url, member])).values()];
+    // Existing cached PRs start read exactly once. Empty installations finish their
+    // baseline after the first discovery, including its progressive batches.
+    reads.observe(s.account, allMembers, !readBaselines.has(s.account) && allMembers.length > 0);
+    readBaselines.add(s.account);
+    const readStates: WorkbenchQueue['readStates'] = reads.snapshot(s.account);
     const mutedPrs = mutes.load(s.account);
     const muted = new Set(mutedPrs.map(entry => entry.member.url));
     const hiddenUrls = new Set([...muted, ...s.subjects.flatMap(subject => subject.members.filter(isArchived).map(member => member.url))]);
@@ -221,6 +234,7 @@ export function createWorkbenchService(deps: Deps) {
         review,
         briefing,
         attention: attentionFor(subject, review),
+        unreadUrls: subject.members.filter(member => readStates[member.url]?.unread.length).map(member => member.url),
         starred: isStarredSubject(subject, starredUrls),
         starredUrls: subject.members.filter((m) => starredUrls.has(m.url)).map((m) => m.url),
       };
@@ -259,6 +273,7 @@ export function createWorkbenchService(deps: Deps) {
     );
     return {
       items,
+      readStates,
       starredPrs,
       starredItems,
       mutedPrs,
@@ -470,6 +485,8 @@ export function createWorkbenchService(deps: Deps) {
           const member = await fetchMember(octokit, url, role ?? current?.role);
           if (member.repoArchived) { setArchiveState(member.repo, true); return; }
           members.set(url, member);
+          if (!cached || cached.updatedAt !== member.updatedAt || cached.headSha !== member.headSha)
+            s.unreadActivityPending = [...new Set([...(s.unreadActivityPending ?? []), url])];
           dirty = true;
           checkedAt[url] = now();
           completed.set(url, member);
@@ -630,7 +647,29 @@ export function createWorkbenchService(deps: Deps) {
       );
       delete s.discoveryProgress;
       completed.clear();
+      const latestMembers = s.subjects.flatMap(subject => subject.members);
+      reads.observe(s.account, latestMembers);
+      // Include changed PRs even when an Unread-only view keeps their rows offscreen.
+      // Reuse the normal batched status cache/backoff; never fetch discussion bodies.
+      if (deps.signals) {
+        const pendingActivity = new Set(s.unreadActivityPending ?? []);
+        const changed = latestMembers.filter(member => pendingActivity.has(member.url) && !mutedUrls().has(member.url) && !isArchived(member));
+        for (let i = 0; i < changed.length; i += 25) {
+          checkAllowance();
+          const batch = changed.slice(i, i + 25);
+          const signals = await deps.signals(octokit, batch.map(member => ({ url: member.url, headSha: member.headSha })));
+          checkAllowance();
+          reads.signals(s.account, signals);
+          for (const signal of signals) {
+            const member = batch.find(member => member.url === signal.url);
+            if (signal.activity && member && signal.checkedAt >= Date.parse(member.updatedAt)) pendingActivity.delete(signal.url);
+          }
+          s.unreadActivityPending = [...pendingActivity];
+          if (!signals.length) break; // shared backoff owns the retry; finish this sync quietly
+        }
+      }
       finished = true;
+      reads.observe(s.account, latestMembers, true);
       save();
       void pump();
       return view();
@@ -912,6 +951,20 @@ export function createWorkbenchService(deps: Deps) {
     snapshot: (): WorkbenchQueue => deps.auth().token && deps.auth().login ? view() : { items: [], warnings: [], remaining: 0 },
     queue,
     mutedUrls,
+    markPrRead(request: MarkPrReadRequest) {
+      const account = deps.auth().login;
+      if (!account || !deps.auth().token) throw new Error('Connect GitHub to save unread progress.');
+      reads.mark(account, request);
+      return view();
+    },
+    observeReadSignals(account: string, signals: QueueSignals[]) {
+      if (account !== deps.auth().login) return false;
+      return reads.signals(account, signals);
+    },
+    noteOwnReview(account: string, url: string, inlineComments: number, reviewUrl?: string) {
+      try { if (account === deps.auth().login) reads.ownReview(account, url, inlineComments, now(), reviewUrl); }
+      catch (error) { console.warn('Review posted, but its unread progress could not be saved:', error); }
+    },
     isMutedReview: (entry: Pick<ReviewHistoryEntry, 'prUrl' | 'snapshot'>) => isMutedReview(entry, mutedUrls()),
     mutePrs(request: MutePrRequest) {
       if (!deps.auth().login || !deps.auth().token) throw new Error('Connect GitHub to mute PRs.');
@@ -934,7 +987,8 @@ export function createWorkbenchService(deps: Deps) {
       stars.set(load().account, request);
       return view();
     },
-    updatePrMetadata(metadata: PrMetadata) {
+    updatePrMetadata(metadata: PrMetadata, own = false) {
+      reads.observe(load().account, [metadata], false, own);
       const s = load();
       s.subjects = s.subjects.map(subject => ({ ...subject, members: subject.members.map(member => member.url === metadata.url ? { ...member, ...metadata } : member) }));
       const saved = stars.load(s.account).find(entry => entry.member.url === metadata.url);
@@ -1052,7 +1106,7 @@ export function createWorkbenchService(deps: Deps) {
         if (!sub || !includeSubject(sub))
           throw new Error('This PR is no longer available for briefing. Refresh the queue and try again.');
         if (load().used >= limit())
-          throw new Error('The daily briefing limit is reached. Increase it in Settings → Work queue or try tomorrow.');
+          throw new Error('The daily briefing limit is reached. Increase it in Settings → Review queue or try tomorrow.');
         if (runningKey === key(sub)) return view();
         requestedBriefings.add(requestKey(key(sub)));
       }

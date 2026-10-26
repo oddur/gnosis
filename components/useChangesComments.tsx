@@ -28,7 +28,7 @@ export function useChangesComments({
   onOpenChanges,
 }: {
   enabled?: boolean;
-  onOpenChanges?: () => void;
+  onOpenChanges?: (filePath: string) => void;
   onSubmitted?: (url: string, event: string) => void;
   snapshot?: PrChanges;
   path?: string;
@@ -190,6 +190,7 @@ export function useChangesComments({
   // Keep submission bound to the captured PR even if the file/stack selection changes.
   const targetDrafts = target && target.url === url ? drafts : [];
   return {
+    ready: !!account || !!authError,
     openReview: () => {
       if (stale.length) {
         setDraftsOpen(true);
@@ -244,7 +245,7 @@ export function useChangesComments({
             {stale.length} draft{stale.length === 1 ? ' refers' : 's refer'} to an earlier version. Open Drafts to copy
             or remove them before reviewing this version.
             <button onClick={() => setDraftsOpen(true)}>Show drafts</button>
-            {onOpenChanges && <button onClick={onOpenChanges}>Open Changes to reposition</button>}
+            {onOpenChanges && <button onClick={() => onOpenChanges(stale[0].filePath)}>Open Changes to reposition</button>}
           </p>
         )}
         {draftsOpen && (
@@ -277,6 +278,8 @@ export function useChangesComments({
               open
               onOpenChange={setReviewOpen}
               comments={targetDrafts}
+              onEditComment={edit}
+              onRemoveComment={id => change(list => list.filter(d => d.id !== id))}
               prUrl={url}
               headSha={target.metadata.headSha}
               isOwnPr={snapshot?.metadata.author === account}

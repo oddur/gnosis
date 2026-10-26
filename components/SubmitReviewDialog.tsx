@@ -1,6 +1,7 @@
 import { useSessionDraft } from '../lib/session-drafts';
-import { useState, useEffect, useRef } from 'react';
-import { AlertTriangle, Check, ExternalLink, MessageSquare, ShieldCheck, ShieldX, ChevronRight } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback, useId } from 'react';
+import { ChangesDraftComment } from './ChangesDraftComment';
+import { AlertTriangle, Check, ExternalLink, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -19,10 +20,22 @@ interface Props {
   prUrl: string;
   headSha?: string;
   isOwnPr: boolean;
+  onEditComment?: (id: string, body: string) => void;
+  onRemoveComment?: (id: string) => void;
   onSubmit: (event: ReviewEvent, body: string) => Promise<{ reviewUrl: string; droppedCommentCount: number }>;
 }
 
-export function SubmitReviewDialog({ open, onOpenChange, comments, prUrl, headSha, isOwnPr, onSubmit }: Props) {
+export function SubmitReviewDialog({
+  open,
+  onOpenChange,
+  comments,
+  prUrl,
+  headSha,
+  isOwnPr,
+  onSubmit,
+  onEditComment,
+  onRemoveComment,
+}: Props) {
   const target = prUrl.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
   const destination = target ? `${target[1]}/${target[2]} #${target[3]}` : prUrl;
   const [body, setBody] = useSessionDraft(`submission:${prUrl}:${headSha ?? ''}`, '');
@@ -38,6 +51,31 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, prUrl, headSh
   const signatureEpoch = useRef(0);
   const signaturePending = useRef(false);
   const pending = useRef(false);
+  const decisionId = useId();
+  const [decision, setDecision] = useState<ReviewEvent>('COMMENT');
+  const [editingIds, setEditingIds] = useState<Set<string>>(() => new Set());
+  const onEditingChange = useCallback((id: string, editing: boolean) => {
+    setEditingIds((previous) => {
+      if (previous.has(id) === editing) return previous;
+      const next = new Set(previous);
+      if (editing) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+  const editing = comments.some((comment) => editingIds.has(comment.id));
+  const needsMessage = decision !== 'APPROVE' && !comments.length;
+  const canSubmit =
+    !submitting &&
+    signatureState === 'ready' &&
+    !editing &&
+    !(isOwnPr && decision !== 'COMMENT') &&
+    (!needsMessage || !!body.trim());
+  const decisions: { value: ReviewEvent; label: string; description: string }[] = [
+    { value: 'COMMENT', label: 'Comment', description: 'Give feedback without approval.' },
+    { value: 'APPROVE', label: 'Approve', description: 'Approve these changes.' },
+    { value: 'REQUEST_CHANGES', label: 'Request changes', description: 'Ask the author to revise these changes.' },
+  ];
 
   async function syncSignature(desired?: boolean) {
     if (signaturePending.current) return;
@@ -88,7 +126,7 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, prUrl, headSh
   }
 
   async function handleSubmit(event: ReviewEvent) {
-    if (pending.current || signaturePending.current || signatureState !== 'ready' || successUrl) return;
+    if (pending.current || signaturePending.current || signatureState !== 'ready' || successUrl || editing) return;
     if (event !== 'COMMENT' && isOwnPr) return;
     if (event !== 'APPROVE' && !comments.length && !body.trim()) return;
     pending.current = true;
@@ -130,8 +168,8 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, prUrl, headSh
               Feedback submitted to GitHub
             </DialogTitle>
             <DialogDescription className="slide-meta">
-              Your feedback to {destination} with {submittedCount} comment{submittedCount !== 1 ? 's' : ''} has been
-              posted.
+              Your review of {destination} has been posted
+              {submittedCount > 0 ? ` with ${submittedCount} comment${submittedCount !== 1 ? 's' : ''}` : ''}.
             </DialogDescription>
           </DialogHeader>
           {droppedCount > 0 && (
@@ -163,150 +201,175 @@ export function SubmitReviewDialog({ open, onOpenChange, comments, prUrl, headSh
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-xl max-h-[80vh] flex flex-col gap-5">
-        <DialogHeader>
-          <DialogTitle className="editorial-heading">Submit to GitHub</DialogTitle>
-          <DialogDescription className="slide-meta">
-            {comments.length} comment{comments.length !== 1 ? 's' : ''} across {fileGroups.size} file
-            {fileGroups.size !== 1 ? 's' : ''}
+      <DialogContent className="review-submit-dialog" showCloseButton={!submitting}>
+        <DialogHeader className="review-submit-header">
+          <DialogTitle>{target ? `Review PR #${target[3]}` : 'Submit review'}</DialogTitle>
+          <DialogDescription asChild>
+            <div className="submission-destination">
+              <a
+                href={prUrl}
+                onClick={(event) => {
+                  event.preventDefault();
+                  void window.electronAPI.openExternal(prUrl);
+                }}
+                aria-label={`Open ${destination} on GitHub`}
+              >
+                {target ? `${target[1]}/${target[2]}` : prUrl} <ExternalLink size={13} aria-hidden="true" />
+              </a>
+              {headSha && (
+                <span title={`Reviewing revision ${headSha}`}>
+                  Revision <code>{headSha.slice(0, 7)}</code>
+                </span>
+              )}
+            </div>
           </DialogDescription>
         </DialogHeader>
 
-        <div className="submission-destination">
-          <p>Posting to</p>
-          <a
-            href={prUrl}
-            onClick={(event) => {
-              event.preventDefault();
-              void window.electronAPI.openExternal(prUrl);
-            }}
-          >
-            {destination} <ExternalLink size={13} aria-hidden="true" />
-          </a>
-          <p>
-            Choose an action below to send your feedback to this PR on GitHub. Your review progress stays in Gnosis.
-          </p>
-        </div>
-
-        {!headSha && (
-          <div className="staleBanner-warn flex items-start gap-2 rounded-md p-3 text-sm">
-            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-            <span>
-              This review was loaded from history without a commit reference. Line comments may land on wrong lines if
-              the PR has been updated.
-            </span>
-          </div>
-        )}
-
-        {/* Comment list — files as collapsible details, comments
-            as quiet rows. No card-on-card. */}
-        {comments.length > 0 && (
-          <div className="flex-1 overflow-y-auto min-h-0 flex flex-col gap-4">
-            {Array.from(fileGroups.entries()).map(([filePath, fileComments]) => (
-              <details key={filePath} className="group" open>
-                <summary className="slide-meta cursor-pointer hover:text-foreground select-none flex items-center gap-1.5">
-                  <ChevronRight
-                    size={14}
-                    className="group-open:rotate-90 shrink-0 transition-transform"
-                    aria-hidden="true"
-                  />
-                  {filePath}
-                  <span className="text-[var(--ring)]">({fileComments.length})</span>
-                </summary>
-                <div className="mt-2 ml-4 border-l border-border pl-4 flex flex-col gap-3">
-                  {fileComments.map((c) => (
-                    <div key={c.id} className="flex flex-col gap-1">
-                      <div className="flex items-center gap-2 slide-meta">
-                        <span>{c.startLine ? `Lines ${c.startLine}–${c.line}` : `Line ${c.line}`}</span>
-                        <code className="text-xs truncate max-w-[200px] text-muted-foreground">{c.codeSnippet}</code>
-                      </div>
-                      <pre className="text-[length:var(--type-body)] leading-relaxed whitespace-pre-wrap break-words font-sans text-foreground">
-                        {c.body}
-                      </pre>
-                    </div>
-                  ))}
-                </div>
-              </details>
+        <div className="review-submit-body">
+          {!headSha && (
+            <p className="review-submit-notice" role="status">
+              <AlertTriangle size={16} aria-hidden="true" />
+              This saved review has no commit reference. Open the current changes before posting line comments.
+            </p>
+          )}
+          <fieldset className="review-decision" disabled={submitting}>
+            <legend>Review decision</legend>
+            {decisions.map((option) => (
+              <label key={option.value} className="review-decision-option" data-selected={decision === option.value}>
+                <input
+                  type="radio"
+                  name={decisionId}
+                  value={option.value}
+                  checked={decision === option.value}
+                  disabled={isOwnPr && option.value !== 'COMMENT'}
+                  aria-describedby={`${decisionId}-${option.value}-description`}
+                  onChange={() => {
+                    setDecision(option.value);
+                    setError(null);
+                  }}
+                />
+                <span>
+                  <strong>{option.label}</strong>
+                  <span id={`${decisionId}-${option.value}-description`}>{option.description}</span>
+                </span>
+              </label>
             ))}
-          </div>
-        )}
+            {isOwnPr && (
+              <p className="review-submit-hint">
+                You can comment on your own PR, but cannot approve it or request changes.
+              </p>
+            )}
+          </fieldset>
 
-        {/* Review body */}
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="review-summary" className="text-sm font-medium text-foreground">
-              Review summary <span className="slide-meta">(optional)</span>
+          <div className="review-submit-message">
+            <label htmlFor="review-summary">
+              Review message <span>{needsMessage ? 'Required' : 'Optional'}</span>
             </label>
             <textarea
               id="review-summary"
               value={body}
               disabled={submitting}
+              rows={3}
               maxLength={65536}
-              onChange={(e) => setBody(e.target.value)}
-              placeholder="Overall feedback…"
-              className="w-full min-h-[80px] bg-transparent text-sm resize-y border-0 border-b border-border px-0 py-2 placeholder:text-muted-foreground/60 transition-colors"
+              aria-required={needsMessage}
+              aria-describedby={needsMessage || comments.length ? 'review-message-hint' : undefined}
+              onChange={(event) => setBody(event.target.value)}
+              placeholder={
+                decision === 'REQUEST_CHANGES'
+                  ? 'Describe the changes you need…'
+                  : decision === 'APPROVE'
+                    ? 'Add an approval note…'
+                    : 'Share your feedback…'
+              }
             />
+            {(needsMessage || comments.length > 0) && (
+              <p id="review-message-hint" className="review-submit-hint">
+                {needsMessage
+                  ? 'Add a message or an inline comment before submitting.'
+                  : 'Your inline comments will be included.'}
+              </p>
+            )}
           </div>
-          <label className="flex items-center gap-2 cursor-pointer select-none slide-meta hover:text-foreground transition-colors">
+
+          {comments.length > 0 && (
+            <section className="review-submit-comments" aria-label="Pending inline comments">
+              <h3>
+                {comments.length} {comments.length === 1 ? 'comment' : 'comments'}{' '}
+                <span>
+                  in {fileGroups.size} {fileGroups.size === 1 ? 'file' : 'files'}
+                </span>
+              </h3>
+              {Array.from(fileGroups.entries()).map(([filePath, fileComments]) => (
+                <details key={filePath} className="review-submit-file" open>
+                  <summary>
+                    <ChevronRight size={14} aria-hidden="true" />
+                    <span>{filePath}</span>
+                    <span className="review-submit-file-count">{fileComments.length}</span>
+                  </summary>
+                  {fileComments.map((comment) => (
+                    <div key={comment.id} className="review-submit-comment">
+                      <div className="review-submit-line">
+                        {comment.side === 'LEFT' ? 'Old' : 'New'}{' '}
+                        {comment.startLine ? `lines ${comment.startLine}–${comment.line}` : `line ${comment.line}`}
+                      </div>
+                      {comment.codeSnippet && (
+                        <pre className="review-submit-snippet">
+                          <code>{comment.codeSnippet}</code>
+                        </pre>
+                      )}
+                      {onEditComment && onRemoveComment ? (
+                        <ChangesDraftComment
+                          comment={comment}
+                          onEdit={onEditComment}
+                          onRemove={onRemoveComment}
+                          disabled={submitting}
+                          onEditingChange={onEditingChange}
+                        />
+                      ) : (
+                        <p className="review-submit-comment-text">{comment.body}</p>
+                      )}
+                    </div>
+                  ))}
+                </details>
+              ))}
+            </section>
+          )}
+
+          <label className="review-submit-signature">
             <input
               type="checkbox"
               checked={reviewSignature}
               disabled={submitting || signatureState === 'loading' || signatureState === 'saving'}
-              onChange={(e) => {
-                void syncSignature(e.target.checked);
+              onChange={(event) => {
+                void syncSignature(event.target.checked);
               }}
-              className="accent-[var(--ring)]"
             />
-            <span>Add &ldquo;Reviewed using gnosis.to&rdquo; signature</span>
+            <span>Add “Reviewed using gnosis.to” signature</span>
           </label>
           {signatureError && (
-            <div className="text-sm text-destructive" role="alert">
+            <div className="review-submit-error" role="alert">
               <p>{signatureError}</p>
               <Button variant="link" size="sm" onClick={() => void syncSignature(signatureIntent.current)}>
                 Retry signature setting
               </Button>
             </div>
           )}
+          {error && (
+            <p className="review-submit-error" role="alert">
+              {error}
+            </p>
+          )}
         </div>
-
-        {error && (
-          <p className="text-sm text-destructive" role="alert">
-            {error}
-          </p>
-        )}
-
-        <DialogFooter className="flex-col gap-2 sm:flex-col sm:gap-2">
-          {submitting && <p className="slide-meta text-center animate-pulse">Posting to GitHub…</p>}
-          {isOwnPr && <p className="slide-meta text-center">You can't approve or request changes on your own PR.</p>}
-          <div className="flex flex-row flex-wrap justify-end gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handleSubmit('COMMENT')}
-              disabled={submitting || signatureState !== 'ready' || (comments.length === 0 && !body.trim())}
-            >
-              <MessageSquare className="h-3.5 w-3.5 mr-1.5" />
-              Post comments
+        <DialogFooter className="review-submit-footer">
+          <span className="review-submit-hint" role="status">
+            {submitting ? 'Posting to GitHub…' : editing ? 'Save or cancel your comment edit before submitting.' : ''}
+          </span>
+          <div>
+            <Button variant="outline" size="sm" onClick={handleClose} disabled={submitting}>
+              Cancel
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="border-[var(--color-success)]/35 text-[var(--color-success)] hover:bg-[var(--color-success)]/10"
-              onClick={() => handleSubmit('APPROVE')}
-              disabled={submitting || signatureState !== 'ready' || isOwnPr}
-            >
-              <ShieldCheck className="h-3.5 w-3.5 mr-1.5" />
-              Approve PR
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="border-[var(--color-danger)]/35 text-[var(--color-danger)] hover:bg-[var(--color-danger)]/10"
-              onClick={() => handleSubmit('REQUEST_CHANGES')}
-              disabled={submitting || signatureState !== 'ready' || isOwnPr || (comments.length === 0 && !body.trim())}
-            >
-              <ShieldX className="h-3.5 w-3.5 mr-1.5" />
-              Request changes
+            <Button size="sm" onClick={() => void handleSubmit(decision)} disabled={!canSubmit}>
+              {submitting ? 'Submitting…' : 'Submit review'}
             </Button>
           </div>
         </DialogFooter>

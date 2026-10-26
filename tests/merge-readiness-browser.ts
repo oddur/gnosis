@@ -1,3 +1,4 @@
+import { menuAction } from './entry-menu-helpers';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -18,6 +19,10 @@ void app.whenReady().then(async () => {
     throw Error(`Timed out: ${code}`);
   };
   const click = async (label: string) => {
+    if (label === 'Refresh status') {
+      const menu = await js<string>("document.querySelector('.pr-overview-heading .entry-menu-trigger').getAttribute('aria-label')");
+      return menuAction(js, menu, 'Refresh GitHub status');
+    }
     await js(
       `(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.getBoundingClientRect().width && (b.textContent.trim()===${JSON.stringify(label)} || b.getAttribute('aria-label')===${JSON.stringify(label)}));if(!b)throw Error('Missing '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
     );
@@ -38,10 +43,10 @@ void app.whenReady().then(async () => {
     await wait("document.querySelectorAll('.queue-item').length===7");
     await js(`(()=>{
       const signals=window.electronAPI.getQueueSignals, status=window.electronAPI.getPrStatus;
-      window.mode='behind';window.forceReads=0;window.failStatus=false;
+      window.mode='behind';window.forceReads=0;window.failStatus=false;window.reviewDecisions={};window.reviewOverrides={};
       window.electronAPI.getQueueSignals=async(requests,options)=>{
         const result=await signals(requests,options);
-        return result.map(s=>({...s,readiness:{...s.readiness,mergeState:window.mode==='conflicts'?'DIRTY':window.mode==='behind'?'BEHIND':'CLEAN',mergeable:window.mode==='conflicts'?'CONFLICTING':'MERGEABLE',behindBy:3}}));
+        return result.map(s=>({...s,readiness:{...s.readiness,mergeState:window.mode==='conflicts'?'DIRTY':window.mode==='behind'?'BEHIND':'CLEAN',mergeable:window.mode==='conflicts'?'CONFLICTING':'MERGEABLE',behindBy:3,reviewDecision:s.url in window.reviewDecisions?window.reviewDecisions[s.url]:s.readiness.reviewDecision,...window.reviewOverrides[s.url]}}));
       };
       window.electronAPI.getPrStatus=async(url,force)=>{if(force)window.forceReads++;if(window.failStatus)throw Error('Network unavailable');return status(url,force)};
     })()`);
@@ -50,7 +55,6 @@ void app.whenReady().then(async () => {
     );
     await click('Open PR overview');
     await wait("document.querySelector('.pr-merge-status')?.textContent.includes('Update required to merge')");
-    await wait("!document.querySelector('.pr-merge-status button').disabled");
     assert.match(
       await js<string>("document.querySelector('.pr-merge-detail').textContent"),
       /Rebase onto main, or merge main/
@@ -59,9 +63,11 @@ void app.whenReady().then(async () => {
       await js("document.querySelector('.pr-merge-detail a').getAttribute('href')"),
       'https://github.com/klang/engine/pull/150'
     );
+    assert.equal(await js("document.querySelector('.pr-merge-status .pr-review-status').textContent"), 'Approved');
     await capture('desktop-update-required');
     for (const tab of ['Changes', 'Commits', 'Explanation', 'Summary']) {
       await click(tab);
+      assert.equal(await js("document.querySelector('.pr-merge-status .pr-review-status').textContent"), 'Approved');
       assert.match(
         await js<string>("document.querySelector('.pr-merge-status').textContent"),
         /Update required to merge/
@@ -76,31 +82,34 @@ void app.whenReady().then(async () => {
     await js("document.documentElement.classList.remove('dark');window.mode='conflicts'");
     await click('Refresh status');
     await wait(
-      "document.querySelector('.pr-merge-status')?.textContent.includes('Merge conflicts') && !document.querySelector('.pr-merge-status button').disabled"
+      "document.querySelector('.pr-merge-status')?.textContent.includes('Merge conflicts')"
     );
     assert.match(await js<string>("document.querySelector('.pr-merge-detail').textContent"), /resolve the conflicts/);
+    assert.equal(await js("document.querySelector('.pr-merge-status .pr-review-status').textContent"), 'Approved');
     await capture('conflicts');
     await js("window.mode='clean'");
     await click('Refresh status');
     await wait(
-      "document.querySelector('.pr-merge-status')?.textContent.includes('Ready to merge') && !document.querySelector('.pr-merge-status button').disabled"
+      "document.querySelector('.pr-merge-status')?.textContent.includes('Ready to merge')"
     );
     assert.match(await js<string>("document.querySelector('.pr-merge-detail').textContent"), /updating is optional/);
     await capture('optional-update');
     await js('window.failStatus=true;const realNow=Date.now;Date.now=()=>realNow()+6*60*1000;void 0');
     await click('Refresh status');
     await wait(
-      "document.querySelector('.pr-merge-status')?.textContent.includes('Readiness out of date') && !document.querySelector('.pr-merge-status button').disabled"
+      "document.querySelector('.pr-merge-status')?.textContent.includes('Readiness out of date')"
     );
     assert.equal(await js("!!document.querySelector('.pr-merge-status .is-success')"), false);
+    assert.equal(await js("document.querySelector('.pr-merge-status .pr-review-status').textContent"), 'Approved · Out of date');
+    assert.match(await js<string>("document.querySelector('.pr-merge-status .pr-review-status').title"), /Last checked/);
     await capture('stale');
     await js("window.failStatus=false;window.mode='behind'");
     await click('Refresh status');
     await wait(
-      "document.querySelector('.pr-merge-status')?.textContent.includes('Update required to merge') && !document.querySelector('.pr-merge-status button').disabled"
+      "document.querySelector('.pr-merge-status')?.textContent.includes('Update required to merge')"
     );
     assert.ok((await js<number>('window.forceReads')) >= 4);
-    await click('Work queue');
+    await click('Review queue');
     await wait(
       "[...document.querySelectorAll('.queue-item')].find(e=>e.textContent.includes('Fix reconnect'))?.textContent.includes('Update required to merge')"
     );
@@ -118,6 +127,58 @@ void app.whenReady().then(async () => {
     await click('Refresh status');
     await wait("document.querySelector('.pr-merge-status')?.textContent.includes('Next: #120 ready to merge')");
     await capture('stack-next');
+    await js(`window.reviewDecisions={
+      'https://github.com/klang/engine/pull/120':'CHANGES_REQUESTED',
+      'https://github.com/klang/engine/pull/121':'REVIEW_REQUIRED',
+      'https://github.com/klang/engine/pull/122':null
+    }`);
+    await click('Refresh status');
+    await wait("document.querySelector('.pr-merge-status .pr-review-statuses')?.textContent.includes('1 no review decision')");
+    assert.deepEqual(await js("[...document.querySelectorAll('.pr-merge-status .pr-review-status')].map(s=>s.textContent)"),
+      ['1 changes requested', '1 awaiting review', '1 no review decision']);
+    assert.equal(await js("document.querySelector('.pr-stack-nav button .pr-review-status').textContent"), 'Changes requested');
+    assert.equal(await js("document.querySelector('.pr-stack-nav li:first-child .merge-readiness-badge')"), null);
+    await capture('stack-review-status');
+    win.setSize(640, 800);
+    await capture('stack-review-status-narrow');
+    assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
+    assert.equal(await js("document.querySelector('.pr-member-review-status').textContent"), 'Awaiting review');
+    await js("document.documentElement.classList.add('dark')");
+    await capture('stack-review-status-narrow-dark');
+    win.setSize(1280, 800);
+    await js("document.documentElement.classList.remove('dark')");
+    await click('Review queue');
+    await wait("[...document.querySelectorAll('.queue-status-line')].some(e=>e.textContent.includes('changes requested'))");
+    await capture('queue-review-status');
+    await js("document.querySelector('.queue-disclosure').click()");
+    await wait("document.querySelector('.queue-member .pr-review-status')?.textContent==='Changes requested'");
+    await js("document.querySelector('.queue-item:has(.queue-disclosure)').scrollIntoView({block:'start'})");
+    await capture('queue-review-status-expanded');
+    await js("document.documentElement.classList.add('dark')");
+    await capture('queue-review-status-dark');
+    await js("document.querySelector('.queue-list').scrollTop=0");
+    await js(`(async()=>{
+      const queue = await window.electronAPI.workbenchQueue();
+      const updated = structuredClone(queue);
+      updated.items.flatMap(i=>i.subject.members).filter(m=>m.number===150).forEach(m=>m.headSha='new-status-revision');
+      window.electronAPI.workbenchQueue = async()=>updated;
+      const original = window.electronAPI.getQueueSignals;
+      const gate = new Promise(resolve=>window.confirmNewRevision=resolve);
+      window.electronAPI.getQueueSignals=async(requests, options)=>{
+        if(requests.some(r=>r.headSha==='new-status-revision')) {
+          if(options?.cachedOnly) return [];
+          await gate;
+        }
+        return original(requests,options);
+      };
+      document.querySelector('.queue-toolbar button[aria-label]').click();
+    })()`);
+    await wait("[...document.querySelectorAll('.queue-item')].find(e=>e.textContent.includes('Fix reconnect'))?.querySelector('.pr-review-status')?.textContent==='Checking review status'");
+    await capture('new-revision');
+    await js('window.confirmNewRevision()');
+    await wait("[...document.querySelectorAll('.queue-item')].find(e=>e.textContent.includes('Fix reconnect'))?.querySelector('.pr-review-status')?.textContent==='Approved'");
+
+
     console.log(
       'Merge readiness browser checks passed: queue, persistent header, required/optional updates, conflicts, stale status, refresh, stack bases, narrow and dark views.'
     );

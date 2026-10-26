@@ -10,6 +10,10 @@ export interface QueueSignalOptions {
 export interface QueueSignals extends QueueSignalRequest {
   checkedAt: number;
   comments: number;
+  activity?: {
+    comment?: { id: string; at: string; author: string };
+    review?: { id: string; at: string; author: string; state?: string };
+  };
   checks: { state: 'success' | 'failure' | 'pending' | 'neutral'; passed: number; skipped?: number; total: number };
   readiness?: {
     state: string;

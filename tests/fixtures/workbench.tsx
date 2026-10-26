@@ -1,3 +1,4 @@
+import { emptyReadVersions, type PrReadState, type MarkPrReadRequest } from '../../lib/pr-read-state';
 import './select-option';
 import { matchesPrInactivity, normalizePrInactivityDays } from '../../lib/pr-inactivity';
 import { withoutMutedMembers, isMutedReview } from '../../lib/muted-prs';
@@ -423,6 +424,27 @@ let activities: ActivityTask[] = [
 ];
 if (onboardingScenario) activities = [];
 let navigateReview: ((event: Event) => void) | undefined;
+const unreadScenario = new URLSearchParams(location.search).has('unread');
+const fixtureReads: Record<string, PrReadState> = unreadScenario ? JSON.parse(sessionStorage.getItem('fixture-read-state') ?? 'null') ?? Object.fromEntries(items.flatMap(item => item.subject.members).map(member => {
+  const versions = emptyReadVersions();
+  const unread = member.number === 121 || member.number === 152 ? ['commits' as const] : [];
+  if (unread.length) versions.commits = 1;
+  return [member.url, { url: member.url, headSha: member.headSha, versions, unread }];
+})) : {};
+const updateFixtureUnread = () => {
+  for (const item of items) item.unreadUrls = item.subject.members.filter(member => fixtureReads[member.url]?.unread.length).map(member => member.url);
+};
+updateFixtureUnread();
+window.addEventListener('fixture-new-commit', () => {
+  const state = fixtureReads['https://github.com/klang/engine/pull/152'];
+  if (!state) return;
+  state.versions.commits++;
+  state.headSha = 'head-new';
+  state.unread = [...new Set([...state.unread, 'commits' as const])];
+  for (const item of items) for (const member of item.subject.members) if (member.number === 152) member.headSha = state.headSha;
+  updateFixtureUnread();
+  window.dispatchEvent(new Event('fixture-pr-read-change'));
+});
 const mocks = {
   onReviewNavigate: (callback: (id: string) => void) => {
     navigateReview = event => callback((event as CustomEvent<string>).detail);
@@ -527,6 +549,21 @@ const mocks = {
     return Promise.resolve(mocks.workbenchQueue());
   },
   workbenchSnapshot: () => mocks.workbenchQueue(),
+  onPrReadStateChanged: (callback: () => void) => {
+    window.addEventListener('fixture-pr-read-change', callback);
+    return () => window.removeEventListener('fixture-pr-read-change', callback);
+  },
+  workbenchMarkPrRead: (request: MarkPrReadRequest) => {
+    for (const receipt of request.receipts) {
+      const current = fixtureReads[receipt.url];
+      if (!current) continue;
+      if (!request.read) { current.versions.manual++; current.unread = [...new Set([...current.unread, 'manual' as const])]; }
+      else current.unread = current.unread.filter(reason => current.versions[reason] > receipt.versions[reason] || ((reason === 'commits' || reason === 'new') && current.headSha !== receipt.headSha));
+    }
+    sessionStorage.setItem('fixture-read-state', JSON.stringify(fixtureReads));
+    updateFixtureUnread();
+    return mocks.workbenchQueue();
+  },
   workbenchMutePrs: (request: import('../../lib/muted-prs').MutePrRequest) => {
     const entries = new Map(fixtureMutes.map(entry => [entry.member.url, entry]));
     for (const member of request.members) {
@@ -548,6 +585,7 @@ const mocks = {
   },
   workbenchQueue: () =>
     Promise.resolve({
+      readStates: unreadScenario ? structuredClone(fixtureReads) : undefined,
       mutedPrs: fixtureMutes,
       starredPrs: fixtureStars.filter(entry => !fixtureMutedUrls().has(entry.member.url)),
       starredItems: visibleFixtureItems().filter(item=>item.starred),

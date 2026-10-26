@@ -87,7 +87,7 @@ void app.whenReady().then(async () => {
       `(()=>{const e=document.querySelector('.chat-sheet textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,'Keep my unfinished question');e.dispatchEvent(new Event('input',{bubbles:true}));})()`
     );
     await open();
-    await fill('> go to work queue');
+    await fill('> go to review queue');
     await key('Enter');
     await wait("!!document.querySelector('.workbench-header')&&!document.querySelector('.workbench-review')");
     await open();

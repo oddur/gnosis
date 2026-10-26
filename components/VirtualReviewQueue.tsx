@@ -76,7 +76,11 @@ export function VirtualReviewQueue({ items, labels, selected, scrollElement, ini
         setFocused(row?.dataset.queueId ?? null);
       }}
       onBlurCapture={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(null);
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          // Menus are portaled, but their entry must stay mounted while keyboard focus is inside.
+          const owner = (event.relatedTarget as HTMLElement | null)?.closest<HTMLElement>('[data-queue-id]');
+          setFocused(owner?.dataset.queueId ?? null);
+        }
       }}>
       {virtual ? virtualizer.getVirtualItems().map((entry) => (
         <div key={entry.key} ref={virtualizer.measureElement} data-index={entry.index}

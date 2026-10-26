@@ -4,7 +4,7 @@ import { CircleHelp, X } from 'lucide-react';
 
 const terms = [
   [
-    'Work queue',
+    'Review queue',
     'PRs that involve you or come from repositories you follow in Gnosis. Filters help you choose what to review next.',
   ],
   [

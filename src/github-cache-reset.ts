@@ -7,7 +7,7 @@ function savedWorkbench(directory: string): Record<string, unknown> | undefined 
   if (!fs.existsSync(file)) return;
   const value: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (!value || typeof value !== 'object' || Array.isArray(value))
-    throw new Error('Could not read the work queue. Its saved briefings have not been deleted.');
+    throw new Error('Could not read the review queue. Its saved briefings have not been deleted.');
   return value as Record<string, unknown>;
 }
 /** Defer deletion until startup, when no old request can write its response back. */

@@ -1628,3 +1628,34 @@ void test('upgrading an existing queue retains verified details instead of rehyd
     assert.equal(reads, 0, 'The old scope fingerprint verifies that this credential populated the saved details');
   } finally { s.cleanup(); }
 });
+
+test('normal discovery detects new reviews on read PRs hidden by the unread filter without refetching unchanged activity', async () => {
+  const s = setup(() => Promise.resolve('unused'), false);
+  let calls = 0;
+  let now = Date.parse('2026-10-26T12:00:00Z');
+  let review = { id: 'old-review', at: '2026-10-25T00:00:00Z', author: 'author' };
+  const service = createWorkbenchService({ ...s.deps, now: () => now,
+    signals: async (_client, requests) => {
+      calls++;
+      return requests.map(request => ({ ...request, checkedAt: now, comments: 0, activity: { review }, checks: { state: 'success', total: 1, passed: 1 } }));
+    },
+  });
+  try {
+    const first = await service.queue(true);
+    assert.deepEqual(first.items[0].unreadUrls, []);
+    assert.equal(calls, 1);
+    service.setFilters({ unreadOnly: true });
+    now += 6 * 60_000;
+    await service.queue(false);
+    // Discovery runs in the background when cached data exists.
+    for (let i = 0; i < 30 && service.snapshot().sync?.status === 'checking'; i++) await new Promise(r => setTimeout(r, 5));
+    assert.equal(calls, 1, 'unchanged PRs do not cause more activity queries');
+    review = { id: 'new-review', at: '2026-10-26T12:07:00Z', author: 'author' };
+    s.pr.updated_at = review.at;
+    now = Date.parse('2026-10-26T12:08:00Z');
+    const updated = await service.queue(true);
+    assert.deepEqual(updated.items[0].unreadUrls, [s.pr.html_url]);
+    assert.deepEqual(updated.readStates?.[s.pr.html_url]?.unread, ['reviews']);
+    assert.equal(calls, 2);
+  } finally { s.cleanup(); }
+});
