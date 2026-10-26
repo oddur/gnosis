@@ -111,7 +111,7 @@ void test('SQLite batches roll back atomically on a failed operation', async () 
           payload: JSON.stringify({ scope, key: hash('one'), savedAt: 1000, value: 'partial' }),
         },
         { id: 'invalid', payload: undefined },
-      ])
+      ], 1000)
     );
     await storage.close();
     const cache = await f.open();
@@ -141,7 +141,7 @@ void test('refreshing 25 PR signals does not serialize or synchronously rewrite 
   );
   const responses = Object.fromEntries(
     Array.from({ length: 25 }, (_, i) => [
-      'p' + i,
+      `p${i}`,
       {
         pullRequest: {
           headRefOid: 'abc123',
@@ -163,10 +163,10 @@ void test('refreshing 25 PR signals does not serialize or synchronously rewrite 
   );
   const pool = createGitHubClientPool({
     minSpacingMs: 0,
-    fetch: (async () =>
+    fetch: (() => Promise.resolve(
       new Response(JSON.stringify({ data: responses }), {
         headers: { 'content-type': 'application/json' },
-      })) as typeof fetch,
+      }))) as typeof fetch,
   });
   try {
     await pool.setStorage(path.join(f.dir, 'github-budget.json'));
@@ -174,7 +174,7 @@ void test('refreshing 25 PR signals does not serialize or synchronously rewrite 
     const stringify = JSON.stringify;
     const serialization = t.mock.method(JSON, 'stringify', (...args: Parameters<typeof JSON.stringify>) => {
       const result = stringify(...args);
-      serializedBytes += result?.length ?? 0;
+      serializedBytes += result.length;
       return result;
     });
     const writes = t.mock.method(fs, 'writeFileSync');
@@ -227,17 +227,51 @@ void test('disk cache limits evict oldest prepared content and apply immediately
       maxBytes: 32000000, maxEntryBytes: 1000000, maxEntries: 2000, retention: 10000, preparedBytes: 1500 });
     const put = (key: string, time: number) => ({ id: `${scope}:${hash(key)}`, prepared: true, onlyPrepared: true,
       payload: JSON.stringify({ scope, key: hash(key), savedAt: time, value: 'x'.repeat(500) }) });
-    await storage.write([put('one', 800), put('two', 900), put('three', 1000)]);
+    await storage.write([put('one', 800), put('two', 900), put('three', 1000)], 1000);
     assert.equal(await storage.readPrepared(`${scope}:${hash('one')}`, 1000), undefined);
     assert.ok(await storage.readPrepared(`${scope}:${hash('two')}`, 1000));
     await storage.setPreparedLimit(750, 1000);
     assert.equal(await storage.readPrepared(`${scope}:${hash('two')}`, 1000), undefined);
     assert.ok(await storage.readPrepared(`${scope}:${hash('three')}`, 1000));
     await storage.setPreparedLimit(1500, 1000);
-    await storage.write([put('four', 1000)]);
+    await storage.write([put('four', 1000)], 1000);
     assert.ok(await storage.readPrepared(`${scope}:${hash('three')}`, 1000));
     assert.ok(await storage.readPrepared(`${scope}:${hash('four')}`, 1000));
   } finally { await storage.close(); await f.cleanup(); }
+});
+
+void test('reading an older hot entry after restart preserves newer disk-only downloads', async () => {
+  const f = fixture();
+  let now = 1000;
+  let cache = createGitHubCache(() => now);
+  const large = 'x'.repeat(1_100_000);
+  try {
+    await cache.setStorage(f.file);
+    cache.scope(scope).set('pr-file:v2:older', 'older file');
+    await cache.flush();
+    now = 2000;
+    cache.scope(scope).set('pr-file:v2:newer', large);
+    await cache.close();
+
+    now = 3000;
+    cache = createGitHubCache(() => now);
+    await cache.setStorage(f.file);
+    const account = cache.scope(scope);
+    assert.equal(account.get('pr-file:v2:newer', valid), undefined, 'large files are disk-only');
+    assert.equal(await account.getPrepared('pr-file:v2:newer', valid), large);
+    assert.equal(await account.getPrepared('pr-file:v2:older', valid), 'older file');
+    await cache.flush();
+    assert.equal(await account.getPrepared('pr-file:v2:newer', valid), large);
+    assert.equal(account.get('pr-file:v2:older', valid)?.savedAt, 1000, 'restoring does not renew retention');
+
+    await cache.close();
+    cache = createGitHubCache(() => now);
+    await cache.setStorage(f.file);
+    assert.equal(await cache.scope(scope).getPrepared('pr-file:v2:newer', valid), large);
+  } finally {
+    await cache.close();
+    await f.cleanup();
+  }
 });
 
 void test('cache size defaults to 512 MB and accepts only supported budgets', async () => {

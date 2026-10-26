@@ -9,13 +9,13 @@ export function ChangesDraftComment({
   onEdit,
   onRemove,
   disabled = false,
-  onEditingChange,
+  onBusyChange,
 }: {
   comment: PendingReviewComment;
   onEdit: (id: string, body: string) => void | Promise<void>;
   onRemove: (id: string) => void | Promise<void>;
   disabled?: boolean;
-  onEditingChange?: (id: string, editing: boolean) => void;
+  onBusyChange?: (id: string, busy: boolean) => void;
 }) {
   const [editing, setEditing] = useSessionDraft(`changes-draft-editing:${comment.id}`, false);
   const [error, setError] = useState('');
@@ -24,9 +24,9 @@ export function ChangesDraftComment({
   const [body, setBody] = useSessionDraft(`changes-draft-edit:${comment.id}`, comment.body);
   const id = useId();
   useEffect(() => {
-    onEditingChange?.(comment.id, editing);
-    return () => onEditingChange?.(comment.id, false);
-  }, [comment.id, editing, onEditingChange]);
+    onBusyChange?.(comment.id, editing || saving);
+    return () => onBusyChange?.(comment.id, false);
+  }, [comment.id, editing, saving, onBusyChange]);
   return (
     <div className="changes-draft-comment">
       {editing ? (

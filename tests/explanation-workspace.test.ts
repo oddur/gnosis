@@ -10,6 +10,7 @@ import {
   subscribeDiscussions,
 } from '../lib/review-discussion-cache';
 import type { GitHubReviewThreads, GitHubReviewThread } from '../lib/review-threads';
+import type { Preferences } from '../lib/types';
 const storage = new Map<string, string>();
 Object.defineProperty(globalThis, 'localStorage', {
   value: {
@@ -177,6 +178,89 @@ void test('signed-out local explanations migrate, edit, and retain notes indepen
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);
       else Reflect.deleteProperty(globalThis, key);
     });
+    dom.window.close();
+  }
+});
+
+void test('review submission waits for draft removal and recovers after a failed save', async () => {
+  const { JSDOM } = await import('jsdom');
+  const { createElement, act, useState } = await import('react');
+  const dom = new JSDOM('<div id="root"></div>', { url: 'https://review.test' });
+  const globals: Record<string, unknown> = {
+    window: dom.window, document: dom.window.document, navigator: dom.window.navigator,
+    HTMLElement: dom.window.HTMLElement, HTMLInputElement: dom.window.HTMLInputElement,
+    HTMLButtonElement: dom.window.HTMLButtonElement, Element: dom.window.Element, Node: dom.window.Node,
+    MutationObserver: dom.window.MutationObserver, CustomEvent: dom.window.CustomEvent,
+    NodeFilter: dom.window.NodeFilter, getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  const previous = new Map(Object.keys(globals).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  for (const [key, value] of Object.entries(globals))
+    Object.defineProperty(globalThis, key, { value, configurable: true });
+  window.electronAPI = { loadPreferences: () => Promise.resolve({ reviewSignature: false } as Preferences) } as typeof window.electronAPI;
+  const { createRoot } = await import('react-dom/client');
+  const { SubmitReviewDialog } = await import('../components/SubmitReviewDialog');
+  let completeRemoval: () => void = () => { throw Error('No removal pending'); };
+  let failRemoval: () => void = () => { throw Error('No removal pending'); };
+  const submitted: string[][] = [];
+  function Harness() {
+    const [comments, setComments] = useState([draft, { ...draft, id: 'retained', body: 'Keep this comment.' }]);
+    return createElement(SubmitReviewDialog, {
+      open: true, onOpenChange: () => {}, comments,
+      prUrl: 'https://github.com/o/r/pull/99', isOwnPr: false,
+      onEditComment: () => {},
+      onRemoveComment: async (id: string) => {
+        await new Promise<void>((resolve, reject) => {
+          completeRemoval = resolve;
+          failRemoval = () => reject(new Error('Disk full'));
+        });
+        setComments(current => current.filter(comment => comment.id !== id));
+      },
+      onSubmit: () => {
+        submitted.push(comments.map(comment => comment.id));
+        return Promise.resolve({ reviewUrl: 'https://github.com/o/r/pull/99#review', droppedCommentCount: 0 });
+      },
+    });
+  }
+  const container = document.getElementById('root');
+  assert.ok(container);
+  const root = createRoot(container);
+  const update = (work: () => void | Promise<void>) => act(async () => { await work(); });
+  const button = (text: string) => {
+    const found = [...document.querySelectorAll('button')].find(element => element.textContent.trim() === text);
+    assert.ok(found, `Missing button: ${text}`);
+    return found;
+  };
+  try {
+    await update(() => { root.render(createElement(Harness)); });
+    assert.equal(button('Submit review').disabled, false);
+    await update(() => { button('Remove draft').click(); });
+    assert.equal(button('Submit review').disabled, true);
+    await update(() => { button('Submit review').click(); });
+    assert.deepEqual(submitted, []);
+
+    await update(() => { failRemoval(); });
+    assert.match(document.body.textContent, /Could not remove this draft/);
+    assert.equal(button('Submit review').disabled, false, 'failed removal does not leave submission locked');
+    assert.equal(document.querySelectorAll('.review-submit-comment').length, 2);
+
+    await update(() => { button('Remove draft').click(); });
+    assert.equal(button('Submit review').disabled, true);
+    await update(() => { completeRemoval(); });
+    assert.equal(document.querySelectorAll('.review-submit-comment').length, 1);
+    assert.equal(button('Submit review').disabled, false);
+    await update(() => { button('Submit review').click(); });
+    assert.deepEqual(submitted, [['retained']], 'the removed draft must not be posted');
+  } finally {
+    await act(async () => {
+      root.unmount();
+      // Radix restores focus in a timer; keep the DOM globals until it finishes.
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
     dom.window.close();
   }
 });

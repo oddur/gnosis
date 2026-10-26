@@ -53,7 +53,7 @@ export function createGitHubCache(now = Date.now) {
     const batch = [...writes.values()];
     writes.clear();
     const target = storage;
-    pending = pending.catch(() => {}).then(() => target.write(batch));
+    pending = pending.catch(() => {}).then(() => target.write(batch, now()));
     return pending;
   }
   function remove(key: string) {

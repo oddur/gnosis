@@ -62,7 +62,7 @@ export function createCacheStorage() {
     }) => call('open', args),
     setPreparedLimit: (bytes: number, now: number) => call('prepared-limit', { bytes, now }),
     readPrepared: (id: string, now: number) => call('prepared-read', { id, now }),
-    write: (operations: CacheWrite[]) => call('write', operations),
+    write: (operations: CacheWrite[], now: number) => call('write', { operations, now }),
     async close() {
       try {
         await call('close');
