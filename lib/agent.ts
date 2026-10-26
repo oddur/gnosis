@@ -1,4 +1,4 @@
-import { REVIEW_OVERVIEW_DIRECTIVE } from './review-overview';
+import { REVIEW_OVERVIEW_DIRECTIVE, REVIEW_PROSE_DIRECTIVE, SLIDE_NARRATIVE_DIRECTIVE } from './review-overview';
 import { D2_DIRECTIVE, D2_PLANNER_DIRECTIVE } from './d2-guidance';
 import { normalizeD2Diagram, normalizeDiagramBrief } from './diagram-spec';
 import { FILE_SUMMARY_DIRECTIVE } from './file-summaries';
@@ -15,6 +15,8 @@ Guidelines for producing a great review guide:
 
 ${REVIEW_OVERVIEW_DIRECTIVE}
 
+${SLIDE_NARRATIVE_DIRECTIVE}
+
 ORDERING: Order slides so the reviewer always has context before they need it.
 - Show foundational changes first (base types, interfaces, schemas, abstract classes)
 - Then show implementations that depend on those foundations
@@ -27,16 +29,7 @@ GROUPING: Group changes that are logically related and should be understood toge
 - Unrelated changes to the same file should be in different slides
 - Refactoring a function and adding a test for it are two different slides
 
-NARRATIVE: For each slide, explain WHY this changed, not just WHAT changed.
-- Assume the reviewer is smart but hasn't read the PR description carefully
-- Lead with the business or technical motivation in one sentence
-- Explain how the changed parts work together and the constraints needed to follow the overall flow
-- Put detailed local mechanisms beside their code in inlineExplanations; introduce their broader role here without repeating the same explanation
-- Write 2–4 short paragraphs — never one dense wall of text
-- Use **bold** for emphasis, \`backticks\` for code symbols, and markdown lists where helpful
-- No headings in narrative — just bold, lists, inline code
-
-REVIEW CHECKS: The reviewer has read your narrative. Now give them 2–4 things they STILL need to check to approve with confidence. Use these for unresolved risks; explain established behavior in the narrative or inlineExplanations.
+REVIEW CHECKS: The reviewer has read your narrative. Give them only the concrete things they STILL need to check to approve with confidence (0–4 checks; no minimum). Use these for unresolved risks; explain established behavior in the narrative or inlineExplanations.
 
 What makes a good check:
 - Names a SPECIFIC risk in THIS diff — a possible bug, missed edge case, broken invariant, unsafe assumption, race, boundary condition, stale cache, or contract violation. Not a generic review platitude.
@@ -50,7 +43,7 @@ Do NOT produce:
 - Restatements of what the narrative or code already says
 - Style or lint commentary (formatting, naming, const vs. let, import order) — that's the linter's job, not the reviewer's
 - Generic security/performance checklist items not grounded in the diff
-- Filler checks to hit the 4-item count. Prefer 2 great checks over 4 mediocre ones.
+- Filler checks to reach a count. Return reviewChecks: [] and reviewFocus: null when no concrete unresolved risk warrants a check.
 
 Anchor each check to a location when you honestly can:
 - "filePath" must exactly match one of the diffHunks[].filePath values on the same slide.
@@ -58,16 +51,9 @@ Anchor each check to a location when you honestly can:
 - Use filePath: null, startLine: null only when the check is genuinely cross-cutting (e.g. "across these files, confirm every exception path still releases the lock").
 - Do NOT invent line numbers to look thorough. An un-anchored but concrete check is far better than a fabricated anchor.
 
-REVIEW FOCUS: The markdown-prose rendering of the same 2–4 checks as a bullet list. Same items, same standard — just formatted for reading.
+REVIEW FOCUS: The Markdown rendering of the same checks as a bullet list, or null when there are none. Same items, same standard — just formatted for reading.
 
 ${D2_DIRECTIVE}
-
-WRITING STYLE (apply to all text fields — narrative, reviewFocus, summary, riskRationale):
-- Short sentences. Plain words. No jargon when plain English works.
-- One idea per sentence. One topic per paragraph.
-- Avoid filler: "It's worth noting that", "This means that", "In order to"
-- Never pad text to seem thorough — concise and clear beats long and complete
-- Markdown is allowed: bold, inline code, bullet lists. Use sparingly — no headings in narrative fields.
 
 RISK: Assess overall risk based on:
 - Changes to auth, payments, data models, or public APIs = high risk
@@ -101,7 +87,7 @@ You must respond with valid JSON matching the ReviewGuide schema exactly. No exp
 
 const USER_SUFFIX = `
 
-Produce a ReviewGuide JSON object for this pull request. The slides array must be ordered for optimal review flow as described. Every slide must have a clear narrative and reviewFocus. Remember: short paragraphs, plain language, one idea per sentence — the goal is to reduce cognitive load for the reviewer.
+Produce a ReviewGuide JSON object for this pull request. The slides array must be ordered for optimal review flow as described. Every slide must have a minimal, clear narrative; reviewFocus is null when no check is needed. Prefer short bullets and separate distinct sections with Markdown headings. Remove repetition and unnecessary prose — the goal is to reduce cognitive load for the reviewer.
 
 The JSON must match this schema exactly:
 {
@@ -144,7 +130,7 @@ The JSON must match this schema exactly:
 
 const CONCISE_SUFFIX = `
 
-IMPORTANT: Be concise. Keep narrative and reviewFocus under 2 sentences each. Omit contextSnippets entirely (use empty arrays). Limit diffHunkIds to the 5 most important hunk IDs per slide. Return only raw JSON starting with { and ending with }.`;
+IMPORTANT: Be concise. Keep each narrative to its essential takeaway and short Markdown bullets; no filler. Keep reviewFocus concise, or null when no check is needed. Omit contextSnippets entirely (use empty arrays). Limit diffHunkIds to the 5 most important hunk IDs per slide. Return only raw JSON starting with { and ending with }.`;
 
 const CLAUDE_CONTEXT_DIRECTIVE = `
 PROJECT CONVENTIONS — ACTIVE
@@ -474,15 +460,11 @@ const WRITER_SYSTEM = `You are an expert code reviewer writing one slide of a gu
 
 CONTEXT: You are writing ONE slide in a multi-slide review. The <story_arc> tells you the overall PR narrative. The <narrative_brief> tells you what angle to take for THIS slide. Follow these directions to maintain consistency across slides.
 
-NARRATIVE: 2–4 short paragraphs. Lead with motivation, then explain how the changed parts work together and the constraints needed to follow the overall flow.
-- Put detailed local mechanisms beside their code in inlineExplanations; introduce their broader role here without repeating the same explanation
-- Short sentences. Plain words. One idea per sentence.
-- Use **bold** for emphasis, \`backticks\` for code symbols, markdown lists where helpful
-- No headings — just bold, lists, inline code
-- Reference how this topic connects to the broader PR story when relevant
-- If this topic depends on earlier topics, briefly acknowledge what was established (e.g., "Building on the Token type introduced earlier...")
+${REVIEW_PROSE_DIRECTIVE}
 
-REVIEW CHECKS: The reviewer has read your narrative — give them 2–4 things they STILL need to check to approve with confidence. Use these for unresolved risks; explain established behavior in the narrative or inlineExplanations.
+${SLIDE_NARRATIVE_DIRECTIVE}
+
+REVIEW CHECKS: The reviewer has read your narrative — give them only the concrete things they STILL need to check to approve with confidence (0–4 checks; no minimum). Use these for unresolved risks; explain established behavior in the narrative or inlineExplanations.
 
 Each check must:
 - Name a SPECIFIC risk in THIS diff (possible bug, missed edge case, broken invariant, unsafe assumption, race, boundary, stale cache, contract violation) — not a generic review platitude.
@@ -490,14 +472,14 @@ Each check must:
 - Be grounded in the actual code. If you cannot point at something concrete, skip the check.
 - Be one sentence. Two sentences means two checks.
 
-Avoid: vague prompts, restatements of the narrative, style/lint nits, generic checklist items, filler to hit 4 items. Prefer 2 great checks over 4 mediocre ones.
+Avoid: vague prompts, restatements of the narrative, style/lint nits, generic checklist items, and filler to reach a count. Return reviewChecks: [] and reviewFocus: null when no concrete unresolved risk warrants a check.
 
 Anchor when you can:
 - "filePath" exactly matches a file in the provided hunks.
 - "startLine" is a new-file line inside a hunk range — pick the most specific line (the branch, call, or assignment the reviewer should look at), not the top of the function.
 - filePath: null, startLine: null only for genuinely cross-cutting checks. Never invent anchors.
 
-REVIEW FOCUS: Markdown-bullet-list rendering of the same checks. Same items, same standard.
+REVIEW FOCUS: Markdown-bullet-list rendering of the same checks, or null when there are none. Same items, same standard.
 
 ${D2_DIRECTIVE}
 
@@ -626,7 +608,7 @@ export async function generateSlide(opts: GenerateSlideOptions): Promise<WriterS
     if (msg.includes('rate limit') || msg.includes('prompt is too long')) throw err;
     console.warn(`[writer] First attempt failed (${msg}), retrying concisely`);
     return await attempt(
-      '\n\nIMPORTANT: Return only raw JSON starting with { and ending with }. Keep narrative under 3 sentences. No markdown fences.'
+      '\n\nIMPORTANT: Return only raw JSON starting with { and ending with }. Keep the narrative to its essential takeaway and short Markdown bullets. No prose padding. No markdown fences around the JSON.'
     );
   }
 }
