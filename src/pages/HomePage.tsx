@@ -684,7 +684,7 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
   };
   const queueItems = filters.starredOnly ? (queue.starredItems ?? []) : queue.items;
   const items = queueItems.filter((item) => matchesQueueFilters(item,
-    filters.unreadOnly && openedItem?.subject.id === item.subject.id ? { ...filters, unreadOnly: false } : filters,
+    filters.readStatus !== 'all' && openedItem?.subject.id === item.subject.id ? { ...filters, readStatus: 'all' } : filters,
     Date.now(), auth?.login));
   const repos = [
     ...new Set([...queueItems.flatMap((i) => i.subject.members.map((m) => m.repo)), ...(repo === 'all' ? [] : [repo])]),

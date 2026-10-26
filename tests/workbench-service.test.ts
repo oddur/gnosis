@@ -1675,7 +1675,7 @@ test('normal discovery detects new reviews on read PRs hidden by the unread filt
     const first = await service.queue(true);
     assert.deepEqual(first.items[0].unreadUrls, []);
     assert.equal(calls, 1);
-    service.setFilters({ unreadOnly: true });
+    service.setFilters({ readStatus: 'unread' });
     now += 6 * 60_000;
     await service.queue(false);
     // Discovery runs in the background when cached data exists.

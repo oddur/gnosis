@@ -5,7 +5,7 @@ import { fingerprint, type QueueItem, type ReviewMember } from './workbench';
 export interface QueueFilters {
   sort: PrListSort;
   starredOnly: boolean;
-  unreadOnly: boolean;
+  readStatus: 'all' | 'unread' | 'read';
   involvement: 'all' | 'mine';
   query: string;
   repo: string;
@@ -22,7 +22,7 @@ export interface QueueFilters {
 export const DEFAULT_QUEUE_FILTERS: QueueFilters = {
   sort: DEFAULT_PR_SORT,
   starredOnly: false,
-  unreadOnly: false,
+  readStatus: 'all',
   involvement: 'all',
   query: '',
   repo: 'all',
@@ -47,7 +47,7 @@ export function normalizeQueueFilters(value: unknown): QueueFilters {
   return {
     sort: normalizePrListSort(raw.sort),
     starredOnly: raw.starredOnly === true,
-    unreadOnly: raw.unreadOnly === true,
+    readStatus: choice('readStatus', ['all', 'unread', 'read'], raw.unreadOnly === true ? 'unread' : 'all'),
     involvement: choice('involvement', ['all', 'mine'], 'all'),
     query: text('query', ''),
     repo: text('repo', 'all'),
@@ -99,7 +99,7 @@ export function matchesQueueFilters(
     (m: ReviewMember) =>
       (filters.starredOnly || (m.state === 'open' && !m.merged)) &&
       (!filters.starredOnly || item.starredUrls?.includes(m.url)) &&
-      (!filters.unreadOnly || item.unreadUrls?.includes(m.url)) &&
+      (filters.readStatus === 'all' || (filters.readStatus === 'unread') === !!item.unreadUrls?.includes(m.url)) &&
       (filters.involvement !== 'mine' || isMyPr(m, login)) &&
       (filters.repo === 'all' || m.repo === filters.repo) &&
       (filters.author === 'all' || m.author === filters.author) &&
@@ -136,7 +136,7 @@ export function prioritizeBriefings(
 export function describeQueueFilters(filters: QueueFilters): { key: keyof QueueFilters; label: string }[] {
   const labels: Partial<Record<keyof QueueFilters, string>> = {
     starredOnly: 'Starred PRs',
-    unreadOnly: 'Unread updates',
+    readStatus: filters.readStatus === 'unread' ? 'Unread PRs' : 'Read PRs',
     involvement: 'Involving me',
     query: `Search: ${filters.query}`,
     repo: filters.repo,

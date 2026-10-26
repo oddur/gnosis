@@ -77,3 +77,18 @@ void test('view order, active selection and drafts persist separately for each G
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+void test('saved views retain read status and labels and migrate the old unread toggle', () => {
+  let state = normalizeViews(null, { unreadOnly: true, label: 'bug' });
+  assert.equal(activeViewFilters(state).readStatus, 'unread');
+  state = applyViewAction(state, { type: 'create', name: 'Unread bugs' }, () => 'bugs');
+  state = editViewFilters(state, { ...activeViewFilters(state), readStatus: 'read' });
+  const restored = normalizeViews(JSON.parse(JSON.stringify(state)));
+  assert.equal(activeViewFilters(restored).readStatus, 'read');
+  assert.equal(activeViewFilters(restored).label, 'bug');
+  assert.equal(restored.views[0].filters.readStatus, 'unread');
+  assert.equal(viewIsModified(restored.views[0]), true);
+  state = applyViewAction(restored, { type: 'reset', id: 'bugs' }, () => 'unused');
+  assert.equal(activeViewFilters(state).readStatus, 'unread');
+  assert.equal(activeViewFilters(state).label, 'bug');
+});
