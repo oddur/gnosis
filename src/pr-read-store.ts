@@ -142,8 +142,17 @@ export function createPrReadStore(directory: () => string, now = Date.now) {
   }
   return {
     observe(account: string, members: PrMetadata[], finishBaseline = false, own = false) {
+      const current = load(account);
+      const changed = members.filter(member => {
+        if (!validUrl(member.url)) return false;
+        const entry = current.entries[member.url];
+        if (!entry) return true;
+        if (entry.metadataAt && member.updatedAt < entry.metadataAt) return false;
+        return entry.metadataKey !== JSON.stringify(prReadMetadata(member));
+      });
+      if (!changed.length && (!finishBaseline || current.initialized)) return false;
       return edit(account, (state) => {
-        for (const member of members) observeMetadata(state, member, own);
+        for (const member of changed) observeMetadata(state, member, own);
         if (finishBaseline) state.initialized = true;
       });
     },

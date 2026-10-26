@@ -18,6 +18,7 @@ import {
 import { ACTIVITY_RETENTION_MS, type ActivityTask } from '../lib/activity';
 import type { ActivityService } from './activity-service';
 import fs from 'node:fs';
+import { isDeepStrictEqual } from 'node:util';
 import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
@@ -166,28 +167,29 @@ export function createWorkbenchService(deps: Deps) {
     fs.writeFileSync(temp, JSON.stringify(load()));
     fs.renameSync(temp, cachePath());
   }
-  const modelSettings = () => briefingModel(deps.preferences());
+  const modelSettings = (preferences = deps.preferences()) => briefingModel(preferences);
   function key(subject: ReviewSubject, p = modelSettings()) {
     return createHash('sha256')
       .update(JSON.stringify([fingerprint(subject), p.provider, p.model, p.thinking, 'briefing-v2']))
       .digest('hex');
   }
-  const limit = () => Math.min(100, Math.max(0, (deps.preferences().briefingDailyLimit ?? 10) || 0));
+  const limit = (preferences = deps.preferences()) => Math.min(100, Math.max(0, (preferences.briefingDailyLimit ?? 10) || 0));
   function isArchived(member: ReviewMember) {
     return member.repoArchived === true || (load().archivedRepos ?? []).includes(member.repo.toLowerCase());
   }
-  const inactivityDays = () => normalizePrInactivityDays(deps.preferences().prInactivityDays);
-  const withinInactivity = (subject: ReviewSubject, starred: ReadonlySet<string> = new Set(stars.load(load().account).map(entry => entry.member.url))) => matchesPrInactivity(subject, inactivityDays(), now(), starred);
-  function includeSubject(subject: ReviewSubject, muted = mutedUrls(), starred: ReadonlySet<string> = new Set(stars.load(load().account).map(entry => entry.member.url))) {
+  const inactivityDays = (preferences = deps.preferences()) => normalizePrInactivityDays(preferences.prInactivityDays);
+  const withinInactivity = (subject: ReviewSubject, starred: ReadonlySet<string> = new Set(stars.load(load().account).map(entry => entry.member.url)), preferences = deps.preferences()) => matchesPrInactivity(subject, inactivityDays(preferences), now(), starred);
+  function includeSubject(subject: ReviewSubject, muted = mutedUrls(), starred: ReadonlySet<string> = new Set(stars.load(load().account).map(entry => entry.member.url)), preferences = deps.preferences()) {
     if (load().retainedInactiveIds?.includes(subject.id) && !subject.members.some(member =>
-      isMyPr(member, deps.auth().login) || deps.preferences().watchedRepos.some(repo => repo.toLowerCase() === member.repo.toLowerCase()) || starred.has(member.url)
+      isMyPr(member, deps.auth().login) || preferences.watchedRepos.some(repo => repo.toLowerCase() === member.repo.toLowerCase()) || starred.has(member.url)
     )) return false;
     // Retain necessary parent context when a human-authored change depends on a bot PR.
-    return withinInactivity(subject, starred) && !subject.members.some(m => muted.has(m.url) || isArchived(m)) && subject.members.some(
-      (m) => m.state === 'open' && (deps.preferences().ignoreDependabotPrs === false || !isDependabot(m.author))
+    return withinInactivity(subject, starred, preferences) && !subject.members.some(m => muted.has(m.url) || isArchived(m)) && subject.members.some(
+      (m) => m.state === 'open' && (preferences.ignoreDependabotPrs === false || !isDependabot(m.author))
     );
   }
   function view(includeHidden = false): WorkbenchQueue {
+    const preferences = deps.preferences();
     const s = load();
     const allMembers = [...new Map([...stars.load(s.account).map(entry => entry.member), ...s.subjects.flatMap(subject => subject.members)].map(member => [member.url, member])).values()];
     // Existing cached PRs start read exactly once. Empty installations finish their
@@ -203,9 +205,9 @@ export function createWorkbenchService(deps: Deps) {
     const starredUrls = new Set(starredPrs.map((entry) => entry.member.url));
     const history = deps.history().filter(entry => !isMutedReview(entry, muted));
     const filters = normalizeQueueFilters(s.filters);
-    const selection = modelSettings();
+    const selection = modelSettings(preferences);
     const knownUrls = new Set(s.subjects.flatMap((subject) => subject.members.map((m) => m.url)));
-    const activeSubjects = new Set(visibleSubjects.filter(subject => includeSubject(subject, muted, starredUrls)));
+    const activeSubjects = new Set(visibleSubjects.filter(subject => includeSubject(subject, muted, starredUrls, preferences)));
     const subjects = [
       ...visibleSubjects,
       ...groupSubjects(
@@ -223,8 +225,8 @@ export function createWorkbenchService(deps: Deps) {
         key: k,
         status:
           activeSubjects.has(subject) &&
-          (deps.preferences().autoBriefings !== false || requestedBriefings.has(requestKey(k))) &&
-          s.used < limit()
+          (preferences.autoBriefings !== false || requestedBriefings.has(requestKey(k))) &&
+          s.used < limit(preferences)
             ? ('queued' as const)
             : ('paused' as const),
         updatedAt: new Date().toISOString(),
@@ -279,7 +281,7 @@ export function createWorkbenchService(deps: Deps) {
       mutedPrs,
       warnings,
       sync: sync ?? { status: 'idle', checkedAt: s.discoveredAt },
-      remaining: Math.max(0, limit() - s.used),
+      remaining: Math.max(0, limit(preferences) - s.used),
       filters,
       savedViews: { ...structuredClone(views), counts },
     };
@@ -790,11 +792,12 @@ export function createWorkbenchService(deps: Deps) {
     }
     return refresh.promise;
   }
-  async function pump() {
+  async function pump(queue?: WorkbenchQueue) {
+    const preferences = deps.preferences();
     if (
       pumping ||
       deps.busy() ||
-      (deps.preferences().autoBriefings === false &&
+      (preferences.autoBriefings === false &&
         ![...requestedBriefings].some((k) => k.startsWith(`${deps.auth().login}:`))) ||
       !deps.auth().token ||
       (cooldown && cooldown.error.retryAt > now()) ||
@@ -805,23 +808,24 @@ export function createWorkbenchService(deps: Deps) {
     try {
       const s = load();
       const filters = normalizeQueueFilters(s.filters);
-      const candidates = view().items.filter(
+      const items = (queue ?? view()).items;
+      const p = modelSettings(preferences);
+      const candidates = items.filter(
         (item) =>
           filters.involvement !== 'mine' ||
           item.subject.members.some(
             (member) => member.state === 'open' && !member.merged && isMyPr(member, deps.auth().login)
           )
       );
-      const manualItem = view().items.find((i) => requestedBriefings.has(requestKey(key(i.subject))));
+      const manualItem = items.find((i) => requestedBriefings.has(requestKey(key(i.subject, p))));
       const item =
         manualItem ??
-        (deps.preferences().autoBriefings === false
+        (preferences.autoBriefings === false
           ? undefined
           : prioritizeBriefings(candidates, filters, now(), deps.auth().login).find(
-              (i) => !s.briefs[key(i.subject)] || s.briefs[key(i.subject)]?.status === 'paused'
+              (i) => !s.briefs[key(i.subject, p)] || s.briefs[key(i.subject, p)]?.status === 'paused'
             ));
-      if (!item || s.used >= limit()) return;
-      const p = modelSettings();
+      if (!item || s.used >= limit(preferences)) return;
       const subject = item.subject,
         k = key(subject, p);
       const controller = new AbortController();
@@ -990,10 +994,21 @@ export function createWorkbenchService(deps: Deps) {
     updatePrMetadata(metadata: PrMetadata, own = false) {
       reads.observe(load().account, [metadata], false, own);
       const s = load();
-      s.subjects = s.subjects.map(subject => ({ ...subject, members: subject.members.map(member => member.url === metadata.url ? { ...member, ...metadata } : member) }));
+      let changed = false;
+      s.subjects = s.subjects.map(subject => {
+        let subjectChanged = false;
+        const members = subject.members.map(member => {
+          if (member.url !== metadata.url) return member;
+          const next = { ...member, ...metadata };
+          if (isDeepStrictEqual(member, next)) return member;
+          changed = subjectChanged = true;
+          return next;
+        });
+        return subjectChanged ? { ...subject, members } : subject;
+      });
       const saved = stars.load(s.account).find(entry => entry.member.url === metadata.url);
       if (saved) stars.update(s.account, [{ ...saved.member, ...metadata }]);
-      save();
+      if (changed) save();
     },
     updateStarredMetadata(metadata: PrMetadata) {
       const account = deps.auth().login;
@@ -1019,12 +1034,16 @@ export function createWorkbenchService(deps: Deps) {
     activity(): ActivityTask[] {
       // The drawer mounts before GitHub authentication finishes restoring.
       if (!deps.auth().login || !deps.auth().token) return [];
-      void pump();
-      const p = modelSettings();
-      return view().items.flatMap(({ subject, briefing }) => {
-        if (!briefing) return [];
-        const cached = load().briefs[briefing.key];
-        if ((!cached && briefing.status === 'paused') || briefing.pauseReason === 'filter') return [];
+      const queue = view();
+      void pump(queue);
+      const preferences = deps.preferences();
+      const p = modelSettings(preferences);
+      return queue.items.flatMap(({ subject, briefing: projected }) => {
+        if (!projected) return [];
+        // pump can start a briefing synchronously before its first network await.
+        const cached = load().briefs[projected.key];
+        const briefing = cached ?? projected;
+        if ((!cached && briefing.status === 'paused') || projected.pauseReason === 'filter') return [];
         if (
           (briefing.status === 'ready' || briefing.status === 'cancelled') &&
           Date.now() - Date.parse(briefing.updatedAt) > ACTIVITY_RETENTION_MS
@@ -1056,8 +1075,8 @@ export function createWorkbenchService(deps: Deps) {
             canCancel: ['running', 'queued', 'paused'].includes(status),
             canRetry:
               ['failed', 'cancelled'].includes(status) &&
-              deps.preferences().autoBriefings !== false &&
-              load().used < limit(),
+              preferences.autoBriefings !== false &&
+              load().used < limit(preferences),
           },
         ];
       });

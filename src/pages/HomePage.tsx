@@ -384,7 +384,9 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
         };
     if (force) setRefreshing(true);
     try {
-      await window.electronAPI.workbenchSnapshot().then(next => { applyQueue(next); if (current() && next.items.length) setLoading(false); }).catch(() => {});
+      // Only the first load needs an immediate snapshot. Later polls already have
+      // a visible queue; fetching both would transfer and render it twice.
+      if (!filtersLoaded.current) await window.electronAPI.workbenchSnapshot().then(next => { applyQueue(next); if (current() && next.items.length) setLoading(false); }).catch(() => {});
       await Promise.all([
         window.electronAPI.workbenchQueue(force).then(applyQueue),
         window.electronAPI.listReviews().then((entries) => {
