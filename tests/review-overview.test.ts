@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { finalizeReviewOverview, generateReviewGuide, planReview } from '../lib/agent';
+import { finalizeReviewOverview, generateReviewGuide, generateSlide, planReview } from '../lib/agent';
 import { REVIEW_OVERVIEW_DIRECTIVE } from '../lib/review-overview';
 import { getProvider, type GenerateOptions } from '../lib/provider';
 import { DEFAULT_CODEX_MODEL } from '../lib/models';
@@ -84,4 +84,23 @@ void test('overview failure preserves finished work but user cancellation still 
     return Promise.resolve('{"summary":"Do not publish"}');
   });
   await assert.rejects(finalizeReviewOverview({ ...input, signal: during.signal }));
+});
+
+void test('slide writers can correct planner titles while retaining structured text and older output', async (t) => {
+  const narrative =
+    'Reject oversized responses.\n\n- Stop reading at the byte limit.\n- Enforce it without a size header.';
+  const titles: unknown[] = ['  Bound response downloads  ', undefined, '   ', { unexpected: true }];
+  t.mock.method(getProvider('codex'), 'generate', () =>
+    Promise.resolve(JSON.stringify({ title: titles.shift(), narrative, reviewFocus: null }))
+  );
+  for (const expected of ['Bound response downloads', undefined, undefined, undefined]) {
+    const slide = await generateSlide({
+      providerName: 'codex',
+      model: DEFAULT_CODEX_MODEL,
+      topicContext: 'Planned title: Change storage ownership. Actual change: bound response downloads.',
+    });
+    assert.equal(slide.title, expected);
+    assert.equal(slide.narrative, narrative);
+    assert.equal(slide.reviewFocus, null);
+  }
 });

@@ -205,6 +205,7 @@ export interface PlannerOutput {
 
 // Writer output for a single slide in two-phase generation
 export interface WriterSlideOutput {
+  title?: string; // Source-verified title; older writers fall back to the planner title.
   fileSummaries?: FileChangeSummary[];
   inlineExplanations?: InlineExplanation[];
   narrative: string;
