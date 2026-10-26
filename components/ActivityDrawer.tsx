@@ -1,3 +1,4 @@
+import { inspectionData } from '../lib/inspection-cache';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Activity, ChevronUp, X, Loader2, Check, AlertCircle } from 'lucide-react';
 import { isActiveTask, type ActivityAction, type ActivityTask } from '../lib/activity';
@@ -10,6 +11,7 @@ const kindLabels = {
   briefing: 'Briefing',
   exploration: 'Interactive explanation',
   github: 'GitHub update',
+  preload: 'Preloading',
   'file-chat': 'File question',
   'pr-action': 'GitHub action',
 };
@@ -56,7 +58,9 @@ export function ActivityDrawer({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [tasks, setTasks] = useState<ActivityTask[]>([]);
+  const [remoteTasks, setTasks] = useState<ActivityTask[]>([]);
+  const [preloadTask, setPreloadTask] = useState<ActivityTask>();
+  const tasks = preloadTask ? [...remoteTasks, preloadTask] : remoteTasks;
   const [newCompletions] = useState(createActivityCompletionTracker);
   const onOpenRef = useRef(onOpen);
   useEffect(() => {
@@ -73,6 +77,8 @@ export function ActivityDrawer({
   const closeButton = useRef<HTMLButtonElement>(null);
   const refresh = useCallback(
     (force = false): Promise<void> => {
+      // Local preparation stays observable even while backend activity is busy.
+      if (alive.current) setPreloadTask(inspectionData.activity());
       if (refreshRequest.current && !force) return refreshRequest.current;
       const version = ++refreshVersion.current;
       const request = (async () => {
@@ -138,8 +144,11 @@ export function ActivityDrawer({
     trigger.current?.focus();
   };
   useEffect(() => {
-    if (open) closeButton.current?.focus();
-  }, [open]);
+    if (open) {
+      closeButton.current?.focus();
+      void refresh();
+    }
+  }, [open, refresh]);
   async function act(task: ActivityTask, action: ActivityAction | 'open') {
     if (pendingActions.current.has(task.id)) return;
     pendingActions.current.add(task.id);
@@ -227,12 +236,12 @@ export function ActivityDrawer({
           <div className="activity-list">
             {!tasks.length && (
               <p className="activity-empty">
-                GitHub updates, guided reviews, briefings, and interactive explanations appear here. You can keep
+                PR preloading, GitHub updates, guided reviews, briefings, and interactive explanations appear here. You can keep
                 browsing while they run.
               </p>
             )}
             {[...tasks]
-              .sort((a, b) => order[a.status] - order[b.status] || b.updatedAt.localeCompare(a.updatedAt))
+              .sort((a, b) => Number(a.kind === 'preload') - Number(b.kind === 'preload') || order[a.status] - order[b.status] || b.updatedAt.localeCompare(a.updatedAt))
               .map((task) => {
                 const label =
                   Object.values(PROVIDERS)
@@ -272,10 +281,10 @@ export function ActivityDrawer({
                       <span>
                         {task.status === 'failed'
                           ? 'Failed'
-                          : task.status === 'completed' && task.kind !== 'github' && task.kind !== 'pr-action'
+                          : task.status === 'completed' && task.kind !== 'github' && task.kind !== 'pr-action' && task.kind !== 'preload'
                             ? completedLabels[task.kind]
                             : task.detail}
-                        {task.status === 'running' && task.progress
+                        {task.kind !== 'preload' && task.status === 'running' && task.progress
                           ? ` · ${task.progress.completed} of ${task.progress.total} ${task.progress.unit ?? 'topics'} complete`
                           : ''}
                       </span>
@@ -294,7 +303,12 @@ export function ActivityDrawer({
                         ))}
                       </details>
                     )}
-                    {task.status === 'running' && <Progress task={task} />}
+                    {task.kind === 'preload' && task.progress && (
+                      <p className="mt-2 text-xs text-muted-foreground tabular-nums">
+                        {task.progress.completed} prepared · {task.progress.total - task.progress.completed} pending
+                      </p>
+                    )}
+                    {(task.status === 'running' || (task.kind === 'preload' && task.status === 'paused')) && <Progress task={task} />}
                     <div className="activity-actions">
                       {task.canCancel && (
                         <button disabled={pending.has(task.id)} onClick={() => void act(task, 'cancel')}>
@@ -306,7 +320,7 @@ export function ActivityDrawer({
                           Retry
                         </button>
                       )}
-                      {task.status === 'completed' && task.kind !== 'github' && task.kind !== 'file-chat' && task.kind !== 'pr-action' && (
+                      {task.status === 'completed' && task.kind !== 'github' && task.kind !== 'file-chat' && task.kind !== 'pr-action' && task.kind !== 'preload' && (
                         <button disabled={pending.has(task.id)} onClick={() => void act(task, 'open')}>
                           {openLabels[task.kind]}
                         </button>

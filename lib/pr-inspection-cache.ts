@@ -1,3 +1,4 @@
+import type { ActivityTask } from './activity';
 import { changesRevision, type InspectionRevision, type PrChanges, type PrChangeFile } from './pr-changes';
 import type { PrCommits, PrCommit } from './pr-commits';
 
@@ -31,6 +32,7 @@ interface Job {
   comparisonFile: number;
   retryAt: number;
   failures: number;
+  rateLimited?: boolean;
 }
 export interface InspectionPriorities {
   active?: string[];
@@ -53,6 +55,9 @@ export function createPrInspectionCache(deps: Dependencies) {
   let order: string[] = [];
   let priorities = new Map<string, number>();
   let activeUrls = new Set<string>();
+  let currentJob: Job | undefined;
+  let activitySignature = '';
+  let activityUpdatedAt = new Date(now()).toISOString();
   let stopped = false;
   let running: Promise<void> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -228,12 +233,18 @@ export function createPrInspectionCache(deps: Dependencies) {
         const preferred = ready.filter(job => tier(job) === highest);
         const job = preferred.find(job => job.stage < 2) ?? preferred.at(0);
         if (!job) break;
+        currentJob = job;
         try {
           await step(job, generation);
           job.failures = 0;
-        } catch {
+          job.rateLimited = false;
+        } catch (error) {
           job.failures++;
+          // Electron preserves the error message, but not custom Error properties.
+          job.rateLimited = /rate.?limit|API (?:allowance|limit)|GitHub allowance|GitHub requests can resume/i.test(String(error));
           job.retryAt = now() + Math.min(300_000, 30_000 * 2 ** Math.min(job.failures - 1, 4));
+        } finally {
+          if (currentJob === job) currentJob = undefined;
         }
       }
     })().finally(() => {
@@ -246,7 +257,34 @@ export function createPrInspectionCache(deps: Dependencies) {
     running = promise;
     return promise;
   }
+  function activity(): ActivityTask | undefined {
+    if (!scope || stopped || !jobs.size) return;
+    const pending = order.flatMap(id => jobs.get(id) ?? []);
+    if (!pending.length) return;
+    const activeJob = currentJob && jobs.get(key(currentJob.revision)) === currentJob ? currentJob : undefined;
+    const waiting = pending.filter(job => job.retryAt > now());
+    const paused = !activeJob && waiting.length === pending.length;
+    const job = activeJob ?? pending[0];
+    const match = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)$/.exec(job.revision.url);
+    const identity = match ? `${match[1]} #${match[2]}` : 'PR';
+    const phase = ['Changed-file list', 'Commit list', 'Newest commit', 'Changed files', 'Review diff', 'Earlier commits'][job.stage] ?? 'Saved content';
+    let detail = `${identity} · ${phase}`;
+    if (paused) detail = waiting.some(job => job.rateLimited)
+      ? 'Waiting for GitHub’s API allowance. Retrying automatically.'
+      : 'Some PRs could not be prepared. Retrying automatically.';
+    else if (waiting.length) detail += ` · ${waiting.length} waiting to retry`;
+    const progress = { completed: order.length - pending.length, total: order.length, unit: 'PRs' };
+    const status = paused ? 'paused' : 'running';
+    const signature = JSON.stringify({ scope, detail, progress, status });
+    if (signature !== activitySignature) {
+      activitySignature = signature;
+      activityUpdatedAt = new Date(now()).toISOString();
+    }
+    return { id: 'pr-preload', kind: 'preload', account: scope, title: 'Preparing PRs for instant opening',
+      detail, status, progress, updatedAt: activityUpdatedAt, canCancel: false, canRetry: false };
+  }
   return {
+    activity,
     readChanges,
     readCommits,
     peekChanges: (r: InspectionRevision) => values.get(key(r))?.changes ?? latest.get(r.url)?.changes,
@@ -263,6 +301,7 @@ export function createPrInspectionCache(deps: Dependencies) {
         restored.clear();
         pending.clear();
         activeUrls.clear();
+        currentJob = undefined;
         deps.reset?.();
       }
       const unique = new Map<string, InspectionRevision>();

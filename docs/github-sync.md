@@ -88,6 +88,10 @@ The current operation finishes before priorities change. Completed operations do
 Background requests respect the shared GitHub allowance, reserved interactive capacity, and backoff. Failed operations retry with increasing delays.
 Unsupported previews do not block other files. Preparation continues during navigation and while the window is hidden. It never starts AI generation.
 
+Activity shows one **Preparing PRs for instant opening** entry below user-requested tasks. It shows the current PR, preparation stage, progress, and prepared/pending counts.
+When GitHub limits stop preparation, the entry shows a pause and keeps its progress visible. Failed operations retry automatically.
+The entry disappears after preparation finishes. It does not create a completion toast. Activity reads this local status without additional GitHub requests.
+
 A local restore pass loads saved inventories before network work starts. Changes and Commits use prepared data immediately when available.
 An open diff keeps its displayed revision until the reviewer selects **Update changes**. Preparation of a newer revision does not replace displayed code.
 Metadata and CI updates do not repeat content downloads for unchanged base and head SHAs.
