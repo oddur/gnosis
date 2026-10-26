@@ -2880,5 +2880,3 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .pr-unread-dot { display:inline-block; flex:none; width:8px; height:8px; border-radius:50%; background:var(--primary); }
 .queue-row-heading > .pr-unread-dot { margin-top:8px; }
 .pr-unread-dot:focus-visible { outline:2px solid var(--ring); outline-offset:4px; }
-.queue-unread-filter { display:flex; align-items:center; gap:8px; padding:12px 0; font-size:var(--type-control); }
-.queue-unread-filter input { accent-color:var(--primary); }

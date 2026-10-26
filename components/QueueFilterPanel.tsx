@@ -25,8 +25,14 @@ export function QueueFilterPanel({
   ].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }));
   const labels = [
     ...new Set([...members.flatMap((m) => m.labels), ...(filters.label === 'all' ? [] : [filters.label])]),
-  ].sort();
-  const fields: { key: Exclude<keyof QueueFilters, 'starredOnly' | 'unreadOnly' | 'sort'>; label: string; options: [string, string][] }[] = [
+  ].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }));
+  const fields: { key: Exclude<keyof QueueFilters, 'starredOnly' | 'sort'>; label: string; options: [string, string][] }[] = [
+    { key: 'readStatus', label: 'Read status', options: [['all', 'Any read status'], ['unread', 'Unread'], ['read', 'Read']] },
+    {
+      key: 'label',
+      label: 'GitHub label',
+      options: [['all', 'Any label'], ...labels.map((l) => [l, l] as [string, string])],
+    },
     {
       key: 'status',
       label: 'PR status',
@@ -46,11 +52,6 @@ export function QueueFilterPanel({
       key: 'updatedWithin',
       label: 'PR last updated',
       options: RECENCY_DAYS.map((d) => [String(d), d ? `Last ${d} days` : 'Any time']),
-    },
-    {
-      key: 'label',
-      label: 'GitHub label',
-      options: [['all', 'Any label'], ...labels.map((l) => [l, l] as [string, string])],
     },
     {
       key: 'kind',
@@ -102,10 +103,6 @@ export function QueueFilterPanel({
             : 'PRs involving you and from repositories added in Settings.'}
         </p>
       </div>
-      <label className="queue-unread-filter">
-        <input type="checkbox" checked={filters.unreadOnly} onChange={event => onChange({ unreadOnly: event.target.checked })} />
-        Unread updates only
-      </label>
       <div className="queue-filter-fields">
         {fields.map((field) => (
           <label key={field.key} htmlFor={`${id}-${field.key}`}>
@@ -165,6 +162,7 @@ export function QueueFilterPanel({
       <p className="queue-filter-hint">One open PR must match all filters. Its whole stack stays visible.</p>
       <details className="queue-filter-help">
         <summary>How filters work</summary>
+        <p>Unread means new activity since you last opened the PR, or a PR you marked as unread.</p>
         <p>Use “PR created” to exclude old PRs, even if they were updated recently.</p>
         <p>“Up to date” means the AI explanation matches the latest loaded PR data.</p>
         <p>“Involving me” also reduces PR details fetched from GitHub. Related stack PRs stay included.</p>

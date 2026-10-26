@@ -61,7 +61,7 @@ void app.whenReady().then(async () => {
     fs.writeFileSync(path.join(dir, `${name}.png`), (await win.webContents.capturePage()).toPNG());
   };
   try {
-    await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&unread`);
+    await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&unread&labels`);
     app.focus({ steal: true });
     win.focus();
     await wait("document.querySelectorAll('.queue-item').length===7");
@@ -124,8 +124,7 @@ void app.whenReady().then(async () => {
     await menuAction(js, 'Actions for PR #152', 'Mark as unread');
     await menuAction(js, 'Actions for PR #151', 'Mark as unread');
     await click('Filters');
-    await wait("!!document.querySelector('.queue-unread-filter input')");
-    await js("document.querySelector('.queue-unread-filter input').click()");
+    await js(`(()=>{const label=[...document.querySelectorAll('.queue-filter-fields label')].find(e=>e.textContent.startsWith('Read status'));const select=label.querySelector('select');select.value='unread';select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
     await capture('filter-popover');
     await click('Close filters');
     await wait("document.querySelectorAll('.queue-item').length===2");
@@ -145,10 +144,29 @@ void app.whenReady().then(async () => {
     await click('Clear filters');
     await wait("document.querySelectorAll('.queue-item').length===7");
     await menuAction(js, 'Actions for PR #152', 'Mark as unread');
-    await wait('window.electronAPI.workbenchSnapshot().then(q=>q.filters.unreadOnly===false)');
-    await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&unread`);
+    await wait("window.electronAPI.workbenchSnapshot().then(q=>q.filters.readStatus==='all')");
+    await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&unread&labels`);
     await wait("document.querySelectorAll('.queue-item').length===7");
     assert.equal(await js(unread(152)), 1, 'Unread survives renderer restart');
+    await click('Filters');
+    const setReadStatus = (value: string) => js(`(()=>{const label=[...document.querySelectorAll('.queue-filter-fields label')].find(e=>e.textContent.startsWith('Read status'));const select=label.querySelector('select');select.value=${JSON.stringify(value)};select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+    await setReadStatus('read');
+    await wait("document.querySelectorAll('.queue-item').length===6");
+    await js("window.selectOption('[aria-label=\"GitHub label\"]','critical')");
+    await wait("document.querySelectorAll('.queue-item').length===0");
+    await setReadStatus('unread');
+    await wait("document.querySelectorAll('.queue-item').length===1");
+    await wait("window.electronAPI.workbenchSnapshot().then(q=>q.filters.readStatus==='unread'&&q.filters.label==='critical')");
+    win.setSize(1100, 760);
+    await js("document.documentElement.classList.add('dark')");
+    await capture('read-status-label-filters-dark');
+    await js("document.documentElement.classList.remove('dark')");
+    await capture('read-status-label-filters-light');
+    assert.ok(await js('document.documentElement.scrollWidth<=innerWidth'));
+    win.reload();
+    await wait("document.querySelectorAll('.queue-item').length===1");
+    assert.ok(await js("document.querySelector('.queue-item').textContent.includes('Add trace context')"));
+    assert.ok(await js("[...document.querySelectorAll('.queue-filter-chip')].some(e=>e.textContent.includes('Unread PRs'))"));
     console.log(
       'Unread PR browser checks passed: selection/open, stack members, live updates, manual override, filter stability, bulk read, persistence and light/dark UI.'
     );

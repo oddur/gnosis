@@ -201,12 +201,13 @@ void test('successful own actions do not generate unread but preserve already un
 void test('unread filter combines all member conditions and is normalized for saved views', () => {
   const subject = groupSubjects([member(), member(2, { baseBranch: 'feature-1', author: 'bob' })])[0];
   const item = { subject, attention: 'other' as const, unreadUrls: [member(2).url] };
-  const filters = { ...DEFAULT_QUEUE_FILTERS, unreadOnly: true };
+  const filters = { ...DEFAULT_QUEUE_FILTERS, readStatus: 'unread' as const };
   assert.equal(matchesQueueFilters(item, filters), true);
   assert.equal(matchesQueueFilters(item, { ...filters, author: 'alice' }), false);
   assert.equal(matchesQueueFilters(item, { ...filters, author: 'bob' }), true);
-  assert.equal(normalizeQueueFilters(filters).unreadOnly, true);
-  assert.equal(normalizeQueueFilters({}).unreadOnly, false);
+  assert.equal(normalizeQueueFilters(filters).readStatus, 'unread');
+  assert.equal(normalizeQueueFilters({ unreadOnly: true }).readStatus, 'unread');
+  assert.equal(normalizeQueueFilters({}).readStatus, 'all');
   assert.equal(unreadDescription(['commits', 'comments']), 'New commits and new comments since your last visit');
 });
 void test('failed writes preserve prior read progress in memory and on disk', () => {

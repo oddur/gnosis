@@ -130,3 +130,20 @@ void test('my PRs includes authorship, assignments, and review requests on the s
   assert.equal(stack.subject.members.length, 2);
   assert.deepEqual(prioritizeBriefings([item([member(3, { author: 'bob' })]), stack], filters, now, 'alice'), [stack]);
 });
+
+void test('read status and labels must match the same PR, with saved-view migration', () => {
+  const read = member(1, { labels: ['bug'] });
+  const unread = member(2, { baseBranch: 'pr-1', labels: ['feature'] });
+  const stack = { ...item([read, unread]), unreadUrls: [unread.url] };
+  const filters = normalizeQueueFilters({ readStatus: 'read', label: 'bug' });
+  assert.equal(matchesQueueFilters(stack, filters), true);
+  assert.equal(matchesQueueFilters(stack, { ...filters, readStatus: 'unread' }), false);
+  assert.equal(matchesQueueFilters(stack, { ...filters, readStatus: 'unread', label: 'feature' }), true);
+  assert.equal(matchesQueueFilters(stack, { ...filters, label: 'feature' }), false);
+  assert.deepEqual(prioritizeBriefings([stack], filters), [stack]);
+  assert.deepEqual(prioritizeBriefings([stack], { ...filters, readStatus: 'unread' }), []);
+  assert.equal(normalizeQueueFilters({ unreadOnly: true }).readStatus, 'unread');
+  assert.equal(normalizeQueueFilters({ unreadOnly: true, readStatus: 'all' }).readStatus, 'all');
+  assert.equal(normalizeQueueFilters({ readStatus: 'invalid' }).readStatus, 'all');
+  assert.deepEqual(normalizeQueueFilters(JSON.parse(JSON.stringify(filters))), filters);
+});
