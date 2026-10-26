@@ -507,7 +507,7 @@ void app.whenReady().then(async () => {
     })()`);
     await click('Open PR overview');
     await wait("!!document.querySelector('.pr-summary-page')");
-    await js("[...document.querySelectorAll('[role=tab]')].find(tab => tab.textContent === 'Explanation').click()");
+    await js("(()=>{const tab=[...document.querySelectorAll('[role=tab]')].find(tab => tab.textContent === 'Explanation');tab.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));tab.click()})()");
     await wait("!!document.querySelector('.explanation-empty')");
     await click('Generate explanation');
     await wait('window.electronAPI.loadPreferences().then(p => p.firstRunSeen)');
