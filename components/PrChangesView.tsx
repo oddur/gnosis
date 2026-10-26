@@ -3,7 +3,7 @@ import { useReviewBreadcrumbs, type ReviewCrumb } from '../lib/review-breadcrumb
 import { LfsDownload } from './LfsDownload';
 import { useDiffAppearance } from '../lib/use-diff-appearance';
 import { DiffStats } from './DiffStats';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
   inspectionFiles as fileCache,
   fileIsReady,
@@ -16,16 +16,7 @@ import {
 import { prPreviewSelection } from '../lib/pr-change-preview';
 import { FileDiff, MultiFileDiff } from '@pierre/diffs/react';
 import type { DiffFileInput, FileDiffOptions, SelectedLineRange } from '@pierre/diffs';
-import {
-  ChevronDown,
-  ChevronRight,
-  PanelLeft,
-  ArrowLeft,
-  ArrowRight,
-  RefreshCw,
-  MessageSquare,
-  ExternalLink,
-} from 'lucide-react';
+import { ChevronDown, ChevronRight, PanelLeft, RefreshCw, MessageSquare, ExternalLink } from 'lucide-react';
 import { ChangesFileTree } from './ChangesFileTree';
 import { ChangesFileResize } from './ChangesFileResize';
 import { DiffAppearanceMenu } from './DiffAppearanceMenu';
@@ -103,10 +94,16 @@ export function PrChangesView({
   preferences: Preferences;
   commit?: CommitWorkspace;
   initialFile?: { url: string; path: string };
-  embedded?: { file: PrChangeFile; onViewedNext: () => void; onAsk: (text: string) => void };
+  embedded?: {
+    file: PrChangeFile;
+    snapshot: PrChanges;
+    discussion: ReturnType<typeof usePrDiscussions>;
+    onViewedNext: () => void;
+    onAsk: (text: string) => void;
+  };
 }) {
   const positionId = commit ? commitPositionId(subject.id, commit.snapshot) : subject.id;
-  const continuous = !!commit && !embedded;
+  const continuous = !embedded;
   const stream = useRef<CommitDiffStreamHandle>(null);
   const [chatEntry, setChatEntry] = useState<Entry>();
   const [position] = useState<Position>(() =>
@@ -116,13 +113,10 @@ export function PrChangesView({
     subject.members.flatMap((member) => inspectionData.peekChanges(member) ?? [])
   );
   const snapshots = useMemo(
-    () => (commit ? (commit.snapshot ? [commit.snapshot] : []) : loadedSnapshots),
-    [commit?.snapshot, !!commit, loadedSnapshots]
+    () => (embedded ? [embedded.snapshot] : commit ? (commit.snapshot ? [commit.snapshot] : []) : loadedSnapshots),
+    [embedded?.snapshot, commit?.snapshot, !!commit, loadedSnapshots]
   );
   const [selected, setSelected] = useState(position.selected);
-  const [openingFile, setOpeningFile] = useState('');
-  const [navigationError, setNavigationError] = useState<{ key: string; message: string }>();
-  const fileNavigation = useRef(0);
   const unsupportedFiles = useRef(new Map<string, string>());
   const hoverCancel = useRef<() => void>(() => {});
   const [loading, setLoading] = useState(false),
@@ -161,12 +155,12 @@ export function PrChangesView({
   const [loadedFile, setLoadedFile] = useState<{ key: string; data: PrFileContents }>(),
     [fileError, setFileError] = useState(''),
     [fileAttempt, setFileAttempt] = useState(0);
-  const discussion = usePrDiscussions(commit ? [] : subject.members.map((member) => member.url));
+  const ownDiscussion = usePrDiscussions(commit || embedded ? [] : subject.members.map((member) => member.url));
+  const discussion = embedded?.discussion ?? ownDiscussion;
   const [chatOpen, setChatOpen] = useState(false),
     [selection, setSelection] = useState('');
   const [range, setRange] = useState<SelectedLineRange | null>(null);
-  const viewport = useRef<HTMLDivElement>(null),
-    code = useRef<HTMLDivElement>(null);
+  const code = useRef<HTMLDivElement>(null);
   const alive = useRef(true),
     generation = useRef(0);
   const persist = () => {
@@ -177,7 +171,7 @@ export function PrChangesView({
     }
   };
   async function load(refresh: boolean) {
-    if (commit) return;
+    if (commit || embedded) return;
     const current = ++generation.current;
     setLoading(refresh || !loadedSnapshots.length);
     setError('');
@@ -200,18 +194,18 @@ export function PrChangesView({
   }
   useEffect(() => {
     alive.current = true;
-    if (!commit && loadedSnapshots.length === subject.members.length) loadedSnapshots.forEach(registerChangeProgress);
-    else if (!commit) void load(false);
+    if (!commit && !embedded && loadedSnapshots.length === subject.members.length)
+      loadedSnapshots.forEach(registerChangeProgress);
+    else if (!commit && !embedded) void load(false);
     return () => {
       alive.current = false;
       generation.current++;
-      fileNavigation.current++;
       hoverCancel.current();
     };
   }, [subject.id]);
   const revision = snapshots.map((s) => `${s.url}:${changesRevision(s.metadata)}`).join('|');
   useEffect(() => {
-    if (commit || !snapshots.length) return;
+    if (commit || embedded || !snapshots.length) return;
     let cancelled = false;
     const check = async () => {
       if (document.visibilityState === 'hidden') return;
@@ -244,7 +238,7 @@ export function PrChangesView({
           .sort((a, b) => a.path.localeCompare(b.path))
           .map((file) => ({ key: prefix + file.path, snapshot, file }));
       }),
-    [snapshots, subject.kind, !!commit]
+    [snapshots, subject.kind, !!commit, embedded?.file.path]
   );
   const entry =
     entries.find((e) => e.key === selected) ?? entries.find((e) => !progress.isFileViewed(viewKey(e))) ?? entries.at(0);
@@ -357,35 +351,9 @@ export function PrChangesView({
   function select(key: string) {
     const target = entries.find((e) => e.key === key);
     if (!target) return;
-    if (continuous) {
-      setSelected(key);
-      stream.current?.scrollToFile(key);
-      if (window.innerWidth <= 700) setTreeOpen(false);
-      return;
-    }
-    const id = ++fileNavigation.current;
-    setNavigationError(undefined);
-    if (fileIsReady(target.snapshot, target.file) || unsupportedFiles.current.has(viewKey(target))) {
-      setOpeningFile('');
-      applySelection(key);
-      return;
-    }
-    setOpeningFile(key);
-    void prepareFile(target.snapshot, target.file)
-      .then(() => {
-        if (alive.current && fileNavigation.current === id) applySelection(key);
-      })
-      .catch((error: unknown) => {
-        if (!alive.current || fileNavigation.current !== id) return;
-        const message = error instanceof Error ? error.message : String(error);
-        if (isUnsupportedPreview(message)) {
-          unsupportedFiles.current.set(viewKey(target), message);
-          applySelection(key);
-        } else setNavigationError({ key, message });
-      })
-      .finally(() => {
-        if (alive.current && fileNavigation.current === id) setOpeningFile('');
-      });
+    setSelected(key);
+    stream.current?.scrollToFile(key);
+    if (window.innerWidth <= 700) setTreeOpen(false);
   }
   useReviewBreadcrumbs(
     commit ? 'commits' : 'changes',
@@ -426,17 +394,8 @@ export function PrChangesView({
     ],
     !embedded
   );
-  function applySelection(key: string) {
-    if (viewport.current && entry) position.scroll[activeKey] = viewport.current.scrollTop;
-    position.selected = key;
-    persist();
-    setSelected(key);
-    setSelection('');
-    setRange(null);
-    if (window.innerWidth <= 700) setTreeOpen(false);
-  }
   useEffect(() => {
-    if (!entry || continuous || (embedded && progress.isFileViewed(activeKey))) return;
+    if (!entry || continuous || progress.isFileViewed(activeKey)) return;
     let cancelled = false;
     setLoadedFile((previous) => (previous?.key === activeKey ? previous : undefined));
     setSelection('');
@@ -474,27 +433,6 @@ export function PrChangesView({
       cancelled = true;
     };
   }, [activeKey, fileAttempt, contextLines, embedded ? progress.isFileViewed(activeKey) : false]);
-  useLayoutEffect(() => {
-    const el = viewport.current;
-    if (embedded || continuous || !el || (!contents && !preview)) return;
-    const desired = position.scroll[activeKey] ?? 0;
-    const restore = () => {
-      el.scrollTop = desired;
-    };
-    restore();
-    const observer = new ResizeObserver(restore);
-    if (code.current) observer.observe(code.current);
-    const timer = setTimeout(() => observer.disconnect(), 1500);
-    const stop = () => observer.disconnect();
-    el.addEventListener('wheel', stop, { passive: true });
-    el.addEventListener('pointerdown', stop);
-    return () => {
-      observer.disconnect();
-      clearTimeout(timer);
-      el.removeEventListener('wheel', stop);
-      el.removeEventListener('pointerdown', stop);
-    };
-  }, [activeKey, contents, preview]);
   function savePreferences(patch: Partial<Preferences>) {
     setPrefs((p) => ({ ...p, ...patch }));
     setPreferenceError('');
@@ -652,28 +590,6 @@ export function PrChangesView({
         </span>
       </div>
       <div className="changes-file-actions">
-        {!embedded && (
-          <>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Previous file"
-              disabled={fileIndex <= 0}
-              onClick={() => select(entries[fileIndex - 1].key)}
-            >
-              <ArrowLeft size={14} />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Next file"
-              disabled={fileIndex >= entries.length - 1}
-              onClick={() => select(entries[fileIndex + 1].key)}
-            >
-              <ArrowRight size={14} />
-            </Button>
-          </>
-        )}
         <label>
           <input
             type="checkbox"
@@ -714,17 +630,7 @@ export function PrChangesView({
     </header>
   );
   const fileContent = (
-    <div
-      className="changes-code-scroll"
-      ref={viewport}
-      onScroll={(e) => {
-        if (entry && (contents || preview)) {
-          position.selected = entry.key;
-          position.scroll[activeKey] = e.currentTarget.scrollTop;
-          persist();
-        }
-      }}
-    >
+    <div className="changes-code-scroll">
       {!embedded && commit?.status}
       {!entry && !loading && !commit && <p className="changes-empty">Select a file to inspect its changes.</p>}
       {entry && !contents && !preview && !fileError && (
@@ -813,13 +719,6 @@ export function PrChangesView({
           />
         )}
       </div>
-      {entry && !commit && (
-        <div className="changes-discussion-tools">
-          <Button variant="ghost" size="sm" onClick={() => void refreshThreads(entry.snapshot.url)}>
-            Refresh comments
-          </Button>
-        </div>
-      )}
       {threadError && (
         <p className="changes-notice">
           {threadError}
@@ -839,6 +738,7 @@ export function PrChangesView({
     return (
       <section className="commit-stream-file" aria-label={entry?.file.path}>
         {fileHeader}
+        {!commit && comments.feedback}
         {!viewed && fileContent}
       </section>
     );
@@ -877,13 +777,19 @@ export function PrChangesView({
           </span>
         )}
         <span className="changes-toolbar-spacer" />
-        {openingFile && (
-          <span className="changes-progress" role="status">
-            Opening {openingFile.split('/').pop()}…
-          </span>
-        )}
         {commit?.tools}
         {!commit && comments.controls}
+        {!commit && entry && (
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Refresh comments"
+            title={`Refresh comments for PR #${entry.snapshot.url.split('/').pop()}`}
+            onClick={() => void refreshThreads(entry.snapshot.url)}
+          >
+            <RefreshCw size={14} />
+          </Button>
+        )}
         <DiffAppearanceMenu
           layout={prefs.diffLayout}
           onLayoutChange={(diffLayout) => savePreferences({ diffLayout })}
@@ -909,12 +815,6 @@ export function PrChangesView({
         <div className="changes-notice" role="status">
           {error || checkError || preferenceError}
           {error && <button onClick={() => void load(true)}>Retry</button>}
-        </div>
-      )}
-      {navigationError && (
-        <div className="changes-notice" role="alert">
-          Could not open {navigationError.key}. {navigationError.message}
-          <button onClick={() => select(navigationError.key)}>Retry</button>
         </div>
       )}
       {!commit && comments.panel}
@@ -990,7 +890,7 @@ export function PrChangesView({
         )}
         <div className="changes-diff-pane">
           {commit?.header}
-          {continuous ? (
+          {continuous && (snapshots.length > 0 || commit) ? (
             <CommitDiffStream
               ref={stream}
               files={streamFiles}
@@ -1009,11 +909,14 @@ export function PrChangesView({
                 if (!e) return null;
                 return (
                   <PrChangesView
+                    key={viewKey(e)}
                     subject={subject}
                     preferences={prefs}
                     commit={commit}
                     embedded={{
                       file: e.file,
+                      snapshot: e.snapshot,
+                      discussion,
                       onViewedNext: next,
                       onAsk: (text) => {
                         setChatEntry(e);
@@ -1026,11 +929,15 @@ export function PrChangesView({
               }}
               completion={
                 <>
-                  {commit.status}
+                  {commit?.status}
                   {entries.length > 0 && entries.every((e) => progress.isFileViewed(viewKey(e))) && (
                     <div className="changes-empty commit-viewed-complete" role="status">
                       <strong>All files viewed</strong>
-                      <p>You’ve finished this comparison. Choose another commit to continue.</p>
+                      <p>
+                        {commit
+                          ? 'You’ve finished this comparison. Choose another commit to continue.'
+                          : 'You’ve viewed every file. Submit your review when you’re ready.'}
+                      </p>
                       {unviewed && (
                         <Button variant="outline" size="sm" onClick={() => setUnviewed(false)}>
                           Show all files

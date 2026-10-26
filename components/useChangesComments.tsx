@@ -202,6 +202,11 @@ export function useChangesComments({
       setTarget(snapshot);
       setReviewOpen(true);
     },
+    feedback: error ? (
+      <p className="changes-notice" role="alert">
+        {error}
+      </p>
+    ) : null,
     draftCount: drafts.length,
     annotations,
     renderAnnotation,

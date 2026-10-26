@@ -10,7 +10,10 @@ void app.whenReady().then(async () => {
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
   });
   window.webContents.on('console-message', (_e, _l, m) => console.log('renderer:', m));
-  const js = <T = unknown>(code: string) => window.webContents.executeJavaScript(code) as Promise<T>;
+  const js = <T = unknown>(code: string) =>
+    window.webContents.executeJavaScript(code).catch((error: unknown) => {
+      throw new Error(code + ': ' + String(error));
+    }) as Promise<T>;
   const wait = async (expression: string) => {
     for (let i = 0; i < 200; i++) {
       if (await js(expression)) return;
@@ -20,7 +23,7 @@ void app.whenReady().then(async () => {
   };
   const click = async (label: string) => {
     await js(
-      `(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(label)} || b.getAttribute('aria-label')===${JSON.stringify(label)});if(!b)throw Error('Missing button '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
+      `(()=>{const b=[...document.querySelectorAll('.commit-stream-row[data-active=true] button'),...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(label)} || b.getAttribute('aria-label')===${JSON.stringify(label)});if(!b)throw Error('Missing button '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
     );
     await new Promise((r) => setTimeout(r, 40));
   };
@@ -32,12 +35,13 @@ void app.whenReady().then(async () => {
     window.focus();
     await wait("document.visibilityState === 'visible'");
     await js('document.fonts.ready');
-    await new Promise((r) => setTimeout(r, 250));
+    await new Promise((r) => setTimeout(r, 700));
     fs.writeFileSync(path.join(shots, `${name}.png`), (await window.webContents.capturePage()).toPNG());
   };
   try {
     await window.loadURL(`${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary`);
     window.webContents.setZoomFactor(1);
+    await js("document.title='Gnosis — automated Changes checks'");
     await wait("document.querySelectorAll('.queue-item').length===7");
     await js("(async()=>{await (await import('/lib/inspection-cache.ts')).inspectionData.flush()})()");
     assert.deepEqual(
@@ -97,7 +101,9 @@ void app.whenReady().then(async () => {
       `window.deepAll=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(selector,e.shadowRoot))];window.openFile=name=>{const row=window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')===name);if(!row)throw Error('Missing tree row '+name);row.click()};void 0;`
     );
     await js("window.openFile('worker.ts')");
-    await wait("document.querySelector('.changes-file-header h2')?.textContent==='src/worker.ts'");
+    await wait(
+      "document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/worker.ts'"
+    );
     await wait("window.deepAll('[data-line]').length>0");
     assert.equal(await js('window.generationCalls.length'), 0);
     assert.equal(
@@ -111,8 +117,14 @@ void app.whenReady().then(async () => {
       false,
       'A prepared text file renders immediately'
     );
-    await wait("document.querySelector('.changes-code')?.textContent.includes('retry boundary')");
-    assert.equal(await js("!!document.querySelector('.changes-code textarea')"), false, 'Reply editors open on demand');
+    await wait(
+      "document.querySelector('.commit-stream-row[data-active=true] .changes-code')?.textContent.includes('retry boundary')"
+    );
+    assert.equal(
+      await js("!!document.querySelector('.commit-stream-row[data-active=true] .changes-code textarea')"),
+      false,
+      'Reply editors open on demand'
+    );
     await js(
       `window.treeCount=path=>window.deepAll('[role=treeitem]').find(e=>e.getAttribute('data-item-path')===path)?.querySelector('[title*="GitHub"]')?.title;void 0;`
     );
@@ -127,7 +139,7 @@ void app.whenReady().then(async () => {
       window.electronAPI.createReviewComment=async r=>{window.commentWrites.push(r);if(window.failPost)throw Error('Posting failed. Try again.');window.discussion.threads.push({...window.discussion.threads[0],id:'posted-'+window.commentWrites.length,line:r.line,diffSide:r.side,comments:[{...window.discussion.threads[0].comments[0],id:'posted-comment',body:r.body}]})};
       window.electronAPI.submitReview=async r=>{window.reviewWrites.push(r);return {reviewUrl:r.prUrl+'#review',droppedCommentCount:0}};
       window.fill=(selector,value)=>{const el=document.querySelector(selector);Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(el,value);el.dispatchEvent(new Event('input',{bubbles:true}))};
-      window.commentLine=()=>window.deepAll('[data-column-number]').find(e=>e.getAttribute('data-column-number')==='36'&&e.getAttribute('data-line-type')==='change-addition').click();})()`);
+      window.commentFile='src/worker.ts';window.commentLine=()=>window.deepAll('[data-column-number]',[...document.querySelectorAll('.commit-stream-row')].find(e=>e.dataset.file===window.commentFile)).find(e=>e.getAttribute('data-column-number')==='36'&&e.getAttribute('data-line-type')==='change-addition').click();})()`);
     await click('Refresh comments');
     await wait("[...document.querySelectorAll('.github-thread button')].some(b=>b.textContent==='Edit')");
     await click('Reply');
@@ -172,6 +184,10 @@ void app.whenReady().then(async () => {
     await click('Summary');
     await click('Changes');
     await wait("!!document.querySelector('.changes-pending-comment')");
+    await js("window.openFile('worker.ts')");
+    await wait(
+      "document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/worker.ts'"
+    );
     await js('window.commentLine()');
     await wait("!!document.querySelector('.changes-comment-composer textarea')");
     await js("window.failPost=true;window.fill('.changes-comment-composer textarea','An immediate comment.')");
@@ -184,7 +200,9 @@ void app.whenReady().then(async () => {
     await js('window.failPost=false');
     await click('Comment now');
     await wait("!document.querySelector('.changes-comment-composer')");
-    await wait("document.querySelector('.changes-code')?.textContent.includes('An immediate comment.')");
+    await wait(
+      "document.querySelector('.commit-stream-row[data-active=true] .changes-code')?.textContent.includes('An immediate comment.')"
+    );
     await wait("window.treeCount('src/worker.ts')?.includes('2 GitHub comments')");
     await click('Review PR #150 (1)');
     await wait("document.querySelector('[role=dialog]')?.textContent.includes('Keep the cancellation boundary')");
@@ -207,15 +225,19 @@ void app.whenReady().then(async () => {
     window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Up' });
     await new Promise((r) => setTimeout(r, 100));
     assert.equal(
-      await js("document.querySelector('.changes-file-header h2').textContent"),
+      await js("document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2').textContent"),
       'src/worker.ts',
       'Arrows do not activate files'
     );
     window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
     window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
-    await wait("document.querySelector('.changes-file-header h2')?.textContent==='src/old.ts'");
+    await wait(
+      "document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/old.ts'"
+    );
     await js("window.openFile('worker.ts')");
-    await wait("document.querySelector('.changes-file-header h2')?.textContent==='src/worker.ts'");
+    await wait(
+      "document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/worker.ts'"
+    );
     assert.equal(
       await js("!!document.querySelector('.changes-loading')"),
       false,
@@ -224,12 +246,18 @@ void app.whenReady().then(async () => {
     await click('Viewed & next');
     await wait("document.querySelector('.changes-progress')?.textContent.includes('1 / 5')");
     await js("window.openFile('new.ts')");
-    await wait("document.querySelector('.changes-file-header h2')?.textContent==='src/new.ts'");
+    await wait(
+      "document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/new.ts'"
+    );
     await wait("window.deepAll('[data-line]').length>0");
     await js("window.openFile('worker.ts')");
-    await wait("document.querySelector('.changes-file-header h2')?.textContent==='src/worker.ts'");
+    await wait(
+      "document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/worker.ts'"
+    );
     await js("window.openFile('new.ts')");
-    await wait("document.querySelector('.changes-file-header h2')?.textContent==='src/new.ts'");
+    await wait(
+      "document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/new.ts'"
+    );
     assert.equal(
       await js("!!document.querySelector('.changes-loading')"),
       false,
@@ -245,14 +273,18 @@ void app.whenReady().then(async () => {
     await click('Close file conversation');
     await click('Summary');
     await click('Changes');
-    await wait("document.querySelector('.changes-file-header h2')?.textContent==='src/new.ts'");
+    await wait(
+      "document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/new.ts'"
+    );
     await click('Ask about this');
     await wait("document.querySelector('.changes-chat-messages')?.textContent.includes('retry boundary')");
     await click('Close file conversation');
     await js("window.openFile('worker.ts')");
-    await wait("document.querySelector('.changes-file-header h2')?.textContent==='src/worker.ts'");
+    await wait(
+      "document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/worker.ts'"
+    );
     assert.equal(
-      await js("document.querySelector('.changes-file-actions input').checked"),
+      await js("document.querySelector('.commit-stream-row[data-active=true] .changes-file-actions input').checked"),
       true,
       'Viewed survives tab switches'
     );
@@ -273,7 +305,9 @@ void app.whenReady().then(async () => {
     await click('Changes');
     await wait("document.querySelector('.changes-notice')?.textContent.includes('New commits')");
     assert.equal(
-      await js("document.querySelector('.changes-source').textContent.includes('new-head')"),
+      await js(
+        "document.querySelector('.commit-stream-row[data-active=true] .changes-source').textContent.includes('new-head')"
+      ),
       false,
       'New commits never replace the displayed revision automatically'
     );
@@ -296,9 +330,11 @@ void app.whenReady().then(async () => {
     await js(
       "window.deepAll('[role=treeitem]').find(e=>e.getAttribute('data-item-path')?.includes('#121/src/worker.ts')).click()"
     );
-    await wait("document.querySelector('.changes-source')?.textContent.includes('#121')");
+    await wait(
+      "document.querySelector('.commit-stream-row[data-active=true] .changes-source')?.textContent.includes('#121')"
+    );
     assert.equal(
-      await js("document.querySelector('.changes-file-actions input').checked"),
+      await js("document.querySelector('.commit-stream-row[data-active=true] .changes-file-actions input').checked"),
       false,
       'Same paths in different PRs have separate progress'
     );
@@ -325,6 +361,9 @@ void app.whenReady().then(async () => {
     );
     await wait("window.deepAll('[data-item-type=file]').length===3");
     assert.equal(await js('window.generationCalls.length'), 0);
+    await js(
+      "window.commentFile=window.deepAll('[role=treeitem]').find(e=>e.getAttribute('data-item-path')?.includes('#121/src/worker.ts')).getAttribute('data-item-path')"
+    );
     await js('window.commentLine()');
     await wait("!!document.querySelector('.changes-comment-composer textarea')");
     await js("window.fill('.changes-comment-composer textarea','Only for the middle PR.')");
@@ -348,7 +387,9 @@ void app.whenReady().then(async () => {
     );
     await click('Author description');
     await click('Changes');
-    await wait("document.querySelector('.changes-code')?.textContent.includes('Persist this draft across restarts.')");
+    await wait(
+      "document.querySelector('.commit-stream-row[data-active=true] .changes-code')?.textContent.includes('Persist this draft across restarts.')"
+    );
     await js(
       `const read=window.electronAPI.getPrChanges;window.electronAPI.getPrChanges=async (...args)=>{const value=await read(...args);return {...value,metadata:{...value.metadata,headSha:'new-head'}}};void 0;`
     );
@@ -365,6 +406,64 @@ void app.whenReady().then(async () => {
     await capture('comments-stale-drafts');
     await click('Remove draft');
     await wait("![...document.querySelectorAll('button')].find(b=>b.textContent.includes('Review PR #121')).disabled");
+    // Cold Changes inventories restore a distant file and keep mounts bounded.
+    await js(String.raw`(async()=>{
+      window.deepAll=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(selector,e.shadowRoot))];
+      const {mountLargeComparison}=await import('/tests/fixtures/commit-stream.tsx');
+      const queue=await window.electronAPI.workbenchQueue();
+      const member={...queue.items[0].subject.members[0],url:'https://github.com/klang/engine/pull/999'};
+      const subject={...queue.items[0].subject,id:'large-changes-stream-test',kind:'pr',members:[member],edges:[]};
+      const original=await window.electronAPI.getPrChanges(member.url);
+      const snapshot={...original,url:member.url,metadata:{...original.metadata,state:'open',merged:false,headSha:'large-changes-head'},files:Array.from({length:120},(_,i)=>({path:'src/file'+String(i).padStart(3,'0')+'.ts',status:'modified',additions:1,deletions:1,changeId:'large-changes-'+i,patch:'@@ -1 +1 @@\n-old\n+new'}))};
+      const read=window.electronAPI.getPrChanges;
+      window.electronAPI.getPrChanges=async(url,...args)=>url===member.url ? (await new Promise(r=>setTimeout(r,100)),snapshot) : read(url,...args);
+      window.electronAPI.checkPrChanges=async()=>snapshot.metadata;
+      window.largeReads=[];window.electronAPI.getPrChangeFile=async r=>{window.largeReads.push(r);throw Error('Unexpected full-content read')};
+      window.electronAPI.createReviewComment=async r=>{window.pendingComment=r;await new Promise((resolve,reject)=>window.rejectComment=()=>reject(Error('Offline: retry your comment.')))};
+      mountLargeComparison(subject,snapshot,{...await window.electronAPI.loadPreferences(),diffLayout:'unified',diffAppearance:{contextLines:3}},true);
+    })()`);
+    await wait(
+      "document.querySelector('#large-stream-test .commit-stream-row[data-active=true]')?.dataset.file==='src/file119.ts'"
+    );
+    await new Promise((r) => setTimeout(r, 700));
+    assert.ok((await js<number>("document.querySelectorAll('#large-stream-test .commit-stream-row').length")) < 15);
+    assert.deepEqual(await js('window.largeReads'), []);
+    await js(
+      `(()=>{const root=document.querySelector('#large-stream-test .commit-stream-row[data-active=true]');window.deepAll('[data-column-number]',root).find(e=>e.getAttribute('data-column-number')==='1'&&e.getAttribute('data-line-type')==='change-addition').click()})()`
+    );
+    await wait("!!document.querySelector('#large-stream-test .changes-comment-composer textarea')");
+    await js(
+      `(()=>{const el=document.querySelector('#large-stream-test textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(el,'Keep this pending comment.');el.dispatchEvent(new Event('input',{bubbles:true}))})()`
+    );
+    await js(
+      "[...document.querySelectorAll('#large-stream-test button')].find(b=>b.textContent==='Comment now').click()"
+    );
+    await wait('!!window.rejectComment');
+    await js(
+      `(()=>{const el=document.querySelector('#large-stream-test .commit-diff-stream');el.dispatchEvent(new WheelEvent('wheel',{deltaY:-10000,bubbles:true}));el.scrollTop=0;el.focus()})()`
+    );
+    await wait(
+      "document.querySelector('#large-stream-test .commit-stream-row[data-active=true]')?.dataset.file==='src/file000.ts'"
+    );
+    assert.equal(
+      await js("document.querySelector('#large-stream-test .changes-comment-composer textarea').value"),
+      'Keep this pending comment.'
+    );
+    assert.equal(await js('window.pendingComment.path'), 'src/file119.ts');
+    await js('window.rejectComment()');
+    await wait(
+      "document.querySelector('#large-stream-test .changes-comment-composer')?.textContent.includes('Offline: retry')"
+    );
+    assert.ok((await js<number>("document.querySelectorAll('#large-stream-test .commit-stream-row').length")) < 16);
+    await capture('continuous-files');
+    await js(
+      `(()=>{const input=document.querySelector('#large-stream-test .changes-file-actions input');input.click()})()`
+    );
+    await wait(`!document.querySelector('#large-stream-test [data-file="src/file000.ts"] .changes-code')`);
+    await js(
+      `(()=>{const input=document.querySelector('#large-stream-test .changes-tree-controls input[type=checkbox]');input.click()})()`
+    );
+    await wait(`!document.querySelector('#large-stream-test [data-file="src/file000.ts"]')`);
     console.log('PR Changes browser checks passed. Captures:', shots);
   } catch (error) {
     console.error(error);
