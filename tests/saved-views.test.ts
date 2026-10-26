@@ -85,10 +85,22 @@ void test('saved views retain read status and labels and migrate the old unread 
   state = editViewFilters(state, { ...activeViewFilters(state), readStatus: 'read' });
   const restored = normalizeViews(JSON.parse(JSON.stringify(state)));
   assert.equal(activeViewFilters(restored).readStatus, 'read');
-  assert.equal(activeViewFilters(restored).label, 'bug');
+  assert.deepEqual(activeViewFilters(restored).labels.names, ['bug']);
   assert.equal(restored.views[0].filters.readStatus, 'unread');
   assert.equal(viewIsModified(restored.views[0]), true);
   state = applyViewAction(restored, { type: 'reset', id: 'bugs' }, () => 'unused');
   assert.equal(activeViewFilters(state).readStatus, 'unread');
-  assert.equal(activeViewFilters(state).label, 'bug');
+  assert.deepEqual(activeViewFilters(state).labels.names, ['bug']);
+});
+
+void test('multiple label names and matching mode survive saved views and clearing', () => {
+  let state = normalizeViews(null, { labels: { names: ['urgent', 'bug'], match: 'all' } });
+  state = applyViewAction(state, { type: 'create', name: 'Urgent bugs' }, () => 'labels');
+  const restored = normalizeViews(JSON.parse(JSON.stringify(state)));
+  assert.deepEqual(activeViewFilters(restored).labels, { names: ['bug', 'urgent'], match: 'all', unlabelled: false });
+  state = editViewFilters(restored, { ...activeViewFilters(restored), labels: { unlabelled: true } });
+  assert.deepEqual(activeViewFilters(state).labels, { names: [], match: 'any', unlabelled: true });
+  assert.equal(viewIsModified(state.views[0]), true);
+  state = applyViewAction(state, { type: 'reset', id: 'labels' }, () => 'unused');
+  assert.deepEqual(activeViewFilters(state).labels.names, ['bug', 'urgent']);
 });

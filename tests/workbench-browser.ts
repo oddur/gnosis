@@ -594,9 +594,9 @@ void app.whenReady().then(async () => {
     await selectFilter('Author', 'sam');
     await wait("document.body.textContent.includes('No PRs match these filters')");
     await selectFilter('Author', 'lena');
-    await selectFilter('GitHub label', 'bug');
+    await js("window.selectLabels(['bug'])");
     await wait("document.querySelectorAll('.queue-item').length === 1");
-    await wait("window.electronAPI.workbenchQueue().then(q=>q.filters.author==='lena' && q.filters.label==='bug')");
+    await wait("window.electronAPI.workbenchQueue().then(q=>q.filters.author==='lena' && q.filters.labels.names.includes('bug'))");
     await capture('queue-filters-light');
     await js("document.querySelector('.queue-filter-help summary').focus()");
     assert.equal(await js("document.activeElement === document.querySelector('.queue-filter-help summary')"), true);

@@ -1,3 +1,5 @@
+import { QueueLabelFilter } from './QueueLabelFilter';
+import { Fragment } from 'react';
 import { SearchableSelect } from './SearchableSelect';
 import { normalizePrInactivityDays } from '../lib/pr-inactivity';
 import { useId } from 'react';
@@ -23,16 +25,8 @@ export function QueueFilterPanel({
   const authors = [
     ...new Set([...members.map((m) => m.author), ...(filters.author === 'all' ? [] : [filters.author])]),
   ].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }));
-  const labels = [
-    ...new Set([...members.flatMap((m) => m.labels), ...(filters.label === 'all' ? [] : [filters.label])]),
-  ].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }));
-  const fields: { key: Exclude<keyof QueueFilters, 'starredOnly' | 'sort'>; label: string; options: [string, string][] }[] = [
+  const fields: { key: Exclude<keyof QueueFilters, 'starredOnly' | 'sort' | 'labels'>; label: string; options: [string, string][] }[] = [
     { key: 'readStatus', label: 'Read status', options: [['all', 'Any read status'], ['unread', 'Unread'], ['read', 'Read']] },
-    {
-      key: 'label',
-      label: 'GitHub label',
-      options: [['all', 'Any label'], ...labels.map((l) => [l, l] as [string, string])],
-    },
     {
       key: 'status',
       label: 'PR status',
@@ -105,9 +99,9 @@ export function QueueFilterPanel({
       </div>
       <div className="queue-filter-fields">
         {fields.map((field) => (
-          <label key={field.key} htmlFor={`${id}-${field.key}`}>
+          <Fragment key={field.key}><label htmlFor={`${id}-${field.key}`}>
             <span>{field.label}</span>
-            {field.key === 'author' || field.key === 'label' ? (
+            {field.key === 'author' ? (
               <SearchableSelect
                 id={`${id}-${field.key}`}
                 label={field.label}
@@ -137,6 +131,10 @@ export function QueueFilterPanel({
             </select>
             )}
           </label>
+          {field.key === 'readStatus' && <QueueLabelFilter value={filters.labels}
+            members={filters.repo === 'all' ? members : members.filter(member => member.repo === filters.repo)}
+            onChange={labels => onChange({ labels })} />}
+          </Fragment>
         ))}
       </div>
       <div className="queue-filter-policy">

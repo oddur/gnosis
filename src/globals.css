@@ -2880,3 +2880,21 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .pr-unread-dot { display:inline-block; flex:none; width:8px; height:8px; border-radius:50%; background:var(--primary); }
 .queue-row-heading > .pr-unread-dot { margin-top:8px; }
 .pr-unread-dot:focus-visible { outline:2px solid var(--ring); outline-offset:4px; }
+
+/* Label filters use the same GitHub badges as PR rows. */
+.queue-label-filter { grid-column:span 2; min-width:0; font-size:var(--type-control); }
+.queue-label-heading { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px; color:var(--muted-foreground); font-size:var(--type-caption); }
+.queue-label-clear { color:var(--ring); text-decoration:underline; text-underline-offset:3px; }
+.queue-label-tags { display:flex; align-items:center; flex-wrap:wrap; gap:6px; min-height:34px; }
+.queue-label-tag.pr-label { display:inline-flex; align-items:center; gap:4px; max-width:100%; padding:3px 5px 3px 8px; }
+.queue-label-tag > span { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.queue-label-tag > button { display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; width:24px; height:24px; border-radius:3px; color:inherit; }
+.queue-label-tag > button:hover { background:color-mix(in srgb,currentColor 15%,transparent); }
+.queue-label-add.selection-trigger { width:auto; min-width:0; gap:6px; }
+.queue-label-match { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:8px; color:var(--muted-foreground); font-size:var(--type-caption); }
+.queue-label-match button { padding:3px 8px; border:1px solid var(--border); border-radius:4px; color:var(--foreground); }
+.queue-label-match button[aria-pressed=true] { background:var(--accent); color:var(--accent-foreground); border-color:var(--ring); }
+.queue-label-popup.selection-popup { width:340px; max-width:var(--available-width); }
+.queue-label-popup .pr-label { max-width:100%; white-space:normal; overflow-wrap:anywhere; }
+.queue-label-footer { display:flex; flex-shrink:0; align-items:center; justify-content:space-between; gap:12px; padding:8px 12px; border-top:1px solid var(--border); color:var(--muted-foreground); font-size:var(--type-caption); }
+.queue-label-footer button { padding:4px 8px; color:var(--ring); }

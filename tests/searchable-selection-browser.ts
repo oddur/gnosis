@@ -29,7 +29,7 @@ void app.whenReady().then(async () => {
   };
   const fill = (value: string) =>
     js(
-      `(()=>{const input=document.querySelector('[data-slot=combobox-input]');input.focus();Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}))})()`
+      `(()=>{const input=document.querySelector('[data-slot=combobox-input]');input.focus();Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'}))})()`
     );
   const key = async (keyCode: string) => {
     win.webContents.sendInputEvent({ type: 'keyDown', keyCode });
@@ -98,13 +98,14 @@ void app.whenReady().then(async () => {
     await key('Enter');
     await wait("window.electronAPI.workbenchQueue().then(q=>q.filters.author==='maya')");
     assert.ok(await js("!!document.querySelector('.queue-filter-popover')"), 'Choosing an author leaves filters open');
-    await click('[aria-label="GitHub label"]');
+    await click('[aria-label="GitHub labels"]');
     await fill('bug');
     await wait(
-      "document.querySelector('[data-slot=combobox-item][data-highlighted]')?.getAttribute('data-value')==='bug'"
+      "document.querySelector('[data-slot=combobox-item][data-highlighted]')?.getAttribute('data-value')==='label:bug'"
     );
     await key('Enter');
-    await wait("window.electronAPI.workbenchQueue().then(q=>q.filters.label==='bug')");
+    await wait("window.electronAPI.workbenchQueue().then(q=>q.filters.labels.names.includes('bug'))");
+    await key('Escape');
     await click('[aria-label="Close filters"]');
     await click('[aria-label="Settings"]');
     await wait("!!document.querySelector('[role=dialog]')");
