@@ -23,7 +23,7 @@ void app.whenReady().then(async () => {
   };
   const click = async (label: string) => {
     await js(
-      `(()=>{const b=[...document.querySelectorAll('.commit-stream-row[data-active=true] button'),...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(label)} || b.getAttribute('aria-label')===${JSON.stringify(label)});if(!b)throw Error('Missing button '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
+      `(()=>{const b=[...document.querySelectorAll('.commit-stream-row[data-active=true] button'),...document.querySelectorAll('button')].filter(b=>b.checkVisibility({visibilityProperty:true})).find(b=>b.textContent.trim()===${JSON.stringify(label)} || b.getAttribute('aria-label')===${JSON.stringify(label)});if(!b)throw Error('Missing button '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
     );
     await new Promise((r) => setTimeout(r, 40));
   };
@@ -458,7 +458,7 @@ void app.whenReady().then(async () => {
     await click('Update changes');
     await wait("[...document.querySelectorAll('.changes-notice')].some(e=>e.textContent.includes('earlier version'))");
     assert.equal(
-      await js("[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Review PR #121')).disabled"),
+      await js("[...document.querySelectorAll('button')].filter(b=>b.checkVisibility({visibilityProperty:true})).find(b=>b.textContent.includes('Review PR #121')).disabled"),
       true
     );
     await click('Show drafts');
@@ -467,7 +467,7 @@ void app.whenReady().then(async () => {
     );
     await capture('comments-stale-drafts');
     await click('Remove draft');
-    await wait("![...document.querySelectorAll('button')].find(b=>b.textContent.includes('Review PR #121')).disabled");
+    await wait("![...document.querySelectorAll('button')].filter(b=>b.checkVisibility({visibilityProperty:true})).find(b=>b.textContent.includes('Review PR #121')).disabled");
     // Cold Changes inventories restore a distant file and keep mounts bounded.
     await js(String.raw`(async()=>{
       window.deepAll=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(selector,e.shadowRoot))];

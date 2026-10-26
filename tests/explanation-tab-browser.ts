@@ -20,7 +20,7 @@ void app.whenReady().then(async () => {
   };
   const click = async (label: string) => {
     await js(
-      `(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.getBoundingClientRect().width && (b.textContent.trim()===${JSON.stringify(label)}||b.getAttribute('aria-label')===${JSON.stringify(label)}));if(!b)throw Error('Missing '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
+      `(()=>{const b=[...document.querySelectorAll('button')].filter(b=>b.checkVisibility({visibilityProperty:true})).find(b=>b.getBoundingClientRect().width && (b.textContent.trim()===${JSON.stringify(label)}||b.getAttribute('aria-label')===${JSON.stringify(label)}));if(!b)throw Error('Missing '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
     );
     await new Promise((r) => setTimeout(r, 40));
   };
@@ -281,7 +281,7 @@ void app.whenReady().then(async () => {
       `(async()=>{await window.selectOption('[aria-label="PR for review submission"]',window.savedReview.snapshot.subject.members[1].url);})()`
     );
     assert.equal(
-      await js("[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Review PR #121')).disabled"),
+      await js("[...document.querySelectorAll('button')].filter(b=>b.checkVisibility({visibilityProperty:true})).find(b=>b.textContent.includes('Review PR #121')).disabled"),
       false,
       'Drafts still belong to the displayed revision'
     );
@@ -306,7 +306,7 @@ void app.whenReady().then(async () => {
     );
     await wait("document.querySelector('.changes-notice')?.textContent.includes('earlier version')");
     assert.equal(
-      await js("[...document.querySelectorAll('button')].find(b=>b.textContent.includes('Review PR #121')).disabled"),
+      await js("[...document.querySelectorAll('button')].filter(b=>b.checkVisibility({visibilityProperty:true})).find(b=>b.textContent.includes('Review PR #121')).disabled"),
       true,
       'Old drafts block submission after explicitly opening the new revision'
     );
