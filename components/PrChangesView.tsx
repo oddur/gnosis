@@ -1,3 +1,4 @@
+import { LfsDownload } from './LfsDownload';
 import { useDiffAppearance } from '../lib/use-diff-appearance';
 import { DiffStats } from './DiffStats';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
@@ -252,6 +253,20 @@ export function PrChangesView({
   );
   const contents =
     (request ? fileCache.peek(request) : undefined) ?? (loadedFile?.key === activeKey ? loadedFile.data : undefined);
+  const [lfsDownload, setLfsDownload] = useState<{ key: string; busy: boolean; error?: string }>();
+  const lfsSides = contents ? [contents.before, contents.after].filter(side => side.kind === 'lfs') : [];
+  async function downloadLfs() {
+    if (!request || (lfsDownload?.key === activeKey && lfsDownload.busy)) return;
+    setLfsDownload({ key: activeKey, busy: true });
+    try {
+      const data = await fileCache.read({ ...request, downloadLfs: true });
+      if (alive.current && currentFile.current === activeKey) setLoadedFile({ key: activeKey, data });
+      if (alive.current) setLfsDownload(previous => previous?.key === activeKey ? { key: activeKey, busy: false } : previous);
+    } catch (e) {
+      if (alive.current) setLfsDownload(previous => previous?.key === activeKey
+        ? { key: activeKey, busy: false, error: e instanceof Error ? e.message : String(e) } : previous);
+    }
+  }
   const visible = entries.filter((e) => !unviewed || !progress.isFileViewed(viewKey(e)));
   const viewedSignature = visible.map((e) => (progress.isFileViewed(viewKey(e)) ? '1' : '0')).join('');
   const treeEntries = useMemo(
@@ -430,7 +445,7 @@ export function PrChangesView({
     threads?.threads.filter((t) => t.path === entry?.file.path || t.path === entry?.file.previousPath) ?? [];
   const inline = matching.filter(
     (t) =>
-      !t.isOutdated &&
+      !contents?.lfs && !t.isOutdated &&
       t.line !== null &&
       threads?.headSha === entry?.snapshot.metadata.headSha &&
       (t.diffSide === 'RIGHT' || threads?.baseSha === entry?.snapshot.metadata.baseSha)
@@ -448,9 +463,9 @@ export function PrChangesView({
   });
   const annotations = comments.annotations;
   const options: FileDiffOptions<(typeof annotations)[number]['metadata'], undefined> = {
-    enableGutterUtility: comments.writable,
-    onGutterUtilityClick: comments.begin,
-    onLineNumberClick: (event) =>
+    enableGutterUtility: comments.writable && !contents?.lfs,
+    onGutterUtilityClick: contents?.lfs ? undefined : comments.begin,
+    onLineNumberClick: contents?.lfs ? undefined : (event) =>
       comments.begin({ start: event.lineNumber, end: event.lineNumber, side: event.annotationSide }),
     theme: `gnosis-${CODE_THEMES.some((t) => t.id === prefs.codeTheme) ? prefs.codeTheme : 'github-dark'}`,
     themeType: 'dark',
@@ -486,7 +501,7 @@ export function PrChangesView({
   };
   const files: DiffFileInput | undefined = useMemo(
     () =>
-      contents && (contents.before.kind === 'text' || contents.after.kind === 'text')
+      contents && ![contents.before, contents.after].some(side => side.kind === 'lfs') && (contents.before.kind === 'text' || contents.after.kind === 'text')
         ? ({
             oldFile:
               contents.before.kind === 'text'
@@ -728,8 +743,8 @@ export function PrChangesView({
                   <Button
                     variant="ghost"
                     size="sm"
-                    disabled={!range || !comments.writable}
-                    onClick={() => range && comments.begin(range)}
+                    disabled={!range || !comments.writable || contents?.lfs}
+                    onClick={() => range && !contents?.lfs && comments.begin(range)}
                     title="Select lines in the diff to comment"
                   >
                     <MessageSquare size={14} /> Comment
@@ -795,6 +810,11 @@ export function PrChangesView({
                 </Button>
               </div>
             )}
+            {lfsSides.length > 0 && <LfsDownload pointers={lfsSides.map(side => side.pointer)}
+              busy={lfsDownload?.key === activeKey && lfsDownload.busy}
+              error={lfsDownload?.key === activeKey ? lfsDownload.error : undefined}
+              onDownload={() => void downloadLfs()} />}
+            {contents?.lfs && files && <p className="changes-notice">Downloaded Git LFS contents. GitHub line comments refer to the pointer file; use the file discussion for this resource.</p>}
             <div ref={code} className="changes-code">
               <ReviewSelectionActions containerRef={code} resetKey={activeKey} onAsk={ask} />
               {preview && !(contextLines > 3 && files) && (
@@ -829,7 +849,7 @@ export function PrChangesView({
                   }
                 />
               )}
-              {contents && (contents.before.kind === 'image' || contents.after.kind === 'image') && (
+              {contents && !lfsSides.length && (contents.before.kind === 'image' || contents.after.kind === 'image') && (
                 <ReviewImageDiff
                   enabled
                   filePath={entry?.file.path ?? ''}

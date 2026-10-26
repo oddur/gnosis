@@ -292,7 +292,10 @@ export function createGitHubClientPool(options: Options = {}) {
           lastRequest = now();
           // A failed write may still have reached GitHub. Invalidate without replaying it.
           const invalidateWrite = () => {
-            if (get || graphRead) return;
+            const lfsDownload = endpoint.method === 'POST' && new URL(endpoint.url).hostname === 'github.com' &&
+              /^\/[\w.-]+\/[\w.-]+\.git\/info\/lfs\/objects\/batch$/.test(new URL(endpoint.url).pathname) &&
+              (requestOptions.data as { operation?: string } | undefined)?.operation === 'download';
+            if (get || graphRead || lfsDownload) return;
             const match = /^\/repos\/([^/]+)\/([^/]+)\/(?:issues|pulls)(?:\/(\d+))?/.exec(
               new URL(endpoint.url).pathname
             );

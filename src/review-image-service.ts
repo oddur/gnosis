@@ -1,8 +1,11 @@
+import { parseLfsPointer } from '../lib/git-lfs';
+import { lfsResources } from './git-lfs-service';
 import type { Octokit } from '@octokit/rest';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import {
   imageMimeType,
+  isLfsReviewFile,
   reviewImageFiles,
   type ReviewImageComparison,
   type ReviewImageSide,
@@ -74,14 +77,15 @@ export function createReviewImageService(io: {
   loadReview: (id: string) => Promise<ReviewGuide> | ReviewGuide;
   client: () => Octokit;
   allowLocal?: (id: string) => boolean;
+  lfs?: typeof lfsResources;
 }) {
   const accounts = new WeakMap<Octokit, ReturnType<typeof cache>>();
   const localCache = cache();
-  return async (reviewId: string, filePath: string): Promise<ReviewImageComparison> => {
+  return async (reviewId: string, filePath: string, downloadLfs = false): Promise<ReviewImageComparison> => {
     if (typeof reviewId !== 'string' || !/^[a-zA-Z0-9_-]+$/.test(reviewId)) throw new Error('Invalid review ID.');
     const review = await io.loadReview(reviewId);
     const file = review.changedFiles?.find((f) => f.filename === filePath);
-    if (!file || !reviewImageFiles(review).includes(filePath))
+    if (!file || (!reviewImageFiles(review).includes(filePath) && !isLfsReviewFile(review, filePath)))
       throw new Error('This image is not part of the saved review.');
     const source = sourceForPath(review, filePath);
     if (review.snapshot?.subject.members.length && !source.member)
@@ -125,7 +129,6 @@ export function createReviewImageService(io: {
           before && metadata.previousFilename ? sourceForPath(review, metadata.previousFilename).path : source.path;
         if (!validPath(imagePath)) throw new Error('The saved image path is invalid.');
         const mime = imageMimeType(imagePath);
-        if (!mime) throw new Error('This revision is not a supported image format.');
         const revision = before ? await mergeBase() : head;
         if (!revision || !shaPattern.test(revision))
           throw new Error('This saved review has no pinned image revision. Regenerate it to view the image.');
@@ -140,7 +143,7 @@ export function createReviewImageService(io: {
                 maxBuffer: MAX_IMAGE_BYTES,
                 env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
               });
-              return dataUrl(stdout, mime);
+              return dataUrl(stdout, mime ?? 'application/octet-stream');
             }
             if (!repoName || !client) throw new Error('The source repository is unavailable.');
             const [owner, repo] = repoName.split('/');
@@ -152,10 +155,45 @@ export function createReviewImageService(io: {
               headers: { accept: 'application/vnd.github.raw+json' },
               request: { cache: 'no-store', responseType: 'arraybuffer' },
             });
-            return dataUrl(response.data, mime);
+            return dataUrl(response.data, mime ?? 'application/octet-stream');
           }
         );
-        return { status: 'ready', dataUrl: image, path: imagePath, revision };
+        const raw = Buffer.from(image.slice(image.indexOf(',') + 1), 'base64');
+        const ready = (bytes: Buffer): ReviewImageSide => {
+          if (mime) return { status: 'ready', dataUrl: dataUrl(bytes, mime), path: imagePath, revision };
+          if (bytes.includes(0)) throw new Error('This binary resource has no preview. Open it in your checkout.');
+          try {
+            return {
+              status: 'text',
+              content: new TextDecoder('utf-8', { fatal: true }).decode(bytes),
+              path: imagePath,
+              revision,
+            };
+          } catch {
+            throw new Error('This resource is not UTF-8 text. Open it in your checkout.');
+          }
+        };
+        const pointer = parseLfsPointer(raw.toString('utf8'));
+        if (pointer) {
+          try {
+            const resource = localSource
+              ? await (io.lfs ?? lfsResources).local(localSource.repoPath, pointer, downloadLfs)
+              : client && repoName
+                ? await (io.lfs ?? lfsResources).remote(client, repoName, pointer, downloadLfs)
+                : undefined;
+            if (resource) return ready(resource);
+            return { status: 'lfs', pointer, path: imagePath, revision };
+          } catch (error) {
+            return {
+              status: 'lfs',
+              pointer,
+              path: imagePath,
+              revision,
+              error: error instanceof Error ? error.message : 'Could not download this Git LFS resource.',
+            };
+          }
+        }
+        return ready(raw);
       } catch (error) {
         const status = (error as { status?: number }).status;
         return {

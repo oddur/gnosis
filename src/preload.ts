@@ -156,7 +156,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   reRenderHunks: (review: ReviewGuide): Promise<ReviewGuide> => ipcRenderer.invoke('re-render-hunks', review),
   getPrStatus: (prUrl: string, force?: boolean): Promise<PrStatus> => ipcRenderer.invoke('get-pr-status', prUrl, force),
   getPrMetadata: (prUrl: string): Promise<PrMetadata> => ipcRenderer.invoke('get-pr-metadata', prUrl),
-  loadReviewImages: (reviewId: string, filePath: string): Promise<import('../lib/review-images').ReviewImageComparison> => ipcRenderer.invoke('load-review-images', reviewId, filePath),
+  loadReviewImages: (reviewId: string, filePath: string, downloadLfs = false): Promise<import('../lib/review-images').ReviewImageComparison> => ipcRenderer.invoke('load-review-images', reviewId, filePath, downloadLfs),
   loadPrImage: (url: string): Promise<string> => ipcRenderer.invoke('load-pr-image', url),
   getReviewThreads: (prUrl: string, refresh?: boolean): Promise<GitHubReviewThreads> => ipcRenderer.invoke('get-review-threads', prUrl, refresh),
   createReviewComment: (req: CreateReviewCommentRequest): Promise<void> => ipcRenderer.invoke('create-review-comment', req),

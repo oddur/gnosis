@@ -23,13 +23,23 @@ export function createPrFileCache(
   };
   function read(r: PrFileRequest, background = false): Promise<PrFileContents> {
     const cached = peek(r);
-    if (cached) return Promise.resolve(cached);
+    if (cached && (!r.downloadLfs || ![cached.before, cached.after].some((s) => s.kind === 'lfs')))
+      return Promise.resolve(cached);
     const key = keyFor(r),
-      existing = pending.get(key);
+      pendingKey = `${key}:${!!r.downloadLfs}`,
+      existing = pending.get(pendingKey);
     if (existing && (!existing.background || background)) return existing.promise;
     const generation = epoch;
     const promise = load(r, background)
       .then((value) => {
+        const current = saved.get(key)?.value;
+        if (
+          generation === epoch &&
+          current?.lfs &&
+          ![current.before, current.after].some((s) => s.kind === 'lfs') &&
+          [value.before, value.after].some((s) => s.kind === 'lfs')
+        )
+          return current;
         const size = [value.before, value.after].reduce(
           (n, side) =>
             n + (side.kind === 'text' ? side.content.length * 2 : side.kind === 'image' ? side.dataUrl.length * 2 : 0),
@@ -52,9 +62,9 @@ export function createPrFileCache(
         return value;
       })
       .finally(() => {
-        if (pending.get(key)?.promise === promise) pending.delete(key);
+        if (pending.get(pendingKey)?.promise === promise) pending.delete(pendingKey);
       });
-    pending.set(key, { promise, background });
+    pending.set(pendingKey, { promise, background });
     return promise;
   }
   return {

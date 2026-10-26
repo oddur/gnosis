@@ -5,10 +5,12 @@ import type { Octokit } from '@octokit/rest';
 import { parsePrUrl } from '../lib/github';
 import { githubCacheFor } from '../lib/github-client';
 import { isCacheRecord } from '../lib/github-cache';
+import { parseLfsPointer } from '../lib/git-lfs';
+import { lfsResources } from './git-lfs-service';
 import { imageMimeType } from '../lib/review-images';
 import type { PrChanges, PrChangeFile, PrFileRequest, PrFileContents, PrFileSide } from '../lib/pr-changes';
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-export function createSnapshotFileLoader() {
+export function createSnapshotFileLoader(lfs = lfsResources) {
   const pending = new WeakMap<Octokit, Map<string, GitHubWork<PrFileContents>>>();
   return async (
     client: Octokit,
@@ -20,6 +22,7 @@ export function createSnapshotFileLoader() {
     const identity = {
       url: req.url,
       path: req.path,
+      downloadLfs: !!req.downloadLfs,
       baseSha: req.baseSha,
       headSha: req.headSha,
       ...(req.comparison ? { scope: 'commit' } : {}),
@@ -41,7 +44,9 @@ export function createSnapshotFileLoader() {
           key,
           (v): v is PrFileContents => isCacheRecord(v) && isCacheRecord(v.before) && isCacheRecord(v.after)
         );
-        if (saved) return saved.value;
+        if (saved && (!req.downloadLfs || ![saved.value.before, saved.value.after].some((s) => s.kind === 'lfs')))
+          return saved.value;
+        const lfsSides = new Set<boolean>();
         async function side(before: boolean): Promise<PrFileSide> {
           if ((before && file.status === 'added') || (!before && file.status === 'deleted')) return { kind: 'absent' };
           const path = before ? (file.previousPath ?? file.path) : file.path;
@@ -50,26 +55,40 @@ export function createSnapshotFileLoader() {
             `${parsePrUrl(req.url).owner}/${parsePrUrl(req.url).repo}`;
           const [owner, repo] = repoName.split('/');
           const ref = before ? snapshot.comparisonBase : snapshot.metadata.headSha;
-          beforeRequest?.();
-          const { data } = await client.request('GET /repos/{owner}/{repo}/contents/{path}', {
-            owner,
-            repo,
-            path,
-            ref,
-            headers: { accept: 'application/vnd.github.raw+json' },
-            request: { responseType: 'arraybuffer', cache: 'no-store' },
-          });
-          const bytes =
-            typeof data === 'string'
-              ? Buffer.from(data)
-              : data instanceof ArrayBuffer
+          const savedSide = before ? saved?.value.before : saved?.value.after;
+          if (savedSide && savedSide.kind !== 'lfs') return savedSide;
+          let bytes: Buffer | undefined;
+          let pointer = savedSide?.pointer;
+          if (!pointer) {
+            beforeRequest?.();
+            const { data } = await client.request('GET /repos/{owner}/{repo}/contents/{path}', {
+              owner,
+              repo,
+              path,
+              ref,
+              headers: { accept: 'application/vnd.github.raw+json' },
+              request: { responseType: 'arraybuffer', cache: 'no-store' },
+            });
+            bytes =
+              typeof data === 'string'
                 ? Buffer.from(data)
-                : ArrayBuffer.isView(data)
-                  ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
-                  : null;
-          if (!bytes) throw new Error('GitHub did not return file contents. Open the file on GitHub.');
+                : data instanceof ArrayBuffer
+                  ? Buffer.from(data)
+                  : ArrayBuffer.isView(data)
+                    ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+                    : undefined;
+            if (!bytes) throw new Error('GitHub did not return file contents. Open the file on GitHub.');
+            pointer = parseLfsPointer(bytes.toString('utf8'));
+          }
+          if (pointer) {
+            lfsSides.add(before);
+            const resource = await lfs.remote(client, repoName, pointer, req.downloadLfs === true);
+            if (!resource) return { kind: 'lfs', pointer };
+            bytes = resource;
+          }
+          if (!bytes) throw new Error('This resource could not be read. Retry the download.');
           const mime = imageMimeType(path);
-          if (bytes.length > (mime ? 8_000_000 : 1_000_000))
+          if (bytes.length > (pointer ? 8 * 1024 * 1024 : mime ? 8_000_000 : 1_000_000))
             throw new Error('This file is too large to preview. Open it on GitHub.');
           if (mime) return { kind: 'image', dataUrl: `data:${mime};base64,${bytes.toString('base64')}` };
           if (bytes.includes(0)) throw new Error('This binary file has no text preview. Open it on GitHub.');
@@ -81,8 +100,20 @@ export function createSnapshotFileLoader() {
         }
         const before = await side(true),
           after = await side(false);
-        const result = { before, after };
-        if (cache?.version() === version) cache?.set(key, result);
+        const result = { before, after, ...(lfsSides.size ? { lfs: true } : {}) };
+        if (cache?.version() === version) {
+          const current = cache?.get(
+            key,
+            (v): v is PrFileContents => isCacheRecord(v) && isCacheRecord(v.before) && isCacheRecord(v.after)
+          )?.value;
+          if (
+            current?.lfs &&
+            ![current.before, current.after].some((s) => s.kind === 'lfs') &&
+            [result.before, result.after].some((s) => s.kind === 'lfs')
+          )
+            return current;
+          cache?.set(key, result);
+        }
         return result;
       })().finally(() => work.delete(key))
     );

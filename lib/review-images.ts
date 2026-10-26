@@ -1,3 +1,4 @@
+import { LFS_VERSION, type LfsPointer } from './git-lfs';
 import type { ReviewGuide } from './types';
 
 const imageTypes: Record<string, string> = {
@@ -16,7 +17,9 @@ export function imageMimeType(filePath: string): string | undefined {
 }
 export type ReviewImageSide =
   | { status: 'absent' }
+  | { status: 'lfs'; pointer: LfsPointer; path: string; revision: string; error?: string }
   | { status: 'ready'; dataUrl: string; path: string; revision: string }
+  | { status: 'text'; content: string; path: string; revision: string }
   | { status: 'error'; message: string };
 export interface ReviewImageComparison {
   before: ReviewImageSide;
@@ -48,4 +51,10 @@ export function includeImageChanges(review: ReviewGuide): void {
     affectedFiles: missing,
     dependsOn: [],
   });
+}
+
+export function isLfsReviewFile(review: ReviewGuide, filePath: string): boolean {
+  return review.slides.some((slide) =>
+    slide.diffHunks.some((hunk) => hunk.filePath === filePath && hunk.content.includes(LFS_VERSION))
+  );
 }
