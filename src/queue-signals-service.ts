@@ -180,6 +180,8 @@ export function createQueueSignalsService(now = Date.now) {
                     ? 'failure'
                     : 'pending',
               total: rollup?.contexts.totalCount ?? 0,
+              failed: counts.filter(c => ['FAILURE', 'ERROR', 'TIMED_OUT', 'CANCELLED', 'ACTION_REQUIRED', 'STALE', 'STARTUP_FAILURE'].includes(c.state)).reduce((n,c) => n + c.count, 0),
+              running: counts.filter(c => ['PENDING', 'QUEUED', 'IN_PROGRESS', 'WAITING', 'REQUESTED', 'PENDING_DEPLOYMENT'].includes(c.state)).reduce((n,c) => n + c.count, 0),
               skipped: counts
                 .filter((c) => c.state === 'SKIPPED' || c.state === 'NEUTRAL')
                 .reduce((sum, c) => sum + c.count, 0),

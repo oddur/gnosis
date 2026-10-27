@@ -19,7 +19,16 @@ void app.whenReady().then(async () => {
       if (await js(code)) return;
       await new Promise((r) => setTimeout(r, 30));
     }
-    throw Error('Timed out: ' + code);
+    throw Error(
+      'Timed out: ' +
+        code +
+        '\n' +
+        JSON.stringify(
+          await js(
+            `({focused:document.hasFocus(),active:document.activeElement?.outerHTML,viewport:[innerWidth,innerHeight],tooltip:document.querySelector('.pr-badge-tooltip')?.getBoundingClientRect().toJSON()})`
+          )
+        )
+    );
   };
   const shots = path.resolve('.impeccable/review/pr-badge-previews');
   fs.mkdirSync(shots, { recursive: true });
@@ -45,7 +54,7 @@ void app.whenReady().then(async () => {
     await wait('document.hasFocus()');
     focusedSelector = selector;
     await js(
-      `document.activeElement.blur();document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`
+      `document.activeElement.blur();document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center',behavior:'instant'})`
     );
     await new Promise((r) => setTimeout(r, 150));
     await js(`document.querySelector(${JSON.stringify(selector)}).focus()`);
@@ -59,6 +68,9 @@ void app.whenReady().then(async () => {
   };
   try {
     await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL ?? ''}?entity-badges`);
+    // Keep keyboard-focus behavior deterministic even if the desktop activates another window.
+    win.webContents.debugger.attach('1.3');
+    await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
     await wait("document.querySelectorAll('.queue-item').length===7");
     await js(
       "window.previewReads=[];window.basePreview=window.electronAPI.getPrBadgePreview;window.electronAPI.getPrBadgePreview=async url=>{window.previewReads.push(url);return window.basePreview(url)};window.copies=[];Object.defineProperty(navigator.clipboard,'writeText',{configurable:true,value:text=>{window.copies.push(text);return Promise.resolve()}});void 0"
@@ -124,21 +136,26 @@ void app.whenReady().then(async () => {
     await js(
       "window.electronAPI.getPrBadgePreview=async url=>{const p=await window.basePreview(url);p.member.title='Preserve cancellation and retry boundaries across streaming command processing and connection recovery'.repeat(2);p.briefing.summary='Preserve pending work when transport reconnects. '.repeat(30);p.member.headBranch='feature/'+'long-branch-name-'.repeat(20);return p};void 0"
     );
-    win.setContentSize(900, 740);
+    win.setContentSize(900, 600);
     await new Promise((r) => setTimeout(r, 300));
     await focus();
     assert.match(await js<string>(`${content}.textContent`), /Preserve cancellation/);
     await capture('laptop');
     for (const width of [900, 640]) {
-      win.setContentSize(width, 740);
-      await new Promise((r) => setTimeout(r, 300));
-      await close();
+      win.setContentSize(width, 600);
+      // Resizing can scroll the queue and dismiss the tooltip. Reopen it once resized.
+      await wait(`innerWidth === ${width} && innerHeight === 600`);
       await focus();
-      await new Promise((r) => setTimeout(r, 200));
+      await wait(
+        `(()=>{const r=${content}?.getBoundingClientRect();return r && r.width > 0 && r.x >= 0 && r.y >= 0 && r.right <= innerWidth && r.bottom <= innerHeight})()`
+      );
       const rect = await js<{ x: number; y: number; right: number; bottom: number }>(
         `(()=>{const r=${content}.getBoundingClientRect();return {x:r.x,y:r.y,right:r.right,bottom:r.bottom}})()`
       );
-      assert.ok(rect.x >= 0 && rect.y >= 0 && rect.right <= width && rect.bottom <= 740, 'Tooltip fits viewport');
+      assert.ok(
+        rect.x >= 0 && rect.y >= 0 && rect.right <= width && rect.bottom <= 600,
+        `Tooltip fits viewport: ${JSON.stringify({ width, rect })}`
+      );
       if (width === 640) await capture('narrow');
     }
     console.log('PR badge preview browser checks passed');

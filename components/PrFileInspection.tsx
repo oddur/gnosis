@@ -50,8 +50,10 @@ export function PrFileInspection({
   onAsk,
   onOpenCurrentFile,
   classificationControl,
+  sourceLine,
 }: {
   entry: ChangeFileEntry;
+  sourceLine?: number;
   classificationControl?: ReactNode;
   preferences: Preferences;
   discussion: ReturnType<typeof usePrDiscussions>;
@@ -373,6 +375,9 @@ export function PrFileInspection({
       setSourceLocation(location);
     }
   }
+  useEffect(() => {
+    if (sourceLine) { opened.current = true; openMarkdownSource({ side: 'after', start: sourceLine, end: sourceLine }); }
+  }, [sourceLine, activeKey]);
   function chooseMarkdownMode(mode: 'source' | 'preview') {
     const section = sectionRef.current;
     const top = Math.max(0, section?.closest('.commit-diff-stream')?.getBoundingClientRect().top ?? 0) + 130;

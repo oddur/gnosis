@@ -1,3 +1,4 @@
+import type { CheckTarget, CheckSelection, ChecksOptions, PrChecks, CheckDetails, CheckLog } from '../lib/pr-checks';
 import type { ExplanationMarkdownRequest } from '../lib/explanation-markdown';
 import type { MarkdownReviewRequest, MarkdownReview } from '../lib/markdown-review';
 import type { FileKinds, FileFilterState } from '../lib/file-kinds';
@@ -128,6 +129,10 @@ declare global {
       searchPullRequests: () => Promise<PrSearchResult[]>;
       searchRepos: (query: string) => Promise<RepoSearchResult[]>;
       reRenderHunks: (review: ReviewGuide) => Promise<ReviewGuide>;
+      getPrChecks: (target: CheckTarget, options?: ChecksOptions) => Promise<PrChecks | undefined>;
+      getCheckDetails: (target: CheckSelection) => Promise<CheckDetails>;
+      getCheckLog: (target: CheckSelection) => Promise<CheckLog>;
+      rerunChecks: (target: CheckSelection & { mode: 'failed' | 'all' }) => Promise<void>;
       getPrStatus: (prUrl: string, force?: boolean) => Promise<PrStatus>;
       getPrMetadata: (prUrl: string) => Promise<PrMetadata>;
       loadReviewImages: (reviewId: string, filePath: string, downloadLfs?: boolean) => Promise<import('../lib/review-images').ReviewImageComparison>;

@@ -1,3 +1,4 @@
+import type { CheckTarget, CheckSelection, ChecksOptions, PrChecks, CheckDetails, CheckLog } from '../lib/pr-checks';
 import type { ExplanationMarkdownRequest } from '../lib/explanation-markdown';
 import type { MarkdownReviewRequest, MarkdownReview } from '../lib/markdown-review';
 import type { FileKinds, FileFilterState } from '../lib/file-kinds';
@@ -193,6 +194,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   searchPullRequests: (): Promise<PrSearchResult[]> => ipcRenderer.invoke('search-pull-requests'),
   searchRepos: (query: string): Promise<RepoSearchResult[]> => ipcRenderer.invoke('search-repos', query),
   reRenderHunks: (review: ReviewGuide): Promise<ReviewGuide> => ipcRenderer.invoke('re-render-hunks', review),
+  getPrChecks: (target: CheckTarget, options?: ChecksOptions): Promise<PrChecks | undefined> => ipcRenderer.invoke('pr-checks', target, options),
+  getCheckDetails: (target: CheckSelection): Promise<CheckDetails> => ipcRenderer.invoke('check-details', target),
+  getCheckLog: (target: CheckSelection): Promise<CheckLog> => ipcRenderer.invoke('check-log', target),
+  rerunChecks: (target: CheckSelection & { mode: 'failed' | 'all' }): Promise<void> => ipcRenderer.invoke('rerun-checks', target),
   getPrStatus: (prUrl: string, force?: boolean): Promise<PrStatus> => ipcRenderer.invoke('get-pr-status', prUrl, force),
   getPrMetadata: (prUrl: string): Promise<PrMetadata> => ipcRenderer.invoke('get-pr-metadata', prUrl),
   loadReviewImages: (reviewId: string, filePath: string, downloadLfs = false): Promise<import('../lib/review-images').ReviewImageComparison> => ipcRenderer.invoke('load-review-images', reviewId, filePath, downloadLfs),

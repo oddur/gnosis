@@ -263,6 +263,8 @@ export interface ReviewGuide {
 }
 
 export interface PrStatus {
+  checkSnapshot?: import('./pr-checks').PrChecks;
+  ciError?: string;
   signals?: import('./queue-signals').QueueSignals;
   labels: string[];
   mergeable: boolean | null;

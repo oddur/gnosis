@@ -40,7 +40,7 @@ export function PrStateIcon({ member }: { member: ReviewMember }) {
     </span>
   );
 }
-export function QueueMetadata({ subject, account }: { subject: ReviewSubject; account: string | null }) {
+export function QueueMetadata({ subject, account, onChecks }: { subject: ReviewSubject; account: string | null; onChecks?: () => void }) {
   const { ref, values, loaded } = useQueueSignals(
     account,
     subject.members.map((m) => ({ url: m.url, headSha: m.headSha }))
@@ -65,13 +65,15 @@ export function QueueMetadata({ subject, account }: { subject: ReviewSubject; ac
           ? 'success'
           : 'neutral';
   const CheckIcon = state === 'failure' ? X : state === 'pending' ? CircleDot : state === 'success' ? Check : Minus;
+  const failed = values.reduce((n, value) => n + (value.checks.failed ?? 0), 0);
+  const CheckControl = onChecks ? 'button' : 'span';
   const checkLabel = !complete
     ? loaded
       ? 'Checks unavailable'
       : 'Checks not loaded'
     : !total
       ? 'No checks'
-      : `${passed + skipped}/${total}`;
+      : state === 'failure' ? (failed ? `${failed} failed` : 'Checks failing') : `${passed + skipped}/${total}`;
   const checkDescription = !complete
     ? checkLabel
     : `${passed} of ${total} checks passed${skipped ? `, ${skipped} skipped or neutral` : ''}${state === 'failure' ? ', some checks failed' : state === 'pending' ? ', checks pending' : ''}${stack ? ' across this stack' : ''}. Last checked ${lastChecked}.`;
@@ -103,14 +105,14 @@ export function QueueMetadata({ subject, account }: { subject: ReviewSubject; ac
               </>
             )}
           </span>
-          <span
+          <CheckControl onClick={onChecks}
             className={`queue-checks is-${state}${stale ? ' is-stale' : ''}`}
             title={checkDescription}
             aria-label={checkDescription}
           >
             <CheckIcon size={14} aria-hidden="true" />
             {checkLabel}
-          </span>
+          </CheckControl>
         </div>
         {comments !== undefined && comments > 0 && (
           <span

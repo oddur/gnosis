@@ -54,6 +54,7 @@ void app.whenReady().then(async () => {
         ...await getStatus(...args), ciConclusion:'success',
         ciChecks:[{name:'continuous-integration-'+'verylongcheckname'.repeat(25),status:'completed',conclusion:'success',url:'https://github.com/klang/engine/actions'}],
       });
+      window.electronAPI.getPrChecks = input => Promise.resolve({ ...input, checkedAt:Date.now(), checks:[{id:'check:1',databaseId:1,name:'continuous-integration-'+'verylongcheckname'.repeat(25),kind:'check',provider:'GitHub Actions',required:true,status:'completed',conclusion:'failure',url:'https://github.com/klang/engine/actions',startedAt:null,completedAt:null}] });
       window.privateImageReads = 0;
       window.electronAPI.loadPrImage = async url => {
         if (!url.includes('/user-attachments/')) throw Error('Missing image');
@@ -156,16 +157,16 @@ void app.whenReady().then(async () => {
     await capture('pr-summary-laptop');
     assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
     window.setSize(540, 760);
-    await js("document.querySelector('.pr-checks').open = true");
+    await wait("!!document.querySelector('.pr-check-summary li')");
     assert.equal(
       await js(
         "document.querySelector('.pr-summary-page').scrollWidth <= document.querySelector('.pr-summary-page').clientWidth"
       ),
       true,
-      'Expanded long CI check names wrap without widening the summary'
+      'Long CI failure names wrap without widening the summary'
     );
     await capture('pr-summary-narrow');
-    await js("document.querySelector('.pr-checks').open = false");
+
     assert.equal(await js("document.querySelector('.pr-summary-page').scrollWidth <= innerWidth"), true);
     window.setSize(1280, 800);
     await js(`(async()=>{

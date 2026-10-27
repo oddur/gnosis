@@ -20,6 +20,7 @@ export function PrDetails({
   member: m,
   starControl,
   status,
+  checkSummary,
   signals,
   statusError,
   onRetryStatus,
@@ -29,6 +30,7 @@ export function PrDetails({
   member: ReviewMember;
   starControl?: ReactNode;
   status?: PrStatus;
+  checkSummary?: ReactNode;
   signals?: QueueSignals;
   statusError?: string;
   onRetryStatus?: () => void;
@@ -59,7 +61,7 @@ export function PrDetails({
           </a>
         </header>
       )}
-      <PrReadiness member={m} status={status} signals={signals} error={statusError} onRetry={onRetryStatus} />
+      <PrReadiness checkSummary={checkSummary} member={m} status={status} signals={signals} error={statusError} onRetry={onRetryStatus} />
       <div className="pr-details-columns">
         <section className="pr-description" aria-label={`Author description for PR #${m.number}`}>
           <SectionHeading>Author description</SectionHeading>

@@ -246,6 +246,8 @@ void app.whenReady().then(async () => {
     assert.ok(await js("!document.querySelector('.review-file-group del')"));
     win.setSize(900, 760);
     await js("document.documentElement.classList.add('dark')");
+    // The Code tab appears only after the responsive layout processes the resize.
+    await wait("[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='Code'&&b.checkVisibility({visibilityProperty:true}))");
     await click('Code');
     await capture('explanation-laptop');
     await js("document.querySelector('.review-file-group .markdown-review h2').scrollIntoView({block:'center'})");

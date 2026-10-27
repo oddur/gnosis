@@ -361,7 +361,7 @@ void app.whenReady().then(async () => {
       return { offset: header.getBoundingClientRect().top - pane.getBoundingClientRect().top, text: header.textContent };
     })()`);
     assert.ok(Math.abs(sticky.offset) < 2, 'Source header must stay pinned during diff scroll');
-    assert.match(sticky.text, /PR #121/);
+    assert.equal(await js("document.querySelector('.review-file-context .source-attribution .entity-badge')?.textContent"), '#121');
     assert.match(sticky.text, /command-queue.ts/);
     assert.match(sticky.text, /Limits pending commands/);
     assert.equal(
@@ -388,7 +388,7 @@ void app.whenReady().then(async () => {
       await js(`(() => {
       const pane = document.querySelector('.review-code').parentElement;
       const header = document.querySelectorAll('.review-file-context')[1];
-      return Math.abs(header.getBoundingClientRect().top - pane.getBoundingClientRect().top) < 2 && header.textContent.includes('PR #122');
+      return Math.abs(header.getBoundingClientRect().top - pane.getBoundingClientRect().top) < 2 && header.querySelector('.source-attribution .entity-badge')?.textContent === '#122';
     })()`),
       'Pinned source must follow the next stack member'
     );

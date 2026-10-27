@@ -51,6 +51,7 @@ void app.whenReady().then(async () => {
       'Summary',
       'Changes',
       'Commits',
+      'Checks',
       'Explanation',
     ]);
     await capture('empty');
@@ -174,6 +175,10 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('[role=dialog]')");
     assert.match(await js<string>("document.querySelector('[role=dialog]').textContent"), /cancellation throws/);
     await capture('shared-review');
+    if (await js("!!document.querySelector('[role=tooltip]')")) {
+      await js("document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))");
+      await wait("!document.querySelector('[role=tooltip]')");
+    }
     await js(
       "document.querySelector('[role=dialog]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
     );
@@ -273,6 +278,10 @@ void app.whenReady().then(async () => {
       )
     );
     await wait("document.querySelector('[role=dialog]')?.textContent.includes('This PR changed')");
+    if (await js("!!document.querySelector('[role=tooltip]')")) {
+      await js("document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))");
+      await wait("!document.querySelector('[role=tooltip]')");
+    }
     await js(
       "document.querySelector('[role=dialog]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
     );
