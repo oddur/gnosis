@@ -55,6 +55,7 @@ const config: ForgeConfig = {
     new VitePlugin({
       build: [
         { entry: 'src/main.ts', config: 'vite.main.config.ts', target: 'main' },
+        { entry: 'src/markdown-review-worker.ts', config: 'vite.markdown-worker.config.ts', target: 'main' },
         { entry: 'src/app-data-worker.ts', config: 'vite.main.config.ts', target: 'main' },
         { entry: 'src/preload.ts', config: 'vite.preload.config.ts', target: 'preload' },
       ],

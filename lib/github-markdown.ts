@@ -3,6 +3,8 @@ import { defaultUrlTransform } from 'react-markdown';
 export interface GitHubMarkdownSource {
   repo: string;
   ref: string;
+  /** Repository-relative file path; omitted for PR descriptions. */
+  path?: string;
 }
 
 /** Resolve repository-relative content at the PR's revision, never the app's origin. */
@@ -32,5 +34,6 @@ export function githubMarkdownUrl(url: string, image: boolean, source: GitHubMar
   const base = image
     ? `https://raw.githubusercontent.com/${source.repo}/${encodeURIComponent(source.ref)}/`
     : `https://github.com/${source.repo}/blob/${encodeURIComponent(source.ref)}/`;
-  return new URL(safe.replace(/^\//, ''), base).href;
+  const directory = source.path?.split('/').slice(0, -1).map(encodeURIComponent).join('/');
+  return new URL(safe.replace(/^\//, ''), base + (!safe.startsWith('/') && directory ? directory + '/' : '')).href;
 }

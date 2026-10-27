@@ -1,3 +1,5 @@
+import { createMarkdownReviewService } from './markdown-review-service';
+import type { MarkdownReviewRequest } from '../lib/markdown-review';
 import { fileClassifications, onClassificationUpdate } from './file-classification-service';
 import { createFileFilterState, type FileFilterAction } from './file-filter-state';
 import { attachWindowHistoryNavigation } from './window-history-navigation';
@@ -2610,6 +2612,9 @@ const inspectionPrefetchGuard = (background: boolean) => {
   } : undefined;
 };
 ipcMain.handle('commit-comparison', (_event, selection: CommitSelection, background: boolean = false) => withGitHubPriority(background ? 'background' : 'interactive', async () => { const client = changesClient(); return classifySnapshot(client, await prCommits.comparison(client, selection, inspectionPrefetchGuard(background))); }));
+const markdownReview = createMarkdownReviewService(path.join(__dirname, 'markdown-review-worker.js'));
+ipcMain.handle('markdown-review', (_event, request: MarkdownReviewRequest) => markdownReview.render(request));
+app.on('before-quit', () => markdownReview.dispose());
 ipcMain.handle('pr-change-file', (_event, request: PrFileRequest, background: boolean = false) => withGitHubPriority(background ? 'background' : 'interactive', () => (request.comparison ? prCommits : prChanges).content(changesClient(), request, inspectionPrefetchGuard(background))));
 ipcMain.handle('prepare-pr-review', (_event, url: string, revision: { baseSha: string; headSha: string }) => withGitHubPriority('background', () => prChanges.prepareReview(changesClient(), url, revision)));
 ipcMain.handle('pr-changes-revision', (_event, url: string) => prChanges.revision(changesClient(), url));

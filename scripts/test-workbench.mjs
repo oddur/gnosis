@@ -11,6 +11,7 @@ const prBadgePreviews = process.argv.includes('--pr-badge-previews');
 const fileFilters = process.argv.includes('--file-filters');
 const navigationHistory = process.argv.includes('--navigation-history') || process.argv.includes('--navigation-swipe');
 const entityBadges = process.argv.includes('--entity-badges');
+const markdownReview = process.argv.includes('--markdown-review');
 const targetBranch = process.argv.includes('--target-branch');
 const labelFilter = process.argv.includes('--label-filter');
 const sorting = process.argv.includes('--sorting');
@@ -59,7 +60,7 @@ try {
   const outfile = path.join(dir, 'test.cjs');
   await build({
     entryPoints: [
-      targetBranch ? 'tests/target-branch-browser.ts' : prBadgePreviews ? 'tests/pr-badge-previews-browser.ts' : fileFilters ? 'tests/file-filters-browser.ts' : navigationHistory ? 'tests/navigation-history-browser.ts' : entityBadges ? 'tests/entity-badges-browser.ts' : labelFilter ? 'tests/label-filter-browser.ts' : sorting ? 'tests/pr-list-sort-browser.ts' : preloadActivity ? 'tests/preload-activity-browser.ts' : unread ? 'tests/unread-prs-browser.ts' : reviewEntryPoints ? 'tests/review-entry-points-browser.ts' : contextMenus ? 'tests/context-menus-browser.ts' : d2 ? 'tests/d2-browser.ts' : mermaid ? 'tests/mermaid-browser.ts' : prActions ? 'tests/pr-actions-browser.ts' : breadcrumbs ? 'tests/breadcrumbs-browser.ts' : lfs ? 'tests/git-lfs-browser.ts' : selections ? 'tests/searchable-selection-browser.ts' : shellHardening ? 'tests/shell-hardening-browser.ts' : setupHardening ? 'tests/setup-hardening-browser.ts' : inspectionHardening ? 'tests/inspection-hardening-browser.ts' : cacheReset ? 'tests/github-cache-reset-browser.ts' : preload ? 'tests/pr-preload-browser.ts' : sync ? 'tests/github-sync-browser.ts' : inactivity ? 'tests/pr-inactivity-browser.ts' : mutes ? 'tests/muted-prs-browser.ts' : stars ? 'tests/starred-prs-browser.ts' : readiness ? 'tests/merge-readiness-browser.ts' : diffContext ? 'tests/diff-context-browser.ts' : explanation ? 'tests/explanation-tab-browser.ts' : diffSpeed ? 'tests/diff-navigation-browser.ts' : commits ? 'tests/pr-commits-browser.ts' : changes ? 'tests/pr-changes-browser.ts' : queueMetadata ? 'tests/queue-metadata-browser.ts' : authors ? 'tests/github-author-browser.ts' : commandCenter ? 'tests/command-center-browser.ts' : performance ? 'tests/queue-performance-browser.ts' : polish
+      markdownReview ? 'tests/markdown-review-browser.ts' : targetBranch ? 'tests/target-branch-browser.ts' : prBadgePreviews ? 'tests/pr-badge-previews-browser.ts' : fileFilters ? 'tests/file-filters-browser.ts' : navigationHistory ? 'tests/navigation-history-browser.ts' : entityBadges ? 'tests/entity-badges-browser.ts' : labelFilter ? 'tests/label-filter-browser.ts' : sorting ? 'tests/pr-list-sort-browser.ts' : preloadActivity ? 'tests/preload-activity-browser.ts' : unread ? 'tests/unread-prs-browser.ts' : reviewEntryPoints ? 'tests/review-entry-points-browser.ts' : contextMenus ? 'tests/context-menus-browser.ts' : d2 ? 'tests/d2-browser.ts' : mermaid ? 'tests/mermaid-browser.ts' : prActions ? 'tests/pr-actions-browser.ts' : breadcrumbs ? 'tests/breadcrumbs-browser.ts' : lfs ? 'tests/git-lfs-browser.ts' : selections ? 'tests/searchable-selection-browser.ts' : shellHardening ? 'tests/shell-hardening-browser.ts' : setupHardening ? 'tests/setup-hardening-browser.ts' : inspectionHardening ? 'tests/inspection-hardening-browser.ts' : cacheReset ? 'tests/github-cache-reset-browser.ts' : preload ? 'tests/pr-preload-browser.ts' : sync ? 'tests/github-sync-browser.ts' : inactivity ? 'tests/pr-inactivity-browser.ts' : mutes ? 'tests/muted-prs-browser.ts' : stars ? 'tests/starred-prs-browser.ts' : readiness ? 'tests/merge-readiness-browser.ts' : diffContext ? 'tests/diff-context-browser.ts' : explanation ? 'tests/explanation-tab-browser.ts' : diffSpeed ? 'tests/diff-navigation-browser.ts' : commits ? 'tests/pr-commits-browser.ts' : changes ? 'tests/pr-changes-browser.ts' : queueMetadata ? 'tests/queue-metadata-browser.ts' : authors ? 'tests/github-author-browser.ts' : commandCenter ? 'tests/command-center-browser.ts' : performance ? 'tests/queue-performance-browser.ts' : polish
         ? 'tests/polish-browser.ts'
         : hardening
           ? 'tests/hardening-browser.ts'
@@ -83,6 +84,7 @@ try {
     format: 'cjs',
     external: ['electron'],
   });
+  if (markdownReview) await build({ entryPoints: ['src/markdown-review-worker.ts'], outfile: path.join(dir, 'markdown-review-worker.cjs'), bundle: true, platform: 'node', format: 'cjs' });
   const env = {
     ...process.env,
     GNOSIS_NATIVE_SWIPE: process.argv.includes('--navigation-swipe') ? '1' : process.env.GNOSIS_NATIVE_SWIPE,
