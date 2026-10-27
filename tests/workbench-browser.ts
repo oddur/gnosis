@@ -46,6 +46,8 @@ void app.whenReady().then(async () => {
   };
   try {
     await window.loadURL(fixtureUrl);
+    window.webContents.debugger.attach('1.3');
+    await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
     await wait("document.querySelectorAll('.queue-item').length === 7");
     assert.equal(await js(`document.fonts.load('650 22px "Plus Jakarta Sans"').then(f=>f.length)`), 1);
     assert.equal(await js(`document.fonts.load('400 13px "JetBrains Mono"').then(f=>f.length)`), 1);
@@ -340,6 +342,8 @@ void app.whenReady().then(async () => {
     await press('Down');
     assert.equal(await js("document.activeElement?.getAttribute('aria-pressed')"), 'true');
     await press('Enter');
+    await wait("!!document.querySelector('.stack-overview')");
+    await click('Explanation');
     await wait("!!document.querySelector('.workbench-overview')");
     await click('Continue review');
     await wait("document.querySelectorAll('.review-file-context').length === 2");
