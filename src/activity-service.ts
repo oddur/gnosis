@@ -43,6 +43,17 @@ export function createActivityService(now = () => Date.now()) {
           canRetry: false,
         });
     },
+    /** An automatic retry keeps completed work and the user's cancel action. */
+    wait(id: string, detail: string) {
+      const entry = tasks.get(id);
+      if (entry && isActiveTask(entry.task))
+        Object.assign(entry.task, { status: 'paused', detail, updatedAt: stamp(), canCancel: !!entry.actions.cancel });
+    },
+    resume(id: string) {
+      const entry = tasks.get(id);
+      if (entry?.task.status === 'paused')
+        Object.assign(entry.task, { status: 'running', updatedAt: stamp(), canCancel: !!entry.actions.cancel });
+    },
     list(): ActivityTask[] {
       for (const [id, { task }] of tasks)
         if (

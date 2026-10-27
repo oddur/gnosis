@@ -33,7 +33,6 @@ export function joinGitHubWork<T>(work: GitHubWork<T>): Promise<T> {
 export function createGitHubScheduler() {
   const pending: { scope: PriorityScope; run: () => Promise<void> }[] = [];
   let running = false;
-  let foregroundRuns = 0;
   async function drain() {
     if (running) return;
     running = true;
@@ -41,13 +40,9 @@ export function createGitHubScheduler() {
       while (pending.length) {
         let preferred = pending.findIndex((task) => githubPriority(task.scope) === 'interactive');
         if (preferred < 0) {
-          const priority = foregroundRuns >= 8 ? 'background' : 'foreground';
-          preferred = pending.findIndex((task) => githubPriority(task.scope) === priority);
+          preferred = pending.findIndex((task) => githubPriority(task.scope) === 'foreground');
         }
         const [task] = pending.splice(preferred < 0 ? 0 : preferred, 1);
-        const priority = githubPriority(task.scope);
-        if (priority === 'foreground') foregroundRuns++;
-        else if (priority === 'background') foregroundRuns = 0;
         await context.run(task.scope, task.run);
       }
     } finally {

@@ -248,3 +248,50 @@ void test('opening Changes promotes the entire shared manifest operation, includ
     'Only the before/after consistency checks run'
   );
 });
+
+void test('requested-task inputs drain before optional work, even for large stacks', async () => {
+  const schedule = createGitHubScheduler(), gate = deferred(), order: string[] = [];
+  const running = schedule('background', () => gate.promise);
+  const optional = schedule('background', () => { order.push('history'); return Promise.resolve(); });
+  const inputs = Array.from({ length: 24 }, (_, i) =>
+    schedule('foreground', () => { order.push(`file ${i}`); return Promise.resolve(); }));
+  gate.resolve();
+  await Promise.all([running, optional, ...inputs]);
+  assert.deepEqual(order, [...Array.from({ length: 24 }, (_, i) => `file ${i}`), 'history']);
+});
+
+void test('required file contents surface rate limits instead of silently omitting source', async () => {
+  const { getFileContent } = await import('../lib/github');
+  const pool = createGitHubClientPool({
+    minSpacingMs: 0,
+    fetch: (() => Promise.resolve(new Response(JSON.stringify({ message: 'secondary rate limit' }), {
+      status: 429, headers: { 'content-type': 'application/json', 'retry-after': '60' },
+    }))) as typeof fetch,
+  });
+  await assert.rejects(getFileContent(pool.client('account'), 'o', 'r', 'file.ts', 'head'), GitHubBackoffError);
+});
+
+void test('cancelled optional history leaves the queue without making a GitHub request', async () => {
+  const { getFileMetadata } = await import('../lib/github');
+  const { startReviewFileMetadata } = await import('../lib/review-preparation');
+  const gate = deferred(), entered = deferred(), calls: string[] = [];
+  const pool = createGitHubClientPool({ minSpacingMs: 0, fetch: (async (input: string) => {
+    const path = new URL(input).pathname;
+    calls.push(path);
+    if (path === '/block') { entered.resolve(); await gate.promise; }
+    return json([]);
+  }) as typeof fetch });
+  const client = pool.client('account');
+  const running = client.request('GET /block');
+  await entered.promise;
+  const metadata = startReviewFileMetadata({ getFileMetadata: (files, signal) =>
+    getFileMetadata(client, 'o', 'r', 1, 'base', files, signal),
+  }, [{ filename: 'file.ts', status: 'modified', additions: 1, deletions: 1 }]);
+  await turn();
+  metadata.finish();
+  const ui = withGitHubPriority('interactive', () => client.request('GET /clicked'));
+  gate.resolve();
+  await Promise.all([running, ui]);
+  await turn();
+  assert.deepEqual(calls, ['/block', '/clicked']);
+});

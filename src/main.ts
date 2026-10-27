@@ -1,3 +1,4 @@
+import { loadReviewContents, startReviewFileMetadata } from '../lib/review-preparation';
 import { normalizeGitHubCacheMB, DEFAULT_GITHUB_CACHE_MB } from '../lib/github-cache-settings';
 import type { ReviewStateWrite, FileProgressPatch } from '../lib/review-state';
 import { createAppDataStore } from './app-data-store';
@@ -53,7 +54,7 @@ import {
 import { createDiffSource } from '../lib/diffSource';
 import type { DiffSource } from '../lib/diffSource';
 import { isLocalUrl } from '../lib/local-url';
-import type { CiCheck, FileMetadata, PrMetadata, PrSearchResult, PrStatus } from '../lib/types';
+import type { CiCheck, PrMetadata, PrSearchResult, PrStatus } from '../lib/types';
 import {
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_FAST_CLAUDE_MODEL,
@@ -1505,7 +1506,7 @@ ipcMain.handle(
   }
 );
 
-ipcMain.handle('get-pr-files', async (_event, prUrl: string): Promise<ChangedFile[]> => {
+handleInteractive('get-pr-files', async (_event, prUrl: string): Promise<ChangedFile[]> => {
   const token = getResolvedToken();
   const source = await createDiffSource(prUrl, { token });
   return source.getChangedFiles();
@@ -1747,6 +1748,7 @@ async function runBackgroundGeneration(
     claudeContext,
   } = request;
 
+  let optionalMetadata: ReturnType<typeof startReviewFileMetadata> | undefined;
   try {
     const token = getResolvedToken();
 
@@ -1768,23 +1770,6 @@ async function runBackgroundGeneration(
     // Fetch changed files first so we can pass them to getDiff as fallback
     const allChangedFiles = await source.getChangedFiles();
     const diff = await source.getDiff(allChangedFiles);
-
-    // Fetch file metadata (age + churn) in the background while the
-    // rest of the pipeline proceeds. We don't await it here — it
-    // joins later when we assemble the ReviewGuide. This avoids
-    // blocking the critical path (diff fetching, AI generation).
-    const fileMetadataPromise: Promise<FileMetadata[]> = source.getFileMetadata(
-      allChangedFiles
-    ).catch((err: unknown) => {
-      console.warn('[main] File metadata fetch failed, proceeding without:', err);
-      return allChangedFiles.map((f) => ({
-        filename: f.filename,
-        previousFilename: f.previous_filename,
-        status: f.status,
-        additions: f.additions,
-        deletions: f.deletions,
-      }));
-    });
 
     // Apply user exclusions before any other processing
     const userExcludedSet = new Set(request.excludedFiles ?? []);
@@ -1809,31 +1794,17 @@ async function runBackgroundGeneration(
       );
     }
 
-    reportReviewPhase( { reviewId, phase: 'Fetching file contents' });
-
-    const fileContents: Record<string, string> = {};
-    const headFileContents: Record<string, string> = {};
-    const concurrency = 5;
     const textFiles = normalFiles.filter(
       (f) => !imageMimeType(f.filename) || imageMimeType(f.filename) === 'image/svg+xml'
     );
-    const filesToFetch = textFiles.filter((f) => f.status !== 'deleted');
-    const filesToFetchBase = textFiles.filter((f) => f.status !== 'added');
-
-    for (let i = 0; i < Math.max(filesToFetch.length, filesToFetchBase.length); i += concurrency) {
-      const headBatch = filesToFetch.slice(i, i + concurrency);
-      const baseBatch = filesToFetchBase.slice(i, i + concurrency);
-      await Promise.all([
-        ...headBatch.map(async (f) => {
-          const content = await source.getFileContent(f.filename, 'head');
-          if (content !== null) headFileContents[f.filename] = content;
-        }),
-        ...baseBatch.map(async (f) => {
-          const content = await source.getFileContent(f.previous_filename ?? f.filename, 'base');
-          if (content !== null) fileContents[f.filename] = content;
-        }),
-      ]);
-    }
+    const { fileContents, headFileContents } = await loadReviewContents(source, textFiles, signal, progress => {
+      const phase = progress.waitingUntil
+        ? `Waiting for GitHub rate limit · resumes at ${new Date(progress.waitingUntil).toLocaleTimeString()}`
+        : `Loading files: ${progress.completed}/${progress.total}`;
+      activities.resume(`review:${reviewId}`);
+      reportReviewPhase({ reviewId, phase, completed: progress.completed, total: progress.total });
+      if (progress.waitingUntil) activities.wait(`review:${reviewId}`, phase);
+    });
 
     reportReviewPhase( { reviewId, phase: 'Resolving imports' });
 
@@ -1883,6 +1854,10 @@ async function runBackgroundGeneration(
         projectClaudeContext
       );
     }
+
+    // Only start optional history once all required input is ready. It uses idle
+    // GitHub capacity and cannot hold up delivery if the model finishes first.
+    optionalMetadata = startReviewFileMetadata(source, allChangedFiles);
 
     console.log(`[main] Generating review guide (${reviewId})...`);
     const generationStart = Date.now();
@@ -2151,8 +2126,7 @@ async function runBackgroundGeneration(
       });
     }
 
-    // Await the file metadata that was kicked off in parallel earlier.
-    const fileMetadata = await fileMetadataPromise;
+    const fileMetadata = optionalMetadata.finish();
     for (const slide of resolvedSlides) {
       slide.inlineExplanations = normalizeInlineExplanations(slide.inlineExplanations, slide.diffHunks, fileMetadata);
     }
@@ -2242,6 +2216,7 @@ async function runBackgroundGeneration(
     activities.finish(`review:${reviewId}`, isCancelled ? 'cancelled' : 'failed', errorMessage);
     broadcastToAllWindows('review-failed', { reviewId, error: errorMessage });
   } finally {
+    optionalMetadata?.finish();
     activeGenerations.delete(reviewId);
   }
 }
@@ -2272,7 +2247,7 @@ ipcMain.handle('list-activity', () => {
   const hiddenReviews = new Set(readReviewsIndex().filter(entry => workbench.isMutedReview(entry)).map(entry => entry.id));
   return [...activities.list().filter(task => (!task.account || task.account === cachedLogin) && (!task.reviewId || !hiddenReviews.has(task.reviewId))), ...workbench.activity().filter(t=>dismissedBriefings.get(t.id)!==t.updatedAt)];
 });
-ipcMain.handle('activity-action', async (_event, id:string, action:ActivityAction) => {
+handleInteractive('activity-action', async (_event, id:string, action:ActivityAction) => {
   if (!['cancel','retry','dismiss'].includes(action)) throw new Error('Invalid task action.');
   const briefing=workbench.activity().find(t=>t.id===id);
   if (briefing) {
@@ -2374,7 +2349,7 @@ async function startReview(request: GenerateReviewRequest): Promise<StartReviewR
   // Track and fire off background generation (no await)
   const abortController = new AbortController();
   activeGenerations.set(reviewId, { abortController, prUrl: request.prUrl });
-  void runBackgroundGeneration(reviewId, request, source, prData, abortController.signal, reviewSnapshot);
+  void withGitHubPriority('foreground', () => runBackgroundGeneration(reviewId, request, source, prData, abortController.signal, reviewSnapshot));
 
   return {
     reviewId,
@@ -2383,7 +2358,7 @@ async function startReview(request: GenerateReviewRequest): Promise<StartReviewR
     author: prData.author,
   };
 }
-ipcMain.handle('start-review', (_event, request:GenerateReviewRequest)=>startReview(request));
+handleInteractive('start-review', (_event, request:GenerateReviewRequest)=>startReview(request));
 
 ipcMain.handle('cancel-review', (_event, reviewId: string) => {
   const gen = activeGenerations.get(reviewId);
@@ -2609,7 +2584,7 @@ ipcMain.handle('commit-comparison', (_event, selection: CommitSelection, backgro
 ipcMain.handle('pr-change-file', (_event, request: PrFileRequest, background: boolean = false) => withGitHubPriority(background ? 'background' : 'interactive', () => (request.comparison ? prCommits : prChanges).content(changesClient(), request, inspectionPrefetchGuard(background))));
 ipcMain.handle('prepare-pr-review', (_event, url: string, revision: { baseSha: string; headSha: string }) => withGitHubPriority('background', () => prChanges.prepareReview(changesClient(), url, revision)));
 ipcMain.handle('pr-changes-revision', (_event, url: string) => prChanges.revision(changesClient(), url));
-ipcMain.handle('ask-pr-file', async (_event, request: FileChatRequest) => {
+handleInteractive('ask-pr-file', async (_event, request: FileChatRequest) => {
   if (!request.question.trim() || request.question.length > 20000) throw new Error('Enter a question under 20,000 characters.');
   const client = changesClient();
   const source = request.comparison ? prCommits : prChanges;
