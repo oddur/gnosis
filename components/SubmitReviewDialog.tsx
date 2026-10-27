@@ -1,3 +1,4 @@
+import { CommitBadge } from './EntityBadge';
 import { useSessionDraft } from '../lib/session-drafts';
 import { useState, useEffect, useRef, useCallback, useId } from 'react';
 import { ChangesDraftComment } from './ChangesDraftComment';
@@ -218,7 +219,7 @@ export function SubmitReviewDialog({
               </a>
               {headSha && (
                 <span title={`Reviewing revision ${headSha}`}>
-                  Revision <code>{headSha.slice(0, 7)}</code>
+                  Revision <CommitBadge sha={headSha} repo={target ? `${target[1]}/${target[2]}` : undefined} />
                 </span>
               )}
             </div>

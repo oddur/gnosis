@@ -1,3 +1,4 @@
+import { PrBadge, BranchBadge } from './EntityBadge';
 import { GitHubAuthor } from './GitHubAuthor';
 import { ExternalLink, ArrowLeft, Settings, GitCompare } from 'lucide-react';
 import { GitHubIcon, riskConfig, safeConfigLookup } from '@/lib/constants';
@@ -57,7 +58,7 @@ export function PRSummaryBanner({ review, onBack, onOpenSettings }: Props) {
         </div>
 
         <div className="flex items-center gap-5 shrink-0 slide-meta">
-          <GitHubAuthor login={review.author}/>
+          <PrBadge url={review.prUrl} title={review.prTitle} /><GitHubAuthor login={review.author}/>
           <span>
             {review.totalFilesChanged} {review.totalFilesChanged === 1 ? 'file' : 'files'}
           </span>
@@ -77,7 +78,7 @@ export function PRSummaryBanner({ review, onBack, onOpenSettings }: Props) {
               <GitCompare className="h-3.5 w-3.5" />
               {localRange ? (
                 <span className="truncate max-w-[28ch]">
-                  {localRange.base} <span className="text-muted-foreground/60">→</span> {localRange.head}
+                  <BranchBadge branch={localRange.base} /> <span className="text-muted-foreground/60">→</span> <BranchBadge branch={localRange.head} />
                 </span>
               ) : (
                 <span>Local</span>

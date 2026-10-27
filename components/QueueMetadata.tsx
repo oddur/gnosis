@@ -1,3 +1,4 @@
+import { RepositoryBadge, PrBadge } from './EntityBadge';
 import {
   Check,
   CircleDot,
@@ -89,9 +90,9 @@ export function QueueMetadata({ subject, account }: { subject: ReviewSubject; ac
       </div>
       <div className="queue-metadata-line">
         <div className="queue-meta">
-          <span className="queue-repository">{member.repo}</span>
+          <RepositoryBadge repo={member.repo} />
           <span className="queue-pr-origin">
-            {stack ? `${subject.members.length} PRs in stack · updated ` : `#${member.number} opened `}
+            {stack ? `${subject.members.length} PRs in stack · updated ` : <><PrBadge url={member.url} number={member.number} title={member.title} /> opened </>}
             <time dateTime={timestamp} title={new Date(timestamp).toLocaleString()}>
               {timeAgo(timestamp)}
             </time>

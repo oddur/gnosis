@@ -1,3 +1,4 @@
+import { RepositoryBadge, PrBadge } from './EntityBadge';
 import { usePrReadVisit } from '../lib/pr-read-context';
 import { PrActions } from './PrActions';
 import { ReviewBreadcrumbProvider, useReviewBreadcrumbs } from '../lib/review-breadcrumbs';
@@ -311,7 +312,7 @@ function PrSummaryContent({
                 </>
               ) : (
                 <>
-                  {first.repo} #{first.number} ·{' '}
+                  <RepositoryBadge repo={first.repo} /> <PrBadge url={first.url} number={first.number} title={first.title} /> ·{' '}
                   <span className={`pr-state pr-state-${state.toLowerCase()}`}>{state}</span> · by{' '}
                   <GitHubAuthor login={first.author} /> · updated{' '}
                   <time dateTime={first.updatedAt}>{timeAgo(first.updatedAt)}</time>

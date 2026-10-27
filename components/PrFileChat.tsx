@@ -1,3 +1,4 @@
+import { CommitBadge } from './EntityBadge';
 import { useSessionDraft } from '../lib/session-drafts';
 import { X } from 'lucide-react';
 import { PROVIDERS } from '../lib/models';
@@ -29,8 +30,8 @@ export function PrFileChat({
         </Button>
       </header>
       <p className="changes-chat-source">
-        {request.path} · {request.comparison && `${request.baseSha.slice(0, 7)} → `}
-        {request.headSha.slice(0, 7)}
+        {request.path} · {request.comparison && <><CommitBadge sha={request.baseSha} /> → </>}
+        <CommitBadge sha={request.headSha} />
       </p>
       <div className="changes-chat-messages" aria-live="polite">
         {!chat.messages.length && <p>Ask how this change works, what it affects, or what to check during review.</p>}

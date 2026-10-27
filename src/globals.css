@@ -2910,3 +2910,35 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .queue-label-popup .pr-label { max-width:100%; white-space:normal; overflow-wrap:anywhere; }
 .queue-label-footer { display:flex; flex-shrink:0; align-items:center; justify-content:space-between; gap:12px; padding:8px 12px; border-top:1px solid var(--border); color:var(--muted-foreground); font-size:var(--type-caption); }
 .queue-label-footer button { padding:4px 8px; color:var(--ring); }
+
+/* Copyable metadata: compact GitHub-style identifiers, distinct from navigation. */
+.entity-badge { display:inline-flex; align-items:center; gap:4px; min-width:0; max-width:min(100%, 32ch); min-height:24px; padding:2px 5px; border:1px solid transparent; border-radius:var(--radius-sm); background:var(--secondary); color:var(--foreground); font-family:var(--font-sans); font-size:var(--type-caption); font-weight:500; line-height:1.4; vertical-align:middle; text-align:left; cursor:copy; }
+.entity-badge-branch,.entity-badge-commit { background:var(--accent); color:var(--accent-foreground); font-family:var(--font-mono); }
+.entity-badge:hover { border-color:var(--input); background:var(--accent); color:var(--accent-foreground); }
+.entity-badge:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+.entity-badge-icon,.entity-badge-copy { display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; }
+.entity-badge-copy { width:12px; opacity:0; }
+.entity-badge:hover .entity-badge-copy,.entity-badge:focus-visible .entity-badge-copy,.entity-badge[data-copy-state=copied] .entity-badge-copy,.entity-badge[data-copy-state=failed] .entity-badge-copy { opacity:1; }
+.entity-badge[data-copy-state=failed] { color:var(--destructive); }
+.entity-badge-value { display:inline-flex; min-width:0; overflow:hidden; white-space:nowrap; }
+.entity-badge-start { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.entity-badge-tail { display:flex; justify-content:flex-end; flex-shrink:0; max-width:45%; overflow:hidden; }
+.entity-badge-tail > span { flex-shrink:0; }
+.entity-badge-group { display:inline-flex; align-items:center; flex-wrap:wrap; gap:4px; min-width:0; max-width:100%; vertical-align:middle; }
+.entity-badge-tooltip { display:flex; flex-direction:column; gap:5px; max-width:min(360px,calc(100vw - 24px)); background:var(--popover); color:var(--popover-foreground); border:1px solid var(--border); overflow-wrap:anywhere; text-align:left; }
+.entity-badge-tooltip .fill-foreground { background:var(--popover); fill:var(--popover); }
+.entity-badge-full-value { font-weight:600; }
+.entity-badge-instruction { font-size:var(--type-caption); color:var(--muted-foreground); }
+.entity-badge.github-author { gap:4px; color:var(--foreground); }
+.entity-badge.github-author .entity-badge-start { text-decoration:underline; text-underline-offset:3px; }
+.pr-branches { flex-wrap:wrap; align-items:center; }
+.pr-branches svg { margin-top:0; }
+.pr-branches .entity-badge { max-width:100%; }
+.commit-entry { border-bottom:1px solid var(--border); }
+.commit-entry .commit-row { border:0; padding-bottom:0; background:transparent; box-shadow:none; }
+.commit-entry:hover,.commit-entry:has(.commit-row[aria-pressed=true]) { background:var(--accent); }
+.commit-entry:has(.commit-row[aria-pressed=true]) { box-shadow:inset 1px 0 var(--primary); }
+.commit-entry .commit-row-meta { padding:0 12px 9px; flex-wrap:wrap; gap:4px; }
+.commit-row-meta > .entity-badge { flex:initial; max-width:100%; }
+.commit-row-meta time { margin-left:auto; }
+.commit-row-meta .github-author { max-width:calc(100% - 4px); }

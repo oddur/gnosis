@@ -59,6 +59,23 @@ void app.whenReady().then(async () => {
     await wait('!!document.querySelector(\'[aria-label="Merge method"]\')');
     assert.match(await js<string>("document.querySelector('.pr-action-dialog').textContent"), /1 PR → main/);
     await capture('merge-light-1280');
+    await js('window.badgeLinks=[];void(window.electronAPI.openExternal=async url=>{window.badgeLinks.push(url)})');
+    for (const kind of ['branch', 'commit']) {
+      await js(
+        `document.querySelector('.pr-action-members .entity-badge-${kind}').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:500,clientY:300}))`
+      );
+      await wait("[...document.querySelectorAll('[role=menuitem]')].some(e=>e.textContent==='Open on GitHub')");
+      await js("[...document.querySelectorAll('[role=menuitem]')].find(e=>e.textContent==='Open on GitHub').click()");
+      await wait(`window.badgeLinks.length===${kind === 'branch' ? 1 : 2}`);
+      assert.equal(
+        await js("!!document.querySelector('.pr-action-dialog')"),
+        true,
+        'Badge navigation does not submit or close confirmation'
+      );
+    }
+    assert.match(await js<string>('window.badgeLinks[0]'), /^https:\/\/github.com\/klang\/engine\/tree\//);
+    assert.match(await js<string>('window.badgeLinks[1]'), /^https:\/\/github.com\/klang\/engine\/commit\//);
+
     await click('Cancel');
     assert.equal(await js('window.writes.length'), 0);
     await click('Convert to draft…');

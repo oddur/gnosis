@@ -1,3 +1,5 @@
+import { PrBadge, RepositoryBadge } from './EntityBadge';
+import { GitHubAuthor } from './GitHubAuthor';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { Search, VolumeX } from 'lucide-react';
 import type { MutedPr } from '../lib/muted-prs';
@@ -20,9 +22,9 @@ export function MutedPrs({
   const previousCount = useRef(entries.length);
   useLayoutEffect(() => {
     if (entries.length < previousCount.current) {
-      const next = section.current?.querySelector<HTMLElement>('.muted-pr-list button, h1');
+      const next = section.current?.querySelector<HTMLElement>('.muted-pr-list .muted-pr-restore, h1');
       // Prefer another restore action; when the list is empty, focus its heading.
-      (section.current?.querySelector<HTMLButtonElement>('.muted-pr-list button') ?? next)?.focus();
+      (section.current?.querySelector<HTMLButtonElement>('.muted-pr-list .muted-pr-restore') ?? next)?.focus();
     }
     previousCount.current = entries.length;
   }, [entries.length]);
@@ -64,7 +66,7 @@ export function MutedPrs({
               <div>
                 <strong>{m.title}</strong>
                 <p>
-                  {m.repo} #{m.number} · {m.author} ·{' '}
+                  <RepositoryBadge repo={m.repo} /> <PrBadge url={m.url} number={m.number} title={m.title} /> <GitHubAuthor login={m.author} /> ·{' '}
                   {m.merged ? 'Merged' : m.state === 'closed' ? 'Closed' : m.isDraft ? 'Draft' : 'Open'}
                 </p>
               </div>
@@ -72,7 +74,7 @@ export function MutedPrs({
                 size="sm"
                 variant="outline"
                 disabled={busy}
-                aria-label={`Unmute PR #${m.number}`}
+                className="muted-pr-restore" aria-label={`Unmute PR #${m.number}`}
                 onClick={() => onUnmute([m])}
               >
                 Unmute
