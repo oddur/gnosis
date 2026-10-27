@@ -1,3 +1,7 @@
+import { ExplanationMarkdownPreview } from './ExplanationMarkdownPreview';
+import { isMarkdownFile, type MarkdownLocation } from '../lib/markdown-review';
+import { useMarkdownView } from '../lib/use-markdown-view';
+import { LFS_VERSION } from '../lib/git-lfs';
 import {
   readDiscussion,
   refreshDiscussion,
@@ -17,10 +21,30 @@ import {
 } from '../lib/review-threads';
 import type { ReviewGuide } from '../lib/types';
 
-type Props = ComponentProps<typeof ReviewDiff> & { review?: ReviewGuide };
+type Props = ComponentProps<typeof ReviewDiff> & {
+  review?: ReviewGuide;
+  enabled?: boolean;
+  onAsk?: (text: string) => void;
+};
 
 /** Load only PRs represented by the current topic; the main process coalesces file reads. */
-export function ReviewFileDiscussion({ review, ...diff }: Props) {
+export function ReviewFileDiscussion({ review, enabled = true, onAsk, ...diff }: Props) {
+  const [markdownView, changeMarkdownView] = useMarkdownView();
+  const [sourceLocation, setSourceLocation] = useState<MarkdownLocation>();
+  const markdown = isMarkdownFile(diff.filePath) && !diff.hunks.some((h) => h.content.includes(LFS_VERSION));
+  const preview = markdown && markdownView.mode === 'preview';
+  const openedPreview = useRef(false);
+  if (preview && enabled) openedPreview.current = true;
+  function openSource(location?: MarkdownLocation) {
+    const draft = root.current?.querySelector('textarea');
+    if (draft) {
+      draft.focus();
+      setNotice('Finish or cancel your comment before switching views.');
+      return;
+    }
+    setSourceLocation(location);
+    changeMarkdownView({ mode: 'source' });
+  }
   const source = review ? threadSource(review, diff.filePath) : null;
   const prUrl = source?.prUrl;
   const [data, setData] = useState<GitHubReviewThreads | null>(() => (prUrl ? (peekDiscussion(prUrl) ?? null) : null));
@@ -146,11 +170,28 @@ export function ReviewFileDiscussion({ review, ...diff }: Props) {
           Could not load GitHub comments. {error}
         </p>
       )}
-      <ReviewDiff
-        {...diff}
-        threads={placed.filter((p) => !p.reason).map((p) => p.thread)}
-        renderThread={renderThread}
-      />
+      {markdown && openedPreview.current && (
+        <div hidden={!preview || !enabled}>
+          <ExplanationMarkdownPreview
+            {...diff}
+            review={review}
+            onSource={openSource}
+            onAsk={onAsk}
+            threads={placed.filter((p) => !p.reason).map((p) => p.thread)}
+            renderThread={renderThread}
+          />
+        </div>
+      )}
+      {!preview && (
+        <ReviewDiff
+          {...diff}
+          sourceLocation={sourceLocation}
+          onSourceLocationShown={() => setSourceLocation(undefined)}
+          pinnedLines={[...(diff.pinnedLines ?? []), ...(sourceLocation ? [sourceLocation.start] : [])]}
+          threads={placed.filter((p) => !p.reason).map((p) => p.thread)}
+          renderThread={renderThread}
+        />
+      )}
       {unplaced.length > 0 && (
         <div
           ref={unplacedSection}

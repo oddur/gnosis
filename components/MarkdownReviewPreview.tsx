@@ -55,7 +55,7 @@ export function MarkdownReviewPreview({
   showChanges: boolean;
   onChanges: (value: boolean) => void;
   onSource: (location?: MarkdownLocation) => void;
-  onAsk: (text: string) => void;
+  onAsk?: (text: string) => void;
   annotations: Annotation[];
   canComment: boolean;
   revealLocation?: MarkdownLocation;
@@ -63,6 +63,7 @@ export function MarkdownReviewPreview({
   const ref = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<{ text: string; location?: MarkdownLocation }>();
   const [changeIndex, setChangeIndex] = useState(-1);
+  const [draftNotice, setDraftNotice] = useState('');
   const [revealed] = useState(() => {
     if (!revealLocation) return [];
     const first = markdownBlockAt(review.blocks, revealLocation);
@@ -142,6 +143,13 @@ export function MarkdownReviewPreview({
             type="checkbox"
             checked={showChanges}
             onChange={(e) => {
+              const draft = ref.current?.querySelector('textarea');
+              if (draft) {
+                draft.focus();
+                setDraftNotice('Finish or cancel your comment before changing the preview.');
+                return;
+              }
+              setDraftNotice('');
               onChanges(e.target.checked);
               setSelected(undefined);
             }}
@@ -175,13 +183,17 @@ export function MarkdownReviewPreview({
           </div>
         )}
         {!showChanges && (
-          <span className="markdown-review-mode">{review.deleted ? 'Deleted document' : 'Final document'}</span>
+          <span className="markdown-review-mode">
+            {review.excerpt ? 'Topic excerpts' : review.deleted ? 'Deleted document' : 'Final document'}
+          </span>
         )}
         {selected && (
           <div className="markdown-selection-actions" onPointerDown={(event) => event.preventDefault()}>
-            <Button variant="outline" size="sm" onClick={() => onAsk(selected.text)}>
-              <MessageSquare size={14} /> Ask about this
-            </Button>
+            {onAsk && (
+              <Button variant="outline" size="sm" onClick={() => onAsk(selected.text)}>
+                <MessageSquare size={14} /> Ask about this
+              </Button>
+            )}
             {canComment && (
               <Button variant="outline" size="sm" onClick={() => onSource(selected.location)}>
                 <Code2 size={14} /> Comment in source
@@ -190,6 +202,12 @@ export function MarkdownReviewPreview({
           </div>
         )}
       </div>
+      {draftNotice && (
+        <p className="markdown-review-notice" role="status">
+          {draftNotice}
+        </p>
+      )}
+      {review.excerpt && <p className="markdown-review-notice">Saved sections from this topic.</p>}
       {review.sourceOnly && showChanges && (
         <p className="markdown-review-notice">
           Source changed; the rendered content is unchanged. <button onClick={() => onSource()}>Inspect source</button>

@@ -139,6 +139,18 @@ const review: ReviewGuide = {
     },
   ],
 };
+if (new URLSearchParams(location.search).has('markdown-explanation')) {
+  const path = prefix + 'docs/retry.md';
+  review.changedFiles = [{ filename: path, status: 'modified', additions: 2, deletions: 2 }];
+  review.slides = [{ ...review.slides[0], title: 'Clarify retry limits', narrative: 'Requests retry five times. The warning now describes when to stop.', affectedFiles: [path],
+    fileSummaries: [{ filePath: path, summary: 'Clarifies retry limits and the final warning.' }],
+    inlineExplanations: [{ filePath: path, side: 'RIGHT', line: 22, code: 'Retry five times.', text: 'The limit includes the first attempt; it permits four retries.' }],
+    diffHunks: [
+      { filePath: path, language: 'markdown', renderedHtml: '', hunkHeader: '@@ -20,3 +20,3 @@', content: ' ## Retry policy\n \n-Retry three times.\n+Retry five times.' },
+      { filePath: path, language: 'markdown', renderedHtml: '', hunkHeader: '@@ -80,1 +82,1 @@', content: '-Old warning.\n+Stop after the final attempt.' },
+    ], reviewChecks: [], explainer: undefined, explainerIdea: undefined, mermaidDiagram: undefined, d2Diagram: undefined,
+  }];
+}
 const history: ReviewHistoryEntry[] = [
   {
     id: 'workbench-review',

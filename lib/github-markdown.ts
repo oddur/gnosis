@@ -31,6 +31,7 @@ export function githubMarkdownUrl(url: string, image: boolean, source: GitHubMar
   if (safe.startsWith('#') || /^mailto:/i.test(safe)) return image ? '' : safe;
   if (/^[a-z][a-z\d+.-]*:/i.test(safe)) return '';
   if (safe.startsWith('/user-attachments/')) return `https://github.com${safe}`;
+  if (!source.repo || !source.ref) return '';
   const base = image
     ? `https://raw.githubusercontent.com/${source.repo}/${encodeURIComponent(source.ref)}/`
     : `https://github.com/${source.repo}/blob/${encodeURIComponent(source.ref)}/`;

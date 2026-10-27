@@ -13,6 +13,7 @@ export interface MarkdownReviewRequest {
   afterSource: GitHubMarkdownSource;
 }
 export interface MarkdownReviewBlock {
+  sourceGap?: boolean;
   id: string;
   change: 'unchanged' | 'added' | 'removed' | 'changed' | 'moved';
   tree: Root;
@@ -20,6 +21,8 @@ export interface MarkdownReviewBlock {
   after?: MarkdownLocation;
 }
 export interface MarkdownReview {
+  /** Saved topic sections, rather than a complete document. */
+  excerpt?: boolean;
   blocks: MarkdownReviewBlock[];
   clean: Root;
   deleted: boolean;

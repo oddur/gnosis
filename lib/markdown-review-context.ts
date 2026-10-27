@@ -24,7 +24,7 @@ export function markdownReviewContext(
   const hasChanges = blocks.some((block) => block.change !== 'unchanged');
   blocks.forEach((block, index) => {
     // Source-only changes have no rendered hunk. Leave their document readable.
-    if (!hasChanges || expanded.has(block.id)) visible.add(index);
+    if (!hasChanges || block.sourceGap || expanded.has(block.id)) visible.add(index);
     if (block.change !== 'unchanged' || pinned.has(block.id)) {
       for (let n = Math.max(0, index - 1); n <= Math.min(blocks.length - 1, index + 1); n++) visible.add(n);
     }

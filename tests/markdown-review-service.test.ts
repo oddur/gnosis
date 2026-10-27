@@ -36,6 +36,23 @@ void test('the production-built backend worker queues comparisons, survives a re
     });
     assert.equal(code.blocks[0].change, 'changed');
     assert.match(JSON.stringify(code), /--shiki-light/);
+    const excerpt = await service.render({
+      kind: 'explanation',
+      beforeSource: source,
+      afterSource: source,
+      hunks: [
+        {
+          filePath: 'README.md',
+          hunkHeader: '@@ -50 +50 @@',
+          content: '-Before\n+After',
+          language: 'markdown',
+          renderedHtml: '',
+        },
+      ],
+    });
+    assert.equal(excerpt.excerpt, true);
+    assert.equal(excerpt.blocks[0].after?.start, 50);
+    await assert.rejects(service.render({ kind: 'explanation', hunks: [{ content: 42 }] }), /invalid/);
     await assert.rejects(service.render(null), /revision is missing/);
     await assert.rejects(service.render({ ...request, after: 'x'.repeat(500_001) }), /too large/);
     assert.deepEqual(await service.render(request), results[0]);

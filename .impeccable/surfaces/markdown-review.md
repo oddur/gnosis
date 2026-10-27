@@ -1,6 +1,6 @@
 # Markdown review
 
-Mode: Operate, with Read typography for document content. This surface extends the existing Changes and Commits workspace.
+Mode: Operate, with Read typography for document content. This surface extends Changes, Commits, and explanation slides.
 
 ## Direction contract
 
@@ -14,7 +14,7 @@ FIRST VIEWPORT: Source and Preview share the file header with Viewed and existin
 
 FORM: This is an extension of existing components. It introduces no new visual world or global tokens.
 
-FINISH: The fresh `markdown_context_finish` review returned **SHIP** with no material fixes. This document records the focused preview extension and its evidence.
+FINISH: The fresh `markdown_context_finish` and `explanation_md_finish` reviews returned **SHIP** with no material fixes. This document records both extensions and their evidence.
 
 ## Interaction contract
 
@@ -34,6 +34,16 @@ Existing comments appear beside their mapped blocks in the comparison. Comments 
 
 Source/Preview and Show changes preferences persist through the existing SQLite review-state store. Source remains available during preparation, unsupported content, and preview errors. Retry and Use source provide explicit recovery actions.
 
+### Explanation slides
+
+[ReviewFileHeader](../../components/ReviewFileHeader.tsx) adds the shared [MarkdownViewSwitch](../../components/MarkdownViewSwitch.tsx) to eligible Markdown files in explanation slides. Source and Preview retain the same file identity, Viewed state, and collapse behavior.
+
+[ExplanationMarkdownPreview](../../components/ExplanationMarkdownPreview.tsx) uses only saved topic hunks. Existing, local, and imported explanations can prepare their Markdown preview offline without another file read. The clean view says **Topic excerpts** because the saved sections do not represent the full final document. Changes and Commits retain their whole-file behavior.
+
+[ReviewFileDiscussion](../../components/ReviewFileDiscussion.tsx) maps GitHub comments, local review drafts, and inline insights to preview blocks. Threads without matching source lines retain their existing separate section. Source actions preserve the original side and line, including deleted prose and code. An open comment editor keeps focus and prevents a view switch until the reviewer finishes or cancels the comment.
+
+Explanation previews share Source/Preview and Show changes preferences with Changes and Commits. A failed preference save retains the session choice and offers a retry through the existing storage error flow.
+
 ## Layout and visual treatment
 
 The [stylesheet](../../src/globals.css) uses existing background, foreground, border, focus, and semantic status variables. Prose uses the existing reading role within a maximum width of 78ch. Code uses the shared monospace size and line height. Underlines, strike-through, labels, and symbols supplement change colors.
@@ -49,6 +59,8 @@ The [comparison engine](../../lib/markdown-review-engine.ts) parses Markdown int
 The [worker build configuration](../../vite.markdown-worker.config.ts) selects Node entry points for Markdown dependencies. The service test builds and executes this production worker, including syntax highlighting.
 
 The [service](../../src/markdown-review-service.ts) runs comparison and syntax work in one Electron worker. Limits cover document length, AST complexity, diff time, queue length, and worker time. The [worker](../../src/markdown-review-worker.ts) bounds its cache by count and estimated bytes. The [renderer cache](../../lib/markdown-review-cache.ts) reuses results and pending requests. File contents reuse the existing full-file cache.
+
+Explanation requests use the same worker and comparison engine. [The excerpt builder](../../lib/explanation-markdown.ts) reconstructs contiguous or overlapping saved sections and preserves their original source coordinates. It marks omitted gaps with **Between saved sections** and does not invent intervening lines. Conflicting saved sections produce an error with Source available for recovery. This path does not fetch full file contents.
 
 ## Evidence
 
@@ -69,8 +81,26 @@ The full unit run passed 408 tests in `/tmp/gnosis-md-context-all-tests.log`. Ty
 
 This documentation pass checked the recorded evidence and source. It did not repeat the interaction suites.
 
+### Explanation extension evidence
+
+The documenter checked the explanation components, excerpt builder, worker, shared preferences, stylesheet, and logs on October 27, 2026. The fresh `explanation_md_finish` review returned **SHIP** after these application captures:
+
+| Capture | Observed result |
+| --- | --- |
+| [Explanation desktop](../review/markdown-review/explanation-desktop.png) | Source/Preview controls and rendered topic changes fit the existing file group. |
+| [Explanation context](../review/markdown-review/explanation-context.png) | Saved context and review annotations remain available in Preview. |
+| [Explanation source](../review/markdown-review/explanation-source.png) | Source retains its review controls and mapped locations. |
+| [Explanation laptop](../review/markdown-review/explanation-laptop.png) | Header controls remain usable in the laptop workspace. |
+| [Explanation laptop content](../review/markdown-review/explanation-laptop-content.png) | Excerpt content remains contained within the narrow pane. |
+
+The existing narrow workspace limits reading space. The finish review found no new regression and did not establish this constraint as a new design rule.
+
+The actual-worker browser suite passed in `/tmp/gnosis-explanation-md-browser.log`. Coverage includes explanation previews, GitHub threads, inline insights, deleted-text source focus, cached switches, Viewed, and laptop layouts. The separate thread regression passed in `/tmp/gnosis-explanation-md-threads.log`. The broader explanation-workspace test timed out when closing a review dialog; the same failure occurred on unchanged commit `13cbae2` in an isolated worktree (`/tmp/gnosis-explanation-baseline.log`).
+
+The full unit run passed 410 tests in `/tmp/gnosis-explanation-md-all-tests.log`. TypeScript and lint passed with empty logs at `/tmp/gnosis-explanation-md-types.log` and `/tmp/gnosis-explanation-md-lint.log`. The detector result in `/tmp/gnosis-explanation-md-detect.json` is an empty array. These captures remain review evidence, with no new shipping raster assets.
+
 ## Final disposition
 
-Finish review: **SHIP**, as reported by `markdown_context_finish`. No material fixes remain for this extension.
+Finish reviews: **SHIP**, as reported by `markdown_context_finish` and `explanation_md_finish`. No material fixes remain for these extensions.
 
 Documenter: **COMPLETE**. The implementation matches this extension contract. The global design documents remain unchanged.

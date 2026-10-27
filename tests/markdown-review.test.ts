@@ -169,3 +169,57 @@ void test('focused previews preserve whole added, deleted and source-only docume
     assert.ok(markdownReviewContext(review.blocks).every((item) => item.kind === 'block'));
   }
 });
+
+void test('explanation previews merge overlapping saved sections and retain original coordinates across gaps', async () => {
+  const { buildExplanationMarkdown } = await import('../lib/explanation-markdown');
+  const hunk = (header: string, content: string) => ({
+    filePath: 'docs/guide.md',
+    hunkHeader: header,
+    content,
+    language: 'markdown',
+    renderedHtml: '',
+  });
+  const result = await buildExplanationMarkdown({
+    kind: 'explanation',
+    fileStatus: 'modified',
+    beforeSource: source,
+    afterSource: source,
+    hunks: [
+      hunk('@@ -20,3 +20,3 @@', ' ## Policy\n \n-Retry three times.\n+Retry five times.'),
+      hunk('@@ -22,2 +22,2 @@', '-Retry three times.\n+Retry five times.\n Keep the ID.'),
+      hunk('@@ -80,1 +82,1 @@', '-Old warning.\n+New warning.'),
+    ],
+  });
+  assert.equal(result.excerpt, true);
+  assert.equal(text(result.clean), 'PolicyRetry five times.\nKeep the ID.Between saved sectionsNew warning.');
+  const changed = result.blocks.filter((block) => block.change === 'changed');
+  assert.equal(changed.length, 2);
+  assert.deepEqual(changed[0].before, { side: 'before', start: 22, end: 23 });
+  assert.equal(tags(changed[0].tree, 'del')[0].properties['data-md-side'], 'before');
+  assert.equal(tags(changed[0].tree, 'del')[0].properties['data-md-start'], 22);
+  assert.equal(changed[1].before?.start, 80);
+  assert.equal(changed[1].after?.start, 82);
+  const { markdownReviewContext } = await import('../lib/markdown-review-context');
+  assert.ok(markdownReviewContext(result.blocks).some((item) => item.kind === 'block' && item.block.sourceGap));
+});
+
+void test('explanation previews reject contradictory overlapping sections and malformed saved diffs', async () => {
+  const { buildExplanationMarkdown } = await import('../lib/explanation-markdown');
+  const hunk = {
+    filePath: 'README.md',
+    hunkHeader: '@@ -1 +1 @@',
+    content: '-Before\n+After',
+    language: 'markdown',
+    renderedHtml: '',
+  };
+  const request = { kind: 'explanation' as const, beforeSource: source, afterSource: source, hunks: [hunk] };
+  await assert.rejects(
+    buildExplanationMarkdown({ ...request, hunks: [hunk, { ...hunk, content: '-Different\n+After' }] }),
+    /disagree/
+  );
+  await assert.rejects(
+    buildExplanationMarkdown({ ...request, hunks: [{ ...hunk, hunkHeader: 'no coordinates' }] }),
+    /cannot be rendered/
+  );
+  assert.equal(githubMarkdownUrl('./private.md', false, { repo: '', ref: '', path: 'docs/a.md' }), '');
+});

@@ -190,9 +190,63 @@ void app.whenReady().then(async () => {
       false,
       'Clean document choice survives reload'
     );
+    await win.loadURL((process.env.GNOSIS_WORKBENCH_URL ?? '') + '?markdown-explanation');
+    win.setSize(1280, 900);
+    await wait("document.querySelectorAll('.queue-item').length===7");
+    await js(
+      "window.electronAPI.getReviewThreads=async()=>({headSha:'head-1',baseSha:'base-1',threads:[{id:'explanation-thread',path:'docs/retry.md',line:22,startLine:null,diffSide:'RIGHT',isResolved:false,isOutdated:false,viewerCanResolve:true,viewerCanUnresolve:false,comments:[{id:'explanation-comment',body:'Does the limit include the first attempt?',createdAt:new Date().toISOString(),url:'https://github.com/klang/engine/pull/121#discussion_r1',author:{login:'maya',avatarUrl:''}}]}]});void 0"
+    );
+    await js("window.dispatchEvent(new CustomEvent('fixture-review-navigate',{detail:'workbench-review'}))");
+    await wait("!!document.querySelector('.pr-overview-tabs') || !!document.querySelector('.review-workspace')");
+    await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}))");
+    await wait("!!document.querySelector('.review-file-group .markdown-review ins')");
+    assert.ok(
+      await js("document.querySelector('.review-file-group').textContent.includes('four retries')"),
+      'Inline insights appear with the rendered section'
+    );
+    assert.ok(await js("document.querySelector('.review-file-group').textContent.includes('Between saved sections')"));
+    await wait(
+      "document.querySelector('.review-file-group .markdown-review-discussion')?.textContent.includes('four retries')"
+    );
+    assert.ok(
+      await js(
+        "document.querySelector('.review-file-group .markdown-review').textContent.includes('Does the limit include')"
+      ),
+      'GitHub threads stay attached to rendered sections'
+    );
+    await capture('explanation-desktop');
+    await js("document.querySelector('.inline-code-explanation').scrollIntoView({block:'center'})");
+    await capture('explanation-context');
+    await js(
+      "(()=>{const word=document.querySelector('.review-file-group del');const range=document.createRange();range.selectNodeContents(word);window.getSelection().removeAllRanges();window.getSelection().addRange(range);word.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}))})()"
+    );
+    await click('Comment in source');
+    await wait('!!document.querySelector(\'diffs-container[aria-label="Source at old line 22"]\')');
+    assert.ok(
+      await js("document.activeElement?.getAttribute('aria-label')==='Source at old line 22'"),
+      'Deleted text opens old source'
+    );
+    await capture('explanation-source');
+    await click('Preview');
+    await wait("!!document.querySelector('.review-file-group .markdown-review ins')");
+    await js("document.querySelector('.review-file-group .markdown-review-toolbar input').click()");
+    await wait("document.querySelector('.review-file-group .markdown-review-mode')?.textContent==='Topic excerpts'");
+    assert.ok(await js("!document.querySelector('.review-file-group del')"));
+    win.setSize(900, 760);
+    await js("document.documentElement.classList.add('dark')");
+    await click('Code');
+    await capture('explanation-laptop');
+    await js("document.querySelector('.review-file-group .markdown-review h2').scrollIntoView({block:'center'})");
+    await capture('explanation-laptop-content');
+    await js("document.querySelector('.review-file-viewed input').click()");
+    await wait("document.querySelector('.review-file-content')?.hidden === true");
+    assert.ok(
+      await js("!!document.querySelector('.review-files-complete')"),
+      'Viewed collapse retains next-topic action'
+    );
     assert.ok(renders > 0, 'Comparison runs through the real backend worker');
     console.log(
-      'Markdown review passed: actual worker, word edits, clean/source modes, comments, cached switching, change navigation, Changes/Commits and laptop layouts.'
+      'Markdown review passed: actual worker, Changes/Commits, explanation previews, inline insights, GitHub threads, deleted-text source focus, cached toggles, Viewed and laptop layouts.'
     );
     service.dispose();
     win.destroy();

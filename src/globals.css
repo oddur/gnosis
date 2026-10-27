@@ -3078,3 +3078,9 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .markdown-context-gap { display:flex; align-items:center; justify-content:center; gap:4px; margin:12px 0; color:var(--muted-foreground); }
 .markdown-context-gap::before,.markdown-context-gap::after { content:''; flex:1; border-top:1px solid var(--border); }
 .markdown-context-gap button { font-size:var(--type-caption); height:28px; padding-inline:8px; }
+
+/* Topic previews share the file header; their toolbar stays within the code pane. */
+.review-file-discussion .markdown-review-toolbar { position:static; }
+.review-file-details:has(.markdown-view-switch) { flex-wrap:wrap; }
+.review-file-discussion .markdown-review-document { padding:16px 24px; }
+.review-file-discussion .markdown-review-notice { margin:0; }

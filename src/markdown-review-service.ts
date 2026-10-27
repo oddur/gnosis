@@ -1,3 +1,4 @@
+import type { ExplanationMarkdownRequest } from '../lib/explanation-markdown';
 import { Worker } from 'node:worker_threads';
 import type { MarkdownReview, MarkdownReviewRequest } from '../lib/markdown-review';
 
@@ -8,7 +9,7 @@ export function createMarkdownReviewService(workerPath: string) {
   let disposed = false;
   type Job = {
     id: number;
-    request: MarkdownReviewRequest;
+    request: MarkdownReviewRequest | ExplanationMarkdownRequest;
     resolve: (value: MarkdownReview) => void;
     reject: (error: Error) => void;
   };
@@ -56,10 +57,30 @@ export function createMarkdownReviewService(workerPath: string) {
     render(input: unknown): Promise<MarkdownReview> {
       if (!input || typeof input !== 'object')
         return Promise.reject(new Error('The document revision is missing. Reopen the file.'));
-      const request = input as MarkdownReviewRequest;
+      const request = input as MarkdownReviewRequest | ExplanationMarkdownRequest;
       if (disposed) return Promise.reject(new Error('Markdown preview is closing.'));
       // IPC callers can supply malformed values despite the typed bridge.
+      const excerpt = 'kind' in request;
       if (
+        excerpt &&
+        ((input as Record<string, unknown>).kind !== 'explanation' ||
+          !Array.isArray(request.hunks) ||
+          request.hunks.length > 100 ||
+          !request.hunks.every(
+            (h: unknown) =>
+              !!h &&
+              typeof h === 'object' &&
+              'content' in h &&
+              typeof h.content === 'string' &&
+              'hunkHeader' in h &&
+              typeof h.hunkHeader === 'string' &&
+              h.hunkHeader.length < 1000
+          ) ||
+          request.hunks.reduce((n, h) => n + h.content.length, 0) > 500_000)
+      )
+        return Promise.reject(new Error('These saved sections are too large or invalid. Use Source to review them.'));
+      if (
+        !excerpt &&
         [request.before, request.after].some(
           (value) => value !== null && (typeof value !== 'string' || value.length > 500_000)
         )

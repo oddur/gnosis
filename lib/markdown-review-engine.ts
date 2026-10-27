@@ -158,7 +158,12 @@ export async function buildMarkdownReview(request: MarkdownReviewRequest): Promi
       return changes
         ? changes.map((c) =>
             c.added || c.removed
-              ? element(c.added ? 'ins' : 'del', [text(c.value)], { 'data-md-change': c.added ? 'added' : 'removed' })
+              ? element(c.added ? 'ins' : 'del', [text(c.value)], {
+                  'data-md-change': c.added ? 'added' : 'removed',
+                  'data-md-side': c.added ? 'after' : 'before',
+                  'data-md-start': (c.added ? b : a).position?.start.line,
+                  'data-md-end': (c.added ? b : a).position?.end.line,
+                })
               : text(c.value)
           )
         : [mark(a, 'removed', 'before'), mark(b, 'added', 'after')];
@@ -179,16 +184,24 @@ export async function buildMarkdownReview(request: MarkdownReviewRequest): Promi
         const copy = prepare(b, 'after') as Element;
         const code = copy.children.find((n) => n.type === 'element' && n.tagName === 'code');
         if (code?.type === 'element') {
+          let oldLine = (a.position?.start.line ?? 0) + 1;
+          let newLine = (b.position?.start.line ?? 0) + 1;
           code.children = differences.flatMap((part) =>
             part.value
               .replace(/\n$/, '')
               .split('\n')
-              .map((value) =>
-                element('span', [text(value)], {
+              .map((value) => {
+                const line = part.removed ? oldLine : newLine;
+                if (!part.added) oldLine++;
+                if (!part.removed) newLine++;
+                return element('span', [text(value)], {
                   'data-code-line': true,
+                  'data-md-side': part.removed ? 'before' : 'after',
+                  'data-md-start': line,
+                  'data-md-end': line,
                   ...(part.added || part.removed ? { 'data-md-change': part.added ? 'added' : 'removed' } : {}),
-                })
-              )
+                });
+              })
           );
           return [copy];
         }

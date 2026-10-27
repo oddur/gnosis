@@ -36,6 +36,7 @@ export function useMarkdownView() {
           new CustomEvent('gnosis-storage-error', {
             detail: {
               message: 'Markdown display preferences could not be saved. Your choice is kept for this session.',
+              retry: () => writeReviewState(key, load()),
             },
           })
         )

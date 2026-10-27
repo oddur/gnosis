@@ -1,3 +1,4 @@
+import type { ExplanationMarkdownRequest } from '../lib/explanation-markdown';
 import type { MarkdownReviewRequest, MarkdownReview } from '../lib/markdown-review';
 import type { FileKinds, FileFilterState } from '../lib/file-kinds';
 import type { FileFilterAction } from './file-filter-state';
@@ -45,7 +46,7 @@ declare global {
       preparePrReview: (url: string, revision: { baseSha: string; headSha: string }) => Promise<void>;
       getPrCommits: (url: string, refresh?: boolean, options?: InspectionLoadOptions) => Promise<PrCommits>;
       getCommitComparison: (selection: CommitSelection, background?: boolean) => Promise<PrChanges>;
-      renderMarkdownReview: (request: MarkdownReviewRequest) => Promise<MarkdownReview>;
+      renderMarkdownReview: (request: MarkdownReviewRequest | ExplanationMarkdownRequest) => Promise<MarkdownReview>;
       getPrChanges: (url: string, refresh?: boolean, options?: InspectionLoadOptions) => Promise<PrChanges>;
       getPrChangeFile: (request: PrFileRequest, background?: boolean) => Promise<PrFileContents>;
       checkPrChanges: (url: string) => Promise<{ baseSha: string; headSha: string }>;
