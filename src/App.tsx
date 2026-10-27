@@ -14,10 +14,40 @@ import { toast, Toaster } from '../components/ui/toast';
 
 import { isLocalUrl } from '../lib/local-url';
 import { rememberExplanation, loadExplanation, type ExplanationDestination } from '../lib/explanation-workspace';
+import { createNavigationHistory, locationKey, type AppLocation, type HomeLocation, type HistoryDirection } from '../lib/navigation-history';
+import { useHistoryInput } from '../lib/use-history-input';
 
 type Page = 'home' | 'review';
 
 export function App() {
+  const [navigationHistory] = useState(() => createNavigationHistory<AppLocation>(locationKey));
+  const [homeRestoration, setHomeRestoration] = useState<{ location: HomeLocation; nonce: number }>();
+  const lastHome = useRef<HomeLocation | undefined>(undefined);
+  const historyAccount = useRef<string | undefined>(undefined);
+  const restorationNonce = useRef(0);
+  const pendingHistory = useRef<string | undefined>(undefined);
+  const displayedLocation = useRef<AppLocation | undefined>(undefined);
+  const cancelHistoryLoad = useCallback(() => {
+    if (pendingHistory.current && displayedLocation.current) navigationHistory.restore(displayedLocation.current);
+    pendingHistory.current = undefined;
+  }, [navigationHistory]);
+  const recordHome = useCallback((home: HomeLocation) => {
+    const location: AppLocation = { page: 'home', home };
+    if (pendingHistory.current) {
+      // A new user destination supersedes an in-flight saved-review load.
+      if (!displayedLocation.current || locationKey(location) === locationKey(displayedLocation.current)) return;
+      navigationVersion.current++;
+      pendingHistory.current = undefined;
+      navigationHistory.restore(displayedLocation.current);
+    }
+    if (historyAccount.current !== home.account) {
+      navigationHistory.clear();
+      historyAccount.current = home.account;
+    }
+    lastHome.current = home;
+    navigationHistory.record(location);
+    displayedLocation.current = location;
+  }, [navigationHistory]);
   useEffect(() => {
     const failed = (event: Event) => {
       const {message,retry} = (event as CustomEvent<{message:string;retry:()=>Promise<void>}>).detail;
@@ -70,9 +100,51 @@ export function App() {
   // via the new-review-in-history event — handled in HomePage.
   const [review, setReview] = useState<ReviewGuide | null>(null);
   const [prefillPrUrl, setPrefillPrUrl] = useState<string | undefined>();
+  useEffect(() => {
+    if (page !== 'review' || !review?.reviewId) return;
+    const location: AppLocation = { page: 'review', reviewId: review.reviewId };
+    if (pendingHistory.current) return;
+    navigationHistory.record(location);
+    displayedLocation.current = location;
+  }, [navigationHistory, page, review?.reviewId]);
+
+  async function moveHistory(direction: HistoryDirection) {
+    const target = navigationHistory.move(direction);
+    if (!target) return;
+    pendingHistory.current = locationKey(target);
+    const version = ++navigationVersion.current;
+    try {
+      // Resolve before replacing the screen, so a missing saved review cannot strand the user.
+      const loaded = target.page === 'review' ? await loadExplanation(target.reviewId) : undefined;
+      if (version !== navigationVersion.current) return;
+      pendingHistory.current = undefined;
+      setHomeCommand(undefined);
+      setReviewCommand(undefined);
+      setExplanationDestination(undefined);
+      setPrefillPrUrl(undefined);
+      setDestination(d => ({ nonce: d.nonce + 1 }));
+      setActivityOpen(false);
+      if (target.page === 'home') {
+        setHomeRestoration({ location: target.home, nonce: ++restorationNonce.current });
+        setReview(null);
+        setPage('home');
+      } else if (loaded) {
+        setReview(loaded);
+        setPage('review');
+      }
+    } catch (error) {
+      if (version !== navigationVersion.current) return;
+      pendingHistory.current = undefined;
+      if (displayedLocation.current) navigationHistory.restore(displayedLocation.current);
+      toast.add({ type: 'error', title: 'Could not open history item', description: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  useHistoryInput(direction => { void moveHistory(direction); });
 
   const handleReviewReady = useCallback((r: ReviewGuide) => {
     navigationVersion.current++;
+    cancelHistoryLoad();
+    setHomeRestoration(undefined);
     setReviewCommand(undefined);
     setHomeCommand(undefined);
     setDestination((d) => ({ nonce: d.nonce + 1 }));
@@ -89,11 +161,13 @@ export function App() {
       });
       setPage('home');
     }
-  }, []);
+  }, [cancelHistoryLoad]);
 
   async function openActivity(task: ActivityTask) {
     if (task.kind === 'briefing') {
       navigationVersion.current++;
+      cancelHistoryLoad();
+      setHomeRestoration(undefined);
       setHomeCommand(undefined);
       setDestination((d) => ({ subjectId: task.subjectId, nonce: d.nonce + 1 }));
       setReview(null);
@@ -113,15 +187,19 @@ export function App() {
 
   function handleBack() {
     navigationVersion.current++;
+    cancelHistoryLoad();
     setExplanationDestination(undefined);
     setHomeCommand(undefined);
     setReviewCommand(undefined);
     setReview(null);
+    if (lastHome.current) setHomeRestoration({ location: lastHome.current, nonce: ++restorationNonce.current });
     setPage('home');
   }
 
   function handleReReview(prUrl: string) {
     navigationVersion.current++;
+    cancelHistoryLoad();
+    setHomeRestoration(undefined);
     setExplanationDestination(undefined);
     setHomeCommand(undefined);
     setReviewCommand(undefined);
@@ -163,6 +241,8 @@ export function App() {
 
   async function navigate(target: SearchDestination) {
     const version = ++navigationVersion.current;
+    cancelHistoryLoad();
+    setHomeRestoration(undefined);
     if (target.kind === 'activity') {
       setActivityOpen(true);
       return;
@@ -303,6 +383,8 @@ export function App() {
             initialSubjectId={destination.subjectId}
             commandDestination={homeCommand}
             explanationDestination={explanationDestination}
+            navigationRestoration={homeRestoration}
+            onNavigationChange={recordHome}
             onShowActivity={() => setActivityOpen(true)}
           />
         )}

@@ -100,6 +100,7 @@ declare global {
       onReviewStats: (callback: (reviewId: string, inputBytes: number) => void) => void;
       offReviewStats: () => void;
       onReviewNavigate: (callback: (reviewId: string) => void) => void;
+      onHistoryNavigate: (callback: (direction: -1 | 1) => void) => () => void;
       offReviewNavigate: () => void;
       sendSlideChat: (req: SendSlideChatRequest) => Promise<string>;
       onChatProgress: (callback: (chunk: string) => void) => void;

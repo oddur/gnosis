@@ -40,7 +40,8 @@ import {
   describeQueueFilters,
   type QueueFilters,
 } from '../../lib/queue-filters';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { HomeLocation } from '../../lib/navigation-history';
 import {
   ArrowRight,
   Check,
@@ -87,6 +88,8 @@ import {
 import type { Preferences, PrStatus, ReviewGuide, ReviewHistoryEntry, ModelId, Provider } from '../../lib/types';
 
 interface Props {
+  navigationRestoration?: { location: HomeLocation; nonce: number };
+  onNavigationChange?: (location: HomeLocation) => void;
   onReviewReady: (review: ReviewGuide) => void;
   onReviewOriginChange?: (origin: { name: string; reviews: { id: string; title: string }[] }) => void;
   explanationDestination?: ExplanationDestination;
@@ -102,7 +105,7 @@ const labels = {
   other: 'Other changes',
 };
 
-export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, initialSubjectId, commandDestination, explanationDestination, onShowActivity }: Props) {
+export function HomePage({ navigationRestoration, onNavigationChange, onReviewOriginChange, onReviewReady, prefillPrUrl, initialSubjectId, commandDestination, explanationDestination, onShowActivity }: Props) {
   const [overviewTab,setOverviewTab] = useState<'summary'|'changes'|'commits'|'explanation'>('summary');
   const [reviewRequest, setReviewRequest] = useState<PrReviewRequest>();
   const commandCenter = useCommandCenter();
@@ -749,6 +752,50 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
     : orderedItems.map(item => ({ value: item.subject.id, label: item.subject.kind === 'stack'
       ? `Stack · ${item.subject.title}` : `${item.subject.members[0].repo} #${item.subject.members[0].number} · ${item.subject.title}` }));
   const summaryNavigation = useRef(0);
+  const restoredNavigation = useRef(0);
+  const historyLocation = useRef<HomeLocation | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (initializing || loading || !prefs || viewBusy) return;
+    if (navigationRestoration && restoredNavigation.current !== navigationRestoration.nonce) {
+      restoredNavigation.current = navigationRestoration.nonce;
+      const next = navigationRestoration.location;
+      if (next.account !== (auth?.login ?? 'local')) return;
+      summaryNavigation.current++;
+      const viewId = queue.savedViews?.views.some(view => view.id === next.viewId) ? next.viewId : null;
+      const viewChanged = viewId !== (queue.savedViews?.activeId ?? null);
+      // Tab/PR history must not leave a pending filter write when filters did not change.
+      if (viewChanged || JSON.stringify(filters) !== JSON.stringify(next.filters)) {
+        filterVersion.current++;
+        filtersLoaded.current = true;
+        const restoredFilters = normalizeQueueFilters(next.filters);
+        pendingFilters.current = restoredFilters;
+        setFilters(restoredFilters);
+      }
+      const version = filterVersion.current;
+      setSavedView(next.savedView);
+      setSavedQuery(next.savedQuery);
+      setMutedOpen(next.muted);
+      setOpenedItem(next.item);
+      setSelected(next.selected);
+      setOverviewTab(next.tab);
+      queueScrollOffset.current = next.scroll;
+      if (queueScrollElement) queueScrollElement.scrollTop = next.scroll;
+      // Restore the active saved view through the local store, in the same write queue as filters.
+      if (viewChanged) {
+        setQueue(current => ({ ...current, savedViews: current.savedViews && { ...current.savedViews, activeId: viewId } }));
+        void enqueueWrite(() => window.electronAPI.workbenchViewAction({ type: 'activate', id: viewId }))
+          .catch(error => { if (version === filterVersion.current) setError(`Could not restore saved view: ${String(error)}`); });
+      }
+      return;
+    }
+    const location: HomeLocation = {
+      account: auth?.login ?? 'local', filters, savedView, savedQuery,
+      viewId: queue.savedViews?.activeId ?? null, muted: mutedOpen, item: openedItem,
+      tab: overviewTab, selected, scroll: queueScrollOffset.current,
+    };
+    historyLocation.current = location;
+    onNavigationChange?.(location);
+  });
   useEffect(() => { summaryNavigation.current++; }, [openedItem?.subject.id, savedView, commandDestination]);
   const summaryIndex = summaryChoices.findIndex(choice => choice.value === summaryItem?.subject.id);
   const selectSummary = async (id: string) => {
@@ -1564,6 +1611,10 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
                 ref={attachQueueScroll}
                 onScroll={(event) => {
                   queueScrollOffset.current = event.currentTarget.scrollTop;
+                  if (historyLocation.current) {
+                    historyLocation.current = { ...historyLocation.current, scroll: event.currentTarget.scrollTop };
+                    onNavigationChange?.(historyLocation.current);
+                  }
                 }}
               >
               {!gettingStartedVisible && githubConnection}

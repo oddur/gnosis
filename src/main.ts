@@ -281,6 +281,11 @@ function createWindow() {
   });
 
   protectExplainerFrames(mainWindow);
+  mainWindow.on('app-command', (event, command) => {
+    if (command !== 'browser-backward' && command !== 'browser-forward') return;
+    event.preventDefault();
+    mainWindow.webContents.send('history-navigate', command === 'browser-backward' ? -1 : 1);
+  });
   const ownerId = mainWindow.webContents.id;
   mainWindow.on('closed', () => explainerService.cancelOwner(ownerId));
 
