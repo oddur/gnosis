@@ -76,6 +76,10 @@ void app.whenReady().then(async () => {
       await key('Tab');
       assert.ok(await js("!!document.activeElement.closest('[role=dialog]')"), 'Tab stays inside the palette');
     }
+    if (await js("!!document.querySelector('[role=tooltip]')")) {
+      await key('Escape');
+      await wait("!document.querySelector('[role=tooltip]')");
+    }
     await key('Escape');
     await wait("!document.querySelector('[role=dialog]')");
     assert.ok(
@@ -97,6 +101,10 @@ void app.whenReady().then(async () => {
       topic,
       'Dialog keys cannot mark a topic reviewed or advance'
     );
+    if (await js("!!document.querySelector('[role=tooltip]')")) {
+      await key('Escape');
+      await wait("!document.querySelector('[role=tooltip]')");
+    }
     await key('Escape');
     await wait("!document.querySelector('[role=dialog]')");
     await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'?',bubbles:true}))");
@@ -112,6 +120,10 @@ void app.whenReady().then(async () => {
         `(()=>{const d=document.querySelector('[role=dialog]'),r=d.getBoundingClientRect();return r.bottom<=innerHeight&&d.scrollWidth<=d.clientWidth+1})()`
       )
     );
+    if (await js("!!document.querySelector('[role=tooltip]')")) {
+      await key('Escape');
+      await wait("!document.querySelector('[role=tooltip]')");
+    }
     await key('Escape');
     await wait("!document.querySelector('[role=dialog]')");
     await openPalette();
@@ -121,6 +133,10 @@ void app.whenReady().then(async () => {
         `(()=>{const d=document.querySelector('[role=dialog]'),r=d.getBoundingClientRect();return r.bottom<=innerHeight&&d.scrollWidth<=d.clientWidth+1})()`
       )
     );
+    if (await js("!!document.querySelector('[role=tooltip]')")) {
+      await key('Escape');
+      await wait("!document.querySelector('[role=tooltip]')");
+    }
     await key('Escape');
     await wait("!document.querySelector('[role=dialog]')");
     await click('Diff appearance');
