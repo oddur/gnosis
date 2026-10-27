@@ -2915,6 +2915,9 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .entity-badge { display:inline-flex; align-items:center; gap:4px; min-width:0; max-width:min(100%, 32ch); min-height:24px; padding:2px 5px; border:1px solid transparent; border-radius:var(--radius-sm); background:var(--secondary); color:var(--foreground); font-family:var(--font-sans); font-size:var(--type-caption); font-weight:500; line-height:1.4; vertical-align:middle; text-align:left; cursor:copy; }
 .entity-badge-branch,.entity-badge-commit { background:var(--accent); color:var(--accent-foreground); font-family:var(--font-mono); }
 .entity-badge:hover { border-color:var(--input); background:var(--accent); color:var(--accent-foreground); }
+/* Keep copy controls distinct when their containing row is highlighted. */
+:where(.queue-item:hover, .queue-item.is-selected, .commit-entry:hover, .commit-entry:has(.commit-row[aria-pressed=true]), .global-command [cmdk-item][data-selected=true]) .entity-badge { background:var(--card); border-color:var(--border); }
+:where(.queue-item:hover, .queue-item.is-selected, .commit-entry:hover, .commit-entry:has(.commit-row[aria-pressed=true]), .global-command [cmdk-item][data-selected=true]) .entity-badge:hover { border-color:var(--input); }
 .entity-badge:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
 .entity-badge-icon,.entity-badge-copy { display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; }
 .entity-badge-copy { width:12px; opacity:0; }
