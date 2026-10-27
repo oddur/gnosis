@@ -310,3 +310,20 @@ void test('refresh reuses immutable files but persists reopened and retargeted P
   assert.deepEqual(reader.cached(client, url, closed.metadata)?.metadata, reopened.metadata, 'revision disk snapshot');
   assert.equal(closed.metadata.state, 'closed', 'already displayed snapshot remains immutable');
 });
+
+void test('unviewing a historical file clears only its matching commit completion', async () => {
+  const { commitViewedKey } = await import('../lib/pr-commits');
+  const data = new Map<string, string>();
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: { getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => data.set(k, v) },
+  });
+  const first = commitViewedKey(url, 'commit', 'parent');
+  const alternate = commitViewedKey(url, 'commit', 'other-parent');
+  const otherPr = commitViewedKey(url + '2', 'commit', 'parent');
+  for (const key of [first, alternate, otherPr]) await markFileViewed(key, true);
+  await markFileViewed('commit:' + fileRevisionKey(url, 'file.ts', 'parent', 'commit'), false);
+  assert.equal(isFileViewed(first), false);
+  assert.equal(isFileViewed(alternate), true);
+  assert.equal(isFileViewed(otherPr), true);
+});

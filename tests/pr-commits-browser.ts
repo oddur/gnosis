@@ -99,6 +99,33 @@ void app.whenReady().then(async () => {
       null
     );
     assert.match(await js<string>("document.querySelector('.commit-row').textContent"), /Merge worker/);
+    // Opening a commit does not mark it viewed; all its files must be viewed.
+    assert.equal(await js("document.querySelectorAll('.commit-row.is-unviewed .pr-unread-dot').length"), 3);
+    await js("document.querySelector('.changes-tree-controls input').click()");
+    for (let i = 0; i < 5; i++) {
+      await js("[...document.querySelectorAll('.commit-stream-row button')].find(b=>b.textContent.trim()==='Viewed & next').click()");
+      await new Promise(r => setTimeout(r, 120));
+    }
+    await wait("!document.querySelector('.commit-row[aria-pressed=true] .pr-unread-dot')");
+    await click('Show all files');
+    assert.equal(await js("document.querySelectorAll('.commit-row.is-unviewed').length"), 2);
+    assert.equal(await js("getComputedStyle(document.querySelector('.commit-row[aria-pressed=true] .commit-row-title')).fontWeight"), '500');
+    assert.equal(await js("getComputedStyle(document.querySelector('.commit-row.is-unviewed .commit-row-title')).fontWeight"), '650');
+    await capture('viewed-light');
+    await js("document.documentElement.classList.add('dark')");
+    await capture('viewed-dark');
+    window.setSize(900, 740);
+    await capture('viewed-narrow');
+    window.setSize(1280, 800);
+    await js("document.documentElement.classList.remove('dark')");
+    await click('Summary');
+    await click('Commits');
+    await wait("!!document.querySelector('.commit-row[aria-pressed=true]') && !document.querySelector('.commit-row[aria-pressed=true] .pr-unread-dot')");
+    // The completion marker uses the existing durable Viewed store.
+    assert.equal(await js("Object.keys(JSON.parse(localStorage.getItem('gnosis-file-progress:v1')).marks).some(k=>k.startsWith('commit-viewed:'))"), true);
+    await js("document.querySelector('.changes-file-actions input[type=checkbox]').click()");
+    await wait("!!document.querySelector('.commit-row[aria-pressed=true] .pr-unread-dot')");
+    await js("document.querySelectorAll('.changes-file-actions input[type=checkbox]').forEach(e=>{if(e.checked)e.click()})");
     // Ranges retain chronological order while the list always shows newest first.
     await js(
       "document.querySelector('.commit-range-controls input[type=checkbox]').click();document.querySelectorAll('.commit-row')[2].click()"

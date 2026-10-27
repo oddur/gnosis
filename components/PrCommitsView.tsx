@@ -1,4 +1,6 @@
 import { usePrReadVisit } from '../lib/pr-read-context';
+import { useFileProgress } from '../lib/file-view-progress';
+import { changeFileKey } from './PrFileInspection';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Copy, ExternalLink, RefreshCw } from 'lucide-react';
 import {
@@ -14,6 +16,7 @@ import { GitHubAuthor } from './GitHubAuthor';
 import { Button } from './ui/button';
 import {
   commitSelectionKey,
+  commitViewedKey,
   ownedCommits,
   selectedCommits,
   type CommitSelection,
@@ -48,6 +51,7 @@ export function PrCommitsView({
   preferences: Preferences;
   onOpenCurrentFile: (url: string, path: string) => void;
 }) {
+  const progress = useFileProgress();
   const [position] = useState(() => restore(subject.id));
   const [lists, setLists] = useState(() =>
     subject.members.flatMap((member) => inspectionData.peekCommits(member) ?? [])
@@ -122,6 +126,15 @@ export function PrCommitsView({
     (selection ? peekComparison(selection) : undefined) ?? (resolved?.key === key ? resolved.snapshot : undefined);
   const first = chosen.at(0),
     last = chosen.at(-1);
+  useEffect(() => {
+    // A range cannot establish that each constituent commit was inspected.
+    if (!snapshot || !selection || chosen.length !== 1 || !first) return;
+    const viewed = snapshot.files.every(file => progress.isFileViewed(changeFileKey({
+      snapshot, file, key: file.path,
+    })));
+    const summary = commitViewedKey(selection.url, first.sha, selection.parentSha ?? first.parents.at(0) ?? '');
+    if (progress.isFileViewed(summary) !== viewed) void progress.markFileViewed(summary, viewed);
+  }, [snapshot, selection, first, chosen.length, progress]);
   function openSelection(next: CommitSelection) {
     setClosedGroups((previous) => {
       const groups = new Set(previous);
@@ -366,10 +379,19 @@ export function PrCommitsView({
                       </div>
                     )}
                     <div className={subject.kind === 'stack' ? 'commit-pr-commits' : undefined}>
-                      {[...group.commits].reverse().map((commit) => (
+                      {[...group.commits].reverse().map((commit) => {
+                        const savedComparison = group.list ? peekComparison({
+                          url: group.member.url, prBaseSha: group.list.metadata.baseSha,
+                          prHeadSha: group.list.metadata.headSha, firstSha: commit.sha, lastSha: commit.sha,
+                        }) : undefined;
+                        const viewed = savedComparison
+                          ? savedComparison.files.every(file => progress.isFileViewed(changeFileKey({ snapshot: savedComparison, file, key: file.path })))
+                          : progress.isFileViewed(commitViewedKey(group.member.url, commit.sha, commit.parents.at(0) ?? ''));
+                        return (
                         <button
                           key={commit.sha}
-                          className="commit-row"
+                          className={`commit-row${viewed ? '' : ' is-unviewed'}`}
+                          title={viewed ? 'All files in this commit are viewed' : 'This commit has unviewed files'}
                           aria-busy={opening?.url === group.member.url && opening.lastSha === commit.sha}
                           onPointerEnter={() => {
                             hoverCancel.current();
@@ -386,7 +408,13 @@ export function PrCommitsView({
                             group.list && choose(group.list, commit, e.shiftKey || (rangeMode && !!anchor.current))
                           }
                         >
-                          <span className="commit-row-title">{commit.message.split('\n')[0]}</span>
+                          <span className="commit-row-heading">
+                            <span className="commit-view-indicator" aria-hidden="true">
+                              {!viewed && <span className="pr-unread-dot" />}
+                            </span>
+                            <span className="sr-only">{viewed ? 'Viewed: ' : 'Unviewed: '}</span>
+                            <span className="commit-row-title">{commit.message.split('\n')[0]}</span>
+                          </span>
                           <span className="commit-row-meta">
                             <span>{authorName(commit)}</span>
                             <code>{short(commit.sha)}</code>
@@ -395,7 +423,8 @@ export function PrCommitsView({
                             </time>
                           </span>
                         </button>
-                      ))}
+                        );
+                      })}
                       {!group.commits.length && (
                         <p className="commit-inherited">All commits are included in the PRs above.</p>
                       )}
