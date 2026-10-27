@@ -1,3 +1,6 @@
+import { useRawFileFilters } from '../lib/use-raw-file-filters';
+import { hiddenByFileFilters, hiddenByFileExtensions } from '../lib/file-kinds';
+import { RawFileFilters, FileKindControl } from './RawFileFilters';
 import { usePrReadVisit } from '../lib/pr-read-context';
 import { CommitDiffStream, type CommitDiffStreamHandle } from './CommitDiffStream';
 import { useReviewBreadcrumbs, type ReviewCrumb } from '../lib/review-breadcrumbs';
@@ -80,7 +83,10 @@ export function PrChangesView({
     () => (commit ? (commit.snapshot ? [commit.snapshot] : []) : loadedSnapshots),
     [commit?.snapshot, !!commit, loadedSnapshots]
   );
-  usePrReadVisit(snapshots.map(snapshot => ({ url: snapshot.url, headSha: snapshot.metadata.headSha })), !commit);
+  usePrReadVisit(
+    snapshots.map((snapshot) => ({ url: snapshot.url, headSha: snapshot.metadata.headSha })),
+    !commit
+  );
   const [selected, setSelected] = useState(position.selected);
   const hoverCancel = useRef<() => void>(() => {});
   const [loading, setLoading] = useState(false),
@@ -194,14 +200,37 @@ export function PrChangesView({
       }),
     [snapshots, subject.kind, !!commit]
   );
+  const filters = useRawFileFilters(snapshots);
+  const kinds = new Map(entries.map((e) => [e.key, filters.kind(e.snapshot, e.file)]));
+  const allowed = entries.filter(
+    (e) =>
+      !hiddenByFileFilters(filters.kind(e.snapshot, e.file), filters.state) &&
+      !hiddenByFileExtensions(e.file.path, filters.state.hiddenExtensions)
+  );
+  const hidden = entries.length - allowed.length;
+  const visible = allowed.filter((e) => !unviewed || !progress.isFileViewed(viewKey(e)));
+  const selectionIndex = entries.findIndex((e) => e.key === selected);
+  const visibleKeys = new Set(visible.map((e) => e.key));
   const entry =
-    entries.find((e) => e.key === selected) ?? entries.find((e) => !progress.isFileViewed(viewKey(e))) ?? entries.at(0);
+    visible.find((e) => e.key === selected) ??
+    entries.slice(selectionIndex + 1).find((e) => visibleKeys.has(e.key)) ??
+    visible.at(0);
   const activeKey = entry ? viewKey(entry) : '';
-  const visible = entries.filter((e) => !unviewed || !progress.isFileViewed(viewKey(e)));
+  const visibleSignature = visible.map((e) => e.key).join('\n');
+  useEffect(() => {
+    if (entry && !visible.some((e) => e.key === selected)) {
+      setSelected(entry.key);
+      stream.current?.scrollToFile(entry.key);
+    }
+  }, [visibleSignature]);
+  const reveal = async () => {
+    setUnviewed(false);
+    await filters.update({ filters: { hideGenerated: false, hideTests: false, hiddenExtensions: [] } });
+  };
   const viewedSignature = visible.map((e) => (progress.isFileViewed(viewKey(e)) ? '1' : '0')).join('');
   const streamFiles = useMemo(
     () => visible.map((e) => ({ key: e.key, file: e.file, viewed: progress.isFileViewed(viewKey(e)) })),
-    [entries, unviewed, viewedSignature]
+    [entries, visibleSignature, viewedSignature]
   );
   const treeEntries = useMemo(
     () =>
@@ -216,7 +245,7 @@ export function PrChangesView({
           .reduce((total, thread) => total + thread.comments.length, 0),
         commentError: !!discussion.discussions[e.snapshot.url]?.error,
       })),
-    [entries, unviewed, viewedSignature, discussion.discussions]
+    [entries, visibleSignature, viewedSignature, discussion.discussions]
   );
   useEffect(() => {
     if (!initialFile) return;
@@ -225,7 +254,7 @@ export function PrChangesView({
         e.snapshot.url === initialFile.url &&
         (e.file.path === initialFile.path || e.file.previousPath === initialFile.path)
     );
-    if (match) select(match.key);
+    if (match) void select(match.key);
     else if (snapshots.length)
       setError(`“${initialFile.path}” is not in the current PR changes. Choose another file to comment on.`);
   }, [initialFile, entries]);
@@ -262,15 +291,17 @@ export function PrChangesView({
   }
   useEffect(() => {
     if (!entry) return;
-    const index = entries.indexOf(entry);
-    const cancel = [index + 1, index + 2, index - 1].flatMap((i) => (entries[i] ? [warmFile(entries[i].key)] : []));
+    const index = visible.indexOf(entry);
+    const cancel = [index + 1, index + 2, index - 1].flatMap((i) => (visible[i] ? [warmFile(visible[i].key)] : []));
     return () => cancel.forEach((stop) => stop());
-  }, [activeKey, entries, contextLines]);
-  function select(key: string) {
+  }, [activeKey, entries, visibleSignature, contextLines]);
+  async function select(key: string) {
     const target = entries.find((e) => e.key === key);
     if (!target) return;
+    if (!allowed.some((e) => e.key === key)) await reveal();
+    if (unviewed && progress.isFileViewed(viewKey(target))) setUnviewed(false);
     setSelected(key);
-    stream.current?.scrollToFile(key);
+    requestAnimationFrame(() => stream.current?.scrollToFile(key));
     if (window.innerWidth <= 700) setTreeOpen(false);
   }
   useReviewBreadcrumbs(
@@ -290,7 +321,7 @@ export function PrChangesView({
               })),
               select: (url: string) => {
                 const next = entries.find((e) => e.snapshot.url === url);
-                if (next) select(next.key);
+                if (next) void select(next.key);
               },
             },
           ]
@@ -302,7 +333,7 @@ export function PrChangesView({
               label: entry.file.path,
               pickerLabel: 'File in comparison',
               value: entry.key,
-              options: entries
+              options: visible
                 .filter((e) => e.snapshot.url === entry.snapshot.url)
                 .map((e) => ({ value: e.key, label: e.file.path })),
               select,
@@ -326,7 +357,9 @@ export function PrChangesView({
   const refreshThreads = discussion.refresh;
   const comments = useChangesComments({
     enabled: !commit,
-    snapshot: commit ? undefined : entry?.snapshot,
+    snapshot: commit
+      ? undefined
+      : (entry?.snapshot ?? entries.find((e) => e.key === selected)?.snapshot ?? snapshots.at(0)),
     path: entry?.file.path,
     activeKey,
     inline: [],
@@ -380,6 +413,13 @@ export function PrChangesView({
             <RefreshCw size={14} />
           </Button>
         )}
+        <RawFileFilters
+          filters={filters}
+          paths={entries.map((e) => e.file.path)}
+          hidden={hidden}
+          generated={[...kinds.values()].filter((k) => k.generated.value).length}
+          tests={[...kinds.values()].filter((k) => k.test.value).length}
+        />
         <DiffAppearanceMenu
           layout={prefs.diffLayout}
           onLayoutChange={(diffLayout) => savePreferences({ diffLayout })}
@@ -393,6 +433,20 @@ export function PrChangesView({
           </Button>
         )}
       </div>
+      {filters.pending && (
+        <div className="changes-notice" role="status">
+          File classification has updated. Your visible files are unchanged.
+          <button onClick={filters.apply}>Apply updated file filters</button>
+        </div>
+      )}
+      {filters.error && (
+        <div className="changes-notice" role="alert">
+          {filters.error}
+          <button disabled={filters.busy} onClick={() => void filters.retry()}>
+            Retry file filters
+          </button>
+        </div>
+      )}
       {newer && (
         <div className="changes-notice" role="status">
           New commits are available. Your current diff is unchanged.
@@ -437,6 +491,19 @@ export function PrChangesView({
                     Unviewed only
                   </label>
                 </div>
+                {!commit &&
+                  subject.kind === 'stack' &&
+                  snapshots
+                    .filter((s) => s.files.length > 0 && !visible.some((e) => e.snapshot.url === s.url))
+                    .map((s) => (
+                      <div className="file-filter-group" key={s.url}>
+                        <strong>PR #{s.url.split('/').pop()}</strong>
+                        <span>
+                          {s.files.length} {s.files.length === 1 ? 'file' : 'files'} hidden
+                        </span>
+                        <button onClick={reveal}>Show hidden files</button>
+                      </div>
+                    ))}
                 {commit && !commit.snapshot ? (
                   <p className="commit-inherited" role="status">
                     {commit.fileStatus}
@@ -445,7 +512,16 @@ export function PrChangesView({
                   <p role="status">Loading changed files…</p>
                 ) : !visible.length ? (
                   <p role="status">
-                    {unviewed ? 'All files viewed. Turn off Unviewed only to browse again.' : 'No changed files.'}
+                    {hidden
+                      ? `${hidden} ${hidden === 1 ? 'file' : 'files'} hidden by your filters.`
+                      : unviewed
+                        ? 'All files viewed. Turn off Unviewed only to browse again.'
+                        : 'No changed files.'}
+                    {hidden > 0 && (
+                      <button className="file-filter-reveal" onClick={reveal}>
+                        Show hidden files
+                      </button>
+                    )}
                   </p>
                 ) : (
                   <ChangesFileTree
@@ -502,6 +578,14 @@ export function PrChangesView({
                     key={viewKey(e)}
                     entry={e}
                     preferences={prefs}
+                    classificationControl={
+                      <FileKindControl
+                        snapshot={e.snapshot}
+                        file={e.file}
+                        kinds={filters.kind(e.snapshot, e.file)}
+                        filters={filters}
+                      />
+                    }
                     discussion={discussion}
                     onOpenCurrentFile={commit?.onOpenCurrentFile}
                     onViewedNext={next}
@@ -516,6 +600,17 @@ export function PrChangesView({
               completion={
                 <>
                   {commit?.status}
+                  {hidden > 0 && (
+                    <div className="changes-empty file-filter-hidden" role="status">
+                      <strong>
+                        {hidden} {hidden === 1 ? 'file is' : 'files are'} hidden
+                      </strong>
+                      <p>Hidden files still count toward your review progress.</p>
+                      <Button variant="outline" size="sm" disabled={filters.busy} onClick={reveal}>
+                        Show hidden files
+                      </Button>
+                    </div>
+                  )}
                   {entries.length > 0 && entries.every((e) => progress.isFileViewed(viewKey(e))) && (
                     <div className="changes-empty commit-viewed-complete" role="status">
                       <strong>All files viewed</strong>

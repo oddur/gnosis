@@ -1,5 +1,5 @@
 import { setEntryMenuOpen } from '../lib/entry-menu-state';
-import { useRef, useState, useLayoutEffect, type ReactElement, type ReactNode } from 'react';
+import { useId, useRef, useState, useLayoutEffect, type ReactElement, type ReactNode } from 'react';
 import { Menu } from '@base-ui/react/menu';
 import { MoreHorizontal } from 'lucide-react';
 import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from './ui/context-menu';
@@ -21,13 +21,21 @@ export function EntryActions({
   children,
   restoreFocus = true,
   buttonClassName = '',
+  description,
 }: {
   label: string;
   groups: EntryActionGroups;
   children?: (button: ReactNode) => ReactElement;
   restoreFocus?: boolean;
   buttonClassName?: string;
+  description?: ReactNode;
 }) {
+  const descriptionId = useId();
+  const explanation = description ? (
+    <div id={descriptionId} className="entry-menu-description">
+      {description}
+    </div>
+  ) : null;
   const trigger = useRef<HTMLButtonElement>(null);
   const restoreFocusRef = useRef(restoreFocus);
   restoreFocusRef.current = restoreFocus;
@@ -80,6 +88,7 @@ export function EntryActions({
     ));
   const popupProps = {
     'aria-label': label,
+    'aria-describedby': description ? descriptionId : undefined,
     'data-queue-id': trigger.current?.closest<HTMLElement>('[data-queue-id]')?.dataset.queueId,
     finalFocus: () => (restoreFocusRef.current ? trigger.current : false),
     onClick: (event: React.MouseEvent) => event.stopPropagation(),
@@ -101,6 +110,7 @@ export function EntryActions({
       <Menu.Portal>
         <Menu.Positioner className="entry-menu-positioner" sideOffset={4} align="end" collisionPadding={12}>
           <Menu.Popup className="entry-menu" {...popupProps}>
+            {explanation}
             {items}
           </Menu.Popup>
         </Menu.Positioner>
@@ -122,7 +132,10 @@ export function EntryActions({
           }
         }}
       />
-      <ContextMenuContent {...popupProps}>{items}</ContextMenuContent>
+      <ContextMenuContent {...popupProps}>
+        {explanation}
+        {items}
+      </ContextMenuContent>
     </ContextMenu>
   );
 }

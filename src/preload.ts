@@ -1,3 +1,5 @@
+import type { FileKinds, FileFilterState } from '../lib/file-kinds';
+import type { FileFilterAction } from './file-filter-state';
 import type { ReviewStateWrite, FileProgressPatch } from '../lib/review-state';
 import type { MarkPrReadRequest } from '../lib/pr-read-state';
 import type { PreparedInventories } from '../lib/pr-inspection-cache';
@@ -36,6 +38,17 @@ import type {
 } from '../lib/types';
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  loadFileFilters: (): Promise<FileFilterState> => ipcRenderer.invoke('load-file-filters'),
+  updateFileFilters: (action: FileFilterAction): Promise<FileFilterState> => ipcRenderer.invoke('update-file-filters', action),
+  getFileClassifications: (request: PrFileRequest): Promise<Record<string,FileKinds>> => ipcRenderer.invoke('file-classifications', request),
+  onFileFiltersChanged: (callback: (state:FileFilterState)=>void) => {
+    const handler=(_event:Electron.IpcRendererEvent,state:FileFilterState)=>callback(state);
+    ipcRenderer.on('file-filters-changed',handler);return ()=>ipcRenderer.removeListener('file-filters-changed',handler);
+  },
+  onFileClassificationsChanged: (callback: (key:string,kinds:Record<string,FileKinds>)=>void) => {
+    const handler=(_event:Electron.IpcRendererEvent,value:{key:string;kinds:Record<string,FileKinds>})=>callback(value.key,value.kinds);
+    ipcRenderer.on('file-classifications-changed',handler);return ()=>ipcRenderer.removeListener('file-classifications-changed',handler);
+  },
   onHistoryNavigate: (callback: (direction: -1 | 1) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, direction: unknown) => {
       if (direction === -1 || direction === 1) callback(direction);

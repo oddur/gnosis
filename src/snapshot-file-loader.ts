@@ -1,3 +1,4 @@
+import { fileClassifications } from './file-classification-service';
 import { createGitHubWork, joinGitHubWork, type GitHubWork } from '../lib/github-scheduler';
 import { createHash } from 'node:crypto';
 import { preparedFileKey } from '../lib/prepared-pr';
@@ -44,7 +45,7 @@ export function createSnapshotFileLoader(lfs = lfsResources) {
           (v): v is PrFileContents => isCacheRecord(v) && isCacheRecord(v.before) && isCacheRecord(v.after));
         const saved = savedValue ? { value: savedValue } : undefined;
         if (saved && (!req.downloadLfs || ![saved.value.before, saved.value.after].some((s) => s.kind === 'lfs')))
-          return saved.value;
+          { void fileClassifications.observe(client,snapshot,file,saved.value).catch(() => {}); return saved.value; }
         const lfsSides = new Set<boolean>();
         async function side(before: boolean): Promise<PrFileSide> {
           if ((before && file.status === 'added') || (!before && file.status === 'deleted')) return { kind: 'absent' };
@@ -113,6 +114,7 @@ export function createSnapshotFileLoader(lfs = lfsResources) {
             return current;
           cache?.set(key, result);
         }
+        void fileClassifications.observe(client,snapshot,file,result).catch(() => {});
         return result;
       })().finally(() => work.delete(key))
     );
