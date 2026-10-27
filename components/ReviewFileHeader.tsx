@@ -1,3 +1,4 @@
+import { MarkdownViewSwitch } from './MarkdownViewSwitch';
 import { PrBadge } from './EntityBadge';
 import { DiffStats } from './DiffStats';
 import { ChevronDown, ChevronRight, MessageSquare } from 'lucide-react';
@@ -6,6 +7,7 @@ import { prepareReviewHunk } from '@/lib/review-diff';
 import type { DiffHunk, FileMetadata } from '@/lib/types';
 
 interface Props {
+  markdownPreview?: boolean;
   filePath: string;
   hunks: DiffHunk[];
   gitFileUrlBase?: string | null;
@@ -36,6 +38,7 @@ function shownCounts(hunks: DiffHunk[]) {
 /** One header for the whole file, so source and summary remain pinned across
  * Pierre's separate saved hunks and expandable context sections. */
 export function ReviewFileHeader({
+  markdownPreview,
   filePath,
   hunks,
   gitFileUrlBase,
@@ -81,7 +84,11 @@ export function ReviewFileHeader({
           )}
           {source && (
             <span className="source-attribution" title={source.title}>
-              {source.url ? <PrBadge url={source.url} number={source.number} title={source.title} /> : `PR #${source.number}`}
+              {source.url ? (
+                <PrBadge url={source.url} number={source.number} title={source.title} />
+              ) : (
+                `PR #${source.number}`
+              )}
             </span>
           )}
           <FilePathLink
@@ -92,6 +99,7 @@ export function ReviewFileHeader({
           />
         </div>
         <div className="review-file-details">
+          {markdownPreview && <MarkdownViewSwitch />}
           {statusLabel && (
             <span className="review-file-status" data-status={status}>
               {statusLabel}

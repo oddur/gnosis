@@ -1,3 +1,4 @@
+import { isMarkdownFile } from '../lib/markdown-review';
 import { useSessionScroll, useSessionDraft } from '../lib/session-drafts';
 import { ReviewImageDiff } from './ReviewImageDiff';
 import { LFS_VERSION } from '../lib/git-lfs';
@@ -410,11 +411,13 @@ export function SlideView({
   const focusScroll = useSessionScroll(`${slide.id}:focus`);
   const typeConfig = safeConfigLookup(slideTypeConfig, slide.slideType, slideTypeConfig.foundation);
   const Icon = typeConfig.icon;
-  const groupedHunks = groupHunksByFile(slide.diffHunks);
-  for (const filePath of slide.affectedFiles) {
-    if (imageMimeType(filePath) && !groupedHunks.some((group) => group.filePath === filePath))
-      groupedHunks.push({ filePath, hunks: [] });
-  }
+  const groupedHunks = useMemo(() => {
+    const groups = groupHunksByFile(slide.diffHunks);
+    for (const filePath of slide.affectedFiles) {
+      if (imageMimeType(filePath) && !groups.some(group => group.filePath === filePath)) groups.push({ filePath, hunks: [] });
+    }
+    return groups;
+  }, [slide.diffHunks, slide.affectedFiles]);
   const allFilesViewed = groupedHunks.length > 0 && groupedHunks.every(({ filePath }) => viewedFiles?.has(filePath));
   const isLastTopic = slideNumber === totalSlides;
   const rightPanelRef = useRef<HTMLDivElement>(null);
@@ -733,6 +736,8 @@ export function SlideView({
               showInlineExplanations ? inlineExplanations.filter((note) => note.filePath === filePath) : []
             }
             review={review}
+            enabled={expanded}
+            onAsk={onAskAboutSelection}
             filePath={filePath}
             pinnedLines={slide.reviewChecks
               ?.filter((check) => check.filePath === filePath && check.startLine != null)
@@ -750,6 +755,7 @@ export function SlideView({
         return (
           <div key={filePath} className="review-file-group flex flex-col gap-0" data-file-path={filePath}>
             <ReviewFileHeader
+              markdownPreview={isMarkdownFile(filePath) && !lfsResource}
               expanded={expanded}
               contentId={contentId}
               onToggleExpanded={() => {

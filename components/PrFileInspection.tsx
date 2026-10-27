@@ -1,3 +1,7 @@
+import { isMarkdownFile, type MarkdownReview, type MarkdownLocation } from '../lib/markdown-review';
+import { useMarkdownView } from '../lib/use-markdown-view';
+import { peekMarkdownReview, prepareMarkdownReview } from '../lib/markdown-review-cache';
+import { MarkdownReviewPreview } from './MarkdownReviewPreview';
 import { RepositoryBadge, PrBadge, CommitBadge } from './EntityBadge';
 import { useEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties } from 'react';
 import { FileDiff, MultiFileDiff } from '@pierre/diffs/react';
@@ -31,6 +35,12 @@ export const changeFileKey = (entry: ChangeFileEntry) =>
 const isUnsupportedPreview = (message: string) =>
   /This file is too large to preview|This binary file has no text preview|This file is not UTF-8 text/.test(message);
 
+function isBeforeDiffLine(line: HTMLElement) {
+  if (line.dataset.lineType === 'change-addition') return false;
+  if (line.dataset.lineType === 'change-deletion') return true;
+  return !!line.closest('[data-deletions]') && !line.closest('[data-additions]');
+}
+
 /** One revision's file preview and discussions. The workspace owns navigation and shared data. */
 export function PrFileInspection({
   entry,
@@ -56,7 +66,18 @@ export function PrFileInspection({
   const opened = useRef(!viewed);
   if (!viewed) opened.current = true;
   const appearance = useDiffAppearance(prefs.diffAppearance);
-  const contextLines = diffContextLines(appearance);
+  const markdown = isMarkdownFile(entry.file.path);
+  const [markdownView, changeMarkdownView] = useMarkdownView();
+  const [sourceOverride, setSourceOverride] = useState<string>();
+  const [sourceLocation, setSourceLocation] = useState<MarkdownLocation>();
+  const sourceJump = useRef<MarkdownLocation | undefined>(undefined);
+  const previewJump = useRef<MarkdownLocation | undefined>(undefined);
+  const sectionRef = useRef<HTMLElement>(null);
+  const [markdownResult, setMarkdownResult] = useState<{ key: string; value: MarkdownReview }>();
+  const [markdownError, setMarkdownError] = useState<{ key: string; message: string }>();
+  const [markdownAttempt, setMarkdownAttempt] = useState(0);
+  const wantsPreview = markdown && markdownView.mode === 'preview' && sourceOverride !== activeKey;
+  const contextLines = sourceLocation ? Number.MAX_SAFE_INTEGER : diffContextLines(appearance);
   const parseDiffOptions = useMemo(() => ({ context: contextLines }), [contextLines]);
   const [loadedFile, setLoadedFile] = useState<{ key: string; data: PrFileContents }>();
   const [fileError, setFileError] = useState('');
@@ -73,6 +94,18 @@ export function PrFileInspection({
       alive.current = false;
     };
   }, []);
+  useEffect(() => {
+    if (!markdown) return;
+    const section = sectionRef.current;
+    const header = section?.querySelector('.changes-file-header');
+    if (!section || !header) return;
+    const measure = () =>
+      section.style.setProperty('--markdown-header-height', `${header.getBoundingClientRect().height}px`);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, [markdown]);
   const request = {
     url: entry.snapshot.url,
     path: entry.file.path,
@@ -82,6 +115,10 @@ export function PrFileInspection({
   };
   const preview = useMemo(() => previewFor(activeKey, entry.file, contextLines), [activeKey, entry.file, contextLines]);
   const contents = fileCache.peek(request) ?? (loadedFile?.key === activeKey ? loadedFile.data : undefined);
+  const markdownKey = activeKey + (contents?.lfs ? ':lfs' : '');
+  const renderedMarkdown =
+    peekMarkdownReview(markdownKey) ?? (markdownResult?.key === markdownKey ? markdownResult.value : undefined);
+  const showingPreview = wantsPreview && !!renderedMarkdown;
   const [lfsDownload, setLfsDownload] = useState<{ key: string; busy: boolean; error?: string }>();
   const lfsSides = contents ? [contents.before, contents.after].filter((side) => side.kind === 'lfs') : [];
   async function downloadLfs() {
@@ -109,7 +146,7 @@ export function PrFileInspection({
     setFileError('');
     if (
       contents ||
-      (preview && (contextLines <= 3 || entry.file.status === 'added' || entry.file.status === 'deleted'))
+      (!markdown && preview && (contextLines <= 3 || entry.file.status === 'added' || entry.file.status === 'deleted'))
     )
       return;
     const unsupported = unsupportedFiles.current.get(activeKey);
@@ -139,6 +176,65 @@ export function PrFileInspection({
       cancelled = true;
     };
   }, [activeKey, fileAttempt, contextLines, viewed]);
+  useEffect(() => {
+    if (
+      !markdown ||
+      !contents ||
+      viewed ||
+      ![contents.before.kind, contents.after.kind].every((kind) => kind === 'text' || kind === 'absent')
+    )
+      return;
+    let cancelled = false;
+    setMarkdownError(undefined);
+    void prepareMarkdownReview(markdownKey, {
+      before: contents.before.kind === 'text' ? contents.before.content : null,
+      after: contents.after.kind === 'text' ? contents.after.content : null,
+      beforeSource: {
+        repo: entry.snapshot.metadata.baseRepo ?? entry.snapshot.url.split('/').slice(3, 5).join('/'),
+        ref: entry.snapshot.comparisonBase,
+        path: entry.file.previousPath ?? entry.file.path,
+      },
+      afterSource: {
+        repo:
+          entry.snapshot.metadata.headRepo ??
+          entry.snapshot.metadata.baseRepo ??
+          entry.snapshot.url.split('/').slice(3, 5).join('/'),
+        ref: entry.snapshot.metadata.headSha,
+        path: entry.file.path,
+      },
+    })
+      .then((value) => {
+        if (!cancelled) setMarkdownResult({ key: markdownKey, value });
+      })
+      .catch((error: unknown) => {
+        if (!cancelled)
+          setMarkdownError({ key: markdownKey, message: error instanceof Error ? error.message : String(error) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [markdownKey, contents, viewed, markdownAttempt]);
+  useEffect(() => {
+    setSourceLocation(undefined);
+    sourceJump.current = undefined;
+    previewJump.current = undefined;
+  }, [activeKey]);
+  useEffect(() => {
+    if (!showingPreview || !previewJump.current) return;
+    const location = previewJump.current;
+    previewJump.current = undefined;
+    const block = renderedMarkdown.blocks.find((block) => {
+      const range = block[location.side];
+      return range && range.end >= location.start;
+    });
+    if (!block) return;
+    const frame = requestAnimationFrame(() =>
+      sectionRef.current
+        ?.querySelector(`[data-md-block="${block.id}"]`)
+        ?.scrollIntoView({ block: 'start', behavior: 'instant' })
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [showingPreview, renderedMarkdown]);
   const threads = discussion.discussions[entry.snapshot.url]?.data;
   const threadError = discussion.discussions[entry.snapshot.url]?.error;
   const matching =
@@ -183,6 +279,30 @@ export function PrFileInspection({
     overflow: appearance.wrap ? 'wrap' : 'scroll',
     enableLineSelection: true,
     onLineSelected: setRange,
+    onPostRender: (node) => {
+      const location = sourceJump.current;
+      if (!location || showingPreview) return;
+      requestAnimationFrame(() => {
+        if (!node.isConnected || currentFile.current !== activeKey || sourceJump.current !== location) return;
+        const lines = [...(node.shadowRoot?.querySelectorAll<HTMLElement>('[data-code] [data-line]') ?? [])];
+        const target = lines.find(
+          (line) =>
+            Number(line.dataset.line) >= location.start &&
+            Number(line.dataset.line) <= location.end &&
+            (location.side === 'before') === isBeforeDiffLine(line)
+        );
+        if (!target) return;
+        sourceJump.current = undefined;
+        target.scrollIntoView({ block: 'center', behavior: 'instant' });
+        // The highlighter may replace line nodes. Keep keyboard focus on its stable host.
+        node.tabIndex = -1;
+        node.setAttribute(
+          'aria-label',
+          `Source at ${location.side === 'before' ? 'old' : 'new'} line ${location.start}`
+        );
+        node.focus({ preventScroll: true });
+      });
+    },
     loadDiffFiles: async () => {
       try {
         if (alive.current && currentFile.current === activeKey) setFileError('');
@@ -228,7 +348,7 @@ export function PrFileInspection({
       : { status: 'absent' };
   };
   function mark(andNext: boolean) {
-    progress.markFileViewed(activeKey, true);
+    void progress.markFileViewed(activeKey, true);
     if (andNext) onViewedNext();
   }
   const ask = (text = '') => onAsk(text);
@@ -245,12 +365,65 @@ export function PrFileInspection({
           .join('\n')}`
       : '';
   };
+  function openMarkdownSource(location?: MarkdownLocation) {
+    setSourceOverride(activeKey);
+    setRange(null);
+    if (location) {
+      sourceJump.current = location;
+      setSourceLocation(location);
+    }
+  }
+  function chooseMarkdownMode(mode: 'source' | 'preview') {
+    const section = sectionRef.current;
+    const top = Math.max(0, section?.closest('.commit-diff-stream')?.getBoundingClientRect().top ?? 0) + 130;
+    if (mode === 'source' && showingPreview && section) {
+      const anchor = [...section.querySelectorAll<HTMLElement>('[data-md-start]')].find(
+        (el) => el.getBoundingClientRect().bottom >= top
+      );
+      if (anchor) {
+        const location: MarkdownLocation = {
+          side: anchor.dataset.mdSide === 'before' ? 'before' : 'after',
+          start: Number(anchor.dataset.mdStart),
+          end: Number(anchor.dataset.mdEnd),
+        };
+        sourceJump.current = location;
+        setSourceLocation(location);
+      }
+    } else if (mode === 'preview' && code.current) {
+      const lines = [...code.current.querySelectorAll('diffs-container')].flatMap((host) => [
+        ...(host.shadowRoot?.querySelectorAll<HTMLElement>('[data-code] [data-line]') ?? []),
+      ]);
+      const bottom = Math.min(
+        window.innerHeight,
+        section?.closest('.commit-diff-stream')?.getBoundingClientRect().bottom ?? window.innerHeight
+      );
+      const visible = lines.filter((el) => {
+        const bounds = el.getBoundingClientRect();
+        return bounds.bottom >= top && bounds.top < bottom;
+      });
+      const line = visible.at(0);
+      if (line) {
+        const before = isBeforeDiffLine(line);
+        const last = visible.filter((el) => isBeforeDiffLine(el) === before).at(-1) ?? line;
+        previewJump.current = {
+          side: before ? 'before' : 'after',
+          start: Number(line.dataset.line),
+          end: Number(last.dataset.line),
+        };
+      }
+    }
+    setSourceOverride(undefined);
+    setRange(null);
+    changeMarkdownView({ mode });
+  }
   const fileHeader = (
     <header className="changes-file-header">
       <div>
         {!commit && (
           <span className="changes-source">
-            <RepositoryBadge repo={entry.snapshot.metadata.baseRepo} /> <PrBadge url={entry.snapshot.url} title={entry.snapshot.metadata.title} /> <CommitBadge sha={entry.snapshot.metadata.headSha} repo={entry.snapshot.metadata.headRepo} />
+            <RepositoryBadge repo={entry.snapshot.metadata.baseRepo} />{' '}
+            <PrBadge url={entry.snapshot.url} title={entry.snapshot.metadata.title} />{' '}
+            <CommitBadge sha={entry.snapshot.metadata.headSha} repo={entry.snapshot.metadata.headRepo} />
           </span>
         )}
         <h2 title={entry.file.path}>
@@ -262,6 +435,26 @@ export function PrFileInspection({
         </span>
       </div>
       <div className="changes-file-actions">
+        {markdown && (
+          <div className="markdown-view-switch" role="group" aria-label="Markdown view">
+            <Button
+              variant={!wantsPreview ? 'secondary' : 'ghost'}
+              size="sm"
+              aria-pressed={!wantsPreview}
+              onClick={() => chooseMarkdownMode('source')}
+            >
+              Source
+            </Button>
+            <Button
+              variant={wantsPreview ? 'secondary' : 'ghost'}
+              size="sm"
+              aria-pressed={wantsPreview}
+              onClick={() => chooseMarkdownMode('preview')}
+            >
+              Preview
+            </Button>
+          </div>
+        )}
         {classificationControl}
         <label>
           <input
@@ -274,7 +467,7 @@ export function PrFileInspection({
         <Button variant="outline" size="sm" data-viewed-next onClick={() => mark(true)}>
           Viewed & next
         </Button>
-        {!commit && (
+        {!commit && !showingPreview && (
           <Button
             variant="ghost"
             size="sm"
@@ -348,48 +541,79 @@ export function PrFileInspection({
           resource.
         </p>
       )}
-      <div ref={code} className="changes-code">
-        <ReviewSelectionActions containerRef={code} resetKey={activeKey} onAsk={ask} />
-        {preview && !(contextLines > 3 && files) && (
-          <FileDiff
-            key={activeKey}
-            fileDiff={preview}
-            options={options}
-            lineAnnotations={annotations}
-            renderAnnotation={comments.renderAnnotation}
-            style={
-              {
-                '--diffs-font-family': 'var(--font-mono)',
-                '--diffs-font-size': 'var(--type-code)',
-                '--diffs-line-height': 'var(--leading-code)',
-              } as CSSProperties
-            }
-          />
-        )}
-        {files && (!preview || contextLines > 3) && (
-          <MultiFileDiff
-            key={activeKey}
-            {...files}
-            options={options}
-            lineAnnotations={annotations}
-            renderAnnotation={comments.renderAnnotation}
-            style={
-              {
-                '--diffs-font-family': 'var(--font-mono)',
-                '--diffs-font-size': 'var(--type-code)',
-                '--diffs-line-height': 'var(--leading-code)',
-              } as CSSProperties
-            }
-          />
-        )}
-        {contents && !lfsSides.length && (contents.before.kind === 'image' || contents.after.kind === 'image') && (
-          <ReviewImageDiff
-            enabled
-            filePath={entry.file.path}
-            comparison={{ before: imageSide(true), after: imageSide(false) }}
-          />
-        )}
-      </div>
+      {wantsPreview && !renderedMarkdown && !lfsSides.length && (
+        <div className="markdown-preview-status" role={markdownError?.key === markdownKey ? 'alert' : 'status'}>
+          <span>
+            {markdownError?.key === markdownKey
+              ? markdownError.message
+              : 'Preparing rendered view… Source remains available below.'}
+          </span>
+          {markdownError?.key === markdownKey && (
+            <button onClick={() => setMarkdownAttempt((n) => n + 1)}>Retry</button>
+          )}
+          <button onClick={() => openMarkdownSource()}>Use source</button>
+        </div>
+      )}
+      {showingPreview && (
+        <MarkdownReviewPreview
+          key={markdownKey}
+          review={renderedMarkdown}
+          revealLocation={previewJump.current}
+          showChanges={markdownView.changes}
+          onChanges={(changes) => changeMarkdownView({ changes })}
+          onSource={openMarkdownSource}
+          onAsk={ask}
+          canComment={!commit && comments.writable && !contents?.lfs}
+          annotations={annotations.map((annotation) => ({
+            ...annotation,
+            content: comments.renderAnnotation(annotation),
+          }))}
+        />
+      )}
+      {!showingPreview && (
+        <div ref={code} className="changes-code">
+          <ReviewSelectionActions containerRef={code} resetKey={activeKey} onAsk={ask} />
+          {preview && !(contextLines > 3 && files) && (
+            <FileDiff
+              key={activeKey}
+              fileDiff={preview}
+              options={options}
+              lineAnnotations={annotations}
+              renderAnnotation={comments.renderAnnotation}
+              style={
+                {
+                  '--diffs-font-family': 'var(--font-mono)',
+                  '--diffs-font-size': 'var(--type-code)',
+                  '--diffs-line-height': 'var(--leading-code)',
+                } as CSSProperties
+              }
+            />
+          )}
+          {files && (!preview || contextLines > 3) && (
+            <MultiFileDiff
+              key={activeKey}
+              {...files}
+              options={options}
+              lineAnnotations={annotations}
+              renderAnnotation={comments.renderAnnotation}
+              style={
+                {
+                  '--diffs-font-family': 'var(--font-mono)',
+                  '--diffs-font-size': 'var(--type-code)',
+                  '--diffs-line-height': 'var(--leading-code)',
+                } as CSSProperties
+              }
+            />
+          )}
+          {contents && !lfsSides.length && (contents.before.kind === 'image' || contents.after.kind === 'image') && (
+            <ReviewImageDiff
+              enabled
+              filePath={entry.file.path}
+              comparison={{ before: imageSide(true), after: imageSide(false) }}
+            />
+          )}
+        </div>
+      )}
       {threadError && (
         <p className="changes-notice">
           {threadError}
@@ -406,7 +630,7 @@ export function PrFileInspection({
     </div>
   );
   return (
-    <section className="commit-stream-file" aria-label={entry.file.path}>
+    <section ref={sectionRef} className="commit-stream-file" aria-label={entry.file.path}>
       {fileHeader}
       {!commit && comments.feedback}
       {/* Keep editor state and pending-write guards alive when the file collapses. */}

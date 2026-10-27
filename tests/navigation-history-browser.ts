@@ -1,5 +1,7 @@
 import { attachWindowHistoryNavigation } from '../src/window-history-navigation';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { app, BrowserWindow } from 'electron';
 
 void app.whenReady().then(async () => {
@@ -45,7 +47,7 @@ void app.whenReady().then(async () => {
   try {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     if (!url) throw Error('Missing fixture URL');
-    await win.loadURL(url + '?pr-summary&navigation-history');
+    await win.loadURL(url + '?pr-summary&navigation-history&keep-progress');
     win.webContents.debugger.attach('1.3');
     await wait("document.querySelectorAll('.queue-item').length===7");
     await mouse(3);
@@ -135,6 +137,46 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('h1')?.textContent==='History view'");
     await wait("document.querySelector('.saved-view-link')?.getAttribute('aria-current')==='page'");
     assert.equal(await js('window.electronAPI.workbenchSnapshot().then(q=>q.savedViews.activeId)'), 'history-view');
+    await js("document.querySelector('[aria-label=\"Recently viewed\"]').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerType:'mouse'}))");
+    await wait("!!document.querySelector('.recent-history-menu')");
+    assert.ok(await js("document.querySelector('.recent-history-menu').textContent.includes('History view')"));
+    assert.ok(await js("document.querySelector('.recent-history-menu').textContent.includes('Local history fixture')"));
+    assert.equal(await js("[...document.querySelectorAll('.recent-history-name')].filter(e=>e.textContent.includes('Fix reconnect')).length"), 1);
+    const capture = async (name: string) => {
+      const directory = path.resolve('.impeccable/review/recently-viewed');
+      fs.mkdirSync(directory, { recursive: true });
+      await js('document.fonts.ready');
+      win.focus();
+      await new Promise(resolve => setTimeout(resolve, 200));
+      fs.writeFileSync(path.join(directory, name + '.png'), (await win.webContents.capturePage()).toPNG());
+    };
+    await capture('desktop-light');
+    win.setSize(900, 760);
+    await js("document.documentElement.classList.add('dark')");
+    await capture('laptop-dark');
+    // Keyboard focus stays within the menu; Enter opens the selected destination.
+    await js("[...document.querySelectorAll('.recent-history-item')].find(e=>e.textContent.includes('Fix reconnect')).focus()");
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+    await wait("!!document.querySelector('.pr-overview-tabs') && !document.querySelector('.recent-history-menu')");
+    assert.equal(await title(), original);
+    await click('Changes');
+    await js("document.querySelector('[aria-label=\"Recently viewed\"]').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerType:'mouse'}))");
+    await wait("!!document.querySelector('.recent-history-menu')");
+    await js("[...document.querySelectorAll('.recent-history-item')].find(e=>e.textContent.includes('History view')).click()");
+    await wait("document.querySelector('h1')?.textContent==='History view'");
+    await js("document.querySelector('[aria-label=\"Recently viewed\"]').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerType:'mouse'}))");
+    await wait("!!document.querySelector('.recent-history-menu')");
+    await js("[...document.querySelectorAll('.recent-history-item')].find(e=>e.textContent.includes('Fix reconnect')).click()");
+    await wait("document.querySelector('[role=tab][aria-selected=true]')?.textContent==='Changes'");
+    win.reload();
+    await wait("!!document.querySelector('.queue-list')");
+    await js("document.querySelector('[aria-label=\"Recently viewed\"]').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerType:'mouse'}))");
+    await wait("!!document.querySelector('.recent-history-menu')");
+    assert.ok(await js("document.querySelector('.recent-history-menu').textContent.includes('Fix reconnect')"));
+    await js("[...document.querySelectorAll('.recent-history-action')].find(e=>e.textContent.includes('Clear recently')).click()");
+    await js("document.querySelector('[aria-label=\"Recently viewed\"]').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerType:'mouse'}))");
+    await wait("!!document.querySelector('.recent-history-empty')");
     console.log(
       'Navigation history passed: mouse back/forward, tab order, queue selection, shortcuts, modal protection and branching.'
     );

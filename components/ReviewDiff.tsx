@@ -1,3 +1,4 @@
+import type { MarkdownLocation } from '../lib/markdown-review';
 import { useSessionDraft } from '../lib/session-drafts';
 import { useMemo, useState, useRef, type CSSProperties, type ReactNode } from 'react';
 import type { GitHubReviewThread } from '../lib/review-threads';
@@ -34,6 +35,8 @@ for (const { id } of CODE_THEMES) {
 
 type Location = { line: number; side: DiffSide };
 interface Props {
+  sourceLocation?: MarkdownLocation;
+  onSourceLocationShown?: () => void;
   filePath: string;
   hunks: DiffHunk[];
   pinnedLines?: number[];
@@ -74,6 +77,8 @@ function ReviewHunk({
   ...props
 }: Omit<Props, 'hunks'> & { hunk: DiffHunk; sourceHeader?: string }) {
   const {
+    sourceLocation,
+    onSourceLocationShown,
     filePath,
     fileStatus,
     diffLayout,
@@ -136,7 +141,10 @@ function ReviewHunk({
         : undefined,
       onPostRender(node) {
         for (const el of node.shadowRoot?.querySelectorAll<HTMLElement>('[data-code] [data-line]') ?? []) {
-          const old = !!el.closest('[data-deletions]') || el.dataset.lineType === 'change-deletion';
+          const old =
+            el.dataset.lineType === 'change-addition'
+              ? false
+              : el.dataset.lineType === 'change-deletion' || !!el.closest('[data-deletions]');
           const n = Number(el.dataset.line);
           const info = (old ? lineMaps.old : lineMaps.head).get(n);
           el.dataset.filePath = filePath;
@@ -146,9 +154,36 @@ function ReviewHunk({
           if (info?.baseLineNumber != null && (old || diffLayout === 'unified'))
             el.dataset.baseLine = String(info.baseLineNumber);
         }
+        if (sourceLocation)
+          requestAnimationFrame(() => {
+            if (!node.isConnected) return;
+            const target = node.shadowRoot?.querySelector<HTMLElement>(
+              `[${sourceLocation.side === 'before' ? 'data-base-line' : 'data-line-number'}="${sourceLocation.start}"]`
+            );
+            if (!target) return;
+            target.scrollIntoView({ block: 'center', behavior: 'instant' });
+            node.tabIndex = -1;
+            node.setAttribute(
+              'aria-label',
+              `Source at ${sourceLocation.side === 'before' ? 'old' : 'new'} line ${sourceLocation.start}`
+            );
+            node.focus({ preventScroll: true });
+            onSourceLocationShown?.();
+          });
       },
     }),
-    [theme, prepared, diffLayout, appearance, commentCallbacks, filePath, lineMaps, sourceHeader]
+    [
+      theme,
+      prepared,
+      diffLayout,
+      appearance,
+      commentCallbacks,
+      filePath,
+      lineMaps,
+      sourceHeader,
+      sourceLocation,
+      onSourceLocationShown,
+    ]
   );
   const annotations = useMemo<DiffLineAnnotation<Location>[]>(() => {
     const locations = [

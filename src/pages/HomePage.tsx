@@ -1,3 +1,4 @@
+import { RecentlyViewed } from '../../components/RecentlyViewed';
 import { PrBadge } from '../../components/EntityBadge';
 import { PrListSortControl } from '../../components/PrListSortControl';
 import { normalizePrListSort, sortQueueItems, sortSavedReviews, type PrListSort } from '../../lib/pr-list-sort';
@@ -89,7 +90,7 @@ import type { Preferences, PrStatus, ReviewGuide, ReviewHistoryEntry, ModelId, P
 
 interface Props {
   navigationRestoration?: { location: HomeLocation; nonce: number };
-  onNavigationChange?: (location: HomeLocation) => void;
+  onNavigationChange?: (location: HomeLocation, mutedUrls?: Set<string>) => void;
   onReviewReady: (review: ReviewGuide) => void;
   onReviewOriginChange?: (origin: { name: string; reviews: { id: string; title: string }[] }) => void;
   explanationDestination?: ExplanationDestination;
@@ -784,17 +785,17 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       if (viewChanged) {
         setQueue(current => ({ ...current, savedViews: current.savedViews && { ...current.savedViews, activeId: viewId } }));
         void enqueueWrite(() => window.electronAPI.workbenchViewAction({ type: 'activate', id: viewId }))
-          .catch(error => { if (version === filterVersion.current) setError(`Could not restore saved view: ${String(error)}`); });
+          .catch((error: unknown) => { if (version === filterVersion.current) setError(`Could not restore saved view: ${String(error)}`); });
       }
       return;
     }
     const location: HomeLocation = {
       account: auth?.login ?? 'local', filters, savedView, savedQuery,
-      viewId: queue.savedViews?.activeId ?? null, muted: mutedOpen, item: openedItem,
+      viewId: queue.savedViews?.activeId ?? null, viewName: originName, muted: mutedOpen, item: openedItem,
       tab: overviewTab, selected, scroll: queueScrollOffset.current,
     };
     historyLocation.current = location;
-    onNavigationChange?.(location);
+    onNavigationChange?.(location, mutedUrls);
   });
   useEffect(() => { summaryNavigation.current++; }, [openedItem?.subject.id, savedView, commandDestination]);
   const summaryIndex = summaryChoices.findIndex(choice => choice.value === summaryItem?.subject.id);
@@ -1215,6 +1216,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
         >
           Gnosis
         </a>
+        <RecentlyViewed />
         <div className="ml-auto flex items-center gap-2">
           {prefs && (
             <SearchableSelect

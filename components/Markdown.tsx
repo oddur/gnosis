@@ -19,7 +19,7 @@ interface Props {
   headingLevel?: number;
 }
 
-function MarkdownImage({
+export function MarkdownImage({
   src,
   alt,
   title,
@@ -141,7 +141,7 @@ const components: Components = {
   img: ({ src, ...props }) => <MarkdownImage key={src} src={src} {...props} />,
 };
 
-function GitHubCodeBlock({ children }: ComponentProps<'pre'>) {
+export function GitHubCodeBlock({ children, ...props }: ComponentProps<'pre'>) {
   const code = Children.toArray(children)[0];
   if (
     isValidElement<ComponentProps<'code'>>(code) &&
@@ -159,7 +159,7 @@ function GitHubCodeBlock({ children }: ComponentProps<'pre'>) {
     return <MermaidDiagram chart={code.props.children.trimEnd()} />;
   }
   return (
-    <pre tabIndex={0} aria-label="Code block">
+    <pre {...props} tabIndex={0} aria-label="Code block">
       {children}
     </pre>
   );

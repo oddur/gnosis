@@ -1,3 +1,6 @@
+import { RecentlyViewedContext } from '../components/RecentlyViewed';
+import { createRecentlyViewed, homeVisit, reviewVisit, type RecentVisit } from '../lib/recently-viewed';
+import { readReviewState, writeReviewState } from '../lib/renderer-review-state';
 import { useFileFilterSync } from '../lib/use-raw-file-filters';
 import { CommandCenter, type AppCommand } from '../lib/command-center';
 import type { SearchDestination } from '../lib/command-search';
@@ -22,6 +25,7 @@ type Page = 'home' | 'review';
 
 export function App() {
   useFileFilterSync();
+  const [recentlyViewed] = useState(() => createRecentlyViewed(readReviewState, writeReviewState));
   const [navigationHistory] = useState(() => createNavigationHistory<AppLocation>(locationKey));
   const [homeRestoration, setHomeRestoration] = useState<{ location: HomeLocation; nonce: number }>();
   const lastHome = useRef<HomeLocation | undefined>(undefined);
@@ -33,7 +37,7 @@ export function App() {
     if (pendingHistory.current && displayedLocation.current) navigationHistory.restore(displayedLocation.current);
     pendingHistory.current = undefined;
   }, [navigationHistory]);
-  const recordHome = useCallback((home: HomeLocation) => {
+  const recordHome = useCallback((home: HomeLocation, mutedUrls?: Set<string>) => {
     const location: AppLocation = { page: 'home', home };
     if (pendingHistory.current) {
       // A new user destination supersedes an in-flight saved-review load.
@@ -46,10 +50,13 @@ export function App() {
       navigationHistory.clear();
       historyAccount.current = home.account;
     }
+    recentlyViewed.scope(home.account);
+    if (mutedUrls) recentlyViewed.hide(mutedUrls);
+    recentlyViewed.record(homeVisit(home));
     lastHome.current = home;
     navigationHistory.record(location);
     displayedLocation.current = location;
-  }, [navigationHistory]);
+  }, [navigationHistory, recentlyViewed]);
   useEffect(() => {
     const failed = (event: Event) => {
       const {message,retry} = (event as CustomEvent<{message:string;retry:()=>Promise<void>}>).detail;
@@ -108,11 +115,16 @@ export function App() {
     if (pendingHistory.current) return;
     navigationHistory.record(location);
     displayedLocation.current = location;
-  }, [navigationHistory, page, review?.reviewId]);
+    const visit = reviewVisit(review);
+    if (visit) recentlyViewed.record(visit);
+  }, [navigationHistory, recentlyViewed, page, review]);
 
   async function moveHistory(direction: HistoryDirection) {
     const target = navigationHistory.move(direction);
     if (!target) return;
+    await openHistoryLocation(target);
+  }
+  async function openHistoryLocation(target: AppLocation, reportError = true) {
     pendingHistory.current = locationKey(target);
     const version = ++navigationVersion.current;
     try {
@@ -138,8 +150,14 @@ export function App() {
       if (version !== navigationVersion.current) return;
       pendingHistory.current = undefined;
       if (displayedLocation.current) navigationHistory.restore(displayedLocation.current);
+      if (!reportError) throw error;
       toast.add({ type: 'error', title: 'Could not open history item', description: error instanceof Error ? error.message : String(error) });
     }
+  }
+  async function openRecent(visit: RecentVisit) {
+    if (visit.location.page === 'home' && visit.location.home.account !== historyAccount.current)
+      throw new Error('This item belongs to a different GitHub account.');
+    await openHistoryLocation(visit.location, false);
   }
   useHistoryInput(direction => { void moveHistory(direction); });
 
@@ -363,6 +381,7 @@ export function App() {
   ];
 
   return (
+    <RecentlyViewedContext.Provider value={{ store: recentlyViewed, open: openRecent }}>
     <CommandCenter navigate={navigate} commands={commands}>
       {/* Skip-to-content link — visually hidden until focused. Lets
           keyboard users jump straight to the slide/page content
@@ -412,5 +431,6 @@ export function App() {
       <ActivityDrawer onOpen={openActivity} open={activityOpen} onOpenChange={setActivityOpen} />
       <Toaster />
     </CommandCenter>
+    </RecentlyViewedContext.Provider>
   );
 }
