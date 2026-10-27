@@ -182,8 +182,9 @@ export function createCommandSearchService(deps: Deps) {
         deps.index?.replace(deps.account(), visibleDocs);
         indexedInputs = inputs;
       }
-      const hits = deps.index
-        ? deps.index.search(deps.account(), query, bots, recentIds)
+      const indexedResult = deps.index?.search(deps.account(), query, bots, recentIds);
+      const hits = indexedResult
+        ? indexedResult.hits
         : query.trim()
           ? searchDocuments(visibleDocs, query, bots)
           : visibleDocs
@@ -201,7 +202,7 @@ export function createCommandSearchService(deps: Deps) {
       return {
         account: deps.account(),
         hits: hits.slice(0, 120).map((h) => ({ ...h, document: { ...h.document, text: h.snippet, code: undefined } })),
-        total: hits.length,
+        total: indexedResult?.total ?? hits.length,
         ignoreBots: deps.ignoreBots(),
         warnings: indexed?.warnings ?? [],
       };

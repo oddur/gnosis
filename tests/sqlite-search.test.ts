@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { createSqliteSearchIndex } from '../src/sqlite-search-index';
 import { searchDocuments, type SearchDocument } from '../lib/command-search';
 const docs: SearchDocument[] = [
@@ -38,7 +43,7 @@ const docs: SearchDocument[] = [
     destination: { kind: 'activity' },
   },
 ];
-test('FTS matches existing substring, code, fuzzy title, number and bot behavior', () => {
+void test('FTS matches existing substring, code, fuzzy title, number and bot behavior', () => {
   const db = new DatabaseSync(':memory:');
   try {
     const index = createSqliteSearchIndex(db);
@@ -58,15 +63,15 @@ test('FTS matches existing substring, code, fuzzy title, number and bot behavior
       'nonexistent',
     ]) {
       for (const bots of [true, false])
-        assert.deepEqual(index.search('alice', query, bots, []), searchDocuments(docs, query, bots), query);
+        assert.deepEqual(index.search('alice', query, bots, []).hits, searchDocuments(docs, query, bots), query);
     }
-    assert.equal(index.search('bob', 'queue', true, []).length, 0);
-    assert.equal(index.search('alice', '', false, ['file'])[0].document.id, 'file');
+    assert.equal(index.search('bob', 'queue', true, []).hits.length, 0);
+    assert.equal(index.search('alice', '', false, ['file']).hits[0].document.id, 'file');
   } finally {
     db.close();
   }
 });
-test('unchanged index documents cause no writes; updates and deletions do not leave ghost matches', () => {
+void test('unchanged index documents cause no writes; updates and deletions do not leave ghost matches', () => {
   const db = new DatabaseSync(':memory:');
   try {
     const index = createSqliteSearchIndex(db);
@@ -76,12 +81,62 @@ test('unchanged index documents cause no writes; updates and deletions do not le
     index.replace('alice', docs);
     assert.equal(changes(), before);
     index.replace('alice', [{ ...docs[0], text: 'New unique body' }]);
-    assert.equal(index.search('alice', 'semaphore', true, []).length, 0);
-    assert.equal(index.search('alice', 'unique', true, []).length, 1);
+    assert.equal(index.search('alice', 'semaphore', true, []).hits.length, 0);
+    assert.equal(index.search('alice', 'unique', true, []).hits.length, 1);
     index.replace('bob', docs);
     index.replace('alice', []);
-    assert.equal(index.search('alice', 'queue', true, []).length, 0);
-    assert.ok(index.search('bob', 'queue', true, []).length > 0);
+    assert.equal(index.search('alice', 'queue', true, []).hits.length, 0);
+    assert.ok(index.search('bob', 'queue', true, []).hits.length > 0);
+  } finally {
+    db.close();
+  }
+});
+
+void test('large legacy indexes update and search within a bounded heap', async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-search-memory-'));
+  try {
+    for (const mode of ['replace', 'empty', 'broad']) {
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        [
+          '--max-old-space-size=96',
+          '--import',
+          'tsx',
+          path.resolve('tests/fixtures/search-memory.ts'),
+          path.join(directory, `${mode}.sqlite`),
+          mode,
+        ],
+        { timeout: 30000, maxBuffer: 100_000 }
+      );
+      assert.match(stdout, /bounded search memory passed/, mode);
+    }
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+void test('paged searches retain ranking, exact totals, bots and recent destinations', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    const index = createSqliteSearchIndex(db);
+    const many = Array.from({ length: 180 }, (_, i) => ({
+      ...docs[i % docs.length],
+      id: String(i),
+      title: `queue ${i}`,
+      bot: i % 5 === 0,
+    }));
+    index.replace('alice', many);
+    for (const query of ['queue', 'qu', 'qq', '#42']) {
+      for (const bots of [false, true]) {
+        const expected = searchDocuments(many, query, bots);
+        const actual = index.search('alice', query, bots, [], 7);
+        assert.equal(actual.total, expected.length);
+        assert.deepEqual(actual.hits, expected.slice(0, 7));
+      }
+    }
+    const recent = index.search('alice', '', true, ['179', '178'], 1);
+    assert.equal(recent.hits[0].document.id, '179');
+    assert.ok(recent.total > recent.hits.length);
   } finally {
     db.close();
   }
