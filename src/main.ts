@@ -1,3 +1,4 @@
+import { attachWindowHistoryNavigation } from './window-history-navigation';
 import { loadReviewContents, startReviewFileMetadata } from '../lib/review-preparation';
 import { normalizeGitHubCacheMB, DEFAULT_GITHUB_CACHE_MB } from '../lib/github-cache-settings';
 import type { ReviewStateWrite, FileProgressPatch } from '../lib/review-state';
@@ -281,6 +282,7 @@ function createWindow() {
   });
 
   protectExplainerFrames(mainWindow);
+  attachWindowHistoryNavigation(mainWindow, direction => mainWindow.webContents.send('history-navigate', direction));
   const ownerId = mainWindow.webContents.id;
   mainWindow.on('closed', () => explainerService.cancelOwner(ownerId));
 

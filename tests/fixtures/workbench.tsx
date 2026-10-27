@@ -28,6 +28,11 @@ const saveViews = () => {
   queueFilters = activeViewFilters(savedViews);
   sessionStorage.setItem(filterStorageKey, JSON.stringify(queueFilters));
 };
+if (new URLSearchParams(location.search).has('navigation-history') && !savedViews.views.length) {
+  savedViews = applyViewAction(savedViews, { type: 'create', name: 'History view' }, () => 'history-view');
+  savedViews = applyViewAction(savedViews, { type: 'activate', id: null }, () => 'unused');
+  saveViews();
+}
 const onboardingScenario = new URLSearchParams(location.search).has('onboarding');
 let fixtureAuthenticated = !onboardingScenario;
 let fixtureStarted = false;
@@ -595,8 +600,16 @@ const mocks = {
       warnings: [],
       remaining: polishScenario ? 0 : 7,
     }),
-  listReviews: () => Promise.resolve(onboardingScenario && !fixtureStarted ? [] : history.filter(entry => !isMutedReview(entry, fixtureMutedUrls()))),
-  loadReview: () => Promise.resolve(review),
+  onHistoryNavigate: (callback: (direction: -1 | 1) => void) => {
+    const handler = (event: Event) => callback((event as CustomEvent<-1 | 1>).detail);
+    window.addEventListener('fixture-history-navigate', handler);
+    return () => window.removeEventListener('fixture-history-navigate', handler);
+  },
+  listReviews: () => Promise.resolve(onboardingScenario && !fixtureStarted ? [] : [
+    ...history.filter(entry => !isMutedReview(entry, fixtureMutedUrls())),
+    ...(new URLSearchParams(location.search).has('navigation-history') ? [{ ...history[0], id: 'local-history-review', prUrl: 'local:/fixture/repo', prTitle: 'Local history fixture', snapshot: undefined }] : []),
+  ]),
+  loadReview: (id: string) => Promise.resolve(id === 'local-history-review' ? { ...review, reviewId: id, prUrl: 'local:/fixture/repo', prTitle: 'Local history fixture', snapshot: undefined } : review),
   reRenderHunks: (r: ReviewGuide) => Promise.resolve(r),
   getReviewThreads: () => Promise.resolve({ headSha: 'fixture-head', baseSha: 'fixture-base', threads: [] }),
   getPrStatus: async (url: string) =>

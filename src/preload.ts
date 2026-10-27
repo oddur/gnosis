@@ -36,6 +36,13 @@ import type {
 } from '../lib/types';
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  onHistoryNavigate: (callback: (direction: -1 | 1) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, direction: unknown) => {
+      if (direction === -1 || direction === 1) callback(direction);
+    };
+    ipcRenderer.on('history-navigate', handler);
+    return () => ipcRenderer.removeListener('history-navigate', handler);
+  },
   clearGitHubCache: (): Promise<void> => ipcRenderer.invoke('clear-github-cache'),
   getPreparedInventories: (revisions: InspectionRevision[]): Promise<PreparedInventories> => ipcRenderer.invoke('prepared-inventories', revisions),
   preparePrReview: (url: string, revision: { baseSha: string; headSha: string }): Promise<void> => ipcRenderer.invoke('prepare-pr-review', url, revision),
