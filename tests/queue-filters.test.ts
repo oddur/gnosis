@@ -6,6 +6,7 @@ import {
   describeQueueFilters,
   DEFAULT_QUEUE_FILTERS,
   matchesQueueFilters,
+  matchesTargetBranch,
   normalizeQueueFilters,
   prioritizeBriefings,
 } from '../lib/queue-filters';
@@ -171,4 +172,51 @@ void test('label selections count as one filter and describe Any, All and No lab
   assert.equal(activeQueueFilterCount(filters), 1);
   assert.deepEqual(describeQueueFilters(filters), [{ key: 'labels', label: 'Labels (all): bug, feature' }]);
   assert.deepEqual(describeQueueFilters(normalizeQueueFilters({ labels: { unlabelled: true } })), [{ key: 'labels', label: 'No labels' }]);
+});
+
+void test('target branch patterns match whole, case-sensitive names with literal punctuation', () => {
+  for (const [branch, pattern, expected] of [
+    ['release/1.2', 'release/*', true],
+    ['release/1.2/hotfix', 'release/*', true],
+    ['release', 'release/*', false],
+    ['feature/release/1.2', 'release/*', false],
+    ['Release/1.2', 'release/*', false],
+    ['main', 'main', true],
+    ['main-next', 'main', false],
+    ['release/1.2', 'release/?.?', true],
+    ['release/11.2', 'release/?.?', false],
+    ['release/1.2', 'release/1.2', true],
+    ['release/1x2', 'release/1.2', false],
+    ['fix/(api)+', 'fix/(api)+', true],
+    ['fix/api', 'fix/(api)+', false],
+    ['release/1/hotfix', '*/*fix', true],
+    ['ab', '*ab*ab', false],
+    ['anything', '**', true],
+    ['main', '  ', true],
+    ['main', ' main ', true],
+    ['a'.repeat(300), '*a'.repeat(100) + 'b', false],
+  ] as const) assert.equal(matchesTargetBranch(branch, pattern), expected, `${branch} / ${pattern}`);
+});
+
+void test('target branch combines on the same PR, preserves stacks, and limits automatic briefings', () => {
+  const stack = item([member(1, { baseBranch: 'release/1.2' }), member(2, { baseBranch: 'pr-1', author: 'bob' })]);
+  const other = item([member(3, { headBranch: 'release/1.2', baseBranch: 'main' })]);
+  const filters = normalizeQueueFilters({ targetBranch: 'release/*' });
+  assert.equal(matchesQueueFilters(stack, filters), true);
+  assert.equal(matchesQueueFilters(other, filters), false, 'Match the target, not the source branch');
+  assert.equal(matchesQueueFilters(stack, { ...filters, author: 'bob' }), false);
+  assert.deepEqual(prioritizeBriefings([other, stack], filters), [stack]);
+  assert.equal(stack.subject.members.length, 2);
+  stack.subject.members[0].state = 'closed';
+  assert.equal(matchesQueueFilters(stack, filters), false);
+});
+
+void test('target branch defaults, normalization and removable filter description', () => {
+  assert.equal(normalizeQueueFilters({}).targetBranch, '');
+  assert.equal(normalizeQueueFilters({ targetBranch: ['main'] }).targetBranch, '');
+  const filters = normalizeQueueFilters({ targetBranch: ' release/* ' });
+  assert.equal(filters.targetBranch, 'release/*');
+  assert.equal(activeQueueFilterCount(filters), 1);
+  assert.deepEqual(describeQueueFilters(filters), [{ key: 'targetBranch', label: 'Target branch: release/*' }]);
+  assert.equal(activeQueueFilterCount({ ...filters, targetBranch: '' }), 0);
 });
