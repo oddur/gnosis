@@ -1,3 +1,4 @@
+import { focusStackPr } from './stack-workspace';
 import type { QueueItem, WorkbenchQueue } from './workbench';
 import { isDependabot, sourceForPath } from './workbench';
 import type { ReviewGuide, ReviewHistoryEntry } from './types';
@@ -133,7 +134,10 @@ export function searchDocuments(documents: SearchDocument[], query: string, incl
 }
 export function queueDocuments(queue: WorkbenchQueue): SearchDocument[] {
   const docs: SearchDocument[] = [];
-  for (const item of queue.items) {
+  const items: QueueItem[] = [...queue.items, ...(queue.starredItems ?? [])];
+  for (const subject of queue.stacks ?? []) if (!items.some(item => item.subject.id === subject.id))
+    items.push({ subject, attention: 'other' });
+  for (const item of new Map(items.map(item => [item.subject.id, item])).values()) {
     const s = item.subject;
     const source = s.members.map((m) => `${m.repo} #${m.number}`).join(' · ');
     const common = {
@@ -164,6 +168,15 @@ export function queueDocuments(queue: WorkbenchQueue): SearchDocument[] {
         .map((m) => `${m.title}\n${m.description}\n${m.labels.join(' ')} ${m.baseBranch} ${m.headBranch}`)
         .join('\n'),
       destination: { kind: 'home', subject: item },
+    });
+    if (s.kind === 'stack') for (const member of s.members) docs.push({
+      ...common, id: `subject:${member.url}`, kind: 'pr', title: member.title,
+      source: `${member.repo} #${member.number}`, sourceUrl: member.url,
+      author: member.author, bot: isDependabot(member.author),
+      state: member.merged ? 'Merged' : member.state === 'closed' ? 'Closed' : member.isDraft ? 'Draft' : 'Open',
+      reviewId: undefined,
+      preview: member.description, text: `${member.description} ${member.labels.join(' ')} ${member.baseBranch} ${member.headBranch}`,
+      destination: { kind: 'home', subject: focusStackPr(item, member) },
     });
     if (item.briefing?.summary)
       docs.push({

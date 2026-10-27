@@ -95,7 +95,13 @@ export function PrChangesView({
     [checkError, setCheckError] = useState('');
   const [query, setQuery] = useState(''),
     [unviewed, setUnviewed] = useState(false),
-    [treeOpen, setTreeOpen] = useState(true);
+    [treeOpen, setTreeOpen] = useState(() => window.innerWidth > 700);
+  useEffect(() => {
+    const narrow = window.matchMedia('(max-width: 700px)');
+    const resize = () => { if (narrow.matches) setTreeOpen(false); };
+    narrow.addEventListener('change', resize);
+    return () => narrow.removeEventListener('change', resize);
+  }, []);
   const [treeWidth, setTreeWidth] = useState(() => {
     try {
       const saved = Number(localStorage.getItem('gnosis-changes-tree-width'));
@@ -314,8 +320,8 @@ export function PrChangesView({
         ? [
             {
               id: 'member',
-              label: `#${entry.snapshot.url.split('/').pop()}`,
-              pickerLabel: 'PR in stack',
+              label: `Source #${entry.snapshot.url.split('/').pop()}`,
+              pickerLabel: 'Source PR in combined changes',
               value: entry.snapshot.url,
               options: subject.members.map((member) => ({
                 value: member.url,
@@ -382,6 +388,9 @@ export function PrChangesView({
       className="pr-changes"
       aria-label={commit ? 'Commit changes' : 'PR changes'}
       onKeyDown={(e) => {
+        if (e.key === 'Escape' && treeOpen && window.innerWidth <= 700) {
+          e.stopPropagation(); setTreeOpen(false); return;
+        }
         if (e.key !== 'Escape' || chatOpen) e.stopPropagation();
       }}
     >
@@ -468,8 +477,10 @@ export function PrChangesView({
         className={`changes-workspace${treeOpen ? '' : ' tree-hidden'}${chatOpen ? ' chat-open' : ''}`}
         style={{ '--changes-tree-width': `${treeWidth}px` } as CSSProperties}
       >
+        {treeOpen && <button className="changes-tree-dismiss" aria-label="Close file browser" onClick={() => setTreeOpen(false)} />}
         {treeOpen && (
           <aside className={`changes-tree-pane${commit ? ' commits-sidebar' : ''}`} aria-label="File browser">
+            <button className="changes-tree-close" onClick={() => setTreeOpen(false)}>Close file browser</button>
             {commit?.sidebar}
             {commit && (
               <button className="commit-section-toggle" onClick={commit.toggleFiles} aria-expanded={commit.filesOpen}>

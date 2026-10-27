@@ -584,6 +584,14 @@ const mocks = {
     return Promise.resolve(mocks.workbenchQueue());
   },
   workbenchSnapshot: () => mocks.workbenchQueue(),
+  workbenchRenameStack: async (id: string, name: string) => {
+    const queue = await mocks.workbenchQueue();
+    const item = queue.items.find(i => i.subject.id === id);
+    if (!item) throw Error('Stack unavailable');
+    item.subject.name = name.trim() || undefined;
+    item.subject.title = item.subject.name ?? item.subject.members[0].title;
+    return queue;
+  },
   onPrReadStateChanged: (callback: () => void) => {
     window.addEventListener('fixture-pr-read-change', callback);
     return () => window.removeEventListener('fixture-pr-read-change', callback);

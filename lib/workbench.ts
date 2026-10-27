@@ -16,6 +16,8 @@ export interface StackEdge {
 }
 export interface ReviewSubject {
   id: string;
+  /** User-owned local name; never part of generated-content identity. */
+  name?: string;
   kind: 'pr' | 'stack';
   scope?: 'single';
   title: string;
@@ -40,6 +42,8 @@ export interface Briefing {
   updatedAt: string;
 }
 export interface QueueItem {
+  /** Navigation context only. The subject is always the scope being reviewed. */
+  parentStack?: ReviewSubject;
   unreadUrls?: string[];
   starred?: boolean;
   starredUrls?: string[];
@@ -49,6 +53,8 @@ export interface QueueItem {
   attention: 'updated' | 'requested' | 'other';
 }
 export interface WorkbenchQueue {
+  /** Locally retained hierarchy, including completed stacks outside the active queue. */
+  stacks?: ReviewSubject[];
   readStates?: Partial<Record<string, import('./pr-read-state').PrReadState>>;
   sync?: { status: 'idle' | 'checking' | 'paused' | 'error'; checkedAt?: number; retryAt?: number };
   mutedPrs?: import('./muted-prs').MutedPr[];
@@ -170,20 +176,21 @@ export function groupSubjects(
       continue;
     }
     const old = previous
-      .filter((p) => p.kind === 'stack' && p.members.some((m) => component.has(m.url)))
+      .filter((p) => p.kind === 'stack' && !result.some(s => s.id === p.id) && p.members.some((m) => component.has(m.url)))
       .sort(
         (a, b) =>
           b.members.filter((m) => component.has(m.url)).length - a.members.filter((m) => component.has(m.url)).length
       )
       .at(0);
-    const stack = ordered.length > 1;
+    const stack = ordered.length > 1 || !!old && old.members.filter(m => byUrl.has(m.url)).length === 1;
     const id = stack ? (old?.id ?? `stack:${ordered[0].url}`) : ordered[0].url;
     // A split group cannot retain the same identity as another resulting group.
     const uniqueId = result.some((s) => s.id === id) ? `stack:${ordered[0].url}` : id;
     result.push({
       id: uniqueId,
       kind: stack ? 'stack' : 'pr',
-      title: ordered[0].title,
+      title: stack && old?.name ? old.name : ordered[0].title,
+      ...(stack && old?.name ? { name: old.name } : {}),
       members: ordered,
       edges: relevant,
       warnings: ordered.flatMap((m) => warnings.get(m.url) ?? []),

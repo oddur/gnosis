@@ -189,7 +189,7 @@ port.on('message', (request: Request) => {
           }[]) {
             const state = read(name) as Record<string, unknown>;
             const retained = Object.fromEntries(
-              ['account', 'credentialKey', 'overrides', 'briefs', 'day', 'used', 'filters']
+              ['account', 'credentialKey', 'overrides', 'briefs', 'day', 'used', 'filters', 'stackNames']
                 .filter((key) => key in state)
                 .map((key) => [key, state[key]])
             );

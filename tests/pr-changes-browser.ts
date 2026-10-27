@@ -80,12 +80,14 @@ void app.whenReady().then(async () => {
       );
     for (const width of [1400, 1024, 640, 1280]) {
       window.setSize(width, 800);
+      await wait(`innerWidth===${width}`);
       await click('Summary');
       await new Promise((r) => setTimeout(r, 100));
       const summaryFrame = await frame();
       await capture(`frame-summary-${width}`);
       await js("document.querySelector('.pr-summary-content').scrollTop=160");
       await click('Changes');
+      if (width <= 700) await js("document.querySelector('.changes-toolbar button').click()");
       await wait("!!document.querySelector('.changes-file-tree')");
       assert.deepEqual(
         await frame(),
@@ -386,7 +388,7 @@ void app.whenReady().then(async () => {
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
-    await click('Author description');
+    await click('Open stack overview');
     await click('Changes');
     await wait("document.querySelector('.changes-progress')?.textContent.includes('/ 15')");
     await js(
@@ -447,7 +449,7 @@ void app.whenReady().then(async () => {
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
-    await click('Author description');
+    await click('Open stack overview');
     await click('Changes');
     await wait(
       "document.querySelector('.commit-stream-row[data-active=true] .changes-code')?.textContent.includes('Persist this draft across restarts.')"

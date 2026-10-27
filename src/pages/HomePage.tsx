@@ -1,3 +1,4 @@
+import { focusStackPr, resolveWorkspace, matchingStackMembers } from '../../lib/stack-workspace';
 import { RecentlyViewed } from '../../components/RecentlyViewed';
 import { PrBadge } from '../../components/EntityBadge';
 import { PrListSortControl } from '../../components/PrListSortControl';
@@ -349,8 +350,12 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
   const selectedItem = [...queue.items, ...(queue.starredItems ?? [])].find(
     (i) => i.subject.id === selected && matchesQueueFilters(i, filters, Date.now(), auth?.login)
   );
-  const summarySource =
-    openedItem && ([...queue.items, ...(queue.starredItems ?? [])].find((item) => item.subject.id === openedItem.subject.id) ?? openedItem);
+  const workspaceItems: QueueItem[] = [...queue.items, ...(queue.starredItems ?? [])];
+  for (const stack of queue.stacks ?? []) if (!workspaceItems.some(item => item.subject.id === stack.id))
+    workspaceItems.push({ subject: stack, attention: 'other' });
+  for (const entry of visibleHistory) if (entry.snapshot?.subject.kind === 'stack' && !workspaceItems.some(item => item.subject.id === entry.snapshot!.subject.id))
+    workspaceItems.push({ subject: entry.snapshot.subject, attention: 'other', review: entry });
+  const summarySource = openedItem && resolveWorkspace(openedItem, workspaceItems);
   const summaryItem = summarySource && {
     ...summarySource,
     review:
@@ -360,7 +365,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
           entry.snapshot?.subject.id === summarySource.subject.id ||
           (!entry.snapshot && entry.prUrl === summarySource.subject.members[0].url)
       ) ??
-      summarySource.review,
+      (summarySource.review && matchesExplanation(summarySource.review, summarySource.subject) ? summarySource.review : undefined),
   };
   useEffect(() => {
     if (!explanationDestination) return;
@@ -798,7 +803,17 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
     onNavigationChange?.(location, mutedUrls);
   });
   useEffect(() => { summaryNavigation.current++; }, [openedItem?.subject.id, savedView, commandDestination]);
-  const summaryIndex = summaryChoices.findIndex(choice => choice.value === summaryItem?.subject.id);
+  const summaryIndex = summaryChoices.findIndex(choice => choice.value === (summaryItem?.parentStack?.id ?? summaryItem?.subject.id));
+  const selectScope = (id: string) => {
+    if (!summaryItem) return;
+    const stack = summaryItem.subject.kind === 'stack' ? summaryItem.subject : summaryItem.parentStack;
+    if (!stack) return;
+    const parent = workspaceItems.find(item => item.subject.id === stack.id) ?? { subject: stack, attention: 'other' as const };
+    const member = parent.subject.members.find(member => member.url === id);
+    if (id !== stack.id && !member) return;
+    setOpenedItem(id === stack.id ? parent : focusStackPr(parent, member!));
+    setSelected(stack.id);
+  };
   const selectSummary = async (id: string) => {
     const version = ++summaryNavigation.current;
     setError('');
@@ -836,14 +851,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       setError('Could not save your getting-started preference. Try dismissing it again.');
     }
   };
-  const activate = (item: QueueItem) => {
-    const entry = item.review;
-    if (entry?.status === 'completed' && entry.snapshot?.fingerprint === fingerprint(item.subject)) void open(entry);
-    else {
-      setError('');
-      setOpenedItem(item);
-    }
-  };
+  const activate = (item: QueueItem) => { setError(''); setOpenedItem(item); };
   const openPrUrl = async () => {
     setError('');
     setOpeningPr(true);
@@ -851,11 +859,11 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       const match = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:[/?#].*)?$/.exec(url.trim());
       if (!match) throw new Error('Enter a GitHub PR URL, such as https://github.com/owner/repo/pull/123.');
       const canonical = `https://github.com/${match[1]}/${match[2]}/pull/${match[3]}`;
-      const cached = queue.items.find((item) =>
+      const cached = workspaceItems.find((item) =>
         item.subject.members.some((m) => m.url.toLowerCase() === canonical.toLowerCase())
       );
       if (cached) {
-        setOpenedItem(cached);
+        setOpenedItem(focusStackPr(cached, cached.subject.members.find(m => m.url.toLowerCase() === canonical.toLowerCase())!));
         setSelected(cached.subject.id);
       } else {
         const meta = await window.electronAPI.getPrMetadata(canonical);
@@ -865,6 +873,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
           subject: {
             id: canonical,
             kind: 'pr',
+            scope: 'single',
             title: meta.title,
             edges: [],
             warnings: [],
@@ -1028,7 +1037,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
   const requestPrReview = (member: QueueItem['subject']['members'][number]) => {
     const parent = [...queue.items, ...(queue.starredItems ?? []), ...(openedItem ? [openedItem] : [])]
       .find(item => item.subject.members.some(m => m.url === member.url));
-    const item: QueueItem = parent ?? {
+    const item: QueueItem = parent ? focusStackPr(parent, member) : {
       attention: 'other',
       subject: { id: member.url, kind: 'pr', title: member.title, members: [member], edges: [], warnings: [] },
     };
@@ -1150,6 +1159,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
           )}
           </div>
             <QueueMetadata onChecks={() => { setOpenedItem(item); setOverviewTab('checks'); }} subject={s} account={auth?.login ?? null} />
+            {s.kind === 'stack' && matchingStackMembers(item, filters, auth?.login).length < s.members.length && <span className="queue-stack-matches">{matchingStackMembers(item, filters, auth?.login).length} of {s.members.length} PRs match</span>}
             {item.briefing?.summary && <span className="queue-summary">{item.briefing.summary}</span>}
           </div>
         </div>}</PrEntryActions>
@@ -1159,11 +1169,11 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
               <PrEntryActions key={m.url} {...entryActions([m])}>{actions => <div className={`queue-member ${queue.readStates?.[m.url]?.unread.length ? 'is-unread' : ''}`}>
                 <PrStateIcon member={m} />
                 <div className="queue-member-content">
-                  <button className="queue-member-title" onClick={() => setSelected(s.id)}>
+                  <button className="queue-member-title" onClick={() => { setSelected(s.id); setOpenedItem(focusStackPr(item, m)); }}>
                     <span className="truncate">{m.title}</span>
                     <PrLabels members={[m]} />
                   </button>
-                  <QueueMetadata onChecks={() => { setOpenedItem(item); setOverviewTab('checks'); }} subject={{ id: m.url, kind: 'pr', title: m.title, members: [m], edges: [], warnings: [] }} account={auth?.login ?? null} />
+                  <QueueMetadata onChecks={() => { setOpenedItem(focusStackPr(item, m)); setOverviewTab('checks'); }} subject={{ id: m.url, kind: 'pr', title: m.title, members: [m], edges: [], warnings: [] }} account={auth?.login ?? null} />
                 </div>
                 <UnreadPrMarker urls={[m.url]} />
                 <PrStarMarker members={[m]} starredUrls={starredUrls} />{actions}
@@ -1263,6 +1273,19 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
         <PrSummary
         key={summaryItem.subject.id}
         item={summaryItem}
+        matchingUrls={matchingStackMembers(summaryItem, filters, auth?.login)}
+        onScopeChange={selectScope}
+        onRenameStack={async name => {
+          const next = await enqueueWrite(() => window.electronAPI.workbenchRenameStack(summaryItem.subject.id, name, auth?.login ?? undefined));
+          if (alive.current && readAccount.current === auth?.login) {
+            setQueue(next);
+            setOpenedItem(current => current ? resolveWorkspace(current, [...next.items, ...(next.starredItems ?? []), ...(next.stacks ?? []).map(subject => ({ subject, attention: 'other' as const }))]) : current);
+          }
+        }}
+        onQueue={() => {
+          summaryNavigation.current++; setOverviewTab('summary'); setOpenedItem(null);
+          requestAnimationFrame(() => rowButtons.current.get(selected ?? '')?.focus({ preventScroll: true }));
+        }}
         generationActions={generationActions}
         onReview={requestPrReview}
         reviewRequest={reviewRequest}
@@ -1298,6 +1321,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
         statuses={statuses}
         statusErrors={statusErrors}
         onBack={() => {
+          if (summaryItem.parentStack) { selectScope(summaryItem.parentStack.id); return; }
           summaryNavigation.current++;
           setOverviewTab('summary');
           setOpenedItem(null);
@@ -1306,7 +1330,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
           onGenerate={() =>
             void start(
               summaryItem.subject.members[0].url,
-          [...queue.items, ...(queue.starredItems ?? [])].some((item) => item.subject.id === summaryItem.subject.id) ? summaryItem.subject : undefined,
+              summaryItem.subject,
               undefined,
               summaryItem.subject.scope === 'single'
             )
@@ -1803,20 +1827,16 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                 )}
                 <div className="briefing-actions">
                     <Button size="sm" onClick={() => activate(selectedItem)}>
-                    {selectedItem.review?.status === 'completed' &&
-                    selectedItem.review.snapshot?.fingerprint === fingerprint(selectedItem.subject)
-                      ? 'Open AI explanation'
-                      : 'Open PR overview'}
+                    {selectedItem.subject.kind === 'stack' ? 'Open stack overview' : 'Open PR overview'}
                     <ArrowRight size={14} />
                   </Button>
                     {selectedItem.review?.status === 'completed' && (
                       <button
                         onClick={() => {
-                          setError('');
-                          setOpenedItem(selectedItem);
+                          if (selectedItem.review) void open(selectedItem.review);
                         }}
                       >
-                        Author description
+                        Open AI explanation
                       </button>
                     )}
                   {selectedItem.review?.status === 'completed' &&
@@ -1961,18 +1981,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                             <button
                               onClick={() => {
                             setError('');
-                                setOpenedItem({
-                                  attention: selectedItem.attention,
-                                  subject: {
-                                    id: m.url,
-                                    kind: 'pr',
-                                    scope: 'single',
-                                    title: m.title,
-                                    members: [m],
-                                    edges: [],
-                                    warnings: [],
-                                  },
-                                });
+                                setOpenedItem(focusStackPr(selectedItem, m));
                               }}
                             >
                             Open this PR

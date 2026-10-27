@@ -63,6 +63,7 @@ declare global {
       listActivity: () => Promise<ActivityTask[]>;
       activityAction: (id:string, action:ActivityAction) => Promise<void>;
       workbenchSnapshot: () => Promise<WorkbenchQueue>;
+      workbenchRenameStack: (id: string, name: string, account?: string) => Promise<WorkbenchQueue>;
       workbenchMutePrs: (request: MutePrRequest) => Promise<WorkbenchQueue>;
       workbenchMarkPrRead: (request: MarkPrReadRequest) => Promise<WorkbenchQueue>;
       onPrReadStateChanged: (callback: () => void) => () => void;

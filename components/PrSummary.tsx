@@ -1,3 +1,7 @@
+import { StackOverview } from './StackOverview';
+import { SearchableSelect } from './SearchableSelect';
+import { stackScopeChoices } from '../lib/stack-workspace';
+import { Button } from './ui/button';
 import { PrChecksView, type CheckFocus } from './PrChecksView';
 import { PrCheckSummary } from './PrCheckSummary';
 import { usePrChecks } from '../lib/use-pr-checks';
@@ -18,7 +22,7 @@ import { PrChangesView } from './PrChangesView';
 import type { Preferences } from '../lib/types';
 import { GitHubAuthor } from './GitHubAuthor';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, ExternalLink, Layers } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ExternalLink, Layers, Pencil, RefreshCw } from 'lucide-react';
 import { Markdown } from './Markdown';
 import { PrSubjectDetails } from './PrSubjectDetails';
 import { type QueueItem } from '../lib/workbench';
@@ -59,6 +63,10 @@ function PrSummaryContent({
   statuses,
   statusErrors,
   onBack,
+  onQueue,
+  onScopeChange,
+  onRenameStack,
+  matchingUrls,
   onGenerate,
   generationActions,
   onReview,
@@ -91,6 +99,10 @@ function PrSummaryContent({
   statuses: Partial<Record<string, PrStatus>>;
   statusErrors: Record<string, string>;
   onBack: () => void;
+  onQueue?: () => void;
+  onScopeChange?: (id: string) => void;
+  onRenameStack?: (name: string) => Promise<void>;
+  matchingUrls?: string[];
   onGenerate: () => void;
   generationActions?: PrGenerationActionsFor;
   onReview?: (member: ReviewMember) => void;
@@ -115,7 +127,11 @@ function PrSummaryContent({
   positions: Map<string, PrReadingPosition>;
   shortcutsEnabled?: boolean;
 }) {
-  usePrReadVisit(item.subject.members, tab === 'summary', 'summary');
+  usePrReadVisit(item.subject.members, tab === 'summary' && item.subject.kind === 'pr', 'summary');
+  const [renaming, setRenaming] = useState(false);
+  const [name, setName] = useState(item.subject.name ?? '');
+  const [nameBusy, setNameBusy] = useState(false);
+  const [nameError, setNameError] = useState('');
   const [initialFile, setInitialFile] = useState<{ url: string; path: string; line?: number; headSha?: string }>();
   const checks = usePrChecks(item.subject, account, tab === 'summary' || tab === 'checks', statuses);
   const [checkFocus, setCheckFocus] = useState<CheckFocus>();
@@ -131,7 +147,9 @@ function PrSummaryContent({
   });
   const [memberUrl, setMemberUrl] = useState(position.memberUrl);
   const activeUrl = item.subject.members.find((m) => m.url === memberUrl)?.url ?? item.subject.members[0].url;
-  const stacked = item.subject.members.length > 1;
+  const stacked = item.subject.kind === 'stack';
+  const parentStack = item.parentStack;
+  const scopeStack = stacked ? item.subject : parentStack;
   const first = item.subject.members[0];
   const activeMember = item.subject.members.find(m => m.url === activeUrl) ?? first;
   // Capture the revision the menu targeted, even if discovery advances while opening the dialog.
@@ -242,13 +260,8 @@ function PrSummaryContent({
     window.addEventListener('keydown', keydown);
     return () => window.removeEventListener('keydown', keydown);
   }, [navigation, onBack, shortcutsEnabled, activeUrl, position, tab]);
-  useReviewBreadcrumbs('summary', stacked ? [{
-    id: 'member', label: `#${item.subject.members.find(m => m.url === activeUrl)?.number}`,
-    title: item.subject.members.find(m => m.url === activeUrl)?.title,
-    pickerLabel: 'PR in stack', value: activeUrl,
-    options: item.subject.members.map(m => ({ value: m.url, label: `#${m.number} · ${m.title}` })),
-    select: url => { remember(); setMemberUrl(url); },
-  }] : []);
+  useReviewBreadcrumbs('summary', []);
+  const changeScope = (id: string) => { remember(); onScopeChange?.(id); };
   const tabs = [{ value: 'summary', label: 'Summary' }, { value: 'changes', label: 'Changes' },
     { value: 'commits', label: 'Commits' }, { value: 'checks', label: 'Checks' }, { value: 'explanation', label: 'Explanation' }];
   return (
@@ -264,11 +277,12 @@ function PrSummaryContent({
         <div className="pr-summary-toolbar">
           <div className="pr-summary-toolbar-inner">
             <ReviewBreadcrumbs scope={tab} base={[
-              { id: 'origin', label: navigation.viewName, navigate: back },
+              { id: 'origin', label: navigation.viewName, navigate: () => { remember(); (onQueue ?? onBack)(); } },
+              ...(parentStack ? [{ id: 'parent-stack', label: parentStack.title, title: 'Stack', navigate: () => changeScope(parentStack.id) }] : []),
               { id: 'subject', label: stacked ? `Stack · ${item.subject.title}` : `${first.repo} #${first.number}`,
                 title: item.subject.title, navigate: () => { remember(); onTabChange('summary'); },
-                pickerLabel: 'PR or stack', value: item.subject.id, options: navigation.choices,
-                select: id => { remember(); navigation.select(id); } },
+                pickerLabel: parentStack ? 'PR in stack' : 'PR or stack', value: item.subject.id, options: parentStack ? stackScopeChoices(parentStack).slice(1) : navigation.choices,
+                select: id => { remember(); parentStack ? changeScope(id) : navigation.select(id); } },
               { id: 'tab', label: tabs.find(t => t.value === tab)?.label ?? 'Summary',
                 pickerLabel: 'Review tab', value: tab, options: tabs,
                 select: value => { remember(); onTabChange(value as typeof tab); } },
@@ -304,8 +318,18 @@ function PrSummaryContent({
               {item.subject.title}
             </h1>
             <PrStarMarker members={item.subject.members} starredUrls={starredUrls} />
+            {stacked && onRenameStack && !renaming && <button className="workbench-icon" aria-label="Rename stack" title="Rename stack on this computer" onClick={() => { setName(item.subject.name ?? item.subject.title); setNameError(''); setRenaming(true); }}><Pencil size={15} /></button>}
             {actions}
           </div>
+          {renaming && <form className="stack-name-form" onSubmit={event => {
+            event.preventDefault(); if (!onRenameStack || nameBusy) return;
+            setNameBusy(true); setNameError('');
+            void onRenameStack(name).then(() => setRenaming(false)).catch(error => setNameError(String(error))).finally(() => setNameBusy(false));
+          }}>
+            <label htmlFor="stack-name">Stack name <span>Only in Gnosis on this computer</span></label>
+            <div><input id="stack-name" value={name} maxLength={120} autoFocus disabled={nameBusy} onChange={e => setName(e.target.value)} placeholder="Use the first PR title" onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); setRenaming(false); } }} /><Button size="sm" disabled={nameBusy} type="submit">{nameBusy ? 'Saving…' : 'Save'}</Button><Button size="sm" type="button" variant="ghost" disabled={nameBusy} onClick={() => setRenaming(false)}>Cancel</Button></div>
+            {nameError && <p role="alert">{nameError}</p>}
+          </form>}
           {starError && (
             <p role="alert" className="text-sm text-destructive">
               {starError}
@@ -316,7 +340,7 @@ function PrSummaryContent({
               {stacked ? (
                 <>
                   <Layers size={14} />
-                  {item.subject.members.length} PRs · one AI explanation
+                  {item.subject.members.length} PRs · whole stack
                 </>
               ) : (
                 <>
@@ -338,9 +362,11 @@ function PrSummaryContent({
           <SubjectReviewStatus subject={item.subject} signals={signals} checking={!signalsLoaded && !!account} />
           <ReadinessBadge readiness={readiness} reviewStatusShown />
           <ReadinessCheckedAt readiness={readiness} />
-          <div className="pr-summary-review-actions" inert={tab !== 'summary'} style={{ visibility: tab === 'summary' ? 'visible' : 'hidden' }}>{summaryReview.controls}</div>
-        </div>
+          {stacked && <button aria-label="Refresh status" title="Refresh status" disabled={statusRefreshing || !account} onClick={onRetryStatus}><RefreshCw size={14} className={statusRefreshing ? 'animate-spin' : undefined} /></button>}
+          {!stacked && <div className="pr-summary-review-actions" inert={tab !== 'summary' || stacked} style={{ visibility: tab === 'summary' && !stacked ? 'visible' : 'hidden' }}>{summaryReview.controls}</div>}
         {stacked && <PrActions member={item.subject.members[item.subject.members.length - 1]} stackMembers={item.subject.members} onChanged={onRetryStatus} />}
+        </div>
+        <div className="pr-workspace-navigation">
         <Tabs.List className="pr-overview-tabs" aria-label="PR overview">
           <Tabs.Trigger value="summary">Summary</Tabs.Trigger>
           <Tabs.Trigger value="changes">Changes</Tabs.Trigger>
@@ -348,6 +374,11 @@ function PrSummaryContent({
           <Tabs.Trigger value="checks">Checks{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>
           <Tabs.Trigger value="explanation">Explanation</Tabs.Trigger>
         </Tabs.List>
+        {scopeStack && onScopeChange && <nav className="stack-scope-bar" aria-label="Stack navigation">
+          <Layers size={15} aria-hidden="true" /><SearchableSelect label="Review scope" value={item.subject.id} triggerLabel={stacked ? 'Whole stack' : `#${first.number} · ${scopeStack.members.findIndex(m => m.url === first.url) + 1} of ${scopeStack.members.length}`} options={stackScopeChoices(scopeStack)} onValueChange={changeScope} popupBoundary="viewport" popupClassName="stack-scope-popup" />
+          {parentStack && <button className="stack-back" onClick={() => changeScope(parentStack.id)}>Back to stack</button>}
+        </nav>}
+        </div>
         <Tabs.Content value="changes" className="pr-changes-tab">
           {preferences && (
             <PrChangesView
@@ -404,11 +435,15 @@ function PrSummaryContent({
             ))}
             {item.briefing?.status === 'ready' && (
               <details className="pr-briefing" open>
-                <summary>AI briefing</summary>
+                <summary>{stacked ? 'Stack briefing' : 'AI briefing'}</summary>
                 <Markdown>{item.briefing.summary ?? ''}</Markdown>
               </details>
             )}
-            <PrSubjectDetails
+            {parentStack && <p className="pr-member-relationship">{parentStack.edges.some(edge => edge.child === first.url)
+              ? `Builds on ${parentStack.edges.filter(edge => edge.child === first.url).map(edge => `#${parentStack.members.find(m => m.url === edge.parent)?.number ?? '?'}`).join(', ')}`
+              : 'Base of stack'} · {parentStack.title}</p>}
+            {stacked ? <StackOverview item={item} signals={signals} checks={checks.values} checkErrors={checks.errors} checksBusy={checks.busy} matchingUrls={matchingUrls}
+              onOpen={member => changeScope(member.url)} onChecks={member => { changeScope(member.url); onTabChange('checks'); }} /> : <PrSubjectDetails
               generationActions={generationActions}
               onReview={onReview}
               reviewDisabled={!account}
@@ -430,7 +465,7 @@ function PrSummaryContent({
               statuses={statuses}
               statusErrors={statusErrors}
               onRetryStatus={onRetryStatus}
-            />
+            />}
           </div>
         </Tabs.Content>
       </main>

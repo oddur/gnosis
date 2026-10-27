@@ -197,3 +197,25 @@ test('bulk check prompts keep the real member source and revision', () => {
   assert.match(prompt, /pull\/2 at sha-2/);
   assert.doesNotMatch(prompt, /PR-owner/);
 });
+
+test('local stack names survive membership updates without changing explanation identity', () => {
+  const original = groupSubjects([member(1), member(2, 'branch-1')])[0];
+  const named = { ...original, name: 'Queue redesign', title: 'Queue redesign' };
+  assert.equal(fingerprint(named), fingerprint(original));
+  const next = groupSubjects([member(1), member(2, 'branch-1'), member(3, 'branch-2')], [], [named]);
+  assert.equal(next[0].id, original.id);
+  assert.equal(next[0].title, 'Queue redesign');
+  const remaining = groupSubjects([member(2, 'main')], [], [named]);
+  assert.equal(remaining[0].kind, 'stack');
+  assert.equal(remaining[0].id, original.id);
+  assert.equal(remaining[0].name, 'Queue redesign');
+});
+
+test('splitting a named stack does not copy its identity or name into two stacks', () => {
+  const original = groupSubjects([member(1), member(2, 'branch-1'), member(3, 'branch-2'), member(4, 'branch-3')])[0];
+  const named = { ...original, name: 'Queue redesign', title: 'Queue redesign' };
+  const split = groupSubjects(original.members, [{ parent: member(2).url, child: member(3).url, action: 'unlink' }], [named]);
+  assert.equal(split.length, 2);
+  assert.equal(new Set(split.map(s => s.id)).size, 2);
+  assert.equal(split.filter(s => s.name === named.name).length, 1);
+});

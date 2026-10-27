@@ -22,7 +22,7 @@ void app.whenReady().then(async () => {
   };
   const click = (label: string) =>
     js(`(()=>{
-    const button = [...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(label)});
+    const button = [...document.querySelectorAll('button')].find(b=>(b.textContent.trim()===${JSON.stringify(label)}||b.getAttribute('aria-label')===${JSON.stringify(label)}));
     if(!button) throw Error('Missing button: '+${JSON.stringify(label)});
     button.dispatchEvent(new MouseEvent("mousedown",{bubbles:true,button:0})); button.click();
   })()`);
@@ -237,27 +237,25 @@ void app.whenReady().then(async () => {
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
-    await click('Author description');
-    await wait("document.querySelectorAll('.pr-summary-page .pr-details').length === 1");
-    assert.equal(await js("document.querySelectorAll('.pr-stack-nav button').length"), 3);
-    await js("document.querySelectorAll('.pr-stack-nav button')[2].click()");
-    assert.match(await js<string>("document.querySelector('.pr-details-heading h2').textContent"), /#122/);
-    assert.match(await js<string>("document.querySelector('.pr-member-relationship').textContent"), /Builds on #121/);
+    await click('Open stack overview');
+    await wait("document.querySelectorAll('.stack-overview-member').length === 3");
+    assert.equal(await js("document.querySelectorAll('.pr-summary-page .pr-details').length"), 0);
     await capture('pr-summary-stack');
+    await click('Open PR #122');
+    await wait("document.querySelector('.pr-overview-heading h1')?.textContent.includes('adaptive batching')");
+    assert.match(await js<string>("document.querySelector('.pr-member-relationship').textContent"), /Builds on #121/);
     window.setSize(980, 700);
-    if (!await js("!!document.querySelector('[aria-label=\"PR in stack\"]')")) await click('Show full review hierarchy');
-    await wait("!!document.querySelector('[aria-label=\"PR in stack\"]')");
-    await js(
-      "window.selectOption('[aria-label=\"PR in stack\"]', 'https://github.com/klang/engine/pull/121')"
-    );
-    assert.match(await js<string>("document.querySelector('.pr-details-heading h2').textContent"), /#121/);
+    await js("window.selectOption('[aria-label=\"Review scope\"]', 'https://github.com/klang/engine/pull/121')");
+    await wait("document.querySelector('.pr-overview-heading h1')?.textContent.includes('Route worker')");
     await capture('pr-summary-stack-laptop');
     window.setSize(1280, 800);
-    assert.equal(await js('window.generationCalls.length'), 1, 'Opening a stack does not generate a review');
+    assert.equal(await js('window.generationCalls.length'), 1, 'Opening a stack or member does not generate a review');
     await click('Explanation');
+    await wait("!!document.querySelector('.explanation-empty')");
+    await click('Back to stack');
     await wait("!!document.querySelector('.workbench-overview')");
     await click('Summary');
-    assert.equal(await js("document.querySelectorAll('.pr-summary-page .pr-details').length"), 1);
+    assert.equal(await js("document.querySelectorAll('.stack-overview-member').length"), 3);
     await click('Explanation');
     await wait("!!document.querySelector('.overview-topic')");
     await click('Review queue');
@@ -291,33 +289,24 @@ void app.whenReady().then(async () => {
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))"
     );
-    await wait("document.querySelectorAll('.pr-stack-nav button').length === 9");
-    assert.equal(await js("document.querySelectorAll('.pr-summary-page .pr-details').length"), 1);
-    assert.equal(
-      await js(
-        "document.querySelector('.pr-summary-body>.workbench-notice').getBoundingClientRect().top < document.querySelector('.pr-description').getBoundingClientRect().top"
-      ),
-      true
-    );
-    await js("document.querySelectorAll('.pr-stack-nav button')[8].click()");
-    assert.match(await js<string>("document.querySelector('.pr-details-heading h2').textContent"), /#128/);
-    assert.match(await js<string>("document.querySelector('.pr-member-relationship').textContent"), /Builds on #127/);
+    await wait("document.querySelectorAll('.stack-overview-member').length === 9");
+    assert.equal(await js("document.querySelectorAll('.pr-summary-page .pr-details').length"), 0);
+    assert.ok(await js("!!document.querySelector('.pr-summary-body>.workbench-notice')"));
     await capture('pr-summary-nine-pr-stack');
+    await click('Open PR #128');
+    await wait("document.querySelector('.pr-overview-heading h1')?.textContent==='Stack step 9'");
+    assert.match(await js<string>("document.querySelector('.pr-member-relationship').textContent"), /Builds on #127/);
     await js("document.querySelector('.pr-summary-content').scrollTop=350");
-    await js("document.querySelectorAll('.pr-stack-nav button')[0].click()");
-    await js("document.querySelectorAll('.pr-stack-nav button')[8].click()");
+    await js("window.selectOption('[aria-label=\"Review scope\"]', 'https://github.com/klang/engine/pull/120')");
+    await js("window.selectOption('[aria-label=\"Review scope\"]', 'https://github.com/klang/engine/pull/128')");
     await wait("document.querySelector('.pr-summary-content').scrollTop>=330");
-    await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'j',bubbles:true}))");
-    await wait("!document.querySelector('.pr-stack-nav')");
-    await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'k',bubbles:true}))");
-    await wait(
-      "document.querySelector('.pr-details-heading h2')?.textContent.includes('#128') && document.querySelector('.pr-summary-content').scrollTop>=330"
-    );
     window.setSize(540, 760);
     await js("document.querySelector('.pr-summary-content').scrollTop=0");
     await capture('pr-summary-nine-pr-stack-narrow');
     assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
     window.setSize(1280, 800);
+    await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+    await wait("!!document.querySelector('.stack-overview')");
     await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
     await wait("!!document.querySelector('.queue-list')");
     await js("window.electronAPI.workbenchSetFilters({author:'sam'})");

@@ -87,6 +87,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('pr-read-state-changed', handler);
   },
   workbenchSnapshot: (): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-snapshot'),
+  workbenchRenameStack: (id: string, name: string, account?: string): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-rename-stack', id, name, account),
   workbenchMutePrs: (request: MutePrRequest): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-mute-prs', request),
   workbenchStarPrs: (request: StarPrRequest): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-star-prs', request),
   workbenchViewAction: (action: QueueViewAction): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-view-action', action),
