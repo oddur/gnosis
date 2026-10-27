@@ -54,7 +54,7 @@ void app.whenReady().then(async () => {
     await wait('document.hasFocus()');
     focusedSelector = selector;
     await js(
-      `document.activeElement.blur();document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center'})`
+      `document.activeElement.blur();document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'center',behavior:'instant'})`
     );
     await new Promise((r) => setTimeout(r, 150));
     await js(`document.querySelector(${JSON.stringify(selector)}).focus()`);
@@ -143,9 +143,9 @@ void app.whenReady().then(async () => {
     await capture('laptop');
     for (const width of [900, 640]) {
       win.setContentSize(width, 600);
-      // Keep the preview open while resizing, as it would be during a real window resize.
-      // Wait for native resizing and floating placement before measuring its bounds.
+      // Resizing can scroll the queue and dismiss the tooltip. Reopen it once resized.
       await wait(`innerWidth === ${width} && innerHeight === 600`);
+      await focus();
       await wait(
         `(()=>{const r=${content}?.getBoundingClientRect();return r && r.width > 0 && r.x >= 0 && r.y >= 0 && r.right <= innerWidth && r.bottom <= innerHeight})()`
       );
