@@ -1,3 +1,6 @@
+import { EventEmitter } from 'node:events';
+import type { BrowserWindow } from 'electron';
+import { attachWindowHistoryNavigation } from '../src/window-history-navigation';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createNavigationHistory, historyKeyDirection } from '../lib/navigation-history';
@@ -51,7 +54,7 @@ void test('browser shortcuts support driver mappings without stealing macOS word
 });
 
 void test('failed or superseded navigation restores the displayed visit without deleting Forward', () => {
-  const h = createNavigationHistory<string>(v => v);
+  const h = createNavigationHistory<string>((v) => v);
   for (const id of ['queue', 'review-a', 'review-b']) h.record(id);
   h.move(-1);
   h.move(-1);
@@ -59,4 +62,25 @@ void test('failed or superseded navigation restores the displayed visit without 
   assert.equal(h.current(), 'review-b');
   assert.equal(h.move(-1), 'review-a');
   assert.equal(h.move(1), 'review-b');
+});
+
+void test('native app commands and Logitech macOS swipe gestures use the same history directions', () => {
+  const window = new EventEmitter();
+  const moves: number[] = [];
+  let prevented = 0;
+  const event = {
+    preventDefault() {
+      prevented++;
+    },
+  };
+  attachWindowHistoryNavigation(window as unknown as BrowserWindow, (direction) => moves.push(direction));
+  window.emit('app-command', event, 'browser-backward');
+  window.emit('app-command', event, 'browser-forward');
+  window.emit('swipe', event, 'left');
+  window.emit('swipe', event, 'right');
+  window.emit('swipe', event, 'up');
+  window.emit('swipe', event, 'down');
+  window.emit('app-command', event, 'media-nexttrack');
+  assert.deepEqual(moves, [-1, 1, -1, 1]);
+  assert.equal(prevented, 4);
 });

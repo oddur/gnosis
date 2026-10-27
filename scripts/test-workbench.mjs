@@ -7,7 +7,7 @@ import path from 'node:path';
 import process from 'node:process';
 import electron from 'electron';
 import { setTimeout, clearTimeout } from 'node:timers';
-const navigationHistory = process.argv.includes('--navigation-history');
+const navigationHistory = process.argv.includes('--navigation-history') || process.argv.includes('--navigation-swipe');
 const entityBadges = process.argv.includes('--entity-badges');
 const labelFilter = process.argv.includes('--label-filter');
 const sorting = process.argv.includes('--sorting');
@@ -82,6 +82,7 @@ try {
   });
   const env = {
     ...process.env,
+    GNOSIS_NATIVE_SWIPE: process.argv.includes('--navigation-swipe') ? '1' : process.env.GNOSIS_NATIVE_SWIPE,
     GNOSIS_WORKBENCH_URL: `http://127.0.0.1:${address.port}/tests/fixtures/${splitDiff ? 'split-diff' : 'workbench'}.html`,
   };
   delete env.ELECTRON_RUN_AS_NODE;

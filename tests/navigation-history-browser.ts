@@ -1,3 +1,4 @@
+import { attachWindowHistoryNavigation } from '../src/window-history-navigation';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 
@@ -20,7 +21,15 @@ void app.whenReady().then(async () => {
     js(
       `(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(label)});if(!b)throw Error('Missing button '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
     );
+  attachWindowHistoryNavigation(win, (direction) => {
+    void js(`window.dispatchEvent(new CustomEvent('fixture-history-navigate',{detail:${direction}}))`);
+  });
   const mouse = async (button: number) => {
+    if (process.env.GNOSIS_NATIVE_SWIPE === '1') {
+      win.emit('swipe', { preventDefault() {} }, button === 3 ? 'left' : 'right');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return;
+    }
     for (const type of ['mousePressed', 'mouseReleased']) {
       await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
         type,
@@ -47,7 +56,9 @@ void app.whenReady().then(async () => {
     await click('Open PR overview');
     await wait("!!document.querySelector('[role=tab][aria-selected=true]')");
     const original = await title();
-    await js("(()=>{window.historyFilterWrites=0;const save=window.electronAPI.workbenchSetFilters;window.electronAPI.workbenchSetFilters=(...args)=>{window.historyFilterWrites++;return save(...args)}})()");
+    await js(
+      '(()=>{window.historyFilterWrites=0;const save=window.electronAPI.workbenchSetFilters;window.electronAPI.workbenchSetFilters=(...args)=>{window.historyFilterWrites++;return save(...args)}})()'
+    );
     await click('Changes');
     await wait("document.querySelector('[role=tab][aria-selected=true]')?.textContent==='Changes'");
     await click('Commits');
@@ -65,7 +76,11 @@ void app.whenReady().then(async () => {
     await mouse(4);
     await wait("document.querySelector('[role=tab][aria-selected=true]')?.textContent==='Summary'");
     assert.equal(await title(), original);
-    assert.equal(await js('window.historyFilterWrites'), 0, 'Tab and PR history do not rewrite unchanged queue filters');
+    assert.equal(
+      await js('window.historyFilterWrites'),
+      0,
+      'Tab and PR history do not rewrite unchanged queue filters'
+    );
     // Modals protect pending input, without consuming a history entry.
     await js(
       "(()=>{const d=document.createElement('div');d.id='test-modal';d.setAttribute('role','dialog');d.setAttribute('aria-modal','true');document.body.append(d)})()"
@@ -119,7 +134,7 @@ void app.whenReady().then(async () => {
     await mouse(4);
     await wait("document.querySelector('h1')?.textContent==='History view'");
     await wait("document.querySelector('.saved-view-link')?.getAttribute('aria-current')==='page'");
-    assert.equal(await js("window.electronAPI.workbenchSnapshot().then(q=>q.savedViews.activeId)"), 'history-view');
+    assert.equal(await js('window.electronAPI.workbenchSnapshot().then(q=>q.savedViews.activeId)'), 'history-view');
     console.log(
       'Navigation history passed: mouse back/forward, tab order, queue selection, shortcuts, modal protection and branching.'
     );
