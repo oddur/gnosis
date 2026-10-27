@@ -1,3 +1,5 @@
+import { fileClassifications, onClassificationUpdate } from './file-classification-service';
+import { createFileFilterState, type FileFilterAction } from './file-filter-state';
 import { attachWindowHistoryNavigation } from './window-history-navigation';
 import { loadReviewContents, startReviewFileMetadata } from '../lib/review-preparation';
 import { normalizeGitHubCacheMB, DEFAULT_GITHUB_CACHE_MB } from '../lib/github-cache-settings';
@@ -652,6 +654,7 @@ function setupAutoUpdater() {
 }
 
 const appData = createAppDataStore();
+const rawFileFilters = createFileFilterState(appData);
 void app.whenReady().then(async () => {
   setupLogging();
   try {
@@ -2548,6 +2551,23 @@ handleInteractive('perform-pr-action', async (_event, request: PrActionRequest) 
   }
 });
 
+onClassificationUpdate((key, kinds) => {
+  for (const win of BrowserWindow.getAllWindows()) win.webContents.send('file-classifications-changed', { key, kinds });
+});
+ipcMain.handle('load-file-filters', () => rawFileFilters.read());
+ipcMain.handle('update-file-filters', async (_event, action: FileFilterAction) => {
+  const value = await rawFileFilters.update(action);
+  for (const win of BrowserWindow.getAllWindows()) win.webContents.send('file-filters-changed', value);
+  return value;
+});
+async function classifySnapshot(client: ReturnType<typeof changesClient>, snapshot: import('../lib/pr-changes').PrChanges) {
+  return { ...snapshot, fileKinds: await fileClassifications.read(client, snapshot) };
+}
+ipcMain.handle('file-classifications', async (_event, request: PrFileRequest) => {
+  const client = changesClient();
+  const { snapshot } = await (request.comparison ? prCommits : prChanges).find(client, request);
+  return fileClassifications.read(client, snapshot);
+});
 const prChanges = createPrChangesService();
 const prCommits = createPrCommitsService();
 const changesClient = () => {
@@ -2567,11 +2587,11 @@ ipcMain.handle('clear-github-cache', () => {
 ipcMain.handle('prepared-inventories', async (_event, revisions: InspectionRevision[]) => {
   const client = changesClient();
   return {
-    changes: (await Promise.all(revisions.map(async r => await prChanges.restore(client, r.url, r) ?? prChanges.cached(client, r.url, r)))).flatMap(value => value ?? []),
+    changes: await Promise.all((await Promise.all(revisions.map(async r => await prChanges.restore(client, r.url, r) ?? prChanges.cached(client, r.url, r)))).flatMap(value => value ?? []).map(value => classifySnapshot(client, value))),
     commits: (await Promise.all(revisions.map(async r => await prCommits.restore(client, r.url, r) ?? prCommits.cached(client, r.url, r)))).flatMap(value => value ?? []),
   };
 });
-ipcMain.handle('pr-changes', (_event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) => withGitHubPriority(options.background ? 'background' : 'interactive', () => prChanges.manifest(changesClient(), url, refresh, options)));
+ipcMain.handle('pr-changes', (_event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) => withGitHubPriority(options.background ? 'background' : 'interactive', async () => { const client = changesClient(); return classifySnapshot(client, await prChanges.manifest(client, url, refresh, options)); }));
 ipcMain.handle('pr-commits', (_event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) => withGitHubPriority(options.background ? 'background' : 'interactive', () => prCommits.list(changesClient(), url, refresh, options)));
 const inspectionPrefetchGuard = (background: boolean) => {
   const token = getResolvedToken();
@@ -2582,7 +2602,7 @@ const inspectionPrefetchGuard = (background: boolean) => {
     if (paused) throw paused;
   } : undefined;
 };
-ipcMain.handle('commit-comparison', (_event, selection: CommitSelection, background: boolean = false) => withGitHubPriority(background ? 'background' : 'interactive', () => prCommits.comparison(changesClient(), selection, inspectionPrefetchGuard(background))));
+ipcMain.handle('commit-comparison', (_event, selection: CommitSelection, background: boolean = false) => withGitHubPriority(background ? 'background' : 'interactive', async () => { const client = changesClient(); return classifySnapshot(client, await prCommits.comparison(client, selection, inspectionPrefetchGuard(background))); }));
 ipcMain.handle('pr-change-file', (_event, request: PrFileRequest, background: boolean = false) => withGitHubPriority(background ? 'background' : 'interactive', () => (request.comparison ? prCommits : prChanges).content(changesClient(), request, inspectionPrefetchGuard(background))));
 ipcMain.handle('prepare-pr-review', (_event, url: string, revision: { baseSha: string; headSha: string }) => withGitHubPriority('background', () => prChanges.prepareReview(changesClient(), url, revision)));
 ipcMain.handle('pr-changes-revision', (_event, url: string) => prChanges.revision(changesClient(), url));

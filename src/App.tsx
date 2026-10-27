@@ -1,3 +1,4 @@
+import { useFileFilterSync } from '../lib/use-raw-file-filters';
 import { CommandCenter, type AppCommand } from '../lib/command-center';
 import type { SearchDestination } from '../lib/command-search';
 import { ReviewDraftScope } from '../lib/session-drafts';
@@ -20,6 +21,7 @@ import { useHistoryInput } from '../lib/use-history-input';
 type Page = 'home' | 'review';
 
 export function App() {
+  useFileFilterSync();
   const [navigationHistory] = useState(() => createNavigationHistory<AppLocation>(locationKey));
   const [homeRestoration, setHomeRestoration] = useState<{ location: HomeLocation; nonce: number }>();
   const lastHome = useRef<HomeLocation | undefined>(undefined);

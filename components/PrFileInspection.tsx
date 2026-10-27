@@ -1,5 +1,5 @@
 import { RepositoryBadge, PrBadge, CommitBadge } from './EntityBadge';
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties } from 'react';
 import { FileDiff, MultiFileDiff } from '@pierre/diffs/react';
 import type { DiffFileInput, FileDiffOptions, SelectedLineRange } from '@pierre/diffs';
 import { MessageSquare, ExternalLink } from 'lucide-react';
@@ -39,8 +39,10 @@ export function PrFileInspection({
   onViewedNext,
   onAsk,
   onOpenCurrentFile,
+  classificationControl,
 }: {
   entry: ChangeFileEntry;
+  classificationControl?: ReactNode;
   preferences: Preferences;
   discussion: ReturnType<typeof usePrDiscussions>;
   onViewedNext: () => void;
@@ -260,6 +262,7 @@ export function PrFileInspection({
         </span>
       </div>
       <div className="changes-file-actions">
+        {classificationControl}
         <label>
           <input
             type="checkbox"

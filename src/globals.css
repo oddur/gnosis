@@ -2947,3 +2947,31 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .commit-row-meta > .entity-badge { flex:initial; max-width:100%; }
 .commit-row-meta time { margin-left:auto; }
 .commit-row-meta .github-author { max-width:calc(100% - 4px); }
+
+/* Raw-diff filtering keeps review progress and hidden work explicit. */
+.raw-file-filter-popover { z-index:70; width:300px; max-width:calc(100vw - 24px); padding:14px; border:1px solid var(--border); border-radius:var(--radius); background:var(--popover); color:var(--popover-foreground); display:flex; flex-direction:column; gap:12px; font-size:var(--type-caption); }
+.raw-file-filter-popover label { display:flex; align-items:center; gap:8px; min-height:28px; cursor:pointer; }
+.raw-file-filter-popover label span { margin-left:auto; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
+.raw-file-filter-popover input { accent-color:var(--primary); }
+.raw-file-filter-popover p { color:var(--muted-foreground); line-height:1.5; margin:0; }
+.file-filter-count { font-size:var(--type-caption); color:var(--muted-foreground); }
+.file-kind-control { display:flex; align-items:center; gap:4px; }
+.file-kind-tag { padding:2px 5px; border:1px solid var(--border); border-radius:var(--radius-sm); font-size:var(--type-caption); color:var(--muted-foreground); white-space:nowrap; }
+.file-filter-group { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:10px 12px; border-bottom:1px solid var(--border); font-size:var(--type-caption); }
+.file-filter-group span { color:var(--muted-foreground); }
+.file-filter-group button,.file-filter-reveal { color:var(--primary); text-decoration:underline; text-underline-offset:3px; }
+.file-filter-reveal { display:block; margin-top:8px; }
+.file-filter-hidden p { margin:8px 0 12px; }
+
+.file-kind-reasons { display:flex; flex-direction:column; gap:10px; padding:8px; border-bottom:1px solid var(--border); margin-bottom:4px; font-size:var(--type-caption); line-height:1.5; color:var(--foreground); overflow-wrap:anywhere; }
+.file-kind-reasons p { display:flex; flex-direction:column; gap:2px; margin:0; }
+.file-kind-reasons strong { font-weight:600; }
+
+.file-extension-filter { display:flex; flex-direction:column; gap:8px; padding-top:12px; border-top:1px solid var(--border); }
+.file-extension-heading,.file-extension-footer { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+.file-extension-heading button,.file-extension-footer button { color:var(--primary); text-decoration:underline; text-underline-offset:3px; }
+.file-extension-filter .selection-trigger { width:100%; }
+.file-extension-popup { width:280px; max-width:calc(100vw - 24px); }
+.file-extension-popup .selection-option-label { display:flex; align-items:center; justify-content:space-between; gap:12px; flex:1; }
+.file-extension-count { color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
+.file-extension-footer { padding:8px 10px; border-top:1px solid var(--border); color:var(--muted-foreground); font-size:var(--type-caption); }

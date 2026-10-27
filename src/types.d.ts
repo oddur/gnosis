@@ -1,3 +1,5 @@
+import type { FileKinds, FileFilterState } from '../lib/file-kinds';
+import type { FileFilterAction } from './file-filter-state';
 import type { ReviewStateWrite, FileProgressPatch } from '../lib/review-state';
 import type { MarkPrReadRequest } from '../lib/pr-read-state';
 import type { PreparedInventories } from '../lib/pr-inspection-cache';
@@ -100,6 +102,11 @@ declare global {
       onReviewStats: (callback: (reviewId: string, inputBytes: number) => void) => void;
       offReviewStats: () => void;
       onReviewNavigate: (callback: (reviewId: string) => void) => void;
+      loadFileFilters: () => Promise<FileFilterState>;
+      updateFileFilters: (action:FileFilterAction) => Promise<FileFilterState>;
+      getFileClassifications: (request:PrFileRequest) => Promise<Record<string,FileKinds>>;
+      onFileFiltersChanged: (callback:(state:FileFilterState)=>void) => () => void;
+      onFileClassificationsChanged: (callback:(key:string,kinds:Record<string,FileKinds>)=>void) => () => void;
       onHistoryNavigate: (callback: (direction: -1 | 1) => void) => () => void;
       offReviewNavigate: () => void;
       sendSlideChat: (req: SendSlideChatRequest) => Promise<string>;

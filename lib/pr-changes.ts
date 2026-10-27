@@ -11,6 +11,7 @@ export interface PrChangeFile {
   patch?: string;
 }
 export interface PrChanges {
+  fileKinds?: Record<string, import('./file-kinds').FileKinds>;
   comparison?: CommitSelection;
   version: 1;
   url: string;
