@@ -29,6 +29,10 @@ export interface CommitSelection {
 export const commitSelectionKey = (s: CommitSelection) =>
   JSON.stringify([s.url, s.prBaseSha, s.prHeadSha, s.firstSha, s.lastSha, s.parentSha ?? '']);
 
+/** Historical progress belongs to a commit/parent pair, not the PR's moving head. */
+export const commitViewedKey = (url: string, sha: string, parentSha = '') =>
+  `commit-viewed:${JSON.stringify([url, sha, parentSha])}`;
+
 /** Remove only identical SHAs already represented by an ancestor PR, never sibling work. */
 export function ownedCommits(subject: ReviewSubject, lists: PrCommits[]) {
   const byUrl = new Map(lists.map((list) => [list.url, list]));

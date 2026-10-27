@@ -2688,7 +2688,12 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .commit-pr-heading > .commit-pr-count { flex:0 0 auto; font-size:var(--type-caption);color:var(--muted-foreground);font-variant-numeric:tabular-nums; }
 .commit-pr-commits { padding-left:12px; }
 .commit-pr-commits .commit-row { padding:12px;border-bottom:1px solid var(--border); }
-.commit-row-title { line-height:1.5;font-weight:600; }
+.commit-row-title { line-height:1.5;font-weight:500; }
+.commit-row.is-unviewed .commit-row-title { font-weight:650; }
+.commit-row-heading { display:flex;align-items:flex-start;gap:8px; }
+.commit-view-indicator { width:8px;flex:none;display:flex;align-items:center;height:1.5em;font-size:var(--type-control); }
+.commit-row-heading .commit-row-title { min-width:0; }
+.commit-row-meta { padding-left:16px; }
 .commit-row-meta { margin-top:6px;gap:6px; }
 .commit-row-meta time::before { content:'·';margin-right:6px; }
 .commit-row[aria-pressed=true] { box-shadow:inset 2px 0 var(--primary); }

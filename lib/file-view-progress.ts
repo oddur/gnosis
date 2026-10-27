@@ -2,6 +2,7 @@ import { readReviewState, patchFileProgress } from './renderer-review-state';
 import { FILE_PROGRESS_KEY, type FileProgressPatch } from './review-state';
 import { useSyncExternalStore } from 'react';
 import { fileRevisionKey, type PrChanges } from './pr-changes';
+import { commitViewedKey } from './pr-commits';
 interface Progress {
   aliases: Record<string, string>;
   marks: Partial<Record<string, boolean>>;
@@ -70,7 +71,20 @@ export function isFileViewed(key: string): boolean {
 export function markFileViewed(key: string, viewed: boolean) {
   const s = load();
   s.marks[s.aliases[key] ?? key] = viewed;
-  return changed({ aliases: {}, marks: { [s.aliases[key] ?? key]: viewed } });
+  const marks = { [s.aliases[key] ?? key]: viewed };
+  // A range can share a file's exact comparison with a previously completed
+  // commit. Unviewing it must clear that summary even when its row is not open.
+  if (!viewed && key.startsWith('commit:')) {
+    try {
+      const [url, , base, head] = JSON.parse(key.slice('commit:'.length)) as string[];
+      const summary = commitViewedKey(url, head, base === '4b825dc642cb6eb9a060e54bf8d69288fbee4904' ? '' : base);
+      if (s.marks[summary]) {
+        s.marks[summary] = false;
+        marks[summary] = false;
+      }
+    } catch { /* An unknown legacy key still retains its file mark. */ }
+  }
+  return changed({ aliases: {}, marks });
 }
 export function useFileProgress() {
   useSyncExternalStore(
