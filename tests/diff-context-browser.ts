@@ -9,7 +9,10 @@ void app.whenReady().then(async () => {
     show: true,
     webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false },
   });
-  const js = <T = unknown>(s: string) => win.webContents.executeJavaScript(s) as Promise<T>;
+  const js = async <T = unknown>(s: string): Promise<T> => {
+    try { return await win.webContents.executeJavaScript(s) as T; }
+    catch (error) { throw new Error(`${s}: ${String(error)}`); }
+  };
   const wait = async (s: string) => {
     for (let i = 0; i < 150; i++) {
       if (await js(s)) return;
@@ -37,7 +40,7 @@ void app.whenReady().then(async () => {
     await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
     await wait("document.querySelectorAll('.queue-item').length===7");
     await js(
-      `window.deepAll=(s,r=document)=>[...r.querySelectorAll(s),...[...r.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(s,e.shadowRoot))];window.contextCount=()=>window.deepAll('[data-line-type=context][data-column-number]',document.querySelector('[data-file*="src/worker.ts"] .changes-code')).length;void 0;`
+      `window.deepAll=(s,r=document)=>r?[...r.querySelectorAll(s),...[...r.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(s,e.shadowRoot))]:[];window.contextCount=()=>window.deepAll('[data-line-type=context][data-column-number]',document.querySelector('[data-file*="src/worker.ts"] .changes-code')).length;void 0;`
     );
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(e=>e.textContent.includes('Fix reconnect')).click()"
