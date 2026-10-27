@@ -32,6 +32,9 @@ void app.whenReady().then(async () => {
     win.focus();
     await js('document.fonts.ready');
     await new Promise((resolve) => setTimeout(resolve, 300));
+    await js(
+      'Promise.all(document.getAnimations().filter(a=>a.effect?.getTiming().iterations!==Infinity).map(a=>a.finished.catch(()=>{})))'
+    );
     fs.writeFileSync(path.join(directory, `${name}.png`), (await win.webContents.capturePage()).toPNG());
   };
   const dialog = 'document.querySelector(".d2-dialog")';
@@ -250,6 +253,71 @@ void app.whenReady().then(async () => {
       await wait("!!document.querySelector('.d2-dialog svg')");
       await click('Next diagram step', dialog);
       await capture(`generated-${name}-expanded`);
+      await click('Close');
+    }
+    await win.loadURL(`${galleryURL}?variant=algorithm`);
+    await wait("!!document.querySelector('.d2-preview svg')");
+    await click('Next diagram step');
+    await wait("document.querySelector('.d2-step-count')?.textContent.includes('2 of 3')");
+    await click('Next diagram step');
+    await wait("document.querySelector('.d2-caption > strong')?.textContent === 'Capacity is full: C must wait'");
+    assert.deepEqual(
+      await js(
+        '[...document.querySelectorAll(\'.d2-preview [data-d2-entity="slots"] [data-d2-updated]\')].map(e=>e.textContent)'
+      ),
+      ['2']
+    );
+    assert.equal(await js("document.querySelector('.d2-differences').open"), false);
+    assert.equal(await js("document.querySelectorAll('.d2-caption > p').length"), 1);
+    assert.equal(
+      await js("document.querySelector('.d2-preview [data-d2-entity=\"slots\"]').getAttribute('data-d2-focus')"),
+      'active'
+    );
+    await js("document.querySelector('.d2-differences summary').click()");
+    assert.ok(await js("document.querySelector('.d2-differences').textContent.includes('In flight: 1 / 2')"));
+    await js("document.querySelector('.d2-differences summary').click()");
+    for (const dark of [false, true]) {
+      await js("document.querySelector('.d2-view-nav button').click()");
+      await wait("document.querySelector('.d2-step-count')?.textContent.includes('1 of 3')");
+      await js(`document.documentElement.classList.toggle('dark',${dark})`);
+      await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      // A theme change recompiles and returns to the first step.
+      await wait(
+        "!!document.querySelector('.d2-preview svg') && document.querySelector('.d2-step-count')?.textContent.includes('1 of 3')"
+      );
+      await click('Next diagram step');
+      await wait("document.querySelector('.d2-step-count')?.textContent.includes('2 of 3')");
+      await click('Next diagram step');
+      await wait("document.querySelector('.d2-step-count')?.textContent.includes('3 of 3')");
+      await js("document.querySelector('.d2-diagram').scrollIntoView({block:'end'})");
+      await capture(`step-insights-${dark ? 'dark' : 'light'}`);
+      await click('Expand diagram');
+      await wait("!!document.querySelector('.d2-dialog .mermaid-zoom-art svg')");
+      await capture(`step-insights-expanded-${dark ? 'dark' : 'light'}`);
+      if (dark) {
+        win.webContents.debugger.attach('1.3');
+        await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+          features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
+        });
+        await click('Previous diagram step', dialog);
+        await click('Next diagram step', dialog);
+        assert.equal(
+          await js(
+            `${dialog}.querySelector('[data-d2-updated]') && getComputedStyle(${dialog}.querySelector('[data-d2-updated]')).animationName`
+          ),
+          'none'
+        );
+        assert.ok(
+          await js(
+            `getComputedStyle(${dialog}.querySelector('[data-d2-updated]')).textDecorationLine.includes('underline')`
+          )
+        );
+        await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
+        win.webContents.debugger.detach();
+        win.setSize(640, 740);
+        await capture('step-insights-expanded-narrow');
+        assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
+      }
       await click('Close');
     }
     console.log(

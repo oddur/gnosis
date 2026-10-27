@@ -1,6 +1,6 @@
 # D2 explanation diagrams
 
-New explanations use D2 with the local TALA engine. Saved Mermaid diagrams and Mermaid fences in PR descriptions still use Mermaid. Opening a saved explanation does not call a model or rewrite it. Richer guidance metadata requires a newly generated diagram or explanation.
+New explanations use D2 with the local TALA engine. Saved Mermaid diagrams and Mermaid fences in PR descriptions still use Mermaid. Opening a saved explanation does not call a model or rewrite it. Saved D2 diagrams gain the current rendering behavior without regeneration. Improved generated prose and richer guidance metadata require a newly generated diagram or explanation.
 
 A diagram primarily teaches how the change works: its trigger, data or state movement, decisions, invariant, and outcome. Before/after comparison supports that explanation when the contrast clarifies the mechanism. The viewer supports architecture containers, role icons, annotated sequences, concrete algorithm states, and before/after changes.
 
@@ -52,11 +52,13 @@ A saved `d2Diagram` contains D2 `source`, an optional `kind`, a `caption`, and o
 | Field | Meaning |
 | --- | --- |
 | `board` | `overview`, `steps.<name>`, or `scenarios.<name>` |
-| `title` | Name of the event or relationship |
-| `change` | Concrete action or state transition at this step |
-| `description` | Invariant, consequence, or reason that matters |
+| `title` | Short takeaway, such as “Capacity is full: C must wait” |
+| `change` | Optional concrete value or action absent from the title and description; otherwise empty |
+| `description` | One short sentence explaining the constraint or consequence |
 | `focus` | Exact D2 node or connection identifiers |
 | `evidence` | Optional `{filePath, startLine}` anchor in the supplied diff |
+
+Each sentence adds information. The viewer suppresses exact duplicate title, change, and description text. Generation guidance also asks writers to avoid repeated ideas and keep label wording and units consistent across states.
 
 For a stable walkthrough, metadata steps reuse `board: "overview"`. An optional Overview entry has `focus: []`. Explicit diagram kinds can start at the first useful focused step without an inserted overview. Entries select exact identifiers such as `api`, `service.handler`, `(client -> api)[0]`, or `service.(handler -> jobs)[0]`. Connection indices start at zero for each source/target pair. Unknown focus identifiers do not hide the diagram.
 
@@ -64,7 +66,9 @@ Native D2 boards represent actual drawing changes: new labels or values, added o
 
 The viewer supports only top-level steps/scenarios, with a limit of 12 compiled frames including the overview. Nested boards and layers produce a recoverable error. The metadata normalizer retains at most 12 step entries. Native boards alone do not establish an execution sequence or enable auto-play.
 
-When adjacent views use different boards, “What changed in the drawing” lists changed labels and added or removed entities. Up to three differences appear expanded. Longer lists start collapsed. These differences come from compiled entity labels and identities. The viewer does not simulate an algorithm or derive runtime values beyond those labels.
+When adjacent views use different boards, “Changes in this step” lists changed labels and added or removed entities. This list starts collapsed on each step. The comparison follows the authored view order, regardless of navigation direction. These differences come from compiled entity labels and identities. The viewer does not simulate an algorithm or derive runtime values beyond those labels.
+
+Inserted or replaced words and values receive a persistent underline in the SVG and one 450ms opacity pulse. This treatment preserves compiled coordinates, font metrics, and line breaks. Reduced motion removes the pulse but keeps the underline. Removed text remains available in the collapsed change list. Unsupported SVG labels, including labels drawn as paths, retain the entity outline without guaranteed marks on individual words or values.
 
 “Show supporting code” appears only for an evidence anchor that resolves within the current slide's diff hunks. The link closes the diagram and opens the relevant code location. A path outside those hunks does not produce a link.
 
@@ -76,7 +80,7 @@ Native steps and scenarios with the same graph share node positions, node sizes,
 
 This also applies to saved explanations without regeneration. Added or removed entities, changed connections, and changed shape structures retain separate layouts. If the compiler rejects a sizing constraint, the renderer keeps the original diagram. The extra layout pass runs in the D2 worker and uses the existing timeout and cache.
 
-The renderer caches completed output by source and theme, separately from presentation metadata. Changes to focus or captions do not trigger compilation. Limits apply to entry count and SVG bytes. Revisiting a cached diagram can show it immediately. The cache lasts for the application session. The saved review retains source and metadata.
+The renderer caches completed output by source and theme, separately from presentation metadata. Changes to focus or captions do not trigger compilation or rewrite D2 source. Limits apply to entry count and SVG bytes. Revisiting a cached diagram can show it immediately. The cache lasts for the application session. The saved review retains source and metadata.
 
 The normalizer handles malformed optional JSON at generation and display boundaries. Rendering errors leave the narrative and code available. Retry uses the local renderer without a model call. A deadline covers worker initialization, compilation, and rendering. An expired worker is discarded.
 
@@ -115,6 +119,8 @@ Each case records comprehension questions for human assessment. Check whether th
 The guided-diagram finish pass generated and compiled a fresh synthetic sequence through the live writer. Its focus identifiers matched compiled entities. The accepted response remains in [the generated fixtures](../tests/fixtures/d2-generated.json). The finish pass reported 288 passing tests, the diagram browser suite, TypeScript, and targeted ESLint checks.
 
 The independent finish reviewer returned SHIP. Captures in `.impeccable/review/d2-integration/` show the real explanation pane, expanded guidance, light and dark themes, and narrow layouts. These checks establish behavior on the tested fixtures. They do not establish explanation accuracy across arbitrary pull requests or exhaustive accessibility coverage.
+
+The later step-insights refinement passed 11 diagram unit tests, the Electron D2 browser suite, TypeScript, and targeted ESLint checks. Browser checks cover changed values, collapsed details, stable coordinates and zoom, reduced motion, and caption changes without compilation. Its independent finish reviewer returned SHIP with no material fixes. The `step-insights-*.png` captures in the same directory cover light, dark, expanded, and narrow views of the tested fixture. These results do not establish the quality of arbitrary model output.
 
 When evaluating generated output, inspect the causal claim, step order, focus, inherited state, failure paths, readability, and usefulness against the supplied code. Keep accepted outputs as compiler and browser fixtures. Valid SVG alone does not establish a useful explanation.
 

@@ -14,6 +14,39 @@ import { DEFAULT_CODEX_MODEL } from '../lib/models';
 import { buildTopicContext } from '../lib/context-builder';
 import type { Diagram } from '@d2lang/d2';
 import { STABLE_D2_SOURCE } from './fixtures/d2-stable';
+import { changedLabelRanges, markChangedLabel } from '../lib/d2-label-changes';
+
+void test('changed label ranges identify values without marking unchanged words or repeated numbers', async () => {
+  const changed = (before: string, after: string) =>
+    changedLabelRanges(before, after).map((r) => after.slice(r.start, r.end));
+  assert.deepEqual(changed('In flight: 1 / 2', 'In flight: 2 / 2'), ['2']);
+  assert.deepEqual(changed('Version 7, owner A', 'Version 8, owner B'), ['8', 'B']);
+  assert.deepEqual(changed('Pending: A, B, C', 'Pending: B, C'), []);
+  assert.deepEqual(changed('Value: 1\nLimit: 2', 'Value: 1 Limit: 2'), []);
+  assert.deepEqual(changed('État: prêt', 'État: fini'), ['fini']);
+  const long = 'unchanged '.repeat(400);
+  assert.deepEqual(changed(long + '1', long + '2'), ['2']);
+  assert.deepEqual(changed(long + '😀', long + '😃'), ['😃']);
+
+  const { JSDOM } = await import('jsdom');
+  const doc = new JSDOM(
+    `<svg xmlns="http://www.w3.org/2000/svg"><g data-d2-entity="slots"><rect x="10" y="20" width="240" height="100"/><text x="20" y="40"><tspan x="20" y="40">In flight: 2 / 2</tspan><tspan x="20" y="70">Next: C</tspan></text><g data-d2-entity="slots.child"><text>In flight: 2 / 2</text></g></g></svg>`,
+    { contentType: 'image/svg+xml' }
+  ).window.document;
+  const group = doc.querySelector('[data-d2-entity="slots"]');
+  assert.ok(group);
+  const original = group.textContent;
+  const label = 'In flight: 2 / 2\nNext: C';
+  markChangedLabel(group, label, changedLabelRanges('In flight: 1 / 2\nNext: B', label));
+  assert.deepEqual(
+    [...group.querySelectorAll('[data-d2-updated]')].map((e) => e.textContent),
+    ['2', 'C']
+  );
+  assert.equal(group.textContent, original, 'highlighting does not rewrite the label');
+  assert.equal(group.querySelector('rect')?.getAttribute('width'), '240');
+  assert.equal(group.querySelector('text > tspan')?.getAttribute('x'), '20');
+  assert.equal(group.querySelector('[data-d2-entity="slots.child"] [data-d2-updated]'), null);
+});
 
 const geometry = (board: Diagram) => ({
   shapes: board.shapes
