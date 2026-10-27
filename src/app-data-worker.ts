@@ -180,6 +180,8 @@ port.on('message', (request: Request) => {
           // Search also contains derived GitHub text; it can be rebuilt from surviving saved reviews.
           if (db.prepare("SELECT name FROM sqlite_master WHERE name='search_documents'").get())
             db.exec('DELETE FROM search_documents');
+          if (db.prepare("SELECT name FROM sqlite_master WHERE name='search_subjects'").get())
+            db.exec('DELETE FROM search_subjects');
           for (const { name } of db
             .prepare("SELECT DISTINCT name FROM records WHERE name LIKE 'workbench:%'")
             .all() as {

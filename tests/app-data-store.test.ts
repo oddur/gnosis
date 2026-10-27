@@ -200,9 +200,11 @@ test('clearing GitHub data removes derived search rows without deleting review p
     });
     const db = new DatabaseSync(path.join(dir, 'workbench.sqlite'));
     assert.ok(Number(db.prepare('SELECT count(*) AS n FROM search_documents').get()?.n) > 0);
+    db.prepare('INSERT INTO search_subjects(account,id,payload) VALUES(?,?,?)').run('alice', 'stack', '{}');
     await store.saveFileProgress({ aliases: {}, marks: { reviewed: true } });
     await store.clearGitHub();
     assert.equal(db.prepare('SELECT count(*) AS n FROM search_documents').get()?.n, 0);
+    assert.equal(db.prepare('SELECT count(*) AS n FROM search_subjects').get()?.n, 0);
     assert.equal(
       ((await store.loadReviewState({}))['gnosis-file-progress:v1'] as { marks: { reviewed: boolean } }).marks.reviewed,
       true
