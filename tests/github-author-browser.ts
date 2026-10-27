@@ -33,7 +33,7 @@ void app.whenReady().then(async () => {
     win.webContents.setZoomFactor(1);
     await wait("document.querySelectorAll('.queue-item').length===7");
     await js(
-      `(()=>{window.profileCalls=0;window.openedProfiles=[];const load=window.electronAPI.getGitHubProfile;window.electronAPI.getGitHubProfile=(login)=>{window.profileCalls++;return new Promise(resolve=>{window.resolveProfile=()=>resolve(load(login))})};window.electronAPI.openExternal=(url)=>{window.openedProfiles.push(url);return Promise.resolve()}})()`
+      `(()=>{window.profileCalls=0;window.openedProfiles=[];window.copiedValues=[];Object.defineProperty(navigator.clipboard,'writeText',{configurable:true,value:async text=>{window.copiedValues.push(text)}});const load=window.electronAPI.getGitHubProfile;window.electronAPI.getGitHubProfile=(login)=>{window.profileCalls++;return new Promise(resolve=>{window.resolveProfile=()=>resolve(load(login))})};window.electronAPI.openExternal=(url)=>{window.openedProfiles.push(url);return Promise.resolve()}})()`
     );
     await new Promise((r) => setTimeout(r, 450));
     assert.equal(await js('window.profileCalls'), 0, 'Rendering authors does not request profiles');
@@ -76,7 +76,8 @@ void app.whenReady().then(async () => {
     const selected = await js("document.querySelector('.queue-row-main[aria-pressed=true]')?.textContent");
     await js("document.querySelector('.queue-meta .github-author').click()");
     assert.equal(await js("document.querySelector('.queue-row-main[aria-pressed=true]')?.textContent"), selected);
-    assert.equal(await js('window.openedProfiles.length'), 1);
+    assert.equal(await js('window.openedProfiles.length'), 0);
+    assert.equal(await js('window.copiedValues.length'), 1);
     win.webContents.sendInputEvent({ type: 'mouseMove', x: 5, y: 5 });
     win.focus();
     win.webContents.focus();
@@ -110,6 +111,9 @@ void app.whenReady().then(async () => {
     const second = await js<{ x: number; y: number }>(
       "(()=>{const r=document.querySelectorAll('.queue-meta .github-author')[1].getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()"
     );
+    win.focus();
+    win.webContents.focus();
+    await wait('document.hasFocus()');
     win.webContents.sendInputEvent({ type: 'mouseMove', ...second });
     await wait("document.querySelector('.github-author-tooltip')?.textContent.includes('Profile details unavailable')");
     win.setSize(1200, 900);
@@ -130,7 +134,7 @@ void app.whenReady().then(async () => {
       )
     );
     console.log(
-      'GitHub authors passed: lazy hover, profile details, keyboard/Escape, external links, valid row controls, offline fallback, themes and zoom.'
+      'GitHub authors passed: lazy hover, profile details, keyboard/Escape, copy on click, valid row controls, offline fallback, themes and zoom.'
     );
     win.webContents.setZoomFactor(1);
     win.destroy();

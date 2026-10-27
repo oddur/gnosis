@@ -1,3 +1,4 @@
+import { RepositoryBadge, PrBadge } from './EntityBadge';
 import { GitHubAuthor } from './GitHubAuthor';
 import { sourceForPath } from '../lib/workbench';
 import { useState } from 'react';
@@ -114,11 +115,11 @@ export function WorkbenchOverview({
                       <div className="flex items-start gap-2">
                         <span className="stack-step">{i + 1}</span>
                         <span className="text-sm font-medium">
-                          #{m.number} {m.title}
+                          <PrBadge url={m.url} number={m.number} title={m.title} /> {m.title}
                         </span>
                       </div>
                       <p>
-                        {m.repo} · <GitHubAuthor login={m.author} /> · {m.merged ? 'Merged' : m.state}
+                        <RepositoryBadge repo={m.repo} /> · <GitHubAuthor login={m.author} /> · {m.merged ? 'Merged' : m.state}
                       </p>
                       <p>
                         {done}/{topics.length} topics reviewed{submissions[m.url] ? ` · ${submissions[m.url]}` : ''}

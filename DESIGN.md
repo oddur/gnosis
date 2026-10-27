@@ -48,11 +48,14 @@ typography:
   prose: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 16px, fontWeight: 400, lineHeight: 1.65}
   label-row: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 15px, fontWeight: 600, lineHeight: 1.5}
   label-button: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 14px, fontWeight: 500, lineHeight: 20px}
+  entity-label: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: .75rem, fontWeight: 500, lineHeight: 1.4}
+  entity-code: {fontFamily: "'JetBrains Mono', ui-monospace, 'Cascadia Code', 'Fira Code', monospace", fontSize: .75rem, fontWeight: 500, lineHeight: 1.4}
   mono: {fontFamily: "'JetBrains Mono', ui-monospace, 'Cascadia Code', 'Fira Code', monospace"}
 rounded:
   base: .4rem
   button: 4.4px
   control: 4px
+  entity: "calc(.4rem - 4px)"
   field: 5px
   drawer: 8px
   card: 10.4px
@@ -73,6 +76,9 @@ components:
   button-link: {textColor: "{colors.primary}", typography: "{typography.label-button}", rounded: "{rounded.button}", padding: 8px 16px, height: 36px}
   search-field: {backgroundColor: "{colors.card}", textColor: "{colors.foreground}", rounded: "{rounded.field}", padding: 6px 10px}
   navigation-active: {backgroundColor: "{colors.accent}", textColor: "{colors.accent-foreground}", rounded: "{rounded.field}", padding: 9px 10px}
+  entity-badge: {backgroundColor: "{colors.secondary}", textColor: "{colors.foreground}", typography: "{typography.entity-label}", rounded: "{rounded.entity}", padding: 2px 5px}
+  entity-badge-code: {backgroundColor: "{colors.accent}", textColor: "{colors.accent-foreground}", typography: "{typography.entity-code}", rounded: "{rounded.entity}", padding: 2px 5px}
+  entity-badge-hover: {backgroundColor: "{colors.accent}", textColor: "{colors.accent-foreground}"}
   briefing-tag: {textColor: "{colors.foreground}", rounded: "{rounded.control}", padding: 3px 7px}
   card: {backgroundColor: "{colors.card}", textColor: "{colors.foreground}", rounded: "{rounded.card}", padding: 24px}
 ---
@@ -182,6 +188,36 @@ Keep the visible focus outline and library focus ring. Disabled buttons use half
 Briefing tags have thin borders and compact padding. Settings option chips distinguish selection with an underline and ring.
 The queue search field uses a panel surface, muted icon, and 12px input text.
 Focus outlines the search container. Keep an accessible input label even when placeholder text is present.
+
+### Copyable entity badges
+
+[EntityBadge](components/EntityBadge.tsx) supplies compact, lightly tinted rectangular controls for app-owned metadata.
+User, repository, and PR badges use the entity-label role. Branch and commit badges use the entity-code role and accent colors.
+The badge radius derives from the runtime small radius. Each badge has a minimum height of 24px and a 4px internal gap.
+Small icons identify entity kinds. [GitHubAuthor](components/GitHubAuthor.tsx) supplies user avatars and loads profile details after deliberate hover or focus.
+
+| Entity | Display | Primary copy value |
+| --- | --- | --- |
+| User | GitHub login | Exact login without an added `@` |
+| Repository | Owner and repository | `owner/repo` |
+| PR | `#number` | Full PR URL |
+| Branch | Branch name | Exact branch name |
+| Commit | First seven SHA characters | Full SHA |
+
+Click, Enter, and Space copy the primary value. Titles, rows, and breadcrumbs retain their navigation behavior.
+Right-click, the context-menu key, or Shift+F10 opens entity actions. PR actions include the number and, when available, the title.
+The menu offers Open on GitHub when the destination is known. Menu dismissal returns focus to the badge.
+
+Hover and focus replace the leading entity icon or avatar with the copy icon. Success shows a checkmark there for 1500ms.
+Both icons share one grid cell, so feedback preserves the original icon's dimensions without trailing blank space.
+Failure shows an error icon, destructive text, and a retry instruction for the same duration. A polite live region announces the result.
+These states preserve badge dimensions. Keyboard focus uses a 2px ring with a 2px offset.
+
+Badge groups wrap with a 4px gap. Badges normally fit within the smaller of their container width and 32ch.
+Long labels retain their beginning and end through middle truncation. Tooltips show the full copy value and action after a 350ms delay.
+Clipboard values remain complete. Profile tooltips wait for their details before they appear.
+
+**The Entity Copy Rule.** Use badges for app-owned identifiers. Preserve navigation on titles, rows, and breadcrumbs, and preserve authored prose, generated prose, and code.
 
 ### Navigation and containers
 

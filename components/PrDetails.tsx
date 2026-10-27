@@ -1,5 +1,6 @@
+import { RepositoryBadge, PrBadge, BranchBadge, CommitBadge } from './EntityBadge';
 import { GitHubAuthor } from './GitHubAuthor';
-import { ExternalLink, GitBranch } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 import type { ReviewMember } from '../lib/workbench';
 import type { PrStatus } from '../lib/types';
 import { Markdown } from './Markdown';
@@ -44,11 +45,11 @@ export function PrDetails({
           <div>
             {showTitle && (
               <h2>
-                #{m.number} {m.title}
+                <PrBadge url={m.url} number={m.number} title={m.title} /> {m.title}
               </h2>
             )}
             <p>
-              {showTitle && <>{m.repo} · </>}
+              {showTitle && <><RepositoryBadge repo={m.repo} /> · </>}
               <span className={`pr-state pr-state-${state.toLowerCase()}`}>{state}</span> · by <GitHubAuthor login={m.author}/>
             </p>
           </div>
@@ -79,23 +80,17 @@ export function PrDetails({
           <dl>
             <dt>Branches</dt>
             <dd className="pr-branches">
-              <GitBranch size={14} aria-hidden="true" />
-              <span>
-                <code>
-                  {m.headRepo !== m.baseRepo ? `${m.headRepo}:` : ''}
-                  {m.headBranch}
-                </code>{' '}
-                → <code>{m.baseBranch}</code>
-              </span>
+              {m.headRepo !== m.baseRepo && <RepositoryBadge repo={m.headRepo} />}
+              <BranchBadge branch={m.headBranch} repo={m.headRepo} />
+              <span aria-label="into">→</span><BranchBadge branch={m.baseBranch} repo={m.baseRepo} />
             </dd>
             <dt>Labels</dt>
             <dd>{m.labels.length ? <PrLabels members={[m]} /> : 'None'}</dd>
             <dt>Assignees</dt>
-            <dd>{m.assignees?.join(', ') || 'Unassigned'}</dd>
+            <dd>{m.assignees?.length ? <span className="entity-badge-group">{m.assignees.map(login => <GitHubAuthor key={login} login={login} />)}</span> : 'Unassigned'}</dd>
             <dt>Review requested from</dt>
             <dd>
-              {[...meta.requestedReviewers, ...meta.requestedTeams.map((team) => `Team ${team}`)].join(', ') ||
-                'No reviewers requested'}
+              {meta.requestedReviewers.length || meta.requestedTeams.length ? <span className="entity-badge-group">{meta.requestedReviewers.map(login => <GitHubAuthor key={login} login={login} />)}{meta.requestedTeams.map(team => <span key={team}>Team {team}</span>)}</span> : 'No reviewers requested'}
             </dd>
           </dl>
           <details className="pr-secondary-metadata">
@@ -105,7 +100,7 @@ export function PrDetails({
               <dd>{meta.commitCount}</dd>
               <dt>Head revision</dt>
               <dd>
-                <code title={m.headSha}>{m.headSha.slice(0, 7)}</code>
+                <CommitBadge sha={m.headSha} repo={m.headRepo} />
               </dd>
               <dt>Created</dt>
               <dd>

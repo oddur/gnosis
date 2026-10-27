@@ -1,3 +1,4 @@
+import { PrBadge } from '../../components/EntityBadge';
 import { PrListSortControl } from '../../components/PrListSortControl';
 import { normalizePrListSort, sortQueueItems, sortSavedReviews, type PrListSort } from '../../lib/pr-list-sort';
 import { useListOrder, useListScrollAnchor } from '../../lib/use-list-order';
@@ -1613,7 +1614,7 @@ export function HomePage({ onReviewOriginChange, onReviewReady, prefillPrUrl, in
                           {entry.snapshot?.subject.kind === 'stack'
                             ? `${entry.snapshot.subject.members.length} PR stack · `
                             : ''}
-                          <GitHubAuthor login={entry.author}/> · {timeAgo(entry.savedAt)} ·{' '}
+                          <PrBadge url={entry.prUrl} title={entry.prTitle} /> <GitHubAuthor login={entry.author}/> · {timeAgo(entry.savedAt)} ·{' '}
                           {entry.status === 'generating'
                             ? 'Generating explanation'
                             : entry.status === 'failed'

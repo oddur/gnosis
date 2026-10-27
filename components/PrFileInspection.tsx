@@ -1,3 +1,4 @@
+import { RepositoryBadge, PrBadge, CommitBadge } from './EntityBadge';
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { FileDiff, MultiFileDiff } from '@pierre/diffs/react';
 import type { DiffFileInput, FileDiffOptions, SelectedLineRange } from '@pierre/diffs';
@@ -247,8 +248,7 @@ export function PrFileInspection({
       <div>
         {!commit && (
           <span className="changes-source">
-            {entry.snapshot.metadata.baseRepo} #{entry.snapshot.url.split('/').pop()} ·{' '}
-            {entry.snapshot.metadata.headSha.slice(0, 7)}
+            <RepositoryBadge repo={entry.snapshot.metadata.baseRepo} /> <PrBadge url={entry.snapshot.url} title={entry.snapshot.metadata.title} /> <CommitBadge sha={entry.snapshot.metadata.headSha} repo={entry.snapshot.metadata.headRepo} />
           </span>
         )}
         <h2 title={entry.file.path}>

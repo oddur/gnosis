@@ -1,8 +1,9 @@
+import { PrBadge, RepositoryBadge, CommitBadge } from './EntityBadge';
 import { usePrReadVisit } from '../lib/pr-read-context';
 import { useFileProgress } from '../lib/file-view-progress';
 import { changeFileKey } from './PrFileInspection';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, Copy, ExternalLink, RefreshCw } from 'lucide-react';
+import { ChevronDown, ChevronRight, ExternalLink, RefreshCw } from 'lucide-react';
 import {
   peekComparison,
   readComparison,
@@ -92,7 +93,6 @@ export function PrCommitsView({
   const [resolved, setResolved] = useState<{ key: string; snapshot: PrChanges }>();
   const [comparisonError, setComparisonError] = useState(''),
     [attempt, setAttempt] = useState(0);
-  const [copyStatus, setCopyStatus] = useState('');
   const commitListNode = useRef<HTMLDivElement>(null);
   const focusedCommit = useRef<string | undefined>(undefined);
   const attachCommitList = useCallback((node: HTMLDivElement | null) => {
@@ -220,7 +220,6 @@ export function PrCommitsView({
       lastSha: list.commits[Math.max(a, b)].sha,
     });
     if (!extend || anchor.current?.url !== list.url) anchor.current = { url: list.url, sha: commit.sha };
-    setCopyStatus('');
   }
   async function load(refresh: boolean) {
     const current = ++epoch.current;
@@ -407,8 +406,8 @@ export function PrCommitsView({
                           ? savedComparison.files.every(file => progress.isFileViewed(changeFileKey({ snapshot: savedComparison, file, key: file.path })))
                           : progress.isFileViewed(commitViewedKey(group.member.url, commit.sha, commit.parents.at(0) ?? ''));
                         return (
+                        <div key={commit.sha} className="commit-entry">
                         <button
-                          key={commit.sha}
                           data-commit-id={JSON.stringify([group.member.url, commit.sha])}
                           className={`commit-row${viewed ? '' : ' is-unviewed'}`}
                           title={viewed ? 'All files in this commit are viewed' : 'This commit has unviewed files'}
@@ -435,14 +434,18 @@ export function PrCommitsView({
                             <span className="sr-only">{viewed ? 'Viewed: ' : 'Unviewed: '}</span>
                             <span className="commit-row-title">{commit.message.split('\n')[0]}</span>
                           </span>
-                          <span className="commit-row-meta">
-                            <span>{authorName(commit)}</span>
-                            <code>{short(commit.sha)}</code>
+                          <span className="sr-only"> {short(commit.sha)}</span>
+                        </button>
+                          <div className="commit-row-meta" onClick={e => {
+                            if (!(e.target as HTMLElement).closest('button') && group.list) choose(group.list, commit, e.shiftKey || (rangeMode && !!anchor.current));
+                          }}>
+                            {commit.author.login ? <GitHubAuthor login={commit.author.login} /> : <span>{authorName(commit)}</span>}
+                            <CommitBadge sha={commit.sha} repo={group.member.headRepo} />
                             <time title={commit.committedAt}>
                               {commit.committedAt ? timeAgo(commit.committedAt) : ''}
                             </time>
-                          </span>
-                        </button>
+                          </div>
+                        </div>
                         );
                       })}
                       {!group.commits.length && (
@@ -472,19 +475,6 @@ export function PrCommitsView({
         <Button
           variant="ghost"
           size="sm"
-          aria-label="Copy commit SHA"
-          onClick={() => {
-            void navigator.clipboard.writeText(last.sha).then(
-              () => setCopyStatus('SHA copied'),
-              () => setCopyStatus('Could not copy SHA')
-            );
-          }}
-        >
-          <Copy size={14} />
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
           aria-label="Open comparison on GitHub"
           onClick={() => {
             void window.electronAPI.openExternal(
@@ -499,7 +489,7 @@ export function PrCommitsView({
       </div>
       <div className="commit-baseline">
         <span>
-          {activeList?.metadata.baseRepo} #{selection?.url.split('/').pop()}
+          {activeList && <RepositoryBadge repo={activeList.metadata.baseRepo} />} {selection && <PrBadge url={selection.url} title={activeList?.metadata.title} />}
         </span>
         {first.parents.length > 1 ? (
           <label>
@@ -523,21 +513,20 @@ export function PrCommitsView({
           <span>
             {first.parents.length ? (
               <>
-                Parent <code>{short(first.parents[0])}</code>
+                Parent <CommitBadge sha={first.parents[0]} repo={activeList?.metadata.baseRepo} />
               </>
             ) : (
               'Initial commit'
             )}{' '}
-            → <code>{short(last.sha)}</code>
+            → <CommitBadge sha={last.sha} repo={activeList?.metadata.headRepo} />
           </span>
         )}
         {first.parents.length > 1 && (
           <span>
-            → <code title={last.sha}>{short(last.sha)}</code>
+            → <CommitBadge sha={last.sha} repo={activeList?.metadata.headRepo} />
           </span>
         )}
       </div>
-      {copyStatus && <span role="status">{copyStatus}</span>}
       <details>
         <summary title="Full commit messages, authors, and metadata">Details</summary>
         <div className="commit-messages">
@@ -551,7 +540,7 @@ export function PrCommitsView({
             <article key={c.sha}>
               <pre>{c.message}</pre>
               <p>
-                <code>{c.sha}</code> · {c.author.name} · Authored {c.authoredAt || 'date unavailable'}
+                <CommitBadge sha={c.sha} repo={activeList?.metadata.headRepo} /> · {c.author.login ? <GitHubAuthor login={c.author.login} /> : c.author.name} · Authored {c.authoredAt || 'date unavailable'}
               </p>
               <p>
                 Committed by {c.committer || c.author.name} · {c.committedAt || 'date unavailable'} · {c.parents.length}{' '}

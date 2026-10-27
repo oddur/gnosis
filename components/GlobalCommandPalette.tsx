@@ -1,3 +1,5 @@
+import { SourceBadges } from './EntityBadge';
+import { GitHubAuthor } from './GitHubAuthor';
 import { commandRecents as recentIds, rememberCommandDestination as remember } from '../lib/command-recents';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -350,7 +352,7 @@ export function GlobalCommandPalette({
                               </strong>
                               <span>
                                 {doc.kind !== 'pr' && doc.kind !== 'stack' ? `${doc.groupTitle} · ` : ''}
-                                {doc.source}
+                                <SourceBadges source={doc.source} title={doc.kind === 'pr' ? doc.title : undefined} />
                               </span>
                               {term && snippet && (
                                 <small>
@@ -434,7 +436,7 @@ export function GlobalCommandPalette({
                       <span className="global-command-result-copy">
                         <strong>{row.title}</strong>
                         <span>
-                          {row.repoOwner}/{row.repoName} #{row.number} · {row.author}
+                          <SourceBadges source={`${row.repoOwner}/${row.repoName} #${row.number}`} title={row.title} /> <GitHubAuthor login={row.author} />
                         </span>
                       </span>
                     </CommandItem>
@@ -457,7 +459,7 @@ export function GlobalCommandPalette({
                     <span>{selected.document.state}</span>
                   </div>
                   <h2>{selected.document.title}</h2>
-                  <p className="global-command-source">{selected.document.source}</p>
+                  <p className="global-command-source"><SourceBadges source={selected.document.source} title={selected.document.kind === 'pr' ? selected.document.title : undefined} /></p>
                   <div className="global-command-match" tabIndex={0}>
                     {selected.codeSnippet ? (
                       <>
@@ -519,7 +521,7 @@ export function GlobalCommandPalette({
                   <GitPullRequest size={22} />
                   <h2>{selectedRemote.title}</h2>
                   <p>
-                    {selectedRemote.repoOwner}/{selectedRemote.repoName} #{selectedRemote.number}
+                    <SourceBadges source={`${selectedRemote.repoOwner}/${selectedRemote.repoName} #${selectedRemote.number}`} title={selectedRemote.title} />
                   </p>
                   <Button size="sm" disabled={busy} onClick={openSelected}>
                     Open PR overview

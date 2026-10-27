@@ -177,7 +177,7 @@ const items: QueueItem[] = [
         number: 150 + i,
         url: `https://github.com/klang/engine/pull/${150 + i}`,
         title,
-        headBranch: `fix-${i}`,
+        headBranch: i === 0 && new URLSearchParams(location.search).has('entity-badges') ? 'feature/streaming-worker-command-queue/cancellation-aware-backpressure' : `fix-${i}`,
         author: ['lena', 'sam', 'owen'][i % 3],
       },
     ])[0],

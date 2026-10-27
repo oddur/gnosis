@@ -1,3 +1,4 @@
+import { PrBadge } from './EntityBadge';
 import { DiffStats } from './DiffStats';
 import { ChevronDown, ChevronRight, MessageSquare } from 'lucide-react';
 import { FilePathLink } from './FilePathLink';
@@ -10,7 +11,7 @@ interface Props {
   gitFileUrlBase?: string | null;
   metadata?: FileMetadata;
   summary?: string;
-  source?: { number: number; title: string };
+  source?: { number: number; title: string; url?: string };
   commentCount: number;
   age?: string | null;
   expanded?: boolean;
@@ -80,7 +81,7 @@ export function ReviewFileHeader({
           )}
           {source && (
             <span className="source-attribution" title={source.title}>
-              PR #{source.number}
+              {source.url ? <PrBadge url={source.url} number={source.number} title={source.title} /> : `PR #${source.number}`}
             </span>
           )}
           <FilePathLink

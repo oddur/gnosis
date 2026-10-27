@@ -1,3 +1,4 @@
+import { PrBadge, BranchBadge, CommitBadge } from './EntityBadge';
 import { useEffect, useRef, useState } from 'react';
 import { GitMerge, RefreshCw, GitBranch, ChevronDown, Loader2, ExternalLink } from 'lucide-react';
 import { DropdownMenu } from 'radix-ui';
@@ -352,17 +353,26 @@ export function PrActions({
           {plan && (
             <>
               <ol className="pr-action-members">
-                {members.map((m) => (
-                  <li key={m.url}>
-                    <a href={m.url} target="_blank" rel="noreferrer">
-                      #{m.number} {m.title}
-                      <ExternalLink size={12} />
-                    </a>
-                    <span>
-                      <code>{m.headBranch}</code> · <code>{m.headSha.slice(0, 7)}</code>
-                    </span>
-                  </li>
-                ))}
+                {members.map((m) => {
+                  const source =
+                    stackMembers?.find((candidate) => candidate.url === m.url) ??
+                    (member.url === m.url ? member : undefined);
+                  return (
+                    <li key={m.url}>
+                      <div className="entity-badge-group">
+                        <PrBadge url={m.url} number={m.number} title={m.title} />
+                        <a href={m.url} target="_blank" rel="noreferrer">
+                          {m.title}
+                          <ExternalLink size={12} />
+                        </a>
+                      </div>
+                      <span>
+                        <BranchBadge branch={m.headBranch} repo={source?.headRepo} /> ·{' '}
+                        <CommitBadge sha={m.headSha} repo={source?.headRepo} />
+                      </span>
+                    </li>
+                  );
+                })}
               </ol>
               {plan.createStack && kind === 'merge' && (
                 <p className="pr-action-note">

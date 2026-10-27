@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-22T20:26:16.440Z",
+  "generatedAt": "2026-10-27T12:25:35.216Z",
   "title": "Design System: Gnosis",
   "extensions": {
     "colorMeta": {
@@ -272,7 +272,7 @@
       },
       "dark-primary": {
         "role": "primary",
-        "displayName": "Workbench blue — Dark",
+        "displayName": "Workbench blue \u2014 Dark",
         "tonalRamp": [
           "oklch(0.15 0.09508 267.78)",
           "oklch(0.26 0.09508 267.78)",
@@ -569,6 +569,14 @@
       "mono": {
         "displayName": "mono",
         "purpose": "Selected code family; diffs and Markdown blocks share 13px/20px rem tokens."
+      },
+      "entity-label": {
+        "displayName": "Entity label",
+        "purpose": "Copyable GitHub users, repositories, and PR numbers."
+      },
+      "entity-code": {
+        "displayName": "Entity code",
+        "purpose": "Copyable branch names and commit SHAs."
       }
     },
     "shadows": [
@@ -704,6 +712,14 @@
       "description": "The library card primitive; queue rows remain flat and compact.",
       "html": "<section class=\"ds-card\"><div class=\"ds-card-header\"><h3 class=\"ds-card-title\">Review settings</h3><p class=\"ds-card-description\">Choose how code appears.</p></div></section>",
       "css": ".ds-card { display:flex; flex-direction:column; gap:24px; padding:24px 0; border:1px solid var(--border, #e1e5ec); border-radius:calc(var(--radius, .4rem) + 4px); background:var(--card, #fff); color:var(--foreground, #242a35); font-family:var(--font-sans, 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif); box-shadow:0 1px 3px 0 rgb(0 0 0 / .1), 0 1px 2px -1px rgb(0 0 0 / .1); } .ds-card-header { display:grid; gap:8px; padding:0 24px; } .ds-card-title { margin:0; font-size:15px; font-weight:600; line-height:1.375; } .ds-card-description { margin:0; color:var(--muted-foreground, #626b7b); font-size:14px; line-height:1.5; }"
+    },
+    {
+      "name": "Copyable entity badge",
+      "kind": "chip",
+      "refersTo": "entity-badge-code",
+      "description": "Branch metadata copies the exact branch name. The app supplies clipboard actions, context menus, delayed tooltips, and transient result icons. This preview shows hover and keyboard focus.",
+      "html": "<button type=\"button\" class=\"ds-entity-badge\" aria-label=\"Copy branch name: feature/review-navigation\"><span class=\"ds-entity-icon\" aria-hidden=\"true\"><span class=\"ds-entity-identity\"><svg width=\"13\" height=\"13\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><path d=\"M6 3v12\"/><circle cx=\"18\" cy=\"6\" r=\"3\"/><circle cx=\"6\" cy=\"18\" r=\"3\"/><path d=\"M18 9a9 9 0 0 1-9 9\"/></svg></span><span class=\"ds-entity-copy\" aria-hidden=\"true\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\"><rect width=\"14\" height=\"14\" x=\"8\" y=\"8\" rx=\"2\" ry=\"2\"/><path d=\"M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2\"/></svg></span></span><span class=\"ds-entity-value\" aria-hidden=\"true\"><span class=\"ds-entity-start\">feature/revie</span><span class=\"ds-entity-tail\"><span>w-navigation</span></span></span></button>",
+      "css": ".ds-entity-badge { display:inline-flex; align-items:center; gap:4px; min-width:0; max-width:min(100%, 32ch); min-height:24px; padding:2px 5px; border:1px solid transparent; border-radius:var(--radius-sm, calc(.4rem - 4px)); background:var(--accent, #eaf0ff); color:var(--accent-foreground, #24469c); font-family:var(--font-mono, 'JetBrains Mono', ui-monospace, 'Cascadia Code', 'Fira Code', monospace); font-size:var(--type-caption, .75rem); font-weight:500; line-height:1.4; vertical-align:middle; text-align:left; cursor:copy; } .ds-entity-badge:hover { border-color:var(--input, #d5dbe5); background:var(--accent, #eaf0ff); color:var(--accent-foreground, #24469c); } .ds-entity-badge:focus-visible { outline:2px solid var(--ring, #345fc1); outline-offset:2px; } .ds-entity-icon { display:inline-grid; flex-shrink:0; } .ds-entity-identity,.ds-entity-copy { display:inline-flex; align-items:center; justify-content:center; grid-area:1 / 1; } .ds-entity-copy { opacity:0; } .ds-entity-badge:hover .ds-entity-copy,.ds-entity-badge:focus-visible .ds-entity-copy,.ds-entity-badge[data-copy-state=copied] .ds-entity-copy,.ds-entity-badge[data-copy-state=failed] .ds-entity-copy { opacity:1; } .ds-entity-badge[data-copy-state=failed] { color:var(--destructive, oklch(0.55 0.16 25)); } .ds-entity-value { display:inline-flex; min-width:0; overflow:hidden; white-space:nowrap; } .ds-entity-start { min-width:0; overflow:hidden; text-overflow:ellipsis; } .ds-entity-tail { display:flex; justify-content:flex-end; flex-shrink:0; max-width:45%; overflow:hidden; } .ds-entity-tail > span { flex-shrink:0; } .ds-entity-badge:hover .ds-entity-identity,.ds-entity-badge:focus-visible .ds-entity-identity,.ds-entity-badge[data-copy-state=copied] .ds-entity-identity,.ds-entity-badge[data-copy-state=failed] .ds-entity-identity { opacity:0; }"
     }
   ],
   "narrative": {
@@ -730,6 +746,11 @@
         "name": "The Surface Rule",
         "body": "Use borders and tonal layers for the main workspace. Reserve existing shadows for the primitives that already use them.",
         "section": "elevation"
+      },
+      {
+        "name": "The Entity Copy Rule",
+        "body": "Use badges for app-owned identifiers. Preserve navigation on titles, rows, and breadcrumbs, and preserve authored prose, generated prose, and code.",
+        "section": "components"
       }
     ],
     "dos": [

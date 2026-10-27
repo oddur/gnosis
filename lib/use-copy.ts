@@ -36,10 +36,12 @@ export function useCopyToClipboard(resetMs = 1500): {
 
   const copy = useCallback(
     (text: string) => {
-      navigator.clipboard.writeText(text).then(
-        () => flash('copied'),
-        () => flash('failed')
-      );
+      Promise.resolve()
+        .then(() => navigator.clipboard.writeText(text))
+        .then(
+          () => flash('copied'),
+          () => flash('failed')
+        );
     },
     [flash]
   );
