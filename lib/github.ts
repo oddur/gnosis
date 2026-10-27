@@ -699,6 +699,10 @@ export class GitHubDiffSource implements DiffSource {
       if (prepared) return prepared.comparisonBase;
       const { data } = await this.octokit.repos.compareCommits({ owner: this.owner, repo: this.repo, base: meta.baseSha, head: meta.headSha });
       return data.merge_base_commit.sha;
+    }).catch((error: unknown) => {
+      // Keep successful revision pins, but allow a rate-limited lookup to resume.
+      this.comparisonBase = null;
+      throw error;
     });
     return this.comparisonBase;
   }

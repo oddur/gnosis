@@ -137,3 +137,27 @@ void test('completed optional history is retained', async () => {
   await Promise.resolve();
   assert.equal(metadata.finish()[0].prCommitCount, 3);
 });
+
+void test('a rate-limited merge-base lookup can recover on the same generation source', async () => {
+  const { GitHubDiffSource } = await import('../lib/github');
+  let now = 1_000_000, comparisons = 0;
+  const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } });
+  const pool = createGitHubClientPool({ now: () => now, minSpacingMs: 0, fetch: ((input: string) => {
+    const path = new URL(input).pathname;
+    if (path.includes('/compare/')) {
+      if (++comparisons === 1) return Promise.resolve(new Response(JSON.stringify({ message: 'secondary rate limit' }), {
+        status: 429, headers: { 'content-type': 'application/json', 'retry-after': '60' },
+      }));
+      return Promise.resolve(json({ merge_base_commit: { sha: 'mergebase' } }));
+    }
+    return Promise.resolve(json({ title: 'PR', user: { login: 'dev' }, state: 'open', labels: [],
+      base: { ref: 'main', sha: 'base', repo: { full_name: 'o/r' } },
+      head: { ref: 'feature', sha: 'head', repo: { full_name: 'o/r' } },
+    }));
+  }) as typeof fetch });
+  const source = new GitHubDiffSource('https://github.com/o/r/pull/1', 'account', pool.client('account'));
+  await assert.rejects(source.getComparisonBase(), GitHubBackoffError);
+  now += 62_000;
+  assert.equal(await source.getComparisonBase(), 'mergebase');
+  assert.equal(comparisons, 2);
+});
