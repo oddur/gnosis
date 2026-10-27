@@ -2979,7 +2979,7 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .file-extension-footer { padding:8px 10px; border-top:1px solid var(--border); color:var(--muted-foreground); font-size:var(--type-caption); }
 
 /* Cached PR previews preserve copy-on-click and never fetch GitHub on hover. */
-.entity-badge-tooltip.pr-badge-tooltip { width:360px; max-width:calc(100vw - 24px); padding:12px; gap:10px; text-align:left; text-wrap:initial; }
+.entity-badge-tooltip.pr-badge-tooltip { width:360px; max-width:calc(100vw - 24px); max-height:var(--radix-tooltip-content-available-height); overflow-y:auto; padding:12px; gap:10px; text-align:left; text-wrap:initial; }
 .pr-badge-preview { display:flex; flex-direction:column; gap:8px; min-width:0; }
 .pr-badge-preview-title { font-size:var(--type-body); font-weight:650; line-height:1.4; }
 .pr-badge-preview-meta { color:var(--muted-foreground); font-size:var(--type-caption); }

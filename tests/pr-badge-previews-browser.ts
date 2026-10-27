@@ -136,16 +136,16 @@ void app.whenReady().then(async () => {
     await js(
       "window.electronAPI.getPrBadgePreview=async url=>{const p=await window.basePreview(url);p.member.title='Preserve cancellation and retry boundaries across streaming command processing and connection recovery'.repeat(2);p.briefing.summary='Preserve pending work when transport reconnects. '.repeat(30);p.member.headBranch='feature/'+'long-branch-name-'.repeat(20);return p};void 0"
     );
-    win.setContentSize(900, 740);
+    win.setContentSize(900, 600);
     await new Promise((r) => setTimeout(r, 300));
     await focus();
     assert.match(await js<string>(`${content}.textContent`), /Preserve cancellation/);
     await capture('laptop');
     for (const width of [900, 640]) {
-      win.setContentSize(width, 740);
+      win.setContentSize(width, 600);
       // Keep the preview open while resizing, as it would be during a real window resize.
       // Wait for native resizing and floating placement before measuring its bounds.
-      await wait(`innerWidth === ${width} && innerHeight === 740`);
+      await wait(`innerWidth === ${width} && innerHeight === 600`);
       await wait(
         `(()=>{const r=${content}?.getBoundingClientRect();return r && r.width > 0 && r.x >= 0 && r.y >= 0 && r.right <= innerWidth && r.bottom <= innerHeight})()`
       );
@@ -153,7 +153,7 @@ void app.whenReady().then(async () => {
         `(()=>{const r=${content}.getBoundingClientRect();return {x:r.x,y:r.y,right:r.right,bottom:r.bottom}})()`
       );
       assert.ok(
-        rect.x >= 0 && rect.y >= 0 && rect.right <= width && rect.bottom <= 740,
+        rect.x >= 0 && rect.y >= 0 && rect.right <= width && rect.bottom <= 600,
         `Tooltip fits viewport: ${JSON.stringify({ width, rect })}`
       );
       if (width === 640) await capture('narrow');
