@@ -1,6 +1,7 @@
 import type { D2DiagramSpec } from './types';
 import type { D2Frame } from './d2';
 import { diagramFrameCaption } from './diagram-spec';
+import { changedLabelRanges, markChangedLabel, type LabelRange } from './d2-label-changes';
 
 export interface DiagramEntity {
   id: string;
@@ -17,7 +18,13 @@ export interface DiagramView {
   change?: string;
   evidence?: { filePath: string; startLine: number };
   focus: string[];
-  differences: { label: string; before: string; after: string }[];
+  differences: {
+    label: string;
+    before: string;
+    after: string;
+    kind: 'added' | 'changed' | 'removed';
+    ranges: LabelRange[];
+  }[];
 }
 
 /** D2 wraps its drawing in an inner SVG with its own origin. Align both SVG
@@ -87,18 +94,26 @@ export function diagramViews(spec: D2DiagramSpec, frames: D2Frame[]): DiagramVie
             label: entity.id,
             before: before?.label || 'Not present',
             after: entity.label || entity.id,
+            kind: before ? 'changed' : 'added',
+            ranges: changedLabelRanges(before?.label ?? '', entity.label),
           });
         }
         old.delete(entity.id);
       }
       for (const entity of old.values())
-        differences.push({ label: entity.id, before: entity.label || entity.id, after: 'Removed' });
+        differences.push({
+          label: entity.id,
+          before: entity.label || entity.id,
+          after: 'Removed',
+          kind: 'removed',
+          ranges: [],
+        });
     }
     return {
       key: `${frame.id}:${index}`,
       frame,
       title: caption?.title || (i === 0 ? 'Overview' : frame.name.replace(/_/g, ' ')),
-      description: caption?.description || spec.caption || '',
+      description: caption ? caption.description : i === 0 ? spec.caption || '' : '',
       change: caption?.change,
       evidence: caption?.evidence,
       focus: caption?.focus ?? frame.entities.filter((entity) => entity.emphasized).map((entity) => entity.id),
@@ -130,8 +145,14 @@ export function tagDiagramEntities(root: Element, entities: DiagramEntity[]) {
 }
 
 /** Spotlight the existing SVG without changing positions, bounds, or zoom. */
-export function focusDiagram(svg: string, entities: DiagramEntity[], requested: string[]) {
-  const active = new Set(requested.filter((id) => entities.some((entity) => entity.id === id)));
+export function focusDiagram(
+  svg: string,
+  entities: DiagramEntity[],
+  requested: string[],
+  differences: DiagramView['differences'] = []
+) {
+  const changes = new Map(differences.filter((d) => d.kind !== 'removed').map((d) => [d.label, d]));
+  const active = new Set([...requested, ...changes.keys()].filter((id) => entities.some((entity) => entity.id === id)));
   if (!active.size) return svg;
   for (const entity of entities) {
     if (active.has(entity.id)) {
@@ -144,6 +165,11 @@ export function focusDiagram(svg: string, entities: DiagramEntity[], requested: 
     const id = group.getAttribute('data-d2-entity') ?? '';
     const parent = [...active].some((child) => child.startsWith(`${id}.`));
     group.setAttribute('data-d2-focus', active.has(id) ? 'active' : parent ? 'boundary' : 'context');
+    const difference = changes.get(id);
+    if (difference) {
+      group.setAttribute('data-d2-change', difference.kind);
+      markChangedLabel(group, difference.after, difference.ranges);
+    }
   }
   return new XMLSerializer().serializeToString(doc.documentElement);
 }

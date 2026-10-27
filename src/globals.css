@@ -2743,7 +2743,7 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .d2-view-number { flex:none;font-variant-numeric:tabular-nums; }
 .d2-caption { padding:8px 0;min-height:0; }
 .d2-caption > strong { font-size:var(--type-body); }
-.d2-caption .d2-change { margin:10px 0; }
+.d2-caption .d2-change { margin:4px 0 0; }
 .d2-notes { flex-basis:320px; }
 .d2-notes .d2-view-nav { display:flex;flex-direction:column;padding-bottom:16px;border-bottom:1px solid var(--border); }
 .d2-notes .d2-view-nav button { width:100%; }
@@ -2756,7 +2756,7 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .d2-differences dl { margin:8px 0 0; }
 .d2-differences dl > div { margin:8px 0;padding:8px 0;border-top:1px solid var(--border); }
 .d2-differences dt { overflow-wrap:anywhere;font-weight:500; }
-.d2-differences dd { display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:4px 0 0;overflow-wrap:anywhere; }
+.d2-differences dd { white-space:pre-line;display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:4px 0 0;overflow-wrap:anywhere; }
 .d2-differences dd svg { flex:none; }
 .d2-diagram [data-d2-focus="active"] > .shape > *, .d2-dialog [data-d2-focus="active"] > .shape > * { stroke:var(--primary);stroke-width:4!important; }
 .d2-diagram [data-d2-focus="active"] > path.connection, .d2-dialog [data-d2-focus="active"] > path.connection { stroke:var(--primary);stroke-width:4!important; }
@@ -2766,6 +2766,13 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .d2-diagram [data-d2-focus] > .shape, .d2-dialog [data-d2-focus] > .shape { transition:opacity 180ms ease-out; }
 [data-motion="true"] [data-d2-focus="active"] > path.connection { stroke-dasharray:8 6;animation:d2-guided-flow 900ms linear infinite; }
 @keyframes d2-guided-flow { to { stroke-dashoffset:-28; } }
+/* Changed values remain legible after the one-shot attention cue finishes. */
+.d2-diagram [data-d2-updated], .d2-dialog [data-d2-updated] {
+  fill:var(--primary);text-decoration:underline;text-decoration-thickness:.08em;text-underline-offset:.12em;
+  animation:d2-value-change 450ms ease-out 1;animation-play-state:running!important;
+}
+@keyframes d2-value-change { 0%,100% { opacity:1; } 40% { opacity:.6; } }
+
 @media (max-width:900px) { .d2-notes { flex-basis:280px; } }
 @media (max-width:700px) {
   .d2-notes { flex:0 1 42%;min-height:160px; }

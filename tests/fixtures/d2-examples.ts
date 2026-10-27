@@ -179,4 +179,41 @@ steps: {
 `,
     },
   },
+  {
+    id: 'algorithm',
+    title: 'Capacity controls dispatch',
+    summary: 'Illustrative example · two slots, three waiting jobs',
+    diagram: {
+      kind: 'walkthrough',
+      caption: 'A job must acquire a slot before it can run.',
+      source: `direction: right
+pending: "Waiting: A, B, C" { width: 260 }
+slots: "In flight: 0 / 2" { width: 260 }
+pending -> slots: acquire slot
+steps: {
+  first: { pending.label: "Waiting: B, C"; slots.label: "In flight: 1 / 2" }
+  full: { pending.label: "Waiting: C"; slots.label: "In flight: 2 / 2" }
+}`,
+      steps: [
+        {
+          board: 'overview',
+          title: 'Two slots limit dispatch',
+          description: 'This example starts with A, B, and C waiting.',
+          focus: [],
+        },
+        {
+          board: 'steps.first',
+          title: 'A takes the first slot',
+          description: 'One slot remains available for the next job.',
+          focus: ['(pending -> slots)[0]'],
+        },
+        {
+          board: 'steps.full',
+          title: 'Capacity is full: C must wait',
+          description: 'A completion must release a slot before C can run.',
+          focus: ['slots'],
+        },
+      ],
+    },
+  },
 ];

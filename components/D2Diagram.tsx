@@ -50,7 +50,10 @@ export function D2Diagram({
   const open = expanded ?? localOpen;
   const setOpen = onExpandedChange ?? setLocalOpen;
   const svg = useMemo(
-    () => (view ? namespaceSVG(focusDiagram(view.frame.svg, view.frame.entities, view.focus), instanceId) : ''),
+    () =>
+      view
+        ? namespaceSVG(focusDiagram(view.frame.svg, view.frame.entities, view.focus, view.differences), instanceId)
+        : '',
     [view, instanceId]
   );
   useEffect(() => {
@@ -162,13 +165,10 @@ export function D2Diagram({
   const explanation = view && (
     <div className="d2-caption" aria-live={playing ? 'off' : 'polite'}>
       <strong>{view.title}</strong>
-      {view.change && (
-        <p className="d2-change">
-          <b>{safe?.kind === 'comparison' ? 'What changes: ' : 'Here: '}</b>
-          {view.change}
-        </p>
+      {view.change && view.change !== view.title && view.change !== view.description && (
+        <p className="d2-change">{view.change}</p>
       )}
-      {view.description && <p>{view.description}</p>}
+      {view.description && view.description !== view.title && <p>{view.description}</p>}
       {view.evidence && onShowCode && canShowCode?.(view.evidence) && (
         <Button
           variant="link"
@@ -186,10 +186,8 @@ export function D2Diagram({
         </Button>
       )}
       {view.differences.length > 0 && (
-        <details className="d2-differences" open={view.differences.length <= 3}>
-          <summary>
-            What changed in the drawing{view.differences.length > 3 ? ` (${view.differences.length})` : ''}
-          </summary>
+        <details key={view.key} className="d2-differences">
+          <summary>Changes in this step ({view.differences.length})</summary>
           <dl>
             {view.differences.map((difference) => (
               <div key={difference.label}>
@@ -220,7 +218,11 @@ export function D2Diagram({
             aria-expanded={open}
             onClick={() => setOpen(true)}
           >
-            <div key={frame.layoutId ?? frame.id} className="mermaid-preview-canvas d2-frame" dangerouslySetInnerHTML={{ __html: svg }} />
+            <div
+              key={frame.layoutId ?? frame.id}
+              className="mermaid-preview-canvas d2-frame"
+              dangerouslySetInnerHTML={{ __html: svg }}
+            />
             <span className="mermaid-expand">
               <Maximize2 size={14} /> Expand diagram
             </span>

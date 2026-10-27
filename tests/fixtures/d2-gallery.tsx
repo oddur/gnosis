@@ -51,7 +51,7 @@ export function DiagramGallery() {
           return;
         if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
           event.preventDefault();
-          choose((index + (event.key === 'ArrowLeft' ? 2 : 1)) % 3);
+          choose((index + (event.key === 'ArrowLeft' ? examples.length - 1 : 1)) % examples.length);
         }
       }}
     >
@@ -128,13 +128,23 @@ export function DiagramGallery() {
         </div>
       </section>
       <footer className="d2-prototype-switcher">
-        <Button variant="ghost" size="icon-sm" aria-label="Previous example" onClick={() => choose((index + 2) % 3)}>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Previous example"
+          onClick={() => choose((index + examples.length - 1) % examples.length)}
+        >
           <ArrowLeft />
         </Button>
         <span>
-          {index + 1} / 3 · {labels[example.id]}
+          {index + 1} / {examples.length} · {labels[example.id]}
         </span>
-        <Button variant="ghost" size="icon-sm" aria-label="Next example" onClick={() => choose((index + 1) % 3)}>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Next example"
+          onClick={() => choose((index + 1) % examples.length)}
+        >
           <ArrowRight />
         </Button>
       </footer>
