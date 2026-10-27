@@ -31,6 +31,7 @@ type Props = ComponentProps<typeof ReviewDiff> & {
 export function ReviewFileDiscussion({ review, enabled = true, onAsk, ...diff }: Props) {
   const [markdownView, changeMarkdownView] = useMarkdownView();
   const [sourceLocation, setSourceLocation] = useState<MarkdownLocation>();
+  const [sourcePinnedLine, setSourcePinnedLine] = useState<number>();
   const markdown = isMarkdownFile(diff.filePath) && !diff.hunks.some((h) => h.content.includes(LFS_VERSION));
   const preview = markdown && markdownView.mode === 'preview';
   const openedPreview = useRef(false);
@@ -43,6 +44,7 @@ export function ReviewFileDiscussion({ review, enabled = true, onAsk, ...diff }:
       return;
     }
     setSourceLocation(location);
+    setSourcePinnedLine(location?.start);
     changeMarkdownView({ mode: 'source' });
   }
   const source = review ? threadSource(review, diff.filePath) : null;
@@ -187,7 +189,7 @@ export function ReviewFileDiscussion({ review, enabled = true, onAsk, ...diff }:
           {...diff}
           sourceLocation={sourceLocation}
           onSourceLocationShown={() => setSourceLocation(undefined)}
-          pinnedLines={[...(diff.pinnedLines ?? []), ...(sourceLocation ? [sourceLocation.start] : [])]}
+          pinnedLines={[...(diff.pinnedLines ?? []), ...(sourcePinnedLine !== undefined ? [sourcePinnedLine] : [])]}
           threads={placed.filter((p) => !p.reason).map((p) => p.thread)}
           renderThread={renderThread}
         />

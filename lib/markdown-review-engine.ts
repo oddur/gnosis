@@ -184,8 +184,14 @@ export async function buildMarkdownReview(request: MarkdownReviewRequest): Promi
         const copy = prepare(b, 'after') as Element;
         const code = copy.children.find((n) => n.type === 'element' && n.tagName === 'code');
         if (code?.type === 'element') {
-          let oldLine = (a.position?.start.line ?? 0) + 1;
-          let newLine = (b.position?.start.line ?? 0) + 1;
+          const contentStart = (node: Element, source: string | null) => {
+            // Positions retain indentation relative to the Markdown container (including lists).
+            const opening = source?.slice(node.position?.start.offset ?? 0) ?? '';
+            const fenced = /^ {0,3}(?:`{3,}|~{3,})/.test(opening);
+            return (node.position?.start.line ?? 1) + (fenced ? 1 : 0);
+          };
+          let oldLine = contentStart(a, request.before);
+          let newLine = contentStart(b, request.after);
           code.children = differences.flatMap((part) =>
             part.value
               .replace(/\n$/, '')

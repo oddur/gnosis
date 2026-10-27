@@ -223,3 +223,60 @@ void test('explanation previews reject contradictory overlapping sections and ma
   );
   assert.equal(githubMarkdownUrl('./private.md', false, { repo: '', ref: '', path: 'docs/a.md' }), '');
 });
+
+void test('code source locations distinguish indented blocks from fences, including nested lists', async () => {
+  for (const [before, after, expected] of [
+    ['    old\n', '    new\n', 1],
+    ['```\nold\n```', '```\nnew\n```', 2],
+    ['~~~text\nold\n~~~', '~~~text\nnew\n~~~', 2],
+    ['- Example\n\n      old\n', '- Example\n\n      new\n', 3],
+    ['- Example\n\n  ```\n  old\n  ```', '- Example\n\n  ```\n  new\n  ```', 4],
+    ['    ```\n    old\n    ```', '    ```\n    new\n    ```', 2],
+  ] as const) {
+    const review = await buildMarkdownReview(request(before, after));
+    const changed = review.blocks.flatMap((block) => all(block.tree)).filter(
+      (node): node is Element => node.type === 'element' && !!node.properties['data-code-line'] && !!node.properties['data-md-change']
+    );
+    assert.equal(changed.length, 2);
+    assert.deepEqual(changed.map((node) => [node.properties['data-md-side'], node.properties['data-md-start']]), [
+      ['before', expected], ['after', expected],
+    ]);
+  }
+});
+
+void test('clearing Markdown previews drops cached data and rejects late results without disrupting a new account request', async () => {
+  const { prepareMarkdownReview, peekMarkdownReview, clearMarkdownReviews } = await import('../lib/markdown-review-cache');
+  const value = await buildMarkdownReview(request('Before', 'After'));
+  const oldWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  const responses: ((result: typeof value) => void)[] = [];
+  const respond = () => {
+    const resolve = responses.shift();
+    assert.ok(resolve);
+    resolve(value);
+  };
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: {
+    electronAPI: { renderMarkdownReview: () => new Promise<typeof value>((resolve) => responses.push(resolve)) },
+  } });
+  try {
+    const cached = prepareMarkdownReview('cached', request('Before', 'After'));
+    respond();
+    await cached;
+    assert.equal(peekMarkdownReview('cached'), value);
+    const old = prepareMarkdownReview('pending', request('Before', 'After'));
+    const rejected = assert.rejects(old, /account changed/);
+    clearMarkdownReviews();
+    assert.equal(peekMarkdownReview('cached'), undefined);
+    const next = prepareMarkdownReview('pending', request('Before', 'After'));
+    respond();
+    await rejected;
+    assert.equal(peekMarkdownReview('pending'), undefined);
+    assert.equal(prepareMarkdownReview('pending', request('Before', 'After')), next);
+    respond();
+    assert.equal(await next, value);
+    assert.equal(peekMarkdownReview('pending'), value);
+  } finally {
+    clearMarkdownReviews();
+    if (oldWindow) Object.defineProperty(globalThis, 'window', oldWindow);
+    else Reflect.deleteProperty(globalThis, 'window');
+  }
+});

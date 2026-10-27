@@ -8,6 +8,7 @@ export interface HomeLocation {
   savedView: boolean;
   savedQuery: string;
   viewId: string | null;
+  viewName?: string;
   muted: boolean;
   item: QueueItem | null;
   tab: 'summary' | 'changes' | 'commits' | 'explanation';

@@ -1,4 +1,12 @@
 import type { MarkdownLocation, MarkdownReviewBlock } from './markdown-review';
+import type { Root, RootContent } from 'hast';
+
+export function markdownAnchorBlock(blocks: MarkdownReviewBlock[], id: string) {
+  const contains = (node: Root | RootContent): boolean =>
+    (node.type === 'element' && node.properties.id === id) ||
+    ((node.type === 'root' || node.type === 'element') && node.children.some(contains));
+  return blocks.find((block) => contains(block.tree));
+}
 
 export type MarkdownContextItem =
   | { kind: 'block'; block: MarkdownReviewBlock }

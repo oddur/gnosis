@@ -1,10 +1,10 @@
-import { memo, useMemo, useRef, useState, type ReactNode, type ComponentProps, type ReactElement } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode, type ComponentProps, type ReactElement } from 'react';
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
 import { toJsxRuntime } from 'hast-util-to-jsx-runtime';
 import type { Root } from 'hast';
 import { ArrowDown, ArrowUp, ArrowRightLeft, Minus, Plus, Code2, MessageSquare, UnfoldVertical } from 'lucide-react';
 import type { MarkdownLocation, MarkdownReview } from '../lib/markdown-review';
-import { markdownBlockAt, markdownReviewContext } from '../lib/markdown-review-context';
+import { markdownAnchorBlock, markdownBlockAt, markdownReviewContext } from '../lib/markdown-review-context';
 import { MarkdownImage, GitHubCodeBlock } from './Markdown';
 import { Button } from './ui/button';
 
@@ -64,7 +64,8 @@ export function MarkdownReviewPreview({
   const [selected, setSelected] = useState<{ text: string; location?: MarkdownLocation }>();
   const [changeIndex, setChangeIndex] = useState(-1);
   const [draftNotice, setDraftNotice] = useState('');
-  const [revealed] = useState(() => {
+  const [anchorTarget, setAnchorTarget] = useState<string>();
+  const [revealed, setRevealed] = useState(() => {
     if (!revealLocation) return [];
     const first = markdownBlockAt(review.blocks, revealLocation);
     return review.blocks
@@ -75,6 +76,16 @@ export function MarkdownReviewPreview({
       .map((block) => block.id);
   });
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    if (!anchorTarget) return;
+    const target = ref.current?.querySelector<HTMLElement>(`#${CSS.escape(anchorTarget)}`);
+    if (target) {
+      target.tabIndex = -1;
+      target.scrollIntoView({ block: 'center', behavior: 'instant' });
+      target.focus({ preventScroll: true });
+    }
+    setAnchorTarget(undefined);
+  }, [anchorTarget]);
   const wholeFile =
     review.blocks.length && review.blocks.every((b) => b.change === 'added')
       ? 'added'
@@ -136,7 +147,29 @@ export function MarkdownReviewPreview({
     setSelected({ text: selection.toString(), location });
   }
   return (
-    <div ref={ref} className="markdown-review" onMouseUp={readSelection} onKeyUp={readSelection}>
+    <div
+      ref={ref}
+      className="markdown-review"
+      onMouseUp={readSelection}
+      onKeyUp={readSelection}
+      onClick={(event) => {
+        if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        const link = event.target instanceof Element ? event.target.closest('a[href^="#"]') : null;
+        const href = link?.getAttribute('href');
+        if (!href) return;
+        let id: string;
+        try {
+          id = decodeURIComponent(href.slice(1));
+        } catch {
+          return;
+        }
+        const block = markdownAnchorBlock(review.blocks, id);
+        if (!block) return;
+        event.preventDefault();
+        setRevealed((previous) => [...new Set([...previous, block.id])]);
+        setAnchorTarget(id);
+      }}
+    >
       <div className="markdown-review-toolbar">
         <label>
           <input

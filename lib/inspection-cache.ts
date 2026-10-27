@@ -1,3 +1,4 @@
+import { clearMarkdownReviews } from './markdown-review-cache';
 import { createPrFileCache } from './pr-file-cache';
 import { prChangePreview } from './pr-change-preview';
 import { commitSelectionKey, type CommitSelection } from './pr-commits';
@@ -37,6 +38,7 @@ export const inspectionData = createPrInspectionCache({
   },
   reset: () => {
     inspectionEpoch++;
+    clearMarkdownReviews();
     inspectionFiles.clear();
     previews.clear();
     comparisons.clear();

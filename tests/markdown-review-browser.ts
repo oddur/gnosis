@@ -85,6 +85,10 @@ void app.whenReady().then(async () => {
     assert.ok(
       await within("return !root.querySelector('.markdown-review-document').textContent.includes('Keep credentials')")
     );
+    assert.ok(await within("return !root.querySelector('[id$=credentials]')"));
+    await within("root.querySelector('a[href$=credentials]').click()");
+    await wait("document.activeElement?.textContent === 'Credentials'");
+    assert.ok(await within("return root.querySelector('.markdown-review-document').textContent.includes('Keep credentials')"));
     await within("root.querySelector('.markdown-context-gap').scrollIntoView({block:'center'})");
     await capture('folded');
     await within("root.querySelector('.markdown-context-gap button').click()");
@@ -227,6 +231,14 @@ void app.whenReady().then(async () => {
       'Deleted text opens old source'
     );
     await capture('explanation-source');
+    await click('Preview');
+    await wait("!!document.querySelector('.review-file-group .markdown-review ins')");
+    await js("document.querySelector('.review-file-group .markdown-review h1').closest('[data-md-block]').querySelector('.markdown-source-link').click()");
+    await wait('!!document.querySelector(\'diffs-container[aria-label="Source at new line 10"]\')');
+    // Wait through the post-scroll state update: the destination must remain expanded.
+    await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    assert.ok(await js("[...document.querySelectorAll('.review-file-group diffs-container')].some(host => host.shadowRoot?.querySelector('[data-line-number=\"10\"]'))"));
+    assert.equal(await js("document.activeElement?.getAttribute('aria-label')"), 'Source at new line 10');
     await click('Preview');
     await wait("!!document.querySelector('.review-file-group .markdown-review ins')");
     await js("document.querySelector('.review-file-group .markdown-review-toolbar input').click()");

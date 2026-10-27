@@ -146,7 +146,7 @@ if (new URLSearchParams(location.search).has('markdown-explanation')) {
     fileSummaries: [{ filePath: path, summary: 'Clarifies retry limits and the final warning.' }],
     inlineExplanations: [{ filePath: path, side: 'RIGHT', line: 22, code: 'Retry five times.', text: 'The limit includes the first attempt; it permits four retries.' }],
     diffHunks: [
-      { filePath: path, language: 'markdown', renderedHtml: '', hunkHeader: '@@ -20,3 +20,3 @@', content: ' ## Retry policy\n \n-Retry three times.\n+Retry five times.' },
+      { filePath: path, language: 'markdown', renderedHtml: '', hunkHeader: '@@ -10,13 +10,13 @@', content: ' # Retry guide\n \n Saved context near the start.\n \n More saved context.\n \n Keep the request ID.\n \n Unchanged setup.\n \n ## Retry policy\n \n-Retry three times.\n+Retry five times.' },
       { filePath: path, language: 'markdown', renderedHtml: '', hunkHeader: '@@ -80,1 +82,1 @@', content: '-Old warning.\n+Stop after the final attempt.' },
     ], reviewChecks: [], explainer: undefined, explainerIdea: undefined, mermaidDiagram: undefined, d2Diagram: undefined,
   }];

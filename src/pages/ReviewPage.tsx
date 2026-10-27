@@ -1,3 +1,4 @@
+import { RecentlyViewed } from '../../components/RecentlyViewed';
 import { ReviewBreadcrumbProvider, useReviewBreadcrumbs } from '../../lib/review-breadcrumbs';
 import { ReviewBreadcrumbs } from '../../components/ReviewBreadcrumbs';
 import { SearchableSelect } from '../../components/SearchableSelect';
@@ -849,6 +850,7 @@ function ReviewPageContent({
       </div>
 
       {!embedded && <div className="pr-summary-toolbar"><div className="pr-summary-toolbar-inner">
+        <RecentlyViewed />
         <ReviewBreadcrumbs scope="explanation" base={[
           { id: 'origin', label: origin?.name ?? 'Review queue', navigate: onBack },
           ...(isLocal ? [{ id: 'repository', label: review.prUrl.slice(6).split('#')[0].split('/').filter(Boolean).pop() ?? 'Local repository', title: review.prUrl }] : []),

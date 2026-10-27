@@ -3084,3 +3084,20 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .review-file-details:has(.markdown-view-switch) { flex-wrap:wrap; }
 .review-file-discussion .markdown-review-document { padding:16px 24px; }
 .review-file-discussion .markdown-review-notice { margin:0; }
+
+/* A compact, keyboard-navigable history alongside the application identity. */
+.recent-history-menu { width:min(540px,calc(100vw - 24px)); padding:6px; border:1px solid var(--border); border-radius:var(--radius); background:var(--popover); color:var(--popover-foreground); z-index:70; font-size:var(--type-control); }
+.recent-history-heading { padding:6px 8px 8px; color:var(--muted-foreground); font-size:var(--type-caption); }
+.recent-history-list { max-height:min(440px,calc(100vh - 160px)); overflow-y:auto; }
+.recent-history-item { display:grid; grid-template-columns:56px 18px minmax(0,1fr) minmax(0,100px); align-items:center; gap:8px; min-height:34px; padding:6px 8px; border-radius:var(--radius-sm); cursor:default; outline:none; }
+.recent-history-item[data-highlighted],.recent-history-action[data-highlighted] { background:var(--accent); color:var(--accent-foreground); }
+.recent-history-label,.recent-history-detail { color:var(--muted-foreground); font-size:var(--type-caption); font-variant-numeric:tabular-nums; }
+.recent-history-name,.recent-history-detail { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.recent-history-detail { text-align:right; }
+.recent-history-item[data-highlighted] :is(.recent-history-label,.recent-history-detail) { color:inherit; }
+.recent-history-item .queue-pr-icon { display:flex; align-items:center; }
+.recent-history-separator { height:1px; margin:6px 2px; background:var(--border); }
+.recent-history-action { padding:7px 8px; border-radius:var(--radius-sm); font-size:var(--type-caption); color:var(--muted-foreground); outline:none; cursor:default; }
+.recent-history-empty,.recent-history-error { padding:12px 8px; font-size:var(--type-control); color:var(--muted-foreground); }
+.recent-history-error { color:var(--color-danger); }
+@media(max-width:620px) { .recent-history-item { grid-template-columns:48px 18px minmax(0,1fr); } .recent-history-detail { display:none; } }
