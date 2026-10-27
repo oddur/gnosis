@@ -25,7 +25,7 @@ export function QueueFilterPanel({
   const authors = [
     ...new Set([...members.map((m) => m.author), ...(filters.author === 'all' ? [] : [filters.author])]),
   ].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }));
-  const fields: { key: Exclude<keyof QueueFilters, 'starredOnly' | 'sort' | 'labels'>; label: string; options: [string, string][] }[] = [
+  const fields: { key: Exclude<keyof QueueFilters, 'starredOnly' | 'sort' | 'labels' | 'targetBranch'>; label: string; options: [string, string][] }[] = [
     { key: 'readStatus', label: 'Read status', options: [['all', 'Any read status'], ['unread', 'Unread'], ['read', 'Read']] },
     {
       key: 'status',
@@ -131,6 +131,23 @@ export function QueueFilterPanel({
             </select>
             )}
           </label>
+          {field.key === 'author' && <label htmlFor={`${id}-targetBranch`} className="queue-target-branch">
+            <span>Target branch</span>
+            <input
+              id={`${id}-targetBranch`}
+              className="workbench-select"
+              type="text"
+              value={filters.targetBranch}
+              maxLength={300}
+              placeholder="Any branch"
+              spellCheck={false}
+              autoCapitalize="none"
+              autoComplete="off"
+              aria-describedby={`${id}-targetBranch-help`}
+              onChange={event => onChange({ targetBranch: event.target.value })}
+            />
+            <span id={`${id}-targetBranch-help`}>e.g. <code>release/*</code> · <code>*</code> matches any text</span>
+          </label>}
           {field.key === 'readStatus' && <QueueLabelFilter value={filters.labels}
             members={filters.repo === 'all' ? members : members.filter(member => member.repo === filters.repo)}
             onChange={labels => onChange({ labels })} />}
@@ -161,6 +178,7 @@ export function QueueFilterPanel({
       <details className="queue-filter-help">
         <summary>How filters work</summary>
         <p>Unread means new activity since you last opened the PR, or a PR you marked as unread.</p>
+        <p>Target branch matches the whole name, including case. Use * for any text (including /), or ? for one character. Leave it blank for any branch.</p>
         <p>Use “PR created” to exclude old PRs, even if they were updated recently.</p>
         <p>“Up to date” means the AI explanation matches the latest loaded PR data.</p>
         <p>“Involving me” also reduces PR details fetched from GitHub. Related stack PRs stay included.</p>

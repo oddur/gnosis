@@ -104,3 +104,24 @@ void test('multiple label names and matching mode survive saved views and cleari
   state = applyViewAction(state, { type: 'reset', id: 'labels' }, () => 'unused');
   assert.deepEqual(activeViewFilters(state).labels.names, ['bug', 'urgent']);
 });
+
+void test('target branch views persist across restart and keep independent drafts', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-target-views-'));
+  try {
+    const store = createSavedViewStore(() => dir);
+    store.load('alice');
+    store.edit('alice', { targetBranch: 'release/*' });
+    const created = store.act('alice', { type: 'create', name: 'All hot fixes' });
+    store.edit('alice', { targetBranch: 'release/2.*' });
+    const restored = createSavedViewStore(() => dir).load('alice');
+    assert.equal(restored.activeId, created.activeId);
+    assert.equal(restored.views[0].filters.targetBranch, 'release/*');
+    assert.equal(activeViewFilters(restored).targetBranch, 'release/2.*');
+    assert.equal(viewIsModified(restored.views[0]), true);
+    assert.ok(created.activeId);
+    const reset = applyViewAction(restored, { type: 'reset', id: created.activeId }, () => 'unused');
+    assert.equal(activeViewFilters(reset).targetBranch, 'release/*');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

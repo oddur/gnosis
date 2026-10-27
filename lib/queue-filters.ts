@@ -11,6 +11,7 @@ export interface QueueFilters {
   query: string;
   repo: string;
   author: string;
+  targetBranch: string;
   status: 'all' | 'ready' | 'draft';
   createdWithin: number;
   updatedWithin: number;
@@ -28,6 +29,7 @@ export const DEFAULT_QUEUE_FILTERS: QueueFilters = {
   query: '',
   repo: 'all',
   author: 'all',
+  targetBranch: '',
   status: 'all',
   createdWithin: 0,
   updatedWithin: 0,
@@ -53,6 +55,7 @@ export function normalizeQueueFilters(value: unknown): QueueFilters {
     query: text('query', ''),
     repo: text('repo', 'all'),
     author: text('author', 'all'),
+    targetBranch: text('targetBranch', '').trim(),
     labels: normalizeLabelFilter(raw.labels ?? raw.label),
     status: choice('status', ['all', 'ready', 'draft'], 'all'),
     createdWithin: days('createdWithin'),
@@ -63,6 +66,30 @@ export function normalizeQueueFilters(value: unknown): QueueFilters {
     attention: choice('attention', ['all', 'updated', 'requested', 'other'], 'all'),
     briefingScope: choice('briefingScope', ['matches', 'all'], 'matches'),
   };
+}
+/** Case-sensitive, whole-branch glob. * includes slashes; ? matches one character.
+ * No regular expressions: branch punctuation stays literal and patterns cannot cause regex backtracking.
+ */
+export function matchesTargetBranch(branch: string, pattern: string): boolean {
+  pattern = pattern.trim();
+  if (!pattern) return true;
+  let b = 0, p = 0, star = -1, retry = 0;
+  while (b < branch.length) {
+    if (pattern[p] === '*') {
+      star = p++;
+      retry = b;
+    } else if (pattern[p] === '?' || pattern[p] === branch[b]) {
+      b++;
+      p++;
+    } else if (star >= 0) {
+      p = star + 1;
+      b = ++retry;
+    } else {
+      return false;
+    }
+  }
+  while (pattern[p] === '*') p++;
+  return p === pattern.length;
 }
 export function isMyPr(member: ReviewMember, login?: string | null): boolean {
   if (!login) return false;
@@ -104,6 +131,7 @@ export function matchesQueueFilters(
       (filters.involvement !== 'mine' || isMyPr(m, login)) &&
       (filters.repo === 'all' || m.repo === filters.repo) &&
       (filters.author === 'all' || m.author === filters.author) &&
+      matchesTargetBranch(m.baseBranch, filters.targetBranch) &&
       (filters.status === 'all' ||
         (m.state === 'open' && !m.merged && (filters.status === 'draft' ? m.isDraft : !m.isDraft))) &&
       matchesLabelFilter(m.labels, filters.labels) &&
@@ -142,6 +170,7 @@ export function describeQueueFilters(filters: QueueFilters): { key: keyof QueueF
     query: `Search: ${filters.query}`,
     repo: filters.repo,
     author: `Author: ${filters.author}`,
+    targetBranch: `Target branch: ${filters.targetBranch}`,
     status: filters.status === 'draft' ? 'Draft PRs' : 'Open, not draft',
     createdWithin: `Created: last ${filters.createdWithin} days`,
     updatedWithin: `Updated: last ${filters.updatedWithin} days`,

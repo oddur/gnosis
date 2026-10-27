@@ -269,6 +269,10 @@ The outbox owns the pending messages, so replacing the socket does not clear the
   items[1].briefing = undefined;
   items[2].subject.members[0].description = '';
 }
+if (new URLSearchParams(location.search).has('target-branch')) {
+  items[0].subject.members[0].baseBranch = 'release/1.2';
+  items[1].subject.members[0].baseBranch = 'release/2.1';
+}
 if (new URLSearchParams(location.search).has('labels')) {
   const stack = items[0].subject.members;
   stack[0].labels = ['bug', 'needs-review'];
