@@ -25,8 +25,8 @@ export interface DiffSource {
   assertCurrent?(): Promise<void>;
   getDiff(changedFiles?: ChangedFile[]): Promise<string>;
   getChangedFiles(): Promise<ChangedFile[]>;
-  getFileContent(path: string, ref: 'base' | 'head'): Promise<string | null>;
-  getFileMetadata(changedFiles: ChangedFile[]): Promise<FileMetadata[]>;
+  getFileContent(path: string, ref: 'base' | 'head', signal?: AbortSignal): Promise<string | null>;
+  getFileMetadata(changedFiles: ChangedFile[], signal?: AbortSignal): Promise<FileMetadata[]>;
   getNeighborFiles(
     paths: string[],
     contents: Record<string, string>,

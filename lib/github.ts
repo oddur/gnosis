@@ -1,6 +1,6 @@
 import type { Octokit } from '@octokit/rest';
 import { parseGitHubLabels } from './github-labels';
-import { getGitHubClient } from './github-client';
+import { getGitHubClient, githubRateLimit } from './github-client';
 import { preparedChanges, preparedFile, preparedDiff } from './prepared-pr';
 import { getProvider } from './provider';
 import type { DiffSource } from './diffSource';
@@ -173,16 +173,21 @@ export async function getFileContent(
   owner: string,
   repo: string,
   path: string,
-  ref: string
+  ref: string,
+  signal?: AbortSignal
 ): Promise<string | null> {
   try {
-    const { data } = await octokit.repos.getContent({ owner, repo, path, ref });
+    signal?.throwIfAborted();
+    const { data } = await octokit.repos.getContent({ owner, repo, path, ref, ...(signal ? { request: { signal } } : {}) });
     if (Array.isArray(data) || data.type !== 'file') return null;
     if ('content' in data && data.content) {
       return Buffer.from(data.content, 'base64').toString('utf-8');
     }
     return null;
-  } catch {
+  } catch (error) {
+    signal?.throwIfAborted();
+    const limited = githubRateLimit(error);
+    if (limited) throw limited;
     return null;
   }
 }
@@ -517,7 +522,8 @@ async function getFileLastModified(
   owner: string,
   repo: string,
   filePath: string,
-  baseSha: string
+  baseSha: string,
+  signal?: AbortSignal
 ): Promise<string | null> {
   try {
     const { data } = await octokit.repos.listCommits({
@@ -526,6 +532,7 @@ async function getFileLastModified(
       path: filePath,
       sha: baseSha,
       per_page: 1,
+      ...(signal ? { request: { signal } } : {}),
     });
     return data[0]?.commit?.committer?.date ?? null;
   } catch {
@@ -540,26 +547,30 @@ async function getPrFileChurn(
   octokit: Octokit,
   owner: string,
   repo: string,
-  pullNumber: number
+  pullNumber: number,
+  signal?: AbortSignal
 ): Promise<Map<string, number>> {
   const churn = new Map<string, number>();
   try {
-    const commits = await octokit.paginate(octokit.pulls.listCommits, {
+    const { data: commits } = await octokit.pulls.listCommits({
       owner,
       repo,
       pull_number: pullNumber,
-      per_page: 100,
+      per_page: 30,
+      ...(signal ? { request: { signal } } : {}),
     });
     // For each commit, fetch its files and increment the counter.
     // Limit to first 30 commits to avoid API rate limit issues on
     // very large PRs.
     const toFetch = commits.slice(0, 30);
     for (const commit of toFetch) {
+      signal?.throwIfAborted();
       try {
         const { data } = await octokit.repos.getCommit({
           owner,
           repo,
           ref: commit.sha,
+          ...(signal ? { request: { signal } } : {}),
         });
         for (const f of data.files ?? []) {
           churn.set(f.filename, (churn.get(f.filename) ?? 0) + 1);
@@ -584,10 +595,11 @@ export async function getFileMetadata(
   repo: string,
   pullNumber: number,
   baseSha: string,
-  changedFiles: ChangedFile[]
+  changedFiles: ChangedFile[],
+  signal?: AbortSignal
 ): Promise<FileMetadata[]> {
   // Fetch churn data once for the whole PR
-  const churnMap = await getPrFileChurn(octokit, owner, repo, pullNumber);
+  const churnMap = await getPrFileChurn(octokit, owner, repo, pullNumber, signal);
 
   // Fetch last-modified dates in parallel, batched 10 at a time to
   // stay well under GitHub's rate limit.
@@ -602,13 +614,14 @@ export async function getFileMetadata(
 
   const BATCH_SIZE = 10;
   for (let i = 0; i < metadata.length; i += BATCH_SIZE) {
+    signal?.throwIfAborted();
     const batch = metadata.slice(i, i + BATCH_SIZE);
     await Promise.all(
       batch.map(async (fm) => {
         if (fm.status === 'added') {
           fm.lastModified = null;
         } else {
-          fm.lastModified = await getFileLastModified(octokit, owner, repo, fm.filename, baseSha);
+          fm.lastModified = await getFileLastModified(octokit, owner, repo, fm.filename, baseSha, signal);
         }
       })
     );
@@ -686,6 +699,10 @@ export class GitHubDiffSource implements DiffSource {
       if (prepared) return prepared.comparisonBase;
       const { data } = await this.octokit.repos.compareCommits({ owner: this.owner, repo: this.repo, base: meta.baseSha, head: meta.headSha });
       return data.merge_base_commit.sha;
+    }).catch((error: unknown) => {
+      // Keep successful revision pins, but allow a rate-limited lookup to resume.
+      this.comparisonBase = null;
+      throw error;
     });
     return this.comparisonBase;
   }
@@ -710,7 +727,8 @@ export class GitHubDiffSource implements DiffSource {
     return getChangedFiles(this.octokit, this.owner, this.repo, this.pullNumber, true);
   }
 
-  async getFileContent(filePath: string, ref: 'base' | 'head'): Promise<string | null> {
+  async getFileContent(filePath: string, ref: 'base' | 'head', signal?: AbortSignal): Promise<string | null> {
+    signal?.throwIfAborted();
     const meta = await this.getMetadata();
     const snapshot = await preparedChanges(this.octokit, this.key, meta);
     const file = snapshot?.files.find(file => file.path === filePath || (ref === 'base' && file.previousPath === filePath));
@@ -724,12 +742,12 @@ export class GitHubDiffSource implements DiffSource {
     }
     const gitRef = ref === 'base' ? await this.getComparisonBase() : meta.headSha;
     const [owner, repo] = ((ref === 'base' ? meta.baseRepo : meta.headRepo) ?? `${this.owner}/${this.repo}`).split('/');
-    return getFileContent(this.octokit, owner, repo, filePath, gitRef);
+    return getFileContent(this.octokit, owner, repo, filePath, gitRef, signal);
   }
 
-  async getFileMetadata(changedFiles: ChangedFile[]): Promise<FileMetadata[]> {
+  async getFileMetadata(changedFiles: ChangedFile[], signal?: AbortSignal): Promise<FileMetadata[]> {
     const meta = await this.getMetadata();
-    return getFileMetadata(this.octokit, this.owner, this.repo, this.pullNumber, meta.baseSha, changedFiles);
+    return getFileMetadata(this.octokit, this.owner, this.repo, this.pullNumber, meta.baseSha, changedFiles, signal);
   }
 
   async getNeighborFiles(

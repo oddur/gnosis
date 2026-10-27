@@ -278,6 +278,7 @@ export function createGitHubClientPool(options: Options = {}) {
             return structuredClone(cached.response);
           }
           const gate = () => {
+            requestOptions.request.signal?.throwIfAborted();
             const priority = githubPriority();
             const budget = state.budgets[resource];
             const reserve =

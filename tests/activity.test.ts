@@ -104,3 +104,22 @@ void test('retrying an exploration retains the replacement task with the same id
   assert.equal(service.list()[0].status, 'running');
   await assert.rejects(service.act(task.id, 'dismiss'), /no longer available/);
 });
+
+void test('rate-limit waits retain progress and cancellation, then resume without reviving completed tasks', async () => {
+  const service = createActivityService();
+  let cancelled = false;
+  service.start(task, { cancel: () => { cancelled = true; } });
+  service.update(task.id, 'Loading files', { completed: 12, total: 30 });
+  service.wait(task.id, 'Waiting for GitHub');
+  assert.equal(service.list()[0].status, 'paused');
+  assert.deepEqual(service.list()[0].progress, { completed: 12, total: 30 });
+  await service.act(task.id, 'cancel');
+  assert.equal(cancelled, true);
+  service.resume(task.id);
+  service.update(task.id, 'Loading files', { completed: 13, total: 30 });
+  assert.equal(service.list()[0].status, 'running');
+  service.finish(task.id, 'completed', 'Ready');
+  service.wait(task.id, 'Late wait');
+  service.resume(task.id);
+  assert.equal(service.list()[0].status, 'completed');
+});

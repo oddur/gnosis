@@ -26,17 +26,21 @@ Each credential has one serial network scheduler with three priorities:
 
 | Priority | Work |
 | --- | --- |
-| Interactive | Opening PR details, Changes, Commits, files, comments, images, profiles, explicit searches and refreshes, and submitting feedback |
+| Interactive | Opening PR details, Changes, Commits, files, comments, images, profiles, explicit searches and refreshes, file questions, task admission/retry, and submitting feedback |
 | Foreground | AI context requests and automatic status checks for the selected PR |
-| Background | Preloading, discovery, and status checks for other visible queue rows |
+| Background | Preloading, discovery, optional file history, automatic briefings, and status checks for other visible queue rows |
 
-Interactive work always gets the next available slot before either lower tier. Without interactive work, background requests receive a turn after eight foreground requests.
+Interactive work always gets the next available slot. Foreground work runs next. Background work runs only when neither higher tier has a queued request. Large requested tasks no longer yield a slot to optional work after eight requests.
 An active network request completes before the next request starts. Priority never increases network concurrency.
 
 If the UI opens something already being prepared, it promotes the shared operation instead of waiting behind background work.
 Queued requests and later requests in that operation inherit the promotion. File downloads still occur once per side.
 Promoted requests can use the allowance reserved for interaction. They cannot bypass primary exhaustion, secondary limits, or server retry deadlines.
 Fresh HTTP cache hits bypass this scheduler and remain available during network delays and backoff.
+
+Explanation preparation reports completed files, including both required sides, as “Loading files: N/M”. Cached contents use the same progress path. A rate-limited file read retains its completed work, shows the retry time in Activity, and resumes after the deadline. Cancellation remains available while waiting.
+
+Optional file age and churn start only after the explanation inputs are ready, at background priority. They do not delay delivery: the review includes available history or its known file inventory, and cancels unfinished history requests. These requests also stop on generation failure or cancellation.
 
 The scheduler reserves API allowance for interaction. Background requests pause near exhaustion and spread out as the remaining allowance decreases.
 Primary limits apply separately to REST, search, and GraphQL. Secondary limits pause all network work for the credential.

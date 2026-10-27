@@ -53,11 +53,11 @@ export class StackDiffSource implements DiffSource {
     const entry = [...this.sources].find(([prefix]) => file.startsWith(prefix));
     return entry ? { source: entry[1], path: file.slice(entry[0].length) } : undefined;
   }
-  getFileContent(file: string, ref: 'base' | 'head') {
+  getFileContent(file: string, ref: 'base' | 'head', signal?: AbortSignal) {
     const target = this.resolve(file);
-    return target ? target.source.getFileContent(target.path, ref) : Promise.resolve(null);
+    return target ? target.source.getFileContent(target.path, ref, signal) : Promise.resolve(null);
   }
-  async getFileMetadata(files: ChangedFile[]): Promise<FileMetadata[]> {
+  async getFileMetadata(files: ChangedFile[], signal?: AbortSignal): Promise<FileMetadata[]> {
     return (
       await Promise.all(
         [...this.sources].map(async ([prefix, s]) =>
@@ -69,7 +69,8 @@ export class StackDiffSource implements DiffSource {
                   ...f,
                   filename: f.filename.slice(prefix.length),
                   previous_filename: f.previous_filename?.slice(prefix.length),
-                }))
+                })),
+              signal
             )
           ).map((f) => ({
             ...f,
