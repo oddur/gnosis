@@ -343,7 +343,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.activeElement?.getAttribute('aria-pressed')"), 'true');
     await press('Enter');
     await wait("!!document.querySelector('.stack-overview')");
-    await click('Explanation');
+    await js("(()=>{const tab=[...document.querySelectorAll('[role=tab]')].find(t=>t.textContent==='Explanation');tab.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));tab.click()})()");
     await wait("!!document.querySelector('.workbench-overview')");
     await click('Continue review');
     await wait("document.querySelectorAll('.review-file-context').length === 2");
