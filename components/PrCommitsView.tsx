@@ -94,7 +94,7 @@ export function PrCommitsView({
     [attempt, setAttempt] = useState(0);
   const [copyStatus, setCopyStatus] = useState('');
   const commitListNode = useRef<HTMLDivElement>(null);
-  const focusedCommit = useRef<string>();
+  const focusedCommit = useRef<string | undefined>(undefined);
   const attachCommitList = useCallback((node: HTMLDivElement | null) => {
     const previous = commitListNode.current;
     if (previous && previous !== node) {
