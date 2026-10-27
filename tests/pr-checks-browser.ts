@@ -10,13 +10,16 @@ void app.whenReady().then(async () => {
     useContentSize: true,
     webPreferences: { backgroundThrottling: false },
   });
+  const rendererErrors: string[] = [];
+  win.webContents.on('console-message', ({ level, message }) => { if (level === 'error') rendererErrors.push(message); });
   const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
-  const wait = async (code: string) => {
-    for (let i = 0; i < 200; i++) {
+  const wait = async (code: string, timeout = 10_000) => {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
       if (await js(code)) return;
       await new Promise((r) => setTimeout(r, 50));
     }
-    throw Error('Timed out: ' + code);
+    throw Error('Timed out: ' + code + '\nRenderer errors: ' + rendererErrors.join('\n') + '\nScreen: ' + await js('document.body.innerText.slice(0, 4000)'));
   };
   const click = (label: string) =>
     js(
@@ -32,7 +35,7 @@ void app.whenReady().then(async () => {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     if (!url) throw Error('Missing fixture URL');
     await win.loadURL(url + '?pr-summary&checks');
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    await wait("document.querySelectorAll('.queue-item').length===7", 60_000);
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()"
     );

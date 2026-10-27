@@ -490,11 +490,15 @@ export function SlideView({
 
     setNarrowPane('code');
     setFileExpansion((current) => ({ ...current, [filePath]: true }));
-    requestAnimationFrame(() => target.scrollIntoView({ behavior: 'smooth', block: 'center' }));
-    target.classList.remove('check-highlight');
-    // Force reflow to restart animation if clicking the same item again
-    void target.offsetWidth;
-    target.classList.add('check-highlight');
+    requestAnimationFrame(() => {
+      // Expanding a file can replace the diff's line nodes. Resolve after that render.
+      const line = findReviewLine(container, filePath, check.startLine as number);
+      if (!line?.isConnected) return;
+      line.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      line.classList.remove('check-highlight');
+      void line.offsetWidth;
+      line.classList.add('check-highlight');
+    });
   }, []);
 
   // ── Shared content blocks ── Extracted so both split and focus
