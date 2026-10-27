@@ -1747,3 +1747,31 @@ test('the real queue and unread store recover from SQLite without consulting leg
     assert.ok(restored.readStates?.[member.url]?.unread.includes('commits'));
   } finally { await storage.close(); s.cleanup(); }
 });
+
+void test('PR badge previews read saved metadata and briefings without discovery or generation', async () => {
+  let generated=0;
+  const s=setup(()=>{generated++;return Promise.resolve(JSON.stringify({summary:'Bound queue growth.',systems:['Queue'],priorities:[]}));});
+  try {
+    await s.service.queue();await settle(s.service,'ready');
+    const restarted=createWorkbenchService({...s.deps,client:()=>{throw Error('Preview must not contact GitHub');},provider:()=>{throw Error('Preview must not generate text');}});
+    const preview=restarted.prPreview(s.pr.html_url);
+    assert.equal(preview?.member.title,'Bounded queue');
+    assert.equal(preview?.briefing?.summary,'Bound queue growth.');
+    assert.equal(preview?.stack,undefined);
+    assert.equal(preview && 'description' in preview.member,false);
+    assert.equal(restarted.prPreview('https://github.com/owner/repo/pull/999'),null);
+    assert.equal(generated,1);
+    const signedOut=createWorkbenchService({...s.deps,auth:()=>({token:null,login:null})});
+    assert.equal(signedOut.prPreview(s.pr.html_url),null);
+  } finally {s.cleanup();}
+});
+
+void test('PR badge previews do not enqueue missing briefings', async()=>{
+  const s=setup(()=>Promise.reject(Error('Must not generate')),false);
+  try {
+    await s.service.queue();
+    const before=s.service.activity();
+    assert.equal(s.service.prPreview(s.pr.html_url)?.briefing,undefined);
+    assert.deepEqual(s.service.activity(),before);
+  }finally{s.cleanup();}
+});

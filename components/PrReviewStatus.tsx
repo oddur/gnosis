@@ -23,7 +23,7 @@ const icons = {
   unknown: CircleHelp,
 };
 
-function StatusBadge({
+export function StatusBadge({
   status,
   count,
   details = status.details,
