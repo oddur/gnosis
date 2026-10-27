@@ -1,7 +1,7 @@
 import { usePrReadVisit } from '../lib/pr-read-context';
 import { useFileProgress } from '../lib/file-view-progress';
 import { changeFileKey } from './PrFileInspection';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight, Copy, ExternalLink, RefreshCw } from 'lucide-react';
 import {
   peekComparison,
@@ -94,9 +94,28 @@ export function PrCommitsView({
     [attempt, setAttempt] = useState(0);
   const [copyStatus, setCopyStatus] = useState('');
   const commitListNode = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (commitListNode.current) commitListNode.current.scrollTop = position.scroll ?? 0;
-  }, [commitsOpen]);
+  const focusedCommit = useRef<string | undefined>(undefined);
+  const attachCommitList = useCallback((node: HTMLDivElement | null) => {
+    const previous = commitListNode.current;
+    if (previous && previous !== node) {
+      position.scroll = previous.scrollTop;
+      const active = document.activeElement;
+      focusedCommit.current = active instanceof HTMLElement && previous.contains(active)
+        ? active.dataset.commitId
+        : undefined;
+    }
+    commitListNode.current = node;
+    if (!node) return;
+    // Changing the comparison remounts PrChangesView, including this sidebar.
+    // Restore on the actual DOM attachment, before paint, not only on expand.
+    node.scrollTop = position.scroll ?? 0;
+    if (focusedCommit.current) {
+      const target = Array.from(node.querySelectorAll<HTMLButtonElement>('[data-commit-id]'))
+        .find(button => button.dataset.commitId === focusedCommit.current);
+      target?.focus({ preventScroll: true });
+      focusedCommit.current = undefined;
+    }
+  }, [position]);
   const [opening, setOpening] = useState<CommitSelection>();
   const failedSelection = useRef<CommitSelection | undefined>(undefined);
   const navigation = useRef(0);
@@ -319,7 +338,7 @@ export function PrCommitsView({
           </div>
           <div
             className="commit-list"
-            ref={commitListNode}
+            ref={attachCommitList}
             onScroll={(e) => {
               position.scroll = e.currentTarget.scrollTop;
               persist();
@@ -390,6 +409,7 @@ export function PrCommitsView({
                         return (
                         <button
                           key={commit.sha}
+                          data-commit-id={JSON.stringify([group.member.url, commit.sha])}
                           className={`commit-row${viewed ? '' : ' is-unviewed'}`}
                           title={viewed ? 'All files in this commit are viewed' : 'This commit has unviewed files'}
                           aria-busy={opening?.url === group.member.url && opening.lastSha === commit.sha}

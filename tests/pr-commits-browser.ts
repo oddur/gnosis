@@ -126,6 +126,15 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('.changes-file-actions input[type=checkbox]').click()");
     await wait("!!document.querySelector('.commit-row[aria-pressed=true] .pr-unread-dot')");
     await js("document.querySelectorAll('.changes-file-actions input[type=checkbox]').forEach(e=>{if(e.checked)e.click()})");
+    // A scrolling commit history must keep its position when the comparison changes.
+    await js("(()=>{const style=document.createElement('style');style.id='commit-scroll-test';style.textContent='.commit-list{max-height:100px;flex:none}';document.head.appendChild(style);const list=document.querySelector('.commit-list');list.scrollTop=60;list.dispatchEvent(new Event('scroll',{bubbles:true}));window.commitListBefore=list;window.commitScrollBefore=list.scrollTop;const next=document.querySelectorAll('.commit-row')[1];next.focus({preventScroll:true});next.click()})()");
+    await wait("document.querySelector('.commit-detail-title')?.textContent.includes('Keep retry boundaries')");
+    assert.ok(await js<number>('window.commitScrollBefore') > 0, 'The regression starts with a scrolled history');
+    assert.equal(await js("document.querySelector('.commit-list').scrollTop"), await js('window.commitScrollBefore'), 'Selecting a commit must not jump the history back to the top');
+    assert.equal(await js("document.activeElement===document.querySelector('.commit-row[aria-pressed=true]')"), true, 'Keyboard focus stays on the chosen commit');
+    await js("document.querySelectorAll('.commit-row')[0].click()");
+    await wait("document.querySelector('.commit-detail-title')?.textContent.includes('Merge worker')");
+    await js("document.querySelector('#commit-scroll-test').remove();document.querySelector('.commit-list').scrollTop=0");
     // Ranges retain chronological order while the list always shows newest first.
     await js(
       "document.querySelector('.commit-range-controls input[type=checkbox]').click();document.querySelectorAll('.commit-row')[2].click()"
