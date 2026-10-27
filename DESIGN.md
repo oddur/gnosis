@@ -208,7 +208,8 @@ Click, Enter, and Space copy the primary value. Titles, rows, and breadcrumbs re
 Right-click, the context-menu key, or Shift+F10 opens entity actions. PR actions include the number and, when available, the title.
 The menu offers Open on GitHub when the destination is known. Menu dismissal returns focus to the badge.
 
-Hover and focus reveal the copy icon in a reserved 12px slot. Success replaces it with a checkmark for 1500ms.
+Hover and focus replace the leading entity icon or avatar with the copy icon. Success shows a checkmark there for 1500ms.
+Both icons share one grid cell, so feedback preserves the original icon's dimensions without trailing blank space.
 Failure shows an error icon, destructive text, and a retry instruction for the same duration. A polite live region announces the result.
 These states preserve badge dimensions. Keyboard focus uses a 2px ring with a 2px offset.
 

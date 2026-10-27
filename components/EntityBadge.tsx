@@ -119,7 +119,16 @@ export function EntityBadge({
                   }}
                 >
                   <span className="entity-badge-icon" aria-hidden="true">
-                    {icon ?? <Icon size={13} />}
+                    <span className="entity-badge-identity">{icon ?? <Icon size={13} />}</span>
+                    <span className="entity-badge-copy">
+                      {state === 'copied' ? (
+                        <Check size={12} />
+                      ) : state === 'failed' ? (
+                        <X size={12} />
+                      ) : (
+                        <Copy size={12} />
+                      )}
+                    </span>
                   </span>
                   <span className="entity-badge-value" aria-hidden="true">
                     <span className="entity-badge-start">{label.slice(0, split)}</span>
@@ -127,15 +136,6 @@ export function EntityBadge({
                       <span className="entity-badge-tail">
                         <span>{label.slice(split)}</span>
                       </span>
-                    )}
-                  </span>
-                  <span className="entity-badge-copy" aria-hidden="true">
-                    {state === 'copied' ? (
-                      <Check size={12} />
-                    ) : state === 'failed' ? (
-                      <X size={12} />
-                    ) : (
-                      <Copy size={12} />
                     )}
                   </span>
                   <span className="sr-only" role="status" aria-live="polite">

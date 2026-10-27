@@ -2919,9 +2919,11 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 :where(.queue-item:hover, .queue-item.is-selected, .commit-entry:hover, .commit-entry:has(.commit-row[aria-pressed=true]), .global-command [cmdk-item][data-selected=true]) .entity-badge { background:var(--card); border-color:var(--border); }
 :where(.queue-item:hover, .queue-item.is-selected, .commit-entry:hover, .commit-entry:has(.commit-row[aria-pressed=true]), .global-command [cmdk-item][data-selected=true]) .entity-badge:hover { border-color:var(--input); }
 .entity-badge:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
-.entity-badge-icon,.entity-badge-copy { display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; }
-.entity-badge-copy { width:12px; opacity:0; }
+.entity-badge-icon { display:inline-grid; flex-shrink:0; }
+.entity-badge-identity,.entity-badge-copy { display:inline-flex; align-items:center; justify-content:center; grid-area:1 / 1; }
+.entity-badge-copy { opacity:0; }
 .entity-badge:hover .entity-badge-copy,.entity-badge:focus-visible .entity-badge-copy,.entity-badge[data-copy-state=copied] .entity-badge-copy,.entity-badge[data-copy-state=failed] .entity-badge-copy { opacity:1; }
+.entity-badge:hover .entity-badge-identity,.entity-badge:focus-visible .entity-badge-identity,.entity-badge[data-copy-state=copied] .entity-badge-identity,.entity-badge[data-copy-state=failed] .entity-badge-identity { opacity:0; }
 .entity-badge[data-copy-state=failed] { color:var(--destructive); }
 .entity-badge-value { display:inline-flex; min-width:0; overflow:hidden; white-space:nowrap; }
 .entity-badge-start { min-width:0; overflow:hidden; text-overflow:ellipsis; }

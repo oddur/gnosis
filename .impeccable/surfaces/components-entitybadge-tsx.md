@@ -10,7 +10,7 @@ OWN-WORLD: Inherit cool neutral surfaces, blue accent, Plus Jakarta Sans, JetBra
 
 STORY: Read the PR, identify its source, copy an exact value. Clicking a chip copies; titles, rows and breadcrumbs navigate. Right-click offers alternate copy formats and GitHub navigation.
 
-FIRST VIEWPORT: Queue metadata contains repository, PR and user chips beneath the title. Details show source and target branch chips. Reserve copy-icon space; success and failure never shift the layout. Long values preserve their beginning and end, with the full value in the tooltip and clipboard.
+FIRST VIEWPORT: Queue metadata contains repository, PR and user chips beneath the title. Details show source and target branch chips. Copy feedback replaces the leading icon or avatar in the same space; success and failure never shift the layout. No trailing blank icon slot. Long values preserve their beginning and end, with the full value in the tooltip and clipboard.
 
 FORM: Local component extension in the incumbent workbench. No concept seed required. Hover/focus reveals the copy action; successful copying briefly shows a checkmark. No decorative motion.
 

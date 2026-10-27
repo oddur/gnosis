@@ -111,6 +111,9 @@ void app.whenReady().then(async () => {
     const second = await js<{ x: number; y: number }>(
       "(()=>{const r=document.querySelectorAll('.queue-meta .github-author')[1].getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()"
     );
+    win.focus();
+    win.webContents.focus();
+    await wait('document.hasFocus()');
     win.webContents.sendInputEvent({ type: 'mouseMove', ...second });
     await wait("document.querySelector('.github-author-tooltip')?.textContent.includes('Profile details unavailable')");
     win.setSize(1200, 900);
