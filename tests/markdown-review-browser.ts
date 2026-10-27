@@ -72,12 +72,37 @@ void app.whenReady().then(async () => {
     );
     await new Promise((r) => setTimeout(r, 1700));
     await within("root.scrollIntoView({block:'start'})");
+    await within(
+      "const toggle=root.querySelector('.markdown-review-toolbar input'); if(!toggle.checked) toggle.click()"
+    );
     await wait(`!!document.querySelector('${target} ins')`);
     assert.ok(
       await within("return root.querySelector('.markdown-block-content').textContent.includes('Retry failed requests')")
     );
     assert.ok(await within("return [...root.querySelectorAll('del')].some(n=>n.textContent==='three')"));
     assert.ok(await within("return [...root.querySelectorAll('ins')].some(n=>n.textContent==='five')"));
+    assert.ok(await within("return root.querySelectorAll('.markdown-context-gap').length > 0"));
+    assert.ok(
+      await within("return !root.querySelector('.markdown-review-document').textContent.includes('Keep credentials')")
+    );
+    await within("root.querySelector('.markdown-context-gap').scrollIntoView({block:'center'})");
+    await capture('folded');
+    await within("root.querySelector('.markdown-context-gap button').click()");
+    await wait(
+      `document.querySelector('${target} .markdown-review-document')?.textContent.includes('Keep credentials')`
+    );
+    assert.ok(await within("return root.querySelector('.markdown-review-document').contains(document.activeElement)"));
+    await capture('expanded');
+    await within(
+      "[...root.querySelectorAll('[data-md-block]')].find(b=>b.textContent.includes('Keep credentials')).querySelector('.markdown-source-link').click()"
+    );
+    await wait(`document.querySelector('${target} .changes-code')?.checkVisibility({visibilityProperty:true})`);
+    await new Promise((r) => setTimeout(r, 300));
+    await mode('Preview');
+    await wait(
+      `document.querySelector('${target} .markdown-review-document')?.textContent.includes('Keep credentials')`
+    );
+    await within("root.scrollIntoView({block:'start'})");
     await capture('desktop');
     await wait(
       `document.querySelector('${target} .markdown-review-discussion')?.textContent.includes('Should cancellation')`
@@ -130,15 +155,24 @@ void app.whenReady().then(async () => {
     );
     assert.ok(await js('document.documentElement.scrollWidth<=innerWidth'));
     await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='new.md').click()");
-    await wait("document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='docs/new.md'");
+    await wait(
+      "document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='docs/new.md'"
+    );
     await capture('added');
     await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='removed.md').click()");
-    await wait("document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='docs/removed.md'");
+    await wait(
+      "document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='docs/removed.md'"
+    );
     await capture('deleted');
     await click('Commits');
     await wait("!!document.querySelector('.commit-stream-row .markdown-review')");
     await capture('commits');
-    assert.ok(await js("(()=>{const h=document.querySelector('.commit-stream-row .changes-file-header h2');const r=h.getBoundingClientRect();return r.width>=100 && r.height>=16})()"), 'Markdown commit header preserves file identity');
+    assert.ok(
+      await js(
+        "(()=>{const h=document.querySelector('.commit-stream-row .changes-file-header h2');const r=h.getBoundingClientRect();return r.width>=100 && r.height>=16})()"
+      ),
+      'Markdown commit header preserves file identity'
+    );
     const first = "document.querySelector('.commit-stream-row .markdown-review')";
     await js(`${first}.querySelector('.markdown-review-toolbar input').click()`);
     await wait("localStorage.getItem('gnosis-markdown-view:v1')?.includes('false')");

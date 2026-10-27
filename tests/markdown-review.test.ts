@@ -139,3 +139,33 @@ void test('relative paths include encoded file directories; root paths remain re
   );
   assert.equal(githubMarkdownUrl('/a.png', true, source), 'https://raw.githubusercontent.com/owner/repo/head/a.png');
 });
+
+void test('focused previews keep context, heading ancestry and comments; gaps expand without losing changes', async () => {
+  const { markdownReviewContext, markdownBlockAt } = await import('../lib/markdown-review-context');
+  const before =
+    '# Guide\n\nIntroduction.\n\n## Setup\n\nFirst step.\n\nSecond step.\n\nThird step.\n\nFourth step.\n\nFifth step.\n\n## Retries\n\nWait briefly.\n\nTry three times.\n\nLog the result.\n\nArchive the log.\n\nKeep a backup.\n\nFinish.';
+  const review = await buildMarkdownReview(request(before, before.replace('three', 'five')));
+  const items = markdownReviewContext(review.blocks);
+  const shown = items.flatMap((item) => (item.kind === 'block' ? [text(item.block.tree)] : []));
+  assert.deepEqual(shown, ['Guide', 'Retries', 'Wait briefly.', 'Try threefive times.', 'Log the result.']);
+  assert.equal(items.filter((item) => item.kind === 'gap').length, 2);
+  const comment = review.blocks.find((block) => text(block.tree) === 'Third step.');
+  assert.ok(comment);
+  const withComments = markdownReviewContext(review.blocks, new Set([comment.id]));
+  for (const value of ['Setup', 'Second step.', 'Third step.', 'Fourth step.']) {
+    assert.ok(withComments.some((item) => item.kind === 'block' && text(item.block.tree) === value));
+  }
+  assert.equal(markdownBlockAt(review.blocks, comment.after)?.id, comment.id);
+  const expanded = markdownReviewContext(review.blocks, new Set(), new Set(review.blocks.map((block) => block.id)));
+  assert.equal(expanded.length, review.blocks.length);
+  assert.ok(expanded.every((item) => item.kind === 'block'));
+});
+
+void test('focused previews preserve whole added, deleted and source-only documents', async () => {
+  const { markdownReviewContext } = await import('../lib/markdown-review-context');
+  const document = '# Guide\n\nOne.\n\nTwo.\n\nThree.\n\nFour.';
+  for (const input of [request(null, document), request(document, null), request(document, document + '\n')]) {
+    const review = await buildMarkdownReview(input);
+    assert.ok(markdownReviewContext(review.blocks).every((item) => item.kind === 'block'));
+  }
+});

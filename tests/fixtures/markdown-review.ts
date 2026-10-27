@@ -2,6 +2,20 @@ export const markdownBefore = `# Retry failed requests
 
 The client retries a request **three times** before it returns an error. The delay increases after each attempt.
 
+## Connection setup
+
+Open a connection before sending a request.
+
+Use the configured endpoint.
+
+Keep credentials outside the request log.
+
+Close idle connections after the timeout.
+
+Reuse healthy connections for later requests.
+
+Record connection failures separately.
+
 ## Retry policy
 
 - Retry transient connection errors.
@@ -31,6 +45,20 @@ Record the final attempt in the request log.
 export const markdownAfter = `# Retry failed requests
 
 The client retries a request **five times** before it returns an error. The delay increases after each attempt.
+
+## Connection setup
+
+Open a connection before sending a request.
+
+Use the configured endpoint.
+
+Keep credentials outside the request log.
+
+Close idle connections after the timeout.
+
+Reuse healthy connections for later requests.
+
+Record connection failures separately.
 
 ## Retry policy
 

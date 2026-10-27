@@ -393,13 +393,24 @@ export function PrFileInspection({
       const lines = [...code.current.querySelectorAll('diffs-container')].flatMap((host) => [
         ...(host.shadowRoot?.querySelectorAll<HTMLElement>('[data-code] [data-line]') ?? []),
       ]);
-      const line = lines.find((el) => el.getBoundingClientRect().bottom >= top);
-      if (line)
+      const bottom = Math.min(
+        window.innerHeight,
+        section?.closest('.commit-diff-stream')?.getBoundingClientRect().bottom ?? window.innerHeight
+      );
+      const visible = lines.filter((el) => {
+        const bounds = el.getBoundingClientRect();
+        return bounds.bottom >= top && bounds.top < bottom;
+      });
+      const line = visible.at(0);
+      if (line) {
+        const before = isBeforeDiffLine(line);
+        const last = visible.filter((el) => isBeforeDiffLine(el) === before).at(-1) ?? line;
         previewJump.current = {
-          side: isBeforeDiffLine(line) ? 'before' : 'after',
+          side: before ? 'before' : 'after',
           start: Number(line.dataset.line),
-          end: Number(line.dataset.line),
+          end: Number(last.dataset.line),
         };
+      }
     }
     setSourceOverride(undefined);
     setRange(null);
@@ -547,6 +558,7 @@ export function PrFileInspection({
         <MarkdownReviewPreview
           key={markdownKey}
           review={renderedMarkdown}
+          revealLocation={previewJump.current}
           showChanges={markdownView.changes}
           onChanges={(changes) => changeMarkdownView({ changes })}
           onSource={openMarkdownSource}

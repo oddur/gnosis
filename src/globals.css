@@ -3062,7 +3062,6 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .markdown-review-document[data-document-change] .markdown-review-block { background:transparent; }
 .markdown-review-document[data-document-change=added] { background:color-mix(in srgb,var(--color-success) 7%,var(--background)); }
 .markdown-review-document[data-document-change=removed] { background:color-mix(in srgb,var(--color-danger) 7%,var(--background)); }
-.markdown-document-label { font-size:var(--type-caption); font-weight:600; }
 @media(max-width:700px) { .markdown-source-link { right:0; } }
 .markdown-review-toolbar { position:sticky; top:var(--markdown-header-height,92px); z-index:1; background:var(--background); }
 .markdown-selection-actions { position:absolute; top:calc(100% + 6px); right:12px; width:auto; padding:4px; border:1px solid var(--border); border-radius:6px; background:var(--popover); }
@@ -3074,3 +3073,8 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 @media(max-width:700px) { .markdown-media-change { max-width:100%; } }
 .pr-commits .commit-stream-file:has(.markdown-view-switch) > .changes-file-header { display:flex; }
 .commit-stream-file:has(.markdown-view-switch) .changes-file-actions { min-width:0; }
+
+/* Quiet disclosure between rendered Markdown change hunks. */
+.markdown-context-gap { display:flex; align-items:center; justify-content:center; gap:4px; margin:12px 0; color:var(--muted-foreground); }
+.markdown-context-gap::before,.markdown-context-gap::after { content:''; flex:1; border-top:1px solid var(--border); }
+.markdown-context-gap button { font-size:var(--type-caption); height:28px; padding-inline:8px; }

@@ -2,8 +2,9 @@ import { memo, useMemo, useRef, useState, type ReactNode, type ComponentProps, t
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
 import { toJsxRuntime } from 'hast-util-to-jsx-runtime';
 import type { Root } from 'hast';
-import { ArrowDown, ArrowUp, ArrowRightLeft, Minus, Plus, Code2, MessageSquare } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowRightLeft, Minus, Plus, Code2, MessageSquare, UnfoldVertical } from 'lucide-react';
 import type { MarkdownLocation, MarkdownReview } from '../lib/markdown-review';
+import { markdownBlockAt, markdownReviewContext } from '../lib/markdown-review-context';
 import { MarkdownImage, GitHubCodeBlock } from './Markdown';
 import { Button } from './ui/button';
 
@@ -48,6 +49,7 @@ export function MarkdownReviewPreview({
   onAsk,
   annotations,
   canComment,
+  revealLocation,
 }: {
   review: MarkdownReview;
   showChanges: boolean;
@@ -56,10 +58,22 @@ export function MarkdownReviewPreview({
   onAsk: (text: string) => void;
   annotations: Annotation[];
   canComment: boolean;
+  revealLocation?: MarkdownLocation;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<{ text: string; location?: MarkdownLocation }>();
   const [changeIndex, setChangeIndex] = useState(-1);
+  const [revealed] = useState(() => {
+    if (!revealLocation) return [];
+    const first = markdownBlockAt(review.blocks, revealLocation);
+    return review.blocks
+      .filter((block) => {
+        const range = block[revealLocation.side];
+        return block === first || (range && range.start <= revealLocation.end && range.end >= revealLocation.start);
+      })
+      .map((block) => block.id);
+  });
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const wholeFile =
     review.blocks.length && review.blocks.every((b) => b.change === 'added')
       ? 'added'
@@ -76,6 +90,17 @@ export function MarkdownReviewPreview({
     );
     if (block && showChanges) assignments.set(block.id, [...(assignments.get(block.id) ?? []), annotation]);
     else unmatched.push(annotation);
+  }
+  const pinned = new Set(assignments.keys());
+  revealed.forEach((id) => pinned.add(id));
+  const context = markdownReviewContext(review.blocks, pinned, expanded);
+  function expand(ids: string[]) {
+    setExpanded((previous) => new Set([...previous, ...ids]));
+    requestAnimationFrame(() => {
+      const first = ref.current?.querySelector<HTMLElement>(`[data-md-block="${ids[0]}"]`);
+      first?.focus({ preventScroll: true });
+      first?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+    });
   }
   function navigate(delta: number) {
     const next = Math.max(0, Math.min(changes.length - 1, changeIndex + delta));
@@ -180,48 +205,79 @@ export function MarkdownReviewPreview({
         </div>
       ) : (
         <div className="markdown-review-document" data-document-change={wholeFile}>
-          {wholeFile && (
-            <p className="markdown-document-label">{wholeFile === 'added' ? 'Added document' : 'Removed document'}</p>
-          )}
           {!review.blocks.length && <p>This Markdown file is empty.</p>}
-          {review.blocks.map((block) => (
-            <section
-              key={block.id}
-              data-md-block={block.id}
-              data-md-block-change={block.change}
-              tabIndex={-1}
-              className="markdown-review-block"
-            >
-              {!wholeFile && block.change !== 'unchanged' && block.change !== 'changed' && (
-                <div className="markdown-block-label">
-                  {block.change === 'added' ? (
-                    <Plus size={12} />
-                  ) : block.change === 'removed' ? (
-                    <Minus size={12} />
-                  ) : (
-                    <ArrowRightLeft size={12} />
+          {context.map((item) => {
+            if (item.kind === 'gap') {
+              const ids = item.blocks.map((block) => block.id);
+              const description = `${ids.length} unchanged ${ids.length === 1 ? 'block' : 'blocks'}`;
+              return (
+                <div key={`gap-${ids[0]}`} className="markdown-context-gap">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    title={description}
+                    aria-label={`Show more context: ${description}`}
+                    onClick={() => expand(ids.slice(0, 3))}
+                  >
+                    <UnfoldVertical size={14} /> Show more
+                  </Button>
+                  {ids.length > 3 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Show all ${description}`}
+                      onClick={() => expand(ids)}
+                    >
+                      Show all
+                    </Button>
                   )}
-                  {({ added: 'Added', removed: 'Removed', changed: 'Changed', moved: 'Moved' } as const)[block.change]}
                 </div>
-              )}
-              <div className="markdown-block-content">
-                <Tree tree={block.tree} />
-              </div>
-              <button
-                className="markdown-source-link"
-                onClick={() => onSource(block.after ?? block.before)}
-                aria-label="View source for section"
-                title="View source for section"
+              );
+            }
+            const block = item.block;
+            return (
+              <section
+                key={block.id}
+                data-md-block={block.id}
+                data-md-block-change={block.change}
+                tabIndex={-1}
+                className="markdown-review-block"
               >
-                <Code2 size={14} />
-              </button>
-              {assignments.get(block.id)?.map((annotation, index) => (
-                <div key={index} className="markdown-review-discussion">
-                  {annotation.content}
+                {!wholeFile && block.change !== 'unchanged' && block.change !== 'changed' && (
+                  <div className="markdown-block-label">
+                    {block.change === 'added' ? (
+                      <Plus size={12} />
+                    ) : block.change === 'removed' ? (
+                      <Minus size={12} />
+                    ) : (
+                      <ArrowRightLeft size={12} />
+                    )}
+                    {
+                      ({ added: 'Added', removed: 'Removed', changed: 'Changed', moved: 'Moved' } as const)[
+                        block.change
+                      ]
+                    }
+                  </div>
+                )}
+                <div className="markdown-block-content">
+                  <Tree tree={block.tree} />
                 </div>
-              ))}
-            </section>
-          ))}
+                <button
+                  className="markdown-source-link"
+                  onClick={() => onSource(block.after ?? block.before)}
+                  aria-label="View source for section"
+                  title="View source for section"
+                >
+                  <Code2 size={14} />
+                </button>
+                {assignments.get(block.id)?.map((annotation, index) => (
+                  <div key={index} className="markdown-review-discussion">
+                    {annotation.content}
+                  </div>
+                ))}
+              </section>
+            );
+          })}
         </div>
       )}
       {!!unmatched.length && (
