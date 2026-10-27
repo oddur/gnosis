@@ -2975,3 +2975,22 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .file-extension-popup .selection-option-label { display:flex; align-items:center; justify-content:space-between; gap:12px; flex:1; }
 .file-extension-count { color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
 .file-extension-footer { padding:8px 10px; border-top:1px solid var(--border); color:var(--muted-foreground); font-size:var(--type-caption); }
+
+/* Cached PR previews preserve copy-on-click and never fetch GitHub on hover. */
+.entity-badge-tooltip.pr-badge-tooltip { width:360px; max-width:calc(100vw - 24px); padding:12px; gap:10px; text-align:left; text-wrap:initial; }
+.pr-badge-preview { display:flex; flex-direction:column; gap:8px; min-width:0; }
+.pr-badge-preview-title { font-size:var(--type-body); font-weight:650; line-height:1.4; }
+.pr-badge-preview-meta { color:var(--muted-foreground); font-size:var(--type-caption); }
+.pr-badge-preview-status,.pr-badge-preview-facts { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; }
+.pr-badge-preview-facts > span,.pr-badge-preview-branches { display:flex; align-items:center; gap:5px; }
+.pr-badge-preview-branches svg { flex-shrink:0; }
+.pr-badge-preview-branches > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:var(--font-mono); }
+.pr-badge-preview-briefing { padding-top:8px; border-top:1px solid var(--border); display:flex; flex-direction:column; gap:4px; }
+.pr-badge-preview p { margin:0; font-size:var(--type-caption); line-height:1.5; }
+.pr-badge-preview-briefing p { display:-webkit-box; -webkit-line-clamp:5; -webkit-box-orient:vertical; overflow:hidden; }
+.pr-badge-tooltip .entity-badge-instruction { padding-top:8px; border-top:1px solid var(--border); }
+
+.pr-badge-preview-head { min-width:0; flex:1; }
+.pr-badge-preview-base { max-width:45%; flex-shrink:0; }
+.pr-badge-preview-title { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.pr-badge-preview-briefing p { -webkit-line-clamp:3; }

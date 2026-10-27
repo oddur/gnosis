@@ -1,3 +1,4 @@
+import { prBadgePreview } from '../../lib/pr-badge-preview';
 import { fileFilterMocks, filterFixtureFiles } from './file-filters';
 import { emptyReadVersions, type PrReadState, type MarkPrReadRequest } from '../../lib/pr-read-state';
 import './select-option';
@@ -452,6 +453,13 @@ window.addEventListener('fixture-new-commit', () => {
   window.dispatchEvent(new Event('fixture-pr-read-change'));
 });
 const mocks = {
+  getPrBadgePreview: (url:string) => {
+    const item=items.find(item=>item.subject.members.some(member=>member.url===url));
+    const member=item?.subject.members.find(member=>member.url===url);
+    if(!member)return Promise.resolve(null);
+    return Promise.resolve({...prBadgePreview(member,item?.subject,item?.briefing),signals:{url,headSha:member.headSha,checkedAt:Date.now(),comments:4,
+      checks:{state:'success' as const,passed:129,skipped:1,total:130},readiness:{state:'OPEN',isDraft:false,mergeable:'MERGEABLE',mergeState:'CLEAN',reviewDecision:'APPROVED',baseBranch:member.baseBranch,baseSha:member.baseSha,behindBy:0,mergeQueue:false,queueState:null}}});
+  },
   ...fileFilterMocks,
   onReviewNavigate: (callback: (id: string) => void) => {
     navigateReview = event => callback((event as CustomEvent<string>).detail);

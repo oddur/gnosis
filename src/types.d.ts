@@ -102,6 +102,7 @@ declare global {
       onReviewStats: (callback: (reviewId: string, inputBytes: number) => void) => void;
       offReviewStats: () => void;
       onReviewNavigate: (callback: (reviewId: string) => void) => void;
+      getPrBadgePreview: (url: string) => Promise<import('../lib/pr-badge-preview').PrBadgePreview | null>;
       loadFileFilters: () => Promise<FileFilterState>;
       updateFileFilters: (action:FileFilterAction) => Promise<FileFilterState>;
       getFileClassifications: (request:PrFileRequest) => Promise<Record<string,FileKinds>>;

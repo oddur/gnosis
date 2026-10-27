@@ -38,6 +38,7 @@ import type {
 } from '../lib/types';
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  getPrBadgePreview: (url: string): Promise<import('../lib/pr-badge-preview').PrBadgePreview | null> => ipcRenderer.invoke('pr-badge-preview', url),
   loadFileFilters: (): Promise<FileFilterState> => ipcRenderer.invoke('load-file-filters'),
   updateFileFilters: (action: FileFilterAction): Promise<FileFilterState> => ipcRenderer.invoke('update-file-filters', action),
   getFileClassifications: (request: PrFileRequest): Promise<Record<string,FileKinds>> => ipcRenderer.invoke('file-classifications', request),

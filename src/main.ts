@@ -2282,6 +2282,13 @@ ipcMain.handle('workbench-queue', async (_event, force: boolean) => {
   return workbench.queue(force);
 });
 ipcMain.handle('workbench-snapshot', () => workbench.snapshot());
+ipcMain.handle('pr-badge-preview', (_event, url: string) => {
+  if (typeof url !== 'string' || !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(url)) return null;
+  const token = getResolvedToken();
+  if (!token || !cachedLogin) return null;
+  const preview = workbench.prPreview(url);
+  return preview ? { ...preview, signals: cachedQueueSignals(getGitHubClient(token), [preview.member])[0] } : null;
+});
 ipcMain.handle('workbench-mute-prs', (_event, request: MutePrRequest) => { const queue = workbench.mutePrs(request); rebuildTrayMenu(); return queue; });
 ipcMain.handle('workbench-mark-pr-read', async (_event, request: MarkPrReadRequest) => {
   const result = workbench.markPrRead(request);

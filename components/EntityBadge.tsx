@@ -1,3 +1,5 @@
+import type { PrBadgePreview } from '../lib/pr-badge-preview';
+import { PrBadgeTooltip } from './PrBadgeTooltip';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Check,
@@ -48,6 +50,7 @@ export function EntityBadge({
   className = '',
   copyOptions = [],
   tooltipContent,
+  tooltipHeading,
   tooltipReady = true,
   onTooltipOpenChange,
 }: {
@@ -59,6 +62,7 @@ export function EntityBadge({
   className?: string;
   copyOptions?: { label: string; value: string }[];
   tooltipContent?: ReactNode;
+  tooltipHeading?: string;
   tooltipReady?: boolean;
   onTooltipOpenChange?: (open: boolean) => void;
 }) {
@@ -152,11 +156,12 @@ export function EntityBadge({
               sideOffset={6}
               collisionPadding={12}
               hideWhenDetached
-              className={`entity-badge-tooltip${tooltipContent ? ' github-author-tooltip' : ''}`}
+              className={`entity-badge-tooltip${tooltipContent && kind === 'user' ? ' github-author-tooltip' : ''}${kind === 'pr' ? ' pr-badge-tooltip' : ''}`}
             >
-              <span className="entity-badge-full-value">{value}</span>
-              <span className="entity-badge-instruction">{feedback}</span>
+              <span className="entity-badge-full-value">{tooltipHeading ?? value}</span>
+              {kind !== 'pr' && <span className="entity-badge-instruction">{feedback}</span>}
               {tooltipContent}
+              {kind === 'pr' && <span className="entity-badge-instruction">{feedback}</span>}
             </TooltipContent>
           )}
         </Tooltip>
@@ -209,11 +214,36 @@ export function RepositoryBadge({ repo }: { repo?: string }) {
   return <EntityBadge kind="repository" value={repo} href={`https://github.com/${repo}`} />;
 }
 export function PrBadge({ url, number, title }: { url: string; number?: number | string; title?: string }) {
+  const [open, setOpen] = useState(false);
+  const [resolved, setResolved] = useState<{ url: string; value: PrBadgePreview | null; failed?: boolean }>();
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    void window.electronAPI
+      .getPrBadgePreview(url)
+      .then((value) => {
+        if (live) setResolved({ url, value: value ?? null });
+      })
+      .catch(() => {
+        if (live) setResolved({ url, value: null, failed: true });
+      });
+    return () => {
+      live = false;
+    };
+  }, [open, url]);
+  const preview = resolved?.url === url ? resolved.value : null;
   const n = number ?? /\/pull\/(\d+)/.exec(url)?.[1];
   if (!n) return null;
   return (
     <EntityBadge
       kind="pr"
+      tooltipHeading={preview ? `${preview.member.repo} #${n}` : url}
+      tooltipReady={resolved?.url === url}
+      tooltipContent={<PrBadgeTooltip preview={preview} title={title} failed={resolved?.failed} />}
+      onTooltipOpenChange={(next) => {
+        if (next) setResolved(undefined);
+        setOpen(next);
+      }}
       value={url}
       label={`#${n}`}
       href={url}

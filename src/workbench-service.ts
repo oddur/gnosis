@@ -1,3 +1,4 @@
+import { prBadgePreview, type PrBadgePreview } from '../lib/pr-badge-preview';
 import type { StateStorage } from './app-data-store';
 import { createPrReadStore } from './pr-read-store';
 import type { MarkPrReadRequest } from '../lib/pr-read-state';
@@ -955,6 +956,17 @@ export function createWorkbenchService(deps: Deps) {
     }
   }
   return {
+    /** Local preview only: no discovery, status refresh, or briefing generation. */
+    prPreview(url: string): PrBadgePreview | null {
+      if (!deps.auth().token || !deps.auth().login) return null;
+      const s = load();
+      const subject = s.subjects.find(subject => subject.members.some(member => member.url === url));
+      const member = subject?.members.find(member => member.url === url) ?? stars.load(s.account).find(entry => entry.member.url === url)?.member;
+      if (member) return prBadgePreview(member, subject, subject ? s.briefs[key(subject)] : undefined);
+      const saved = deps.history().find(entry => entry.snapshot?.subject.members.some(member => member.url === url))?.snapshot?.subject;
+      const historical = saved?.members.find(member => member.url === url);
+      return historical ? prBadgePreview(historical, saved, undefined, true) : null;
+    },
     cached: () => view(true),
     snapshot: (): WorkbenchQueue => deps.auth().token && deps.auth().login ? view() : { items: [], warnings: [], remaining: 0 },
     queue,
