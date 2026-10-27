@@ -12,6 +12,100 @@ import { generateSlide, generateReviewGuide, planReview } from '../lib/agent';
 import { getProvider, type GenerateOptions } from '../lib/provider';
 import { DEFAULT_CODEX_MODEL } from '../lib/models';
 import { buildTopicContext } from '../lib/context-builder';
+import type { Diagram } from '@d2lang/d2';
+import { STABLE_D2_SOURCE } from './fixtures/d2-stable';
+
+const geometry = (board: Diagram) => ({
+  shapes: board.shapes
+    .map(({ id, pos, width, height }) => ({ id, pos, width, height }))
+    .sort((a, b) => a.id.localeCompare(b.id)),
+  edges: board.connections
+    .map(({ id, route, labelPosition, labelPercentage }) => ({ id, route, labelPosition, labelPercentage }))
+    .sort((a, b) => a.id.localeCompare(b.id)),
+});
+
+void test('native steps reserve label space and retain node positions and edge routes', async () => {
+  const d2 = new D2();
+  const source = STABLE_D2_SOURCE;
+  try {
+    for (const dark of [false, true]) {
+      const compiled = await compileD2Source(d2, source, dark);
+      const boards = [compiled.diagram, ...(compiled.diagram.steps ?? []).filter((b): b is Diagram => !!b)];
+      for (const board of boards.slice(1)) assert.deepEqual(geometry(board), geometry(boards[0]));
+      const queue = boards[1].shapes.find((s) => s.id === 'queue');
+      assert.ok(queue && 'label' in queue);
+      assert.equal(queue.label, 'Pending: A, B, C\nWaiting for capacity');
+      assert.equal(boards[1].shapes.find((s) => s.id === 'worker')?.strokeWidth, 4);
+      for (const board of boards) {
+        for (const shape of board.shapes) {
+          assert.equal(shape.labelPosition, 'INSIDE_MIDDLE_CENTER', 'labels remain inside their nodes');
+          if ('label' in shape) {
+            assert.equal(shape.fontSize, 24, 'native steps retain the application font size');
+            assert.ok(
+              shape.width >= shape.labelWidth && shape.height >= shape.labelHeight,
+              'reserve enough room for every state'
+            );
+          }
+        }
+        for (const edge of board.connections) assert.equal(edge.fontSize, 20);
+        assert.match(await d2.render(board, { ...compiled.renderOptions, noXMLTag: true }), /<svg/);
+      }
+    }
+  } finally {
+    await d2.dispose();
+  }
+});
+
+void test('stable layouts support containers, sequence notes and native scenarios without flattening real graph changes', async () => {
+  const d2 = new D2();
+  try {
+    for (const source of [
+      `direction: right
+service: { handler: Handler { icon: gnosis:server }; jobs: "Pending: A"; handler -> jobs: enqueue }
+worker: Worker
+service.jobs -> worker: dispatch
+scenarios: { busy: { service.jobs.label: "Pending: A, B, C\\nWait for capacity"; service.handler.style.stroke-width: 4 } }`,
+      `shape: sequence_diagram
+caller: Caller
+api: API
+store: Store
+caller -> api.run: request
+api.note: Check version
+api.run -> store: write
+store -> api.run: done
+api.run -> caller: result
+scenarios: { conflict: { api.note.label: "Version has changed\\nDo not write"; (store -> api.run)[0].label: "conflict: retry with current version" } }`,
+    ]) {
+      const result = await compileD2Source(d2, source, false);
+      assert.ok(result.diagram.scenarios?.[0]);
+      assert.deepEqual(geometry(result.diagram), geometry(result.diagram.scenarios[0]));
+    }
+    const changed = await compileD2Source(
+      d2,
+      `direction: right
+a -> b: remote read
+steps: {
+  cached: { (a -> b)[0]: null; cache: Snapshot; a -> cache: local read; cache -> b: refresh }
+  stale: { cache.label: "Stale snapshot\\nRefresh in progress" }
+}`,
+      false
+    );
+    const [cached, stale] = changed.diagram.steps ?? [];
+    assert.ok(cached && stale);
+    assert.deepEqual(geometry(cached), geometry(stale), 'matching later states share a layout too');
+    assert.ok(
+      !changed.diagram.shapes.some((s) => s.id === 'cache'),
+      'do not introduce future entities into the initial state'
+    );
+    assert.deepEqual(
+      changed.diagram.connections.map((e) => e.id),
+      ['(a -> b)[0]']
+    );
+    assert.equal(cached.connections.length, 2);
+  } finally {
+    await d2.dispose();
+  }
+});
 
 void test('malformed optional diagrams cannot break the review, and old positional captions stay aligned', () => {
   for (const invalid of [

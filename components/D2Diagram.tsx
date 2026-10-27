@@ -220,7 +220,7 @@ export function D2Diagram({
             aria-expanded={open}
             onClick={() => setOpen(true)}
           >
-            <div key={frame.id} className="mermaid-preview-canvas d2-frame" dangerouslySetInnerHTML={{ __html: svg }} />
+            <div key={frame.layoutId ?? frame.id} className="mermaid-preview-canvas d2-frame" dangerouslySetInnerHTML={{ __html: svg }} />
             <span className="mermaid-expand">
               <Maximize2 size={14} /> Expand diagram
             </span>
@@ -279,7 +279,7 @@ export function D2Diagram({
               <div className="d2-expanded-body">
                 <DiagramViewport
                   svg={svg}
-                  frameKey={frame.id}
+                  frameKey={frame.layoutId ?? frame.id}
                   onEntitySelect={(id) => {
                     const match = views.findIndex(
                       (item) =>

@@ -3,6 +3,7 @@ import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { D2_EXAMPLES } from './fixtures/d2-examples';
+import { STABLE_D2_SOURCE } from './fixtures/d2-stable';
 
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({
@@ -171,6 +172,44 @@ void app.whenReady().then(async () => {
     await click('Close');
     win.setSize(1280, 800);
     await click('Try your own D2');
+    await js(
+      `(()=>{const e=document.querySelector('textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,${JSON.stringify(STABLE_D2_SOURCE)});e.dispatchEvent(new Event('input',{bubbles:true}))})()`
+    );
+    await click('Render with TALA');
+    await wait("document.querySelector('.d2-preview svg')?.textContent.includes('Pending: A')");
+    const frameGeometry = (scope: string) => `(()=>{
+      const root=${scope};const svg=root.querySelector('svg[data-d2-version]');const origin=svg.getBoundingClientRect();
+      return {bounds:[svg,...svg.querySelectorAll('svg')].map(s=>s.getAttribute('viewBox')),
+        shapes:[...root.querySelectorAll('[data-d2-entity] .shape rect')].map(e=>{const r=e.getBoundingClientRect();return [r.x-origin.x,r.y-origin.y,r.width,r.height].map(v=>Math.round(v*100)/100)})};
+    })()`;
+    const previewGeometry = await js(frameGeometry("document.querySelector('.d2-preview')"));
+    assert.equal(await js("document.querySelectorAll('.d2-preview [data-d2-entity] .shape rect').length"), 2);
+    await click('Next diagram step');
+    await wait("document.querySelector('.d2-preview svg')?.textContent.includes('Waiting for capacity')");
+    assert.deepEqual(
+      await js(frameGeometry("document.querySelector('.d2-preview')")),
+      previewGeometry,
+      'native label changes must not move or rescale the preview'
+    );
+    await click('Expand diagram');
+    await wait("!!document.querySelector('.d2-dialog svg')");
+    await click('Zoom in', dialog);
+    await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    await js(
+      `${dialog}.getAnimations({subtree:true}).filter(a=>a.effect?.getTiming().iterations!==Infinity).map(a=>a.finished.catch(()=>{})).reduce((p,a)=>p.then(()=>a),Promise.resolve())`
+    );
+    const expandedGeometry = await js(frameGeometry(dialog));
+    const zoom = await js(`${dialog}.querySelector('[aria-label="Zoom level"]').textContent`);
+    await click('Next diagram step', dialog);
+    await wait(`${dialog}.querySelector('.mermaid-zoom-art svg')?.textContent.includes('Wake the next caller')`);
+    assert.equal(await js(`${dialog}.querySelector('[aria-label="Zoom level"]').textContent`), zoom);
+    assert.deepEqual(
+      await js(frameGeometry(dialog)),
+      expandedGeometry,
+      'native state changes preserve expanded geometry and zoom'
+    );
+    await capture('stable-native-steps');
+    await click('Close');
     const sqlSource = 'query: "WHERE id = $1"';
     await js(
       `(()=>{const e=document.querySelector('textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(e,${JSON.stringify(sqlSource)});e.dispatchEvent(new Event('input',{bubbles:true}))})()`
@@ -219,6 +258,11 @@ void app.whenReady().then(async () => {
     app.exit(0);
   } catch (error) {
     console.error(error);
+    console.error(
+      await js(
+        `({views:[...document.querySelectorAll('.d2-step-count')].map(e=>e.textContent),labels:[...document.querySelectorAll('.d2-dialog svg text')].map(e=>e.textContent)})`
+      ).catch(() => 'Diagram unavailable')
+    );
     app.exit(1);
   }
 });

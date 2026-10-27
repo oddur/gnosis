@@ -54,6 +54,8 @@ export function prepareD2Source(source: string, dark: boolean): string {
     .join('; ');
   return (
     resolveD2Icons(source, dark) +
-    `\n**.style.font-size: 24\n(** -> **)[*].style.font-size: 20\nvars: { d2-config: { theme-overrides: { ${theme} }; layout-engine: tala } }\n`
+    // Triple globs cross board boundaries. Double globs leave native steps at
+    // D2's smaller default font, changing both text metrics and layout.
+    `\n***.style.font-size: 24\n(*** -> ***)[*].style.font-size: 20\nvars: { d2-config: { theme-overrides: { ${theme} }; layout-engine: tala } }\n`
   );
 }

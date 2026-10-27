@@ -1,5 +1,6 @@
 import type { D2 } from '@d2lang/d2';
 import { prepareD2Source } from './d2-source';
+import { stabilizeD2Layouts } from './d2-layout';
 
 /** Repair only dollar signs that the parser identified as invalid substitutions.
  * This leaves raw blocks, single-quoted strings, escaped dollars and ${variables}
@@ -45,11 +46,13 @@ function escapeReportedDollars(source: string, error: unknown): string | null {
 export async function compileD2Source(d2: Pick<D2, 'compile'>, source: string, dark: boolean) {
   const prepared = prepareD2Source(source, dark);
   try {
-    return await d2.compile(prepared, { layout: 'tala' });
+    const compiled = await d2.compile(prepared, { layout: 'tala' });
+    return await stabilizeD2Layouts(d2, prepared, compiled);
   } catch (error) {
     const repaired = escapeReportedDollars(prepared, error);
     if (repaired === null) throw error;
     // One local parser recovery, with no model call or saved-source mutation.
-    return d2.compile(repaired, { layout: 'tala' });
+    const compiled = await d2.compile(repaired, { layout: 'tala' });
+    return stabilizeD2Layouts(d2, repaired, compiled);
   }
 }
