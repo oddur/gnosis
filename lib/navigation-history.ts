@@ -11,7 +11,7 @@ export interface HomeLocation {
   viewName?: string;
   muted: boolean;
   item: QueueItem | null;
-  tab: 'summary' | 'changes' | 'commits' | 'explanation';
+  tab: 'summary' | 'changes' | 'commits' | 'explanation' | 'checks';
   selected: string | null;
   scroll: number;
 }

@@ -70,7 +70,7 @@ export function PrChangesView({
   subject: ReviewSubject;
   preferences: Preferences;
   commit?: CommitWorkspace;
-  initialFile?: { url: string; path: string };
+  initialFile?: { url: string; path: string; line?: number; headSha?: string };
 }) {
   const positionId = commit ? commitPositionId(subject.id, commit.snapshot) : subject.id;
   const stream = useRef<CommitDiffStreamHandle>(null);
@@ -254,7 +254,9 @@ export function PrChangesView({
         e.snapshot.url === initialFile.url &&
         (e.file.path === initialFile.path || e.file.previousPath === initialFile.path)
     );
-    if (match) void select(match.key);
+    if (match && initialFile.headSha && match.snapshot.metadata.headSha !== initialFile.headSha) {
+      setError('This annotation belongs to an older commit. Open its source on GitHub from Checks.');
+    } else if (match) void select(match.key);
     else if (snapshots.length)
       setError(`“${initialFile.path}” is not in the current PR changes. Choose another file to comment on.`);
   }, [initialFile, entries]);
@@ -577,6 +579,7 @@ export function PrChangesView({
                   <PrFileInspection
                     key={viewKey(e)}
                     entry={e}
+                    sourceLine={initialFile?.url === e.snapshot.url && initialFile.path === e.file.path && initialFile.headSha === e.snapshot.metadata.headSha ? initialFile.line : undefined}
                     preferences={prefs}
                     classificationControl={
                       <FileKindControl

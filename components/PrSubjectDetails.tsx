@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { SearchableSelect } from './SearchableSelect';
 import { PrEntryActions, type PrGenerationActionsFor } from './PrEntryActions';
 import { PrDetails } from './PrDetails';
@@ -27,11 +28,13 @@ export function PrSubjectDetails({
   generationActions,
   onReview,
   reviewDisabled,
+  checkSummary,
 }: {
   subject: ReviewSubject;
   generationActions?: PrGenerationActionsFor;
   onReview?: (member: ReviewSubject['members'][number]) => void;
   reviewDisabled?: boolean;
+  checkSummary?: (url: string) => ReactNode;
   activeUrl: string;
   onSelect: (url: string) => void;
   statuses?: Partial<Record<string, PrStatus>>;
@@ -117,6 +120,7 @@ export function PrSubjectDetails({
         <PrDetails
           key={member.url}
           member={member}
+          checkSummary={checkSummary?.(member.url)}
           starControl={
             stacked && starredUrls && onStarChange ? (
               <PrEntryActions {...generationActions?.([member])} onReview={onReview} reviewDisabled={reviewDisabled} members={[member]} starredUrls={starredUrls} busy={starBusy || muteBusy} onStarChange={onStarChange} onMute={onMute} />

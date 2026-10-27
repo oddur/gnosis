@@ -1,3 +1,6 @@
+import { readPrChecks, readCheckDetails, readCheckLog, rerunChecks } from './pr-checks-service';
+import { checkCounts } from '../lib/pr-checks';
+import type { CheckTarget, CheckSelection, ChecksOptions } from '../lib/pr-checks';
 import { createMarkdownReviewService } from './markdown-review-service';
 import type { MarkdownReviewRequest } from '../lib/markdown-review';
 import { fileClassifications, onClassificationUpdate } from './file-classification-service';
@@ -53,13 +56,12 @@ import {
   searchPullRequests,
   searchRepos,
   listRepoPullRequests,
-  getCiStatus,
   getReviewStatus,
 } from '../lib/github';
 import { createDiffSource } from '../lib/diffSource';
 import type { DiffSource } from '../lib/diffSource';
 import { isLocalUrl } from '../lib/local-url';
-import type { CiCheck, PrMetadata, PrSearchResult, PrStatus } from '../lib/types';
+import type { PrMetadata, PrSearchResult, PrStatus } from '../lib/types';
 import {
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_FAST_CLAUDE_MODEL,
@@ -1432,11 +1434,12 @@ async function fetchPrStatus(prUrl: string, force = false): Promise<PrStatus | n
     getReviewStatus(octokit, owner, repo, pullNumber),
   ]);
 
-  const [ciStatus, signals] = await Promise.all([
-    getCiStatus(octokit, owner, repo, prData.headSha).catch(() => ({
-      checks: [] as CiCheck[],
-      conclusion: 'neutral' as const,
-    })),
+  let ciError: string | undefined;
+  const [checkSnapshot, signals] = await Promise.all([
+    readPrChecks(octokit, { url: prUrl, headSha: prData.headSha }, { force }).catch((error: unknown) => {
+      ciError = error instanceof Error ? error.message : String(error);
+      return undefined;
+    }),
     getQueueSignals(octokit, [{ url: prUrl, headSha: prData.headSha }], { force, active: true }).then(
       ([value]): QueueSignals | undefined => value
     ),
@@ -1454,8 +1457,9 @@ async function fetchPrStatus(prUrl: string, force = false): Promise<PrStatus | n
     labels: prData.labels,
     mergeable: prData.mergeable,
     isDraft: prData.isDraft,
-    ciChecks: ciStatus.checks,
-    ciConclusion: signals?.checks.state ?? ciStatus.conclusion,
+    checkSnapshot, ciError,
+    ciChecks: checkSnapshot?.checks ?? [],
+    ciConclusion: signals?.checks.state ?? (checkSnapshot ? checkCounts(checkSnapshot.checks).attention ? 'failure' : checkCounts(checkSnapshot.checks).running ? 'pending' : checkSnapshot.checks.length ? 'success' : 'neutral' : 'neutral'),
     reviewSummary,
     baseBranch: prData.baseBranch,
     commitCount: prData.commitCount,
@@ -2584,6 +2588,22 @@ const changesClient = () => {
   if (!token) throw new Error('Connect GitHub to view PR changes.');
   return getGitHubClient(token);
 };
+async function checkAccount<T>(read: (client: ReturnType<typeof changesClient>) => Promise<T>) {
+  const token = getResolvedToken();
+  const value = await read(changesClient());
+  if (token !== getResolvedToken()) throw new Error('Your GitHub account changed. Open Checks again.');
+  return value;
+}
+ipcMain.handle('pr-checks', (_event, input: CheckTarget, options: ChecksOptions = {}) =>
+  withGitHubPriority(options.background ? 'foreground' : 'interactive', () => checkAccount(async client => {
+    if (options.cachedOnly) return readPrChecks(client, input, options);
+    const { owner, repo, pullNumber } = parsePrUrl(input.url);
+    const metadata = await getPrMetadata(client, owner, repo, pullNumber, !!options.force);
+    return readPrChecks(client, { url: input.url, headSha: metadata.headSha }, options);
+  })));
+handleInteractive('check-details', (_event, input: CheckSelection) => checkAccount(client => readCheckDetails(client, input)));
+handleInteractive('check-log', (_event, input: CheckSelection) => checkAccount(client => readCheckLog(client, input)));
+handleInteractive('rerun-checks', (_event, input: CheckSelection & { mode: 'failed' | 'all' }) => checkAccount(client => rerunChecks(client, input)));
 ipcMain.handle('clear-github-cache', () => {
   if (activeGenerations.size || activeForegroundChats || workbench.isGenerating() ||
     activities.list().some(task => task.kind !== 'github' && task.status === 'running'))

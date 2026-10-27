@@ -1,3 +1,4 @@
+import { readCommitChecks } from './github-checks';
 import type { Octokit } from '@octokit/rest';
 import { parseGitHubLabels } from './github-labels';
 import { getGitHubClient, githubRateLimit } from './github-client';
@@ -296,32 +297,7 @@ export async function getCiStatus(
   repo: string,
   ref: string
 ): Promise<{ checks: CiCheck[]; conclusion: 'success' | 'failure' | 'pending' | 'neutral' }> {
-  const { data } = await octokit.checks.listForRef({ owner, repo, ref, per_page: 100 });
-  const checks: CiCheck[] = data.check_runs.map((run) => ({
-    name: run.name,
-    status: run.status as CiCheck['status'],
-    conclusion: run.conclusion ?? null,
-    url: run.html_url ?? run.details_url ?? null,
-  }));
-
-  let conclusion: 'success' | 'failure' | 'pending' | 'neutral' = 'success';
-  if (checks.length === 0) {
-    conclusion = 'neutral';
-  } else if (
-    checks.some((c) => c.conclusion === 'failure' || c.conclusion === 'timed_out' || c.conclusion === 'cancelled')
-  ) {
-    conclusion = 'failure';
-  } else if (checks.some((c) => c.status === 'in_progress' || c.status === 'queued')) {
-    conclusion = 'pending';
-  } else if (
-    checks.every((c) => c.conclusion === 'success' || c.conclusion === 'skipped' || c.conclusion === 'neutral')
-  ) {
-    conclusion = 'success';
-  } else {
-    conclusion = 'neutral';
-  }
-
-  return { checks, conclusion };
+  return readCommitChecks(octokit, owner, repo, ref);
 }
 
 export async function getReviewStatus(

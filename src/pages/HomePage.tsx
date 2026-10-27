@@ -107,7 +107,7 @@ const labels = {
 };
 
 export function HomePage({ navigationRestoration, onNavigationChange, onReviewOriginChange, onReviewReady, prefillPrUrl, initialSubjectId, commandDestination, explanationDestination, onShowActivity }: Props) {
-  const [overviewTab,setOverviewTab] = useState<'summary'|'changes'|'commits'|'explanation'>('summary');
+  const [overviewTab,setOverviewTab] = useState<'summary'|'changes'|'commits'|'explanation'|'checks'>('summary');
   const [reviewRequest, setReviewRequest] = useState<PrReviewRequest>();
   const commandCenter = useCommandCenter();
   const handledCommand = useRef<number>(0);
@@ -1149,7 +1149,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
             </span>
           )}
           </div>
-            <QueueMetadata subject={s} account={auth?.login ?? null} />
+            <QueueMetadata onChecks={() => { setOpenedItem(item); setOverviewTab('checks'); }} subject={s} account={auth?.login ?? null} />
             {item.briefing?.summary && <span className="queue-summary">{item.briefing.summary}</span>}
           </div>
         </div>}</PrEntryActions>
@@ -1163,7 +1163,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                     <span className="truncate">{m.title}</span>
                     <PrLabels members={[m]} />
                   </button>
-                  <QueueMetadata subject={{ id: m.url, kind: 'pr', title: m.title, members: [m], edges: [], warnings: [] }} account={auth?.login ?? null} />
+                  <QueueMetadata onChecks={() => { setOpenedItem(item); setOverviewTab('checks'); }} subject={{ id: m.url, kind: 'pr', title: m.title, members: [m], edges: [], warnings: [] }} account={auth?.login ?? null} />
                 </div>
                 <UnreadPrMarker urls={[m.url]} />
                 <PrStarMarker members={[m]} starredUrls={starredUrls} />{actions}

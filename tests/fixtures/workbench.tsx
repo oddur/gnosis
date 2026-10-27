@@ -1,3 +1,4 @@
+import { checksMocks } from './pr-checks';
 import { markdownBefore, markdownAfter, markdownFiles } from './markdown-review';
 import { prBadgePreview } from '../../lib/pr-badge-preview';
 import { fileFilterMocks, filterFixtureFiles } from './file-filters';
@@ -515,7 +516,7 @@ const mocks = {
   checkPrChanges: (url:string) => {const member=items.flatMap(i=>i.subject.members).find(m=>m.url===url)??members[0];return Promise.resolve({headSha:member.headSha,baseSha:member.baseSha});},
   askPrFile: () => Promise.resolve('The worker now advances to the next queued item. This changes the retry boundary.'),
   getGitHubProfile: (login:string) => Promise.resolve({login,name:'Morgan Developer',bio:'Building reliable command queues.',company:'Klang',location:'Berlin',type:'User'}),
-  getQueueSignals: (requests: import('../../lib/queue-signals').QueueSignalRequest[]) => Promise.resolve(requests.map((request, i) => ({ ...request, checkedAt: Date.now(), readiness: {state:'OPEN',isDraft:false,mergeable:'MERGEABLE',mergeState:'CLEAN',reviewDecision:'APPROVED',baseBranch:items.flatMap(i=>i.subject.members).find(m=>m.url===request.url)?.baseBranch ?? 'main',baseSha:'base',behindBy:0,mergeQueue:false,queueState:null}, comments: i % 2 ? 0 : 4, checks: { state: 'success' as const, passed: 129, skipped: 1, total: 130 } }))),
+  getQueueSignals: (requests: import('../../lib/queue-signals').QueueSignalRequest[]): Promise<import('../../lib/queue-signals').QueueSignals[]> => Promise.resolve(requests.map((request, i) => ({ ...request, checkedAt: Date.now(), readiness: {state:'OPEN',isDraft:false,mergeable:'MERGEABLE',mergeState:'CLEAN',reviewDecision:'APPROVED',baseBranch:items.flatMap(i=>i.subject.members).find(m=>m.url===request.url)?.baseBranch ?? 'main',baseSha:'base',behindBy:0,mergeQueue:false,queueState:null}, comments: i % 2 ? 0 : 4, checks: { state: 'success' as const, passed: 129, skipped: 1, total: 130 } }))),
   commandSearch: async (query:string, includeBots=false, recentIds:string[]=[]) => {
     const queue=await mocks.workbenchQueue();
     const docs=[...queueDocuments(queue),...reviewDocuments(review,history[0],queue)];
@@ -692,6 +693,14 @@ if (new URLSearchParams(location.search).has('shell-startup-failure')) {
     if (key === 'gnosis-queue-selection') throw new Error('Storage full');
     return write.call(this, key, value);
   };
+}
+if (new URLSearchParams(location.search).has('checks')) {
+  Object.assign(mocks, checksMocks());
+  const readSignals = mocks.getQueueSignals;
+  mocks.getQueueSignals = async requests => (await readSignals(requests)).map(value => ({ ...value,
+    checks: { state: 'failure', passed: 1, skipped: 1, failed: 3, running: 1, total: 6 },
+    readiness: value.readiness ? { ...value.readiness, mergeState: 'BLOCKED' } : undefined,
+  }));
 }
 Object.defineProperty(window, 'electronAPI', {
   value: new Proxy(mocks, {

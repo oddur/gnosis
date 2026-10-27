@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { PrActions } from './PrActions';
 import { DiffStats } from './DiffStats';
 import { ChevronDown, CircleCheck, CircleHelp, CircleAlert, Clock3, GitPullRequest } from 'lucide-react';
@@ -20,12 +21,14 @@ export function memberReadiness(
 export function PrReadiness({
   member,
   status,
+  checkSummary,
   signals,
   error,
   onRetry,
 }: {
   member: ReviewMember;
   status?: PrStatus;
+  checkSummary?: ReactNode;
   signals?: QueueSignals;
   error?: string;
   onRetry?: () => void;
@@ -90,7 +93,7 @@ export function PrReadiness({
         </div>
       </div>
       <div className="pr-readiness-row">
-        {status?.ciChecks.length ? (
+        {checkSummary ?? (status?.ciChecks.length ? (
           <details className="pr-checks">
             <summary>
               <CheckIcon size={14} />
@@ -125,7 +128,7 @@ export function PrReadiness({
             <CheckIcon size={14} />
             {checks}
           </span>
-        )}
+        ))}
         <span>
           <GitPullRequest size={14} />
           {status

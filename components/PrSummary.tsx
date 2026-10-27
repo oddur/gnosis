@@ -1,3 +1,7 @@
+import { PrChecksView, type CheckFocus } from './PrChecksView';
+import { PrCheckSummary } from './PrCheckSummary';
+import { usePrChecks } from '../lib/use-pr-checks';
+import { checkCounts } from '../lib/pr-checks';
 import { RepositoryBadge, PrBadge } from './EntityBadge';
 import { usePrReadVisit } from '../lib/pr-read-context';
 import { PrActions } from './PrActions';
@@ -79,8 +83,8 @@ function PrSummaryContent({
   onStarChange: (members: QueueItem['subject']['members'], starred: boolean) => void;
   account: string | null;
   statusRefreshing: boolean;
-  tab: 'summary' | 'changes' | 'commits' | 'explanation';
-  onTabChange: (tab: 'summary' | 'changes' | 'commits' | 'explanation') => void;
+  tab: 'summary' | 'changes' | 'commits' | 'explanation' | 'checks';
+  onTabChange: (tab: 'summary' | 'changes' | 'commits' | 'explanation' | 'checks') => void;
   preferences: Preferences | null;
   starting: boolean;
   error: string;
@@ -112,7 +116,11 @@ function PrSummaryContent({
   shortcutsEnabled?: boolean;
 }) {
   usePrReadVisit(item.subject.members, tab === 'summary', 'summary');
-  const [initialFile, setInitialFile] = useState<{ url: string; path: string }>();
+  const [initialFile, setInitialFile] = useState<{ url: string; path: string; line?: number; headSha?: string }>();
+  const checks = usePrChecks(item.subject, account, tab === 'summary' || tab === 'checks', statuses);
+  const [checkFocus, setCheckFocus] = useState<CheckFocus>();
+  const checkTotals = checkCounts(item.subject.members.flatMap(m => checks.values[m.url]?.checks ?? []));
+  const openChecks = (url: string, id?: string) => { setCheckFocus({ url, id, nonce: Date.now() }); onTabChange('checks'); };
   const heading = useRef<HTMLHeadingElement>(null);
   const page = useRef<HTMLDivElement>(null);
   const restoring = useRef(false);
@@ -207,7 +215,7 @@ function PrSummaryContent({
     if (!shortcutsEnabled) return;
     const keydown = (event: KeyboardEvent) => {
       if (tab === 'explanation' && event.key !== 'Escape') return;
-      if (event.composedPath().some((node) => node instanceof Element && node.matches('.pr-changes'))) return;
+      if (event.composedPath().some((node) => node instanceof Element && node.matches('.pr-changes, .pr-checks-workspace'))) return;
       if (event.defaultPrevented || event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target instanceof HTMLElement ? event.target : null;
       if (
@@ -242,13 +250,13 @@ function PrSummaryContent({
     select: url => { remember(); setMemberUrl(url); },
   }] : []);
   const tabs = [{ value: 'summary', label: 'Summary' }, { value: 'changes', label: 'Changes' },
-    { value: 'commits', label: 'Commits' }, { value: 'explanation', label: 'Explanation' }];
+    { value: 'commits', label: 'Commits' }, { value: 'checks', label: 'Checks' }, { value: 'explanation', label: 'Explanation' }];
   return (
     <Tabs.Root
       value={tab}
       onValueChange={(value) => {
         if (tab === 'summary') remember();
-        onTabChange(value as 'summary' | 'changes' | 'commits' | 'explanation');
+        onTabChange(value as 'summary' | 'changes' | 'commits' | 'explanation' | 'checks');
       }}
       asChild
     >
@@ -337,6 +345,7 @@ function PrSummaryContent({
           <Tabs.Trigger value="summary">Summary</Tabs.Trigger>
           <Tabs.Trigger value="changes">Changes</Tabs.Trigger>
           <Tabs.Trigger value="commits">Commits</Tabs.Trigger>
+          <Tabs.Trigger value="checks">Checks{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>
           <Tabs.Trigger value="explanation">Explanation</Tabs.Trigger>
         </Tabs.List>
         <Tabs.Content value="changes" className="pr-changes-tab">
@@ -348,6 +357,12 @@ function PrSummaryContent({
               initialFile={initialFile}
             />
           )}
+        </Tabs.Content>
+        <Tabs.Content value="checks" className="pr-changes-tab">
+          <PrChecksView key={`${account}:${item.subject.id}`} subject={item.subject} {...checks} focus={checkFocus}
+            onSource={(url, path, line, headSha) => {
+              setInitialFile({ url, path, line, headSha }); onTabChange('changes');
+            }} />
         </Tabs.Content>
         <Tabs.Content value="commits" className="pr-changes-tab">
           {preferences && (
@@ -411,6 +426,7 @@ function PrSummaryContent({
                 remember();
                 setMemberUrl(url);
               }}
+              checkSummary={url => <PrCheckSummary value={checks.values[url]} error={checks.errors[url]} busy={checks.busy} onOpen={id => openChecks(url, id)} />}
               statuses={statuses}
               statusErrors={statusErrors}
               onRetryStatus={onRetryStatus}

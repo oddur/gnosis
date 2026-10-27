@@ -14,7 +14,7 @@ export interface QueueSignals extends QueueSignalRequest {
     comment?: { id: string; at: string; author: string };
     review?: { id: string; at: string; author: string; state?: string };
   };
-  checks: { state: 'success' | 'failure' | 'pending' | 'neutral'; passed: number; skipped?: number; total: number };
+  checks: { state: 'success' | 'failure' | 'pending' | 'neutral'; passed: number; failed?: number; running?: number; skipped?: number; total: number };
   readiness?: {
     state: string;
     isDraft: boolean;
