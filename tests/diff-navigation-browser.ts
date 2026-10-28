@@ -24,6 +24,9 @@ void app.whenReady().then(async () => {
     window.show();
     window.focus();
     await window.loadURL(`${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary`);
+    window.webContents.debugger.attach('1.3');
+    await window.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', {width:1280,height:800,deviceScaleFactor:1,mobile:false});
+    await window.webContents.debugger.sendCommand('Emulation.setCPUThrottlingRate', {rate:6});
     await wait("document.querySelectorAll('.queue-item').length===7");
     // Exercise the cache-hit path: background preparation may finish before spies attach.
     await js(`(async()=>{
