@@ -1,3 +1,7 @@
+import type { Provider } from '../lib/models';
+import { createHarnessEnvironmentStore } from './harness-environment-store';
+import { setHarnessEnvironmentLoader } from '../lib/providers/environment';
+import type { EnvironmentVariable } from '../lib/harness-environment';
 import { createChatRuns, waitForChatContext } from './chat-runs';
 import { readPrChecks, readCheckDetails, readCheckLog, rerunChecks } from './pr-checks-service';
 import { checkCounts } from '../lib/pr-checks';
@@ -658,10 +662,17 @@ function setupAutoUpdater() {
   setInterval(() => autoUpdater.checkForUpdates(), 4 * 60 * 60 * 1_000);
 }
 
+let harnessEnvironments: ReturnType<typeof createHarnessEnvironmentStore>;
 const appData = createAppDataStore();
 const rawFileFilters = createFileFilterState(appData);
 void app.whenReady().then(async () => {
   setupLogging();
+  harnessEnvironments = createHarnessEnvironmentStore(path.join(app.getPath('userData'), 'harness-environment.enc'), {
+    available: () => safeStorage.isEncryptionAvailable() && (process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text'),
+    encrypt: text => safeStorage.encryptString(text),
+    decrypt: data => safeStorage.decryptString(data),
+  });
+  setHarnessEnvironmentLoader(() => harnessEnvironments.load());
   try {
     await appData.open(app.getPath('userData'));
     await applyPendingGitHubCacheClear(app.getPath('userData'), () => session.defaultSession.clearCache(), () => appData.clearGitHub());
@@ -1193,6 +1204,9 @@ handleInteractive('search-repos', async (_event, query: string) => {
     throw err;
   }
 });
+
+ipcMain.handle('load-harness-environment', () => harnessEnvironments.load());
+ipcMain.handle('save-harness-environment', (_event, provider: Provider, variables: EnvironmentVariable[]) => harnessEnvironments.save(provider, variables));
 
 ipcMain.handle('load-preferences', () => {
   return loadPreferences();

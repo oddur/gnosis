@@ -1,3 +1,4 @@
+import { HarnessEnvironmentSettings } from './HarnessEnvironmentSettings';
 import { GITHUB_CACHE_SIZES_MB, DEFAULT_GITHUB_CACHE_MB, normalizeGitHubCacheMB } from '../lib/github-cache-settings';
 import { SearchableSelect } from './SearchableSelect';
 import { Button } from './ui/button';
@@ -900,6 +901,8 @@ export function SettingsDialog({
                   Leave empty to auto-detect. Sign in first with <code>codex login</code>.
                 </p>
               </div>
+
+              <HarnessEnvironmentSettings />
 
               {onReplayOnboarding && (
                 <button

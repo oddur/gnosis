@@ -4,6 +4,7 @@ import process from 'node:process';
 
 const args = process.argv.slice(2);
 const result = JSON.stringify({
+  testEnvironment: { override: process.env.GNOSIS_TEST_OVERRIDE ?? null, inherited: process.env.GNOSIS_TEST_INHERITED ?? null, onlyClaude: process.env.GNOSIS_TEST_CLAUDE ?? null, onlyCodex: process.env.GNOSIS_TEST_CODEX ?? null },
   args,
   input: fs.readFileSync(0, 'utf8'),
   effortOverride: process.env.CLAUDE_CODE_EFFORT_LEVEL ?? null,

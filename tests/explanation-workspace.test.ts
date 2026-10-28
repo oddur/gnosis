@@ -185,13 +185,15 @@ void test('signed-out local explanations migrate, edit, and retain notes indepen
 void test('review submission waits for draft removal and recovers after a failed save', async () => {
   const { JSDOM } = await import('jsdom');
   const { createElement, act, useState } = await import('react');
-  const dom = new JSDOM('<div id="root"></div>', { url: 'https://review.test' });
+  const dom = new JSDOM('<div id="root"></div>', { url: 'https://review.test', pretendToBeVisual: true });
   const globals: Record<string, unknown> = {
     window: dom.window, document: dom.window.document, navigator: dom.window.navigator,
     HTMLElement: dom.window.HTMLElement, HTMLInputElement: dom.window.HTMLInputElement,
     HTMLButtonElement: dom.window.HTMLButtonElement, Element: dom.window.Element, Node: dom.window.Node,
     MutationObserver: dom.window.MutationObserver, CustomEvent: dom.window.CustomEvent,
     NodeFilter: dom.window.NodeFilter, getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+    requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+    cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
     IS_REACT_ACT_ENVIRONMENT: true,
   };
   const previous = new Map(Object.keys(globals).map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
