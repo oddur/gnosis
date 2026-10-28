@@ -1,3 +1,4 @@
+import { useKeyboardShortcuts } from '../lib/use-keyboard-shortcuts';
 import { useRawFileFilters } from '../lib/use-raw-file-filters';
 import { hiddenByFileFilters, hiddenByFileExtensions } from '../lib/file-kinds';
 import { RawFileFilters, FileKindControl } from './RawFileFilters';
@@ -74,6 +75,8 @@ export function PrChangesView({
 }) {
   const positionId = commit ? commitPositionId(subject.id, commit.snapshot) : subject.id;
   const stream = useRef<CommitDiffStreamHandle>(null);
+  const workspace = useRef<HTMLElement>(null);
+  const [chatFocusRequest, setChatFocusRequest] = useState(0);
   const [chatEntry, setChatEntry] = useState<Entry>();
   const [position] = useState<Position>(() => loadPosition(positionId));
   const [loadedSnapshots, setSnapshots] = useState<PrChanges[]>(() =>
@@ -222,6 +225,15 @@ export function PrChangesView({
     entries.slice(selectionIndex + 1).find((e) => visibleKeys.has(e.key)) ??
     visible.at(0);
   const activeKey = entry ? viewKey(entry) : '';
+  useKeyboardShortcuts({
+    c: () => {
+      if (!entry) return;
+      if (!chatEntry || viewKey(chatEntry) !== viewKey(entry)) setSelection('');
+      setChatEntry(entry);
+      setChatOpen(true);
+      setChatFocusRequest((request) => request + 1);
+    },
+  }, { enabled: !!entry, capture: true, scope: workspace });
   const visibleSignature = visible.map((e) => e.key).join('\n');
   useEffect(() => {
     if (entry && !visible.some((e) => e.key === selected)) {
@@ -385,6 +397,7 @@ export function PrChangesView({
     : null;
   return (
     <section
+      ref={workspace}
       className="pr-changes"
       aria-label={commit ? 'Commit changes' : 'PR changes'}
       onKeyDown={(e) => {
@@ -651,6 +664,7 @@ export function PrChangesView({
           <PrFileChat
             key={chatEntry ? viewKey(chatEntry) : activeKey}
             request={chatRequest}
+            focusRequest={chatFocusRequest}
             preferences={prefs}
             selection={selection}
             onClose={() => setChatOpen(false)}

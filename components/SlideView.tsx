@@ -37,6 +37,7 @@ import type { Slide, DiffHunk, FileMetadata, PendingReviewComment, Preferences, 
 interface Props {
   review?: ReviewGuide;
   leftSlot?: ReactNode;
+  leftSlotFocusRequest?: number;
   rightSlot?: ReactNode;
   slide: Slide;
   slideNumber: number;
@@ -373,6 +374,7 @@ function groupHunksByFile(hunks: DiffHunk[]): { filePath: string; hunks: DiffHun
 export function SlideView({
   review,
   leftSlot,
+  leftSlotFocusRequest,
   rightSlot,
   slide,
   slideNumber,
@@ -448,7 +450,7 @@ export function SlideView({
   }, [hasRightSlot]);
   useEffect(() => {
     if (hasLeftSlot) setNarrowPane('explanation');
-  }, [hasLeftSlot]);
+  }, [hasLeftSlot, leftSlotFocusRequest]);
 
   const chapterNumber = slideNumber.toString().padStart(2, '0');
   const fileCount = slide.affectedFiles.length;

@@ -13,6 +13,7 @@ const DEFAULT_WIDTH = 460;
 interface Props {
   embedded?: boolean;
   open: boolean;
+  focusRequest?: number;
   onOpenChange: (open: boolean) => void;
   slideTitle: string;
   slideId?: string;
@@ -72,6 +73,7 @@ function SuggestedQuestions({
 export function SlideChatSheet({
   embedded = false,
   open,
+  focusRequest,
   onOpenChange,
   slideTitle,
   slideId,
@@ -103,7 +105,7 @@ export function SlideChatSheet({
       }, 300);
       return () => clearTimeout(timer);
     }
-  }, [open]);
+  }, [open, focusRequest]);
 
   const finishResize = useCallback(() => {
     const drag = dragging.current;

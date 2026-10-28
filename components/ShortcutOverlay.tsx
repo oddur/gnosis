@@ -32,7 +32,7 @@ const groups: ShortcutGroup[] = [
     shortcuts: [
       { keys: 'r', label: 'Mark topic reviewed and advance' },
       { keys: 'n', label: 'Jump to next unreviewed' },
-      { keys: 'c', label: 'Open chat for current topic' },
+      { keys: 'c', label: 'Open or focus chat for current topic or file' },
       { keys: 'f', label: 'Toggle focus / split view' },
       { keys: 'u', label: 'Switch to unified diff' },
       { keys: 's', label: 'Switch to split diff' },

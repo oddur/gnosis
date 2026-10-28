@@ -14,19 +14,21 @@ export function PrFileChat(props: {
   request: PrFileRequest;
   preferences: Preferences;
   selection: string;
+  focusRequest?: number;
   onClose: () => void;
 }) {
   const { request } = props;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const origin = useRef<HTMLElement | null>(null);
   useEffect(() => {
-    origin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && !active.closest('.changes-chat')) origin.current = active;
     const input = textareaRef.current;
     const dialog = [...document.querySelectorAll('[role="dialog"][data-state="open"]')]
       .filter((element) => element.checkVisibility())
       .at(-1);
     if (input && (!dialog || dialog.contains(input))) input.focus({ preventScroll: true });
-  }, []);
+  }, [props.focusRequest]);
   const close = () => {
     props.onClose();
     requestAnimationFrame(() => {

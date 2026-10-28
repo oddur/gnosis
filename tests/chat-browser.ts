@@ -180,8 +180,11 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('.queue-item:has(.queue-disclosure:not(:disabled)) .queue-row-main').click()");
     await click('Open AI explanation');
     await click('Continue review');
-    await click('Ask a question');
+    await js(
+      "document.activeElement?.blur();window.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true}))"
+    );
     await wait("!!document.querySelector('.chat-sheet textarea')");
+    await wait("document.activeElement===document.querySelector('.chat-sheet textarea')");
     await js(`window.electronAPI.sendSlideChat=async()=>${JSON.stringify(answer)};void 0`);
     await fill('How does the queue preserve order?');
     await click('Send question');
@@ -196,6 +199,13 @@ void app.whenReady().then(async () => {
     console.log('Integrated topic height at900×720:', await transcriptHeight());
     await fullCapture('integrated-topic-narrow-dark');
     assert.ok((await transcriptHeight()) >= 240, 'Narrow topic conversation needs240px of reading space');
+    await click('Code');
+    await js(
+      "document.activeElement?.blur();window.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true}))"
+    );
+    await wait(
+      "document.querySelector('.chat-sheet textarea').checkVisibility() && document.activeElement===document.querySelector('.chat-sheet textarea')"
+    );
     await click('Summary');
     await wait("document.querySelector('.pr-summary-context').checkVisibility()");
     await click('Explanation');
@@ -218,6 +228,48 @@ void app.whenReady().then(async () => {
     assert.ok((await transcriptHeight()) >= 240, 'File conversation needs240px of reading space');
     await click('Close file conversation');
     await wait('document.activeElement===window.askOrigin');
+    // Capture reaches C even inside the diff workspace, which owns other keys.
+    await js("window.askOrigin.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true}))");
+    await wait("document.activeElement?.id==='changes-question'");
+    await fill('Preserve my draft');
+    await js(
+      "window.askOrigin.focus();window.askOrigin.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true}))"
+    );
+    await wait("document.activeElement?.id==='changes-question'");
+    assert.equal(await js("document.querySelector('#changes-question').value"), 'Preserve my draft');
+    await click('Close file conversation');
+    // Typing, copy, IME, and modal controls must never open chat.
+    for (const test of [
+      "const el=document.createElement('textarea');document.body.append(el);el.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true}));el.remove()",
+      "const host=document.createElement('div');document.body.append(host);const root=host.attachShadow({mode:'open'});const el=document.createElement('div');el.contentEditable='true';root.append(el);el.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true,composed:true}));host.remove()",
+      "const el=document.createElement('div');el.setAttribute('role','dialog');document.body.append(el);el.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true}));el.remove()",
+      "window.dispatchEvent(new KeyboardEvent('keydown',{key:'c',metaKey:true,bubbles:true}))",
+      "window.dispatchEvent(new KeyboardEvent('keydown',{key:'c',ctrlKey:true,bubbles:true}))",
+      "window.dispatchEvent(new KeyboardEvent('keydown',{key:'c',isComposing:true,bubbles:true}))",
+    ]) {
+      await js(`(()=>{${test}})()`);
+      assert.equal(await js("!!document.querySelector('.changes-chat')"), false, test);
+    }
+    await click('Summary');
+    await js(
+      "document.activeElement?.blur();window.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true}))"
+    );
+    assert.equal(
+      await js("[...document.querySelectorAll('.chat-sheet,.changes-chat')].some(el=>el.checkVisibility())"),
+      false,
+      'Summary has no active chat context'
+    );
+    await click('Commits');
+    await wait("!!document.querySelector('.commit-row') && !!document.querySelector('.changes-file-header')");
+    await js(
+      "const row=document.querySelector('.commit-row');row.focus();row.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true}))"
+    );
+    await wait("document.activeElement?.id==='changes-question'");
+    assert.ok(
+      await js("document.querySelector('.changes-chat-source').textContent.includes('→')"),
+      'Commit chat uses the selected comparison'
+    );
+    await click('Close file conversation');
     console.log('Chat integration passed: laptop transcript budget, focus transfer and return.');
     console.log(
       'Chat passed: anchored turns, manual reading during streaming, jump to latest, copy, Stop/retry, quoted code, draft isolation, narrow dark layout.'

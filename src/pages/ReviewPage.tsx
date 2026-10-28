@@ -164,6 +164,11 @@ function ReviewPageContent({
   const [currentLogin, setCurrentLogin] = useState<string | null>(null);
   const [freshness, setFreshness] = useState<FreshnessResult | null>(null);
   const [chatOpen, setChatOpen] = useSessionDraft('chat-open', false);
+  const [chatFocusRequest, setChatFocusRequest] = useState(0);
+  const openChat = useCallback(() => {
+    setChatOpen(true);
+    setChatFocusRequest((request) => request + 1);
+  }, [setChatOpen]);
   const [chatQuotedCode, setChatQuotedCode] = useState<string | null>(null);
   const [chatProvider, setChatProvider] = useState<Provider>(initialPreferences?.provider ?? 'claude');
   const [chatModel, setChatModel] = useState<ModelId>(initialPreferences?.model ?? DEFAULT_FAST_CLAUDE_MODEL);
@@ -582,10 +587,6 @@ function ReviewPageContent({
       f: () => {
         if (currentSlide > 0) setSlideViewMode((v) => (v === 'split' ? 'focus' : 'split'));
       },
-      // Open chat for the current slide
-      c: () => {
-        if (currentSlide > 0) setChatOpen(true);
-      },
       // Review progress
       r: () => {
         if (currentSlide > 0) markReviewedAndAdvance(currentSlide);
@@ -613,6 +614,10 @@ function ReviewPageContent({
   ]);
 
   useKeyboardShortcuts(shortcutMap, { enabled: active && !exploreOpen });
+  useKeyboardShortcuts({ c: openChat }, {
+    enabled: active && !exploreOpen && currentSlide > 0,
+    capture: true,
+  });
 
   // Build the command palette commands. The slide jump entries
   // are generated dynamically from the review so they read like a
@@ -664,7 +669,7 @@ function ReviewPageContent({
           hint: 'c',
           group: 'Reviewing',
           keywords: 'chat question follow up',
-          perform: () => setChatOpen(true),
+          perform: openChat,
         }
       );
     }
@@ -702,7 +707,7 @@ function ReviewPageContent({
     );
 
     return commands;
-  }, [review.slides, currentSlide, comments.length, handleJumpTo, handleDiffLayoutChange, onBack]);
+  }, [review.slides, currentSlide, comments.length, handleJumpTo, handleDiffLayoutChange, onBack, openChat]);
 
   useEffect(() => {
     if (review.reviewId && currentLogin)
@@ -937,6 +942,7 @@ function ReviewPageContent({
             <SlideView
               key={review.snapshot?.fingerprint ?? review.headSha ?? review.reviewId}
               review={review}
+              leftSlotFocusRequest={chatFocusRequest}
               viewedFiles={viewedFiles}
               onFileViewedChange={setFileViewed}
               onContinue={() => handleJumpTo(currentSlide < review.slides.length ? currentSlide + 1 : 0)}
@@ -958,13 +964,13 @@ function ReviewPageContent({
               onDiffLayoutChange={handleDiffLayoutChange}
               onAskQuestion={() => {
                 setExploreOpen(false);
-                setChatOpen(true);
+                openChat();
               }}
               onExplore={review.reviewId ? openExplainer : undefined}
               onAskAboutSelection={(code) => {
                 setExploreOpen(false);
                 setChatQuotedCode(code);
-                setChatOpen(true);
+                openChat();
               }}
               viewMode={slideViewMode}
               fileMetadataMap={fileMetadataMap}
@@ -978,6 +984,7 @@ function ReviewPageContent({
                   <SlideChatSheet
                     embedded
                     open={chatOpen}
+                    focusRequest={chatFocusRequest}
                     onOpenChange={setChatOpen}
                     slideId={`${review.reviewId ?? review.prUrl}:${review.snapshot?.fingerprint ?? review.headSha ?? ''}:${review.slides[currentSlide - 1].id}`}
                     slideTitle={review.slides[currentSlide - 1].title}
