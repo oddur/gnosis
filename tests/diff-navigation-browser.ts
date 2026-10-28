@@ -76,9 +76,8 @@ void app.whenReady().then(async () => {
     );
     assert.equal(nextFile.path, 'src/new.ts');
     // A later file click must win over a slower response.
-    await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='old.ts').click()");
     const cold = await js<{ loading: boolean; path: string }>(
-      `({loading:!!document.querySelector('.commit-stream-row[data-active=true] .changes-loading'),path:document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent})`
+      `(async()=>{window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='old.ts').click();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {loading:!!document.querySelector('.commit-stream-row[data-active=true] .changes-loading'),path:document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent}})()`
     );
     assert.equal(cold.path, 'src/old.ts', 'A cold file remains reachable in the continuous stream');
     await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='worker.ts').click()");
