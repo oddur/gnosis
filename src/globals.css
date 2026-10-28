@@ -3291,3 +3291,37 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .pr-summary-page:has(.pr-changes-tab[data-state=active] .chat-sheet[data-open=true], .pr-changes-tab[data-state=active] .changes-chat) .pr-overview-tabs button { padding-block:6px; }
 .pr-summary-page:has(.pr-changes-tab[data-state=active] .chat-sheet[data-open=true], .pr-changes-tab[data-state=active] .changes-chat) .pr-summary-toolbar-inner { padding-block:6px; }
 .workbench-review:has(.chat-sheet[data-open=true]) [aria-label="Review pane"] { padding-block:4px; }
+
+/* Shared GitHub comment editor; keep source mounted to preserve drafts and selection. */
+.comment-editor { min-width:0;border:1px solid var(--input);border-radius:var(--radius);background:var(--background);overflow:hidden; }
+.comment-editor-header { display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;padding:4px 8px;border-bottom:1px solid var(--border);min-height:36px; }
+.comment-editor-tabs { display:flex;gap:4px; }
+.comment-editor-tabs button { padding:4px 8px;font-size:var(--type-control);color:var(--muted-foreground);text-decoration:none;border-radius:4px; }
+.comment-editor-tabs button[data-state=active] { background:var(--secondary);color:var(--foreground);font-weight:600; }
+.comment-editor-tabs button:focus-visible { outline:2px solid var(--ring);outline-offset:-2px; }
+.comment-editor-toolbar { display:flex;align-items:center;gap:2px;flex-wrap:wrap;margin-left:auto; }
+.comment-editor .comment-editor-toolbar button { color:var(--muted-foreground);text-decoration:none; }
+.comment-editor .comment-editor-toolbar button:hover { color:var(--foreground); }
+.comment-editor .comment-editor-panel[hidden] { display:none; }
+.comment-editor .comment-editor-panel textarea { display:block;width:100%;min-height:96px;margin:0;border:0;border-radius:0;padding:10px 12px;background:transparent;color:var(--foreground);font:var(--type-body)/1.6 var(--font-sans);resize:vertical; }
+.comment-editor .comment-editor-panel textarea:focus-visible { outline:2px solid var(--ring);outline-offset:-2px;box-shadow:none; }
+.comment-editor-preview { overflow:auto;padding:10px 12px;min-height:96px; }
+.comment-editor-empty { font-size:var(--type-body);color:var(--muted-foreground); }
+.comment-editor .github-comment-body { max-width:none; }
+.github-comment-body table { display:block;max-width:100%;overflow:auto;border-collapse:collapse;margin-block:8px; }
+.github-comment-body th,.github-comment-body td { border:1px solid var(--border);padding:4px 8px;text-align:left; }
+.github-comment-body th { font-weight:600;background:var(--muted); }
+.github-comment-body img { max-width:100%;height:auto; }
+.comment-suggestion { margin-block:8px;border:1px solid var(--border);border-radius:4px;overflow:hidden; }
+.comment-suggestion>span { display:block;padding:4px 8px;font-size:var(--type-caption);color:var(--muted-foreground); }
+.github-comment-body .comment-suggestion pre { margin:0;border-radius:0; }
+
+.github-comment-body { overflow-wrap:anywhere; }
+.github-comment-body>h1,.github-comment-body>h2,.github-comment-body>h3,.github-comment-body>h4,.github-comment-body>h5,.github-comment-body>h6 { font-weight:600;line-height:1.4;margin-block:12px 8px; }
+.github-comment-body>h1 { font-size:1.25em; }
+.github-comment-body>h2 { font-size:1.15em; }
+.github-comment-body>h3 { font-size:1.05em; }
+.github-comment-body>:first-child { margin-top:0; }
+.github-comment-body .task-list-item { list-style:none; }
+.github-comment-body .task-list-item input { margin-right:6px;accent-color:var(--primary); }
+.changes-comment-buttons [data-variant=ghost] { color:var(--foreground); }

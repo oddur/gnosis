@@ -1,3 +1,5 @@
+import { CommentMarkdown } from './CommentMarkdown';
+import { MarkdownCommentEditor } from './MarkdownCommentEditor';
 import { useSessionDraft } from '../lib/session-drafts';
 import { useState, useRef, useEffect } from 'react';
 import { Pencil, Trash2 } from 'lucide-react';
@@ -138,7 +140,7 @@ export function InlineCommentForm({
   }, []);
 
   function handleKeyDown(e: React.KeyboardEvent) {
-    if (pendingSave.current) return;
+    if (pendingSave.current || e.nativeEvent.isComposing) return;
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       void save();
@@ -151,14 +153,14 @@ export function InlineCommentForm({
 
   return (
     <div className="mx-2 my-1.5 border rounded-md bg-muted/30 p-2">
-      <textarea
-        ref={textareaRef}
+      <MarkdownCommentEditor
+        textareaRef={textareaRef}
         disabled={saving}
         value={body}
-        onChange={(e) => setBody(e.target.value)}
+        onValueChange={setBody}
         onKeyDown={handleKeyDown}
         placeholder="Leave a comment... (Cmd+Enter to add, Esc to cancel)"
-        className="w-full min-h-[60px] bg-transparent text-sm font-mono resize-y border rounded p-2 focus:outline-none focus:ring-1 focus:ring-ring"
+        aria-label="Comment"
       />
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       <div className="flex justify-end gap-1.5 mt-1.5">
@@ -202,9 +204,7 @@ export function CommentBubble({
   return (
     <div className="pending-comment-block mx-2 my-1 border rounded-md p-2 flex gap-2 group">
       {error && <p role="alert">{error}</p>}
-      <pre className="pending-comment-block-text flex-1 text-xs font-mono whitespace-pre-wrap break-words">
-        {comment.body}
-      </pre>
+      <div className="pending-comment-block-text flex-1 min-w-0"><CommentMarkdown>{comment.body}</CommentMarkdown></div>
       <div className="flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
         <button
           onClick={() => setEditing(true)}

@@ -1,3 +1,4 @@
+import { MarkdownCommentEditor } from './MarkdownCommentEditor';
 import { useId, useRef, useState } from 'react';
 import { useSessionDraft } from '../lib/session-drafts';
 import { Button } from './ui/button';
@@ -42,10 +43,10 @@ export function ChangesCommentComposer({
       }}
     >
       <label htmlFor={id}>{label}</label>
-      <textarea
+      <MarkdownCommentEditor
         id={id}
         value={body}
-        onChange={(e) => setBody(e.target.value)}
+        onValueChange={setBody}
         rows={4}
         maxLength={65536}
         disabled={busy}
