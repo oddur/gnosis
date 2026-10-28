@@ -5,6 +5,20 @@ on:
     tags:
       - 'v*.*.*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build (for example v0.30.0)
+        required: true
+        type: string
+      platform:
+        description: Platform to publish
+        default: all
+        type: choice
+        options:
+          - all
+          - macos-latest
+          - windows-latest
+          - ubuntu-24.04
 
 permissions:
   contents: write
@@ -13,16 +27,26 @@ jobs:
   release:
     name: ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - macos-latest # arm64 (Apple Silicon)
-          - windows-latest # x64
-          - ubuntu-latest # x64
+        # The RPM maker requires the pre-RPM-4.20 build-directory layout.
+        os: ${{ fromJSON(inputs.platform && inputs.platform != 'all' && format('["{0}"]', inputs.platform) || '["macos-latest","windows-latest","ubuntu-24.04"]') }}
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+
+      - name: Validate release tag
+        shell: bash
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Expected a stable release tag such as v0.30.0"
+            exit 1
+          fi
 
       - uses: actions/setup-node@v4
         with:
@@ -47,9 +71,8 @@ jobs:
 
       # Sync package.json version with the pushed tag (strips leading 'v')
       - name: Set version from tag
-        if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
-        run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version
+        run: npm version "${RELEASE_TAG#v}" --no-git-tag-version
 
       - name: Import Apple certificate
         if: runner.os == 'macOS' && env.APPLE_CERTIFICATE_BASE64 != ''
@@ -96,14 +119,14 @@ jobs:
           fi
 
       - name: Update Homebrew tap
-        if: startsWith(github.ref, 'refs/tags/v') && matrix.os == 'macos-latest'
+        if: matrix.os == 'macos-latest'
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           ZIP="Gnosis-darwin-arm64-${VERSION}.zip"
-          curl -sL "https://github.com/oddur/gnosis/releases/download/${GITHUB_REF_NAME}/${ZIP}" -o /tmp/gnosis.zip
+          curl --fail -sL "https://github.com/oddur/gnosis/releases/download/${RELEASE_TAG}/${ZIP}" -o /tmp/gnosis.zip
           SHA=$(shasum -a 256 /tmp/gnosis.zip | awk '{print $1}')
           git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/oddur/homebrew-gnosis.git" /tmp/homebrew-tap
           sed -i '' "s/version \".*\"/version \"${VERSION}\"/" /tmp/homebrew-tap/Casks/gnosis.rb
