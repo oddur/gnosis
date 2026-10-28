@@ -37,6 +37,9 @@ void app.whenReady().then(async () => {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     if (!url) throw new Error('Missing fixture URL');
     await win.loadURL(url + '?onboarding');
+    // Returning users must reconnect; first-run setup owns the initial prompt.
+    await js("sessionStorage.setItem('fixture-first-run-seen', 'true')");
+    await win.loadURL(url + '?onboarding');
     win.webContents.setZoomFactor(1);
     await wait("!!document.querySelector('.github-auth-dialog')");
     await capture('welcome');
@@ -47,7 +50,7 @@ void app.whenReady().then(async () => {
     await click('Continue with local reviews');
     await wait("!document.querySelector('.github-auth-dialog')");
     assert.equal(await js('window.electronAPI.loadPreferences().then(p=>p.guestMode)'), true);
-    await wait("!!document.querySelector('.getting-started')");
+    await wait("!!document.querySelector('.workbench-connect')");
     await js(`(()=>{
       window.authWeb=true;window.cancelledCodes=0;window.savedPat=null;
       const originalComplete=window.electronAPI.completeGitHubSignIn;
@@ -59,7 +62,6 @@ void app.whenReady().then(async () => {
       window.electronAPI.openExternal=(url)=>{window.openedAuthUrl=url;return Promise.resolve();};
       window.electronAPI.savePat=(token,pr)=>{window.savedPat={token,pr};return Promise.reject(new Error(${JSON.stringify(githubAccessMessage({ status: 403 }, 'example-organization/repository-with-a-long-name'))}));};
     })()`);
-    await js("document.querySelector('.getting-started-connection summary').click()");
     await click('Sign in to GitHub');
     await wait("!!document.querySelector('.github-auth-dialog')");
     await click('Sign in through browser');
