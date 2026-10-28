@@ -1,3 +1,4 @@
+import { harnessEnvironment } from './environment';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
@@ -98,7 +99,7 @@ async function generate(opts: GenerateOptions): Promise<string> {
       ],
       stdinContent: opts.content,
       cwd: dir,
-      env: { ...process.env },
+      env: await harnessEnvironment('codex'),
       installHint: INSTALL_HINT,
       processLine: events.processLine,
       signal: opts.signal,

@@ -1,3 +1,4 @@
+import type { HarnessEnvironment, EnvironmentVariable } from '../lib/harness-environment';
 import type { CheckTarget, CheckSelection, ChecksOptions, PrChecks, CheckDetails, CheckLog } from '../lib/pr-checks';
 import type { ExplanationMarkdownRequest } from '../lib/explanation-markdown';
 import type { MarkdownReviewRequest, MarkdownReview } from '../lib/markdown-review';
@@ -127,6 +128,8 @@ declare global {
       performPrAction: (request: import('../lib/pr-actions').PrActionRequest) => Promise<import('../lib/pr-actions').PrActionResult>;
       submitReview: (req: SubmitReviewRequest) => Promise<{ reviewUrl: string; droppedCommentCount: number }>;
       checkPrFreshness: (prUrl: string, headSha: string | undefined) => Promise<FreshnessResult>;
+      loadHarnessEnvironment: () => Promise<HarnessEnvironment>;
+      saveHarnessEnvironment: (provider: import('../lib/models').Provider, variables: EnvironmentVariable[]) => Promise<void>;
       loadPreferences: () => Promise<Preferences>;
       savePreferences: (prefs: Preferences) => Promise<void>;
       searchPullRequests: () => Promise<PrSearchResult[]>;

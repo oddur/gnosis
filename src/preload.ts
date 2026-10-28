@@ -1,3 +1,4 @@
+import type { HarnessEnvironment, EnvironmentVariable } from '../lib/harness-environment';
 import type { CheckTarget, CheckSelection, ChecksOptions, PrChecks, CheckDetails, CheckLog } from '../lib/pr-checks';
 import type { ExplanationMarkdownRequest } from '../lib/explanation-markdown';
 import type { MarkdownReviewRequest, MarkdownReview } from '../lib/markdown-review';
@@ -196,6 +197,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('submit-review', req),
   checkPrFreshness: (prUrl: string, headSha: string | undefined): Promise<FreshnessResult> =>
     ipcRenderer.invoke('check-pr-freshness', prUrl, headSha),
+  loadHarnessEnvironment: (): Promise<HarnessEnvironment> => ipcRenderer.invoke('load-harness-environment'),
+  saveHarnessEnvironment: (provider: import('../lib/models').Provider, variables: EnvironmentVariable[]): Promise<void> => ipcRenderer.invoke('save-harness-environment', provider, variables),
   loadPreferences: (): Promise<Preferences> => ipcRenderer.invoke('load-preferences'),
   savePreferences: (prefs: Preferences): Promise<void> => ipcRenderer.invoke('save-preferences', prefs),
   searchPullRequests: (): Promise<PrSearchResult[]> => ipcRenderer.invoke('search-pull-requests'),

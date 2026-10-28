@@ -562,6 +562,8 @@ const mocks = {
     return Promise.resolve({ reviewId: 'workbench-review', prUrl: review.prUrl, prTitle: review.prTitle, author: review.author });
   },
   getPrMetadata: (url: string) => Promise.resolve(items.flatMap((item) => item.subject.members).find((member) => member.url === url) ?? { ...members[0], url, title: 'A PR outside the queue' }),
+  loadHarnessEnvironment: async () => ({ claude: [], codex: [] }),
+  saveHarnessEnvironment: async () => {},
   loadPreferences: () => Promise.resolve(prefs),
   savePreferences: (next: Preferences) => {
     prefs = next;

@@ -1,3 +1,4 @@
+import { harnessEnvironment } from './environment';
 import os from 'os';
 import { CLAUDE_MODELS } from '../models';
 import type { LLMProvider } from '../provider';
@@ -7,16 +8,6 @@ const INSTALL_HINT = 'Install it from claude.ai/code and authenticate with `clau
 
 function resolveClaudePath(): string {
   return resolveBinaryPath('claude', [`${os.homedir()}/.volta/bin/claude`]);
-}
-
-function makeClaudeEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
-  delete env.CLAUDECODE;
-  // Current Claude models always use adaptive reasoning. Control effort with
-  // --effort, without an inherited environment override or fixed token budget.
-  delete env.CLAUDE_CODE_EFFORT_LEVEL;
-  delete env.MAX_THINKING_TOKENS;
-  return env;
 }
 
 export const claudeProvider: LLMProvider = {
@@ -114,7 +105,7 @@ export const claudeProvider: LLMProvider = {
       ],
       stdinContent: content,
       processLine,
-      env: makeClaudeEnv(),
+      env: await harnessEnvironment('claude'),
       installHint: INSTALL_HINT,
       signal,
       handleExitError: (stderr: string) => {
@@ -131,7 +122,7 @@ export const claudeProvider: LLMProvider = {
     return fullText.trim();
   },
 
-  quick({ content, systemPrompt, model, cwd }) {
+  async quick({ content, systemPrompt, model, cwd }) {
     const claudePath = resolveClaudePath();
     return spawnCliQuick({
       binPath: claudePath,
@@ -152,7 +143,7 @@ export const claudeProvider: LLMProvider = {
         'low',
       ],
       stdinContent: content,
-      env: makeClaudeEnv(),
+      env: await harnessEnvironment('claude'),
       installHint: INSTALL_HINT,
     });
   },

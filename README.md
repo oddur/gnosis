@@ -53,6 +53,11 @@ Model access depends on your Codex account.
 In the model menu, select a model under **Codex**.
 If Gnosis cannot find the CLI, set **Codex CLI path** in Settings.
 
+To pass environment variables to either tool, open **Settings → Integrations → AI environment variables**. Add name/value pairs for Claude or Codex, then save that tool's variables. New jobs use the saved overrides; running jobs keep their existing environment.
+
+Values are masked by default and encrypted locally with the operating system's secure storage. Values are literal text: `$HOME` and shell commands are not expanded. An empty value is an explicit override. Remove a variable and save to restore its inherited value. Gnosis manages Claude's effort variables through its model and thinking settings.
+
+
 Codex supports GitHub PRs, local Git diffs, background reviews, slide chat, and smart imports.
 Codex reviews the context supplied by Gnosis in a read-only session.
 Gnosis disables Codex shell tools, apps, plugins, hooks, and web search for these sessions.
