@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 
 // Generic keyboard-shortcut hook used by HomePage and ReviewPage to
 // register a global keydown listener. Supports:
@@ -23,6 +23,8 @@ export interface ShortcutMap {
 
 interface Options {
   enabled?: boolean;
+  capture?: boolean;
+  scope?: RefObject<HTMLElement | null>;
 }
 
 const SEQUENCE_TIMEOUT_MS = 700;
@@ -46,7 +48,7 @@ function buildSignature(e: KeyboardEvent): string {
 }
 
 export function useKeyboardShortcuts(map: ShortcutMap, options: Options = {}) {
-  const { enabled = true } = options;
+  const { enabled = true, capture = false, scope } = options;
   const mapRef = useRef(map);
   mapRef.current = map;
 
@@ -59,12 +61,18 @@ export function useKeyboardShortcuts(map: ShortcutMap, options: Options = {}) {
     function handleKeyDown(e: KeyboardEvent) {
       // Dialogs and popovers own their keys. Review shortcuts must not move the
       // underlying topic while a user operates a modal, select, or resize handle.
-      const target = e.target instanceof Element ? e.target : null;
+      if (scope && !scope.current?.checkVisibility()) return;
+      // Events from diff editors are retargeted at their shadow host.
+      const targets = e.composedPath();
       if (
         e.defaultPrevented ||
         e.isComposing ||
-        isTypingTarget(e.target) ||
-        target?.closest('[role="dialog"], [role="alertdialog"], [role="menu"], [role="combobox"]')
+        targets.some(
+          (target) =>
+            isTypingTarget(target) ||
+            (target instanceof Element &&
+              target.closest('[role="dialog"], [role="alertdialog"], [role="menu"], [role="combobox"]'))
+        )
       ) {
         lastKey = null;
         return;
@@ -110,7 +118,7 @@ export function useKeyboardShortcuts(map: ShortcutMap, options: Options = {}) {
       }
     }
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [enabled]);
+    window.addEventListener('keydown', handleKeyDown, capture);
+    return () => window.removeEventListener('keydown', handleKeyDown, capture);
+  }, [enabled, capture, scope]);
 }

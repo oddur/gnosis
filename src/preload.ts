@@ -69,6 +69,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPrChanges: (url: string, refresh = false, options?: InspectionLoadOptions): Promise<PrChanges> => ipcRenderer.invoke('pr-changes', url, refresh, options),
   getPrChangeFile: (request: PrFileRequest, background?: boolean): Promise<PrFileContents> => ipcRenderer.invoke('pr-change-file', request, background),
   checkPrChanges: (url: string): Promise<{ baseSha: string; headSha: string }> => ipcRenderer.invoke('pr-changes-revision', url),
+  cancelChat: (requestId: string): Promise<void> => ipcRenderer.invoke('cancel-chat', requestId),
+  onFileChatProgress: (callback: (event: { requestId: string; chunk: string }) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: { requestId: string; chunk: string }) => callback(value);
+    ipcRenderer.on('file-chat-progress', listener);
+    return () => ipcRenderer.removeListener('file-chat-progress', listener);
+  },
   askPrFile: (request: FileChatRequest): Promise<string> => ipcRenderer.invoke('ask-pr-file', request),
   getGitHubProfile: (login:string):Promise<GitHubProfile> => ipcRenderer.invoke('get-github-profile',login),
   getQueueSignals: (requests: QueueSignalRequest[], options?: QueueSignalOptions): Promise<QueueSignals[]> => ipcRenderer.invoke('get-queue-signals', requests, options),

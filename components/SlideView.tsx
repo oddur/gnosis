@@ -36,7 +36,7 @@ import type { Slide, DiffHunk, FileMetadata, PendingReviewComment, Preferences, 
 
 interface Props {
   review?: ReviewGuide;
-  leftSlot?: ReactNode;
+  chatOpen?: boolean;
   rightSlot?: ReactNode;
   slide: Slide;
   slideNumber: number;
@@ -372,7 +372,7 @@ function groupHunksByFile(hunks: DiffHunk[]): { filePath: string; hunks: DiffHun
 
 export function SlideView({
   review,
-  leftSlot,
+  chatOpen = false,
   rightSlot,
   slide,
   slideNumber,
@@ -441,14 +441,13 @@ export function SlideView({
     media.addEventListener('change', update);
     return () => media.removeEventListener('change', update);
   }, []);
-  const hasLeftSlot = !!leftSlot,
-    hasRightSlot = !!rightSlot;
+  const hasRightSlot = !!rightSlot;
   useEffect(() => {
     if (hasRightSlot) setNarrowPane('code');
   }, [hasRightSlot]);
   useEffect(() => {
-    if (hasLeftSlot) setNarrowPane('explanation');
-  }, [hasLeftSlot]);
+    if (chatOpen) setNarrowPane('code');
+  }, [chatOpen]);
 
   const chapterNumber = slideNumber.toString().padStart(2, '0');
   const fileCount = slide.affectedFiles.length;
@@ -837,7 +836,7 @@ export function SlideView({
     </div>
   );
 
-  if (narrow)
+  if (narrow || chatOpen)
     return (
       <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
         <div className="flex gap-2 border-b border-border px-3 py-2" aria-label="Review pane">
@@ -847,7 +846,7 @@ export function SlideView({
             aria-pressed={narrowPane === 'explanation'}
             onClick={() => setNarrowPane('explanation')}
           >
-            {leftSlot ? 'Chat' : 'Explanation'}
+            Explanation
           </Button>
           <Button
             size="sm"
@@ -859,10 +858,9 @@ export function SlideView({
           </Button>
         </div>
         <div hidden={narrowPane !== 'explanation'} className="flex-1 min-h-0 overflow-hidden">
-          <div {...narrativeScroll} hidden={!!leftSlot} className="h-full overflow-y-auto">
+          <div {...narrativeScroll} className="h-full overflow-y-auto">
             {narrativeContent}
           </div>
-          {leftSlot && <div className="review-tool-slot">{leftSlot}</div>}
         </div>
         <div hidden={narrowPane !== 'code'} className="flex-1 min-h-0 overflow-hidden">
           <div {...codeScroll} hidden={!!rightSlot} className="h-full overflow-y-auto">
@@ -874,14 +872,13 @@ export function SlideView({
     );
 
   // ── Split mode ── resizable narrative (left) + diff (right) panels
-  if (viewMode === 'split' || leftSlot || rightSlot) {
+  if (viewMode === 'split' || rightSlot) {
     return (
       <PanelGroup orientation="horizontal" className="flex flex-1 overflow-hidden">
         <Panel defaultSize={40} minSize={25} className="overflow-hidden min-h-0">
-          <div {...narrativeScroll} hidden={!!leftSlot} className="h-full overflow-y-auto">
+          <div {...narrativeScroll} className="h-full overflow-y-auto">
             {narrativeContent}
           </div>
-          {leftSlot && <div className="review-tool-slot">{leftSlot}</div>}
         </Panel>
         <PanelResizeHandle className="w-px bg-border hover:bg-[var(--ring)]/40 transition-colors cursor-col-resize" />
         <Panel defaultSize={60} minSize={30} className="overflow-hidden min-h-0">

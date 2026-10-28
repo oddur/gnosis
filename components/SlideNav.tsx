@@ -1,6 +1,7 @@
 import { MessageSquarePlus } from 'lucide-react';
 
 interface Props {
+  compact?: boolean;
   current: number;
   total: number;
   reviewedCount?: number;
@@ -12,16 +13,8 @@ interface Props {
   onSubmitReview?: () => void;
 }
 
-// Bottom navigation bar. The previous version was a thin row of muted
-// text controls — so quiet that users overlooked it and missed how to
-// advance through the deck. This rebuild keeps the editorial register
-// (no shadcn Button chrome, no rounded pills) but gives the bar real
-// presence: a subtle paper-tinted background, a solid border-top, more
-// vertical padding, and the actual section titles on the prev/next
-// buttons so the user can see what's coming next at a glance. The
-// reading-progress hairline has moved to the very top of the page in
-// ReviewPage; this bar no longer carries it.
 export function SlideNav({
+  compact = false,
   current,
   total,
   reviewedCount = 0,
@@ -48,19 +41,21 @@ export function SlideNav({
 
   return (
     <div className="border-t border-border bg-muted/30 shrink-0">
-      <div className="review-bottom-nav grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-stretch gap-4 px-5 py-2">
+      <div
+        className={`review-bottom-nav ${compact ? 'is-compact' : ''} grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-stretch gap-4 px-5 py-2`}
+      >
         {/* ── Previous ── Quieter weight than Next so the eye is
             pulled forward. Disabled (faded) when on the overview. */}
         <button
           onClick={onPrev}
           disabled={isOverview}
           className="group flex items-baseline gap-3 text-left min-w-0 disabled:opacity-30 disabled:cursor-default"
-          title="Previous (←)"
+          title={compact ? `Previous: ${prevTitle ?? 'Overview'} (←)` : 'Previous (←)'}
         >
           <span className="slide-meta shrink-0 group-hover:text-foreground transition-colors">←</span>
           <span className="flex flex-col gap-0.5 min-w-0">
-            <span className="slide-meta">Previous</span>
-            <span className="font-sans text-sm text-muted-foreground group-hover:text-foreground transition-colors truncate">
+            <span className="slide-meta nav-direction">Previous</span>
+            <span className="nav-topic-title font-sans text-sm text-muted-foreground group-hover:text-foreground transition-colors truncate">
               {prevTitle ?? 'Start of review'}
             </span>
           </span>
@@ -118,11 +113,11 @@ export function SlideNav({
             onClick={onNext}
             disabled={atEnd}
             className="group flex items-baseline gap-3 text-right min-w-0 disabled:opacity-30 disabled:cursor-default justify-end"
-            title="Next (→)"
+            title={compact ? `Next: ${nextTitle ?? 'End of review'} (→)` : 'Next (→)'}
           >
             <span className="flex flex-col gap-0.5 min-w-0 items-end max-w-full">
-              <span className="slide-meta">{nextLeadIn}</span>
-              <span className="font-sans text-sm text-foreground group-hover:opacity-80 transition-opacity truncate max-w-full">
+              <span className="slide-meta nav-direction">{nextLeadIn}</span>
+              <span className="nav-topic-title font-sans text-sm text-foreground group-hover:opacity-80 transition-opacity truncate max-w-full">
                 {nextTitle ?? '—'}
               </span>
             </span>

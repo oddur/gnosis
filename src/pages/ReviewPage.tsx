@@ -35,7 +35,7 @@ import { useKeyboardShortcuts, type ShortcutMap } from '../../lib/use-keyboard-s
 import { buildFileUrlBase } from '../../lib/github-url';
 import { isLocalUrl } from '../../lib/local-url';
 import type { ReviewGuide, FreshnessResult, Preferences, Provider, ModelId } from '../../lib/types';
-import { DEFAULT_FAST_CLAUDE_MODEL } from '../../lib/models';
+import { DEFAULT_FAST_CLAUDE_MODEL, PROVIDERS } from '../../lib/models';
 
 interface Props {
   review: ReviewGuide;
@@ -164,6 +164,11 @@ function ReviewPageContent({
   const [currentLogin, setCurrentLogin] = useState<string | null>(null);
   const [freshness, setFreshness] = useState<FreshnessResult | null>(null);
   const [chatOpen, setChatOpen] = useSessionDraft('chat-open', false);
+  const [chatFocusRequest, setChatFocusRequest] = useState(0);
+  const openChat = useCallback(() => {
+    setChatOpen(true);
+    setChatFocusRequest((request) => request + 1);
+  }, [setChatOpen]);
   const [chatQuotedCode, setChatQuotedCode] = useState<string | null>(null);
   const [chatProvider, setChatProvider] = useState<Provider>(initialPreferences?.provider ?? 'claude');
   const [chatModel, setChatModel] = useState<ModelId>(initialPreferences?.model ?? DEFAULT_FAST_CLAUDE_MODEL);
@@ -582,10 +587,6 @@ function ReviewPageContent({
       f: () => {
         if (currentSlide > 0) setSlideViewMode((v) => (v === 'split' ? 'focus' : 'split'));
       },
-      // Open chat for the current slide
-      c: () => {
-        if (currentSlide > 0) setChatOpen(true);
-      },
       // Review progress
       r: () => {
         if (currentSlide > 0) markReviewedAndAdvance(currentSlide);
@@ -613,6 +614,10 @@ function ReviewPageContent({
   ]);
 
   useKeyboardShortcuts(shortcutMap, { enabled: active && !exploreOpen });
+  useKeyboardShortcuts({ c: openChat }, {
+    enabled: active && !exploreOpen && currentSlide > 0,
+    capture: true,
+  });
 
   // Build the command palette commands. The slide jump entries
   // are generated dynamically from the review so they read like a
@@ -664,7 +669,7 @@ function ReviewPageContent({
           hint: 'c',
           group: 'Reviewing',
           keywords: 'chat question follow up',
-          perform: () => setChatOpen(true),
+          perform: openChat,
         }
       );
     }
@@ -702,7 +707,7 @@ function ReviewPageContent({
     );
 
     return commands;
-  }, [review.slides, currentSlide, comments.length, handleJumpTo, handleDiffLayoutChange, onBack]);
+  }, [review.slides, currentSlide, comments.length, handleJumpTo, handleDiffLayoutChange, onBack, openChat]);
 
   useEffect(() => {
     if (review.reviewId && currentLogin)
@@ -884,12 +889,6 @@ function ReviewPageContent({
         <button onClick={() => setNavOpen((v) => !v)} aria-pressed={navOpen} title="Toggle topic navigation">
           {navOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}Topics
         </button>
-        {chatOpen && (
-          <button onClick={() => setChatOpen(false)}>
-            <X size={13} />
-            Close chat
-          </button>
-        )}
         {exploreOpen && (
           <button onClick={() => setExploreOpen(false)}>
             <X size={13} />
@@ -909,7 +908,7 @@ function ReviewPageContent({
       </div>
       {!isLocal && active && sharedReview.panel}
 
-      <div className="flex-1 overflow-hidden flex flex-row min-h-0">
+      <div className={`review-chat-workspace flex-1 overflow-hidden flex flex-row min-h-0${chatOpen && currentSlide > 0 ? ' chat-open' : ''}`}>
         {navOpen && (
           <TocRail
             slides={review.slides}
@@ -920,7 +919,7 @@ function ReviewPageContent({
             onNavigate={handleJumpTo}
           />
         )}
-        <div key={currentSlide} className="flex-1 min-w-0 overflow-hidden flex flex-col">
+        <div key={currentSlide} className="review-chat-content flex-1 min-w-0 overflow-hidden flex flex-col">
           {currentSlide === 0 ? (
             <WorkbenchOverview
               review={review}
@@ -937,6 +936,7 @@ function ReviewPageContent({
             <SlideView
               key={review.snapshot?.fingerprint ?? review.headSha ?? review.reviewId}
               review={review}
+              chatOpen={chatOpen}
               viewedFiles={viewedFiles}
               onFileViewedChange={setFileViewed}
               onContinue={() => handleJumpTo(currentSlide < review.slides.length ? currentSlide + 1 : 0)}
@@ -958,13 +958,13 @@ function ReviewPageContent({
               onDiffLayoutChange={handleDiffLayoutChange}
               onAskQuestion={() => {
                 setExploreOpen(false);
-                setChatOpen(true);
+                openChat();
               }}
               onExplore={review.reviewId ? openExplainer : undefined}
               onAskAboutSelection={(code) => {
                 setExploreOpen(false);
                 setChatQuotedCode(code);
-                setChatOpen(true);
+                openChat();
               }}
               viewMode={slideViewMode}
               fileMetadataMap={fileMetadataMap}
@@ -973,24 +973,6 @@ function ReviewPageContent({
               isReviewed={reviewed.has(currentSlide)}
               onMarkReviewed={() => markReviewedAndAdvance(currentSlide)}
               onToggleReviewed={() => toggleReviewed(currentSlide)}
-              leftSlot={
-                chatOpen ? (
-                  <SlideChatSheet
-                    embedded
-                    open={chatOpen}
-                    onOpenChange={setChatOpen}
-                    slideId={review.slides[currentSlide - 1].id}
-                    slideTitle={review.slides[currentSlide - 1].title}
-                    reviewFocus={prefs?.reviewSuggestions === false ? null : review.slides[currentSlide - 1].reviewFocus}
-                    messages={slideChat.getMessages(currentSlide)}
-                    isStreaming={slideChat.isStreaming}
-                    onSend={(text) => void slideChat.send(currentSlide, text)}
-                    onRetry={(id) => void slideChat.retry(currentSlide, id)}
-                    quotedCode={chatQuotedCode}
-                    onQuotedCodeConsumed={() => setChatQuotedCode(null)}
-                  />
-                ) : undefined
-              }
               rightSlot={
                 exploreOpen && review.reviewId ? (
                   <ExplainerView
@@ -1011,10 +993,30 @@ function ReviewPageContent({
             />
           )}
         </div>
+        {chatOpen && currentSlide > 0 && (
+          <SlideChatSheet
+            embedded
+            open={chatOpen}
+            focusRequest={chatFocusRequest}
+            onOpenChange={setChatOpen}
+            slideId={`${review.reviewId ?? review.prUrl}:${review.snapshot?.fingerprint ?? review.headSha ?? ''}:${review.slides[currentSlide - 1].id}`}
+            slideTitle={review.slides[currentSlide - 1].title}
+            reviewFocus={prefs?.reviewSuggestions === false ? null : review.slides[currentSlide - 1].reviewFocus}
+            messages={slideChat.getMessages(currentSlide)}
+            isStreaming={slideChat.isStreaming}
+            onSend={(text, selection) => void slideChat.send(currentSlide, text, selection)}
+            onRetry={(id) => void slideChat.retry(currentSlide, id)}
+            onStop={() => slideChat.stop(currentSlide)}
+            modelLabel={PROVIDERS[chatProvider].models.find(model => model.id === chatModel)?.label ?? chatModel}
+            quotedCode={chatQuotedCode}
+            onQuotedCodeConsumed={() => setChatQuotedCode(null)}
+          />
+        )}
       </div>
 
       {
         <SlideNav
+          compact={chatOpen}
           current={currentSlide}
           total={review.slides.length}
           reviewedCount={reviewedCount}

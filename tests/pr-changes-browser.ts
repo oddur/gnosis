@@ -340,17 +340,17 @@ void app.whenReady().then(async () => {
       `(()=>{const input=document.querySelector('#changes-question');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'What changes here?');input.dispatchEvent(new Event('input',{bubbles:true}))})()`
     );
     await js("document.querySelector('.changes-chat form').requestSubmit()");
-    await wait("document.querySelector('.changes-chat-messages')?.textContent.includes('retry boundary')");
+    await wait("document.querySelector('.changes-chat .chat-conversation')?.textContent.includes('retry boundary')");
     await capture('chat');
-    await click('Close file conversation');
+    await click('Close chat');
     await click('Summary');
     await click('Changes');
     await wait(
       "document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/new.ts'"
     );
     await click('Ask about this');
-    await wait("document.querySelector('.changes-chat-messages')?.textContent.includes('retry boundary')");
-    await click('Close file conversation');
+    await wait("document.querySelector('.changes-chat .chat-conversation')?.textContent.includes('retry boundary')");
+    await click('Close chat');
     await js("window.openFile('worker.ts')");
     await wait(
       "document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/worker.ts'"

@@ -52,6 +52,7 @@ export interface FileChatMessage {
   content: string;
 }
 export interface FileChatRequest extends PrFileRequest {
+  requestId?: string;
   question: string;
   selection?: string;
   history: FileChatMessage[];
