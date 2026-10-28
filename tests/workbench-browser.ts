@@ -457,14 +457,16 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('.workbench-help')");
     assert.equal(await js("document.activeElement?.getAttribute('aria-label')"), 'Help and terminology');
     await js('document.querySelector(\'[aria-label="Help and terminology"]\').click()');
-    await click('Show getting started');
-    await wait("!!document.querySelector('.getting-started') && !document.querySelector('.workbench-help')");
-    await js("document.querySelector('.getting-started-connection summary').click()");
-    await click('Sign in to GitHub');
+    await click('Run setup again');
+    await wait("!!document.querySelector('.setup-dialog') && !document.querySelector('.workbench-help')");
+    await js("document.querySelector('.setup-choice input').click()");
+    await click('Next');
+    await click('Connect GitHub');
     await wait("!!document.querySelector('.github-auth-dialog')");
     await click('Sign in through browser');
-    await wait("!document.querySelector('.workbench-connect')");
-    assert.ok(await js("document.body.textContent.includes('GitHub connected as oddur')"));
+    await wait("document.querySelector('.setup-connected')?.textContent.includes('oddur') && !document.querySelector('.github-auth-dialog')");
+    await click('Finish later');
+    await wait("!document.querySelector('.setup-dialog') && !document.querySelector('.workbench-connect')");
     await js(`(() => {
       const input = document.querySelector('[aria-label="Search PRs and stacks"]');
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'absent');
@@ -510,7 +512,7 @@ void app.whenReady().then(async () => {
     await js(
       "void (window.electronAPI.checkCliInstalled = () => Promise.resolve({installed:true,resolvedPath:'/fixture/claude'}))"
     );
-    await click('Open a pull request');
+    await click('Open PR');
     await wait('!!document.querySelector(\'[aria-label="Pull request URL"]\')');
     await js(`(() => {
       const input = document.querySelector('[aria-label="Pull request URL"]');
