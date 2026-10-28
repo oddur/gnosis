@@ -5,7 +5,7 @@ import path from 'node:path';
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({width:1024,height:700,useContentSize:true,show:true,webPreferences:{backgroundThrottling:false}});
   const js = <T=unknown>(code:string) => win.webContents.executeJavaScript(code) as Promise<T>;
-  const wait = async (code:string) => { for(let i=0;i<200;i++){if(await js(code))return;await new Promise(r=>setTimeout(r,30));}throw Error(`Timed out: ${code}\n${await js('document.body.innerText')}`); };
+  const wait = async (code:string, attempts=200) => { for(let i=0;i<attempts;i++){if(await js(code))return;await new Promise(r=>setTimeout(r,30));}throw Error(`Timed out: ${code}\n${await js('document.body.innerText')}`); };
   // CI desktops can clamp native windows below the requested dimensions.
   // Set Chromium's viewport explicitly so density assertions measure their named size.
   const viewport=async(width:number,height:number)=>{
@@ -15,11 +15,14 @@ void app.whenReady().then(async () => {
   const shots=path.resolve('.impeccable/review/stack-layout');fs.mkdirSync(shots,{recursive:true});
   const capture=async(name:string)=>{await js('document.fonts.ready');await new Promise(r=>setTimeout(r,300));fs.writeFileSync(path.join(shots,name+'.png'),(await win.webContents.capturePage()).toPNG());};
   const click = async (label:string) => { await wait(`[...document.querySelectorAll('button')].some(b=>b.checkVisibility()&&(b.textContent.trim()===${JSON.stringify(label)}||b.getAttribute('aria-label')===${JSON.stringify(label)}))`); await js(`(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.checkVisibility()&&(b.textContent.trim()===${JSON.stringify(label)}||b.getAttribute('aria-label')===${JSON.stringify(label)}));b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`); };
+  win.webContents.on('console-message', (_event, _level, message) => console.log('renderer:', message));
+  win.webContents.on('render-process-gone', (_event, details) => console.error('Renderer exited:', details.reason));
   try {
+    // Cold Vite startup on CI is separate from the layout assertions below.
     await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&checks`);
     win.webContents.debugger.attach('1.3');await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled',{enabled:true});
     await viewport(1280,800);
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    await wait("document.querySelectorAll('.queue-item').length===7", 1000);
     await js("document.querySelector('.queue-item .queue-disclosure').closest('.queue-item').querySelector('.queue-row-main').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))");
     await wait("document.querySelectorAll('.stack-overview-member').length===3 && document.querySelector('.pr-merge-status').textContent.includes('checked just now')");
     await new Promise(r=>setTimeout(r,2000));
