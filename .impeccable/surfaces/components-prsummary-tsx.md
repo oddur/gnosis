@@ -2,7 +2,7 @@
 version: 1
 slug: "components-prsummary-tsx"
 primary_target: "components/PrSummary.tsx"
-related_targets: ["src/pages/HomePage.tsx","lib/stack-workspace.ts","components/StackOverview.tsx"]
+related_targets: ["src/pages/HomePage.tsx","lib/stack-workspace.ts","components/StackOverview.tsx","components/StackBriefing.tsx"]
 ---
 
 Mode: Operate. Extend the existing PR workspace and visual system.
@@ -24,3 +24,11 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
 ## Acceptance
 
 Separate stack and PR explanations, explicit generation only. Direct PR links retain parent context. Scope changes preserve tabs and per-scope positions. Opening the stack overview does not mark all members read. Local renaming must survive restart and not invalidate explanations. Completed stacks stay accessible through saved work, history and stars. Shared cached inventories supply progress without new GitHub calls. Verify laptop widths, keyboard, light/dark, empty and failed persistence states.
+
+## Stack summary behavior
+
+The scope switcher precedes the tabs and moves above them in narrow windows. Compact rows pair the PR number and title above dependency, status, checks, and file progress. A shared repository appears once in the heading. Mixed-repository stacks show the repository in each row.
+
+The briefing area identifies missing, queued, generating, paused, failed, cancelled, and disconnected states. Generation requires an explicit action here. Running and queued briefings link to Activity. Failed and cancelled briefings offer retry when available. Paused briefings expose Activity and available generation actions. Detailed errors remain collapsed.
+
+The heading and member rows share one clock for saved status freshness. Expired review status says “Status needs refresh” and exposes a refresh action. Check outcomes distinguish passed, skipped, neutral, running, and attention states. A blocked count remains separate from the next PR's merge readiness.

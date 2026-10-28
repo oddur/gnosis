@@ -8,6 +8,7 @@ export interface MergeReadiness {
   details: string[];
   checkedAt?: number;
   stale: boolean;
+  blockedCount?: number;
 }
 
 /** GitHub evaluates merge policy. Counts of approvals or passing checks cannot replace that decision. */
@@ -138,7 +139,7 @@ export function subjectReadiness(subject: ReviewSubject, signals: QueueSignals[]
   );
   return {
     label: next
-      ? `Next: #${next.member.number} ${next.readiness.label.toLowerCase()}${blocked.length ? ` · ${blocked.length} blocked` : ''}`
+      ? `Next: #${next.member.number} ${next.readiness.label.toLowerCase()}`
       : remaining.length
         ? blocked.length
           ? 'Stack has merge blockers'
@@ -156,6 +157,7 @@ export function subjectReadiness(subject: ReviewSubject, signals: QueueSignals[]
           ? 'warning'
           : 'muted',
     ready: !!next,
+    blockedCount: next ? blocked.length : undefined,
     checkedAt: checked.length === members.length ? Math.min(...checked) : undefined,
     stale,
     details: [

@@ -27,10 +27,12 @@ export function StatusBadge({
   status,
   count,
   details = status.details,
+  staleLabel = 'Out of date',
 }: {
   status: PrReviewStatus;
   count?: number;
   details?: string;
+  staleLabel?: string;
 }) {
   const Icon = icons[status.kind];
   const label = count === undefined ? status.label : `${count} ${status.label.toLowerCase()}`;
@@ -39,7 +41,7 @@ export function StatusBadge({
       <Icon size={14} aria-hidden="true" />
       <span>
         {label}
-        {status.stale && ' · Out of date'}
+        {status.stale && ` · ${staleLabel}`}
       </span>
     </span>
   );
@@ -49,30 +51,37 @@ export function MemberReviewStatus({
   member,
   signals,
   checking,
+  now,
+  staleLabel,
 }: {
   member: ReviewMember;
   signals?: QueueSignals;
   checking?: boolean;
+  now?: number;
+  staleLabel?: string;
 }) {
-  return <StatusBadge status={prReviewStatus(member, signals, checking)} />;
+  return <StatusBadge status={prReviewStatus(member, signals, checking, now)} staleLabel={staleLabel} />;
 }
 
 export function SubjectReviewStatus({
   subject,
   signals,
   checking,
+  now,
 }: {
   subject: ReviewSubject;
   signals: QueueSignals[];
   checking: boolean;
+  now?: number;
 }) {
   const stacked = subject.kind === 'stack' && subject.members.length > 1;
   return (
     <span className="pr-review-statuses" role="group" aria-label={stacked ? 'Stack review status' : 'Review status'}>
-      {subjectReviewStatuses(subject, signals, checking).map((group) => (
+      {subjectReviewStatuses(subject, signals, checking, now).map((group) => (
         <StatusBadge
           key={`${group.status.kind}:${group.status.stale}`}
           status={group.status}
+          staleLabel={subject.kind === 'stack' ? 'Status needs refresh' : undefined}
           count={stacked ? group.members.length : undefined}
           details={group.members.map((m) => `#${m.number}: ${m.status.details}`).join('\n')}
         />

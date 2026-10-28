@@ -177,7 +177,7 @@ export function PrExplanation({
                 ? 'Saved explanation could not be opened'
                 : wanted
                   ? 'Opening saved explanation'
-                  : 'Understand the changes, step by step'}
+                  : item.subject.kind === 'stack' ? `Understand this ${item.subject.members.length}-PR stack` : 'Understand the changes, step by step'}
             </h2>
             <p>
               {loadError
