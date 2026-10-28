@@ -83,7 +83,9 @@ void app.whenReady().then(async () => {
       `(async()=>{window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='old.ts').click();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {loading:!!document.querySelector('.commit-stream-row[data-active=true] .changes-loading'),path:document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent}})()`
     );
     assert.equal(cold.path, 'src/old.ts', 'A cold file remains reachable in the continuous stream');
+    await window.webContents.debugger.sendCommand('Emulation.setCPUThrottlingRate', { rate: 1 });
     await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='worker.ts').click()");
+    await wait("document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/worker.ts'");
     await new Promise((r) => setTimeout(r, 600));
     assert.equal(
       await js("document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent"),
