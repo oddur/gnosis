@@ -3,15 +3,22 @@ import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 void app.whenReady().then(async () => {
-  const win = new BrowserWindow({width:1280,height:800,useContentSize:true,show:true,webPreferences:{backgroundThrottling:false}});
+  const win = new BrowserWindow({width:1024,height:700,useContentSize:true,show:true,webPreferences:{backgroundThrottling:false}});
   const js = <T=unknown>(code:string) => win.webContents.executeJavaScript(code) as Promise<T>;
   const wait = async (code:string) => { for(let i=0;i<200;i++){if(await js(code))return;await new Promise(r=>setTimeout(r,30));}throw Error(`Timed out: ${code}\n${await js('document.body.innerText')}`); };
+  // CI desktops can clamp native windows below the requested dimensions.
+  // Set Chromium's viewport explicitly so density assertions measure their named size.
+  const viewport=async(width:number,height:number)=>{
+    await win.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+    await wait(`innerWidth===${width} && innerHeight===${height}`);
+  };
   const shots=path.resolve('.impeccable/review/stack-layout');fs.mkdirSync(shots,{recursive:true});
   const capture=async(name:string)=>{await js('document.fonts.ready');await new Promise(r=>setTimeout(r,300));fs.writeFileSync(path.join(shots,name+'.png'),(await win.webContents.capturePage()).toPNG());};
   const click = async (label:string) => { await wait(`[...document.querySelectorAll('button')].some(b=>b.checkVisibility()&&(b.textContent.trim()===${JSON.stringify(label)}||b.getAttribute('aria-label')===${JSON.stringify(label)}))`); await js(`(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.checkVisibility()&&(b.textContent.trim()===${JSON.stringify(label)}||b.getAttribute('aria-label')===${JSON.stringify(label)}));b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`); };
   try {
     await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&checks`);
     win.webContents.debugger.attach('1.3');await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled',{enabled:true});
+    await viewport(1280,800);
     await wait("document.querySelectorAll('.queue-item').length===7");
     await js("document.querySelector('.queue-item .queue-disclosure').closest('.queue-item').querySelector('.queue-row-main').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))");
     await wait("document.querySelectorAll('.stack-overview-member').length===3 && document.querySelector('.pr-merge-status').textContent.includes('checked just now')");
@@ -38,8 +45,8 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.briefingCalls'),0,'Opening the overview must not start briefing generation');
     assert.equal(await js("[...document.querySelectorAll('.stack-overview-member')].some(e=>e.textContent.includes('klang/engine'))"),false,'Common repository belongs in stack header');
     const completeRows=()=>js<number>("(()=>{const bottom=document.querySelector('.pr-summary-content').getBoundingClientRect().bottom;return [...document.querySelectorAll('.stack-overview-member')].filter(e=>e.getBoundingClientRect().bottom<=bottom).length})()");
-    await capture('ten-pr-desktop-light');assert.ok(await completeRows()>=6,'Six complete PR rows at1280×800');
-    win.setContentSize(900,600);await wait('innerWidth===900');await js("document.documentElement.classList.add('dark')");
+    console.log('Layout viewport:',await js('({width:innerWidth,height:innerHeight})'));await capture('ten-pr-desktop-light');assert.ok(await completeRows()>=6,'Six complete PR rows at1280×800');
+    await viewport(900,600);await js("document.documentElement.classList.add('dark')");
     await capture('ten-pr-laptop-dark');assert.ok(await completeRows()>=3,'Three complete PR rows at900×600');
     assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'),true);
     await click('Generate stack briefing');await wait("document.querySelector('.stack-briefing-state')?.textContent.includes('Generating stack briefing')");assert.equal(await js('window.briefingCalls'),1);await capture('generating');
@@ -50,7 +57,7 @@ void app.whenReady().then(async () => {
     await click('Generate stack briefing');await wait("document.querySelector('.stack-briefing-state')?.textContent.includes('Generating stack briefing')");
     await js("window.stackItem.briefing=undefined;window.stackItem.subject.members[1].repo='klang/worker';window.dispatchEvent(new Event('fixture-pr-read-change'))");
     await wait("document.querySelector('.stack-overview-member:nth-child(2)').textContent.includes('klang/worker')");
-    win.setContentSize(640,600);await wait('innerWidth===640');await capture('mixed-repos-narrow');assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'),true);
+    await viewport(640,600);await capture('mixed-repos-narrow');assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'),true);
     console.log('Stack layout passed: coherent freshness, compact ten-PR overview, briefing generation/retry/pause, common and mixed repositories.');app.exit(0);
   }catch(error){console.error(error);await capture('failure');app.exit(1);}
 });
