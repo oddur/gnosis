@@ -22,7 +22,7 @@ export async function applyPendingGitHubCacheClear(directory: string, clearBrows
   const state = savedWorkbench(directory);
   if (state) {
     const retained = Object.fromEntries(
-      ['account', 'credentialKey', 'overrides', 'briefs', 'day', 'used', 'filters']
+      ['account', 'credentialKey', 'overrides', 'briefs', 'day', 'used', 'filters', 'stackNames']
         .filter((key) => key in state)
         .map((key) => [key, state[key]])
     );

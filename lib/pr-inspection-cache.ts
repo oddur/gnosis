@@ -45,6 +45,9 @@ export interface InspectionPriorities {
 export function createPrInspectionCache(deps: Dependencies) {
   const now = deps.now ?? Date.now;
   const values = new Map<string, Entry>();
+  const listeners = new Set<() => void>();
+  let version = 0;
+  const changed = () => { version++; listeners.forEach(listener => listener()); };
   const latest = new Map<string, Entry>();
   const jobs = new Map<string, Job>();
   const completed = new Set<string>();
@@ -82,6 +85,7 @@ export function createPrInspectionCache(deps: Dependencies) {
       if (first === undefined) break;
       latest.delete(first);
     }
+    changed();
   }
   function read<T extends PrChanges | PrCommits>(
     kind: keyof Entry,
@@ -284,6 +288,8 @@ export function createPrInspectionCache(deps: Dependencies) {
       detail, status, progress, updatedAt: activityUpdatedAt, canCancel: false, canRetry: false };
   }
   return {
+    subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    getVersion: () => version,
     activity,
     readChanges,
     readCommits,
@@ -301,6 +307,7 @@ export function createPrInspectionCache(deps: Dependencies) {
         restored.clear();
         pending.clear();
         activeUrls.clear();
+        changed();
         currentJob = undefined;
         deps.reset?.();
       }

@@ -76,6 +76,9 @@ export function CommitDiffStream({
     const index = current.current.files.findIndex((f) => f.key === key);
     if (index < 0) return;
     pending.current = { key, offset, focus, until: Date.now() + 1500 };
+    // Publish the target even if scrolling does not move the viewport. A layout
+    // effect may have restored the previous position before this deferred jump.
+    current.current.onPosition(key, offset);
     virtual.scrollToIndex(index, { align: 'start' });
   }
   useImperativeHandle(ref, () => ({ scrollToFile: jump }));

@@ -1775,3 +1775,52 @@ void test('PR badge previews do not enqueue missing briefings', async()=>{
     assert.deepEqual(s.service.activity(),before);
   }finally{s.cleanup();}
 });
+
+test('stack names persist locally, preserve explanations, reset, and stay account scoped', async () => {
+  const s = setup(async () => '{}', false);
+  try {
+    const queue = await s.service.queue(true);
+    const original = queue.items[0].subject;
+    const file = path.join(s.deps.directory(), 'workbench.json');
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    saved.subjects[0] = { ...original, id: 'stack:' + original.id, kind: 'stack' };
+    fs.writeFileSync(file, JSON.stringify(saved));
+    const service = createWorkbenchService(s.deps);
+    const id = saved.subjects[0].id;
+    const before = service.cached().items[0].briefing?.key;
+    const renamed = service.renameStack(id, '  Queue redesign  ');
+    assert.equal(renamed.items[0].subject.title, 'Queue redesign');
+    assert.equal(service.cached().items[0].briefing?.key, before);
+    const restarted = createWorkbenchService(s.deps);
+    assert.equal(restarted.snapshot().items[0].subject.name, 'Queue redesign');
+    assert.equal(restarted.renameStack(id, '').items[0].subject.title, original.title);
+    assert.throws(() => service.renameStack(id, 'x'.repeat(121)), /120/);
+    assert.throws(() => service.renameStack(id, 'Wrong account', 'someone-else'), /account changed/);
+    const other = createWorkbenchService({ ...s.deps, auth: () => ({ login: 'someone-else', token: 'fixture' }) });
+    assert.throws(() => other.renameStack(id, 'No'), /no longer available/);
+  } finally { s.cleanup(); }
+});
+
+test('absent stacks leave the active queue but retain local identity across discovery and restart', async () => {
+  const s = setup(async () => '{}', false);
+  try {
+    await s.service.queue(true);
+    const file = path.join(s.deps.directory(), 'workbench.json');
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const subject = saved.subjects[0];
+    subject.id = 'stack:' + subject.id;
+    subject.kind = 'stack';
+    fs.writeFileSync(file, JSON.stringify(saved));
+    const client = s.deps.client();
+    client.search.issuesAndPullRequests = (async () => ({ data: { items: [] } })) as unknown as typeof client.search.issuesAndPullRequests;
+    client.pulls.list = (async () => ({ data: [] })) as unknown as typeof client.pulls.list;
+    const service = createWorkbenchService(s.deps);
+    service.renameStack(subject.id, 'Saved stack');
+    const queue = await service.queue(true);
+    assert.equal(queue.items.length, 0);
+    assert.equal(queue.stacks?.[0].title, 'Saved stack');
+    const restarted = createWorkbenchService(s.deps);
+    assert.equal(restarted.snapshot().items.length, 0);
+    assert.equal(restarted.snapshot().stacks?.[0].id, subject.id);
+  } finally { s.cleanup(); }
+});

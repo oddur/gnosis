@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createGitHubClientPool } from './cache-test-pool';
 import { readCommitChecks } from '../lib/github-checks';
 import { readPrChecks, readCheckDetails, readCheckLog, rerunChecks } from '../src/pr-checks-service';
-import { checkCounts, orderedChecks, type PrCheck } from '../lib/pr-checks';
+import { checkSummary, checkCounts, orderedChecks, type PrCheck } from '../lib/pr-checks';
 const sha = 'a'.repeat(40),
   url = 'https://github.com/o/r/pull/1';
 const input = { url, headSha: sha, id: 'check:1' };
@@ -196,4 +196,12 @@ void test('job logs use an unauthenticated bounded download and strip terminal e
     assert.equal(log.text.includes(String.fromCharCode(27)), false);
     assert.equal(cancelled, true);
   } finally { globalThis.fetch = original; }
+});
+
+void test('compact check outcomes explain skipped and neutral results without implying failure', () => {
+  const checks = (conclusions: string[]) => conclusions.map(conclusion => ({ name: conclusion, status: 'completed' as const, conclusion, url: '' }));
+  assert.equal(checkSummary(checks(['success','success','skipped'])), '2 passed · 1 skipped');
+  assert.equal(checkSummary(checks(['success','neutral'])), '1 passed · 1 neutral');
+  assert.equal(checkSummary(checks(['success','failure'])), '1 check needs attention');
+  assert.equal(checkSummary([]), 'No checks reported');
 });

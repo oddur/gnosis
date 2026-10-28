@@ -251,7 +251,7 @@ void app.whenReady().then(async () => {
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
-    await click('Author description');
+    await click('Open stack overview');
     await click('Commits');
     await wait(
       "document.querySelectorAll('.commit-list section').length===3 && !!document.querySelector('.changes-file-header')"

@@ -72,6 +72,16 @@ export function checkCounts(checks: CiCheck[]) {
   for (const check of checks) counts[checkGroup(check)]++;
   return counts;
 }
+/** Compact outcomes without making skipped or neutral checks look like failures. */
+export function checkSummary(checks: CiCheck[]) {
+  if (!checks.length) return 'No checks reported';
+  const counts = checkCounts(checks);
+  if (counts.attention) return `${counts.attention} ${counts.attention === 1 ? 'check needs' : 'checks need'} attention`;
+  const skipped = checks.filter(c => c.status === 'completed' && c.conclusion === 'skipped').length;
+  const neutral = counts.skipped - skipped;
+  return [counts.running && `${counts.running} running`, counts.passed && `${counts.passed} passed`, skipped && `${skipped} skipped`, neutral && `${neutral} neutral`].filter(Boolean).join(' · ');
+}
+
 export function orderedChecks(checks: PrCheck[], filter: CheckFilter) {
   const rank = { attention: 0, running: 1, passed: 2, skipped: 3 };
   return checks

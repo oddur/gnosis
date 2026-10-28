@@ -21,6 +21,11 @@ void app.whenReady().then(async () => {
     }
     throw Error(`Timed out: ${expression}`);
   };
+  // Native window bounds include platform chrome and may be clamped by CI displays.
+  const viewport = async (width: number, height: number) => {
+    await window.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+    await wait(`innerWidth===${width} && innerHeight===${height}`);
+  };
   const click = async (label: string) => {
     await js(
       `(()=>{const b=[...document.querySelectorAll('.commit-stream-row[data-active=true] button'),...document.querySelectorAll('button')].filter(b=>b.checkVisibility({visibilityProperty:true})).find(b=>b.textContent.trim()===${JSON.stringify(label)} || b.getAttribute('aria-label')===${JSON.stringify(label)});if(!b)throw Error('Missing button '+${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
@@ -40,6 +45,9 @@ void app.whenReady().then(async () => {
   };
   try {
     await window.loadURL(`${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary`);
+    window.webContents.debugger.attach('1.3');
+    await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
+    await viewport(1280, 800);
     window.webContents.setZoomFactor(1);
     await js("document.title='Gnosis — automated Changes checks'");
     await wait("document.querySelectorAll('.queue-item').length===7");
@@ -79,13 +87,15 @@ void app.whenReady().then(async () => {
         `[...document.querySelectorAll('.pr-summary-toolbar-inner,.pr-overview-heading,.pr-overview-heading h1,.pr-overview-tabs')].map(e=>{const r=e.getBoundingClientRect();return [r.x,r.y,r.width,r.height]})`
       );
     for (const width of [1400, 1024, 640, 1280]) {
-      window.setSize(width, 800);
+      await viewport(width, 800);
+      await wait(`innerWidth===${width}`);
       await click('Summary');
       await new Promise((r) => setTimeout(r, 100));
       const summaryFrame = await frame();
       await capture(`frame-summary-${width}`);
       await js("document.querySelector('.pr-summary-content').scrollTop=160");
       await click('Changes');
+      if (width <= 700) await js("document.querySelector('.changes-toolbar button').click()");
       await wait("!!document.querySelector('.changes-file-tree')");
       assert.deepEqual(
         await frame(),
@@ -227,7 +237,7 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.changes-comment-composer textarea')");
     await js("window.fill('.changes-comment-composer textarea','Keep the cancellation boundary explicit.')");
     for (const width of [1280, 1024, 640, 1616]) {
-      window.setSize(width, width === 1616 ? 1200 : 800);
+      await viewport(width, width === 1616 ? 1200 : 800);
       if (width === 640) await js("document.querySelector('.changes-toolbar button').click()");
       await js(
         "document.querySelector('.changes-code-scroll').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));document.querySelector('.changes-comment-composer').scrollIntoView({block:'center'})"
@@ -235,7 +245,7 @@ void app.whenReady().then(async () => {
       await capture(`comments-composer-${width}`);
       if (width === 640) await js("document.querySelector('.changes-toolbar button').click()");
     }
-    window.setSize(1280, 800);
+    await viewport(1280, 800);
     await click('Add to review');
     await wait("!!document.querySelector('.changes-pending-comment')");
     assert.equal(
@@ -351,13 +361,13 @@ void app.whenReady().then(async () => {
       'Viewed survives tab switches'
     );
     await js("document.documentElement.classList.add('dark')");
-    window.setSize(1024, 768);
+    await viewport(1024, 768);
     await capture('user-1024');
-    window.setSize(640, 740);
+    await viewport(640, 740);
     await capture('mobile-tree');
     await js("document.querySelector('.changes-toolbar button').click()");
     await capture('mobile');
-    window.setSize(1280, 800);
+    await viewport(1280, 800);
     await js("window.electronAPI.checkPrChanges=async()=>({baseSha:'base-0',headSha:'new-head'});void 0");
     window.show();
     window.focus();
@@ -386,7 +396,7 @@ void app.whenReady().then(async () => {
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
-    await click('Author description');
+    await click('Open stack overview');
     await click('Changes');
     await wait("document.querySelector('.changes-progress')?.textContent.includes('/ 15')");
     await js(
@@ -447,7 +457,7 @@ void app.whenReady().then(async () => {
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
-    await click('Author description');
+    await click('Open stack overview');
     await click('Changes');
     await wait(
       "document.querySelector('.commit-stream-row[data-active=true] .changes-code')?.textContent.includes('Persist this draft across restarts.')"

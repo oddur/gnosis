@@ -591,8 +591,8 @@ export function PrCommitsView({
               ? [
                   {
                     id: 'member',
-                    label: `#${selection.url.split('/').pop()}`,
-                    pickerLabel: 'PR in stack',
+                    label: `Source #${selection.url.split('/').pop()}`,
+                    pickerLabel: 'Source PR in combined commits',
                     value: selection.url,
                     options: groups
                       .filter((group) => group.commits.length)

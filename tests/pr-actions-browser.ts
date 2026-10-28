@@ -182,7 +182,7 @@ void app.whenReady().then(async () => {
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
-    await click('Author description');
+    await click('Open stack overview');
     await js('window.denyWrite=false');
     await click('Merge whole stack…');
     await wait("document.querySelector('.pr-action-members')?.children.length===3");

@@ -62,6 +62,8 @@ void app.whenReady().then(async () => {
   };
   try {
     await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&unread&labels`);
+    win.webContents.debugger.attach('1.3');
+    await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
     app.focus({ steal: true });
     win.focus();
     await wait("document.querySelectorAll('.queue-item').length===7");
@@ -119,7 +121,12 @@ void app.whenReady().then(async () => {
     await js(
       "document.querySelector('.queue-item .queue-disclosure').closest('.queue-item').querySelector('.queue-row-main').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))"
     );
+    await wait("document.querySelectorAll('.stack-overview-member').length===3");
+    assert.ok(await js<number>(unread(121)), 'Stack overview leaves member PRs unread');
+    await js("document.querySelector('[aria-label=\"Open PR #121\"]').click()");
     await wait(`${unread(121)}.then(n=>n===0)`);
+    await click('Back to stack');
+    await menuAction(js, 'Stack actions', 'Mark as read');
     await back();
     await menuAction(js, 'Actions for PR #152', 'Mark as unread');
     await menuAction(js, 'Actions for PR #151', 'Mark as unread');

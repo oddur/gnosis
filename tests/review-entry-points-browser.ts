@@ -81,10 +81,11 @@ void app.whenReady().then(async () => {
     await menuAction(js, 'Stack actions', 'Review PR #121…');
     await wait("document.querySelector('.review-submit-header')?.textContent.includes('#121')");
     await click('Close');
-    await wait("!!document.querySelector('.pr-stack-nav button[aria-current=true] strong')");
-    assert.match(await js<string>("document.querySelector('.pr-stack-nav button[aria-current=true] strong').textContent"), /#121/);
+    await wait("document.querySelector('[aria-label=\"Review scope\"]')?.value.endsWith('/121')");
+    assert.match(await js<string>("document.querySelector('[aria-label=\"Review scope\"]').textContent"), /#121/);
     assert.equal(await js("document.querySelector('.pr-summary-review-actions').textContent.includes('Review PR #121')"), true);
     await capture('stack-summary');
+    await click('Back to stack');
     await menuAction(js, 'Stack actions', 'Review PR #120…');
     await wait("document.querySelector('.review-submit-header')?.textContent.includes('#120')");
     await click('Close');
@@ -140,8 +141,8 @@ void app.whenReady().then(async () => {
     await click('Changes');
     await wait("!!document.querySelector('.changes-file-tree')");
     await js(`window.deepAll=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(selector,e.shadowRoot))];void 0`);
-    await wait("!!window.deepAll('[role=treeitem]').find(e=>e.getAttribute('data-item-path')?.includes('#120/src/new.ts'))");
-    await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('data-item-path')?.includes('#120/src/new.ts')).click()");
+    await wait("!!window.deepAll('[role=treeitem]').find(e=>e.getAttribute('data-item-path')?.includes('src/new.ts'))");
+    await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('data-item-path')?.includes('src/new.ts')).click()");
     await wait("document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/new.ts'");
     await click('Summary');
     await js(`(async()=>{
@@ -149,6 +150,7 @@ void app.whenReady().then(async () => {
       const member=(await window.electronAPI.workbenchQueue()).items.flatMap(i=>i.subject.members).find(m=>m.number===121);
       await updateReviewDrafts('oddur',member.url,()=>[{id:'stale-review-draft',filePath:'src/worker.ts',body:'Keep this earlier note.',line:35,side:'RIGHT',hunkHeader:'',codeSnippet:'',slideIndex:0,headSha:'old-sha',baseSha:member.baseSha,baseBranch:member.baseBranch}]);
     })()`);
+    await click('Back to stack');
     await menuAction(js, 'Stack actions', 'Review PR #121…');
     await wait("document.querySelector('.changes-drafts')?.textContent.includes('Keep this earlier note.')");
     assert.equal(await js("!!document.querySelector('[role=dialog]')"), false);

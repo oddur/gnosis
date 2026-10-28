@@ -10,7 +10,7 @@ void app.whenReady().then(async () => {
     show: true,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
   });
-  const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
+  const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code).catch(error => { throw new Error(`${code}\n${error}`); }) as Promise<T>;
   const wait = async (code: string) => {
     for (let i = 0; i < 200; i++) {
       if (await js(code)) return;
@@ -115,14 +115,15 @@ void app.whenReady().then(async () => {
     );
     await capture('queue');
     await js("document.querySelector('.queue-item:has(.queue-disclosure) .queue-row-main').click()");
-    await click('Author description');
+    await click('Open stack overview');
     await wait("document.querySelector('.pr-merge-status')?.textContent.includes('Stack has merge blockers')");
-    await js("[...document.querySelectorAll('.pr-stack-nav button')].find(b=>b.textContent.includes('#121')).click()");
+    await js("document.querySelector('[aria-label=\"Open PR #121\"]').click()");
     assert.match(
       await js<string>("document.querySelector('.pr-merge-detail').textContent"),
       /Rebase onto queue-0, or merge queue-0/
     );
     await capture('stack');
+    await click('Back to stack');
     await js("window.mode='clean'");
     await click('Refresh status');
     await wait("document.querySelector('.pr-merge-status')?.textContent.includes('Next: #120 ready to merge')");
@@ -136,13 +137,13 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.pr-merge-status .pr-review-statuses')?.textContent.includes('1 no review decision')");
     assert.deepEqual(await js("[...document.querySelectorAll('.pr-merge-status .pr-review-status')].map(s=>s.textContent)"),
       ['1 changes requested', '1 awaiting review', '1 no review decision']);
-    assert.equal(await js("document.querySelector('.pr-stack-nav button .pr-review-status').textContent"), 'Changes requested');
-    assert.equal(await js("document.querySelector('.pr-stack-nav li:first-child .merge-readiness-badge')"), null);
+    assert.equal(await js("document.querySelector('.stack-overview-member .pr-review-status').textContent"), 'Changes requested');
+    assert.equal(await js("document.querySelector('.stack-overview-member:first-child .merge-readiness-badge')"), null);
     await capture('stack-review-status');
     win.setSize(640, 800);
     await capture('stack-review-status-narrow');
     assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
-    assert.equal(await js("document.querySelector('.pr-member-review-status').textContent"), 'Awaiting review');
+    assert.equal(await js("document.querySelectorAll('.stack-overview-member .pr-review-status')[1].textContent"), 'Awaiting review');
     await js("document.documentElement.classList.add('dark')");
     await capture('stack-review-status-narrow-dark');
     win.setSize(1280, 800);

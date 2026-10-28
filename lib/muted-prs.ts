@@ -24,9 +24,9 @@ export function withoutMutedMembers(subject: ReviewSubject, urls: ReadonlySet<st
   if (members.length === subject.members.length) return subject;
   return {
     ...subject,
-    id: members.length === 1 ? members[0].url : subject.id,
-    kind: members.length === 1 ? 'pr' : 'stack',
-    title: members[0].title,
+    id: subject.id,
+    kind: subject.kind,
+    title: subject.name ?? subject.title,
     members,
     edges: subject.edges.filter((edge) => !urls.has(edge.parent) && !urls.has(edge.child)),
     warnings: [],

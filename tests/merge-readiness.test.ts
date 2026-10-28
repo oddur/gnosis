@@ -94,6 +94,10 @@ void test('stacks name only the next dependency-eligible PR and never promise th
     warnings: [],
   };
   const childSignals = { ...signals(), url: child.url, headSha: child.headSha };
+  const draftChild = { ...childSignals, readiness: { ...childSignals.readiness!, isDraft: true } };
+  const partial = subjectReadiness(subject, [signals(), draftChild], now);
+  assert.equal(partial.blockedCount, 1);
+  assert.doesNotMatch(partial.label, /blocked/);
   const blockedBase = signals({ mergeState: 'BEHIND' });
   assert.equal(subjectReadiness(subject, [blockedBase, childSignals], now).ready, false);
   assert.match(subjectReadiness(subject, [signals(), childSignals], now).label, /Next: #1/);

@@ -108,7 +108,7 @@ void app.whenReady().then(async () => {
     await wait(
       "!!document.querySelector('.changes-file-header') && !!document.querySelector('.pr-summary-page.is-stack')"
     );
-    await choose('PR in stack', 'https://github.com/klang/engine/pull/121');
+    await choose('Source PR in combined changes', 'https://github.com/klang/engine/pull/121');
     await wait("document.querySelector('[aria-label=\"File in comparison\"]')?.value.includes('#121/')");
     await capture('stack-changes-1280');
     win.setSize(640, 800);
@@ -156,7 +156,7 @@ void app.whenReady().then(async () => {
     );
     await wait("document.querySelectorAll('.queue-item').length===1");
     await js("document.querySelector('.queue-row-main').click()");
-    await click('Author description');
+    await click('Open stack overview');
     assert.equal(await rootLabel(), 'Stacks');
     await click('Stacks');
     await wait("!!document.querySelector('.queue-row-main')");

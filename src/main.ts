@@ -2288,6 +2288,7 @@ ipcMain.handle('workbench-queue', async (_event, force: boolean) => {
   return workbench.queue(force);
 });
 ipcMain.handle('workbench-snapshot', () => workbench.snapshot());
+ipcMain.handle('workbench-rename-stack', (_event, id: string, name: string, account?: string) => workbench.renameStack(id, name, account));
 ipcMain.handle('pr-badge-preview', (_event, url: string) => {
   if (typeof url !== 'string' || !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(url)) return null;
   const token = getResolvedToken();

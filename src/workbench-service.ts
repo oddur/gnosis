@@ -55,6 +55,8 @@ interface State {
   credentialKey?: string;
   archivedRepos?: string[];
   retainedInactiveIds?: string[];
+  retiredIds?: string[];
+  stackNames?: Record<string, string>;
   subjects: ReviewSubject[];
   overrides: GroupingOverride[];
   briefs: Partial<Record<string, Briefing>>;
@@ -157,6 +159,10 @@ export function createWorkbenchService(deps: Deps) {
     }
     if (!state || state.account !== account)
       state = { account, subjects: [], overrides: [], briefs: {}, day: '', used: 0 };
+    for (const subject of state.subjects) {
+      const name = state.stackNames?.[subject.id] ?? subject.name;
+      if (subject.kind === 'stack' && name) { subject.name = name; subject.title = name; }
+    }
     state.filters = activeViewFilters(savedViews.load(account, state.filters));
     const day = new Date().toISOString().slice(0, 10);
     if (state.day !== day) {
@@ -185,6 +191,7 @@ export function createWorkbenchService(deps: Deps) {
   const inactivityDays = (preferences = deps.preferences()) => normalizePrInactivityDays(preferences.prInactivityDays);
   const withinInactivity = (subject: ReviewSubject, starred: ReadonlySet<string> = new Set(stars.load(load().account).map(entry => entry.member.url)), preferences = deps.preferences()) => matchesPrInactivity(subject, inactivityDays(preferences), now(), starred);
   function includeSubject(subject: ReviewSubject, muted = mutedUrls(), starred: ReadonlySet<string> = new Set(stars.load(load().account).map(entry => entry.member.url)), preferences = deps.preferences()) {
+    if (load().retiredIds?.includes(subject.id)) return false;
     if (load().retainedInactiveIds?.includes(subject.id) && !subject.members.some(member =>
       isMyPr(member, deps.auth().login) || preferences.watchedRepos.some(repo => repo.toLowerCase() === member.repo.toLowerCase()) || starred.has(member.url)
     )) return false;
@@ -280,6 +287,7 @@ export function createWorkbenchService(deps: Deps) {
     );
     return {
       items,
+      stacks: visibleSubjects.filter(subject => subject.kind === 'stack'),
       readStates,
       starredPrs,
       starredItems,
@@ -627,7 +635,12 @@ export function createWorkbenchService(deps: Deps) {
       // reintroducing subjects that were part of this completed discovery.
       const represented = new Set([...updatedSubjects, ...untouched].flatMap(subject => subject.members.map(member => member.url)));
       const inactive = s.subjects.filter(subject => !withinInactivity(subject) && !subject.members.some(member => represented.has(member.url)));
-      s.subjects = [...updatedSubjects, ...untouched, ...inactive];
+      const retained = new Set([...updatedSubjects, ...untouched, ...inactive].flatMap(subject => subject.members.map(member => member.url)));
+      // Preserve completed/local stack identity for history and bookmarks without
+      // putting absent work back in the active queue or fetching it again.
+      const retired = s.subjects.filter(subject => subject.kind === 'stack' && !subject.members.some(member => retained.has(member.url)));
+      s.subjects = [...updatedSubjects, ...untouched, ...inactive, ...retired];
+      s.retiredIds = retired.map(subject => subject.id);
       s.retainedInactiveIds = [...inactive.map(subject => subject.id), ...untouched.filter(subject => s.retainedInactiveIds?.includes(subject.id)).map(subject => subject.id)];
       stars.update(
         s.account,
@@ -1108,6 +1121,23 @@ export function createWorkbenchService(deps: Deps) {
     },
     subject: (id: string) =>
       view(true).items.find((item) => item.subject.id === id)?.subject ?? view().starredItems?.find((item) => item.subject.id === id)?.subject,
+    renameStack(id: string, value: string, account = deps.auth().login) {
+      if (account !== deps.auth().login) throw new Error('Your GitHub account changed. Open the stack again and retry.');
+      if (!deps.auth().login || !deps.auth().token) throw new Error('Connect GitHub to rename a stack.');
+      if (typeof value !== 'string' || value.trim().length > 120) throw new Error('Use a stack name of 120 characters or fewer.');
+      const s = load();
+      const subject = s.subjects.find(subject => subject.id === id && subject.kind === 'stack');
+      if (!subject) throw new Error('This stack is no longer available. Open it again and retry.');
+      const prior = { name: subject.name, title: subject.title, names: s.stackNames };
+      subject.name = value.trim() || undefined;
+      subject.title = subject.name ?? subject.members[0].title;
+      s.stackNames = { ...s.stackNames, [id]: subject.name ?? '' };
+      try { save(); } catch (error) {
+        subject.name = prior.name; subject.title = prior.title; s.stackNames = prior.names;
+        throw error;
+      }
+      return view();
+    },
     async correct(override: GroupingOverride) {
       if (refresh) await refresh;
       if (!['link', 'unlink'].includes(override.action)) throw new Error('Invalid grouping action.');

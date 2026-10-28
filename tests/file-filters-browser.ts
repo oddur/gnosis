@@ -187,7 +187,7 @@ void app.whenReady().then(async () => {
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
-    await click('Author description');
+    await click('Open stack overview');
     await click('Changes');
     await wait("document.querySelector('.file-filter-group')?.textContent.includes('PR #120')");
     assert.match(await js<string>("document.querySelector('.file-filter-group').textContent"), /1 file hidden/);
@@ -253,6 +253,7 @@ void app.whenReady().then(async () => {
     await wait('window.electronAPI.loadFileFilters().then(s=>!s.hiddenExtensions.length)');
     await click('Show hidden files');
     await close();
+    if (await js("!document.querySelector('.changes-tree-pane')")) await js("document.querySelector('.changes-toolbar button').click()");
     await wait("!!document.querySelector('.changes-file-tree')");
     await pop();
     await click('File extensions');
@@ -268,7 +269,7 @@ void app.whenReady().then(async () => {
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
-    await click('Author description');
+    await click('Open stack overview');
     await click('Commits');
     await wait("!!document.querySelector('.commit-row')");
     await pop();
