@@ -51,6 +51,8 @@ declare global {
       getPrChanges: (url: string, refresh?: boolean, options?: InspectionLoadOptions) => Promise<PrChanges>;
       getPrChangeFile: (request: PrFileRequest, background?: boolean) => Promise<PrFileContents>;
       checkPrChanges: (url: string) => Promise<{ baseSha: string; headSha: string }>;
+      cancelChat: (requestId: string) => Promise<void>;
+      onFileChatProgress: (callback: (event: { requestId: string; chunk: string }) => void) => () => void;
       askPrFile: (request: FileChatRequest) => Promise<string>;
       getGitHubProfile: (login:string) => Promise<GitHubProfile>;
       getQueueSignals: (requests: QueueSignalRequest[], options?: QueueSignalOptions) => Promise<QueueSignals[]>;

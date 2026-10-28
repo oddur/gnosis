@@ -175,7 +175,7 @@ void app.whenReady().then(async () => {
     );
     await input('.changes-chat textarea', 'What is preserved here?');
     await js("document.querySelector('.changes-chat form').requestSubmit()");
-    await wait("document.querySelector('.changes-chat-messages')?.textContent.includes('exact comparison')");
+    await wait("document.querySelector('.changes-chat .chat-conversation')?.textContent.includes('exact comparison')");
     assert.equal(await js('window.chatReads[0].baseSha'), 'f'.repeat(40));
     assert.equal(await js('window.chatReads[0].comparison.parentSha'), 'f'.repeat(40));
     assert.equal(await js('window.chatReads[0].path'), 'src/worker.ts');

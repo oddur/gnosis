@@ -514,6 +514,7 @@ const mocks = {
     return Promise.resolve({before:request.path.endsWith('/new.ts')?{kind:'absent' as const}:{kind:'text' as const,content:before},after:request.path.endsWith('/old.ts')?{kind:'absent' as const}:{kind:'text' as const,content:before.replace('value35 = 35','value35 = 36')}});
   },
   checkPrChanges: (url:string) => {const member=items.flatMap(i=>i.subject.members).find(m=>m.url===url)??members[0];return Promise.resolve({headSha:member.headSha,baseSha:member.baseSha});},
+  onFileChatProgress: () => () => {},
   askPrFile: () => Promise.resolve('The worker now advances to the next queued item. This changes the retry boundary.'),
   getGitHubProfile: (login:string) => Promise.resolve({login,name:'Morgan Developer',bio:'Building reliable command queues.',company:'Klang',location:'Berlin',type:'User'}),
   getQueueSignals: (requests: import('../../lib/queue-signals').QueueSignalRequest[]): Promise<import('../../lib/queue-signals').QueueSignals[]> => Promise.resolve(requests.map((request, i) => ({ ...request, checkedAt: Date.now(), readiness: {state:'OPEN',isDraft:false,mergeable:'MERGEABLE',mergeState:'CLEAN',reviewDecision:'APPROVED',baseBranch:items.flatMap(i=>i.subject.members).find(m=>m.url===request.url)?.baseBranch ?? 'main',baseSha:'base',behindBy:0,mergeQueue:false,queueState:null}, comments: i % 2 ? 0 : 4, checks: { state: 'success' as const, passed: 129, skipped: 1, total: 130 } }))),

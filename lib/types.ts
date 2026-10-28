@@ -389,6 +389,7 @@ export interface Preferences {
 }
 
 export interface SendSlideChatRequest {
+  requestId?: string;
   prTitle: string;
   prDescription: string;
   summary: string;

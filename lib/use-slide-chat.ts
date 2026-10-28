@@ -8,9 +8,12 @@ export interface ChatMessage {
   isStreaming?: boolean;
   toolCalls?: string[];
   error?: string;
+  stopped?: boolean;
+  selection?: string;
 }
 
 type MessagesMap = Map<number, ChatMessage[]>;
+const runs = new Map<string, { requestId: string; stopped: boolean }>();
 const sessions = new Map<string, MessagesMap>();
 const anyStreaming = () =>
   [...sessions.values()].some((slides) =>
@@ -23,6 +26,7 @@ type Action =
   | { type: 'TOOL_USE'; slideIndex: number; assistantId: string; toolName: string }
   | { type: 'FINALIZE'; slideIndex: number; assistantId: string; content: string }
   | { type: 'ERROR'; slideIndex: number; assistantId: string; error: string }
+  | { type: 'STOP'; slideIndex: number; assistantId: string }
   | { type: 'CLEAR'; slideIndex: number };
 
 function reducer(state: MessagesMap, action: Action): MessagesMap {
@@ -80,6 +84,15 @@ function reducer(state: MessagesMap, action: Action): MessagesMap {
       );
       return next;
     }
+    case 'STOP': {
+      next.set(
+        action.slideIndex,
+        (next.get(action.slideIndex) ?? []).map((m) =>
+          m.id === action.assistantId ? { ...m, isStreaming: false, stopped: true } : m
+        )
+      );
+      return next;
+    }
     case 'CLEAR': {
       next.delete(action.slideIndex);
       return next;
@@ -112,29 +125,7 @@ export function useSlideChat(review: ReviewGuide, provider: Provider, model: Mod
     window.addEventListener('gnosis-chat-session', sync);
     return () => window.removeEventListener('gnosis-chat-session', sync);
   }, [key]);
-  const streamingRef = useRef<{ slideIndex: number; assistantId: string; key: string } | null>(null);
   const isStreamingRef = useRef(false);
-
-  useEffect(() => {
-    const handler = (chunk: string) => {
-      const current = streamingRef.current;
-      if (!current || current.key !== key) return;
-      dispatch({ type: 'APPEND_CHUNK', slideIndex: current.slideIndex, assistantId: current.assistantId, chunk });
-    };
-
-    const toolHandler = (toolName: string) => {
-      const current = streamingRef.current;
-      if (!current || current.key !== key) return;
-      dispatch({ type: 'TOOL_USE', slideIndex: current.slideIndex, assistantId: current.assistantId, toolName });
-    };
-
-    window.electronAPI.onChatProgress(handler);
-    window.electronAPI.onChatToolUse(toolHandler);
-    return () => {
-      window.electronAPI.offChatProgress();
-      window.electronAPI.offChatToolUse();
-    };
-  }, [dispatch, key]);
 
   const getMessages = useCallback(
     (slideIndex: number): ChatMessage[] => {
@@ -151,7 +142,12 @@ export function useSlideChat(review: ReviewGuide, provider: Provider, model: Mod
       const slide = review.slides.at(slideIndex - 1);
       if (!slide || !question.trim()) return;
       const existingMessages = sessions.get(key)?.get(slideIndex) ?? [];
-      if (retryId && (existingMessages.at(-1)?.id !== retryId || !existingMessages.at(-1)?.error)) return;
+      if (
+        retryId &&
+        (existingMessages.at(-1)?.id !== retryId ||
+          !(existingMessages.at(-1)?.error || existingMessages.at(-1)?.stopped))
+      )
+        return;
 
       const userMsg: ChatMessage = { id: crypto.randomUUID(), role: 'user', content: question };
       const assistantMsg: ChatMessage = {
@@ -161,19 +157,35 @@ export function useSlideChat(review: ReviewGuide, provider: Provider, model: Mod
         isStreaming: true,
       };
 
+      const run = { requestId: crypto.randomUUID(), stopped: false };
+      runs.set(`${key}:${slideIndex}`, run);
       dispatch({ type: 'SEND', slideIndex, userMessage: userMsg, assistantMessage: assistantMsg, retryId });
-      streamingRef.current = { slideIndex, assistantId: assistantMsg.id, key };
       isStreamingRef.current = true;
 
       const history = existingMessages
         // Failed output is evidence for the user, never a completed model answer.
-        .filter((m, i) => !m.isStreaming && m.content && !m.error && !existingMessages[i + 1]?.error)
+        .filter(
+          (m, i) =>
+            !m.isStreaming &&
+            m.content &&
+            !m.error &&
+            !m.stopped &&
+            !existingMessages[i + 1]?.error &&
+            !existingMessages[i + 1]?.stopped
+        )
         .map((m) => ({ role: m.role, content: m.content }));
 
       try {
+        window.electronAPI.onChatProgress((chunk) => {
+          if (!run.stopped) dispatch({ type: 'APPEND_CHUNK', slideIndex, assistantId: assistantMsg.id, chunk });
+        });
+        window.electronAPI.onChatToolUse((toolName) => {
+          if (!run.stopped) dispatch({ type: 'TOOL_USE', slideIndex, assistantId: assistantMsg.id, toolName });
+        });
         const diffContent = slide.diffHunks.map((h) => `--- ${h.filePath}\n${h.hunkHeader}\n${h.content}`).join('\n\n');
 
         const req: SendSlideChatRequest = {
+          requestId: run.requestId,
           prTitle: review.prTitle,
           prDescription: review.prDescription,
           summary: review.summary,
@@ -191,12 +203,15 @@ export function useSlideChat(review: ReviewGuide, provider: Provider, model: Mod
         const content = await window.electronAPI.sendSlideChat(req);
         // Progress may include commentary or omit the final text. The returned
         // answer is authoritative for both rendering and subsequent history.
-        dispatch({ type: 'FINALIZE', slideIndex, assistantId: assistantMsg.id, content });
+        if (!run.stopped) dispatch({ type: 'FINALIZE', slideIndex, assistantId: assistantMsg.id, content });
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : 'Failed to get response';
-        dispatch({ type: 'ERROR', slideIndex, assistantId: assistantMsg.id, error: errorMsg });
+        if (!run.stopped) dispatch({ type: 'ERROR', slideIndex, assistantId: assistantMsg.id, error: errorMsg });
       } finally {
-        streamingRef.current = null;
+        if (run.stopped) dispatch({ type: 'STOP', slideIndex, assistantId: assistantMsg.id });
+        runs.delete(`${key}:${slideIndex}`);
+        window.electronAPI.offChatProgress();
+        window.electronAPI.offChatToolUse();
         isStreamingRef.current = false;
       }
     },
@@ -223,5 +238,13 @@ export function useSlideChat(review: ReviewGuide, provider: Provider, model: Mod
   const isStreaming =
     sessionBusy || isStreamingRef.current || [...messages.values()].some((rows) => rows.some((m) => m.isStreaming));
 
-  return { getMessages, send, retry, isStreaming, clearSlide };
+  const stop = (slideIndex: number) => {
+    const run = runs.get(`${key}:${slideIndex}`);
+    if (!run || run.stopped) return;
+    run.stopped = true;
+    void window.electronAPI.cancelChat(run.requestId).catch(() => {
+      run.stopped = false;
+    });
+  };
+  return { getMessages, send, retry, stop, isStreaming, clearSlide };
 }

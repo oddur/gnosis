@@ -49,7 +49,12 @@ for (const provider of ['codex', 'claude'] as const) {
     let finish: ((answer: string) => void) | undefined;
     let fail: ((error: Error) => void) | undefined;
     const requests: SendSlideChatRequest[] = [];
+    const cancelled: string[] = [];
     const electronAPI = {
+      cancelChat: (id: string) => {
+        cancelled.push(id);
+        return Promise.resolve();
+      },
       onChatProgress: (callback: (chunk: string) => void) => {
         onProgress = callback;
       },
@@ -213,5 +218,40 @@ for (const provider of ['codex', 'claude'] as const) {
     });
     assert.equal(getChat().isStreaming, false, 'An invalid topic cannot lock all chat sessions');
     assert.equal(requests.length, 4);
+    await update(() => {
+      pending = getChat().send(1, 'Stop this answer');
+    });
+    await update(() => {
+      onProgress?.('Partial stopped answer');
+    });
+    await update(() => {
+      root.render(null);
+    });
+    await update(() => {
+      root.render(createElement(Probe));
+    });
+    await update(() => {
+      onProgress?.(' after navigating back');
+      getChat().stop(1);
+    });
+    assert.equal(cancelled[0], requests[4].requestId, 'A remounted chat can stop its original request');
+    await act(async () => {
+      onProgress?.(' ignored after stop');
+      assert.ok(finish);
+      finish('Late result');
+      await pending;
+    });
+    assert.equal(getChat().getMessages(1).at(-1)?.content, 'Partial stopped answer after navigating back');
+    assert.equal(getChat().getMessages(1).at(-1)?.stopped, true);
+    assert.equal(getChat().isStreaming, false);
+    await update(() => {
+      pending = getChat().retry(1, getChat().getMessages(1).at(-1)?.id ?? '');
+    });
+    assert.equal(requests[5].history.length, 6, 'Stopped question and answer stay out of retry history');
+    await act(async () => {
+      assert.ok(finish);
+      finish('Retry completed');
+      await pending;
+    });
   });
 }

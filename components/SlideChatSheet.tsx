@@ -1,7 +1,8 @@
 import { useSessionDraft } from '../lib/session-drafts';
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, MessageSquare, X } from 'lucide-react';
-import { Markdown } from '@/components/Markdown';
+import { MessageSquare } from 'lucide-react';
+import { ChatConversation } from './ChatConversation';
+import { ChatComposer } from './ChatComposer';
 import type { ChatMessage } from '@/lib/use-slide-chat';
 
 const MIN_WIDTH = 300;
@@ -19,6 +20,8 @@ interface Props {
   isStreaming: boolean;
   onSend: (text: string) => void;
   onRetry?: (assistantId: string) => void;
+  onStop?: () => void;
+  modelLabel?: string;
   // When the user selects code in the diff and clicks "Ask about
   // this", the selected code is passed here as a fenced code block.
   // The chat sheet renders it as a quoted block above the input and
@@ -42,8 +45,8 @@ function SuggestedQuestions({
   if (suggestions.length === 0) return null;
 
   return (
-    <div className="flex-1 flex flex-col items-start justify-center gap-4 px-2 max-w-md">
-      <p className="slide-meta">Try asking</p>
+    <div className="flex flex-col items-start gap-3">
+      <p className="text-sm text-muted-foreground">Explore this change with a question.</p>
       <ul className="flex flex-col gap-3 w-full">
         {suggestions.map((q, i) => (
           <li key={i}>
@@ -83,56 +86,6 @@ function buildSuggestions(reviewFocus: string | null): string[] {
   return suggestions.slice(0, 3);
 }
 
-// Role labels distinguish participants; both messages use the shared reading style.
-function Message({ message, onRetry, busy }: { message: ChatMessage; onRetry?: () => void; busy: boolean }) {
-  if (message.role === 'user') {
-    return (
-      <div className="flex flex-col gap-1.5">
-        <span className="slide-meta">You</span>
-        <Markdown className="reading-prose">{message.content}</Markdown>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-2">
-      <span className="slide-meta">Gnosis</span>
-      {message.toolCalls && message.toolCalls.length > 0 && (
-        <ul className="flex flex-col gap-0.5">
-          {message.toolCalls.map((tool) => (
-            <li key={tool} className="slide-meta">
-              · {tool}
-            </li>
-          ))}
-        </ul>
-      )}
-      {message.content ? (
-        <Markdown className="reading-prose">{message.content}</Markdown>
-      ) : message.isStreaming ? (
-        <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-      ) : null}
-      {message.isStreaming && message.content && (
-        <span className="inline-block w-px h-4 bg-foreground/40 align-text-bottom" />
-      )}
-      {message.error && (
-        <div role="alert" className="text-sm [overflow-wrap:anywhere]">
-          <p className="text-destructive">Answer interrupted. {message.error}</p>
-          {onRetry && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={onRetry}
-              className="mt-2 underline underline-offset-4 disabled:opacity-50"
-            >
-              Retry answer
-            </button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 export function SlideChatSheet({
   embedded = false,
   open,
@@ -144,36 +97,24 @@ export function SlideChatSheet({
   isStreaming,
   onSend,
   onRetry,
+  onStop,
+  modelLabel,
   quotedCode,
   onQuotedCodeConsumed,
 }: Props) {
   const [input, setInput] = useSessionDraft(`chat-input:${slideId ?? slideTitle}`, '');
   const [width, setWidth] = useState(DEFAULT_WIDTH);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const messageViewport = useRef<HTMLDivElement>(null);
-  const followAnswer = useRef(true);
-  const previousSlide = useRef(slideId);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dragging = useRef<{ id: number; target: HTMLButtonElement; cursor: string; select: string } | null>(null);
   const didDrag = useRef(false);
-
-  const scrollToBottom = useCallback(() => {
-    const viewport = messageViewport.current;
-    if (viewport && followAnswer.current) viewport.scrollTop = viewport.scrollHeight;
-  }, []);
-
-  useEffect(() => {
-    if (previousSlide.current !== slideId) followAnswer.current = true;
-    previousSlide.current = slideId;
-    scrollToBottom();
-  }, [messages, slideId, scrollToBottom]);
 
   useEffect(() => {
     if (open) {
       const timer = setTimeout(() => {
         const target = textareaRef.current;
         const topDialog = [...document.querySelectorAll('[role="dialog"][data-state="open"]')]
-          .filter(dialog => dialog.checkVisibility()).at(-1);
+          .filter((dialog) => dialog.checkVisibility())
+          .at(-1);
         // A palette opened during the sheet animation owns keyboard focus now.
         if (target && (!topDialog || topDialog.contains(target))) target.focus();
       }, 300);
@@ -247,25 +188,16 @@ export function SlideChatSheet({
     onOpenChange(!open);
   }
 
-  function handleSend() {
-    const trimmed = input.trim();
+  function handleSend(text = input) {
+    const trimmed = text.trim();
     if (!trimmed || isStreaming) return;
     // If there's quoted code from a selection, prepend it as a fenced
     // code block so the AI knows exactly which code the user is asking
     // about. Clear the quote after sending so it doesn't persist.
     const message = quotedCode ? `Regarding this code:\n\`\`\`\n${quotedCode}\n\`\`\`\n\n${trimmed}` : trimmed;
-    followAnswer.current = true;
     setInput('');
     onQuotedCodeConsumed?.();
     onSend(message);
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.nativeEvent.isComposing) return;
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
   }
 
   return (
@@ -311,87 +243,30 @@ export function SlideChatSheet({
           style={{ minWidth: 0, width: embedded ? '100%' : width, maxWidth: '100%' }}
         >
           {/* Topic context stays separate from the conversation. */}
-          <div className="border-b border-border px-6 py-4">
-            <h3 className="editorial-heading">Ask about this topic</h3>
+          <div className="border-b border-border px-4 py-3">
+            <h3 className="text-sm font-semibold">Ask about this topic</h3>
             <p className="slide-meta truncate mt-0.5">{slideTitle}</p>
           </div>
 
-          {/* Message list */}
-          <div
-            ref={messageViewport}
-            onScroll={(event) => {
-              const element = event.currentTarget;
-              followAnswer.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
-            }}
-            className="flex-1 overflow-y-auto min-h-0 px-6 py-6 flex flex-col gap-7"
-          >
-            {messages.length === 0 ? (
-              <SuggestedQuestions reviewFocus={reviewFocus} onSelect={(q) => onSend(q)} disabled={isStreaming} />
-            ) : (
-              <>
-                {messages.map((msg) => (
-                  <Message
-                    key={msg.id}
-                    message={msg}
-                    busy={isStreaming}
-                    onRetry={
-                      onRetry && msg === messages.at(-1)
-                        ? () => {
-                            followAnswer.current = true;
-                            onRetry(msg.id);
-                          }
-                        : undefined
-                    }
-                  />
-                ))}
-                <div ref={messagesEndRef} />
-              </>
-            )}
-          </div>
-
-          {/* Input area — bottom-bordered textarea, no rounded
-              fill. Send button is a quiet icon, not a primary CTA.
-              When quoted code is attached from a selection, a quiet
-              preview sits above the input so the user sees what's
-              going to be sent. */}
-          <div className="border-t border-border px-6 py-4 flex flex-col gap-2">
-            {quotedCode && (
-              <div className="flex items-start gap-2 text-xs animate-fade-in">
-                <pre className="flex-1 font-mono text-muted-foreground bg-muted/50 rounded px-2 py-1.5 max-h-20 overflow-y-auto whitespace-pre-wrap break-all">
-                  {quotedCode.length > 200 ? quotedCode.slice(0, 200) + '…' : quotedCode}
-                </pre>
-                <button
-                  onClick={() => onQuotedCodeConsumed?.()}
-                  className="shrink-0 text-muted-foreground hover:text-foreground transition-colors mt-1"
-                  aria-label="Remove quoted code"
-                >
-                  <X size={14} aria-hidden="true" />
-                </button>
-              </div>
-            )}
-            <div className="flex gap-3 items-end">
-              <textarea
-                ref={textareaRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                aria-label="Question about this topic"
-                dir="auto"
-                placeholder="Ask about this topic…"
-                rows={2}
-                className="flex-1 min-w-0 resize-none bg-transparent border-0 border-b border-border px-0 py-2 text-sm placeholder:text-muted-foreground transition-colors"
-              />
-              <button
-                onClick={handleSend}
-                disabled={isStreaming || !input.trim()}
-                className="shrink-0 p-2 text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-default transition-colors"
-                aria-label="Send question"
-                title={isStreaming ? 'Waiting for the current answer' : 'Send question (Enter)'}
-              >
-                {isStreaming ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              </button>
-            </div>
-          </div>
+          <ChatConversation
+            conversationId={slideId ?? slideTitle}
+            messages={messages}
+            busy={isStreaming}
+            onRetry={onRetry}
+            empty={<SuggestedQuestions reviewFocus={reviewFocus} onSelect={handleSend} disabled={isStreaming} />}
+          />
+          <ChatComposer
+            value={input}
+            onChange={setInput}
+            onSend={() => handleSend()}
+            busy={isStreaming}
+            onStop={messages.some((message) => message.isStreaming) ? onStop : undefined}
+            modelLabel={modelLabel}
+            label="Question about this topic"
+            quote={quotedCode}
+            onRemoveQuote={onQuotedCodeConsumed}
+            textareaRef={textareaRef}
+          />
         </div>
       </div>
     </div>

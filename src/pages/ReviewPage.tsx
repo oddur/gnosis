@@ -35,7 +35,7 @@ import { useKeyboardShortcuts, type ShortcutMap } from '../../lib/use-keyboard-s
 import { buildFileUrlBase } from '../../lib/github-url';
 import { isLocalUrl } from '../../lib/local-url';
 import type { ReviewGuide, FreshnessResult, Preferences, Provider, ModelId } from '../../lib/types';
-import { DEFAULT_FAST_CLAUDE_MODEL } from '../../lib/models';
+import { DEFAULT_FAST_CLAUDE_MODEL, PROVIDERS } from '../../lib/models';
 
 interface Props {
   review: ReviewGuide;
@@ -979,13 +979,15 @@ function ReviewPageContent({
                     embedded
                     open={chatOpen}
                     onOpenChange={setChatOpen}
-                    slideId={review.slides[currentSlide - 1].id}
+                    slideId={`${review.reviewId ?? review.prUrl}:${review.snapshot?.fingerprint ?? review.headSha ?? ''}:${review.slides[currentSlide - 1].id}`}
                     slideTitle={review.slides[currentSlide - 1].title}
                     reviewFocus={prefs?.reviewSuggestions === false ? null : review.slides[currentSlide - 1].reviewFocus}
                     messages={slideChat.getMessages(currentSlide)}
                     isStreaming={slideChat.isStreaming}
                     onSend={(text) => void slideChat.send(currentSlide, text)}
                     onRetry={(id) => void slideChat.retry(currentSlide, id)}
+                    onStop={() => slideChat.stop(currentSlide)}
+                    modelLabel={PROVIDERS[chatProvider].models.find(model => model.id === chatModel)?.label ?? chatModel}
                     quotedCode={chatQuotedCode}
                     onQuotedCodeConsumed={() => setChatQuotedCode(null)}
                   />
