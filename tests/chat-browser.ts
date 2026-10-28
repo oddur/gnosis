@@ -247,7 +247,24 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.pr-summary-context').checkVisibility()");
     await click('Explanation');
     await wait("!!document.querySelector('.chat-sheet textarea')");
-    await click('Close chat');
+    await fill('Keep my topic draft');
+    await js(
+      "document.querySelector('.chat-sheet textarea').focus();document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
+    );
+    await wait("!document.querySelector('.chat-sheet')");
+    await js(
+      "window.topicOrigin=document.querySelector('[title=\"Toggle topic navigation\"]');window.topicOrigin.focus();window.topicOrigin.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true}))"
+    );
+    await wait("document.activeElement===document.querySelector('.chat-sheet textarea')");
+    assert.equal(await js("document.querySelector('.chat-sheet textarea').value"), 'Keep my topic draft');
+    await js(
+      "document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',isComposing:true,bubbles:true}))"
+    );
+    assert.equal(await js("!!document.querySelector('.chat-sheet')"), true, 'IME Escape keeps chat open');
+    await js(
+      "document.querySelector('.chat-panel-context').focus();document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
+    );
+    await wait("!document.querySelector('.chat-sheet') && document.activeElement===window.topicOrigin");
     await click('Changes');
     await viewport(1280, 720);
     await wait(
@@ -279,6 +296,21 @@ void app.whenReady().then(async () => {
     );
     await wait("document.activeElement?.id==='changes-question'");
     assert.equal(await js("document.querySelector('#changes-question').value"), 'Preserve my draft');
+    await js(
+      "window.askOrigin.focus();window.askOrigin.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
+    );
+    assert.equal(await js("!!document.querySelector('.changes-chat')"), true, 'Escape outside chat leaves it open');
+    await js(
+      "document.querySelector('#changes-question').focus();document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
+    );
+    await wait("!document.querySelector('.changes-chat') && document.activeElement===window.askOrigin");
+    await js("window.askOrigin.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true}))");
+    await wait("document.activeElement?.id==='changes-question'");
+    assert.equal(
+      await js("document.querySelector('#changes-question').value"),
+      'Preserve my draft',
+      'Escape preserves the draft'
+    );
     await click('Close chat');
     // Typing, copy, IME, and modal controls must never open chat.
     for (const test of [
@@ -313,7 +345,10 @@ void app.whenReady().then(async () => {
     );
     await assertDock();
     await fullCapture('integrated-commit-dark');
-    await click('Close chat');
+    await js("document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+    await wait(
+      "!document.querySelector('.changes-chat') && document.activeElement===document.querySelector('.commit-row')"
+    );
     console.log('Chat integration passed: laptop transcript budget, focus transfer and return.');
     console.log(
       'Chat passed: anchored turns, manual reading during streaming, jump to latest, copy, Stop/retry, quoted code, draft isolation, narrow dark layout.'
