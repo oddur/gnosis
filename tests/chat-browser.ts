@@ -189,6 +189,30 @@ void app.whenReady().then(async () => {
     await fill('How does the queue preserve order?');
     await click('Send question');
     await wait('!!document.querySelector(\'[aria-label="Copy answer"]\')');
+    const assertDock = async () => {
+      const rect = await js<{ right: number; width: number; parentRight: number }>(
+        "(()=>{const panel=[...document.querySelectorAll('.chat-panel-dock')].find(el=>el.checkVisibility());const r=panel.getBoundingClientRect();return{right:r.right,width:r.width,parentRight:panel.parentElement.getBoundingClientRect().right}})()"
+      );
+      assert.ok(Math.abs(rect.right - rect.parentRight) < 2, 'Chat docks to the right edge');
+      assert.equal(Math.round(rect.width), 400, 'All chat surfaces use the same sidebar width');
+      assert.equal(
+        await js(`(()=>{
+        const panel=[...document.querySelectorAll('.chat-panel-dock')].find(el=>el.checkVisibility());
+        const r=panel.getBoundingClientRect();
+        for(const x of [.1,.5,.9]) for(const y of [.1,.3,.5,.7,.9]) {
+          if(!panel.contains(document.elementFromPoint(r.left+r.width*x,r.top+r.height*y))) return false;
+        }
+        return true;
+      })()`),
+        true,
+        'Sticky diff headers must not cover chat'
+      );
+      assert.equal(
+        await js("[...document.querySelectorAll('.chat-panel-header')].find(el=>el.checkVisibility()).textContent"),
+        'Chat'
+      );
+    };
+    await assertDock();
     const transcriptHeight = () =>
       js<number>("document.querySelector('.chat-conversation').getBoundingClientRect().height");
     console.log('Integrated topic height at1280×720:', await transcriptHeight());
@@ -198,7 +222,16 @@ void app.whenReady().then(async () => {
     await js("document.documentElement.classList.add('dark')");
     console.log('Integrated topic height at900×720:', await transcriptHeight());
     await fullCapture('integrated-topic-narrow-dark');
+    await assertDock();
     assert.ok((await transcriptHeight()) >= 240, 'Narrow topic conversation needs240px of reading space');
+    await js(
+      "[...document.querySelectorAll('[aria-label=\"Review pane\"] button')].find(b=>b.textContent==='Explanation').click()"
+    );
+    assert.equal(
+      await js("document.querySelector('.chat-sheet textarea').checkVisibility()"),
+      true,
+      'Explanation stays available beside chat'
+    );
     await click('Code');
     await js(
       "document.activeElement?.blur();window.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true}))"
@@ -206,6 +239,10 @@ void app.whenReady().then(async () => {
     await wait(
       "document.querySelector('.chat-sheet textarea').checkVisibility() && document.activeElement===document.querySelector('.chat-sheet textarea')"
     );
+    await viewport(600, 720);
+    await fullCapture('integrated-topic-small-dark');
+    await assertDock();
+    await viewport(900, 720);
     await click('Summary');
     await wait("document.querySelector('.pr-summary-context').checkVisibility()");
     await click('Explanation');
@@ -225,8 +262,13 @@ void app.whenReady().then(async () => {
     await wait('!!document.querySelector(\'.changes-chat [aria-label="Copy answer"]\')');
     console.log('Integrated file height:', await transcriptHeight());
     await fullCapture('integrated-file-dark');
+    await assertDock();
+    await viewport(600, 720);
+    await fullCapture('integrated-file-small-dark');
+    await assertDock();
+    await viewport(1280, 720);
     assert.ok((await transcriptHeight()) >= 240, 'File conversation needs240px of reading space');
-    await click('Close file conversation');
+    await click('Close chat');
     await wait('document.activeElement===window.askOrigin');
     // Capture reaches C even inside the diff workspace, which owns other keys.
     await js("window.askOrigin.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true}))");
@@ -237,7 +279,7 @@ void app.whenReady().then(async () => {
     );
     await wait("document.activeElement?.id==='changes-question'");
     assert.equal(await js("document.querySelector('#changes-question').value"), 'Preserve my draft');
-    await click('Close file conversation');
+    await click('Close chat');
     // Typing, copy, IME, and modal controls must never open chat.
     for (const test of [
       "const el=document.createElement('textarea');document.body.append(el);el.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true}));el.remove()",
@@ -266,10 +308,12 @@ void app.whenReady().then(async () => {
     );
     await wait("document.activeElement?.id==='changes-question'");
     assert.ok(
-      await js("document.querySelector('.changes-chat-source').textContent.includes('→')"),
+      await js("document.querySelector('.chat-panel-context').textContent.includes('→')"),
       'Commit chat uses the selected comparison'
     );
-    await click('Close file conversation');
+    await assertDock();
+    await fullCapture('integrated-commit-dark');
+    await click('Close chat');
     console.log('Chat integration passed: laptop transcript budget, focus transfer and return.');
     console.log(
       'Chat passed: anchored turns, manual reading during streaming, jump to latest, copy, Stop/retry, quoted code, draft isolation, narrow dark layout.'

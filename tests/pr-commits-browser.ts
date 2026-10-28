@@ -180,7 +180,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.chatReads[0].comparison.parentSha'), 'f'.repeat(40));
     assert.equal(await js('window.chatReads[0].path'), 'src/worker.ts');
     await capture('chat');
-    await click('Close file conversation');
+    await click('Close chat');
     await js(
       "(document.querySelector('.commit-stream-row[data-active=true] .changes-file-actions input[type=checkbox]') ?? document.querySelector('.changes-file-actions input[type=checkbox]')).click()"
     );

@@ -1,6 +1,7 @@
 import { useSessionDraft } from '../lib/session-drafts';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { MessageSquare } from 'lucide-react';
+import { ChatPanel } from './ChatPanel';
 import { ChatConversation } from './ChatConversation';
 import { chatSuggestions } from '../lib/chat-context';
 import { ChatComposer } from './ChatComposer';
@@ -181,6 +182,46 @@ export function SlideChatSheet({
     onSend(trimmed, quotedCode ?? undefined);
   }
 
+  const panel = (
+    <ChatPanel
+      className={embedded ? 'chat-sheet' : ''}
+      contained={!embedded}
+      label="Ask about this topic"
+      context={slideTitle}
+      contextTitle={slideTitle}
+      onClose={() => onOpenChange(false)}
+    >
+      <ChatConversation
+        conversationId={slideId ?? slideTitle}
+        messages={messages}
+        busy={isStreaming}
+        onRetry={onRetry}
+        empty={
+          <SuggestedQuestions
+            slideTitle={slideTitle}
+            selection={!!quotedCode}
+            reviewFocus={reviewFocus}
+            onSelect={handleSend}
+            disabled={isStreaming}
+          />
+        }
+      />
+      <ChatComposer
+        value={input}
+        onChange={setInput}
+        onSend={() => handleSend()}
+        busy={isStreaming}
+        onStop={messages.some((message) => message.isStreaming) ? onStop : undefined}
+        modelLabel={modelLabel}
+        label="Question about this topic"
+        quote={quotedCode}
+        onRemoveQuote={onQuotedCodeConsumed}
+        textareaRef={textareaRef}
+      />
+    </ChatPanel>
+  );
+  if (embedded) return open ? panel : null;
+
   return (
     <div className="chat-sheet shrink-0 flex flex-row h-full" data-open={open}>
       {/* Handle / toggle bar — hairline divider, no fill. */}
@@ -199,7 +240,7 @@ export function SlideChatSheet({
         aria-description="Drag to resize, or use Left and Right arrow keys. Activate to collapse or expand."
         style={{ touchAction: 'none' }}
         onClick={handleHandleClick}
-        className={`${embedded ? 'hidden' : ''} group relative flex items-center justify-center w-4 border-l border-border hover:bg-muted/30 transition-colors ${open ? 'cursor-col-resize' : 'cursor-pointer'}`}
+        className={`group relative flex items-center justify-center w-4 border-l border-border hover:bg-muted/30 transition-colors ${open ? 'cursor-col-resize' : 'cursor-pointer'}`}
         aria-label={open ? 'Collapse chat panel' : 'Expand chat panel'}
       >
         {open ? (
@@ -217,47 +258,9 @@ export function SlideChatSheet({
       <div
         inert={!open}
         className="overflow-hidden transition-[width] duration-300 ease-out"
-        style={{ width: embedded ? '100%' : open ? width : 0, maxWidth: 'calc(100vw - 1rem)' }}
+        style={{ width: open ? width : 0, maxWidth: 'calc(100vw - 1rem)' }}
       >
-        <div
-          className="h-full flex flex-col bg-background"
-          style={{ minWidth: 0, width: embedded ? '100%' : width, maxWidth: '100%' }}
-        >
-          {/* Topic context stays separate from the conversation. */}
-          <div className="chat-topic-header">
-            <h3 className="sr-only">Ask about this topic</h3>
-            <p title={slideTitle} tabIndex={0}>
-              <span>Chat</span> · {slideTitle}
-            </p>
-          </div>
-          <ChatConversation
-            conversationId={slideId ?? slideTitle}
-            messages={messages}
-            busy={isStreaming}
-            onRetry={onRetry}
-            empty={
-              <SuggestedQuestions
-                slideTitle={slideTitle}
-                selection={!!quotedCode}
-                reviewFocus={reviewFocus}
-                onSelect={handleSend}
-                disabled={isStreaming}
-              />
-            }
-          />
-          <ChatComposer
-            value={input}
-            onChange={setInput}
-            onSend={() => handleSend()}
-            busy={isStreaming}
-            onStop={messages.some((message) => message.isStreaming) ? onStop : undefined}
-            modelLabel={modelLabel}
-            label="Question about this topic"
-            quote={quotedCode}
-            onRemoveQuote={onQuotedCodeConsumed}
-            textareaRef={textareaRef}
-          />
-        </div>
+        {panel}
       </div>
     </div>
   );

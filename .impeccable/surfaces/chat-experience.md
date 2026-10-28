@@ -15,3 +15,9 @@ No change to the product visual system or global Button/Tooltip primitives.
 Active chat uses a one-row composer that grows with its draft. Metadata and keyboard help use existing caption tokens. Condense repeated PR metadata and topic navigation only while chat is visible; keep source identity, review status, and navigation available. At 1280×720 and 900×720, verify at least 240px of transcript in the complete workbench, not only a standalone fixture.
 
 Code selections remain collapsed attachments in both chat types and enter model context on send and retry. Explicit file-chat opening transfers focus to the input; closing restores its initiating control. Keep failed questions in the transcript with Retry, preserving any new composer draft. Announce completion, interruption, and cancellation distinctly.
+
+## Shared placement
+
+Topic, Changes, and Commits chats use the same right sidebar: 400px wide, with a Chat header, close button, and source context. On windows below 700px, the sidebar overlays the workspace. Sticky code headers must stay below it.
+
+While topic chat is open, Explanation and Code remain available as tabs beside it. Closing chat restores the regular review layout. C opens or focuses the active topic or file conversation without starting a request or replacing a draft. Typing, dialogs, and modified keys keep their normal behavior.

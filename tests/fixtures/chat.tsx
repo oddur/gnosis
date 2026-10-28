@@ -129,7 +129,7 @@ function Fixture() {
           />
         )}
       </div>
-      <style>{`#chat-surface > .changes-chat {width:100%;max-width:100%;height:100%;border-left:0;} @media(max-width:700px){#chat-surface > .changes-chat {position:static;}}`}</style>
+      <style>{`#chat-surface > .chat-panel {width:100%;max-width:100%;height:100%;border-left:0;} @media(max-width:700px){#chat-surface > .chat-panel {position:static;}}`}</style>
     </main>
   );
 }

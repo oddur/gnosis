@@ -41,7 +41,7 @@ void app.whenReady().then(async () => {
     win.focus();
     await wait("!!document.querySelector('#changes-question')");
     await fill('#changes-question', 'Why does cancellation keep this slot? 日本語 🧪');
-    await click('Close file conversation');
+    await click('Close chat');
     await click('Toggle file chat');
     await wait("document.querySelector('#changes-question')?.value.includes('cancellation')");
     await click('Switch file');
@@ -52,7 +52,7 @@ void app.whenReady().then(async () => {
     await js("window.electronAPI.askPrFile=()=>Promise.reject(Error('Provider unavailable. Try again.'));void 0");
     await js("document.querySelector('.changes-chat form').requestSubmit()");
     await wait("document.querySelector('.changes-chat [role=alert]')?.textContent.includes('Provider unavailable')");
-    await click('Close file conversation');
+    await click('Close chat');
     await click('Toggle file chat');
     assert.equal(await js<string>("document.querySelector('#changes-question').value"), '', 'Failed question remains in the transcript, not duplicated in the composer');
     assert.match(await js<string>("document.querySelector('.changes-chat .chat-transcript').textContent"), /cancellation/);

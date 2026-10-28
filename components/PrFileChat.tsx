@@ -2,9 +2,8 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 import { chatSuggestions } from '../lib/chat-context';
 import { CommitBadge } from './EntityBadge';
 import { useSessionDraft } from '../lib/session-drafts';
-import { X } from 'lucide-react';
 import { PROVIDERS } from '../lib/models';
-import { Button } from './ui/button';
+import { ChatPanel } from './ChatPanel';
 import { ChatConversation } from './ChatConversation';
 import { ChatComposer } from './ChatComposer';
 import { useFileChat } from '../lib/use-file-chat';
@@ -66,22 +65,23 @@ function FileConversation({
     void chat.send({ ...context, question: value.trim(), selection: quote });
   };
   return (
-    <aside className="changes-chat" aria-label="Ask about this file">
-      <header>
-        <strong>Ask about this file</strong>
-        <Button variant="ghost" size="icon-sm" aria-label="Close file conversation" onClick={onClose}>
-          <X size={16} />
-        </Button>
-      </header>
-      <p className="changes-chat-source">
-        {request.path} ·{' '}
-        {request.comparison && (
-          <>
-            <CommitBadge sha={request.baseSha} /> →{' '}
-          </>
-        )}
-        <CommitBadge sha={request.headSha} />
-      </p>
+    <ChatPanel
+      className="changes-chat"
+      label="Ask about this file"
+      onClose={onClose}
+      contextTitle={request.path}
+      context={
+        <>
+          {request.path} ·{' '}
+          {request.comparison && (
+            <>
+              <CommitBadge sha={request.baseSha} /> →{' '}
+            </>
+          )}
+          <CommitBadge sha={request.headSha} />
+        </>
+      }
+    >
       <ChatConversation
         conversationId={conversationId}
         messages={chat.messages}
@@ -115,6 +115,6 @@ function FileConversation({
           PROVIDERS[preferences.provider].models.find((m) => m.id === preferences.model)?.label ?? preferences.model
         }
       />
-    </aside>
+    </ChatPanel>
   );
 }
