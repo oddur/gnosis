@@ -25,6 +25,13 @@ void app.whenReady().then(async () => {
     window.focus();
     await window.loadURL(`${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary`);
     await wait("document.querySelectorAll('.queue-item').length===7");
+    // Exercise the cache-hit path: background preparation may finish before spies attach.
+    await js(`(async()=>{
+      window.inspection=await import('/lib/inspection-cache.ts');
+      await window.inspection.inspectionData.flush();
+      const list=await window.electronAPI.getPrCommits('https://github.com/klang/engine/pull/150');
+      window.adjacentSelection={url:list.url,prBaseSha:list.metadata.baseSha,prHeadSha:list.metadata.headSha,firstSha:'d'.repeat(40),lastSha:'d'.repeat(40)};
+    })()`);
     await js(
       `window.compareReads=[];window.fileReads=[];const compare=window.electronAPI.getCommitComparison,file=window.electronAPI.getPrChangeFile;window.electronAPI.getCommitComparison=async(...args)=>{window.compareReads.push(args);await new Promise(r=>setTimeout(r,250));return compare(...args)};window.electronAPI.getPrChangeFile=async(...args)=>{window.fileReads.push(args);await new Promise(r=>setTimeout(r,250));return file(...args)};window.deepAll=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(selector,e.shadowRoot))];void 0;`
     );
@@ -37,12 +44,11 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.review-image-diff')");
     // Wait for automatic preparation, not a machine-dependent idle delay. The
     // measured click below must still render within two frames without IPC.
-    await js("import('/lib/inspection-cache.ts').then(module => { window.inspection = module; })");
     await wait(
-      "window.compareReads.some(([s]) => s.lastSha === 'd'.repeat(40) && window.inspection.comparisonIsReady(s, ''))"
+      "window.inspection.comparisonIsReady(window.adjacentSelection, '')"
     );
-    const switched = await js<{ loading: boolean; title: string; elapsed: number }>(
-      `(async()=>{const t=performance.now();document.querySelectorAll('.commit-row')[1].click();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {loading:!!document.querySelector('.commit-stream-row[data-active=true] .changes-loading')||document.querySelector('.changes-empty')?.textContent.includes('Loading')||false,title:document.querySelector('.commit-detail-title')?.textContent??'',elapsed:performance.now()-t}})()`
+    const switched = await js<{ loading: boolean; title: string; elapsed: number; reads: number }>(
+      `(async()=>{const t=performance.now(),reads=window.compareReads.length;document.querySelectorAll('.commit-row')[1].click();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {loading:!!document.querySelector('.commit-stream-row[data-active=true] .changes-loading')||document.querySelector('.changes-empty')?.textContent.includes('Loading')||false,title:document.querySelector('.commit-detail-title')?.textContent??'',elapsed:performance.now()-t,reads:window.compareReads.length-reads}})()`
     );
     console.log('Adjacent commit:', JSON.stringify(switched));
     assert.equal(
@@ -51,9 +57,10 @@ void app.whenReady().then(async () => {
       'Selecting a prepared adjacent commit must not replace the diff with a loading phase'
     );
     assert.match(switched.title, /retry boundaries/);
+    assert.equal(switched.reads, 0, 'Opening a prepared commit must not request its comparison again');
     await wait("!!document.querySelector('.review-image-diff')");
     await wait(`(() => {
-      const selection = window.compareReads.find(([s]) => s.lastSha === 'd'.repeat(40))?.[0];
+      const selection = window.adjacentSelection;
       const snapshot = selection && window.inspection.peekComparison(selection);
       const file = snapshot?.files.find(f => f.path === 'src/new.ts');
       return !!file && window.inspection.fileIsReady(snapshot, file);
