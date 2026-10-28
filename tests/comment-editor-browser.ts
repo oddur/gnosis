@@ -116,6 +116,7 @@ void app.whenReady().then(async () => {
       'Saved comments and preview share rendering'
     );
     await click('Write');
+    await wait('document.activeElement===document.querySelector("textarea")');
     await fill('next draft');
     await click('Code block');
     await wait(`document.querySelector('textarea').value.startsWith(${JSON.stringify('```\nnext draft')})`);

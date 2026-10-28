@@ -31,9 +31,9 @@ void app.whenReady().then(async () => {
     throw new Error('Timed out: ' + expression);
   };
   const click = async (text: string) => {
-    await wait(`[...document.querySelectorAll('button')].some(b=>b.checkVisibility({visibilityProperty:true})&&b.textContent.trim()===${JSON.stringify(text)})`);
+    await wait(`[...document.querySelectorAll('button')].some(b=>b.checkVisibility({visibilityProperty:true})&&(b.textContent.trim()===${JSON.stringify(text)}||b.getAttribute('aria-label')===${JSON.stringify(text)}))`);
     await js(
-      `(()=>{const b=[...document.querySelectorAll('button')].filter(b=>b.checkVisibility({visibilityProperty:true})).find(b=>b.textContent.trim()===${JSON.stringify(text)});if(!b)throw new Error('Missing button: '+${JSON.stringify(text)});b.click();})()`
+      `(()=>{const b=[...document.querySelectorAll('button')].filter(b=>b.checkVisibility({visibilityProperty:true})).find(b=>(b.textContent.trim()===${JSON.stringify(text)}||b.getAttribute('aria-label')===${JSON.stringify(text)}));if(!b)throw new Error('Missing button: '+${JSON.stringify(text)});b.click();})()`
     );
   };
   const shots = process.env.GNOSIS_SCREENSHOT_DIR ?? path.join(os.tmpdir(), 'gnosis-workbench-screenshots');
@@ -163,7 +163,7 @@ void app.whenReady().then(async () => {
     await js("document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))");
 
     await click('Ask a question');
-    await wait("!!document.querySelector('.review-tool-slot .chat-sheet')");
+    await wait("!!document.querySelector('.review-chat-workspace > .chat-sheet')");
     assert.equal(await js("document.querySelector('.review-code').getBoundingClientRect().width > 350"), true);
     await capture('chat-dark');
     // Chat must preserve fenced code in both questions and answers, including fences without a language.
