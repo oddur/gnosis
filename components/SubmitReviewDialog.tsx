@@ -1,3 +1,5 @@
+import { CommentMarkdown } from './CommentMarkdown';
+import { MarkdownCommentEditor } from './MarkdownCommentEditor';
 import { CommitBadge } from './EntityBadge';
 import { useSessionDraft } from '../lib/session-drafts';
 import { useState, useEffect, useRef, useCallback, useId } from 'react';
@@ -266,7 +268,7 @@ export function SubmitReviewDialog({
             <label htmlFor="review-summary">
               Review message <span>{needsMessage ? 'Required' : 'Optional'}</span>
             </label>
-            <textarea
+            <MarkdownCommentEditor
               id="review-summary"
               value={body}
               disabled={submitting}
@@ -274,7 +276,7 @@ export function SubmitReviewDialog({
               maxLength={65536}
               aria-required={needsMessage}
               aria-describedby={needsMessage || comments.length ? 'review-message-hint' : undefined}
-              onChange={(event) => setBody(event.target.value)}
+              onValueChange={setBody}
               placeholder={
                 decision === 'REQUEST_CHANGES'
                   ? 'Describe the changes you need…'
@@ -327,7 +329,7 @@ export function SubmitReviewDialog({
                           onBusyChange={onDraftBusyChange}
                         />
                       ) : (
-                        <p className="review-submit-comment-text">{comment.body}</p>
+                        <CommentMarkdown>{comment.body}</CommentMarkdown>
                       )}
                     </div>
                   ))}

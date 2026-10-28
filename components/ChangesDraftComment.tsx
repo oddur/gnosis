@@ -1,6 +1,6 @@
+import { MarkdownCommentEditor } from './MarkdownCommentEditor';
 import { useEffect, useId, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { CommentMarkdown } from './CommentMarkdown';
 import { useSessionDraft } from '../lib/session-drafts';
 import { Button } from './ui/button';
 import type { PendingReviewComment } from '../lib/types';
@@ -45,14 +45,14 @@ export function ChangesDraftComment({
           }}
         >
           <label htmlFor={id}>Edit draft comment</label>
-          <textarea
+          <MarkdownCommentEditor
             id={id}
             rows={3}
             maxLength={65536}
             autoFocus
             value={body}
             disabled={disabled}
-            onChange={(e) => setBody(e.target.value)}
+            onValueChange={setBody}
           />
           {error && <p role="alert">{error}</p>}
           <div className="changes-comment-buttons">
@@ -66,28 +66,7 @@ export function ChangesDraftComment({
         </form>
       ) : (
         <>
-          <div className="github-comment-body select-text">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              skipHtml
-              components={{
-                img: ({ alt }) => <span>[{alt || 'Image attachment'}]</span>,
-                a: ({ href, children }) => (
-                  <a
-                    href={href}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      if (href && /^https?:\/\//.test(href)) void window.electronAPI.openExternal(href);
-                    }}
-                  >
-                    {children}
-                  </a>
-                ),
-              }}
-            >
-              {comment.body}
-            </ReactMarkdown>
-          </div>
+          <CommentMarkdown>{comment.body}</CommentMarkdown>
           <div className="changes-comment-buttons">
             <Button
               variant="ghost"

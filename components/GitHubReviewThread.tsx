@@ -1,9 +1,9 @@
+import { MarkdownCommentEditor } from './MarkdownCommentEditor';
 import { GitHubAuthor } from './GitHubAuthor';
 import { useSessionDraft } from '../lib/session-drafts';
 import { useId, useState, useRef } from 'react';
 import { MessageSquare, Check, ChevronRight } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { CommentMarkdown } from './CommentMarkdown';
 import { timeAgo } from '../lib/utils';
 import type { GitHubReviewThread as Thread, ReviewThreadAction, ReviewCommentAction } from '../lib/review-threads';
 
@@ -93,10 +93,10 @@ export function GitHubReviewThread({ thread, reason, onAction, onCommentAction }
                 }}
               >
                 <label htmlFor={`${inputId}-edit`}>Edit your comment</label>
-                <textarea
+                <MarkdownCommentEditor
                   id={`${inputId}-edit`}
                   value={editBody}
-                  onChange={(e) => setEditBody(e.target.value)}
+                  onValueChange={setEditBody}
                   disabled={busy}
                   maxLength={65536}
                   rows={3}
@@ -110,28 +110,7 @@ export function GitHubReviewThread({ thread, reason, onAction, onCommentAction }
                 </div>
               </form>
             ) : (
-              <div className="github-comment-body select-text">
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  skipHtml
-                  components={{
-                    a: ({ href, children }) => (
-                      <a
-                        href={href}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          if (href && /^https?:\/\//.test(href)) void window.electronAPI.openExternal(href);
-                        }}
-                      >
-                        {children}
-                      </a>
-                    ),
-                    img: ({ alt }) => <span>[{alt || 'Image attachment'} — view on GitHub]</span>,
-                  }}
-                >
-                  {comment.body}
-                </ReactMarkdown>
-              </div>
+              <CommentMarkdown>{comment.body}</CommentMarkdown>
             )}
             {onCommentAction && !editing && (
               <div className="github-thread-actions">
@@ -191,10 +170,10 @@ export function GitHubReviewThread({ thread, reason, onAction, onCommentAction }
           }}
         >
           <label htmlFor={inputId}>Reply to this GitHub thread</label>
-          <textarea
+          <MarkdownCommentEditor
             id={inputId}
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onValueChange={setDraft}
             rows={3}
             maxLength={65536}
             disabled={busy}
