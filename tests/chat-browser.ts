@@ -89,7 +89,8 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelector('textarea').value"), 'What happens if a worker stops?');
     await click('Copy answer');
     await wait('!!document.querySelector(\'[aria-label="Answer copied"]\')');
-    assert.equal(clipboard.readText(), answer);
+    // Windows exposes native CRLF line endings through the system clipboard.
+    assert.equal(clipboard.readText().replace(/\r\n/g, '\n'), answer);
     await click('Send question');
     await emit('The worker slot stays reserved until recovery.');
     await wait("document.querySelectorAll('[data-slot=message-scroller-item]').length===4");

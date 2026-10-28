@@ -372,6 +372,8 @@ export function App() {
       keywords: 'git working tree branch',
       perform: () => navigate({ kind: 'home', local: true }),
     },
+    { id: 'nav:setup', label: 'Run setup again', keywords: 'onboarding tutorial first run', perform: () => navigate({ kind: 'home', onboarding: 'setup' }) },
+    { id: 'nav:walkthrough', label: 'Show walkthrough', keywords: 'tour tutorial onboarding help', perform: () => navigate({ kind: 'home', onboarding: 'tour' }) },
     ...['queue', 'review', 'appearance', 'integrations'].map((section) => ({
       id: `nav:settings:${section}`,
       label: `Settings · ${section}`,

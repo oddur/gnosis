@@ -1357,6 +1357,10 @@ void test('a fresh shared full queue covers switching into and out of a personal
     await s.service.queue();
     s.service.viewAction({ type: 'activate', id: mine });
     await s.service.queue();
+    for (const involvement of ['review', 'authored'] as const) {
+      s.service.setFilters({ involvement });
+      await s.service.queue();
+    }
     assert.equal(searches, initial, 'Personal/full switching reuses the shared fresh discovery');
   } finally {
     s.cleanup();

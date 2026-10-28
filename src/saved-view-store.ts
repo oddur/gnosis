@@ -37,6 +37,7 @@ export function createSavedViewStore(directory: () => string) {
   };
   return {
     load,
+    replace: (account: string, next: QueueViewsState) => save(account, normalizeViews(next)),
     edit(account: string, filters: unknown) {
       return save(account, editViewFilters(load(account), filters));
     },

@@ -371,7 +371,7 @@ function PrSummaryContent({
             )}
           </div>
         </header>}</PrEntryActions>
-        <div ref={statusRef} className="pr-merge-status" aria-label="PR status">
+        <div ref={statusRef} className="pr-merge-status" data-tour="summary" aria-label="PR status">
           <SubjectReviewStatus subject={item.subject} signals={signals} checking={!signalsLoaded && !!account} now={statusNow} />
           <ReadinessBadge readiness={readiness} reviewStatusShown staleLabel={stacked ? 'Status needs refresh' : undefined} />
           <ReadinessCheckedAt readiness={readiness} label={stacked ? 'Status checked' : undefined} />
@@ -381,10 +381,10 @@ function PrSummaryContent({
         <div className="pr-workspace-navigation">
         <Tabs.List className="pr-overview-tabs" aria-label="PR overview">
           <Tabs.Trigger value="summary">Summary</Tabs.Trigger>
-          <Tabs.Trigger value="changes">Changes</Tabs.Trigger>
+          <Tabs.Trigger value="changes" data-tour="changes">Changes</Tabs.Trigger>
           <Tabs.Trigger value="commits">Commits</Tabs.Trigger>
           <Tabs.Trigger value="checks">Checks{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>
-          <Tabs.Trigger value="explanation">Explanation</Tabs.Trigger>
+          <Tabs.Trigger value="explanation" data-tour="explanation">Explanation</Tabs.Trigger>
         </Tabs.List>
         {scopeStack && onScopeChange && <nav className="stack-scope-bar" aria-label="Stack navigation">
           <Layers size={15} aria-hidden="true" /><SearchableSelect label="Review scope" value={item.subject.id} triggerLabel={stacked ? 'Whole stack' : `#${first.number} · ${scopeStack.members.findIndex(m => m.url === first.url) + 1} of ${scopeStack.members.length}`} options={stackScopeChoices(scopeStack)} onValueChange={changeScope} popupBoundary="viewport" popupClassName="stack-scope-popup" />

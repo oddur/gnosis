@@ -1,3 +1,6 @@
+import { useOnboarding } from '../../lib/use-onboarding';
+import { OnboardingSetup } from '../../components/OnboardingSetup';
+import { GuidedTour } from '../../components/GuidedTour';
 import { focusStackPr, resolveWorkspace, matchingStackMembers } from '../../lib/stack-workspace';
 import { RecentlyViewed } from '../../components/RecentlyViewed';
 import { PrBadge } from '../../components/EntityBadge';
@@ -122,6 +125,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
   const [queueFailed, setQueueFailed] = useState(false);
   const [initializationFailed, setInitializationFailed] = useState(false);
   const [initializing, setInitializing] = useState(true);
+  const onboarding = useOnboarding(!loading && !initializing ? prefs : null, auth?.login ?? null, queue.savedViews, history.length === 0);
   const initializationPending = useRef(false);
   const initialized = useRef(false);
   const [error, setError] = useState('');
@@ -210,7 +214,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
     filterVersion.current++;
     filtersLoaded.current = true;
     setFilters((current) => {
-      const next = normalizeQueueFilters({ ...current, ...patch });
+      const next = normalizeQueueFilters({ ...current, ...('repo' in patch ? { repos: undefined } : {}), ...patch });
       pendingFilters.current = next;
       return next;
     });
@@ -270,7 +274,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('queue');
   const [showGettingStarted, setShowGettingStarted] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
-  const connectionRequired = !!auth && !!prefs && !auth.authenticated && !prefs.guestMode;
+  const connectionRequired = !!auth && !!prefs && prefs.firstRunSeen && !auth.authenticated && !prefs.guestMode && !onboarding.open;
   const [localOpen, setLocalOpen] = useState(false);
   const [url, setUrl] = useState(prefillPrUrl ?? '');
   const [showUrl, setShowUrl] = useState(!!prefillPrUrl);
@@ -910,6 +914,10 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       return;
     }
     setOpenedItem(null);
+    if (target.onboarding) {
+      if (target.onboarding === 'setup') onboarding.start(); else onboarding.startTour();
+      return;
+    }
     if (target.settings) {
       openSettings(target.settings as SettingsSection);
       return;
@@ -997,7 +1005,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
         if (!(e.target instanceof HTMLElement) || !e.target.closest('.activity-shell')) moveSelection(-1);
       },
     },
-    { enabled: !mutedOpen && !settings && !localOpen && !openedItem && !authOpen && !connectionRequired && section !== 'saved' }
+    { enabled: !mutedOpen && !onboarding.open && !onboarding.tourOpen && !settings && !localOpen && !openedItem && !authOpen && !connectionRequired && section !== 'saved' }
   );
   const correct = async (action: 'link' | 'unlink', parent = parentUrl, child = childUrl) => {
     setGrouping(true);
@@ -1185,10 +1193,8 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
     );
   }
   const replayGettingStarted = () => {
-    setOpenedItem(null);
-    resetFilters();
-    setSelected(null);
-    setShowGettingStarted(true);
+    setSettings(false);
+    onboarding.start();
   };
   const gettingStartedVisible =
     !loading &&
@@ -1252,7 +1258,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
             <span>Search</span>
             <kbd className="kbd">{window.electronAPI.platform === 'darwin' ? '⌘ K' : 'Ctrl K'}</kbd>
           </button>
-          <WorkbenchHelp onGettingStarted={replayGettingStarted} />
+          <WorkbenchHelp onGettingStarted={replayGettingStarted} onWalkthrough={() => onboarding.startTour()} />
           <button className="workbench-icon" title="Settings" aria-label="Settings" onClick={() => openSettings()}>
             <Settings size={17} />
           </button>
@@ -1305,7 +1311,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
         explanationDestination={explanationDestination}
         explanations={visibleHistory.filter(entry => matchesExplanation(entry, summaryItem.subject))}
         onShowActivity={onShowActivity ?? (() => {})}
-        shortcutsEnabled={!settings && !localOpen && !authOpen && !connectionRequired}
+        shortcutsEnabled={!settings && !localOpen && !authOpen && !connectionRequired && !onboarding.open && !onboarding.tourOpen}
           navigation={{
             index: summaryIndex,
             total: summaryChoices.length,
@@ -1355,6 +1361,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
             return (
               <button
                 key={id as string}
+                data-tour={id === 'all' ? 'queue-fallback' : undefined}
                 title={
                   id === 'stacks'
                     ? 'Stacks of PRs that build on each other'
@@ -1398,15 +1405,17 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
               </button>
             );
           })}
+          <div data-tour="queue">
           {auth?.authenticated && queue.savedViews && (
             <SavedViewsNav state={queue.savedViews} active={!savedView && !mutedOpen} busy={viewBusy} onAction={viewAction} />
           )}
+          </div>
           <div className="mt-auto flex flex-col gap-1">
             <button title="Muted PRs" className={mutedOpen ? 'active' : ''} aria-current={mutedOpen ? 'page' : undefined}
               onClick={() => { setMutedOpen(true); setSelected(null); setOpenedItem(null); setError(''); }}>
               <VolumeX size={16} /><span>Muted PRs</span><span className="nav-count">{queue.mutedPrs?.length ?? 0}</span>
             </button>
-            <button title="Local changes" onClick={() => setLocalOpen(true)}>
+            <button data-tour="local" title="Local changes" onClick={() => setLocalOpen(true)}>
               <FolderGit2 size={16} />
               Local changes
             </button>
@@ -1643,6 +1652,9 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                   }
                 }}
               >
+              {onboarding.error && !onboarding.open && <p role="alert" className="setup-error">{onboarding.error}</p>}
+              {onboarding.state.paused && !onboarding.open && !onboarding.state.completed && <div className="setup-resume"><span>Finish setting up your review queue.</span><Button size="sm" variant="outline" onClick={onboarding.start}>Resume setup</Button></div>}
+              {onboarding.offerTour && <div className="setup-resume"><span>Your setup is ready. Take a quick look around.</span><Button size="sm" onClick={onboarding.startTour}>Show walkthrough</Button><Button size="sm" variant="ghost" onClick={() => onboarding.setOfferTour(false)}>Not now</Button></div>}
               {!gettingStartedVisible && githubConnection}
               {gettingStartedVisible && (
                 <GettingStarted
@@ -2062,6 +2074,23 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
         </main>
         </div>
       )}
+      {onboarding.open && onboarding.state.draft && <OnboardingSetup draft={onboarding.state.draft} onChange={onboarding.change}
+        onPause={() => void onboarding.pause()} onApply={() => { void onboarding.apply().then(next => {
+          if (!next) return;
+          setPrefs(next); setOpenedItem(null); setSavedView(false); setMutedOpen(false); setSelected(null);
+          filtersLoaded.current = false; pendingFilters.current = null;
+          void refresh();
+        }); }} onConnect={() => setAuthOpen(true)} login={auth?.authenticated ? auth.login : null}
+        items={queue.items} saving={onboarding.saving} saveError={onboarding.error} />}
+      {onboarding.tourOpen && <GuidedTour step={onboarding.state.tourStep ?? 0} stacked={summaryItem?.subject.kind === 'stack'} local={prefs?.guestMode || !auth?.authenticated}
+        onStep={onboarding.tourStep} onClose={onboarding.endTour} prepare={step => {
+          if (step === 0) { setOpenedItem(null); setSavedView(false); setMutedOpen(false); return true; }
+          const item = summaryItem ?? orderedItems[0];
+          if (!item) return false;
+          setOpenedItem(item);
+          setOverviewTab(step === 1 ? 'summary' : step === 2 ? 'changes' : 'explanation');
+          return true;
+        }} />}
       <GitHubAuthDialog
         open={authOpen || connectionRequired}
         connectionRequired={connectionRequired}
@@ -2091,6 +2120,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       <SettingsDialog
         initialSection={settingsSection}
         onReplayOnboarding={replayGettingStarted}
+        onShowWalkthrough={() => { setSettings(false); onboarding.startTour(); }}
         open={settings}
         onOpenChange={(open) => {
           setSettings(open);

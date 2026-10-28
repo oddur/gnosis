@@ -1,0 +1,186 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { initialSetup, normalizeSetup, setupViews, setupPreferences } from '../lib/onboarding';
+import { applyViewAction, normalizeViews } from '../lib/saved-views';
+import {
+  normalizeQueueFilters,
+  matchesQueueFilters,
+  activeQueueFilterCount,
+  describeQueueFilters,
+} from '../lib/queue-filters';
+import type { Preferences } from '../lib/types';
+import type { QueueItem, ReviewMember } from '../lib/workbench';
+const prefs = {
+  watchedRepos: [],
+  guestMode: false,
+  prInactivityDays: 30,
+  ignoreDependabotPrs: true,
+  autoBriefings: false,
+  provider: 'claude',
+  model: 'claude-opus-5-5',
+  instructions: 'keep',
+  proactiveMode: false,
+} as unknown as Preferences;
+const member = (patch: Partial<ReviewMember> = {}) =>
+  ({
+    state: 'open',
+    merged: false,
+    author: 'someone',
+    repo: 'org/one',
+    requestedReviewers: [],
+    assignees: [],
+    labels: [],
+    title: 'Change',
+    number: 1,
+    baseBranch: 'main',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    ...patch,
+  }) as ReviewMember;
+const item = (...members: ReviewMember[]) =>
+  ({ subject: { title: 'Stack', kind: 'stack', members }, attention: 'updated' }) as QueueItem;
+void test('personal review presets are distinct and do not depend on AI attention status', () => {
+  const setup = initialSetup(prefs);
+  setup.goals = ['review', 'authored'];
+  const [review, authored] = setupViews(setup);
+  assert.equal(matchesQueueFilters(item(member({ author: 'ALICE' })), review.filters, Date.now(), 'alice'), false);
+  assert.equal(matchesQueueFilters(item(member({ author: 'ALICE' })), authored.filters, Date.now(), 'alice'), true);
+  assert.equal(matchesQueueFilters(item(member({ assignees: ['ALICE'] })), review.filters, Date.now(), 'alice'), true);
+  assert.equal(
+    matchesQueueFilters(item(member({ requestedReviewers: ['alice'] })), review.filters, Date.now(), 'alice'),
+    true
+  );
+  assert.equal(
+    matchesQueueFilters(item(member({ role: 'review-requested' })), review.filters, Date.now(), null),
+    false
+  );
+});
+void test('repository views match selected repositories while preserving same-member stack matching', () => {
+  const setup = initialSetup(prefs);
+  setup.goals = ['repositories'];
+  setup.repositories = ['Org/One', 'org/two'];
+  const filters = setupViews(setup)[0].filters;
+  assert.equal(matchesQueueFilters(item(member({ repo: 'ORG/TWO' })), filters), true);
+  assert.equal(matchesQueueFilters(item(member({ repo: 'org/three' })), filters), false);
+  const combined = normalizeQueueFilters({ ...filters, involvement: 'authored' });
+  assert.equal(
+    matchesQueueFilters(
+      item(member({ repo: 'org/one' }), member({ repo: 'org/three', author: 'alice' })),
+      combined,
+      Date.now(),
+      'alice'
+    ),
+    false
+  );
+  assert.equal(activeQueueFilterCount(normalizeQueueFilters({ repos: ['org/one'] })), 1);
+  assert.equal(
+    describeQueueFilters(filters).some((f) => f.key === 'repos'),
+    true
+  );
+});
+void test('replaying setup updates owned views, preserves unrelated views and does not duplicate', () => {
+  let state = normalizeViews(null);
+  state = applyViewAction(state, { type: 'create', name: 'Needs my review' }, () => 'custom');
+  const setup = initialSetup(prefs, state);
+  assert.equal(setup.names.review, 'Needs my review 2');
+  const action = { type: 'setup' as const, views: setupViews(setup), activeId: 'setup:review' };
+  state = applyViewAction(state, action, () => 'unused');
+  state = applyViewAction(state, action, () => 'unused');
+  assert.equal(state.views.length, 2);
+  assert.equal(state.views[0].id, 'custom');
+  assert.equal(state.activeId, 'setup:review');
+  assert.throws(
+    () =>
+      applyViewAction(state, { ...action, views: [{ ...action.views[0], name: 'Needs my review' }] }, () => 'unused'),
+    /already has/
+  );
+  assert.equal(state.views[1].name, 'Needs my review 2');
+});
+void test('setup validates required repositories, keeps unrelated preferences and supports local mode', () => {
+  const setup = initialSetup(prefs);
+  setup.goals = ['repositories'];
+  assert.throws(() => setupViews(setup), /Choose a repository/);
+  setup.local = true;
+  setup.autoBriefings = true;
+  assert.deepEqual(setupViews(setup), []);
+  const next = setupPreferences(prefs, setup);
+  assert.equal(next.autoBriefings, false);
+  assert.equal(next.instructions, 'keep');
+  assert.equal(next.model, prefs.model, 'skipping AI setup preserves the current model');
+  assert.equal(next.firstRunSeen, true);
+  assert.equal(next.guestMode, true);
+  assert.equal(normalizeSetup({ ...setup, dailyLimit: -100 }).dailyLimit, 1);
+  assert.equal(
+    initialSetup({ ...prefs, autoBriefings: true }).autoBriefings,
+    true,
+    'existing automation choice is preserved'
+  );
+});
+
+void test('applying setup rolls back views and preferences on write failure and refuses account changes', async () => {
+  const { createOnboardingService } = await import('../src/onboarding-service');
+  let currentPrefs = structuredClone(prefs),
+    views = normalizeViews(null),
+    account: string | null = 'alice';
+  const data = new Map<string, unknown>();
+  let fail = true;
+  const service = createOnboardingService({
+    account: () => account,
+    preferences: () => currentPrefs,
+    views: () => views,
+    savePreferences: (value) => {
+      if (fail) {
+        fail = false;
+        throw Error('Disk full');
+      }
+      currentPrefs = value;
+    },
+    replaceViews: (value) => {
+      views = value;
+    },
+    storage: {
+      read: (key) => data.get(key),
+      write: (key, value) => {
+        data.set(key, value);
+      },
+      flush: () => Promise.resolve(),
+    },
+  });
+  const draft = initialSetup(prefs);
+  await service.save({ draft, paused: true, tourStep: 2 }, 'alice');
+  await assert.rejects(service.apply(draft, 'alice'), /previous settings are kept/);
+  assert.equal(views.views.length, 0);
+  assert.equal(currentPrefs.firstRunSeen, undefined);
+  assert.equal(service.load().paused, true);
+  await service.apply(draft, 'alice');
+  assert.equal(views.views.length, 1);
+  assert.equal(currentPrefs.firstRunSeen, true);
+  assert.equal(service.load().completed, true);
+  account = 'bob';
+  await assert.rejects(service.save({ draft }, 'alice'), /account changed/);
+  await assert.rejects(service.apply(draft, 'alice'), /account changed/);
+  assert.deepEqual(service.load(), {});
+});
+
+void test('setup drafts and walkthrough progress survive SQLite restart and cache clearing', async () => {
+  const { createAppDataStore } = await import('../src/app-data-store');
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-onboarding-'));
+  let store = createAppDataStore();
+  const state = { draft: initialSetup(prefs), paused: true, tourStep: 2 };
+  try {
+    await store.open(dir);
+    store.write('onboarding:alice', state);
+    await store.close();
+    store = createAppDataStore();
+    await store.open(dir);
+    assert.deepEqual(store.read('onboarding:alice'), state);
+    await store.clearGitHub();
+    assert.deepEqual(store.read('onboarding:alice'), state);
+  } finally {
+    await store.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

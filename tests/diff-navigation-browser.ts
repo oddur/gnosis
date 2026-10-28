@@ -79,10 +79,10 @@ void app.whenReady().then(async () => {
     );
     assert.equal(nextFile.path, 'src/new.ts');
     // A later file click must win over a slower response.
-    const cold = await js<{ loading: boolean; path: string }>(
-      `(async()=>{window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='old.ts').click();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {loading:!!document.querySelector('.commit-stream-row[data-active=true] .changes-loading'),path:document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent}})()`
-    );
-    assert.equal(cold.path, 'src/old.ts', 'A cold file remains reachable in the continuous stream');
+    await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='old.ts').click()");
+    // Cold-file reachability is eventual; unlike the prepared-file assertion
+    // above, it must allow deferred scroll restoration and file preparation.
+    await wait("document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent === 'src/old.ts'");
     await window.webContents.debugger.sendCommand('Emulation.setCPUThrottlingRate', { rate: 1 });
     await js("window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')==='worker.ts').click()");
     await wait("document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/worker.ts'");

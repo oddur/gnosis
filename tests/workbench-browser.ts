@@ -31,9 +31,9 @@ void app.whenReady().then(async () => {
     throw new Error('Timed out: ' + expression);
   };
   const click = async (text: string) => {
-    await wait(`[...document.querySelectorAll('button')].some(b=>b.checkVisibility({visibilityProperty:true})&&b.textContent.trim()===${JSON.stringify(text)})`);
+    await wait(`[...document.querySelectorAll('button')].some(b=>b.checkVisibility({visibilityProperty:true})&&(b.textContent.trim()===${JSON.stringify(text)}||b.getAttribute('aria-label')===${JSON.stringify(text)}))`);
     await js(
-      `(()=>{const b=[...document.querySelectorAll('button')].filter(b=>b.checkVisibility({visibilityProperty:true})).find(b=>b.textContent.trim()===${JSON.stringify(text)});if(!b)throw new Error('Missing button: '+${JSON.stringify(text)});b.click();})()`
+      `(()=>{const b=[...document.querySelectorAll('button')].filter(b=>b.checkVisibility({visibilityProperty:true})).find(b=>(b.textContent.trim()===${JSON.stringify(text)}||b.getAttribute('aria-label')===${JSON.stringify(text)}));if(!b)throw new Error('Missing button: '+${JSON.stringify(text)});b.click();})()`
     );
   };
   const shots = process.env.GNOSIS_SCREENSHOT_DIR ?? path.join(os.tmpdir(), 'gnosis-workbench-screenshots');
@@ -163,7 +163,7 @@ void app.whenReady().then(async () => {
     await js("document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))");
 
     await click('Ask a question');
-    await wait("!!document.querySelector('.review-tool-slot .chat-sheet')");
+    await wait("!!document.querySelector('.review-chat-workspace > .chat-sheet')");
     assert.equal(await js("document.querySelector('.review-code').getBoundingClientRect().width > 350"), true);
     await capture('chat-dark');
     // Chat must preserve fenced code in both questions and answers, including fences without a language.
@@ -457,14 +457,16 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('.workbench-help')");
     assert.equal(await js("document.activeElement?.getAttribute('aria-label')"), 'Help and terminology');
     await js('document.querySelector(\'[aria-label="Help and terminology"]\').click()');
-    await click('Show getting started');
-    await wait("!!document.querySelector('.getting-started') && !document.querySelector('.workbench-help')");
-    await js("document.querySelector('.getting-started-connection summary').click()");
-    await click('Sign in to GitHub');
+    await click('Run setup again');
+    await wait("!!document.querySelector('.setup-dialog') && !document.querySelector('.workbench-help')");
+    await js("document.querySelector('.setup-choice input').click()");
+    await click('Next');
+    await click('Connect GitHub');
     await wait("!!document.querySelector('.github-auth-dialog')");
     await click('Sign in through browser');
-    await wait("!document.querySelector('.workbench-connect')");
-    assert.ok(await js("document.body.textContent.includes('GitHub connected as oddur')"));
+    await wait("document.querySelector('.setup-connected')?.textContent.includes('oddur') && !document.querySelector('.github-auth-dialog')");
+    await click('Finish later');
+    await wait("!document.querySelector('.setup-dialog') && !document.querySelector('.workbench-connect')");
     await js(`(() => {
       const input = document.querySelector('[aria-label="Search PRs and stacks"]');
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'absent');
@@ -510,7 +512,7 @@ void app.whenReady().then(async () => {
     await js(
       "void (window.electronAPI.checkCliInstalled = () => Promise.resolve({installed:true,resolvedPath:'/fixture/claude'}))"
     );
-    await click('Open a pull request');
+    await click('Open PR');
     await wait('!!document.querySelector(\'[aria-label="Pull request URL"]\')');
     await js(`(() => {
       const input = document.querySelector('[aria-label="Pull request URL"]');

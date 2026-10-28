@@ -1,3 +1,4 @@
+import { setupViews, setupPreferences, type OnboardingState, type SetupDraft } from '../../lib/onboarding';
 import { checksMocks } from './pr-checks';
 import { markdownBefore, markdownAfter, markdownFiles } from './markdown-review';
 import { prBadgePreview } from '../../lib/pr-badge-preview';
@@ -37,8 +38,8 @@ if (new URLSearchParams(location.search).has('navigation-history') && !savedView
   savedViews = applyViewAction(savedViews, { type: 'activate', id: null }, () => 'unused');
   saveViews();
 }
-const onboardingScenario = new URLSearchParams(location.search).has('onboarding');
-let fixtureAuthenticated = !onboardingScenario;
+const onboardingScenario = new URLSearchParams(location.search).has('onboarding') || new URLSearchParams(location.search).has('ftue');
+let fixtureAuthenticated = new URLSearchParams(location.search).has('ftue') ? sessionStorage.getItem('ftue-auth') === 'true' : !onboardingScenario;
 let fixtureStarted = false;
 const polishScenario = new URLSearchParams(location.search).has('polish');
 let statusFailures = polishScenario ? 3 : 0;
@@ -350,9 +351,9 @@ let prefs: Preferences = {
   enableTools: false,
   enableWebResearch: false,
   proactiveMode: false,
-  autoBriefings: true,
+  autoBriefings: !onboardingScenario,
   briefingDailyLimit: 10,
-  watchedRepos: ['klang/engine'],
+  watchedRepos: new URLSearchParams(location.search).has('ftue') ? [] : ['klang/engine'],
   codeTheme: 'github-light',
   codeFont: 'jetbrains-mono',
   claudePath: '',
@@ -545,6 +546,7 @@ const mocks = {
     return Promise.resolve();
   },
   detectBinaryPath: (name: string) => Promise.resolve('/fixture/' + name),
+  searchRepos: (query: string) => Promise.resolve([{ fullName: 'klang/engine', description: 'Game engine' }, { fullName: 'klang/tools', description: 'Developer tools' }].filter(repo => repo.fullName.includes(query))),
   getAuthState: () =>
     Promise.resolve({ authenticated: fixtureAuthenticated, login: fixtureAuthenticated ? 'oddur' : null }),
   githubAuthOptions: () => Promise.resolve({ web: onboardingScenario }),
@@ -555,6 +557,7 @@ const mocks = {
   signOut: () => { fixtureAuthenticated = false; return Promise.resolve(); },
   startOAuth: () => {
     fixtureAuthenticated = true;
+    sessionStorage.setItem('ftue-auth', 'true');
     return Promise.resolve();
   },
   startReview: () => {
@@ -562,6 +565,18 @@ const mocks = {
     return Promise.resolve({ reviewId: 'workbench-review', prUrl: review.prUrl, prTitle: review.prTitle, author: review.author });
   },
   getPrMetadata: (url: string) => Promise.resolve(items.flatMap((item) => item.subject.members).find((member) => member.url === url) ?? { ...members[0], url, title: 'A PR outside the queue' }),
+  loadOnboarding: () => Promise.resolve(JSON.parse(sessionStorage.getItem('fixture-onboarding') ?? '{}') as OnboardingState),
+  saveOnboarding: (state: OnboardingState) => { sessionStorage.setItem('fixture-onboarding', JSON.stringify(state)); return Promise.resolve(); },
+  applyOnboarding: (draft: SetupDraft) => {
+    if (new URLSearchParams(location.search).has('ftue-fail') && !sessionStorage.getItem('ftue-retry')) return Promise.reject(new Error('Disk full. Try again.'));
+    const views = setupViews(draft);
+    if (!draft.local) { savedViews = applyViewAction(savedViews, { type: 'setup', views, activeId: `setup:${draft.start}` }, () => 'unused'); saveViews(); }
+    prefs = setupPreferences(prefs, draft);
+    sessionStorage.setItem('fixture-first-run-seen', 'true');
+    sessionStorage.setItem('fixture-guest-mode', String(draft.local));
+    sessionStorage.setItem('fixture-onboarding', JSON.stringify({ draft, completed: true, paused: false }));
+    return Promise.resolve(prefs);
+  },
   loadHarnessEnvironment: async () => ({ claude: [], codex: [] }),
   saveHarnessEnvironment: async () => {},
   loadPreferences: () => Promise.resolve(prefs),
@@ -637,7 +652,7 @@ const mocks = {
       starredItems: visibleFixtureItems().filter(item=>item.starred),
       filters: queueFilters,
       savedViews: { ...savedViews, counts: Object.fromEntries(savedViews.views.map(view => [view.id, items.filter(item => matchesQueueFilters(item, view.filters, Date.now(), 'oddur')).length])) },
-      items: onboardingScenario && !fixtureStarted ? [] : visibleFixtureItems(),
+      items: onboardingScenario && !fixtureStarted && !JSON.parse(sessionStorage.getItem('fixture-onboarding') ?? '{}').completed ? [] : visibleFixtureItems(),
       warnings: [],
       remaining: polishScenario ? 0 : 7,
     }),

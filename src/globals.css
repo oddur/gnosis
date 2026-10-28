@@ -3325,3 +3325,65 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .github-comment-body .task-list-item { list-style:none; }
 .github-comment-body .task-list-item input { margin-right:6px;accent-color:var(--primary); }
 .changes-comment-buttons [data-variant=ghost] { color:var(--foreground); }
+
+/* Goal-based setup stays in the workbench's existing visual system. */
+.setup-dialog { top:50%; translate:-50% -50%; width:min(680px, calc(100vw - 32px)); max-width:none; max-height:calc(100dvh - 48px); display:flex; flex-direction:column; gap:20px; padding:24px; }
+.setup-heading { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; }
+.setup-heading h2 { font-size:20px; margin-bottom:6px; }
+.setup-questionnaire { display:flex; flex-direction:column; min-height:0; gap:18px; }
+.setup-progress { font-size:12px; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
+.setup-body { min-height:0; min-width:0; overflow-y:auto; margin:0; border:0; padding:2px; }
+.setup-body > fieldset { outline:none; border:0; padding:0; min-width:0; }
+.setup-body > fieldset:not([hidden]) { display:flex; flex-direction:column; align-items:stretch; gap:16px; }
+.setup-body legend { font-size:18px; font-weight:600; line-height:1.45; margin-bottom:8px; }
+.setup-body legend + p { margin:0; color:var(--muted-foreground); font-size:14px; line-height:1.6; }
+.setup-choices { display:grid; gap:10px; }
+.setup-choice { position:relative; display:flex; gap:12px; align-items:flex-start; padding:14px; border:1px solid var(--border); border-radius:6px; cursor:pointer; }
+.setup-choice:hover { background:var(--secondary); }
+.setup-choice[data-checked] { border-color:var(--ring); background:var(--accent); }
+.setup-choice:has(:focus-visible) { outline:2px solid var(--ring); outline-offset:2px; }
+.setup-choice-input { position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer; }
+.setup-choice strong { font-size:14px; font-weight:600; }
+.setup-choice-description { display:block; color:var(--muted-foreground); font-size:13px; line-height:1.5; margin-top:3px; }
+.setup-choice-check { border:1px solid var(--input); border-radius:3px; width:16px; height:16px; margin-top:3px; flex-shrink:0; }
+.setup-choice-check svg { visibility:hidden; }
+.setup-choice[data-checked] .setup-choice-check { color:var(--primary-foreground); background:var(--primary); border-color:var(--primary); }
+.setup-choice[data-checked] .setup-choice-check svg { visibility:visible; }
+.setup-actions { display:flex; flex-shrink:0; justify-content:space-between; gap:12px; border-top:1px solid var(--border); padding-top:16px; }
+.setup-actions > div { display:flex; gap:8px; }
+.setup-actions [hidden] { display:none; }
+.setup-note { font-size:13px; line-height:1.6; color:var(--muted-foreground); margin:0; }
+.setup-field { display:flex; flex-direction:column; min-width:0; gap:6px; font-size:13px; font-weight:500; }
+.setup-field input { border:1px solid var(--input); border-radius:5px; padding:8px 10px; background:var(--background); color:var(--foreground); font-size:14px; width:100%; }
+.setup-check { display:flex; align-items:center; gap:10px; font-size:14px; line-height:1.5; }
+.setup-check input { accent-color:var(--primary); width:16px; height:16px; flex-shrink:0; }
+.setup-models { display:grid; grid-template-columns:1fr 1.4fr; gap:12px; }
+.setup-cli { display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:13px; line-height:1.6; }
+.setup-link { align-self:flex-start; padding:0; }
+.setup-repositories { display:flex; flex-direction:column; gap:10px; min-width:0; }
+.setup-repo-tags { display:flex; gap:6px; flex-wrap:wrap; }
+.setup-repo-tags > span { display:flex; align-items:center; gap:6px; padding:4px 6px; background:var(--secondary); border-radius:4px; font-size:12px; overflow-wrap:anywhere; }
+.setup-repo-tags button { flex-shrink:0; padding:3px; }
+.setup-repo-error,.setup-error { font-size:13px; color:var(--destructive); line-height:1.5; }
+.setup-repo-error { padding:10px; }
+.setup-repo-error button { text-decoration:underline; }
+.setup-connected { display:flex; align-items:center; gap:8px; font-size:14px; }
+.setup-connected svg { color:var(--color-success); }
+.setup-views { display:grid; gap:16px; }
+.setup-summary { font-size:14px; line-height:1.8; padding-left:20px; list-style:disc; }
+.setup-body details > summary { font-size:13px; cursor:pointer; }
+.setup-body .queue-filter-panel { border:0; padding:12px 0; }
+.setup-resume { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:12px 16px; background:var(--accent); color:var(--accent-foreground); font-size:14px; }
+.driver-popover.gnosis-tour { background:var(--popover); color:var(--foreground); border:1px solid var(--border); border-radius:8px; box-shadow:none; padding:18px; max-width:min(340px, calc(100vw - 24px)); font-family:var(--font-sans); }
+.gnosis-tour .driver-popover-title { font-size:16px; line-height:1.4; font-weight:600; }
+.gnosis-tour .driver-popover-description { font-size:14px; line-height:1.6; }
+.gnosis-tour .driver-popover-footer { display:flex; align-items:center; gap:10px; }
+.gnosis-tour .gnosis-tour-progress { color:var(--muted-foreground); font-size:12px; white-space:nowrap; }
+.gnosis-tour button { text-shadow:none; font-family:inherit; }
+.gnosis-tour .driver-popover-close-btn { color:var(--muted-foreground); }
+.gnosis-tour .driver-popover-navigation-btns button { border:1px solid var(--border); background:var(--background); color:var(--foreground); border-radius:4px; padding:6px 10px; font-size:13px; }
+.gnosis-tour .driver-popover-navigation-btns button.driver-popover-next-btn { background:var(--primary); color:var(--primary-foreground); border-color:var(--primary); }
+.gnosis-tour button:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
+.gnosis-tour .driver-popover-arrow { display:none; }
+@media (max-width:600px) { .setup-dialog { padding:16px; max-height:calc(100dvh - 24px); } .setup-models { grid-template-columns:1fr; } .setup-body { min-height:0; } .setup-actions { gap:4px; } }
+@media (prefers-reduced-motion: reduce) { .driver-overlay,.driver-popover { transition:none!important; animation:none!important; } }

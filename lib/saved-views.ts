@@ -12,6 +12,7 @@ export interface QueueViewsState {
   queueDraft: QueueFilters;
 }
 export type QueueViewAction =
+  | { type: 'setup'; views: import('./onboarding').SetupView[]; activeId: string }
   | { type: 'create'; name: string }
   | { type: 'activate'; id: string | null; filters?: Partial<QueueFilters> }
   | { type: 'update' | 'reset' | 'delete' | 'duplicate'; id: string }
@@ -85,6 +86,25 @@ export function applyViewAction(state: QueueViewsState, action: QueueViewAction,
     next.activeId = view.id;
   };
   switch (action.type) {
+    case 'setup': {
+      if (!Array.isArray(action.views) || action.views.length > 3) throw new Error('Invalid setup views.');
+      const ids = new Set<string>();
+      for (const entry of action.views) {
+        if (!['setup:review', 'setup:repositories', 'setup:authored'].includes(entry.id) || ids.has(entry.id)) throw new Error('Invalid setup view.');
+        ids.add(entry.id);
+        const label = name(entry.name, entry.id);
+        const filters = normalizeQueueFilters(entry.filters);
+        const existing = next.views.find(view => view.id === entry.id);
+        if (existing) Object.assign(existing, { name: label, filters, draft: structuredClone(filters) });
+        else {
+          if (next.views.length >= 100) throw new Error('You can save up to 100 views. Delete a view before adding another.');
+          next.views.push({ id: entry.id, name: label, filters, draft: structuredClone(filters) });
+        }
+      }
+      if (!ids.has(action.activeId)) throw new Error('Choose a starting view.');
+      next.activeId = action.activeId;
+      break;
+    }
     case 'create':
       create(action.name, activeViewFilters(next));
       break;

@@ -13,6 +13,7 @@ import { activeViewFilters, type QueueViewAction } from '../lib/saved-views';
 import {
   normalizeQueueFilters,
   matchesQueueFilters,
+  matchesInvolvement,
   isMyPr,
   prioritizeBriefings,
   type QueueFilters,
@@ -139,7 +140,7 @@ export function createWorkbenchService(deps: Deps) {
           deps.auth().token,
           [...deps.preferences().watchedRepos].sort(),
           deps.preferences().ignoreDependabotPrs !== false,
-          involvement,
+          involvement === 'all' ? 'all' : 'mine',
         ])
       )
       .digest('hex');
@@ -255,9 +256,9 @@ export function createWorkbenchService(deps: Deps) {
       if (
         !requestedBriefings.has(requestKey(k)) &&
         (!cached || briefing.status === 'paused') &&
-        ((filters.involvement === 'mine' &&
+        ((filters.involvement !== 'all' &&
           !subject.members.some(
-            (member) => member.state === 'open' && !member.merged && isMyPr(member, deps.auth().login)
+            (member) => member.state === 'open' && !member.merged && matchesInvolvement(member, filters.involvement, deps.auth().login)
           )) ||
           (filters.briefingScope === 'matches' && !matchesQueueFilters(item, filters, now(), deps.auth().login)))
       )
@@ -327,7 +328,7 @@ export function createWorkbenchService(deps: Deps) {
     const s = load();
     const octokit = deps.client?.() ?? getGitHubClient(token);
     const discoverySettings = discoveryKey();
-    const mineOnly = normalizeQueueFilters(s.filters).involvement === 'mine';
+    const mineOnly = normalizeQueueFilters(s.filters).involvement !== 'all';
     const pending = s.discoveryProgress?.key === discoverySettings ? s.discoveryProgress : undefined;
     const credentialKey = createHash('sha256').update(token).digest('hex');
     const legacyCredentials = !s.credentialKey && s.discoveryKey === discoveryKey(undefined, true);
@@ -713,7 +714,7 @@ export function createWorkbenchService(deps: Deps) {
       // views must not re-fetch data that the shared queue already contains.
       const covered =
         saved.discoveryKey === settings ||
-        (normalizeQueueFilters(saved.filters).involvement === 'mine' && saved.discoveryKey === discoveryKey('all'));
+        (normalizeQueueFilters(saved.filters).involvement !== 'all' && saved.discoveryKey === discoveryKey('all'));
       lastRefresh =
         covered &&
         saved.discoveryProgress?.key !== settings &&
@@ -830,9 +831,9 @@ export function createWorkbenchService(deps: Deps) {
       const p = modelSettings(preferences);
       const candidates = items.filter(
         (item) =>
-          filters.involvement !== 'mine' ||
+          filters.involvement === 'all' ||
           item.subject.members.some(
-            (member) => member.state === 'open' && !member.merged && isMyPr(member, deps.auth().login)
+            (member) => member.state === 'open' && !member.merged && matchesInvolvement(member, filters.involvement, deps.auth().login)
           )
       );
       const manualItem = items.find((i) => requestedBriefings.has(requestKey(key(i.subject, p))));
@@ -1044,6 +1045,11 @@ export function createWorkbenchService(deps: Deps) {
       if (!account) return;
       const saved = stars.load(account).find((entry) => entry.member.url === metadata.url);
       if (saved) stars.update(account, [{ ...saved.member, ...metadata }]);
+    },
+    savedViewsState: () => structuredClone(savedViews.load(load().account)),
+    replaceSavedViews(next: import('../lib/saved-views').QueueViewsState) {
+      savedViews.replace(load().account, next);
+      save();
     },
     viewAction(action: QueueViewAction) {
       if (!deps.auth().login || !deps.auth().token) throw new Error('Connect GitHub to manage saved views.');

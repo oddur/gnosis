@@ -1,3 +1,5 @@
+import { createOnboardingService } from './onboarding-service';
+import type { OnboardingState, SetupDraft } from '../lib/onboarding';
 import type { Provider } from '../lib/models';
 import { createHarnessEnvironmentStore } from './harness-environment-store';
 import { setHarnessEnvironmentLoader } from '../lib/providers/environment';
@@ -982,7 +984,7 @@ const DEFAULT_PREFERENCES: Preferences = {
   enableTools: false,
   enableWebResearch: false,
   proactiveMode: false,
-  autoBriefings: true,
+  autoBriefings: false,
   briefingDailyLimit: 10,
   watchedRepos: [],
   codeTheme: 'aurora-x',
@@ -1039,7 +1041,11 @@ function loadPreferences(): Preferences {
 }
 
 function savePreferences(prefs: Preferences): void {
-  fs.writeFileSync(getPreferencesPath(), JSON.stringify({ ...prefs, githubCacheSizeMB: normalizeGitHubCacheMB(prefs.githubCacheSizeMB), prInactivityDays: normalizePrInactivityDays(prefs.prInactivityDays) }, null, 2));
+  const file = getPreferencesPath(), temporary = file + '.tmp';
+  try {
+  fs.writeFileSync(temporary, JSON.stringify({ ...prefs, githubCacheSizeMB: normalizeGitHubCacheMB(prefs.githubCacheSizeMB), prInactivityDays: normalizePrInactivityDays(prefs.prInactivityDays) }, null, 2));
+    fs.renameSync(temporary, file);
+  } finally { fs.rmSync(temporary, { force: true }); }
 }
 
 // ── MCP tools constants ─────────────────────────────────────────
@@ -1204,6 +1210,10 @@ handleInteractive('search-repos', async (_event, query: string) => {
     throw err;
   }
 });
+
+ipcMain.handle('load-onboarding', () => onboardingService.load());
+ipcMain.handle('save-onboarding', (_event, state: OnboardingState, account: string | null) => onboardingService.save(state, account));
+ipcMain.handle('apply-onboarding', (_event, draft: SetupDraft, account: string | null) => onboardingService.apply(draft, account));
 
 ipcMain.handle('load-harness-environment', () => harnessEnvironments.load());
 ipcMain.handle('save-harness-environment', (_event, provider: Provider, variables: EnvironmentVariable[]) => harnessEnvironments.save(provider, variables));
@@ -2319,6 +2329,7 @@ ipcMain.handle('workbench-mark-pr-read', async (_event, request: MarkPrReadReque
   return result;
 });
 ipcMain.handle('workbench-star-prs', (_event, request: StarPrRequest) => workbench.starPrs(request));
+const onboardingService = createOnboardingService({ storage: appData, account: () => cachedLogin, preferences: loadPreferences, savePreferences, views: () => workbench.savedViewsState(), replaceViews: state => workbench.replaceSavedViews(state) });
 ipcMain.handle('workbench-view-action', (_event, action: QueueViewAction) => workbench.viewAction(action));
 ipcMain.handle('workbench-set-filters', (_event, filters: unknown) => workbench.setFilters(filters));
 ipcMain.handle('workbench-group', (_event, correction: GroupingOverride) => workbench.correct(correction));

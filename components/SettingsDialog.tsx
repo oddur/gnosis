@@ -22,6 +22,7 @@ interface Props {
   onThemeChange?: (theme: string) => void;
   // Reopens the optional setup panel in the review queue.
   onReplayOnboarding?: () => void;
+  onShowWalkthrough?: () => void;
 }
 
 // Default faces ship locally. Fetch optional code families only when selected.
@@ -137,6 +138,7 @@ export function SettingsDialog({
   onOpenChange,
   onThemeChange,
   onReplayOnboarding,
+  onShowWalkthrough,
   initialSection = 'queue',
 }: Props) {
   const [clearingCache, setClearingCache] = useState(false);
@@ -904,6 +906,7 @@ export function SettingsDialog({
 
               <HarnessEnvironmentSettings />
 
+              {onShowWalkthrough && <Button variant="outline" size="sm" onClick={onShowWalkthrough}>Show walkthrough</Button>}
               {onReplayOnboarding && (
                 <button
                   type="button"
@@ -915,7 +918,7 @@ export function SettingsDialog({
                   }}
                   className="slide-meta hover:text-foreground transition-colors"
                 >
-                  Show getting started →
+                  Run setup again →
                 </button>
               )}
               <button

@@ -1,3 +1,4 @@
+import { RepositoryPicker } from './RepositoryPicker';
 import { QueueLabelFilter } from './QueueLabelFilter';
 import { Fragment } from 'react';
 import { SearchableSelect } from './SearchableSelect';
@@ -9,10 +10,12 @@ import { RECENCY_DAYS, type QueueFilters } from '../lib/queue-filters';
 export function QueueFilterPanel({
   filters,
   items,
+  setup = false,
   onChange,
   prInactivityDays,
   onManageInactivity,
 }: {
+  setup?: boolean;
   prInactivityDays?: number;
   onManageInactivity?: () => void;
   filters: QueueFilters;
@@ -25,7 +28,7 @@ export function QueueFilterPanel({
   const authors = [
     ...new Set([...members.map((m) => m.author), ...(filters.author === 'all' ? [] : [filters.author])]),
   ].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true }));
-  const fields: { key: Exclude<keyof QueueFilters, 'starredOnly' | 'sort' | 'labels' | 'targetBranch'>; label: string; options: [string, string][] }[] = [
+  const fields: { key: Exclude<keyof QueueFilters, 'starredOnly' | 'sort' | 'labels' | 'targetBranch' | 'repos'>; label: string; options: [string, string][] }[] = [
     { key: 'readStatus', label: 'Read status', options: [['all', 'Any read status'], ['unread', 'Unread'], ['read', 'Read']] },
     {
       key: 'status',
@@ -77,7 +80,7 @@ export function QueueFilterPanel({
           {days ? `Active within ${days} days · starred PRs included` : 'No inactivity limit · change in Settings'}
         </button>
       </div>}
-      <div className="queue-filter-policy queue-filter-scope">
+      {!setup && <div className="queue-filter-policy queue-filter-scope">
         <label htmlFor={`${id}-involvement`}>
           Show
           <select
@@ -89,16 +92,20 @@ export function QueueFilterPanel({
           >
             <option value="all">All PRs in your queue</option>
             <option value="mine">Involving me</option>
+            <option value="review">Needs my review</option>
+            <option value="authored">Authored by me</option>
           </select>
         </label>
         <p id={`${id}-involvement-help`}>
-          {filters.involvement === 'mine'
+          {filters.involvement === 'review' ? 'PRs assigned to you or requesting your review.' : filters.involvement === 'authored' ? 'PRs you authored.' : filters.involvement === 'mine'
             ? 'PRs you authored, are assigned to, or were asked to review.'
             : 'PRs involving you and from repositories added in Settings.'}
         </p>
       </div>
+      }
+      {!setup && <RepositoryPicker value={filters.repos ?? (filters.repo === 'all' ? [] : [filters.repo])} options={[...new Set(members.map(member => member.repo))]} onChange={repos => onChange({ repo: 'all', repos })} />}
       <div className="queue-filter-fields">
-        {fields.map((field) => (
+        {fields.filter(field => !setup || ['readStatus', 'status', 'author'].includes(field.key)).map((field) => (
           <Fragment key={field.key}><label htmlFor={`${id}-${field.key}`}>
             <span>{field.label}</span>
             {field.key === 'author' ? (
@@ -154,7 +161,7 @@ export function QueueFilterPanel({
           </Fragment>
         ))}
       </div>
-      <div className="queue-filter-policy">
+      {!setup && <div className="queue-filter-policy">
         <label htmlFor={`${id}-briefings`}>
           Automatically brief
           <select
@@ -169,11 +176,12 @@ export function QueueFilterPanel({
           </select>
         </label>
         <p id={`${id}-briefings-help`}>
-          {filters.involvement === 'mine'
+          {filters.involvement === 'review' ? 'PRs assigned to you or requesting your review.' : filters.involvement === 'authored' ? 'PRs you authored.' : filters.involvement === 'mine'
             ? 'Both options stay within PRs involving you.'
             : 'Applies when Automatic briefings is on.'}
         </p>
       </div>
+      }
       <p className="queue-filter-hint">One open PR must match all filters. Its whole stack stays visible.</p>
       <details className="queue-filter-help">
         <summary>How filters work</summary>

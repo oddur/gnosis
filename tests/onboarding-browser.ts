@@ -32,6 +32,9 @@ void app.whenReady().then(async () => {
     if (!url) throw new Error('Missing fixture URL');
     await win.loadURL(url + '?onboarding');
     await wait("!!document.querySelector('.workbench-connect')");
+    await wait("!!document.querySelector('.setup-dialog')");
+    await click('Finish later');
+    await wait("!document.querySelector('.setup-dialog')");
     if (await js("!!document.querySelector('.github-auth-dialog')")) {
       await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
       await click('Continue with local reviews');
@@ -70,9 +73,12 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('#ai-setup-title')");
     await js("document.querySelector('[data-slot=dialog-close]').click()");
     await js('document.querySelector(\'[aria-label="Help and terminology"]\').click()');
-    await click('Show getting started');
-    await wait("!!document.querySelector('.getting-started') && !document.querySelector('.pr-summary-page')");
-    await wait("document.activeElement.id === 'getting-started-title'");
+    await click('Run setup again');
+    await wait("!!document.querySelector('.setup-dialog') && !!document.querySelector('.pr-summary-page')");
+    await click('Finish later');
+    await wait("!document.querySelector('.setup-dialog')");
+    await click('Review queue');
+    await wait("!!document.querySelector('.getting-started')");
     // Expand only the setup needed, and keep each recovery route usable.
     await js("document.querySelector('.getting-started-setup summary').click()");
     await click('AI setup');
@@ -92,8 +98,10 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.getting-started-setup').textContent.includes('Codex found')");
     await click('AI setup');
     await wait("!!document.querySelector('#ai-setup-title')");
-    await click('Show getting started →');
-    await wait("!document.querySelector('#ai-setup-title') && document.activeElement.id === 'getting-started-title'");
+    await click('Run setup again →');
+    await wait("!document.querySelector('#ai-setup-title') && !!document.querySelector('.setup-dialog')");
+    await click('Finish later');
+    await wait("!document.querySelector('.setup-dialog')");
     await js("document.querySelector('.getting-started-connection summary').click()");
     await click('Sign in to GitHub');
     await wait("!!document.querySelector('.github-auth-dialog')");

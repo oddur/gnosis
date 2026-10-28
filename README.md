@@ -8,10 +8,11 @@ Pull requests are still reviewed the same way they always have been — scrollin
 
 Gnosis is an experiment in changing that. Paste a PR URL and it reads the diff, groups related changes together, and presents them as an ordered slideshow — foundation changes first, then the features built on top, then tests and config. Each slide has a short explanation of _why_ the change is there, the relevant diff, and optionally a diagram. The goal is to walk the reviewer through the change the way the author understands it, not the way the filesystem happens to order it.
 
-It runs locally and uses the [Claude Code CLI](https://claude.ai/code) or [Codex CLI](https://learn.chatgpt.com/docs/cli).
+It runs locally. AI features use the [Claude Code CLI](https://claude.ai/code) or [Codex CLI](https://learn.chatgpt.com/docs/cli).
 
 ## Features
 
+- **Guided setup** — choose review goals, create saved views, and preview your choices before applying them. Pause setup or replay the interactive walkthrough anytime.
 - **Guided slideshow** — changes are grouped by theme and ordered by dependency (foundations first, then implementations, then tests and config), not by filename
 - **Model choice** — use Claude or Codex for reviews, slide chat, and smart imports. Codex supports GPT-6.1 Sol, GPT-6 Astra, and GPT-6 Luna.
 - **Deeper reasoning** — use more reasoning effort (slower, more thorough)
@@ -40,7 +41,9 @@ It runs locally and uses the [Claude Code CLI](https://claude.ai/code) or [Codex
 
 ## Requirements
 
-Install and authenticate at least one CLI:
+You can browse PRs and inspect diffs without an AI CLI. Local reviews also work without GitHub sign-in.
+
+For AI explanations, briefings, and chat, install and authenticate at least one CLI:
 
 - [Claude Code CLI](https://claude.ai/code) 2.1.293 or later: run `claude update` to upgrade. Authenticate with `claude auth`.
 - [Codex CLI](https://learn.chatgpt.com/docs/cli) 0.163.0 or later: install with `npm install -g @openai/codex`, then authenticate with `codex login`.
@@ -83,7 +86,30 @@ Or download manually from [GitHub Releases](https://github.com/oddur/gnosis/rele
 brew update && brew upgrade --cask gnosis
 ```
 
-On first launch, click **Sign in with GitHub** to authenticate via OAuth.
+## First launch and setup
+
+Choose one or more goals in setup:
+
+- **Review PRs assigned to me** creates **Needs my review** for review requests and PRs where you are an assignee.
+- **Follow repository work** creates **Repository activity** across the repositories you choose.
+- **Track my own PRs** creates **My PRs** for PRs you authored.
+
+Your own PRs and review requests need no repository selection. **Use local reviews without GitHub** skips the GitHub and repository steps.
+
+New installations include PRs updated within 30 days and hide Dependabot PRs. You can change these defaults and refine labels, authors, or target branches.
+
+AI setup is optional. The tool check detects the CLI binary, but does not check authentication or model access.
+Automatic briefings require opt-in and have a daily limit. Full explanations start only when you request them.
+
+Review the preview, name your views, and choose which view opens first. Select **Apply setup** to save these choices.
+Replay updates the views that setup created. It preserves other saved views, reviews, and drafts.
+
+**Finish later** saves your progress. **Resume setup** continues from that point.
+**Run setup again** and **Show walkthrough** are separate actions in Help, Settings, and the command palette (Cmd/Ctrl+K).
+
+The walkthrough highlights the queue, PR summary, Changes, and Explanation. Local mode highlights **Local changes**.
+You can close the walkthrough and resume it with **Show walkthrough**. After completion, the same action starts it again.
+The walkthrough does not generate AI content or submit reviews.
 
 ## Usage
 
