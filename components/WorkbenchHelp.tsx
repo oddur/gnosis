@@ -76,7 +76,7 @@ const terms = [
   ],
 ] as const;
 
-export function WorkbenchHelp({ onGettingStarted }: { onGettingStarted?: () => void }) {
+export function WorkbenchHelp({ onGettingStarted, onWalkthrough }: { onGettingStarted?: () => void; onWalkthrough?: () => void }) {
   const titleId = useId();
   const replaying = useRef(false);
   return (
@@ -125,6 +125,7 @@ export function WorkbenchHelp({ onGettingStarted }: { onGettingStarted?: () => v
               Mark files Viewed and topics reviewed to keep your place. Submit feedback to GitHub when you are ready.
             </li>
           </ol>
+          {onWalkthrough && <Popover.Close asChild><button className="workbench-help-link" onClick={onWalkthrough}>Show walkthrough</button></Popover.Close>}
           {onGettingStarted && (
             <Popover.Close asChild>
               <button
@@ -134,7 +135,7 @@ export function WorkbenchHelp({ onGettingStarted }: { onGettingStarted?: () => v
                   onGettingStarted();
                 }}
               >
-                Show getting started
+                Run setup again
               </button>
             </Popover.Close>
           )}

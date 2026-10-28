@@ -7,9 +7,10 @@ export interface QueueFilters {
   sort: PrListSort;
   starredOnly: boolean;
   readStatus: 'all' | 'unread' | 'read';
-  involvement: 'all' | 'mine';
+  involvement: 'all' | 'mine' | 'review' | 'authored';
   query: string;
   repo: string;
+  repos?: string[];
   author: string;
   targetBranch: string;
   status: 'all' | 'ready' | 'draft';
@@ -51,9 +52,10 @@ export function normalizeQueueFilters(value: unknown): QueueFilters {
     sort: normalizePrListSort(raw.sort),
     starredOnly: raw.starredOnly === true,
     readStatus: choice('readStatus', ['all', 'unread', 'read'], raw.unreadOnly === true ? 'unread' : 'all'),
-    involvement: choice('involvement', ['all', 'mine'], 'all'),
+    involvement: choice('involvement', ['all', 'mine', 'review', 'authored'], 'all'),
     query: text('query', ''),
     repo: text('repo', 'all'),
+    ...(Array.isArray(raw.repos) && raw.repos.length ? { repos: [...new Set(raw.repos.filter((r): r is string => typeof r === 'string' && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r)).map(r => r.toLowerCase()))].slice(0, 100) } : {}),
     author: text('author', 'all'),
     targetBranch: text('targetBranch', '').trim(),
     labels: normalizeLabelFilter(raw.labels ?? raw.label),
@@ -102,6 +104,19 @@ export function isMyPr(member: ReviewMember, login?: string | null): boolean {
     member.role === 'review-requested'
   );
 }
+export function matchesInvolvement(member: ReviewMember, involvement: QueueFilters['involvement'], login?: string | null): boolean {
+  if (involvement === 'all') return true;
+  if (!login) return false;
+  if (involvement === 'mine') return isMyPr(member, login);
+  if (involvement === 'authored') return member.author.toLowerCase() === login.toLowerCase();
+  return member.assignees?.some(name => name.toLowerCase() === login.toLowerCase()) === true ||
+    member.requestedReviewers.some(name => name.toLowerCase() === login.toLowerCase()) ||
+    member.role === 'assigned' || member.role === 'review-requested';
+}
+export function matchesRepositories(repo: string, filters: Pick<QueueFilters, 'repo' | 'repos'>): boolean {
+  return (filters.repo === 'all' || repo.toLowerCase() === filters.repo.toLowerCase()) &&
+    (!filters.repos?.length || filters.repos.some(value => value.toLowerCase() === repo.toLowerCase()));
+}
 export function matchesQueueFilters(
   item: QueueItem,
   filters: QueueFilters,
@@ -128,9 +143,9 @@ export function matchesQueueFilters(
       (filters.starredOnly || (m.state === 'open' && !m.merged)) &&
       (!filters.starredOnly || item.starredUrls?.includes(m.url)) &&
       (filters.readStatus === 'all' || (filters.readStatus === 'unread') === !!item.unreadUrls?.includes(m.url)) &&
-      (filters.involvement !== 'mine' || isMyPr(m, login)) &&
-      (filters.repo === 'all' || m.repo === filters.repo) &&
-      (filters.author === 'all' || m.author === filters.author) &&
+      matchesInvolvement(m, filters.involvement, login) &&
+      matchesRepositories(m.repo, filters) &&
+      (filters.author === 'all' || m.author.toLowerCase() === filters.author.toLowerCase()) &&
       matchesTargetBranch(m.baseBranch, filters.targetBranch) &&
       (filters.status === 'all' ||
         (m.state === 'open' && !m.merged && (filters.status === 'draft' ? m.isDraft : !m.isDraft))) &&
@@ -145,7 +160,7 @@ export function matchesQueueFilters(
 export function activeQueueFilterCount(filters: QueueFilters) {
   return (Object.keys(DEFAULT_QUEUE_FILTERS) as (keyof QueueFilters)[]).filter(
     (key) => key === 'labels' ? labelFilterActive(filters.labels) : key !== 'briefingScope' && key !== 'sort' && filters[key] !== DEFAULT_QUEUE_FILTERS[key]
-  ).length;
+  ).length + (filters.repos?.length ? 1 : 0);
 }
 /** Stable partition preserves the queue's review priority within each group. */
 export function prioritizeBriefings(
@@ -166,7 +181,8 @@ export function describeQueueFilters(filters: QueueFilters): { key: keyof QueueF
   const labels: Partial<Record<keyof QueueFilters, string>> = {
     starredOnly: 'Starred PRs',
     readStatus: filters.readStatus === 'unread' ? 'Unread PRs' : 'Read PRs',
-    involvement: 'Involving me',
+    involvement: { all: 'All PRs', mine: 'Involving me', review: 'Needs my review', authored: 'Authored by me' }[filters.involvement],
+    ...(filters.repos?.length ? { repos: `Repositories: ${filters.repos.join(', ')}` } : {}),
     query: `Search: ${filters.query}`,
     repo: filters.repo,
     author: `Author: ${filters.author}`,

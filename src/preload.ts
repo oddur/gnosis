@@ -1,3 +1,4 @@
+import type { OnboardingState, SetupDraft } from '../lib/onboarding';
 import type { HarnessEnvironment, EnvironmentVariable } from '../lib/harness-environment';
 import type { CheckTarget, CheckSelection, ChecksOptions, PrChecks, CheckDetails, CheckLog } from '../lib/pr-checks';
 import type { ExplanationMarkdownRequest } from '../lib/explanation-markdown';
@@ -197,6 +198,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('submit-review', req),
   checkPrFreshness: (prUrl: string, headSha: string | undefined): Promise<FreshnessResult> =>
     ipcRenderer.invoke('check-pr-freshness', prUrl, headSha),
+  loadOnboarding: (): Promise<OnboardingState> => ipcRenderer.invoke('load-onboarding'),
+  saveOnboarding: (state: OnboardingState, account: string | null): Promise<void> => ipcRenderer.invoke('save-onboarding', state, account),
+  applyOnboarding: (draft: SetupDraft, account: string | null): Promise<Preferences> => ipcRenderer.invoke('apply-onboarding', draft, account),
   loadHarnessEnvironment: (): Promise<HarnessEnvironment> => ipcRenderer.invoke('load-harness-environment'),
   saveHarnessEnvironment: (provider: import('../lib/models').Provider, variables: EnvironmentVariable[]): Promise<void> => ipcRenderer.invoke('save-harness-environment', provider, variables),
   loadPreferences: (): Promise<Preferences> => ipcRenderer.invoke('load-preferences'),

@@ -11,6 +11,7 @@ export type SearchDestination =
       repo?: string;
       viewId?: string;
       settings?: string;
+      onboarding?: 'setup' | 'tour';
       local?: boolean;
       subject?: QueueItem;
       url?: string;
