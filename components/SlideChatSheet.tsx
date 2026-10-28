@@ -2,6 +2,7 @@ import { useSessionDraft } from '../lib/session-drafts';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { MessageSquare } from 'lucide-react';
 import { ChatConversation } from './ChatConversation';
+import { chatSuggestions } from '../lib/chat-context';
 import { ChatComposer } from './ChatComposer';
 import type { ChatMessage } from '@/lib/use-slide-chat';
 
@@ -18,7 +19,7 @@ interface Props {
   reviewFocus: string | null;
   messages: ChatMessage[];
   isStreaming: boolean;
-  onSend: (text: string) => void;
+  onSend: (text: string, selection?: string) => void;
   onRetry?: (assistantId: string) => void;
   onStop?: () => void;
   modelLabel?: string;
@@ -34,14 +35,18 @@ interface Props {
 // Suggested questions remain compact, readable actions.
 function SuggestedQuestions({
   reviewFocus,
+  slideTitle,
+  selection,
   onSelect,
   disabled,
 }: {
   reviewFocus: string | null;
+  slideTitle: string;
+  selection: boolean;
   onSelect: (q: string) => void;
   disabled: boolean;
 }) {
-  const suggestions = buildSuggestions(reviewFocus);
+  const suggestions = chatSuggestions({ title: slideTitle, focus: reviewFocus, selection });
   if (suggestions.length === 0) return null;
 
   return (
@@ -62,28 +67,6 @@ function SuggestedQuestions({
       </ul>
     </div>
   );
-}
-
-function buildSuggestions(reviewFocus: string | null): string[] {
-  const suggestions: string[] = [];
-  const lower = (reviewFocus ?? '').toLowerCase();
-
-  if (lower.includes('error') || lower.includes('edge case') || lower.includes('validation')) {
-    suggestions.push('What edge cases could break this code?');
-  }
-  if (lower.includes('performance') || lower.includes('scaling')) {
-    suggestions.push('Are there any performance concerns here?');
-  }
-  if (lower.includes('security') || lower.includes('auth')) {
-    suggestions.push('Are there security implications to review?');
-  }
-
-  suggestions.push('Why were these changes made this way?');
-  if (suggestions.length < 3) {
-    suggestions.push('What could go wrong with this approach?');
-  }
-
-  return suggestions.slice(0, 3);
 }
 
 export function SlideChatSheet({
@@ -191,17 +174,13 @@ export function SlideChatSheet({
   function handleSend(text = input) {
     const trimmed = text.trim();
     if (!trimmed || isStreaming) return;
-    // If there's quoted code from a selection, prepend it as a fenced
-    // code block so the AI knows exactly which code the user is asking
-    // about. Clear the quote after sending so it doesn't persist.
-    const message = quotedCode ? `Regarding this code:\n\`\`\`\n${quotedCode}\n\`\`\`\n\n${trimmed}` : trimmed;
     setInput('');
     onQuotedCodeConsumed?.();
-    onSend(message);
+    onSend(trimmed, quotedCode ?? undefined);
   }
 
   return (
-    <div className="chat-sheet shrink-0 flex flex-row h-full">
+    <div className="chat-sheet shrink-0 flex flex-row h-full" data-open={open}>
       {/* Handle / toggle bar — hairline divider, no fill. */}
       <button
         type="button"
@@ -243,17 +222,26 @@ export function SlideChatSheet({
           style={{ minWidth: 0, width: embedded ? '100%' : width, maxWidth: '100%' }}
         >
           {/* Topic context stays separate from the conversation. */}
-          <div className="border-b border-border px-4 py-3">
-            <h3 className="text-sm font-semibold">Ask about this topic</h3>
-            <p className="slide-meta truncate mt-0.5">{slideTitle}</p>
+          <div className="chat-topic-header">
+            <h3 className="sr-only">Ask about this topic</h3>
+            <p title={slideTitle} tabIndex={0}>
+              <span>Chat</span> · {slideTitle}
+            </p>
           </div>
-
           <ChatConversation
             conversationId={slideId ?? slideTitle}
             messages={messages}
             busy={isStreaming}
             onRetry={onRetry}
-            empty={<SuggestedQuestions reviewFocus={reviewFocus} onSelect={handleSend} disabled={isStreaming} />}
+            empty={
+              <SuggestedQuestions
+                slideTitle={slideTitle}
+                selection={!!quotedCode}
+                reviewFocus={reviewFocus}
+                onSelect={handleSend}
+                disabled={isStreaming}
+              />
+            }
           />
           <ChatComposer
             value={input}

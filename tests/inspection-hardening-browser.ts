@@ -54,7 +54,9 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.changes-chat [role=alert]')?.textContent.includes('Provider unavailable')");
     await click('Close file conversation');
     await click('Toggle file chat');
-    assert.match(await js<string>("document.querySelector('#changes-question').value"), /cancellation/);
+    assert.equal(await js<string>("document.querySelector('#changes-question').value"), '', 'Failed question remains in the transcript, not duplicated in the composer');
+    assert.match(await js<string>("document.querySelector('.changes-chat .chat-transcript').textContent"), /cancellation/);
+    await wait("[...document.querySelectorAll('.changes-chat button')].some(b=>b.textContent.includes('Retry answer'))");
     // Composition confirmation must not save a partially composed GitHub comment.
     await fill('.changes-comment-composer textarea', '日本語のレビュー');
     await js(

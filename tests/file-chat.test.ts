@@ -105,7 +105,7 @@ void test('file chat streams only its request, retains partial answers, retries 
     });
     assert.deepEqual(
       requests[2].history.map((m) => m.content),
-      ['Why?', 'Authoritative final']
+      ['Regarding this code:\n```\nreturn value;\n```\n\nWhy?', 'Authoritative final']
     );
     await update(() => {
       chunk(requests[2].requestId ?? '', 'Keep this');

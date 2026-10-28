@@ -113,7 +113,7 @@ function Fixture() {
             reviewFocus={null}
             messages={chat.getMessages(1)}
             isStreaming={chat.isStreaming}
-            onSend={(text) => void chat.send(1, text)}
+            onSend={(text, selection) => void chat.send(1, text, selection)}
             onRetry={(id) => void chat.retry(1, id)}
             onStop={() => chat.stop(1)}
             modelLabel="Claude Opus 5.5"

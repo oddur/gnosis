@@ -219,7 +219,7 @@ for (const provider of ['codex', 'claude'] as const) {
     assert.equal(getChat().isStreaming, false, 'An invalid topic cannot lock all chat sessions');
     assert.equal(requests.length, 4);
     await update(() => {
-      pending = getChat().send(1, 'Stop this answer');
+      pending = getChat().send(1, 'Stop this answer', 'await worker.run();');
     });
     await update(() => {
       onProgress?.('Partial stopped answer');
@@ -234,6 +234,13 @@ for (const provider of ['codex', 'claude'] as const) {
       onProgress?.(' after navigating back');
       getChat().stop(1);
     });
+    assert.equal(
+      getChat().getMessages(1).at(-2)?.content,
+      'Stop this answer',
+      'The question stays separate from its attachment'
+    );
+    assert.equal(getChat().getMessages(1).at(-2)?.selection, 'await worker.run();');
+    assert.match(requests[4].question, /await worker.run/);
     assert.equal(cancelled[0], requests[4].requestId, 'A remounted chat can stop its original request');
     await act(async () => {
       onProgress?.(' ignored after stop');
@@ -247,6 +254,7 @@ for (const provider of ['codex', 'claude'] as const) {
     await update(() => {
       pending = getChat().retry(1, getChat().getMessages(1).at(-1)?.id ?? '');
     });
+    assert.match(requests[5].question, /await worker.run/);
     assert.equal(requests[5].history.length, 6, 'Stopped question and answer stay out of retry history');
     await act(async () => {
       assert.ok(finish);

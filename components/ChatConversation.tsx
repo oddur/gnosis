@@ -60,6 +60,16 @@ export function ChatConversation({
   empty: ReactNode;
 }) {
   const streaming = messages.some((message) => message.isStreaming);
+  const latest = messages.at(-1);
+  const status = streaming
+    ? 'Answer in progress'
+    : latest?.stopped
+      ? 'Answer stopped'
+      : latest?.error
+        ? 'Answer interrupted. Retry is available.'
+        : latest?.role === 'assistant'
+          ? 'Answer complete'
+          : '';
   return (
     <TooltipProvider delayDuration={350}>
       <MessageScrollerProvider
@@ -92,7 +102,10 @@ export function ChatConversation({
                       ) : null}
                       {message.selection && (
                         <details className="chat-quote">
-                          <summary>Selected code</summary>
+                          <summary>
+                            Selected code · {message.selection.split('\n').length}{' '}
+                            {message.selection.includes('\n') ? 'lines' : 'line'}
+                          </summary>
                           <pre>{message.selection}</pre>
                         </details>
                       )}
@@ -131,7 +144,7 @@ export function ChatConversation({
           <MessageScrollerButton behavior="instant" aria-label="Jump to latest" />
         </MessageScroller>
         <span className="sr-only" role="status" aria-live="polite">
-          {streaming ? 'Answer in progress' : messages.length ? 'Answer finished' : ''}
+          {status}
         </span>
       </MessageScrollerProvider>
     </TooltipProvider>

@@ -984,7 +984,7 @@ function ReviewPageContent({
                     reviewFocus={prefs?.reviewSuggestions === false ? null : review.slides[currentSlide - 1].reviewFocus}
                     messages={slideChat.getMessages(currentSlide)}
                     isStreaming={slideChat.isStreaming}
-                    onSend={(text) => void slideChat.send(currentSlide, text)}
+                    onSend={(text, selection) => void slideChat.send(currentSlide, text, selection)}
                     onRetry={(id) => void slideChat.retry(currentSlide, id)}
                     onStop={() => slideChat.stop(currentSlide)}
                     modelLabel={PROVIDERS[chatProvider].models.find(model => model.id === chatModel)?.label ?? chatModel}
@@ -1017,6 +1017,7 @@ function ReviewPageContent({
 
       {
         <SlideNav
+          compact={chatOpen}
           current={currentSlide}
           total={review.slides.length}
           reviewedCount={reviewedCount}

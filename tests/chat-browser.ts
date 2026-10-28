@@ -44,6 +44,10 @@ void app.whenReady().then(async () => {
   const capture = async (name: string) => {
     await js('document.fonts.ready');
     await new Promise((r) => setTimeout(r, 250));
+    if (!(await js("!!document.querySelector('#chat-surface')"))) {
+      fs.writeFileSync(path.join(shots, name + '.png'), (await win.webContents.capturePage()).toPNG());
+      return;
+    }
     const rect = await js<{ x: number; y: number; width: number; height: number }>(
       "(()=>{const r=document.querySelector('#chat-surface').getBoundingClientRect();return{x:Math.round(r.x),y:Math.round(r.y),width:Math.round(r.width),height:Math.round(r.height)}})()"
     );
@@ -58,10 +62,23 @@ void app.whenReady().then(async () => {
     await viewport(900, 760);
     await wait("!!document.querySelector('textarea')");
     await capture('topic-empty-light');
+    assert.ok(
+      (await js<number>("document.querySelector('.chat-composer').getBoundingClientRect().height")) < 120,
+      'Composer including quote stays compact'
+    );
     await fill('How does the queue preserve order?');
     await click('Send question');
     await wait('!!document.querySelector(\'[aria-label="Stop answer"]\')');
     assert.match(await js<string>('window.chatFixture.requests[0].question'), /await queue.dispatch/);
+    assert.equal(
+      await js("document.querySelector('.chat-transcript .chat-quote').open"),
+      false,
+      'Sent quote stays collapsed'
+    );
+    assert.equal(
+      await js("document.querySelector('.chat-message-body').textContent"),
+      'How does the queue preserve order?'
+    );
     await fill('What happens if a worker stops?');
     const answer =
       'The queue keeps one command in flight per worker.\n\n- **Before dispatch:** reserve the worker slot.\n- **On acknowledgment:** release the slot, then send the next command.\n- **On failure:** retry the same command before advancing.\n\n```ts\nawait queue.dispatch(command);\nawait worker.acknowledge(command.id);\n```';
@@ -106,6 +123,7 @@ void app.whenReady().then(async () => {
     await click('Jump to latest');
     await click('Stop answer');
     await wait("document.body.textContent.includes('Answer stopped.')");
+    await wait("document.querySelector('.chat-conversation + [role=status]')?.textContent==='Answer stopped'");
     await capture('topic-stopped-light');
     await click('Retry answer');
     await finish('The coordinator retries the command before it advances.');
@@ -118,8 +136,17 @@ void app.whenReady().then(async () => {
     await fill('Why return the command result?');
     await click('Send question');
     await emit('The caller receives the result only after acknowledgment.');
+    await fill('A follow-up for later');
     await js('window.chatFixture.fail()');
     await wait("!!document.querySelector('[role=alert]')");
+    assert.equal(
+      await js("document.querySelector('textarea').value"),
+      'A follow-up for later',
+      'Failure must preserve a new draft without restoring the sent question'
+    );
+    await wait(
+      "document.querySelector('.chat-conversation + [role=status]')?.textContent.includes('Answer interrupted')"
+    );
     await capture('file-error-narrow-dark');
     await click('Retry answer');
     assert.equal(await js('window.chatFixture.requests.at(-1).selection'), 'return command.result;');
@@ -128,14 +155,70 @@ void app.whenReady().then(async () => {
     );
     await wait('!!document.querySelector(\'[aria-label="Copy answer"]\')');
     await fill('Keep my draft');
+    await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Switch file').focus()");
     await click('Switch file');
     await wait("document.querySelector('textarea').value===''");
+    assert.equal(
+      await js('document.activeElement?.textContent'),
+      'Switch file',
+      'Passive file changes must not steal focus'
+    );
     await click('Switch file');
     await wait("document.querySelector('textarea').value==='Keep my draft'");
     assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
     await capture('file-answer-narrow-dark');
     await viewport(900, 760);
     await capture('file-answer-desktop-dark');
+    // Measure the actual review composition, not just a standalone chat panel.
+    const fullCapture = async (name: string) => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      fs.writeFileSync(path.join(shots, name + '.png'), (await win.webContents.capturePage()).toPNG());
+    };
+    await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
+    await viewport(1280, 720);
+    await wait("!!document.querySelector('.queue-item .queue-disclosure:not(:disabled)')");
+    await js("document.querySelector('.queue-item:has(.queue-disclosure:not(:disabled)) .queue-row-main').click()");
+    await click('Open AI explanation');
+    await click('Continue review');
+    await click('Ask a question');
+    await wait("!!document.querySelector('.chat-sheet textarea')");
+    await js(`window.electronAPI.sendSlideChat=async()=>${JSON.stringify(answer)};void 0`);
+    await fill('How does the queue preserve order?');
+    await click('Send question');
+    await wait('!!document.querySelector(\'[aria-label="Copy answer"]\')');
+    const transcriptHeight = () =>
+      js<number>("document.querySelector('.chat-conversation').getBoundingClientRect().height");
+    console.log('Integrated topic height at1280×720:', await transcriptHeight());
+    await fullCapture('integrated-topic-light');
+    assert.ok((await transcriptHeight()) >= 240, 'Topic conversation needs240px of reading space at laptop size');
+    await viewport(900, 720);
+    await js("document.documentElement.classList.add('dark')");
+    console.log('Integrated topic height at900×720:', await transcriptHeight());
+    await fullCapture('integrated-topic-narrow-dark');
+    assert.ok((await transcriptHeight()) >= 240, 'Narrow topic conversation needs240px of reading space');
+    await click('Summary');
+    await wait("document.querySelector('.pr-summary-context').checkVisibility()");
+    await click('Explanation');
+    await wait("!!document.querySelector('.chat-sheet textarea')");
+    await click('Close chat');
+    await click('Changes');
+    await viewport(1280, 720);
+    await wait(
+      "[...document.querySelectorAll('.changes-file-header button')].some(b=>b.textContent.trim()==='Ask about this')"
+    );
+    await js(
+      "window.askOrigin=[...document.querySelectorAll('.changes-file-header button')].find(b=>b.textContent.trim()==='Ask about this');window.askOrigin.focus();window.askOrigin.click()"
+    );
+    await wait("document.activeElement?.id==='changes-question'");
+    await fill('How does this file change?');
+    await click('Send question');
+    await wait('!!document.querySelector(\'.changes-chat [aria-label="Copy answer"]\')');
+    console.log('Integrated file height:', await transcriptHeight());
+    await fullCapture('integrated-file-dark');
+    assert.ok((await transcriptHeight()) >= 240, 'File conversation needs240px of reading space');
+    await click('Close file conversation');
+    await wait('document.activeElement===window.askOrigin');
+    console.log('Chat integration passed: laptop transcript budget, focus transfer and return.');
     console.log(
       'Chat passed: anchored turns, manual reading during streaming, jump to latest, copy, Stop/retry, quoted code, draft isolation, narrow dark layout.'
     );

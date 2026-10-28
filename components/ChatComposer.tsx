@@ -34,7 +34,7 @@ export function ChatComposer({
     const input = ref.current;
     if (input) {
       input.style.height = 'auto';
-      input.style.height = `${Math.min(160, input.scrollHeight)}px`;
+      input.style.height = `${Math.min(120, input.scrollHeight)}px`;
     }
   }, [value, ref]);
   return (
@@ -62,26 +62,24 @@ export function ChatComposer({
               )}
             </InputGroupAddon>
           )}
-          <InputGroupTextarea
-            ref={ref}
-            id={id}
-            aria-label={label}
-            value={value}
-            onChange={(event) => onChange(event.target.value)}
-            placeholder={label + '…'}
-            rows={2}
-            maxLength={20000}
-            dir="auto"
-            onKeyDown={(event) => {
-              if (event.nativeEvent.isComposing || event.key !== 'Enter' || event.shiftKey) return;
-              event.preventDefault();
-              if (value.trim() && !busy) onSend();
-            }}
-          />
-          <InputGroupAddon align="block-end" className="chat-composer-footer">
-            <span className="chat-model" title={modelLabel}>
-              {modelLabel ?? 'Ask a follow-up'}
-            </span>
+          <div className="chat-entry">
+            <InputGroupTextarea
+              ref={ref}
+              id={id}
+              aria-label={label}
+              value={value}
+              onChange={(event) => onChange(event.target.value)}
+              placeholder={label + '…'}
+              rows={1}
+              aria-description="Enter to send. Shift+Enter for a new line."
+              maxLength={20000}
+              dir="auto"
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing || event.key !== 'Enter' || event.shiftKey) return;
+                event.preventDefault();
+                if (value.trim() && !busy) onSend();
+              }}
+            />
             <Tooltip>
               <TooltipTrigger asChild>
                 {busy && onStop ? (
@@ -104,11 +102,16 @@ export function ChatComposer({
                 {busy ? (onStop ? 'Stop answer' : 'Another answer is in progress') : 'Send question (Enter)'}
               </TooltipContent>
             </Tooltip>
-          </InputGroupAddon>
+          </div>
         </InputGroup>
-        <p className="chat-key-hint">
-          {busy ? 'You can draft your next question.' : 'Enter to send · Shift+Enter for a new line'}
-        </p>
+        <div className="chat-composer-meta">
+          <span className="chat-model" title={modelLabel}>
+            {modelLabel ?? 'Ask a follow-up'}
+          </span>
+          <span className="chat-key-hint" title="Enter to send · Shift+Enter for a new line">
+            {busy ? 'Draft while answering' : 'Shift+Enter for a new line'}
+          </span>
+        </div>
       </form>
     </TooltipProvider>
   );

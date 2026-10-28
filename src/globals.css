@@ -2406,12 +2406,15 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .chat-tools summary { cursor:pointer; }
 .chat-tools ul { margin:8px 0;padding-left:16px;overflow-wrap:anywhere; }
 .chat-answer-error { font-size:var(--type-control);color:var(--destructive);overflow-wrap:anywhere; }
-.chat-composer { flex-shrink:0;border-top:1px solid var(--border);padding:12px 16px 8px; }
+.chat-composer { flex-shrink:0;border-top:1px solid var(--border);padding:8px 16px; }
 .chat-composer [data-slot=input-group] { background:var(--background); }
-.chat-composer textarea[data-slot=input-group-control] { width:100%;min-height:64px;max-height:160px;padding:10px 12px;resize:none;outline:none;font-size:var(--type-control);line-height:1.5;border:0;border-radius:8px;background:transparent; }
-.chat-composer-footer { justify-content:space-between;gap:8px; }
+.chat-composer textarea[data-slot=input-group-control] { width:100%;min-width:0;min-height:38px;max-height:120px;padding:10px 12px;resize:none;outline:none;font-size:var(--type-control);line-height:1.5;border:0;border-radius:8px;background:transparent; }
+.chat-entry { display:flex;align-items:flex-end;width:100%;min-width:0;padding-right:4px; }
+.chat-entry>button { margin-bottom:3px; }
+.chat-composer [data-slot=input-group] { height:auto; }
+.chat-composer-meta { display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:4px;min-height:18px; }
 .chat-model { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--type-caption); }
-.chat-key-hint { font-size:11px;color:var(--muted-foreground);margin-top:6px; }
+.chat-key-hint { font-size:var(--type-caption);color:var(--muted-foreground); }
 .chat-quote { align-items:flex-start; }
 .chat-quote details { flex:1;min-width:0;font-size:var(--type-caption); }
 .chat-quote summary { cursor:pointer; }
@@ -3268,3 +3271,20 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
   .changes-tree-dismiss { display:block;position:absolute;inset:0;z-index:3;background:var(--background);opacity:0.7; }
   .changes-tree-close { display:block;padding:10px 14px;width:100%;text-align:right;border-bottom:1px solid var(--border);font-size:var(--type-control); }
 }
+
+/* Chat borrows space from repeated context, while source and review status stay visible. */
+.chat-topic-header { flex-shrink:0;border-bottom:1px solid var(--border);padding:8px 16px;font-size:var(--type-control); }
+.chat-topic-header p { overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted-foreground); }
+.chat-topic-header p>span { font-weight:600;color:var(--foreground); }
+.chat-message .chat-quote { font-size:var(--type-caption);color:var(--muted-foreground); }
+.review-bottom-nav.is-compact { padding-block:3px;min-height:34px;align-items:center; }
+.review-bottom-nav.is-compact .nav-topic-title { display:none; }
+.review-bottom-nav.is-compact .nav-direction { color:var(--foreground); }
+.pr-summary-page:has(.pr-changes-tab[data-state=active] .chat-sheet[data-open=true], .pr-changes-tab[data-state=active] .changes-chat) .pr-overview-heading { padding-top:4px; }
+.pr-summary-page:has(.pr-changes-tab[data-state=active] .chat-sheet[data-open=true], .pr-changes-tab[data-state=active] .changes-chat) .pr-overview-heading h1 { font-size:var(--type-panel-title); }
+.pr-summary-page:has(.pr-changes-tab[data-state=active] .chat-sheet[data-open=true], .pr-changes-tab[data-state=active] .changes-chat) .pr-summary-context { display:none; }
+.pr-summary-page:has(.pr-changes-tab[data-state=active] .chat-sheet[data-open=true], .pr-changes-tab[data-state=active] .changes-chat) .pr-merge-status { padding-bottom:2px; }
+.pr-summary-page:has(.pr-changes-tab[data-state=active] .chat-sheet[data-open=true], .pr-changes-tab[data-state=active] .changes-chat) .pr-overview-tabs button { padding-block:6px; }
+.pr-summary-page:has(.pr-changes-tab[data-state=active] .chat-sheet[data-open=true], .pr-changes-tab[data-state=active] .changes-chat) .pr-summary-toolbar-inner { padding-block:6px; }
+.workbench-review:has(.chat-sheet[data-open=true]) [aria-label="Review pane"] { padding-block:4px; }
+.chat-topic-header p:focus-visible { white-space:normal;overflow:visible; }

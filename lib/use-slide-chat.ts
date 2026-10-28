@@ -1,3 +1,4 @@
+import { chatQuestion } from './chat-context';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import type { ReviewGuide, Provider, ModelId, SendSlideChatRequest } from './types';
 
@@ -135,7 +136,7 @@ export function useSlideChat(review: ReviewGuide, provider: Provider, model: Mod
   );
 
   const send = useCallback(
-    async (slideIndex: number, question: string, retryId?: string) => {
+    async (slideIndex: number, question: string, selection?: string, retryId?: string) => {
       if (isStreamingRef.current || anyStreaming()) return;
 
       if (!Number.isInteger(slideIndex) || slideIndex < 1) return;
@@ -149,7 +150,7 @@ export function useSlideChat(review: ReviewGuide, provider: Provider, model: Mod
       )
         return;
 
-      const userMsg: ChatMessage = { id: crypto.randomUUID(), role: 'user', content: question };
+      const userMsg: ChatMessage = { id: crypto.randomUUID(), role: 'user', content: question, selection };
       const assistantMsg: ChatMessage = {
         id: retryId ?? crypto.randomUUID(),
         role: 'assistant',
@@ -173,7 +174,7 @@ export function useSlideChat(review: ReviewGuide, provider: Provider, model: Mod
             !existingMessages[i + 1]?.error &&
             !existingMessages[i + 1]?.stopped
         )
-        .map((m) => ({ role: m.role, content: m.content }));
+        .map((m) => ({ role: m.role, content: chatQuestion(m.content, m.selection) }));
 
       try {
         window.electronAPI.onChatProgress((chunk) => {
@@ -195,7 +196,7 @@ export function useSlideChat(review: ReviewGuide, provider: Provider, model: Mod
           affectedFiles: slide.affectedFiles,
           diffContent,
           history,
-          question,
+          question: chatQuestion(question, selection),
           provider,
           model,
         };
@@ -223,7 +224,7 @@ export function useSlideChat(review: ReviewGuide, provider: Provider, model: Mod
       const rows = sessions.get(key)?.get(slideIndex) ?? [];
       const question = rows.at(-2);
       if (rows.at(-1)?.id === assistantId && question?.role === 'user')
-        await send(slideIndex, question.content, assistantId);
+        await send(slideIndex, question.content, question.selection, assistantId);
     },
     [send, key]
   );

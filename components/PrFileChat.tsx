@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
+import { chatSuggestions } from '../lib/chat-context';
 import { CommitBadge } from './EntityBadge';
 import { useSessionDraft } from '../lib/session-drafts';
 import { X } from 'lucide-react';
@@ -16,9 +17,25 @@ export function PrFileChat(props: {
   onClose: () => void;
 }) {
   const { request } = props;
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const origin = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    origin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const input = textareaRef.current;
+    const dialog = [...document.querySelectorAll('[role="dialog"][data-state="open"]')]
+      .filter((element) => element.checkVisibility())
+      .at(-1);
+    if (input && (!dialog || dialog.contains(input))) input.focus({ preventScroll: true });
+  }, []);
+  const close = () => {
+    props.onClose();
+    requestAnimationFrame(() => {
+      if (origin.current?.isConnected) origin.current.focus({ preventScroll: true });
+    });
+  };
   const key = `${request.comparison ? 'commit:' : ''}${fileRevisionKey(request.url, request.path, request.baseSha, request.headSha)}`;
   // A revision owns its composer and async draft updates, even during file navigation.
-  return <FileConversation key={key} {...props} conversationId={key} />;
+  return <FileConversation key={key} {...props} onClose={close} conversationId={key} textareaRef={textareaRef} />;
 }
 function FileConversation({
   request,
@@ -26,12 +43,14 @@ function FileConversation({
   selection,
   onClose,
   conversationId,
+  textareaRef,
 }: {
   request: PrFileRequest;
   preferences: Preferences;
   selection: string;
   onClose: () => void;
   conversationId: string;
+  textareaRef: RefObject<HTMLTextAreaElement | null>;
 }) {
   const chat = useFileChat(conversationId);
   const [question, setQuestion] = useSessionDraft(`file-question:${conversationId}`, '');
@@ -42,9 +61,7 @@ function FileConversation({
     if (!value.trim() || chat.busy) return;
     setQuestion('');
     setDismissedSelection(selection);
-    void chat.send({ ...context, question: value.trim(), selection: quote }).then((sent) => {
-      if (!sent) setQuestion((current) => current || value);
-    });
+    void chat.send({ ...context, question: value.trim(), selection: quote });
   };
   return (
     <aside className="changes-chat" aria-label="Ask about this file">
@@ -67,18 +84,12 @@ function FileConversation({
         conversationId={conversationId}
         messages={chat.messages}
         busy={chat.busy}
-        onRetry={(id) => {
-          const original = chat.messages.at(-2)?.content;
-          if (question === original) setQuestion('');
-          void chat.retry(context, id).then((sent) => {
-            if (!sent && original) setQuestion((current) => current || original);
-          });
-        }}
+        onRetry={(id) => void chat.retry(context, id)}
         empty={
           <>
             <p>Ask about this file’s changes.</p>
             <div className="chat-suggestions">
-              {['How does this change work?', 'What could break?'].map((text) => (
+              {chatSuggestions({ path: request.path, selection: !!quote }).map((text) => (
                 <button className="chat-suggestion" key={text} onClick={() => send(text)}>
                   {text}
                 </button>
@@ -89,6 +100,7 @@ function FileConversation({
       />
       <ChatComposer
         id="changes-question"
+        textareaRef={textareaRef}
         value={question}
         onChange={setQuestion}
         onSend={() => send()}

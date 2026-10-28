@@ -1,3 +1,4 @@
+import { chatQuestion } from './chat-context';
 import { useSyncExternalStore } from 'react';
 import type { FileChatRequest } from './pr-changes';
 import type { ChatMessage } from './use-slide-chat';
@@ -106,7 +107,7 @@ async function send(key: string, request: Omit<FileChatRequest, 'history'>, retr
         (m, i) =>
           !m.isStreaming && !m.error && !m.stopped && !before.messages[i + 1]?.error && !before.messages[i + 1]?.stopped
       )
-      .map((m) => ({ role: m.role, content: m.content }));
+      .map((m) => ({ role: m.role, content: chatQuestion(m.content, m.selection) }));
     const content = await window.electronAPI.askPrFile({ ...request, requestId: run.requestId, history });
     if (!run.stopped) patch({ content, isStreaming: false }, false);
     return !run.stopped;
