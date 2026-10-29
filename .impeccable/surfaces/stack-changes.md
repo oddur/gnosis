@@ -34,3 +34,11 @@ The browser suite in `tests/stack-changes-browser.ts` passed mode switching, cac
 Reviewed captures in `.impeccable/review/stack-changes/`: `desktop-light.png`, `desktop-dark.png`, `by-pr.png`, `narrow.png`, `partial.png`, `stale-parent.png`, and `review-target.png`. Desktop captures use 1280 × 800; narrow uses 800 × 800 without page-level horizontal overflow.
 
 This is a local extension of the established workbench. Existing palette, typography, controls, and semantic tokens remain authoritative in DESIGN.md. Known pre-existing metadata drift in DESIGN.md and `.impeccable/design.json` was neither repaired nor adopted as a new rule.
+
+## Compact unchanged moves
+
+The shared Changes and Commits file inspector shows verified pure moves as `old path → new path` with “Moved · contents unchanged”. It keeps Viewed, Viewed & next, chat, and source discussions accessible. Show file reveals source with the existing inline comment controls; direct line navigation and pending inline drafts also reveal it. Moves with content edits retain the normal diff.
+
+The label requires matching loaded text, image data, or LFS object identities. Zero added/deleted lines alone never establish unchanged contents. Unsupported previews keep their existing fallback.
+
+The moved-files browser fixture verifies Changes, Commits, Combined, comment visibility, source reveal, line navigation, Markdown, changed images, and Viewed actions. Light, dark, and 640-pixel captures were inspected; the design detector returned no findings. The existing visual system is unchanged.
