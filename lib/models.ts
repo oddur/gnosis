@@ -1,6 +1,6 @@
-// Single source of truth for the Claude model roster. The picker UIs
+// Single source of truth for the Claude and Codex model rosters. The picker UIs
 // (HomePage, SettingsDialog), the provider (`--model` passed to the
-// CLI), the `ClaudeModel` union, and the stored-preference migration
+// CLI), the model unions, and the stored-preference migration
 // all derive from the tables here — a roster change is one edit in
 // this file. No React imports: this module is shared by the renderer
 // and the Electron main process.
@@ -43,6 +43,7 @@ export const RETIRED_CLAUDE_MODELS: Record<string, { label: string; successor: C
 export const CODEX_MODELS = [
   { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', quick: false },
   { id: 'gpt-6-astra', label: 'GPT-6 Astra', quick: false },
+  { id: 'gpt-6.1-terra', label: 'GPT-6.1 Terra', quick: false },
   { id: 'gpt-6-luna', label: 'GPT-6 Luna', quick: true },
 ] as const;
 
