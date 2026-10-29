@@ -55,6 +55,12 @@ void app.whenReady().then(async () => {
     assert.ok(url);
     await win.loadURL(`${url}?fixtures`);
     await wait("!!document.querySelector('.mechanism-scene')");
+    // Exercise animation independently of the desktop's accessibility preference.
+    win.webContents.debugger.attach('1.3');
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }],
+    });
+    await js("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
     const initial = await js('document.querySelector(\'[data-node="pending"]\').textContent');
     const initialGeometry = await js(
       "[...document.querySelectorAll('[data-node]')].map(n=>n.getAttribute('transform'))"
@@ -127,7 +133,6 @@ void app.whenReady().then(async () => {
         await capture(`${example === 'Ordered batching' ? 'queue' : 'version'}-scenario-${scenario}-final`);
       }
     }
-    win.webContents.debugger.attach('1.3');
     await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
       features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
     });
