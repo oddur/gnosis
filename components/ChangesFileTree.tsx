@@ -41,13 +41,12 @@ export function ChangesFileTree({
 }) {
   const current = useRef({ entries, onSelect });
   current.current = { entries, onSelect };
+  // Decorations change as comments and Viewed progress arrive. Only prepare the
+  // path structure when paths change, not when metadata or selection changes.
+  const paths = JSON.stringify(entries.map((e) => e.key));
   const prepared = useMemo(
-    () =>
-      prepareFileTreeInput(
-        entries.map((e) => e.key),
-        { flattenEmptyDirectories: true }
-      ),
-    [entries]
+    () => prepareFileTreeInput(JSON.parse(paths) as string[], { flattenEmptyDirectories: true }),
+    [paths]
   );
   const { model } = useFileTree({
     preparedInput: prepared,
@@ -89,6 +88,7 @@ export function ChangesFileTree({
     },
   });
   useEffect(() => {
+    // Resetting with the prepared input also refreshes Pierre's row decorations.
     model.resetPaths({ preparedInput: prepared });
     model.setGitStatus(
       entries.map((e) => ({
@@ -100,9 +100,20 @@ export function ChangesFileTree({
   useEffect(() => {
     model.setSearch(query || null);
   }, [model, query]);
+  const revealed = useRef<{ model: typeof model; path: string } | null>(null);
   useEffect(() => {
-    model.getItem(selected)?.select();
-    if (revealSelected && model.getItem(selected)) model.scrollToPath(selected, { focus: false, offset: 'nearest' });
+    const item = model.getItem(selected);
+    item?.select();
+    if (!item || !revealSelected) {
+      revealed.current = null;
+      return;
+    }
+    // An inventory or decoration update must not undo manual tree scrolling.
+    // Reveal only a new selection (or the first time that selection is available).
+    if (revealed.current?.model !== model || revealed.current.path !== selected) {
+      model.scrollToPath(selected, { focus: false, offset: 'nearest' });
+      revealed.current = { model, path: selected };
+    }
   }, [model, selected, prepared, revealSelected]);
   const activate = () => {
     const item = model.getFocusedItem();
