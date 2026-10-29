@@ -239,6 +239,14 @@ test('new children invalidate standalone reviews, but explicit single scope stay
     await s.service.queue(true);
     assert.equal((await s.service.fresh(old)).members.length, 2);
     assert.equal((await s.service.fresh({ ...old, scope: 'single' })).members.length, 1);
+    const focused = s.service.subject(child.html_url);
+    assert.ok(focused, 'a PR inside a stack must resolve when starting its own explanation');
+    assert.equal(focused.scope, 'single');
+    assert.deepEqual(focused.members.map(member => member.url), [child.html_url]);
+    assert.equal((await s.service.fresh(focused)).members.length, 1);
+    const wholeStack = (await s.service.queue()).items[0].subject;
+    assert.equal(s.service.subject(wholeStack.id)?.members.length, 2);
+    assert.equal(s.service.subject('missing-stack'), undefined);
     await assert.rejects(s.service.correct({ parent: child.html_url, child: s.pr.html_url, action: 'link' }), /cycle/);
     // A merged parent cannot be rediscovered from the retargeted child alone.
     s.pr.merged = true;
