@@ -1,3 +1,4 @@
+import { stackFileDiscussions } from '../lib/stack-changes';
 import { loadInspectionBatch, inspectionFailure, type InspectionFailure } from '../lib/inspection-batch';
 import { InspectionFailureNotice } from './InspectionFailureNotice';
 import { useKeyboardShortcuts } from '../lib/use-keyboard-shortcuts';
@@ -52,6 +53,11 @@ function loadPosition(id: string): Position {
   }
   return saved;
 }
+export function rememberChangesFile(subjectId: string, path: string) {
+  const position = loadPosition(subjectId);
+  position.selected = path;
+  try { localStorage.setItem(`gnosis-changes-position:${subjectId}`, JSON.stringify(position)); } catch { /* Optional position. */ }
+}
 export interface CommitWorkspace {
   breadcrumbs?: ReviewCrumb[];
   snapshot?: PrChanges;
@@ -69,28 +75,36 @@ export function PrChangesView({
   preferences,
   commit,
   initialFile,
+  combined,
+  toolbar,
+  preferredPath,
+  onActiveFile,
 }: {
   subject: ReviewSubject;
   preferences: Preferences;
   commit?: CommitWorkspace;
+  combined?: { snapshot: PrChanges; onOpenSource: (url: string, path: string) => void };
+  toolbar?: ReactNode;
+  preferredPath?: string;
+  onActiveFile?: (path: string) => void;
   initialFile?: { url: string; path: string; line?: number; headSha?: string };
 }) {
-  const positionId = commit ? commitPositionId(subject.id, commit.snapshot) : subject.id;
+  const positionId = combined ? `combined:${subject.id}` : commit ? commitPositionId(subject.id, commit.snapshot) : subject.id;
   const stream = useRef<CommitDiffStreamHandle>(null);
   const workspace = useRef<HTMLElement>(null);
   const [chatFocusRequest, setChatFocusRequest] = useState(0);
   const [chatEntry, setChatEntry] = useState<Entry>();
   const [position] = useState<Position>(() => loadPosition(positionId));
   const [loadedSnapshots, setSnapshots] = useState<PrChanges[]>(() =>
-    subject.members.flatMap((member) => inspectionData.peekChanges(member) ?? [])
+    combined ? [] : subject.members.flatMap((member) => inspectionData.peekChanges(member) ?? [])
   );
   const snapshots = useMemo(
-    () => (commit ? (commit.snapshot ? [commit.snapshot] : []) : loadedSnapshots),
-    [commit?.snapshot, !!commit, loadedSnapshots]
+    () => combined ? [combined.snapshot] : (commit ? (commit.snapshot ? [commit.snapshot] : []) : loadedSnapshots),
+    [combined?.snapshot, commit?.snapshot, !!commit, loadedSnapshots]
   );
   usePrReadVisit(
     snapshots.map((snapshot) => ({ url: snapshot.url, headSha: snapshot.metadata.headSha })),
-    !commit
+    !commit && !combined
   );
   const [selected, setSelected] = useState(position.selected);
   const hoverCancel = useRef<() => void>(() => {});
@@ -147,7 +161,7 @@ export function PrChangesView({
   const loadController = useRef<AbortController | undefined>(undefined);
   const [pendingMembers, setPendingMembers] = useState<string[]>([]);
   async function load(refresh: boolean, onlyUrl?: string) {
-    if (commit) return;
+    if (commit || combined) return;
     const current = ++generation.current;
     setLoading(true);
     setError('');
@@ -183,8 +197,8 @@ export function PrChangesView({
   }
   useEffect(() => {
     alive.current = true;
-    if (!commit && loadedSnapshots.length === subject.members.length) loadedSnapshots.forEach(registerChangeProgress);
-    else if (!commit) void load(false);
+    if (!commit && !combined && loadedSnapshots.length === subject.members.length) loadedSnapshots.forEach(registerChangeProgress);
+    else if (!commit && !combined) void load(false);
     return () => {
       alive.current = false;
       generation.current++;
@@ -194,7 +208,7 @@ export function PrChangesView({
   }, [subject.id]);
   const revision = snapshots.map((s) => `${s.url}:${changesRevision(s.metadata)}`).join('|');
   useEffect(() => {
-    if (commit || !snapshots.length) return;
+    if (commit || combined || !snapshots.length) return;
     let cancelled = false;
     const check = async () => {
       if (document.visibilityState === 'hidden') return;
@@ -220,17 +234,17 @@ export function PrChangesView({
       snapshots.flatMap((snapshot) => {
         const index = subject.members.findIndex(member => member.url === snapshot.url);
         const prefix =
-          subject.kind === 'stack' && !commit
+          subject.kind === 'stack' && !commit && !combined
             ? `${String(index + 1).padStart(2, '0')} · ${snapshot.metadata.baseRepo?.replace('/', ' · ') ?? 'PR'} #${snapshot.url.split('/').pop()}/`
             : '';
         return [...snapshot.files]
           .sort((a, b) => a.path.localeCompare(b.path))
           .map((file) => ({ key: prefix + file.path, snapshot, file }));
       }),
-    [snapshots, subject.kind, !!commit]
+    [snapshots, subject.kind, !!commit, !!combined]
   );
   const incomplete = snapshots.some(s => s.filesTruncated) || loadErrors.length > 0 ||
-    (!commit && snapshots.length < subject.members.length);
+    (!commit && !combined && snapshots.length < subject.members.length);
   const filters = useRawFileFilters(snapshots);
   const kinds = new Map(entries.map((e) => [e.key, filters.kind(e.snapshot, e.file)]));
   const allowed = entries.filter(
@@ -244,9 +258,20 @@ export function PrChangesView({
   const visibleKeys = new Set(visible.map((e) => e.key));
   const entry =
     visible.find((e) => e.key === selected) ??
+    (!position.selected && preferredPath ? visible.find(e => e.file.path === preferredPath) : undefined) ??
     entries.slice(selectionIndex + 1).find((e) => visibleKeys.has(e.key)) ??
     visible.at(0);
   const activeKey = entry ? viewKey(entry) : '';
+  const carried = useRef(false);
+  useEffect(() => {
+    if (carried.current || !entries.length) return;
+    carried.current = true;
+    if (!position.selected && preferredPath) {
+      const match = entries.find(e => e.file.path === preferredPath);
+      if (match) { setSelected(match.key); requestAnimationFrame(() => stream.current?.scrollToFile(match.key)); }
+    }
+  }, [entries]);
+  useEffect(() => { if (entry) onActiveFile?.(entry.file.path); }, [activeKey]);
   useKeyboardShortcuts({
     c: () => {
       if (!entry) return;
@@ -280,17 +305,26 @@ export function PrChangesView({
   );
   const treeEntries = useMemo(
     () =>
-      visible.map((e) => ({
-        key: e.key,
-        status: e.file.status,
-        viewed: progress.isFileViewed(viewKey(e)),
-        additions: e.file.additions,
-        deletions: e.file.deletions,
-        commentCount: discussion.discussions[e.snapshot.url]?.data?.threads
-          .filter((t) => t.path === e.file.path || t.path === e.file.previousPath)
-          .reduce((total, thread) => total + thread.comments.length, 0),
-        commentError: !!discussion.discussions[e.snapshot.url]?.error,
-      })),
+      visible.map((e) => {
+        const combinedDiscussion = combined
+          ? stackFileDiscussions(e.snapshot, e.file, discussion.discussions)
+          : undefined;
+        return {
+          key: e.key,
+          status: e.file.status,
+          viewed: progress.isFileViewed(viewKey(e)),
+          additions: e.file.additions,
+          deletions: e.file.deletions,
+          commentCount: combinedDiscussion
+            ? combinedDiscussion.count
+            : discussion.discussions[e.snapshot.url]?.data?.threads
+                .filter((t) => t.path === e.file.path || t.path === e.file.previousPath)
+                .reduce((total, thread) => total + thread.comments.length, 0),
+          commentError: combinedDiscussion
+            ? combinedDiscussion.failures.length > 0
+            : !!discussion.discussions[e.snapshot.url]?.error,
+        };
+      }),
     [entries, visibleSignature, viewedSignature, discussion.discussions]
   );
   useEffect(() => {
@@ -321,6 +355,7 @@ export function PrChangesView({
         baseSha: target.snapshot.metadata.baseSha,
         headSha: target.snapshot.metadata.headSha,
         comparison: target.snapshot.comparison,
+        stackComparison: target.snapshot.stackComparison?.key,
       })
     ) {
       return prefetchInspection(viewKey(target), () =>
@@ -331,6 +366,7 @@ export function PrChangesView({
             baseSha: target.snapshot.metadata.baseSha,
             headSha: target.snapshot.metadata.headSha,
             comparison: target.snapshot.comparison,
+        stackComparison: target.snapshot.stackComparison?.key,
           },
           true
         )
@@ -358,12 +394,12 @@ export function PrChangesView({
     commit ? 'commits' : 'changes',
     [
       ...(commit?.breadcrumbs ?? []),
-      ...(!commit && subject.kind === 'stack' && entry
+      ...(!commit && !combined && subject.kind === 'stack' && entry
         ? [
             {
               id: 'member',
               label: `Source #${entry.snapshot.url.split('/').pop()}`,
-              pickerLabel: 'Source PR in combined changes',
+              pickerLabel: 'Source PR in stack changes',
               value: entry.snapshot.url,
               options: subject.members.map((member) => ({
                 value: member.url,
@@ -406,8 +442,8 @@ export function PrChangesView({
   }
   const refreshThreads = discussion.refresh;
   const comments = useChangesComments({
-    enabled: !commit,
-    snapshot: commit
+    enabled: !commit && !combined,
+    snapshot: commit || combined
       ? undefined
       : (entry?.snapshot ?? entries.find((e) => e.key === selected)?.snapshot ?? snapshots.at(0)),
     path: entry?.file.path,
@@ -423,6 +459,7 @@ export function PrChangesView({
         baseSha: chatEntry.snapshot.metadata.baseSha,
         headSha: chatEntry.snapshot.metadata.headSha,
         comparison: chatEntry.snapshot.comparison,
+        stackComparison: chatEntry.snapshot.stackComparison?.key,
       }
     : null;
   return (
@@ -438,6 +475,7 @@ export function PrChangesView({
       }}
     >
       <div className="changes-toolbar">
+        {toolbar}
         <Button variant="ghost" size="sm" onClick={() => setTreeOpen((v) => !v)} aria-expanded={treeOpen}>
           <PanelLeft size={15} />
           {commit ? (
@@ -456,8 +494,8 @@ export function PrChangesView({
         )}
         <span className="changes-toolbar-spacer" />
         {commit?.tools}
-        {!commit && comments.controls}
-        {!commit && entry && (
+        {!commit && !combined && comments.controls}
+        {!commit && !combined && entry && (
           <Button
             variant="ghost"
             size="icon"
@@ -481,14 +519,14 @@ export function PrChangesView({
           value={appearance}
           onChange={(diffAppearance) => savePreferences({ diffAppearance })}
         />
-        {!commit && (
+        {!commit && !combined && (
           <Button variant="ghost" size="sm" disabled={loading} onClick={() => void load(true)}>
             <RefreshCw size={14} />
             {loading ? 'Loading…' : 'Update changes'}
           </Button>
         )}
       </div>
-      {snapshots.filter(s => s.filesTruncated).map(snapshot => (
+      {snapshots.filter(s => s.filesTruncated && !s.stackComparison).map(snapshot => (
         <div className="changes-notice" role="status" key={snapshot.url}>
           <span>
             <strong>Partial changes · PR #{snapshot.url.split('/').pop()}</strong>{' '}
@@ -540,7 +578,7 @@ export function PrChangesView({
           {error && <button onClick={() => void load(true)}>Retry</button>}
         </div>
       )}
-      {!commit && comments.panel}
+      {!commit && !combined && comments.panel}
       <div
         className={`changes-workspace${treeOpen ? '' : ' tree-hidden'}${chatOpen ? ' chat-open' : ''}`}
         style={{ '--changes-tree-width': `${treeWidth}px` } as CSSProperties}
@@ -573,7 +611,7 @@ export function PrChangesView({
                   </label>
                 </div>
                 {incomplete && <p className="file-filter-group">Search covers available files only.</p>}
-                {!commit &&
+                {!commit && !combined &&
                   subject.kind === 'stack' &&
                   snapshots
                     .filter((s) => s.files.length > 0 && !visible.some((e) => e.snapshot.url === s.url))
@@ -643,7 +681,7 @@ export function PrChangesView({
               ref={stream}
               files={streamFiles}
               selected={entry?.key ?? ''}
-              initialPosition={{ key: position.selected, offset: position.scroll[activeKey] ?? 0 }}
+              initialPosition={{ key: position.selected || entry?.key || '', offset: position.scroll[activeKey] ?? 0 }}
               onPosition={(key, offset) => {
                 if (awaitingSelection) return;
                 const target = entries.find((e) => e.key === key);
@@ -672,6 +710,7 @@ export function PrChangesView({
                     }
                     discussion={discussion}
                     onOpenCurrentFile={commit?.onOpenCurrentFile}
+                    onOpenSource={combined?.onOpenSource}
                     onViewedNext={next}
                     onAsk={(text) => {
                       setChatEntry(e);
@@ -703,6 +742,7 @@ export function PrChangesView({
                           ? 'This is not the complete change. Inspect the remaining files on GitHub or in a local checkout.'
                           : commit
                           ? 'You’ve finished this comparison. Choose another commit to continue.'
+                          : combined ? 'You’ve viewed the net changes. Per-PR review progress is separate.'
                           : 'You’ve viewed every file. Submit your review when you’re ready.'}
                       </p>
                       {unviewed && (

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { DiffLineAnnotation, SelectedLineRange } from '@pierre/diffs';
 import type { PrChanges } from '../lib/pr-changes';
 import type { GitHubReviewThread as Thread } from '../lib/review-threads';
@@ -24,10 +24,12 @@ export function useChangesComments({
   replaceThread,
   refresh,
   enabled = true,
+  renderThreadOverride,
   onSubmitted,
   onOpenChanges,
 }: {
   enabled?: boolean;
+  renderThreadOverride?: (thread: Thread) => ReactNode;
   onOpenChanges?: (filePath: string) => void;
   onSubmitted?: (url: string, event: string) => void;
   snapshot?: PrChanges;
@@ -65,7 +67,7 @@ export function useChangesComments({
     [error, setError] = useState('');
   const [target, setTarget] = useState<PrChanges>();
   const submitting = useRef(false);
-  const writable = !!account && snapshot?.metadata.state === 'open' && !snapshot.metadata.merged;
+  const writable = enabled && !!account && snapshot?.metadata.state === 'open' && !snapshot.metadata.merged;
   const current = (d: ChangesReviewDraft) =>
     d.headSha === snapshot?.metadata.headSha &&
     d.baseSha === snapshot.metadata.baseSha &&
@@ -88,7 +90,7 @@ export function useChangesComments({
     }
   };
   const edit = (id: string, body: string) => change((list) => list.map((d) => (d.id === id ? { ...d, body } : d)));
-  const renderThread = (thread: Thread) => (
+  const renderThread = (thread: Thread) => renderThreadOverride ? renderThreadOverride(thread) : (
     <GitHubReviewThread
       key={thread.id}
       thread={thread}

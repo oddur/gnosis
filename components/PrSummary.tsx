@@ -1,3 +1,4 @@
+import { StackChangesView } from './StackChangesView';
 import { StackBriefing } from './StackBriefing';
 import { StackOverview } from './StackOverview';
 import { SearchableSelect } from './SearchableSelect';
@@ -392,7 +393,7 @@ function PrSummaryContent({
         </nav>}
         </div>
         <Tabs.Content value="changes" className="pr-changes-tab">
-          {preferences && (
+          {preferences && (stacked ? <StackChangesView key={`${account}:${item.subject.id}`} subject={item.subject} preferences={preferences} account={account ?? ''} initialFile={initialFile} onOpenPr={changeScope} /> :
             <PrChangesView
               key={item.subject.id}
               subject={item.subject}

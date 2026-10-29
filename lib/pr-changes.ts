@@ -11,6 +11,7 @@ export interface PrChangeFile {
   patch?: string;
 }
 export interface PrChanges {
+  stackComparison?: import('./stack-changes').StackComparison;
   /** Patches were omitted to bound inventory memory; all listed paths remain accessible. */
   patchesDeferred?: boolean;
   /** GitHub capped this inventory. Listed files remain usable, but this is not the whole change. */
@@ -25,6 +26,7 @@ export interface PrChanges {
   fetchedAt: number;
 }
 export interface PrFileRequest {
+  stackComparison?: string;
   downloadLfs?: boolean;
   comparison?: CommitSelection;
   url: string;

@@ -1,3 +1,6 @@
+import { stackFileProgressKey, stackFileSourcePath, stackFileDiscussions } from '../lib/stack-changes';
+import { GitHubReviewThread } from './GitHubReviewThread';
+import { SearchableSelect } from './SearchableSelect';
 import { isMarkdownFile, type MarkdownReview, type MarkdownLocation } from '../lib/markdown-review';
 import { useMarkdownView } from '../lib/use-markdown-view';
 import { peekMarkdownReview, prepareMarkdownReview } from '../lib/markdown-review-cache';
@@ -30,7 +33,7 @@ export interface ChangeFileEntry {
   file: PrChangeFile;
 }
 export const changeFileKey = (entry: ChangeFileEntry) =>
-  `${entry.snapshot.comparison ? 'commit:' : ''}${fileRevisionKey(entry.snapshot.url, entry.file.path, entry.snapshot.metadata.baseSha, entry.snapshot.metadata.headSha)}`;
+  entry.snapshot.stackComparison ? stackFileProgressKey(entry.snapshot, entry.file) : `${entry.snapshot.comparison ? 'commit:' : ''}${fileRevisionKey(entry.snapshot.url, entry.file.path, entry.snapshot.metadata.baseSha, entry.snapshot.metadata.headSha)}`;
 // Electron preserves messages across IPC, but not custom Error types.
 const isUnsupportedPreview = (message: string) =>
   /This file is too large to preview|This binary file has no text preview|This file is not UTF-8 text/.test(message);
@@ -51,9 +54,11 @@ export function PrFileInspection({
   onOpenCurrentFile,
   classificationControl,
   sourceLine,
+  onOpenSource,
 }: {
   entry: ChangeFileEntry;
   sourceLine?: number;
+  onOpenSource?: (url: string, path: string) => void;
   classificationControl?: ReactNode;
   preferences: Preferences;
   discussion: ReturnType<typeof usePrDiscussions>;
@@ -62,6 +67,7 @@ export function PrFileInspection({
   onOpenCurrentFile?: (url: string, path: string) => void;
 }) {
   const commit = !!onOpenCurrentFile;
+  const combined = entry.snapshot.stackComparison;
   const activeKey = changeFileKey(entry);
   const progress = useFileProgress();
   const viewed = progress.isFileViewed(activeKey);
@@ -114,6 +120,7 @@ export function PrFileInspection({
     baseSha: entry.snapshot.metadata.baseSha,
     headSha: entry.snapshot.metadata.headSha,
     comparison: entry.snapshot.comparison,
+    stackComparison: combined?.key,
   };
   const preview = useMemo(() => previewFor(activeKey, entry.file, contextLines), [activeKey, entry.file, contextLines]);
   const contents = fileCache.peek(request) ?? (loadedFile?.key === activeKey ? loadedFile.data : undefined);
@@ -163,6 +170,7 @@ export function PrFileInspection({
         headSha: entry.snapshot.metadata.headSha,
         path: entry.file.path,
         comparison: entry.snapshot.comparison,
+    stackComparison: combined?.key,
       })
       .then((value) => {
         if (!cancelled) setLoadedFile({ key: activeKey, data: value });
@@ -249,14 +257,32 @@ export function PrFileInspection({
       threads?.headSha === entry.snapshot.metadata.headSha &&
       (t.diffSide === 'RIGHT' || threads.baseSha === entry.snapshot.metadata.baseSha)
   );
-  const other = matching.filter((t) => !inline.includes(t));
+  const combinedSourcePath = (url: string) =>
+    combined ? stackFileSourcePath(combined, entry.file, url) : entry.file.path;
+  const combinedDiscussion = combined
+    ? stackFileDiscussions(entry.snapshot, entry.file, discussion.discussions)
+    : undefined;
+  const combinedThreads = combinedDiscussion?.threads.map((t) => ({ ...t, inline: !contents?.lfs && t.inline })) ?? [];
+  const other = combined ? combinedThreads.filter(t => !t.inline).map(t => t.thread) : matching.filter((t) => !inline.includes(t));
+  const sourceOptions = combined?.members.filter(m => combined.fileSources[entry.file.path]?.includes(m.metadata.url)) ?? [];
+  const commentSources = sourceOptions.length ? sourceOptions : combined?.members ?? [];
+  const renderCombinedThread = (thread: (typeof inline)[number]) => {
+    const source = combinedThreads.find(t => t.thread.id === thread.id)?.source;
+    return <div key={thread.id} className="combined-thread">
+      <Button variant="link" size="sm" onClick={() => source && onOpenSource?.(source.metadata.url, thread.path)}>
+        PR #{source?.metadata.url.split('/').pop()} · Open to reply
+      </Button>
+      <GitHubReviewThread thread={thread} />
+    </div>;
+  };
   const refreshThreads = discussion.refresh;
   const comments = useChangesComments({
-    enabled: !commit,
-    snapshot: commit ? undefined : entry.snapshot,
+    enabled: !commit && !combined,
+    snapshot: commit || combined ? undefined : entry.snapshot,
+    renderThreadOverride: combined ? renderCombinedThread : undefined,
     path: entry.file.path,
     activeKey,
-    inline,
+    inline: combined ? combinedThreads.filter(t => t.inline).map(t => t.thread) : inline,
     refresh: refreshThreads,
     replaceThread: discussion.replace,
   });
@@ -424,13 +450,18 @@ export function PrFileInspection({
   const fileHeader = (
     <header className="changes-file-header">
       <div>
-        {!commit && (
+        {!commit && !combined && (
           <span className="changes-source">
             <RepositoryBadge repo={entry.snapshot.metadata.baseRepo} />{' '}
             <PrBadge url={entry.snapshot.url} title={entry.snapshot.metadata.title} />{' '}
             <CommitBadge sha={entry.snapshot.metadata.headSha} repo={entry.snapshot.metadata.headRepo} />
           </span>
         )}
+        {combined && <span className="changes-source">
+          <span>Combined changes</span>
+          {sourceOptions.slice(0, 3).map(source => <Button key={source.metadata.url} size="sm" variant="link" onClick={() => onOpenSource?.(source.metadata.url, combinedSourcePath(source.metadata.url))}>#{source.metadata.url.split('/').pop()}</Button>)}
+          {sourceOptions.length > 3 && <span>+{sourceOptions.length - 3} PRs</span>}
+        </span>}
         <h2 title={entry.file.path}>
           {entry.file.previousPath && <span>{entry.file.previousPath} → </span>}
           {entry.file.path}
@@ -472,7 +503,7 @@ export function PrFileInspection({
         <Button variant="outline" size="sm" data-viewed-next onClick={() => mark(true)}>
           Viewed & next
         </Button>
-        {!commit && !showingPreview && (
+        {!commit && !combined && !showingPreview && (
           <Button
             variant="ghost"
             size="sm"
@@ -483,6 +514,9 @@ export function PrFileInspection({
             <MessageSquare size={14} /> Comment
           </Button>
         )}
+        {combined && <SearchableSelect label="Comment in source PR" value="" triggerLabel="Comment in PR…" popupBoundary="viewport"
+          options={commentSources.map(s => ({ value: s.metadata.url, label: `#${s.metadata.url.split('/').pop()} · ${s.metadata.title}` }))}
+          onValueChange={url => onOpenSource?.(url, combinedSourcePath(url))} />}
         {commit && (
           <Button
             variant="ghost"
@@ -526,7 +560,13 @@ export function PrFileInspection({
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => void window.electronAPI.openExternal(`${entry.snapshot.url}/files`)}
+            onClick={() =>
+              void window.electronAPI.openExternal(
+                combined
+                  ? `https://github.com/${entry.snapshot.metadata.baseRepo}/compare/${entry.snapshot.comparisonBase}...${entry.snapshot.metadata.headSha}`
+                  : `${entry.snapshot.url}/files`
+              )
+            }
           >
             Open on GitHub <ExternalLink size={14} />
           </Button>
@@ -619,7 +659,18 @@ export function PrFileInspection({
           )}
         </div>
       )}
-      {threadError && (
+      {combinedDiscussion?.failures.map((failure) => (
+        <p className="changes-notice" role="status" key={failure.url}>
+          Comments from PR #{failure.url.split('/').pop()} are unavailable. Some discussions may be missing.
+          <button
+            aria-label={`Retry comments for PR #${failure.url.split('/').pop()}`}
+            onClick={() => void refreshThreads(failure.url)}
+          >
+            Retry comments
+          </button>
+        </p>
+      ))}
+      {!combined && threadError && (
         <p className="changes-notice">
           {threadError}
           <button onClick={() => void refreshThreads(entry.snapshot.url)}>Retry</button>

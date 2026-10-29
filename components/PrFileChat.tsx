@@ -34,7 +34,7 @@ export function PrFileChat(props: {
       if (origin.current?.isConnected) origin.current.focus({ preventScroll: true });
     });
   };
-  const key = `${request.comparison ? 'commit:' : ''}${fileRevisionKey(request.url, request.path, request.baseSha, request.headSha)}`;
+  const key = `${request.stackComparison ? `stack:${request.stackComparison}:` : request.comparison ? 'commit:' : ''}${fileRevisionKey(request.url, request.path, request.baseSha, request.headSha)}`;
   // A revision owns its composer and async draft updates, even during file navigation.
   return <FileConversation key={key} {...props} onClose={close} conversationId={key} textareaRef={textareaRef} />;
 }
@@ -73,7 +73,7 @@ function FileConversation({
       context={
         <>
           {request.path} ·{' '}
-          {request.comparison && (
+          {(request.comparison || request.stackComparison) && (
             <>
               <CommitBadge sha={request.baseSha} /> →{' '}
             </>

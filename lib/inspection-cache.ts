@@ -1,3 +1,4 @@
+import { clearStackChanges } from './stack-inspection-cache';
 import { clearMarkdownReviews } from './markdown-review-cache';
 import { createPrFileCache } from './pr-file-cache';
 import { prChangePreview } from './pr-change-preview';
@@ -49,6 +50,7 @@ export const inspectionData = createPrInspectionCache({
   },
   reset: () => {
     inspectionEpoch++;
+    clearStackChanges();
     clearMarkdownReviews();
     inspectionFiles.clear();
     previews.clear();
@@ -69,6 +71,7 @@ export const inspectionFileRequest = (snapshot: PrChanges, file: PrChangeFile) =
   baseSha: snapshot.metadata.baseSha,
   headSha: snapshot.metadata.headSha,
   comparison: snapshot.comparison,
+  stackComparison: snapshot.stackComparison?.key,
 });
 export const commitPositionId = (subjectId: string, snapshot?: PrChanges) =>
   `commit:${subjectId}:${snapshot?.url ?? ''}:${snapshot?.comparisonBase ?? ''}:${snapshot?.metadata.headSha ?? ''}`;
@@ -89,7 +92,7 @@ export function fileIsReady(snapshot: PrChanges, file: PrChangeFile) {
   return (
     !!inspectionFiles.peek(inspectionFileRequest(snapshot, file)) ||
     !!previewFor(
-      `${snapshot.comparison ? 'commit:' : ''}${fileRevisionKey(snapshot.url, file.path, snapshot.metadata.baseSha, snapshot.metadata.headSha)}`,
+      `${snapshot.stackComparison ? `stack:${snapshot.stackComparison.key}:` : snapshot.comparison ? 'commit:' : ''}${fileRevisionKey(snapshot.url, file.path, snapshot.metadata.baseSha, snapshot.metadata.headSha)}`,
       file
     )
   );

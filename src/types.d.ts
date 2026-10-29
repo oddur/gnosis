@@ -50,6 +50,7 @@ declare global {
       getPrCommits: (url: string, refresh?: boolean, options?: InspectionLoadOptions) => Promise<PrCommits>;
       getCommitComparison: (selection: CommitSelection, background?: boolean) => Promise<PrChanges>;
       renderMarkdownReview: (request: MarkdownReviewRequest | ExplanationMarkdownRequest) => Promise<MarkdownReview>;
+      getStackChanges: (subject: ReviewSubject, refresh?: boolean, options?: InspectionLoadOptions) => Promise<PrChanges>;
       getPrChanges: (url: string, refresh?: boolean, options?: InspectionLoadOptions) => Promise<PrChanges>;
       cancelInspection: (requestId: string) => Promise<void>;
       getPrChangeFile: (request: PrFileRequest, background?: boolean) => Promise<PrFileContents>;

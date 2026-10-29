@@ -3396,3 +3396,13 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .gnosis-tour .driver-popover-arrow { display:none; }
 @media (max-width:600px) { .setup-dialog { padding:16px; max-height:calc(100dvh - 24px); } .setup-ai-role { grid-template-columns:1fr; gap:8px; } .setup-body { min-height:0; } .setup-actions { gap:4px; } }
 @media (prefers-reduced-motion: reduce) { .driver-overlay,.driver-popover { transition:none!important; animation:none!important; } }
+
+/* Combined and per-PR comparisons share the same inspection workspace. */
+.stack-changes-view { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.stack-changes-switch { display: inline-flex; flex-shrink: 0; padding: 2px; border: 1px solid var(--color-border); border-radius: var(--radius); }
+.stack-comparison-context { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--color-border); font-size: var(--type-control); }
+.stack-comparison-range { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.stack-comparison-ancestor { color: var(--color-muted-foreground); }
+.combined-thread { margin-block: 8px; }
+.stack-changes-view > .changes-notice { flex-shrink: 0; }
+.combined-thread { background: var(--color-card); color: var(--color-foreground); font-family: var(--font-sans); }

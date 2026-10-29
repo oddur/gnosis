@@ -11,7 +11,7 @@ export function createPrFileCache(
   let bytes = 0,
     epoch = 0;
   const keyFor = (r: PrFileRequest) =>
-    `${r.comparison ? 'commit:' : ''}${fileRevisionKey(r.url, r.path, r.baseSha, r.headSha)}`;
+    `${r.stackComparison ? `stack:${r.stackComparison}:` : r.comparison ? 'commit:' : ''}${fileRevisionKey(r.url, r.path, r.baseSha, r.headSha)}`;
   const peek = (r: PrFileRequest) => {
     const key = keyFor(r),
       entry = saved.get(key);

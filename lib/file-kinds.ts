@@ -25,7 +25,7 @@ export const DEFAULT_FILE_FILTERS: FileFilterState = {
 };
 export const fileOverrideKey = (repo: string, path: string) => JSON.stringify([repo.toLowerCase(), path]);
 export const classificationKey = (s: PrChanges) =>
-  JSON.stringify([s.url, s.comparisonBase, s.metadata.headSha, !!s.comparison]);
+  JSON.stringify([s.url, s.comparisonBase, s.metadata.headSha, !!s.comparison, ...(s.stackComparison ? [s.stackComparison.key] : [])]);
 export function fileSource(s: PrChanges, f: PrChangeFile) {
   const deleted = f.status === 'deleted';
   const fallback = new URL(s.url).pathname.split('/').slice(1, 3).join('/');

@@ -28,6 +28,7 @@ export function preparedFileKey(req: PrFileRequest) {
         baseSha: req.baseSha,
         headSha: req.headSha,
         ...(req.comparison ? { scope: 'commit' } : {}),
+        ...(req.stackComparison ? { scope: 'stack', stackComparison: req.stackComparison } : {}),
       })
     )
     .digest('hex')}`;

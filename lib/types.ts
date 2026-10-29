@@ -370,6 +370,7 @@ export interface Preferences {
   codexPath: string;
   notifications: boolean;
   diffLayout: 'unified' | 'split';
+  stackChangesMode?: 'combined' | 'by-pr';
   diffAppearance?: import('./review-diff').DiffAppearance;
   showInlineExplanations?: boolean;
   includeAllFiles: boolean;
