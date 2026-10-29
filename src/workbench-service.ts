@@ -1,4 +1,5 @@
 import { prBadgePreview, type PrBadgePreview } from '../lib/pr-badge-preview';
+import { focusStackPr } from '../lib/stack-workspace';
 import type { StateStorage } from './app-data-store';
 import { createPrReadStore } from './pr-read-store';
 import type { MarkPrReadRequest } from '../lib/pr-read-state';
@@ -1125,8 +1126,16 @@ export function createWorkbenchService(deps: Deps) {
       load().briefs[k] = { key: k, status: 'cancelled', updatedAt: new Date().toISOString() };
       save();
     },
-    subject: (id: string) =>
-      view(true).items.find((item) => item.subject.id === id)?.subject ?? view().starredItems?.find((item) => item.subject.id === id)?.subject,
+    subject(id: string) {
+      const items = view(true).items;
+      const exact = items.find(item => item.subject.id === id);
+      if (exact) return exact.subject;
+      // A focused PR is nested under its stack in the queue, but generation
+      // addresses it by PR URL. Keep that explicit scope when refreshing it.
+      const parent = items.find(item => item.subject.members.some(member => member.url === id));
+      const member = parent?.subject.members.find(member => member.url === id);
+      return parent && member ? focusStackPr(parent, member).subject : undefined;
+    },
     renameStack(id: string, value: string, account = deps.auth().login) {
       if (account !== deps.auth().login) throw new Error('Your GitHub account changed. Open the stack again and retry.');
       if (!deps.auth().login || !deps.auth().token) throw new Error('Connect GitHub to rename a stack.');
