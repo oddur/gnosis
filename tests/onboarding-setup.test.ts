@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { initialSetup, normalizeSetup, setupViews, setupPreferences } from '../lib/onboarding';
+import {
+  initialSetup,
+  normalizeSetup,
+  setupViews,
+  setupPreferences,
+  setupForInstalledProviders,
+} from '../lib/onboarding';
 import { applyViewAction, normalizeViews } from '../lib/saved-views';
 import {
   normalizeQueueFilters,
@@ -39,6 +45,65 @@ const member = (patch: Partial<ReviewMember> = {}) =>
   }) as ReviewMember;
 const item = (...members: ReviewMember[]) =>
   ({ subject: { title: 'Stack', kind: 'stack', members }, attention: 'updated' }) as QueueItem;
+
+void test('installed harnesses select separate explanation and briefing defaults', () => {
+  for (const [provider, explanation, briefing] of [
+    ['claude', 'claude-opus-5-5', 'claude-sonnet-5-5'],
+    ['codex', 'gpt-6.1-sol', 'gpt-6.1-terra'],
+  ] as const) {
+    const draft = setupForInstalledProviders(initialSetup(prefs), [provider]);
+    assert.equal(draft.provider, provider);
+    assert.equal(draft.model, explanation);
+    assert.equal(draft.briefingProvider, provider);
+    assert.equal(draft.briefingModel, briefing);
+    const saved = setupPreferences(prefs, draft);
+    assert.equal(saved.provider, provider);
+    assert.equal(saved.model, explanation);
+    assert.equal(saved.proactiveReviewOverrides, true);
+    assert.equal(saved.proactiveProvider, provider);
+    assert.equal(saved.proactiveModel, briefing);
+    assert.equal(saved.autoBriefings, false, 'detecting tools does not opt into automation');
+    assert.equal(saved.instructions, 'keep');
+  }
+});
+
+void test('replaying and resuming setup preserve independent model choices', () => {
+  const saved = {
+    ...prefs,
+    firstRunSeen: true,
+    provider: 'codex' as const,
+    model: 'gpt-6-astra' as const,
+    proactiveReviewOverrides: true,
+    proactiveProvider: 'claude' as const,
+    proactiveModel: 'claude-haiku-5-5' as const,
+  };
+  const draft = setupForInstalledProviders(initialSetup(saved), ['claude', 'codex']);
+  assert.equal(draft.model, 'gpt-6-astra');
+  assert.equal(draft.briefingProvider, 'claude');
+  assert.equal(draft.briefingModel, 'claude-haiku-5-5');
+  assert.deepEqual(normalizeSetup(normalizeSetup(draft)), normalizeSetup(draft));
+  const next = setupPreferences(saved, normalizeSetup(draft));
+  assert.equal(next.model, saved.model);
+  assert.equal(next.proactiveModel, saved.proactiveModel);
+  const codexOnly = setupForInstalledProviders(draft, ['codex']);
+  assert.equal(codexOnly.model, 'gpt-6-astra');
+  assert.equal(codexOnly.briefingModel, 'gpt-6.1-terra');
+  assert.equal(codexOnly.briefingProvider, 'codex');
+  const skipped = setupPreferences(saved, { ...codexOnly, configureAI: false });
+  assert.equal(skipped.proactiveModel, saved.proactiveModel);
+});
+
+void test('missing tools leave AI unconfigured and old setup drafts migrate safely', () => {
+  const draft = initialSetup(prefs);
+  assert.equal(setupForInstalledProviders(draft, []).configureAI, false);
+  const legacy = { ...draft } as Record<string, unknown>;
+  delete legacy.briefingProvider;
+  delete legacy.briefingModel;
+  assert.equal(normalizeSetup(legacy).briefingModel, 'claude-sonnet-5-5');
+  const chosen = normalizeSetup({ ...legacy, configureAI: true, provider: 'codex', model: 'gpt-6-astra' });
+  assert.equal(chosen.briefingProvider, 'codex');
+  assert.equal(chosen.briefingModel, 'gpt-6-astra', 'keep an explicitly chosen model in older drafts');
+});
 void test('personal review presets are distinct and do not depend on AI attention status', () => {
   const setup = initialSetup(prefs);
   setup.goals = ['review', 'authored'];

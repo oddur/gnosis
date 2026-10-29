@@ -1243,8 +1243,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                 p.models.map(m => ({ value: `${provider}:${m.id}`, label: `${p.label} · ${m.label}` })))}
               onValueChange={(value) => {
                 const [provider, ...rest] = value.split(':');
-                void savePrefs({ ...prefs, provider: provider as Provider, model: rest.join(':') as ModelId,
-                  proactiveReviewOverrides: false });
+                void savePrefs({ ...prefs, provider: provider as Provider, model: rest.join(':') as ModelId });
               }}
             />
           )}
@@ -1834,7 +1833,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                 {briefingSelection && (
                   <p className="text-xs text-muted-foreground mb-3" aria-label="Briefing model">
                     Briefing model: {briefingModelLabel}
-                    {prefs?.proactiveReviewOverrides ? ' (separate model selected in Settings)' : ''}
+                    {prefs?.proactiveReviewOverrides ? ' (separate model)' : ''}
                   </p>
                 )}
                 <div className="briefing-actions">

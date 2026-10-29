@@ -583,8 +583,8 @@ export function SettingsDialog({
                   <div className="flex flex-col gap-0.5 min-w-0">
                     <span className="text-sm font-medium text-foreground">Use a different model for briefings</span>
                     <span className="slide-meta">
-                      Choose a separate AI model for automatic briefings. Selecting a model in the queue makes reviews
-                      and briefings use that model again.
+                      Keep a separate model for briefings when you change the explanation model. Turn this off to use
+                      the explanation model for both.
                     </span>
                   </div>
                   <div className="shrink-0">

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { initialSetup, type OnboardingState, type SetupDraft } from './onboarding';
+import { initialSetup, normalizeSetup, type OnboardingState, type SetupDraft } from './onboarding';
 import type { Preferences } from './types';
 import type { QueueViewsState } from './saved-views';
 
@@ -27,6 +27,7 @@ export function useOnboarding(
       .loadOnboarding()
       .then((saved) => {
         if (!alive || latest.current.open) return;
+        saved = { ...saved, draft: saved.draft ? normalizeSetup(saved.draft) : undefined };
         current.current = saved;
         setState(saved);
         const preferences = latest.current.prefs;

@@ -12,7 +12,7 @@ It runs locally. AI features use the [Claude Code CLI](https://claude.ai/code) o
 
 ## Features
 
-- **Guided setup** — choose review goals, create saved views, and preview your choices before applying them. Pause setup or replay the interactive walkthrough anytime.
+- **Guided setup** — choose review goals, create saved views, and pick separate explanation and briefing models from installed Claude Code or Codex tools. Defaults are Opus/Sonnet for Claude and Sol/Terra for Codex. Preview your choices before applying them, pause setup, or replay it anytime.
 - **Guided slideshow** — changes are grouped by theme and ordered by dependency (foundations first, then implementations, then tests and config), not by filename
 - **Model choice** — use Claude or Codex for reviews, slide chat, and smart imports. Codex supports GPT-6.1 Sol, GPT-6 Astra, GPT-6.1 Terra, and GPT-6 Luna. Terra requires Codex CLI 0.159.0 or later.
 - **Deeper reasoning** — use more reasoning effort (slower, more thorough)

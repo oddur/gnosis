@@ -3357,7 +3357,14 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .setup-field input { border:1px solid var(--input); border-radius:5px; padding:8px 10px; background:var(--background); color:var(--foreground); font-size:14px; width:100%; }
 .setup-check { display:flex; align-items:center; gap:10px; font-size:14px; line-height:1.5; }
 .setup-check input { accent-color:var(--primary); width:16px; height:16px; flex-shrink:0; }
-.setup-models { display:grid; grid-template-columns:1fr 1.4fr; gap:12px; }
+.setup-ai-roles { display:flex; flex-direction:column; gap:20px; }
+.setup-ai-role { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1.2fr); gap:16px; align-items:center; }
+.setup-ai-role label { display:block; font-size:14px; font-weight:600; margin-bottom:4px; }
+.setup-ai-role > button { width:100%; min-width:0; text-align:left; height:auto; min-height:36px; white-space:normal; }
+.setup-ai-automation { display:flex; flex-direction:column; gap:12px; }
+.setup-ai-automation input[type=number] { max-width:100px; }
+.setup-ai-guides > p { margin-top:8px; }
+.setup-guide-links { display:flex; flex-wrap:wrap; gap:16px; }
 .setup-cli { display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:13px; line-height:1.6; }
 .setup-link { align-self:flex-start; padding:0; }
 .setup-repositories { display:flex; flex-direction:column; gap:10px; min-width:0; }
@@ -3385,5 +3392,5 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .gnosis-tour .driver-popover-navigation-btns button.driver-popover-next-btn { background:var(--primary); color:var(--primary-foreground); border-color:var(--primary); }
 .gnosis-tour button:focus-visible { outline:2px solid var(--ring); outline-offset:2px; }
 .gnosis-tour .driver-popover-arrow { display:none; }
-@media (max-width:600px) { .setup-dialog { padding:16px; max-height:calc(100dvh - 24px); } .setup-models { grid-template-columns:1fr; } .setup-body { min-height:0; } .setup-actions { gap:4px; } }
+@media (max-width:600px) { .setup-dialog { padding:16px; max-height:calc(100dvh - 24px); } .setup-ai-role { grid-template-columns:1fr; gap:8px; } .setup-body { min-height:0; } .setup-actions { gap:4px; } }
 @media (prefers-reduced-motion: reduce) { .driver-overlay,.driver-popover { transition:none!important; animation:none!important; } }
