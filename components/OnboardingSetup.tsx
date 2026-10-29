@@ -86,7 +86,7 @@ export function OnboardingSetup({
     if (active !== 'ai') return;
     let alive = true;
     setCli(null);
-    void Promise.allSettled(PROVIDER_IDS.map((provider) => window.electronAPI.checkCliInstalled(provider))).then(
+    void Promise.allSettled(PROVIDER_IDS.map((provider) => window.electronAPI.checkCliInstalled(provider, true))).then(
       (results) => {
         if (!alive) return;
         const statuses: Partial<Record<Provider, 'found' | 'missing' | 'error'>> = {};

@@ -39,6 +39,7 @@ if (new URLSearchParams(location.search).has('navigation-history') && !savedView
   saveViews();
 }
 const onboardingScenario = new URLSearchParams(location.search).has('onboarding') || new URLSearchParams(location.search).has('ftue');
+const detectedTools = new Map<string, { installed: boolean; resolvedPath: string | null }>();
 let fixtureAuthenticated = new URLSearchParams(location.search).has('ftue') ? sessionStorage.getItem('ftue-auth') === 'true' : !onboardingScenario;
 let fixtureStarted = false;
 const polishScenario = new URLSearchParams(location.search).has('polish');
@@ -698,11 +699,15 @@ const mocks = {
     document.body.dataset.explainerCalls = String(Number(document.body.dataset.explainerCalls ?? 0) + 1);
     return Promise.resolve(explainer);
   },
-  checkCliInstalled: (provider: 'claude' | 'codex' = 'claude') => {
+  checkCliInstalled: (provider: 'claude' | 'codex' = 'claude', refresh = false) => {
+    const cached = detectedTools.get(provider);
+    if (onboardingScenario && cached && !refresh) return Promise.resolve(cached);
     const tools = JSON.parse(sessionStorage.getItem('ftue-tools') ?? '{}') as Record<string, string>;
     if (tools[provider] === 'error') return Promise.reject(new Error('Could not inspect tool'));
     const installed = tools[provider] === 'found' || !onboardingScenario;
-    return Promise.resolve({ installed, resolvedPath: installed ? `/fixture/${provider}` : null });
+    const result = { installed, resolvedPath: installed ? `/fixture/${provider}` : null };
+    detectedTools.set(provider, result);
+    return Promise.resolve(result);
   },
   platform: 'darwin',
   isPackaged: false,

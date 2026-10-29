@@ -161,7 +161,7 @@ declare global {
       openLogsDirectory: () => Promise<void>;
       openReviewPrompt: (id: string) => Promise<void>;
       detectBinaryPath: (name: string) => Promise<string>;
-      checkCliInstalled: (provider: string) => Promise<{ installed: boolean; resolvedPath: string }>;
+      checkCliInstalled: (provider: string, refresh?: boolean) => Promise<{ installed: boolean; resolvedPath: string }>;
       onShowTrayPrompt: (callback: () => void) => void;
       offShowTrayPrompt: () => void;
       onNewReviewInHistory: (callback: () => void) => void;
