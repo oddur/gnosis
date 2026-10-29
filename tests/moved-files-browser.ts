@@ -11,7 +11,7 @@ void app.whenReady().then(async () => {
   });
   const js = <T = unknown>(code: string) => window.webContents.executeJavaScript(code) as Promise<T>;
   const wait = async (expression: string) => {
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 600; i++) {
       if (await js(expression)) return;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }

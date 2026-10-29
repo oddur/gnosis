@@ -42,6 +42,11 @@ void app.whenReady().then(async () => {
     return frame;
   };
   try {
+    // CI desktops may disable animations. Exercise motion independently of the host preference.
+    win.webContents.debugger.attach('1.3');
+    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }],
+    });
     await win.loadURL(
       'data:text/html,' + encodeURIComponent(buildSvgIllustrationDocument(SVG_MOTION_FIXTURE, 'capture-test'))
     );

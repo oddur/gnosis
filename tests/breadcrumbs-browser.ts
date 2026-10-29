@@ -108,7 +108,7 @@ void app.whenReady().then(async () => {
     await wait(
       "!!document.querySelector('.changes-file-header') && !!document.querySelector('.pr-summary-page.is-stack')"
     );
-    await choose('Source PR in combined changes', 'https://github.com/klang/engine/pull/121');
+    await choose('Source PR in stack changes', 'https://github.com/klang/engine/pull/121');
     await wait("document.querySelector('[aria-label=\"File in comparison\"]')?.value.includes('#121/')");
     await capture('stack-changes-1280');
     win.setSize(640, 800);
