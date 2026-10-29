@@ -42,19 +42,24 @@ void app.whenReady().then(async () => {
     return frame;
   };
   try {
+    await win.loadURL(
+      'data:text/html,' + encodeURIComponent(buildSvgIllustrationDocument(SVG_MOTION_FIXTURE, 'capture-test'))
+    );
+    await wait("!!document.querySelector('[data-motion-id]')");
     // CI desktops may disable animations. Exercise motion independently of the host preference.
     win.webContents.debugger.attach('1.3');
     await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
       features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }],
     });
-    await win.loadURL(
-      'data:text/html,' + encodeURIComponent(buildSvgIllustrationDocument(SVG_MOTION_FIXTURE, 'capture-test'))
-    );
-    await wait("!!document.querySelector('[data-motion-id]')");
+    await js('document.fonts.ready');
+    await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     const sample = async (transition: boolean) =>
-      js<number>(`new Promise(resolve=>{
-      const receive=e=>{if(e.data?.token==='capture-test'&&e.data.event==='captured'){
-        removeEventListener('message',receive);
+      js<number>(`new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>{removeEventListener('message',receive);reject(Error('Illustration capture timed out'));},10000);
+      const receive=e=>{if(e.data?.token==='capture-test'&&e.data.event==='error'){
+        clearTimeout(timer);removeEventListener('message',receive);reject(Error(e.data.message));return;
+      }if(e.data?.token==='capture-test'&&e.data.event==='captured'){
+        clearTimeout(timer);removeEventListener('message',receive);
         resolve(new DOMMatrix(getComputedStyle(document.querySelector('[data-motion-id]')).transform).e);
       }};
       addEventListener('message',receive);
@@ -176,7 +181,7 @@ void app.whenReady().then(async () => {
       String(await inner().executeJavaScript("document.querySelector('[data-motion-id]').getAttribute('transform')")),
       /460/
     );
-    win.webContents.debugger.attach('1.3');
+
     await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
       features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
     });
