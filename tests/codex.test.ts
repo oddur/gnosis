@@ -56,6 +56,22 @@ void test('quick requests use low effort and parallel writers use separate direc
   assert.ok(answers[0].args.includes('model_reasoning_effort="low"'));
 });
 
+void test('preserves saved Terra selections and routes both reasoning modes to Codex', async () => {
+  for (const thinking of [false, true]) {
+    const selection = normalizeModelSelection('codex', 'gpt-6.1-terra', !thinking);
+    assert.equal(selection.model, 'gpt-6.1-terra');
+    const result = await codexProvider.generate({
+      ...options,
+      model: selection.model,
+      thinking,
+      content: JSON.stringify({ mode: 'success' }),
+    });
+    const { args } = JSON.parse(result) as { args: string[] };
+    assert.equal(args[args.indexOf('--model') + 1], 'gpt-6.1-terra');
+    assert.ok(args.includes(`model_reasoning_effort="${thinking ? 'high' : 'low'}"`));
+  }
+});
+
 void test('reports authentication errors, terminal failures and missing final output', async () => {
   for (const [mode, expected] of [
     ['fail', /session has expired/],

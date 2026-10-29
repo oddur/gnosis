@@ -14,7 +14,7 @@ It runs locally. AI features use the [Claude Code CLI](https://claude.ai/code) o
 
 - **Guided setup** — choose review goals, create saved views, and preview your choices before applying them. Pause setup or replay the interactive walkthrough anytime.
 - **Guided slideshow** — changes are grouped by theme and ordered by dependency (foundations first, then implementations, then tests and config), not by filename
-- **Model choice** — use Claude or Codex for reviews, slide chat, and smart imports. Codex supports GPT-6.1 Sol, GPT-6 Astra, and GPT-6 Luna.
+- **Model choice** — use Claude or Codex for reviews, slide chat, and smart imports. Codex supports GPT-6.1 Sol, GPT-6 Astra, GPT-6.1 Terra, and GPT-6 Luna. Terra requires Codex CLI 0.159.0 or later.
 - **Deeper reasoning** — use more reasoning effort (slower, more thorough)
 - **Custom instructions** — steer the review with free-text prompts (e.g. _focus on security_, _explain the auth flow_)
 - **Inline review comments** — add comments on specific diff lines and submit directly to GitHub as an approval, request for changes, or comment
