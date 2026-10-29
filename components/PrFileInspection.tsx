@@ -300,7 +300,8 @@ export function PrFileInspection({
     renderThreadOverride: combined ? renderCombinedThread : undefined,
     path: entry.file.path,
     activeKey,
-    inline: combined ? combinedThreads.filter((t) => t.inline).map((t) => t.thread) : inline,
+    // Unchanged moves keep all published discussions below both source and Markdown views.
+    inline: unchangedMove ? [] : combined ? combinedThreads.filter((t) => t.inline).map((t) => t.thread) : inline,
     refresh: refreshThreads,
     replaceThread: discussion.replace,
   });

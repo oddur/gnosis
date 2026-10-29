@@ -99,6 +99,36 @@ void app.whenReady().then(async () => {
       false,
       'Collapsed Markdown moves do not show preview preparation'
     );
+    await js(`{
+      window.electronAPI.renderMarkdownReview = async () => {
+        const tree = {type:'root',children:[{type:'element',tagName:'p',properties:{},children:[{type:'text',value:'Unchanged document'}]}]};
+        return {blocks:[{id:'one',change:'unchanged',tree,before:{side:'before',start:1,end:2},after:{side:'after',start:1,end:2}}],clean:tree,deleted:false,sourceOnly:false};
+      };
+    }; undefined`);
+    const assertSingleDiscussion = async () => {
+      assert.equal(
+        await js(
+          "document.querySelector('.commit-stream-file').textContent.split('Please keep this public import path compatible.').length-1"
+        ),
+        1,
+        'Unchanged Markdown moves show each discussion once'
+      );
+      assert.ok(await js("document.querySelector('.changes-other-threads')?.textContent.includes('Please keep')"));
+    };
+    for (const mode of ['Changes', 'Combined']) {
+      await click(mode);
+      await wait("document.querySelector('.changes-file-stats')?.textContent==='Moved · contents unchanged'");
+      await assertSingleDiscussion();
+      await click('Show file');
+      await wait("!!document.querySelector('.markdown-review')");
+      await assertSingleDiscussion();
+      await click('Source');
+      await wait("!document.querySelector('.markdown-review') && window.deepAll('[data-line]').length>=2");
+      await assertSingleDiscussion();
+      await click('Preview');
+      await wait("!!document.querySelector('.markdown-review')");
+      await assertSingleDiscussion();
+    }
     await click('src/moved.ts');
     await wait("[...document.querySelectorAll('main button')].some(b=>b.textContent.trim()==='Show file')");
     await click('Jump to line');
