@@ -62,8 +62,8 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.electronAPI.loadPreferences().then(p => p.model)'), 'gpt-6-astra');
     assert.equal(
       await js('window.electronAPI.loadPreferences().then(p => p.proactiveReviewOverrides)'),
-      false,
-      'The workbench model must apply to briefings too'
+      true,
+      'The explanation model must preserve the separate briefing selection'
     );
     await js(`document.querySelector('[aria-label="Settings"]').click()`);
     await wait(`!!document.querySelector('[aria-label="Ignore Dependabot PRs"]')`);
@@ -86,7 +86,7 @@ void app.whenReady().then(async () => {
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
     await wait("document.querySelector('.briefing-panel')?.textContent.includes('Cancellation must release')");
-    match(await js(`document.querySelector('[aria-label="Briefing model"]').textContent`), /GPT-6 Astra/);
+    match(await js(`document.querySelector('[aria-label="Briefing model"]').textContent`), /Sonnet 5.5/);
     await js('document.querySelector(\'.queue-disclosure[aria-label*="Introduce"]\').click()');
     assert.equal(await js("document.querySelectorAll('.queue-member').length"), 3);
     await capture('queue-light');

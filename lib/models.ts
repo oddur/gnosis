@@ -58,6 +58,7 @@ export const PROVIDERS = {
 } as const;
 
 export const DEFAULT_CODEX_MODEL: CodexModel = 'gpt-6.1-sol';
+export const DEFAULT_BRIEFING_CODEX_MODEL: CodexModel = 'gpt-6.1-terra';
 
 /** Keep provider and model together, including when loading older preferences. */
 export function normalizeModelSelection(

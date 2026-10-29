@@ -85,7 +85,7 @@ import { protectExplainerFrames, validateExplainerInBrowser } from './explainer-
 import { checkForUpdate } from '../lib/updater';
 import { renderDiffHunk, reRenderAllHunks } from '../lib/highlight';
 import { parseDiffLines } from '../lib/diff-lines';
-import { setBinaryOverride, detectBinaryPath, resolveBinaryPath } from '../lib/providers/shared';
+import { setBinaryOverride, detectBinaryPath, checkCliInstalled } from '../lib/providers/shared';
 import { getProvider } from '../lib/provider';
 import { buildSlideChatSystemPrompt, buildSlideChatUserMessage } from '../lib/chat-agent';
 import { buildIndexedHunks, expandFullDiff, formatHunkIndexForPrompt, sortDiffHunks } from '../lib/diff-parse';
@@ -1247,12 +1247,10 @@ ipcMain.handle('detect-binary-path', (_event, name: string) => {
   return detectBinaryPath(name, extra);
 });
 
-ipcMain.handle('check-cli-installed', (_event, provider: string) => {
+ipcMain.handle('check-cli-installed', (_event, provider: string, refresh = false) => {
   if (provider !== 'claude' && provider !== 'codex') throw new Error('Unknown CLI provider');
   const extra = [`${os.homedir()}/.volta/bin/${provider}`];
-  const resolved = resolveBinaryPath(provider, extra);
-  const installed = path.isAbsolute(resolved) && fs.existsSync(resolved);
-  return { installed, resolvedPath: resolved };
+  return checkCliInstalled(provider, extra, refresh === true);
 });
 
 ipcMain.handle('list-reviews', () => {

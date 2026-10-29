@@ -1,7 +1,15 @@
 import type { Preferences } from './types';
 import { DEFAULT_QUEUE_FILTERS, normalizeQueueFilters, type QueueFilters } from './queue-filters';
 import type { QueueViewsState } from './saved-views';
-import { normalizeModelSelection, type Provider, type ModelId } from './models';
+import {
+  DEFAULT_CLAUDE_MODEL,
+  DEFAULT_FAST_CLAUDE_MODEL,
+  DEFAULT_CODEX_MODEL,
+  DEFAULT_BRIEFING_CODEX_MODEL,
+  normalizeModelSelection,
+  type Provider,
+  type ModelId,
+} from './models';
 
 export const SETUP_GOALS = [
   {
@@ -33,6 +41,8 @@ export interface SetupDraft {
   dailyLimit: number;
   provider: Provider;
   model: ModelId;
+  briefingProvider: Provider;
+  briefingModel: ModelId;
   names: Record<SetupGoal, string>;
   start: SetupGoal;
   refinements: Partial<QueueFilters>;
@@ -49,6 +59,30 @@ export interface SetupView {
   name: string;
   filters: QueueFilters;
 }
+
+export function recommendedSetupModel(provider: Provider, role: 'explanation' | 'briefing'): ModelId {
+  if (role === 'briefing') return provider === 'codex' ? DEFAULT_BRIEFING_CODEX_MODEL : DEFAULT_FAST_CLAUDE_MODEL;
+  return provider === 'codex' ? DEFAULT_CODEX_MODEL : DEFAULT_CLAUDE_MODEL;
+}
+
+/** Offer only installed tools, preserving an available saved choice for each job. */
+export function setupForInstalledProviders(draft: SetupDraft, providers: Provider[]): SetupDraft {
+  if (!providers.length) return draft;
+  const provider = providers.includes(draft.provider) ? draft.provider : providers[0];
+  const briefingProvider = providers.includes(draft.briefingProvider) ? draft.briefingProvider : provider;
+  return {
+    ...draft,
+    configureAI: true,
+    provider,
+    model: provider === draft.provider ? draft.model : recommendedSetupModel(provider, 'explanation'),
+    briefingProvider,
+    briefingModel:
+      briefingProvider === draft.briefingProvider
+        ? draft.briefingModel
+        : recommendedSetupModel(briefingProvider, 'briefing'),
+  };
+}
+
 export function initialSetup(prefs: Preferences, views?: QueueViewsState): SetupDraft {
   const name = (goal: SetupGoal, fallback: string) => {
     const own = views?.views.find((view) => view.id === `setup:${goal}`);
@@ -69,8 +103,14 @@ export function initialSetup(prefs: Preferences, views?: QueueViewsState): Setup
     configureAI: false,
     autoBriefings: prefs.autoBriefings === true,
     dailyLimit: prefs.briefingDailyLimit ?? 10,
-    provider: prefs.proactiveReviewOverrides ? prefs.proactiveProvider : prefs.provider,
-    model: prefs.proactiveReviewOverrides ? prefs.proactiveModel : prefs.model,
+    provider: prefs.provider,
+    model: prefs.firstRunSeen ? prefs.model : recommendedSetupModel(prefs.provider, 'explanation'),
+    briefingProvider: prefs.proactiveReviewOverrides ? prefs.proactiveProvider : prefs.provider,
+    briefingModel: prefs.proactiveReviewOverrides
+      ? prefs.proactiveModel
+      : prefs.firstRunSeen
+        ? prefs.model
+        : recommendedSetupModel(prefs.provider, 'briefing'),
     names: {
       review: name('review', 'Needs my review'),
       repositories: name('repositories', 'Repository activity'),
@@ -92,6 +132,12 @@ export function normalizeSetup(input: unknown): SetupDraft {
     ),
   ].slice(0, 100);
   const selection = normalizeModelSelection(value.provider, value.model);
+  const briefing = normalizeModelSelection(
+    value.briefingProvider ?? selection.provider,
+    value.briefingModel ??
+      (value.configureAI ? selection.model : recommendedSetupModel(selection.provider, 'briefing')),
+    true
+  );
   const names = Object.fromEntries(
     SETUP_GOALS.map((goal) => [
       goal.id,
@@ -112,6 +158,8 @@ export function normalizeSetup(input: unknown): SetupDraft {
         ? Math.min(100, Math.max(1, Math.round(value.dailyLimit)))
         : 10,
     ...selection,
+    briefingProvider: briefing.provider,
+    briefingModel: briefing.model,
     names,
     start: value.start && goals.includes(value.start) ? value.start : (goals[0] ?? 'review'),
     refinements: normalizeQueueFilters(value.refinements),
@@ -151,8 +199,8 @@ export function setupPreferences(prefs: Preferences, input: SetupDraft): Prefere
           provider: draft.provider,
           model: draft.model,
           proactiveReviewOverrides: true,
-          proactiveProvider: draft.provider,
-          proactiveModel: draft.model,
+          proactiveProvider: draft.briefingProvider,
+          proactiveModel: draft.briefingModel,
         }
       : {}),
     firstRunSeen: true,

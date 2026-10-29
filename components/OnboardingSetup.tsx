@@ -1,5 +1,5 @@
 import { GitHubIcon } from '../lib/constants';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ArrowRight, Check, X } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
 import { Button } from './ui/button';
@@ -18,9 +18,17 @@ import {
 import { RepositoryPicker } from './RepositoryPicker';
 import { SearchableSelect } from './SearchableSelect';
 import { QueueFilterPanel } from './QueueFilterPanel';
-import { SETUP_GOALS, SETUP_STEPS, setupViews, type SetupDraft, type SetupStep } from '../lib/onboarding';
+import {
+  SETUP_GOALS,
+  SETUP_STEPS,
+  setupViews,
+  recommendedSetupModel,
+  setupForInstalledProviders,
+  type SetupDraft,
+  type SetupStep,
+} from '../lib/onboarding';
 import { normalizeQueueFilters } from '../lib/queue-filters';
-import { PROVIDERS, PROVIDER_IDS, normalizeModelSelection, type Provider } from '../lib/models';
+import { PROVIDERS, PROVIDER_IDS, type Provider } from '../lib/models';
 import type { QueueItem } from '../lib/workbench';
 
 export function OnboardingSetup({
@@ -45,9 +53,29 @@ export function OnboardingSetup({
   saveError: string;
 }) {
   const [error, setError] = useState('');
-  const [cli, setCli] = useState<'checking' | 'found' | 'missing' | 'error'>('checking');
+  const [cli, setCli] = useState<Partial<Record<Provider, 'found' | 'missing' | 'error'>> | null>(null);
   const [retry, setRetry] = useState(0);
   const [linkError, setLinkError] = useState('');
+  const latest = useRef({ draft, onChange });
+  latest.current = { draft, onChange };
+  const available = PROVIDER_IDS.filter((id) => cli?.[id] === 'found');
+  const modelOptions = (role: 'explanation' | 'briefing') =>
+    available.flatMap((provider) =>
+      PROVIDERS[provider].models.map((model) => ({
+        value: model.id,
+        label: `${PROVIDERS[provider].label} · ${model.label}${model.id === recommendedSetupModel(provider, role) ? ' (recommended)' : ''}`,
+      }))
+    );
+  const chooseModel = (model: string, role: 'explanation' | 'briefing') => {
+    const provider = available.find((id) => PROVIDERS[id].models.some((item) => item.id === model));
+    const selected = provider && PROVIDERS[provider].models.find((item) => item.id === model);
+    if (!provider || !selected) return;
+    patch(
+      role === 'explanation'
+        ? { provider, model: selected.id, configureAI: true }
+        : { briefingProvider: provider, briefingModel: selected.id, configureAI: true }
+    );
+  };
   const patch = (next: Partial<SetupDraft>) => {
     setError('');
     onChange({ ...draft, ...next });
@@ -57,25 +85,34 @@ export function OnboardingSetup({
   useEffect(() => {
     if (active !== 'ai') return;
     let alive = true;
-    setCli('checking');
-    window.electronAPI
-      .checkCliInstalled(draft.provider)
-      .then((result) => {
-        if (alive) setCli(result.installed ? 'found' : 'missing');
-      })
-      .catch(() => {
-        if (alive) setCli('error');
-      });
+    setCli(null);
+    void Promise.allSettled(PROVIDER_IDS.map((provider) => window.electronAPI.checkCliInstalled(provider, true))).then(
+      (results) => {
+        if (!alive) return;
+        const statuses: Partial<Record<Provider, 'found' | 'missing' | 'error'>> = {};
+        results.forEach((result, index) => {
+          statuses[PROVIDER_IDS[index]] =
+            result.status === 'rejected' ? 'error' : result.value.installed ? 'found' : 'missing';
+        });
+        setCli(statuses);
+        const installed = PROVIDER_IDS.filter((id) => statuses[id] === 'found');
+        if (installed.length) latest.current.onChange(setupForInstalledProviders(latest.current.draft, installed));
+      }
+    );
     return () => {
       alive = false;
     };
-  }, [active, draft.provider, retry]);
+  }, [active, retry]);
   const validate = () => {
     if (active === 'goals' && !draft.local && !draft.goals.length)
       return 'Choose at least one goal, or use local reviews.';
     if (active === 'github' && !login) return 'Connect GitHub, or choose local reviews on the previous step.';
     if (active === 'repositories' && draft.goals.includes('repositories') && !draft.repositories.length)
       return 'Choose at least one repository for Repository activity.';
+    if (active === 'ai' && !available.length)
+      return cli
+        ? 'Install an AI tool and check again, or choose Set up AI later.'
+        : 'Checking installed AI tools. You can also set up AI later.';
     return '';
   };
   const move = (step: string) => {
@@ -257,75 +294,112 @@ export function OnboardingSetup({
             <QuestionnaireItem name="ai">
               <QuestionnaireTitle>Choose how AI helps</QuestionnaireTitle>
               <QuestionnaireDescription>
-                You can read PRs and inspect diffs without AI. Explanations and chat use a tool installed on your
-                computer.
+                Choose a model for detailed explanations and one for quick briefings. You can change either later in
+                Settings.
               </QuestionnaireDescription>
-              <div className="setup-models">
-                <label className="setup-field">
-                  AI tool
-                  <SearchableSelect
-                    label="AI tool"
-                    value={draft.provider}
-                    options={PROVIDER_IDS.map((id) => ({ value: id, label: PROVIDERS[id].label }))}
-                    onValueChange={(value) =>
-                      patch({ ...normalizeModelSelection(value as Provider, undefined), configureAI: true })
-                    }
-                  />
-                </label>
-                <label className="setup-field">
-                  Model
-                  <SearchableSelect
-                    label="AI model"
-                    value={draft.model}
-                    options={PROVIDERS[draft.provider].models.map((model) => ({ value: model.id, label: model.label }))}
-                    onValueChange={(model) =>
-                      patch({ ...normalizeModelSelection(draft.provider, model), configureAI: true })
-                    }
-                  />
-                </label>
-              </div>
-              <div className="setup-cli" role="status">
-                {cli === 'checking'
-                  ? 'Looking for the AI tool…'
-                  : cli === 'found'
-                    ? 'Tool found. Sign in through its terminal command before generating.'
-                    : cli === 'missing'
-                      ? 'Tool not found. You can install it later.'
-                      : 'Could not check the tool. Retry or set it up later.'}
-                <Button type="button" variant="ghost" size="sm" onClick={() => setRetry((value) => value + 1)}>
+              <div className="setup-cli">
+                <span role="status">
+                  {cli === null
+                    ? 'Checking Claude Code and Codex…'
+                    : available.length
+                      ? `${available.map((id) => (id === 'claude' ? 'Claude Code' : 'Codex')).join(' and ')} found on this computer.`
+                      : 'No AI tool found yet. You can still read PRs and inspect diffs.'}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={cli === null}
+                  onClick={() => setRetry((value) => value + 1)}
+                >
                   Check again
                 </Button>
               </div>
-              <Button
-                type="button"
-                variant="link"
-                className="setup-link"
-                onClick={() => {
-                  setLinkError('');
-                  void window.electronAPI
-                    .openExternal(
-                      draft.provider === 'claude'
-                        ? 'https://code.claude.com/docs/en/setup'
-                        : 'https://developers.openai.com/codex/cli/'
-                    )
-                    .catch(() => setLinkError('Could not open the guide. Try again.'));
-                }}
-              >
-                Installation and sign-in guide <ArrowRight size={14} />
-              </Button>
+              {cli &&
+                PROVIDER_IDS.filter((id) => cli[id] === 'error').map((id) => (
+                  <p key={id} className="setup-note" role="status">
+                    Could not check {PROVIDERS[id].label}. Use Check again to retry.
+                  </p>
+                ))}
+              {available.length > 0 && (
+                <div className="setup-ai-roles">
+                  <div className="setup-ai-role">
+                    <div>
+                      <label htmlFor="setup-explanation-model">Explanations</label>
+                      <p id="setup-explanation-help" className="setup-note">
+                        Guided walkthroughs of the code. Start one when you need it.
+                      </p>
+                    </div>
+                    <SearchableSelect
+                      id="setup-explanation-model"
+                      label="Explanation model"
+                      describedBy="setup-explanation-help"
+                      value={draft.model}
+                      options={modelOptions('explanation')}
+                      onValueChange={(model) => chooseModel(model, 'explanation')}
+                    />
+                  </div>
+                  {!draft.local && (
+                    <div className="setup-ai-role">
+                      <div>
+                        <label htmlFor="setup-briefing-model">Briefings</label>
+                        <p id="setup-briefing-help" className="setup-note">
+                          Short summaries to help you triage the review queue.
+                        </p>
+                      </div>
+                      <SearchableSelect
+                        id="setup-briefing-model"
+                        label="Briefing model"
+                        describedBy="setup-briefing-help"
+                        value={draft.briefingModel}
+                        options={modelOptions('briefing')}
+                        onValueChange={(model) => chooseModel(model, 'briefing')}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+              {cli && (
+                <details className="setup-ai-guides" open={available.length === 0 || undefined}>
+                  <summary>
+                    {available.length ? 'Installation and sign-in guides' : 'Install Claude Code or Codex'}
+                  </summary>
+                  <p className="setup-note">
+                    Sign in through the tool before generating. Finding an installed tool does not check your account or
+                    model access.
+                  </p>
+                  <div className="setup-guide-links">
+                    {PROVIDER_IDS.map((provider) => (
+                      <Button
+                        key={provider}
+                        type="button"
+                        variant="link"
+                        className="setup-link"
+                        onClick={() => {
+                          setLinkError('');
+                          void window.electronAPI
+                            .openExternal(
+                              provider === 'claude'
+                                ? 'https://code.claude.com/docs/en/setup'
+                                : 'https://developers.openai.com/codex/cli/'
+                            )
+                            .catch(() => setLinkError('Could not open the guide. Try again.'));
+                        }}
+                      >
+                        {provider === 'claude' ? 'Claude Code' : 'Codex'} guide <ArrowRight size={14} />
+                      </Button>
+                    ))}
+                  </div>
+                </details>
+              )}
               {linkError && <p role="alert">{linkError}</p>}
-              {!draft.local && (
-                <>
+              {!draft.local && available.length > 0 && (
+                <div className="setup-ai-automation">
                   <label className="setup-check">
                     <input
                       type="checkbox"
                       checked={draft.autoBriefings}
-                      onChange={(event) =>
-                        patch({
-                          autoBriefings: event.target.checked,
-                          configureAI: event.target.checked || draft.configureAI,
-                        })
-                      }
+                      onChange={(event) => patch({ autoBriefings: event.target.checked })}
                     />
                     Create briefings automatically for my active view
                   </label>
@@ -342,12 +416,11 @@ export function OnboardingSetup({
                         }
                       />
                       <span className="setup-note">
-                        Uses your selected model and AI account allowance. Full explanations still start only when you
-                        ask.
+                        Uses your briefing model and its account allowance. Explanations start only when you ask.
                       </span>
                     </label>
                   )}
-                </>
+                </div>
               )}
               <Button
                 type="button"
@@ -391,10 +464,21 @@ export function OnboardingSetup({
               )}
               <ul className="setup-summary">
                 {draft.configureAI && (
-                  <li>
-                    AI model:{' '}
-                    {PROVIDERS[draft.provider].models.find((model) => model.id === draft.model)?.label ?? draft.model}
-                  </li>
+                  <>
+                    <li>
+                      Explanations: {PROVIDERS[draft.provider].label} ·{' '}
+                      {PROVIDERS[draft.provider].models.find((model) => model.id === draft.model)?.label}
+                    </li>
+                    {!draft.local && (
+                      <li>
+                        Briefings: {PROVIDERS[draft.briefingProvider].label} ·{' '}
+                        {
+                          PROVIDERS[draft.briefingProvider].models.find((model) => model.id === draft.briefingModel)
+                            ?.label
+                        }
+                      </li>
+                    )}
+                  </>
                 )}
                 {!draft.local && (
                   <li>
@@ -405,7 +489,7 @@ export function OnboardingSetup({
                 {!draft.local && <li>{draft.ignoreDependabot ? 'Dependabot hidden' : 'Dependabot included'}</li>}
                 <li>
                   {draft.autoBriefings && !draft.local
-                    ? `Automatic briefings · up to ${draft.dailyLimit}/day · ${draft.model}`
+                    ? `Automatic briefings · up to ${draft.dailyLimit}/day`
                     : 'AI generation starts only when you ask'}
                 </li>
               </ul>
@@ -427,7 +511,7 @@ export function OnboardingSetup({
             <div>
               <QuestionnairePrevious disabled={saving}>Back</QuestionnairePrevious>
               <QuestionnaireNext
-                disabled={saving}
+                disabled={saving || (active === 'ai' && available.length === 0)}
                 onClick={(event) => {
                   event.preventDefault();
                   move(steps[steps.indexOf(active) + 1]);

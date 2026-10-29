@@ -86,13 +86,60 @@ void app.whenReady().then(async () => {
     await capture('filters-light');
     await click('Next');
     await current('Choose how AI helps');
+    await wait("document.querySelector('.setup-cli')?.textContent.includes('No AI tool')");
+    await capture('ai-missing');
+    assert.equal(await js("[...document.querySelectorAll('.setup-actions button')].find(b=>b.textContent==='Next').disabled"), true);
+    assert.equal(await js("!!document.querySelector('[aria-label=\"Explanation model\"]')"), false);
+    await js("sessionStorage.setItem('ftue-tools', JSON.stringify({claude:'found'}))");
+    await click('Check again');
+    await wait("document.querySelector('[aria-label=\"Explanation model\"]')?.textContent.includes('Opus 5.5')");
+    assert.match(await js<string>("document.querySelector('[aria-label=\"Briefing model\"]').textContent"), /Sonnet 5.5/);
+    await capture('ai-claude');
+    await click('Explanation model');
+    assert.equal(await js("[...document.querySelectorAll('[role=option]')].some(e=>e.textContent.includes('GPT'))"), false);
+    await js("document.querySelector('[aria-label=\"Search explanation model\"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))");
+    await js("sessionStorage.setItem('ftue-tools', JSON.stringify({codex:'found'}))");
+    await click('Check again');
+    await wait("document.querySelector('[aria-label=\"Explanation model\"]')?.textContent.includes('GPT-6.1 Sol')");
+    assert.match(await js<string>("document.querySelector('[aria-label=\"Briefing model\"]').textContent"), /GPT-6.1 Terra/);
+    await capture('ai-codex');
+    await js("sessionStorage.setItem('ftue-tools', JSON.stringify({claude:'error',codex:'found'}))");
+    await click('Check again');
+    await wait("document.querySelector('.setup-body')?.textContent.includes('Could not check Claude')");
+    assert.match(await js<string>("document.querySelector('[aria-label=\"Explanation model\"]').textContent"), /GPT-6.1 Sol/);
+    await js("sessionStorage.setItem('ftue-tools', JSON.stringify({claude:'found',codex:'found'}))");
+    await click('Check again');
+    await wait("document.querySelector('.setup-cli')?.textContent.includes('Claude Code and Codex found')");
+    await click('Explanation model');
+    await fill('[aria-label="Search explanation model"]', 'Opus');
+    await wait("[...document.querySelectorAll('[role=option]')].some(e=>e.textContent.includes('Opus 5.5'))");
+    await js("[...document.querySelectorAll('[role=option]')].find(e=>e.textContent.includes('Opus 5.5')).click()");
     await capture('ai-light');
     assert.equal(
       await js("document.querySelector('.setup-body > fieldset:not([hidden]) input[type=checkbox]').checked"),
       false
     );
-    await click('Set up AI later');
+    await click('Finish later');
+    await wait("!document.querySelector('.setup-dialog')");
+    win.reload();
+    await wait("document.body.innerText.includes('Resume setup')");
+    await click('Resume setup');
+    await current('Choose how AI helps');
+    await wait("document.querySelector('.setup-cli')?.textContent.includes('Claude Code and Codex found')");
+    assert.match(await js<string>("document.querySelector('[aria-label=\"Explanation model\"]').textContent"), /Opus 5.5/);
+    assert.match(await js<string>("document.querySelector('[aria-label=\"Briefing model\"]').textContent"), /GPT-6.1 Terra/);
+    await js("document.documentElement.classList.add('dark')");
+    win.setSize(640, 700);
+    await capture('ai-narrow-dark');
+    assert.equal(await js("document.querySelector('.setup-dialog').scrollWidth<=document.querySelector('.setup-dialog').clientWidth"), true);
+    win.setSize(560, 700);
+    await capture('ai-stacked-dark');
+    assert.equal(await js("document.querySelector('.setup-dialog').scrollWidth<=document.querySelector('.setup-dialog').clientWidth"), true);
+    await js("document.documentElement.classList.remove('dark')");
+    win.setSize(1280, 850);
+    await click('Next');
     await current('Your queue');
+    assert.equal(await js("document.querySelector('.setup-summary').textContent.includes('Explanations: Claude · Opus 5.5') && document.querySelector('.setup-summary').textContent.includes('Briefings: Codex · GPT-6.1 Terra')"), true);
     await capture('preview-light');
     assert.equal(await js("document.querySelector('.setup-body').getBoundingClientRect().bottom <= document.querySelector('.setup-actions').getBoundingClientRect().top"), true, 'preview scrolls above the footer');
     await click('Apply setup');
@@ -100,6 +147,10 @@ void app.whenReady().then(async () => {
     await js("sessionStorage.setItem('ftue-retry','true')");
     await click('Apply setup');
     await wait("!document.querySelector('.setup-dialog')");
+    assert.equal(await js("window.electronAPI.loadPreferences().then(p=>p.model==='claude-opus-5-5' && p.proactiveProvider==='codex' && p.proactiveModel==='gpt-6.1-terra' && p.proactiveReviewOverrides)"), true);
+    await js("window.selectOption('[aria-label=\"Review model\"]', 'codex:gpt-6.1-sol')");
+    await wait("document.querySelector('[aria-label=\"Review model\"]')?.textContent.includes('GPT-6.1 Sol')");
+    assert.equal(await js("window.electronAPI.loadPreferences().then(p=>p.proactiveReviewOverrides && p.proactiveModel==='gpt-6.1-terra')"), true, 'queue model changes preserve the briefing choice');
     assert.equal(
       await js("Object.values(JSON.parse(sessionStorage.getItem('fixture-views'+location.search))).length>0"),
       true

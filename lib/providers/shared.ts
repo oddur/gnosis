@@ -86,17 +86,23 @@ export function detectBinaryPath(name: string, extraCandidates: string[] = []): 
 
 /**
  * Resolve the absolute path to a CLI binary. Checks user overrides first,
- * then cache, then falls back to auto-detection.
+ * then cache, then falls back to auto-detection. Explicit setup checks can
+ * refresh the cache after a tool is installed or moved, keeping custom paths.
  */
-export function resolveBinaryPath(name: string, extraCandidates: string[] = []): string {
+export function resolveBinaryPath(name: string, extraCandidates: string[] = [], refresh = false): string {
   const override = overrides.get(name);
   if (override) return override;
 
   const cached = cache.get(name);
-  if (cached) return cached;
+  if (cached && !refresh) return cached;
 
   const detected = detectBinaryPath(name, extraCandidates);
   return cacheAndReturn(name, detected);
+}
+
+export function checkCliInstalled(name: string, extraCandidates: string[] = [], refresh = false) {
+  const resolvedPath = resolveBinaryPath(name, extraCandidates, refresh);
+  return { installed: path.isAbsolute(resolvedPath) && fs.existsSync(resolvedPath), resolvedPath };
 }
 
 // ── Shared CLI spawn helpers ────────────────────────────────────
