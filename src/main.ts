@@ -1,3 +1,7 @@
+import { approximateBytes } from '../lib/byte-cache';
+import type { PreparedInventories } from '../lib/pr-inspection-cache';
+import { createInspectionRequests } from './inspection-requests';
+import { compactInventory } from '../lib/inspection-limits';
 import { createOnboardingService } from './onboarding-service';
 import type { OnboardingState, SetupDraft } from '../lib/onboarding';
 import type { Provider } from '../lib/models';
@@ -2630,6 +2634,7 @@ ipcMain.handle('update-file-filters', async (_event, action: FileFilterAction) =
   return value;
 });
 async function classifySnapshot(client: ReturnType<typeof changesClient>, snapshot: import('../lib/pr-changes').PrChanges) {
+  snapshot = compactInventory(snapshot);
   return { ...snapshot, fileKinds: await fileClassifications.read(client, snapshot) };
 }
 ipcMain.handle('file-classifications', async (_event, request: PrFileRequest) => {
@@ -2671,13 +2676,44 @@ ipcMain.handle('clear-github-cache', () => {
 // Local-only restore: never let a network-bound PR delay saved inventories for the rest of the queue.
 ipcMain.handle('prepared-inventories', async (_event, revisions: InspectionRevision[]) => {
   const client = changesClient();
-  return {
-    changes: await Promise.all((await Promise.all(revisions.map(async r => await prChanges.restore(client, r.url, r) ?? prChanges.cached(client, r.url, r)))).flatMap(value => value ?? []).map(value => classifySnapshot(client, value))),
-    commits: (await Promise.all(revisions.map(async r => await prCommits.restore(client, r.url, r) ?? prCommits.cached(client, r.url, r)))).flatMap(value => value ?? []),
-  };
+  const result: PreparedInventories = { changes: [], commits: [] };
+  let bytes = 0;
+  // The renderer requests small batches. Also bound direct callers and avoid
+  // parallel materialization of an entire queue's disk cache in the main process.
+  for (const revision of revisions.slice(0, 16)) {
+    const snapshot = await prChanges.restore(client, revision.url, revision) ?? prChanges.cached(client, revision.url, revision);
+    const changes = snapshot && await classifySnapshot(client, snapshot);
+    const commits = await prCommits.restore(client, revision.url, revision) ?? prCommits.cached(client, revision.url, revision);
+    const size = approximateBytes({ changes, commits });
+    if (bytes + size > 8 * 1024 * 1024) break;
+    bytes += size;
+    if (changes) result.changes.push(changes);
+    if (commits) result.commits.push(commits);
+  }
+  return result;
 });
-ipcMain.handle('pr-changes', (_event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) => withGitHubPriority(options.background ? 'background' : 'interactive', async () => { const client = changesClient(); return classifySnapshot(client, await prChanges.manifest(client, url, refresh, options)); }));
-ipcMain.handle('pr-commits', (_event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) => withGitHubPriority(options.background ? 'background' : 'interactive', () => prCommits.list(changesClient(), url, refresh, options)));
+const inspectionRequests = createInspectionRequests();
+const inspectionOwners = new WeakSet<Electron.WebContents>();
+function runInspection<T>(event: Electron.IpcMainInvokeEvent, options: InspectionLoadOptions, operation: (signal: AbortSignal) => Promise<T>) {
+  if (event.senderFrame !== event.sender.mainFrame) throw new Error('Invalid inspection window.');
+  if (!inspectionOwners.has(event.sender)) {
+    inspectionOwners.add(event.sender);
+    const owner = event.sender.id;
+    event.sender.once('destroyed', () => inspectionRequests.cancelOwner(owner));
+  }
+  return inspectionRequests.run(event.sender.id, options.requestId, operation);
+}
+ipcMain.handle('cancel-inspection', (event, id: string) => {
+  if (event.senderFrame === event.sender.mainFrame && typeof id === 'string') inspectionRequests.cancel(event.sender.id, id);
+});
+ipcMain.handle('pr-changes', (event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) =>
+  withGitHubPriority(options.background ? 'background' : 'interactive', () => runInspection(event, options, async signal => {
+    const client = changesClient();
+    return classifySnapshot(client, await prChanges.manifest(client, url, refresh, options, signal));
+  })));
+ipcMain.handle('pr-commits', (event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) =>
+  withGitHubPriority(options.background ? 'background' : 'interactive', () => runInspection(event, options,
+    signal => prCommits.list(changesClient(), url, refresh, options, signal))));
 const inspectionPrefetchGuard = (background: boolean) => {
   const token = getResolvedToken();
   return background ? () => {

@@ -1,6 +1,9 @@
 import type { ActivityTask } from './activity';
 import { changesRevision, type InspectionRevision, type PrChanges, type PrChangeFile } from './pr-changes';
 import type { PrCommits, PrCommit } from './pr-commits';
+import { createSharedRead, readError } from './shared-read';
+import { createByteCache } from './byte-cache';
+import { INVENTORY_MEMORY_BYTES } from './inspection-limits';
 
 const key = (revision: InspectionRevision) => `${revision.url}@${changesRevision(revision)}`;
 export interface PreparedInventories {
@@ -9,8 +12,8 @@ export interface PreparedInventories {
 }
 interface Dependencies {
   restore?: (revisions: InspectionRevision[]) => Promise<PreparedInventories>;
-  changes: (revision: InspectionRevision, refresh: boolean, background: boolean) => Promise<PrChanges>;
-  commits: (revision: InspectionRevision, refresh: boolean, background: boolean) => Promise<PrCommits>;
+  changes: (revision: InspectionRevision, refresh: boolean, background: boolean, signal?: AbortSignal) => Promise<PrChanges>;
+  commits: (revision: InspectionRevision, refresh: boolean, background: boolean, signal?: AbortSignal) => Promise<PrCommits>;
   file: (snapshot: PrChanges, file: PrChangeFile) => Promise<unknown>;
   comparison: (list: PrCommits, commit: PrCommit) => Promise<PrChanges | undefined>;
   review: (snapshot: PrChanges) => Promise<unknown>;
@@ -44,15 +47,19 @@ export interface InspectionPriorities {
 /** Revision-aware tab data and one background work step at a time. No React mount is required. */
 export function createPrInspectionCache(deps: Dependencies) {
   const now = deps.now ?? Date.now;
-  const values = new Map<string, Entry>();
+  const values = createByteCache<string, Entry>(INVENTORY_MEMORY_BYTES, 1000);
   const listeners = new Set<() => void>();
   let version = 0;
   const changed = () => { version++; listeners.forEach(listener => listener()); };
-  const latest = new Map<string, Entry>();
+  const latest = new Map<string, Partial<Record<keyof Entry, string>>>();
+  const latestEntry = (url: string): Entry => ({
+    changes: values.get(latest.get(url)?.changes ?? '')?.changes,
+    commits: values.get(latest.get(url)?.commits ?? '')?.commits,
+  });
   const jobs = new Map<string, Job>();
   const completed = new Set<string>();
   const restored = new Set<string>();
-  const pending = new Map<string, { promise: Promise<PrChanges | PrCommits>; background: boolean }>();
+  const pending = new Map<string, { task: ReturnType<typeof createSharedRead<PrChanges | PrCommits>>; background: boolean }>();
   let scope: string | null = null,
     epoch = 0;
   let order: string[] = [];
@@ -66,12 +73,12 @@ export function createPrInspectionCache(deps: Dependencies) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   function remember(value: PrChanges | PrCommits, kind: keyof Entry) {
     const id = key({ url: value.url, baseSha: value.metadata.baseSha, headSha: value.metadata.headSha });
-    const entry = values.get(id) ?? {};
+    const entry = { ...values.get(id) };
     if (kind === 'changes') entry.changes = value as PrChanges;
     else entry.commits = value as PrCommits;
-    const current = latest.get(value.url)?.[kind];
+    const current = latestEntry(value.url)[kind];
     if (!current || value.fetchedAt >= current.fetchedAt)
-      latest.set(value.url, { ...latest.get(value.url), [kind]: value });
+      latest.set(value.url, { ...latest.get(value.url), [kind]: id });
     values.delete(id);
     values.set(id, entry);
     while (values.size > 1000) {
@@ -91,45 +98,49 @@ export function createPrInspectionCache(deps: Dependencies) {
     kind: keyof Entry,
     revision: InspectionRevision,
     refresh = false,
-    background = false
+    background = false,
+    signal?: AbortSignal
   ): Promise<T> {
+    if (signal?.aborted) return Promise.reject(readError(signal.reason));
     const saved = values.get(key(revision))?.[kind];
     if (saved && !refresh) return Promise.resolve(saved as T);
     const id = `${kind}:${key(revision)}:${refresh}`;
     const previous = pending.get(id);
-    if (previous && (!previous.background || background)) return previous.promise as Promise<T>;
+    if (previous && !previous.task.signal.aborted && (!previous.background || background)) return previous.task.read(signal) as Promise<T>;
     const generation = epoch;
-    const promise = deps[kind](revision, refresh, background)
+    const task = createSharedRead(sharedSignal => deps[kind](revision, refresh, background, sharedSignal)
       .then((value) => {
         if (generation === epoch) remember(value, kind);
         return value;
       })
       .finally(() => {
-        if (pending.get(id)?.promise === promise) pending.delete(id);
-      });
-    pending.set(id, { promise, background });
-    return promise as Promise<T>;
+        if (pending.get(id)?.task === task) pending.delete(id);
+      }));
+    pending.set(id, { task, background });
+    return task.read(signal) as Promise<T>;
   }
-  const readChanges = (r: InspectionRevision, refresh = false, background = false) =>
-    read<PrChanges>('changes', r, refresh, background);
-  const readCommits = (r: InspectionRevision, refresh = false, background = false) =>
-    read<PrCommits>('commits', r, refresh, background);
+  const readChanges = (r: InspectionRevision, refresh = false, background = false, signal?: AbortSignal) =>
+    read<PrChanges>('changes', r, refresh, background, signal);
+  const readCommits = (r: InspectionRevision, refresh = false, background = false, signal?: AbortSignal) =>
+    read<PrCommits>('commits', r, refresh, background, signal);
   async function step(job: Job, generation: number) {
     const r = job.revision;
     if (job.stage === 0) {
       await readChanges(r, false, true);
+      if (!values.get(key(r))) { finish(job, generation); return; }
       job.stage++;
       return;
     }
     if (job.stage === 1) {
       await readCommits(r, false, true);
+      if (!values.get(key(r))) { finish(job, generation); return; }
       job.stage++;
       return;
     }
     const saved = values.get(key(r));
     if (!saved?.changes || !saved.commits) {
-      const current = latest.get(r.url);
-      if ([current?.changes, current?.commits].some(value => value && changesRevision(value.metadata) !== changesRevision(r))) {
+      const current = latestEntry(r.url);
+      if ([current.changes, current.commits].some(value => value && changesRevision(value.metadata) !== changesRevision(r))) {
         // Discovery moved while GitHub supplied a newer snapshot; wait for its identity.
         finish(job, generation);
       } else {
@@ -139,7 +150,7 @@ export function createPrInspectionCache(deps: Dependencies) {
       }
       return;
     }
-    if (saved.changes.filesTruncated) {
+    if (saved.changes.filesTruncated || saved.changes.patchesDeferred) {
       // Keep both tab inventories. Load files on demand for oversized PRs, instead
       // of flooding GitHub or repeatedly trying to prepare an incomplete review.
       finish(job, generation);
@@ -159,7 +170,7 @@ export function createPrInspectionCache(deps: Dependencies) {
         } catch (error) {
           if (!unsupported(error)) throw error;
         }
-        if (job.comparison && !job.comparison.filesTruncated) return;
+        if (job.comparison && !job.comparison.filesTruncated && !job.comparison.patchesDeferred) return;
         job.comparison = undefined;
       } else {
         const file = job.comparison.files.at(job.comparisonFile);
@@ -222,7 +233,9 @@ export function createPrInspectionCache(deps: Dependencies) {
           await new Promise(resolve => setTimeout(resolve, 0));
           if (!active()) break;
         }
-        const missing = order.filter((id) => !restored.has(id)).flatMap((id) => jobs.get(id)?.revision ?? []);
+        // Bound disk reads and IPC payloads too, rather than restoring a whole
+        // queue's patches into a single transient array.
+        const missing = order.filter((id) => !restored.has(id)).flatMap((id) => jobs.get(id)?.revision ?? []).slice(0, 8);
         if (deps.restore && missing.length) {
           try {
             const inventories = await deps.restore(missing);
@@ -300,8 +313,8 @@ export function createPrInspectionCache(deps: Dependencies) {
     activity,
     readChanges,
     readCommits,
-    peekChanges: (r: InspectionRevision) => values.get(key(r))?.changes ?? latest.get(r.url)?.changes,
-    peekCommits: (r: InspectionRevision) => values.get(key(r))?.commits ?? latest.get(r.url)?.commits,
+    peekChanges: (r: InspectionRevision) => values.get(key(r))?.changes ?? latestEntry(r.url).changes,
+    peekCommits: (r: InspectionRevision) => values.get(key(r))?.commits ?? latestEntry(r.url).commits,
     setTargets(account: string | null, targets: InspectionRevision[], intent: InspectionPriorities = {}) {
       stopped = false;
       if (scope !== account) {

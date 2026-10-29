@@ -3,6 +3,8 @@ import type { Octokit } from '@octokit/rest';
 import { parseGitHubLabels } from './github-labels';
 import { getGitHubClient, githubRateLimit } from './github-client';
 import { preparedChanges, preparedFile, preparedDiff } from './prepared-pr';
+import { GITHUB_PR_FILE_LIMIT } from './inspection-limits';
+export { GITHUB_PR_FILE_LIMIT } from './inspection-limits';
 import { getProvider } from './provider';
 import type { DiffSource } from './diffSource';
 import type {
@@ -133,7 +135,6 @@ function assembleUnifiedDiff(files: ChangedFile[]): string {
   return parts.join('\n') + '\n';
 }
 
-export const GITHUB_PR_FILE_LIMIT = 3000;
 export const LARGE_PR_EXPLANATION_ERROR = 'GitHub exposes at most 3,000 changed files for a PR. Gnosis cannot generate a complete explanation for this PR. Browse the available files in Changes, review smaller PRs individually, or use a local checkout.';
 
 export async function getChangedFiles(
@@ -708,7 +709,7 @@ export class GitHubDiffSource implements DiffSource {
       throw new Error(LARGE_PR_EXPLANATION_ERROR);
     const cached = await preparedChanges(this.octokit, this.key, metadata);
     if (cached?.filesTruncated) throw new Error(LARGE_PR_EXPLANATION_ERROR);
-    if (cached) return cached.files.map(file => ({ filename: file.path, previous_filename: file.previousPath,
+    if (cached && !cached.patchesDeferred) return cached.files.map(file => ({ filename: file.path, previous_filename: file.previousPath,
       status: file.status, additions: file.additions, deletions: file.deletions, patch: file.patch }));
     return getChangedFiles(this.octokit, this.owner, this.repo, this.pullNumber, true);
   }

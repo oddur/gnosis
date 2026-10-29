@@ -55,6 +55,18 @@ void app.whenReady().then(async () => {
       'Explanation',
     ]);
     await capture('empty');
+    await js(`(async()=>{
+      const q=await window.electronAPI.workbenchQueue();
+      window.largeExplanationMember=q.items.find(i=>i.subject.title.includes('Fix reconnect')).subject.members[0];
+      window.originalFileCount=window.largeExplanationMember.changedFileCount;
+      window.largeExplanationMember.changedFileCount=3237;
+    })()`);
+    await wait("document.querySelector('.explanation-status')?.textContent.includes('3,000-file limit')");
+    assert.equal(await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Generate explanation').disabled"), true);
+    assert.equal(await js('window.starts'), 0, 'Explain the limit before starting a job');
+    await capture('large-pr-limit');
+    await js('window.largeExplanationMember.changedFileCount=window.originalFileCount');
+    await wait("!document.querySelector('.explanation-status')");
     await js(
       `(async()=>{const q=await window.electronAPI.workbenchQueue();q.items.find(i=>i.subject.title.includes('Fix reconnect')).review={id:'failed-first-review',prUrl:'https://github.com/klang/engine/pull/150',prTitle:'Fix reconnect',author:'lena',status:'failed',savedAt:new Date().toISOString()};})()`
     );

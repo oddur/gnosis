@@ -51,6 +51,7 @@ declare global {
       getCommitComparison: (selection: CommitSelection, background?: boolean) => Promise<PrChanges>;
       renderMarkdownReview: (request: MarkdownReviewRequest | ExplanationMarkdownRequest) => Promise<MarkdownReview>;
       getPrChanges: (url: string, refresh?: boolean, options?: InspectionLoadOptions) => Promise<PrChanges>;
+      cancelInspection: (requestId: string) => Promise<void>;
       getPrChangeFile: (request: PrFileRequest, background?: boolean) => Promise<PrFileContents>;
       checkPrChanges: (url: string) => Promise<{ baseSha: string; headSha: string }>;
       cancelChat: (requestId: string) => Promise<void>;

@@ -6,6 +6,17 @@ import { fileRevisionKey, type PrChanges, type PrChangeFile } from './pr-changes
 import type { FileDiffMetadata } from '@pierre/diffs';
 import { createPrInspectionCache } from './pr-inspection-cache';
 import type { PrCommits } from './pr-commits';
+import { createByteCache } from './byte-cache';
+import { INVENTORY_MEMORY_BYTES } from './inspection-limits';
+
+async function inventory<T>(signal: AbortSignal | undefined, read: (requestId: string) => Promise<T>): Promise<T> {
+  signal?.throwIfAborted();
+  const requestId = crypto.randomUUID();
+  const abort = () => { void window.electronAPI.cancelInspection(requestId).catch(() => {}); };
+  signal?.addEventListener('abort', abort, { once: true });
+  try { return await read(requestId); }
+  finally { signal?.removeEventListener('abort', abort); }
+}
 
 export const latestCommitSelection = (list: PrCommits): CommitSelection | undefined => {
   const commit = list.commits.at(-1);
@@ -22,8 +33,8 @@ export const latestCommitSelection = (list: PrCommits): CommitSelection | undefi
 
 export const inspectionData = createPrInspectionCache({
   restore: revisions => window.electronAPI.getPreparedInventories(revisions),
-  changes: (r, refresh, background) => window.electronAPI.getPrChanges(r.url, refresh, { revision: r, background }),
-  commits: (r, refresh, background) => window.electronAPI.getPrCommits(r.url, refresh, { revision: r, background }),
+  changes: (r, refresh, background, signal) => inventory(signal, requestId => window.electronAPI.getPrChanges(r.url, refresh, { revision: r, background, requestId })),
+  commits: (r, refresh, background, signal) => inventory(signal, requestId => window.electronAPI.getPrCommits(r.url, refresh, { revision: r, background, requestId })),
   file: (snapshot, file) => inspectionFiles.read(inspectionFileRequest(snapshot, file), true),
   comparison: (list, commit) => readComparison({
     url: list.url, prBaseSha: list.metadata.baseSha, prHeadSha: list.metadata.headSha,
@@ -88,7 +99,7 @@ export async function prepareFile(snapshot: PrChanges, file: PrChangeFile, backg
 }
 let inspectionEpoch = 0;
 let comparisonPriorities = new Map<string, number>();
-const comparisons = new Map<string, PrChanges>();
+const comparisons = createByteCache<string, PrChanges>(INVENTORY_MEMORY_BYTES, 100);
 const pending = new Map<string, { promise: Promise<PrChanges>; background: boolean }>();
 export const peekComparison = (selection: CommitSelection) => comparisons.get(commitSelectionKey(selection));
 function preferredFile(snapshot: PrChanges, subjectId: string) {

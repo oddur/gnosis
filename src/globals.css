@@ -2385,6 +2385,8 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .changes-loading { color:var(--muted-foreground); }
 .changes-notice { padding:9px 16px;background:var(--secondary);font-size:var(--type-control);display:flex;gap:12px;align-items:center;flex-wrap:wrap; }
 .changes-notice button { color:var(--ring);text-decoration:underline;text-underline-offset:3px; }
+.changes-notice > span { min-width:0;overflow-wrap:anywhere; }
+.changes-notice button:disabled { color:var(--muted-foreground);text-decoration:none;cursor:default; }
 .changes-other-threads { padding:16px; }
 .changes-other-threads>h3 { font-weight:600;font-size:var(--type-control); }
 .changes-other-threads>p { font-size:var(--type-caption);color:var(--muted-foreground);margin:6px 0 12px; }

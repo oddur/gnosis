@@ -1,3 +1,5 @@
+import { loadInspectionBatch, inspectionFailure, type InspectionFailure } from '../lib/inspection-batch';
+import { InspectionFailureNotice } from './InspectionFailureNotice';
 import { useKeyboardShortcuts } from '../lib/use-keyboard-shortcuts';
 import { useRawFileFilters } from '../lib/use-raw-file-filters';
 import { hiddenByFileFilters, hiddenByFileExtensions } from '../lib/file-kinds';
@@ -96,7 +98,7 @@ export function PrChangesView({
     [error, setError] = useState(''),
     [newer, setNewer] = useState(false),
     [checkError, setCheckError] = useState('');
-  const [loadErrors, setLoadErrors] = useState<{ url: string; message: string }[]>([]);
+  const [loadErrors, setLoadErrors] = useState<InspectionFailure[]>([]);
   const [query, setQuery] = useState(''),
     [unviewed, setUnviewed] = useState(false),
     [treeOpen, setTreeOpen] = useState(() => window.innerWidth > 700);
@@ -142,37 +144,41 @@ export function PrChangesView({
       /* Session position remains. */
     }
   };
-  async function load(refresh: boolean) {
+  const loadController = useRef<AbortController | undefined>(undefined);
+  const [pendingMembers, setPendingMembers] = useState<string[]>([]);
+  async function load(refresh: boolean, onlyUrl?: string) {
     if (commit) return;
     const current = ++generation.current;
-    setLoading(refresh || !loadedSnapshots.length);
+    setLoading(true);
     setError('');
-    setLoadErrors([]);
+    loadController.current?.abort();
+    const controller = new AbortController();
+    loadController.current = controller;
+    const members = subject.members.filter(m => !onlyUrl || m.url === onlyUrl);
+    const waiting = new Set(members.map(m => m.url));
+    setPendingMembers([...waiting]);
+    const next = new Map(loadedSnapshots.map(s => [s.url, s]));
+    const failures = new Map(loadErrors.filter(e => onlyUrl && e.url !== onlyUrl).map(e => [e.url, e]));
+    setLoadErrors([...failures.values()]);
     try {
-      const next: PrChanges[] = [];
-      const failures: typeof loadErrors = [];
-      for (const member of subject.members) {
-        try {
-          const snapshot = await inspectionData.readChanges(member, refresh);
-          if (!alive.current || current !== generation.current) return;
-          registerChangeProgress(snapshot);
-          next.push(snapshot);
-        } catch (e) {
-          failures.push({ url: member.url, message: e instanceof Error ? e.message : String(e) });
-          const saved = loadedSnapshots.find(s => s.url === member.url);
-          if (saved) next.push(saved);
-        }
+      await loadInspectionBatch(members, (member, signal) => inspectionData.readChanges(member, refresh, false, signal), (member, result) => {
         if (!alive.current || current !== generation.current) return;
+        if ('value' in result) {
+          registerChangeProgress(result.value);
+          next.set(member.url, result.value);
+        } else failures.set(member.url, inspectionFailure(member.url, result.error));
+        waiting.delete(member.url);
+        stream.current?.preservePosition();
+        setSnapshots(subject.members.flatMap(m => next.get(m.url) ?? []));
+        setLoadErrors([...failures.values()]);
+        setPendingMembers([...waiting]);
+      }, controller.signal);
+      if (alive.current && current === generation.current && !controller.signal.aborted) {
+        if (refresh && !failures.size) setNewer(false);
+        setCheckError('');
       }
-      if (!alive.current || current !== generation.current) return;
-      setSnapshots(next);
-      setLoadErrors(failures);
-      if (refresh && !failures.length) setNewer(false);
-      setCheckError('');
-    } catch (e) {
-      if (alive.current && current === generation.current) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      if (alive.current && current === generation.current) setLoading(false);
+      if (alive.current && current === generation.current) { setLoading(false); setPendingMembers([]); }
     }
   }
   useEffect(() => {
@@ -182,6 +188,7 @@ export function PrChangesView({
     return () => {
       alive.current = false;
       generation.current++;
+      loadController.current?.abort();
       hoverCancel.current();
     };
   }, [subject.id]);
@@ -249,13 +256,19 @@ export function PrChangesView({
       setChatFocusRequest((request) => request + 1);
     },
   }, { enabled: !!entry, capture: true, scope: workspace });
+  const awaitingSelection = loading && !!selected && !entries.some(e => e.key === selected);
+  const wasAwaiting = useRef(false);
+  useEffect(() => {
+    if (wasAwaiting.current && !awaitingSelection && entries.some(e => e.key === selected)) stream.current?.scrollToFile(selected);
+    wasAwaiting.current = awaitingSelection;
+  }, [awaitingSelection]);
   const visibleSignature = visible.map((e) => e.key).join('\n');
   useEffect(() => {
-    if (entry && !visible.some((e) => e.key === selected)) {
+    if (!awaitingSelection && entry && !visible.some((e) => e.key === selected)) {
       setSelected(entry.key);
       stream.current?.scrollToFile(entry.key);
     }
-  }, [visibleSignature]);
+  }, [visibleSignature, awaitingSelection]);
   const reveal = async () => {
     setUnviewed(false);
     await filters.update({ filters: { hideGenerated: false, hideTests: false, hiddenExtensions: [] } });
@@ -489,14 +502,16 @@ export function PrChangesView({
             : `${snapshot.url}/files`)}>Open on GitHub</button>
         </div>
       ))}
-      {loadErrors.map(failure => (
-        <div className="changes-notice" role="status" key={failure.url}>
-          <span>Could not update PR #{failure.url.split('/').pop()}. {failure.message}{' '}
-            {snapshots.some(s => s.url === failure.url) ? 'Showing its saved changes.' : 'Its changes are not shown.'}</span>
-          <button disabled={loading} onClick={() => void load(true)}>Retry</button>
-          <button onClick={() => void window.electronAPI.openExternal(`${failure.url}/files`)}>Open on GitHub</button>
-        </div>
-      ))}
+      {snapshots.some(s => s.patchesDeferred) && <div className="changes-notice" role="status">
+        Large diffs load as you open each file to keep this view responsive. All available filenames remain searchable.
+      </div>}
+      {loading && <div className="changes-notice" role="status">
+        <span>Loading {pendingMembers.length} {pendingMembers.length === 1 ? 'PR' : 'PRs'}… Available files are ready to review.</span>
+        <button onClick={() => { loadController.current?.abort(); setLoadErrors(errors => [...errors, ...pendingMembers.map(url => ({ url, message: 'Loading was stopped.' }))]); setLoading(false); setPendingMembers([]); }}>Stop loading</button>
+      </div>}
+      {loadErrors.map(failure => <InspectionFailureNotice key={failure.url} failure={failure}
+        saved={snapshots.some(s => s.url === failure.url)} kind="changes" busy={pendingMembers.includes(failure.url)} retryDisabled={loading}
+        retry={() => void load(true, failure.url)} />)}
       {filters.pending && (
         <div className="changes-notice" role="status">
           File classification has updated. Your visible files are unchanged.
@@ -546,8 +561,8 @@ export function PrChangesView({
                 <div className="changes-tree-controls">
                   {!commit && (
                     <input
-                      aria-label="Find changed files"
-                      placeholder="Find a file…"
+                      aria-label={incomplete ? "Find available changed files" : "Find changed files"}
+                      placeholder={incomplete ? "Find an available file…" : "Find a file…"}
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
                     />
@@ -557,6 +572,7 @@ export function PrChangesView({
                     Unviewed only
                   </label>
                 </div>
+                {incomplete && <p className="file-filter-group">Search covers available files only.</p>}
                 {!commit &&
                   subject.kind === 'stack' &&
                   snapshots
@@ -629,6 +645,7 @@ export function PrChangesView({
               selected={entry?.key ?? ''}
               initialPosition={{ key: position.selected, offset: position.scroll[activeKey] ?? 0 }}
               onPosition={(key, offset) => {
+                if (awaitingSelection) return;
                 const target = entries.find((e) => e.key === key);
                 if (!target) return;
                 position.selected = key;

@@ -1,3 +1,5 @@
+import { loadInspectionBatch, inspectionFailure, type InspectionFailure } from '../lib/inspection-batch';
+import { InspectionFailureNotice } from './InspectionFailureNotice';
 import { PrBadge, RepositoryBadge, CommitBadge } from './EntityBadge';
 import { usePrReadVisit } from '../lib/pr-read-context';
 import { useFileProgress } from '../lib/file-view-progress';
@@ -88,7 +90,7 @@ export function PrCommitsView({
   const [rangeMode, setRangeMode] = useState(false);
   const anchor = useRef<{ url: string; sha: string } | undefined>(undefined);
   const [loading, setLoading] = useState(false),
-    [listError, setListError] = useState(''),
+    [loadErrors, setLoadErrors] = useState<InspectionFailure[]>([]),
     [newer, setNewer] = useState(false);
   const [resolved, setResolved] = useState<{ key: string; snapshot: PrChanges }>();
   const [comparisonError, setComparisonError] = useState(''),
@@ -221,62 +223,65 @@ export function PrCommitsView({
     });
     if (!extend || anchor.current?.url !== list.url) anchor.current = { url: list.url, sha: commit.sha };
   }
-  async function load(refresh: boolean) {
+  const loadController = useRef<AbortController | undefined>(undefined);
+  const [pendingMembers, setPendingMembers] = useState<string[]>([]);
+  async function load(refresh: boolean, onlyUrl?: string) {
     const current = ++epoch.current;
-    setLoading(refresh || !lists.length);
-    setListError('');
+    loadController.current?.abort();
+    const controller = new AbortController();
+    loadController.current = controller;
+    const members = subject.members.filter(m => !onlyUrl || m.url === onlyUrl);
+    const waiting = new Set(members.map(m => m.url));
+    setLoading(true);
+    setPendingMembers([...waiting]);
+    const next = new Map(lists.map(list => [list.url, list]));
+    const failures = new Map(loadErrors.filter(e => onlyUrl && e.url !== onlyUrl).map(e => [e.url, e]));
+    setLoadErrors([...failures.values()]);
     try {
-      const next: PrCommits[] = [];
-      const failures: string[] = [];
-      for (const member of subject.members) {
-        try { next.push(await inspectionData.readCommits(member, refresh)); }
-        catch (e) {
-          const saved = lists.find(list => list.url === member.url);
-          if (saved) next.push(saved);
-          failures.push(`PR #${member.number}: ${e instanceof Error ? e.message : String(e)} ${saved ? 'Showing saved commits.' : 'Its commits are not shown.'}`);
-        }
+      await loadInspectionBatch(members, (member, signal) => inspectionData.readCommits(member, refresh, false, signal), (member, result) => {
         if (epoch.current !== current) return;
-      }
-      if (epoch.current !== current) return;
-      // A refresh may finish after the user chooses a different commit. Reconcile that
-      // latest choice, and prevent an older comparison request from replacing it later.
-      const desired = intendedSelection.current;
-      navigation.current++;
-      setOpening(undefined);
-      setComparisonError('');
-      failedSelection.current = undefined;
-      setLists(next);
-      setListError(failures.join(' '));
-      if (!failures.length) setNewer(false);
-      const previous = desired && next.find((list) => list.url === desired.url);
-      if (
-        desired &&
-        previous &&
-        previous.commits.some((c) => c.sha === desired.firstSha) &&
-        previous.commits.some((c) => c.sha === desired.lastSha)
-      ) {
-        const refreshed = { ...desired, prBaseSha: previous.metadata.baseSha, prHeadSha: previous.metadata.headSha };
-        intendedSelection.current = refreshed;
-        setSelection(refreshed);
-      } else {
-        const group = ownedCommits(subject, next).find((g) => g.commits.length);
-        const latest = group?.commits.at(-1);
-        if (group?.list && latest) choose(group.list, latest);
-        else {
-          intendedSelection.current = undefined;
-          setSelection(undefined);
+        if ('value' in result) next.set(member.url, result.value);
+        else failures.set(member.url, inspectionFailure(member.url, result.error));
+        const ordered = subject.members.flatMap(m => next.get(m.url) ?? []);
+        setLists(ordered);
+        waiting.delete(member.url);
+        setPendingMembers([...waiting]);
+        setLoadErrors([...failures.values()]);
+        // Reconcile only the arriving PR. Another member must not replace an
+        // in-flight choice or pull focus back to the first PR in the stack.
+        const desired = intendedSelection.current;
+        if ('value' in result && desired?.url === member.url) {
+          const previous = result.value;
+          if (previous.commits.some(c => c.sha === desired.firstSha) && previous.commits.some(c => c.sha === desired.lastSha)) {
+            if (desired.prBaseSha !== previous.metadata.baseSha || desired.prHeadSha !== previous.metadata.headSha) {
+              navigation.current++;
+              setOpening(undefined);
+              setComparisonError('');
+              const refreshed = { ...desired, prBaseSha: previous.metadata.baseSha, prHeadSha: previous.metadata.headSha };
+              intendedSelection.current = refreshed;
+              setSelection(refreshed);
+            }
+          } else {
+            const latest = latestCommitSelection(previous);
+            if (latest) openSelection(latest);
+            else { intendedSelection.current = undefined; setSelection(undefined); }
+          }
+        } else if (!desired) {
+          const group = ownedCommits(subject, ordered).find(g => g.commits.length);
+          const latest = group?.commits.at(-1);
+          if (group?.list && latest) choose(group.list, latest);
         }
-      }
-    } catch (e) {
-      if (epoch.current === current) setListError(e instanceof Error ? e.message : String(e));
+      }, controller.signal);
+      if (epoch.current === current && !controller.signal.aborted && !failures.size) setNewer(false);
     } finally {
-      if (epoch.current === current) setLoading(false);
+      if (epoch.current === current) { setLoading(false); setPendingMembers([]); }
     }
   }
   useEffect(() => {
     if (lists.length !== subject.members.length) void load(false);
     return () => {
       epoch.current++;
+      loadController.current?.abort();
       navigation.current++;
       hoverCancel.current();
     };
@@ -585,11 +590,18 @@ export function PrCommitsView({
   ) : null;
   return (
     <div className="pr-commits">
-      {(listError || newer) && (
-        <div className="changes-notice" role="status">
-          {listError || 'New commits are available. Your current comparison is unchanged.'}
-        </div>
-      )}
+      {newer && <div className="changes-notice" role="status">New commits are available. Your current comparison is unchanged.</div>}
+      {loading && <div className="changes-notice" role="status">
+        <span>Loading commits for {pendingMembers.length} {pendingMembers.length === 1 ? 'PR' : 'PRs'}… Available commits are ready to review.</span>
+        <button onClick={() => {
+          loadController.current?.abort();
+          setLoadErrors(errors => [...errors, ...pendingMembers.map(url => ({ url, message: 'Loading was stopped.' }))]);
+          setLoading(false); setPendingMembers([]);
+        }}>Stop loading</button>
+      </div>}
+      {loadErrors.map(failure => <InspectionFailureNotice key={failure.url} failure={failure}
+        saved={lists.some(list => list.url === failure.url)} kind="commits" busy={pendingMembers.includes(failure.url)} retryDisabled={loading}
+        retry={() => void load(true, failure.url)} />)}
       <PrChangesView
         key={`${key}:${snapshot ? 'ready' : 'pending'}`}
         subject={subject}

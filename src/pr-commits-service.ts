@@ -1,4 +1,6 @@
-import { createGitHubWork, joinGitHubWork, type GitHubWork } from '../lib/github-scheduler';
+import { createSharedGitHubRead } from '../lib/github-scheduler';
+import { createByteCache } from '../lib/byte-cache';
+import { compactInventory, INVENTORY_MEMORY_BYTES } from '../lib/inspection-limits';
 import { createHash } from 'node:crypto';
 import type { Octokit } from '@octokit/rest';
 import { changesRevision, type InspectionLoadOptions } from '../lib/pr-changes';
@@ -123,13 +125,13 @@ function fileValue(file: ApiFile): PrChangeFile {
 }
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 export function createPrCommitsService() {
-  const memory = new WeakMap<Octokit, Map<string, unknown>>(),
-    pending = new WeakMap<Octokit, Map<string, GitHubWork<unknown>>>();
+  const memory = new WeakMap<Octokit, ReturnType<typeof createByteCache<string, unknown>>>(),
+    pending = new WeakMap<Octokit, Map<string, ReturnType<typeof createSharedGitHubRead<unknown>>>>();
   const loadFile = createSnapshotFileLoader();
   function map(client: Octokit) {
     let m = memory.get(client);
     if (!m) {
-      m = new Map();
+      m = createByteCache<string, unknown>(INVENTORY_MEMORY_BYTES, 150);
       memory.set(client, m);
     }
     return m;
@@ -152,21 +154,22 @@ export function createPrCommitsService() {
     const cache = githubCacheFor(client);
     if (cache?.version() === version) cache?.set(key, value);
   }
-  function share<T>(client: Octokit, key: string, run: () => Promise<T>): Promise<T> {
+  function share<T>(client: Octokit, key: string, run: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted();
     let m = pending.get(client);
     if (!m) {
       m = new Map();
       pending.set(client, m);
     }
     const previous = m.get(key);
-    if (previous) return joinGitHubWork(previous) as Promise<T>;
-    const job = createGitHubWork(() => run().finally(() => m.delete(key)));
+    if (previous && !previous.signal.aborted) return previous.read(signal) as Promise<T>;
+    const job = createSharedGitHubRead(() => run().finally(() => { if (m.get(key) === job) m.delete(key); }));
     m.set(key, job);
-    return job.promise;
+    return job.read(signal);
   }
   const listKey = (url: string, base: string, head: string) => `pr-commits:v1:${url}:${base}:${head}`;
   const latestKey = (url: string) => `pr-commits:v1:${url}:latest`;
-  async function list(client: Octokit, url: string, refresh = false, options: InspectionLoadOptions = {}): Promise<PrCommits> {
+  async function list(client: Octokit, url: string, refresh = false, options: InspectionLoadOptions = {}, signal?: AbortSignal): Promise<PrCommits> {
     const t = target(url);
     return share(client, `list:${url}:${refresh}:${options.revision ? changesRevision(options.revision) : ''}`, async () => {
       const version = githubCacheFor(client)?.version();
@@ -226,7 +229,7 @@ export function createPrCommitsService() {
       save(client, key, value, version);
       save(client, latestKey(url), value, version);
       return value;
-    });
+    }, signal);
   }
   async function comparison(
     client: Octokit,
@@ -293,7 +296,7 @@ export function createPrCommitsService() {
         files = data.files ?? [];
         filesTruncated = files.length >= 300;
       }
-      const snapshot: PrChanges = {
+      const snapshot = compactInventory({
         version: 1,
         url: selection.url,
         comparison: selection,
@@ -302,7 +305,7 @@ export function createPrCommitsService() {
         metadata: { ...catalog.metadata, baseSha: parent, headSha: last.sha, headRepo: catalog.metadata.baseRepo },
         files: files.map(fileValue),
         ...(filesTruncated ? { filesTruncated: true } : {}),
-      };
+      });
       save(client, key, snapshot, version);
       return snapshot;
     });

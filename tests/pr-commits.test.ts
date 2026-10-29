@@ -130,7 +130,7 @@ const selection = (first = 1, last = first): CommitSelection => ({
   lastSha: sha(last),
 });
 void test('commit lists coalesce, paginate beyond 100, and use paginated comparisons beyond the PR endpoint cap', async () => {
-  for (const count of [3, 125, 251]) {
+  for (const count of [3, 125, 251, 554]) {
     const f = fixture(count),
       service = createPrCommitsService(),
       client = f.pool.client('one');

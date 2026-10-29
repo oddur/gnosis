@@ -255,6 +255,10 @@ void test('large patch inventories remain pinned in memory when too large for di
   const service = createPrChangesService(),
     client = f.pool.client('one');
   const first = await service.manifest(client, url);
+  assert.equal(first.patchesDeferred, true);
+  assert.equal(first.files[0].patch, undefined, 'The inventory must not carry a giant patch into the renderer');
+  const reviewFiles = await new GitHubDiffSource(url, null, client).getChangedFiles();
+  assert.equal(reviewFiles[0].patch?.length, 1_100_000, 'Explanation evidence must never silently inherit deferred patches');
   const count = f.reads.length;
   f.move('head2');
   assert.equal((await service.manifest(client, url)).metadata.headSha, first.metadata.headSha);
