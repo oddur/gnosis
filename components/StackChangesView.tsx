@@ -8,7 +8,7 @@ import { InspectionFailureNotice } from './InspectionFailureNotice';
 import { useChangesComments } from './useChangesComments';
 import { usePrDiscussions } from '../lib/use-pr-discussions';
 import { inspectionFailure, type InspectionFailure } from '../lib/inspection-batch';
-import { linearStack } from '../lib/stack-changes';
+import { linearStack, stackMembershipChanged } from '../lib/stack-changes';
 import { peekStackChanges, readStackChanges } from '../lib/stack-inspection-cache';
 import type { PrChanges } from '../lib/pr-changes';
 import type { ReviewSubject } from '../lib/workbench';
@@ -41,7 +41,13 @@ export function StackChangesView({
   const [checkError, setCheckError] = useState('');
   const [saveError, setSaveError] = useState('');
   const [reviewUrl, setReviewUrl] = useState('');
-  const controller = useRef<AbortController | undefined>(undefined);
+  const controllers = useRef(new Set<AbortController>());
+  const pendingLoad = useRef<{ refresh: boolean; background: boolean } | undefined>(undefined);
+  const cancelLoads = () => {
+    controllers.current.forEach((controller) => controller.abort());
+    controllers.current.clear();
+    pendingLoad.current = undefined;
+  };
   const epoch = useRef(0);
   const selectedPath = useRef<string | undefined>(undefined);
   const writes = useRef(Promise.resolve());
@@ -51,6 +57,7 @@ export function StackChangesView({
   } catch (e) {
     reason = e instanceof Error ? e.message : String(e);
   }
+  const membershipChanged = !!snapshot && stackMembershipChanged(snapshot, subject);
   const members = snapshot?.stackComparison?.members ?? [];
   const discussion = usePrDiscussions(mode === 'combined' ? members.map((m) => m.metadata.url) : []);
   const selectedSource = members.find((m) => m.metadata.url === reviewUrl);
@@ -70,16 +77,19 @@ export function StackChangesView({
     refresh: discussion.refresh,
     replaceThread: discussion.replace,
   });
-  async function load(refresh: boolean) {
+  async function load(refresh: boolean, background = mode !== 'combined', promote = false) {
     if (reason) return;
-    controller.current?.abort();
+    // Keep the original reader alive during promotion. The backend joins that
+    // same operation and raises its priority without cancelling shared member reads.
+    if (!promote) cancelLoads();
     const next = new AbortController();
-    controller.current = next;
+    controllers.current.add(next);
+    pendingLoad.current = { refresh, background };
     const sequence = ++epoch.current;
     setBusy(true);
     setFailure(undefined);
     try {
-      const value = await readStackChanges(account, subject, refresh, mode !== 'combined', next.signal);
+      const value = await readStackChanges(account, subject, refresh, background, next.signal);
       if (sequence !== epoch.current) return;
       setSnapshot(value);
       setReviewUrl('');
@@ -89,14 +99,18 @@ export function StackChangesView({
       if (sequence === epoch.current && !next.signal.aborted)
         setFailure(inspectionFailure(subject.members[subject.members.length - 1].url, e));
     } finally {
-      if (sequence === epoch.current) setBusy(false);
+      controllers.current.delete(next);
+      if (sequence === epoch.current) {
+        pendingLoad.current = undefined;
+        setBusy(false);
+      }
     }
   }
   useEffect(() => {
     if (!snapshot) void load(false);
     return () => {
       epoch.current++;
-      controller.current?.abort();
+      cancelLoads();
     };
   }, [subject.id, account]);
   useEffect(() => {
@@ -129,6 +143,11 @@ export function StackChangesView({
     };
   }, [snapshot]);
   function choose(next: Mode) {
+    if (next === 'combined' && mode !== 'combined') {
+      const pending = pendingLoad.current;
+      if (pending?.background) void load(pending.refresh, false, true);
+      else if (!snapshot && !pending) void load(false, false);
+    }
     setMode(next);
     rememberedMode = next;
     setSaveError('');
@@ -241,9 +260,17 @@ export function StackChangesView({
           {failure && (
             <InspectionFailureNotice
               label="combined changes"
-            retryLabel="Retry comparison"
-            githubUrl={snapshot ? `https://github.com/${snapshot.metadata.baseRepo}/compare/${snapshot.comparisonBase}...${snapshot.metadata.headSha}` : undefined}
-            action={<Button size="sm" variant="outline" onClick={() => choose('by-pr')}>Review by PR</Button>}
+              retryLabel="Retry comparison"
+              githubUrl={
+                snapshot
+                  ? `https://github.com/${snapshot.metadata.baseRepo}/compare/${snapshot.comparisonBase}...${snapshot.metadata.headSha}`
+                  : undefined
+              }
+              action={
+                <Button size="sm" variant="outline" onClick={() => choose('by-pr')}>
+                  Review by PR
+                </Button>
+              }
               failure={failure}
               saved={!!snapshot}
               kind="changes"
@@ -263,7 +290,7 @@ export function StackChangesView({
                 variant="ghost"
                 onClick={() => {
                   epoch.current++;
-                  controller.current?.abort();
+                  cancelLoads();
                   setBusy(false);
                   setFailure({ url: subject.members[subject.members.length - 1].url, message: 'Loading was stopped.' });
                 }}
@@ -283,10 +310,13 @@ export function StackChangesView({
               </Button>
             </div>
           )}
-          {newer && (
+          {(newer || membershipChanged) && (
             <div className="changes-notice" role="status">
-              <span>New commits are available. Your current comparison is unchanged.</span>
-              <Button size="sm" variant="outline" disabled={busy} onClick={() => void load(true)}>
+              <span>
+                {membershipChanged ? 'Stack membership has changed.' : 'New commits are available.'} Your current
+                comparison is unchanged.
+              </span>
+              <Button size="sm" variant="outline" disabled={busy || !!reason} onClick={() => void load(true)}>
                 Update changes
               </Button>
             </div>

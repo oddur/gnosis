@@ -1,4 +1,4 @@
-import { stackFileProgressKey, combinedThreadIsInline } from '../lib/stack-changes';
+import { stackFileProgressKey, stackFileSourcePath, stackFileDiscussions } from '../lib/stack-changes';
 import { GitHubReviewThread } from './GitHubReviewThread';
 import { SearchableSelect } from './SearchableSelect';
 import { isMarkdownFile, type MarkdownReview, type MarkdownLocation } from '../lib/markdown-review';
@@ -257,13 +257,12 @@ export function PrFileInspection({
       threads?.headSha === entry.snapshot.metadata.headSha &&
       (t.diffSide === 'RIGHT' || threads.baseSha === entry.snapshot.metadata.baseSha)
   );
-  const combinedSourcePath = (url: string) => combined?.fileSourcePaths?.[entry.file.path]?.[url] ?? entry.file.path;
-  const combinedThreads = combined?.members.flatMap(source => {
-    const data = discussion.discussions[source.metadata.url]?.data;
-    return data?.threads.filter(t => t.path === combinedSourcePath(source.metadata.url) || t.path === entry.file.previousPath).map(thread => ({
-      thread, source, inline: !contents?.lfs && combinedThreadIsInline(entry.snapshot, entry.file, source, data, thread),
-    })) ?? [];
-  }) ?? [];
+  const combinedSourcePath = (url: string) =>
+    combined ? stackFileSourcePath(combined, entry.file, url) : entry.file.path;
+  const combinedDiscussion = combined
+    ? stackFileDiscussions(entry.snapshot, entry.file, discussion.discussions)
+    : undefined;
+  const combinedThreads = combinedDiscussion?.threads.map((t) => ({ ...t, inline: !contents?.lfs && t.inline })) ?? [];
   const other = combined ? combinedThreads.filter(t => !t.inline).map(t => t.thread) : matching.filter((t) => !inline.includes(t));
   const sourceOptions = combined?.members.filter(m => combined.fileSources[entry.file.path]?.includes(m.metadata.url)) ?? [];
   const commentSources = sourceOptions.length ? sourceOptions : combined?.members ?? [];
@@ -561,7 +560,13 @@ export function PrFileInspection({
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => void window.electronAPI.openExternal(combined ? `https://github.com/${entry.snapshot.metadata.baseRepo}/compare/${entry.snapshot.comparisonBase}...${entry.snapshot.metadata.headSha}` : `${entry.snapshot.url}/files`)}
+            onClick={() =>
+              void window.electronAPI.openExternal(
+                combined
+                  ? `https://github.com/${entry.snapshot.metadata.baseRepo}/compare/${entry.snapshot.comparisonBase}...${entry.snapshot.metadata.headSha}`
+                  : `${entry.snapshot.url}/files`
+              )
+            }
           >
             Open on GitHub <ExternalLink size={14} />
           </Button>
@@ -654,7 +659,18 @@ export function PrFileInspection({
           )}
         </div>
       )}
-      {threadError && (
+      {combinedDiscussion?.failures.map((failure) => (
+        <p className="changes-notice" role="status" key={failure.url}>
+          Comments from PR #{failure.url.split('/').pop()} are unavailable. Some discussions may be missing.
+          <button
+            aria-label={`Retry comments for PR #${failure.url.split('/').pop()}`}
+            onClick={() => void refreshThreads(failure.url)}
+          >
+            Retry comments
+          </button>
+        </p>
+      ))}
+      {!combined && threadError && (
         <p className="changes-notice">
           {threadError}
           <button onClick={() => void refreshThreads(entry.snapshot.url)}>Retry</button>

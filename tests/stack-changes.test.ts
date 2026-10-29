@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { stackFileSources, linearStack, stackRevisionKey, stackFileProgressKey, combinedThreadIsInline } from '../lib/stack-changes';
+import {
+  stackFileSources,
+  linearStack,
+  stackRevisionKey,
+  stackFileProgressKey,
+  combinedThreadIsInline,
+} from '../lib/stack-changes';
 import { createStackChangesService } from '../src/stack-changes-service';
 import { createGitHubClientPool } from './cache-test-pool';
 import { preparedFileKey } from '../lib/prepared-pr';
@@ -268,4 +274,94 @@ void test('saved comparisons can be restored by a new service but remain account
     }),
     /Reload/
   );
+});
+
+void test('membership changes are detected without changing any existing revision', async () => {
+  const { stackMembershipChanged } = await import('../lib/stack-changes');
+  const f = fixture();
+  const saved = await f.service.read(f.client, subject);
+  assert.equal(stackMembershipChanged(saved, { ...subject, members: [...members].reverse() }), false);
+  const third = { ...members[1], url: 'https://github.com/o/r/pull/3', baseBranch: 'two', headBranch: 'three' };
+  assert.equal(
+    stackMembershipChanged(saved, {
+      ...subject,
+      members: [...members, third],
+      edges: [...subject.edges, { parent: members[1].url, child: third.url, evidence: 'branch' }],
+    }),
+    true
+  );
+  assert.equal(stackMembershipChanged(saved, { ...subject, members: [members[0]], edges: [] }), true);
+  assert.equal(stackMembershipChanged(saved, { ...subject, edges: [] }), true);
+});
+
+void test('combined comment counts and discussions share rename mapping and retain failed-source state', async () => {
+  const { stackFileDiscussions } = await import('../lib/stack-changes');
+  const changed = { ...file, path: 'final.ts', previousPath: 'old.ts', status: 'renamed' as const };
+  const snapshot: PrChanges = {
+    ...source(1),
+    files: [changed],
+    stackComparison: {
+      key: 'comparison',
+      subjectId: subject.id,
+      members: [source(0), source(1)].map((s) => ({ metadata: s.metadata, comparisonBase: s.comparisonBase })),
+      fileSources: { 'final.ts': members.map((m) => m.url) },
+      fileSourcePaths: { 'final.ts': { [members[0].url]: 'middle.ts', [members[1].url]: 'final.ts' } },
+    },
+  };
+  const thread = {
+    id: 'renamed-thread',
+    path: 'middle.ts',
+    line: 1,
+    diffSide: 'RIGHT',
+    isOutdated: false,
+    comments: [{ id: 'one' }, { id: 'reply' }],
+  } as GitHubReviewThread;
+  const root = { data: { headSha: 'head1', baseSha: 'base', threads: [thread] } };
+  const tip = { data: { headSha: 'head2', baseSha: 'head1', threads: [] } };
+  const loaded = stackFileDiscussions(snapshot, changed, { [members[0].url]: root, [members[1].url]: tip });
+  assert.equal(loaded.count, 2);
+  assert.deepEqual(
+    loaded.threads.map((t) => t.thread.id),
+    ['renamed-thread']
+  );
+  assert.deepEqual(loaded.failures, []);
+  const missing = stackFileDiscussions(snapshot, changed, { [members[1].url]: tip });
+  assert.equal(missing.count, undefined, 'Loading source comments must not appear as zero comments');
+  const failed = stackFileDiscussions(snapshot, changed, {
+    [members[0].url]: { ...root, error: 'Unavailable' },
+    [members[1].url]: tip,
+  });
+  assert.equal(failed.count, undefined, 'A partial count must not appear complete');
+  assert.deepEqual(failed.failures, [{ url: members[0].url, error: 'Unavailable' }]);
+  assert.equal(failed.threads.length, 1, 'Keep saved discussion visible when a refresh fails');
+});
+
+void test('an interactive reader promotes shared stack work without restarting member loads', async () => {
+  const { githubPriority, withGitHubPriority } = await import('../lib/github-scheduler');
+  const f = fixture();
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let reads = 0;
+  const priorities: string[] = [];
+  const service = createStackChangesService({
+    manifest: async (_client, url, _refresh, _options, signal) => {
+      reads++;
+      await gate;
+      signal?.throwIfAborted();
+      priorities.push(githubPriority());
+      return source(url.endsWith('/1') ? 0 : 1);
+    },
+  });
+  const background = withGitHubPriority('background', () => service.read(f.client, subject));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const foreground = withGitHubPriority('interactive', () => service.read(f.client, subject));
+  // read() looks up the persistent cache before joining the pending operation.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  release();
+  const [first, second] = await Promise.all([background, foreground]);
+  assert.equal(first, second);
+  assert.equal(reads, 2, 'Load each of the two members only once');
+  assert.deepEqual(priorities, ['interactive', 'interactive']);
 });

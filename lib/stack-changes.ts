@@ -89,3 +89,52 @@ export function stackFileSources(path: string, snapshots: PrChanges[]) {
   }
   return found.reverse();
 }
+
+/** Membership is separate from revision freshness: a new tip may leave every old SHA unchanged. */
+export function stackMembershipChanged(snapshot: PrChanges, subject: ReviewSubject): boolean {
+  try {
+    return (
+      JSON.stringify(snapshot.stackComparison?.members.map((m) => m.metadata.url)) !==
+      JSON.stringify(linearStack(subject).map((m) => m.url))
+    );
+  } catch {
+    return true;
+  }
+}
+
+export function stackFileSourcePath(comparison: StackComparison, file: PrChangeFile, url: string) {
+  return comparison.fileSourcePaths?.[file.path]?.[url] ?? file.path;
+}
+
+/** Counts, annotations and failure notices must describe the same pinned sources. */
+export function stackFileDiscussions(
+  snapshot: PrChanges,
+  file: PrChangeFile,
+  discussions: Record<string, { data?: GitHubReviewThreads; error?: string } | undefined>
+) {
+  const comparison = snapshot.stackComparison;
+  const failures: { url: string; error: string }[] = [];
+  const complete =
+    comparison?.members.every((source) => {
+      const discussion = discussions[source.metadata.url];
+      return !!discussion?.data && !discussion.error;
+    }) ?? false;
+  const threads =
+    comparison?.members.flatMap((source) => {
+      const url = source.metadata.url;
+      const discussion = discussions[url];
+      if (discussion?.error) failures.push({ url, error: discussion.error });
+      const data = discussion?.data;
+      const path = stackFileSourcePath(comparison, file, url);
+      return (
+        data?.threads
+          .filter((thread) => thread.path === path || thread.path === file.previousPath)
+          .map((thread) => ({
+            thread,
+            source,
+            inline: combinedThreadIsInline(snapshot, file, source, data, thread),
+          })) ?? []
+      );
+    }) ?? [];
+  return { threads, failures, count: complete ? threads.reduce((n, t) => n + t.thread.comments.length, 0) : undefined };
+}

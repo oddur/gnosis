@@ -1,3 +1,4 @@
+import { stackFileDiscussions } from '../lib/stack-changes';
 import { loadInspectionBatch, inspectionFailure, type InspectionFailure } from '../lib/inspection-batch';
 import { InspectionFailureNotice } from './InspectionFailureNotice';
 import { useKeyboardShortcuts } from '../lib/use-keyboard-shortcuts';
@@ -304,17 +305,26 @@ export function PrChangesView({
   );
   const treeEntries = useMemo(
     () =>
-      visible.map((e) => ({
-        key: e.key,
-        status: e.file.status,
-        viewed: progress.isFileViewed(viewKey(e)),
-        additions: e.file.additions,
-        deletions: e.file.deletions,
-        commentCount: (combined ? subject.members.flatMap(m => discussion.discussions[m.url]?.data?.threads ?? []) : discussion.discussions[e.snapshot.url]?.data?.threads)
-          ?.filter((t) => t.path === e.file.path || t.path === e.file.previousPath)
-          .reduce((total, thread) => total + thread.comments.length, 0),
-        commentError: !!discussion.discussions[e.snapshot.url]?.error,
-      })),
+      visible.map((e) => {
+        const combinedDiscussion = combined
+          ? stackFileDiscussions(e.snapshot, e.file, discussion.discussions)
+          : undefined;
+        return {
+          key: e.key,
+          status: e.file.status,
+          viewed: progress.isFileViewed(viewKey(e)),
+          additions: e.file.additions,
+          deletions: e.file.deletions,
+          commentCount: combinedDiscussion
+            ? combinedDiscussion.count
+            : discussion.discussions[e.snapshot.url]?.data?.threads
+                .filter((t) => t.path === e.file.path || t.path === e.file.previousPath)
+                .reduce((total, thread) => total + thread.comments.length, 0),
+          commentError: combinedDiscussion
+            ? combinedDiscussion.failures.length > 0
+            : !!discussion.discussions[e.snapshot.url]?.error,
+        };
+      }),
     [entries, visibleSignature, viewedSignature, discussion.discussions]
   );
   useEffect(() => {
