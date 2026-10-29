@@ -217,6 +217,9 @@ export function createGitHubClientPool(options: Options = {}) {
       const cache = snapshots.scope(key);
       clientCaches.set(client, cache);
       const inflight = new Map<string, GitHubWork<OctokitResponse<unknown>>>();
+      // An expensive PR can repeatedly return 5xx. Cool down that read only;
+      // cached data, other PRs, and explicit writes must stay independent.
+      const unavailable = new Map<string, { retryAt: number; failures: number; error: Error }>();
       const observe = (headers: Headers) => {
         const resource = String(headers['x-ratelimit-resource'] ?? 'core');
         const remaining = Number(headers['x-ratelimit-remaining']);
@@ -279,6 +282,8 @@ export function createGitHubClientPool(options: Options = {}) {
           }
           const gate = () => {
             requestOptions.request.signal?.throwIfAborted();
+            const failed = get && unavailable.get(requestKey);
+            if (failed && failed.retryAt > now()) throw failed.error;
             const priority = githubPriority();
             const budget = state.budgets[resource];
             const reserve =
@@ -348,6 +353,7 @@ export function createGitHubClientPool(options: Options = {}) {
             // Hooks share the original options object, including auth and request logging.
             if (binary) requestOptions.request.parseSuccessResponseBody = false;
             const response = await request(requestOptions);
+            if (get) unavailable.delete(requestKey);
             if (binary) {
               // GitHub raw images can carry charset=utf-8. Bypass Octokit's text decoding,
               // then consume the stream before cloning/coalescing the response for callers.
@@ -391,6 +397,7 @@ export function createGitHubClientPool(options: Options = {}) {
             const e = error as { status?: number; response?: { headers?: Headers } };
             observe(e.response?.headers ?? {});
             if (e.status === 304 && cached) {
+              unavailable.delete(requestKey);
               const response = {
                 ...structuredClone(cached.response),
                 headers: { ...cached.response.headers, ...e.response?.headers },
@@ -435,6 +442,27 @@ export function createGitHubClientPool(options: Options = {}) {
               }
               persist();
               throw new GitHubBackoffError(Math.max(state.blockedUntil, limited.retryAt));
+            }
+            if (get && [500, 502, 503, 504].includes(e.status ?? 0)) {
+              const previous = unavailable.get(requestKey);
+              const failures = previous && now() - previous.retryAt < 300_000 ? previous.failures + 1 : 1;
+              const retry = e.response?.headers?.['retry-after'];
+              const seconds = Number(retry);
+              const serverDeadline = retry === undefined ? 0 : Number.isFinite(seconds)
+                ? now() + seconds * 1000 : Date.parse(String(retry));
+              const retryAt = Math.max(now() + Math.min(300_000, 30_000 * 2 ** Math.min(failures - 1, 4)),
+                Number.isFinite(serverDeadline) ? serverDeadline + 1000 : 0);
+              const failure = Object.assign(new Error(
+                `GitHub could not load this data (HTTP ${e.status}). Try again after ${new Date(retryAt).toLocaleTimeString()}.`
+              ), { retryAt, status: e.status });
+              unavailable.delete(requestKey);
+              unavailable.set(requestKey, { retryAt, failures, error: failure });
+              while (unavailable.size > 200) {
+                const oldest = unavailable.keys().next().value;
+                if (oldest === undefined) break;
+                unavailable.delete(oldest);
+              }
+              throw failure;
             }
             throw error;
           } finally {

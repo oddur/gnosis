@@ -96,6 +96,7 @@ export function PrChangesView({
     [error, setError] = useState(''),
     [newer, setNewer] = useState(false),
     [checkError, setCheckError] = useState('');
+  const [loadErrors, setLoadErrors] = useState<{ url: string; message: string }[]>([]);
   const [query, setQuery] = useState(''),
     [unviewed, setUnviewed] = useState(false),
     [treeOpen, setTreeOpen] = useState(() => window.innerWidth > 700);
@@ -146,16 +147,27 @@ export function PrChangesView({
     const current = ++generation.current;
     setLoading(refresh || !loadedSnapshots.length);
     setError('');
+    setLoadErrors([]);
     try {
       const next: PrChanges[] = [];
+      const failures: typeof loadErrors = [];
       for (const member of subject.members) {
-        const snapshot = await inspectionData.readChanges(member, refresh);
-        registerChangeProgress(snapshot);
-        next.push(snapshot);
+        try {
+          const snapshot = await inspectionData.readChanges(member, refresh);
+          if (!alive.current || current !== generation.current) return;
+          registerChangeProgress(snapshot);
+          next.push(snapshot);
+        } catch (e) {
+          failures.push({ url: member.url, message: e instanceof Error ? e.message : String(e) });
+          const saved = loadedSnapshots.find(s => s.url === member.url);
+          if (saved) next.push(saved);
+        }
+        if (!alive.current || current !== generation.current) return;
       }
       if (!alive.current || current !== generation.current) return;
       setSnapshots(next);
-      if (refresh) setNewer(false);
+      setLoadErrors(failures);
+      if (refresh && !failures.length) setNewer(false);
       setCheckError('');
     } catch (e) {
       if (alive.current && current === generation.current) setError(e instanceof Error ? e.message : String(e));
@@ -198,7 +210,8 @@ export function PrChangesView({
   }, [revision]);
   const entries = useMemo<Entry[]>(
     () =>
-      snapshots.flatMap((snapshot, index) => {
+      snapshots.flatMap((snapshot) => {
+        const index = subject.members.findIndex(member => member.url === snapshot.url);
         const prefix =
           subject.kind === 'stack' && !commit
             ? `${String(index + 1).padStart(2, '0')} · ${snapshot.metadata.baseRepo?.replace('/', ' · ') ?? 'PR'} #${snapshot.url.split('/').pop()}/`
@@ -209,6 +222,8 @@ export function PrChangesView({
       }),
     [snapshots, subject.kind, !!commit]
   );
+  const incomplete = snapshots.some(s => s.filesTruncated) || loadErrors.length > 0 ||
+    (!commit && snapshots.length < subject.members.length);
   const filters = useRawFileFilters(snapshots);
   const kinds = new Map(entries.map((e) => [e.key, filters.kind(e.snapshot, e.file)]));
   const allowed = entries.filter(
@@ -276,7 +291,9 @@ export function PrChangesView({
       setError('This annotation belongs to an older commit. Open its source on GitHub from Checks.');
     } else if (match) void select(match.key);
     else if (snapshots.length)
-      setError(`“${initialFile.path}” is not in the current PR changes. Choose another file to comment on.`);
+      setError(snapshots.some(s => s.url === initialFile.url && s.filesTruncated)
+        ? `“${initialFile.path}” is not in the files GitHub returned. This PR’s file list is incomplete.`
+        : `“${initialFile.path}” is not in the current PR changes. Choose another file to comment on.`);
   }, [initialFile, entries]);
   // Keep selection/scroll independent of tabs, queue navigation, and background discovery.
   function warmFile(key: string) {
@@ -421,6 +438,7 @@ export function PrChangesView({
         {(!commit || commit.snapshot) && (
           <span className="changes-progress">
             {entries.filter((e) => progress.isFileViewed(viewKey(e))).length} / {entries.length} viewed
+            {incomplete && ' · available files'}
           </span>
         )}
         <span className="changes-toolbar-spacer" />
@@ -457,6 +475,28 @@ export function PrChangesView({
           </Button>
         )}
       </div>
+      {snapshots.filter(s => s.filesTruncated).map(snapshot => (
+        <div className="changes-notice" role="status" key={snapshot.url}>
+          <span>
+            <strong>Partial changes · PR #{snapshot.url.split('/').pop()}</strong>{' '}
+            {snapshot.comparison
+              ? `GitHub’s file limit was reached. Showing ${snapshot.files.length.toLocaleString('en-US')} files; this comparison may be incomplete.`
+              : `Showing ${snapshot.files.length.toLocaleString('en-US')} of ${snapshot.metadata.changedFileCount?.toLocaleString('en-US') ?? 'more'} files. GitHub limits PR file lists to 3,000.`}{' '}
+            Files load as you open them.
+          </span>
+          <button onClick={() => void window.electronAPI.openExternal(snapshot.comparison
+            ? `https://github.com/${snapshot.metadata.baseRepo}/compare/${snapshot.comparisonBase}...${snapshot.metadata.headSha}`
+            : `${snapshot.url}/files`)}>Open on GitHub</button>
+        </div>
+      ))}
+      {loadErrors.map(failure => (
+        <div className="changes-notice" role="status" key={failure.url}>
+          <span>Could not update PR #{failure.url.split('/').pop()}. {failure.message}{' '}
+            {snapshots.some(s => s.url === failure.url) ? 'Showing its saved changes.' : 'Its changes are not shown.'}</span>
+          <button disabled={loading} onClick={() => void load(true)}>Retry</button>
+          <button onClick={() => void window.electronAPI.openExternal(`${failure.url}/files`)}>Open on GitHub</button>
+        </div>
+      ))}
       {filters.pending && (
         <div className="changes-notice" role="status">
           File classification has updated. Your visible files are unchanged.
@@ -542,7 +582,7 @@ export function PrChangesView({
                       ? `${hidden} ${hidden === 1 ? 'file' : 'files'} hidden by your filters.`
                       : unviewed
                         ? 'All files viewed. Turn off Unviewed only to browse again.'
-                        : 'No changed files.'}
+                        : loadErrors.length ? 'Changed files are unavailable.' : 'No changed files.'}
                     {hidden > 0 && (
                       <button className="file-filter-reveal" onClick={reveal}>
                         Show hidden files
@@ -638,11 +678,13 @@ export function PrChangesView({
                       </Button>
                     </div>
                   )}
-                  {entries.length > 0 && entries.every((e) => progress.isFileViewed(viewKey(e))) && (
+                  {!loading && entries.length > 0 && entries.every((e) => progress.isFileViewed(viewKey(e))) && (
                     <div className="changes-empty commit-viewed-complete" role="status">
-                      <strong>All files viewed</strong>
+                      <strong>{incomplete ? 'All available files viewed' : 'All files viewed'}</strong>
                       <p>
-                        {commit
+                        {incomplete
+                          ? 'This is not the complete change. Inspect the remaining files on GitHub or in a local checkout.'
+                          : commit
                           ? 'You’ve finished this comparison. Choose another commit to continue.'
                           : 'You’ve viewed every file. Submit your review when you’re ready.'}
                       </p>
@@ -657,7 +699,7 @@ export function PrChangesView({
               }
             />
           ) : (
-            <p className="changes-empty">{loading ? 'Loading changed files…' : 'No changed files.'}</p>
+            <p className="changes-empty">{loading ? 'Loading changed files…' : loadErrors.length ? 'Changed files are unavailable. Retry or open the PR on GitHub.' : 'No changed files.'}</p>
           )}
         </div>
         {chatOpen && chatRequest && (

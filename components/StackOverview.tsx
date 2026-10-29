@@ -43,7 +43,10 @@ export function StackOverview({ now, checking, onRefresh, refreshBusy, item, sig
   const manifest = (m: ReviewMember) => [inspectionData.peekChanges(m), ...inventories].find(s => s?.url === m.url && s.metadata.baseSha === m.baseSha && s.metadata.headSha === m.headSha);
   const viewedCount = (m: ReviewMember) => manifest(m)?.files.filter(f => progress.isFileViewed(fileRevisionKey(m.url, f.path, m.baseSha, m.headSha))).length ?? 0;
   const openMembers = subject.members.filter(m => m.state === 'open' && !m.merged);
-  const next = openMembers.find(m => item.unreadUrls?.includes(m.url)) ?? openMembers.find(m => !manifest(m) || viewedCount(m) < manifest(m)!.files.length);
+  const next = openMembers.find(m => item.unreadUrls?.includes(m.url)) ?? openMembers.find(m => {
+    const snapshot = manifest(m);
+    return !snapshot || snapshot.filesTruncated || viewedCount(m) < snapshot.files.length;
+  });
   const mixedRepos = new Set(subject.members.map(m => m.repo)).size > 1;
   const filtered = matchingUrls && matchingUrls.length < subject.members.length;
   return <section className="stack-overview" aria-label="Stack overview">
@@ -71,7 +74,7 @@ export function StackOverview({ now, checking, onRefresh, refreshBusy, item, sig
               <button className={counts?.attention ? 'stack-checks-failed' : ''} onClick={() => onChecks(m)} title={checkErrors[m.url] || 'Open check results'}>
                 {checkErrors[m.url] ? 'Checks unavailable · View details' : checks[m.url] && !counts ? 'Checks need refresh' : !counts ? checksBusy ? 'Loading checks…' : 'Checks unavailable · View details' : checkSummary(checks[m.url]!.checks)}
               </button>
-              <span>{files ? `${viewed}/${files.length} files viewed` : 'File progress unavailable'}</span>
+              <span>{files ? `${viewed}/${manifest(m)?.metadata.changedFileCount ?? files.length} files viewed${manifest(m)?.filesTruncated ? ' · Partial file list' : ''}` : 'File progress unavailable'}</span>
             </div>
           </div>
           <button className="workbench-icon" onClick={() => onOpen(m)} aria-label={`Open PR #${m.number}`}><ChevronRight size={16} /></button>

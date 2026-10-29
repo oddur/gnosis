@@ -139,6 +139,12 @@ export function createPrInspectionCache(deps: Dependencies) {
       }
       return;
     }
+    if (saved.changes.filesTruncated) {
+      // Keep both tab inventories. Load files on demand for oversized PRs, instead
+      // of flooding GitHub or repeatedly trying to prepare an incomplete review.
+      finish(job, generation);
+      return;
+    }
     if (job.stage === 2 || job.stage === 5) {
       // Newest first, with a scheduling boundary after each comparison and file.
       const commit = saved.commits.commits.at(-1 - job.commit);
@@ -153,7 +159,8 @@ export function createPrInspectionCache(deps: Dependencies) {
         } catch (error) {
           if (!unsupported(error)) throw error;
         }
-        if (job.comparison) return;
+        if (job.comparison && !job.comparison.filesTruncated) return;
+        job.comparison = undefined;
       } else {
         const file = job.comparison.files.at(job.comparisonFile);
         if (file) {

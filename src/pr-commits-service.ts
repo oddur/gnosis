@@ -255,6 +255,7 @@ export function createPrCommitsService() {
         last = chosen[chosen.length - 1];
       const parent = selection.parentSha ?? first.parents.at(0) ?? EMPTY_TREE;
       let files: ApiFile[] = [];
+      let filesTruncated = false;
       if (chosen.length === 1 && (!selection.parentSha || selection.parentSha === first.parents[0])) {
         let page = 1;
         for (;;) {
@@ -268,13 +269,10 @@ export function createPrCommitsService() {
           });
           if (data.sha !== last.sha) throw new Error('GitHub returned a different commit. Reload the commit list.');
           files.push(...(data.files ?? []));
-          if (!headers.link?.includes('rel="next"')) break;
+          if (!headers.link?.includes('rel="next"') || files.length >= 3000) break;
           page++;
         }
-        if (files.length >= 3000)
-          throw new Error(
-            'This commit reaches GitHub’s 3,000-file limit. Open it on GitHub to inspect the complete change.'
-          );
+        filesTruncated = files.length >= 3000;
       } else {
         if (parent === EMPTY_TREE)
           throw new Error(
@@ -293,10 +291,7 @@ export function createPrCommitsService() {
             'These commits are on different ancestry paths. Select a range on one path, or inspect them individually.'
           );
         files = data.files ?? [];
-        if (files.length >= 300)
-          throw new Error(
-            'This comparison reaches GitHub’s 300-file limit. Inspect smaller ranges or open the comparison on GitHub.'
-          );
+        filesTruncated = files.length >= 300;
       }
       const snapshot: PrChanges = {
         version: 1,
@@ -306,6 +301,7 @@ export function createPrCommitsService() {
         fetchedAt: Date.now(),
         metadata: { ...catalog.metadata, baseSha: parent, headSha: last.sha, headRepo: catalog.metadata.baseRepo },
         files: files.map(fileValue),
+        ...(filesTruncated ? { filesTruncated: true } : {}),
       };
       save(client, key, snapshot, version);
       return snapshot;

@@ -1,7 +1,7 @@
 import { createGitHubWork, joinGitHubWork, type GitHubWork } from '../lib/github-scheduler';
 import { createHash } from 'node:crypto';
 import type { Octokit } from '@octokit/rest';
-import { getChangedFiles, getPrMetadata, getPrDiff, parsePrUrl } from '../lib/github';
+import { getChangedFiles, getPrMetadata, getPrDiff, parsePrUrl, GITHUB_PR_FILE_LIMIT } from '../lib/github';
 import { preparedDiff, preparedDiffKey } from '../lib/prepared-pr';
 import { githubCacheFor } from '../lib/github-client';
 import { isCacheRecord } from '../lib/github-cache';
@@ -88,13 +88,16 @@ export function createPrChangesService() {
         return refreshed;
       }
       const files = await getChangedFiles(client, owner, repo, pullNumber, true);
-      if (metadata.changedFileCount !== undefined && files.length !== metadata.changedFileCount)
+      const filesTruncated = files.length === GITHUB_PR_FILE_LIMIT &&
+        (metadata.changedFileCount === undefined || metadata.changedFileCount > files.length);
+      if (!filesTruncated && metadata.changedFileCount !== undefined && files.length !== metadata.changedFileCount)
         throw new Error('GitHub returned an incomplete file list. Open this PR on GitHub to inspect all files.');
       const { data: comparison } = await client.repos.compareCommits({
         owner,
         repo,
         base: metadata.baseSha,
         head: metadata.headSha,
+        per_page: 1,
       });
       const after = await getPrMetadata(client, owner, repo, pullNumber, true);
       if (changesRevision(after) !== changesRevision(metadata))
@@ -121,6 +124,7 @@ export function createPrChangesService() {
             file.patch ?? comparison.merge_base_commit.sha,
           ]),
         })),
+        ...(filesTruncated ? { filesTruncated: true } : {}),
       };
       remember(client, value);
       if (cache?.version() === version) {
@@ -158,6 +162,7 @@ export function createPrChangesService() {
         const cache = githubCacheFor(client), version = cache?.version();
         const before = await getPrMetadata(client, owner, repo, pullNumber);
         if (changesRevision(before) !== changesRevision(revision)) return;
+        if (before.changedFileCount !== undefined && before.changedFileCount > GITHUB_PR_FILE_LIMIT) return;
         const diff = await getPrDiff(client, owner, repo, pullNumber, undefined, true);
         const after = await getPrMetadata(client, owner, repo, pullNumber, true);
         if (changesRevision(before) !== changesRevision(after)) throw new Error('This PR changed while its diff was being prepared.');

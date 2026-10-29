@@ -5,7 +5,7 @@ import type { InspectionRevision, PrChanges } from '../lib/pr-changes';
 import type { PrCommits, PrCommit } from '../lib/pr-commits';
 import type { PrMetadata } from '../lib/types';
 const r = { url: 'https://github.com/o/r/pull/1', baseSha: 'base', headSha: 'head' };
-function fixture(options: { commits?: number; comparisonFiles?: boolean; onFile?: (snapshot: PrChanges, file: string) => Promise<void> } = {}) {
+function fixture(options: { truncatedHead?: string; commits?: number; comparisonFiles?: boolean; onFile?: (snapshot: PrChanges, file: string) => Promise<void> } = {}) {
   const calls: string[] = [];
   let now = 1000,
     fail = false,
@@ -16,6 +16,7 @@ function fixture(options: { commits?: number; comparisonFiles?: boolean; onFile?
     metadata: { ...revision, title: 'PR' } as PrMetadata,
     comparisonBase: 'merge-base',
     fetchedAt: now,
+    filesTruncated: revision.headSha === options.truncatedHead,
     files: ['first.ts', 'second.ts', 'third.svg'].map((path) => ({
       path,
       status: 'modified',
@@ -70,6 +71,23 @@ function fixture(options: { commits?: number; comparisonFiles?: boolean; onFile?
     },
   };
 }
+void test('capped PRs retain tab data without monopolizing preloads or preparing incomplete explanations', async () => {
+  const f = fixture({ truncatedHead: r.headSha });
+  const other = { ...r, url: r.url + '2', headSha: 'small' };
+  try {
+    f.cache.setTargets('one', [r, other]);
+    await f.cache.flush();
+    assert.equal(f.cache.peekChanges(r)?.filesTruncated, true);
+    assert.ok(f.cache.peekCommits(r));
+    assert.deepEqual(f.calls.filter(call => call.includes(':head')), ['changes:head', 'commits:head']);
+    assert.ok(f.calls.includes('review:small'), 'Other PRs still finish preparation');
+    assert.equal(f.cache.activity(), undefined);
+    const count = f.calls.length;
+    f.cache.setTargets('one', [r, other]);
+    await f.cache.flush();
+    assert.equal(f.calls.length, count, 'No repeated retries of a permanent API cap');
+  } finally { f.cache.stop(); }
+});
 void test('discovery preloads tab data and every changed file; unchanged revisions do no work', async () => {
   const f = fixture();
   try {

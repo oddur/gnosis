@@ -39,6 +39,49 @@ const json = (data: unknown, status = 200, headers: Record<string, string> = {})
     headers: { 'content-type': 'application/json', ...headers },
   });
 
+void test('unavailable reads cool down across callers, including forced refresh, without blocking other PRs', async () => {
+  let unavailable = true;
+  const h = harness(url => url.includes('/pulls/1') && unavailable
+    ? json({ message: 'Service Unavailable' }, 503, { 'retry-after': '60' })
+    : json({ ok: true }));
+  const client = h.pool.client('one');
+  for (let i = 0; i < 12; i++)
+    await assert.rejects(client.request('GET /repos/o/r/pulls/1', { headers: { 'cache-control': 'no-cache' } }));
+  assert.equal(h.calls.length, 1, 'A failing read must not be sent on every mount or refresh');
+  await client.request('GET /repos/o/r/pulls/2');
+  assert.equal(h.calls.length, 2, 'Other PRs remain usable');
+  await assert.rejects(h.pool.client('two').request('GET /repos/o/r/pulls/1'));
+  assert.equal(h.calls.length, 3, 'Cooldowns are account scoped');
+  h.advance(60_000);
+  await assert.rejects(client.request('GET /repos/o/r/pulls/1'));
+  assert.equal(h.calls.length, 3, 'Honor Retry-After with a clock-skew cushion');
+  h.advance(1001);
+  unavailable = false;
+  assert.equal((await client.request('GET /repos/o/r/pulls/1')).status, 200);
+});
+
+void test('repeated server failures back off progressively and successful reads reset the cooldown', async () => {
+  let status = 502;
+  const h = harness(() => json({ message: 'Bad Gateway' }, status));
+  const client = h.pool.client('one');
+  const read = () => client.request('GET /repos/o/r/pulls/1', { headers: { 'cache-control': 'no-cache' } });
+  await assert.rejects(read());
+  h.advance(30_000);
+  await assert.rejects(read());
+  h.advance(30_000);
+  await assert.rejects(read());
+  assert.equal(h.calls.length, 2, 'Second failure gets a longer cooldown');
+  h.advance(30_000);
+  status = 200;
+  await read();
+  status = 504;
+  await assert.rejects(read());
+  h.advance(30_000);
+  status = 200;
+  await read();
+  assert.equal(h.calls.length, 5, 'Successful reads reset successive failure counts');
+});
+
 void test('all consumers share authenticated requests and a primary cooldown, including queued requests', async () => {
   let limited = true;
   const h = harness((_url, headers) => {

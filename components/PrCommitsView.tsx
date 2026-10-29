@@ -148,7 +148,7 @@ export function PrCommitsView({
   useEffect(() => {
     // A range cannot establish that each constituent commit was inspected.
     if (!snapshot || !selection || chosen.length !== 1 || !first) return;
-    const viewed = snapshot.files.every(file => progress.isFileViewed(changeFileKey({
+    const viewed = !snapshot.filesTruncated && snapshot.files.every(file => progress.isFileViewed(changeFileKey({
       snapshot, file, key: file.path,
     })));
     const summary = commitViewedKey(selection.url, first.sha, selection.parentSha ?? first.parents.at(0) ?? '');
@@ -227,7 +227,16 @@ export function PrCommitsView({
     setListError('');
     try {
       const next: PrCommits[] = [];
-      for (const member of subject.members) next.push(await inspectionData.readCommits(member, refresh));
+      const failures: string[] = [];
+      for (const member of subject.members) {
+        try { next.push(await inspectionData.readCommits(member, refresh)); }
+        catch (e) {
+          const saved = lists.find(list => list.url === member.url);
+          if (saved) next.push(saved);
+          failures.push(`PR #${member.number}: ${e instanceof Error ? e.message : String(e)} ${saved ? 'Showing saved commits.' : 'Its commits are not shown.'}`);
+        }
+        if (epoch.current !== current) return;
+      }
       if (epoch.current !== current) return;
       // A refresh may finish after the user chooses a different commit. Reconcile that
       // latest choice, and prevent an older comparison request from replacing it later.
@@ -237,7 +246,8 @@ export function PrCommitsView({
       setComparisonError('');
       failedSelection.current = undefined;
       setLists(next);
-      setNewer(false);
+      setListError(failures.join(' '));
+      if (!failures.length) setNewer(false);
       const previous = desired && next.find((list) => list.url === desired.url);
       if (
         desired &&
@@ -403,7 +413,7 @@ export function PrCommitsView({
                           prHeadSha: group.list.metadata.headSha, firstSha: commit.sha, lastSha: commit.sha,
                         }) : undefined;
                         const viewed = savedComparison
-                          ? savedComparison.files.every(file => progress.isFileViewed(changeFileKey({ snapshot: savedComparison, file, key: file.path })))
+                          ? !savedComparison.filesTruncated && savedComparison.files.every(file => progress.isFileViewed(changeFileKey({ snapshot: savedComparison, file, key: file.path })))
                           : progress.isFileViewed(commitViewedKey(group.member.url, commit.sha, commit.parents.at(0) ?? ''));
                         return (
                         <div key={commit.sha} className="commit-entry">
