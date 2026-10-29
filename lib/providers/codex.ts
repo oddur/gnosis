@@ -56,12 +56,19 @@ async function generate(opts: GenerateOptions): Promise<string> {
     const instructionsPath = path.join(dir, 'instructions.md');
     const outputPath = path.join(dir, 'answer.txt');
     await fs.writeFile(instructionsPath, opts.systemPrompt, { mode: 0o600 });
+    const imageArgs: string[] = [];
+    for (const [index, image] of (opts.images ?? []).entries()) {
+      const imagePath = path.join(dir, `frame-${index}.png`);
+      await fs.writeFile(imagePath, Buffer.from(image.base64, 'base64'), { mode: 0o600 });
+      imageArgs.push('--image', imagePath);
+    }
     const events = createCodexEventHandler(opts.onChunk);
     await spawnCliStreaming({
       binPath: resolveBinaryPath('codex', [path.join(os.homedir(), '.volta/bin/codex')]),
       cliName: 'Codex',
       args: [
         'exec',
+        ...imageArgs,
         '--json',
         '--ephemeral',
         '--skip-git-repo-check',

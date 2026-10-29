@@ -1,0 +1,40 @@
+{
+  "summary": "This change replaces repeated pop/unshift operations with three in-place reversals to rotate an array right.\n- The function normalizes the rotation count and returns an empty array unchanged.\n- It reverses the whole array, then reverses each of the two resulting groups.\n- It changes and returns the same array.",
+  "riskLevel": "low",
+  "riskRationale": "This is a small refactor with no external dependencies. Review must check element order, rotation count normalization, and empty-array handling. No tests are supplied.",
+  "storyArc": "The single topic follows the same elements through three reversals. It shows how the first reversal exchanges the two groups, while the next two reversals restore order within each group.",
+  "topics": [
+    {
+      "title": "Rotate right with three in-place reversals",
+      "slideType": "refactor",
+      "importance": "important",
+      "hunkIds": ["hunk-0"],
+      "dependsOn": [],
+      "order": 1,
+      "narrativeBrief": "Use [A,B,C,D,E] with k = 2 to explain why each reversal is necessary. Keep element identity visible through all three phases, and state the empty-array and rotation count rules separately.",
+      "diagramBrief": {
+        "question": "How do the three reversals move [D,E] before [A,B,C] and restore order within both groups?",
+        "takeaway": "The array changes from [A,B,C,D,E] to [E,D,C,B,A], then [D,E,C,B,A], then [D,E,A,B,C]. Both groups finish in their original internal order.",
+        "assumedKnowledge": [
+          "Array indices start at zero.",
+          "A reversal exchanges elements from opposite ends of a range."
+        ],
+        "essentialConcepts": [
+          "All reversals change the same array.",
+          "The normalized rotation count is 2 for this example.",
+          "The whole-array reversal exchanges group positions and reverses order within both groups.",
+          "The first group reversal covers indices 0 through k - 1.",
+          "The second group reversal covers indices k through items.length - 1.",
+          "An empty array returns before rotation count normalization.",
+          "Normalization maps negative and oversized integer counts into the array's index range."
+        ],
+        "omit": [
+          "Performance measurements",
+          "A separate diagram of repeated pop/unshift operations",
+          "A walkthrough of every loop iteration"
+        ],
+        "visualApproach": "Use an animated SVG execution walkthrough with one fixed row of five indexed positions. Give [A,B,C] and [D,E] distinct group colors, and keep each letter visible as its position changes. Show the three reversal ranges in sequence, with a pause after each phase and a small record of each completed state. Position means array index; color means original group membership. This form is better than a static relationship map because the difficult point is the movement of the same elements, not a dependency. The animation shows both groups change position during the whole-array reversal, then recover their internal order during separate reversals. Keep the k = 2 boundary visible after the first phase. State normalization and the empty-array return in nearby text rather than adding unrelated branches to this example."
+      }
+    }
+  ]
+}

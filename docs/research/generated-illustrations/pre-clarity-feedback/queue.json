@@ -1,0 +1,85 @@
+{
+  "id": "queue",
+  "title": "Ordered batching",
+  "filePath": "batch.ts",
+  "code": "export function takeBatch(pending, maxWeight) {\n  // New: preserve order and bound total weight, instead of only item count.\n  const batch = []; let weight = 0;\n  while (pending.length > 0) {\n    const next = pending[0];\n    if (batch.length > 0 && weight + next.weight > maxWeight) break;\n    batch.push(pending.shift()); weight += next.weight;\n  }\n  return batch;\n}",
+  "questions": "Explain [8,5,3] at capacity 12 and [15,2] at capacity 12. Why does 3 not skip ahead of 5? Why does 15 not block forever?",
+  "slide": {
+    "title": "Keep queue order and accept an oversized first item",
+    "narrative": "The weight limit applies only after the batch has one item. This rule lets an oversized first item leave the queue. Later items cannot pass a front item that would exceed the limit. Thus, a returned batch can exceed capacity, but selection does not skip items to fill unused capacity.",
+    "reviewFocus": null,
+    "contextSnippets": [],
+    "fileSummaries": [
+      {
+        "filePath": "batch.ts",
+        "summary": "Batch selection preserves queue order and applies the weight limit only after it accepts the first item."
+      }
+    ],
+    "inlineExplanations": [
+      {
+        "filePath": "batch.ts",
+        "line": 6,
+        "side": "RIGHT",
+        "code": "if (batch.length > 0 && weight + next.weight > maxWeight) break;",
+        "text": "The empty batch accepts its first item regardless of weight. After that, `break` stops selection at the first item that would exceed capacity; later items cannot pass it."
+      }
+    ],
+    "svgIllustration": {
+      "version": 1,
+      "title": "The first item moves; the next item controls the stop",
+      "takeaway": "At capacity 12, [8,5,3] returns [8], and [15,2] returns [15].",
+      "assumptions": "Weights are illustrative. Queue position shows order, not weight or time. Each row is a separate call with capacity 12.",
+      "plan": {
+        "question": "Why can 3 not pass 5, and why does 15 not block selection?",
+        "visualApproach": "Show two aligned queues beside their batches. Move each first item into its batch, then show the stop condition at the next item.",
+        "whyThisForm": "Stable queue positions make the preserved order visible. Separate batch totals show why the same stop rule produces both results.",
+        "encodings": "Items on the left are pending, with the front item first. The right boundary contains the batch. Numbers are weights; item sizes do not represent weight.",
+        "motion": "Move 8 and 15 from their queue fronts into their batches. Keep all other items fixed. After arrival, show why selection stops at 5 and 2.",
+        "prediction": "At capacity 12, [8,4,3] accepts 8 and 4, then stops before 3 because the limit permits equality.",
+        "restingState": "Both returned batches, their totals, the remaining queues, and the two stop calculations remain visible."
+      },
+      "scenarios": [
+        {
+          "id": "ordered_selection",
+          "title": "Capacity 12 in both calls",
+          "input": "Pending weights: [8,5,3] and [15,2]",
+          "frames": [
+            {
+              "title": "An empty batch accepts the front item",
+              "caption": "The nonempty condition is false, so neither first item triggers the stop rule.",
+              "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 300\"><text x=\"24\" y=\"25\" font-size=\"17\" fill=\"var(--ink)\">Pending · front first</text><text x=\"358\" y=\"25\" font-size=\"17\" fill=\"var(--ink)\">Batch · capacity 12</text><rect x=\"340\" y=\"40\" width=\"196\" height=\"88\" rx=\"8\" fill=\"none\" stroke=\"var(--line)\"/><rect x=\"340\" y=\"180\" width=\"196\" height=\"88\" rx=\"8\" fill=\"none\" stroke=\"var(--line)\"/><path d=\"M240 76 H320 M240 216 H320\" stroke=\"var(--line)\" fill=\"none\"/><g data-motion-id=\"eight\" transform=\"translate(24 52)\"><rect width=\"52\" height=\"44\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"26\" y=\"29\" text-anchor=\"middle\" font-size=\"20\" fill=\"var(--ink)\">8</text></g><g data-motion-id=\"five\" transform=\"translate(96 52)\"><rect width=\"52\" height=\"44\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"26\" y=\"29\" text-anchor=\"middle\" font-size=\"20\" fill=\"var(--ink)\">5</text></g><g data-motion-id=\"three\" transform=\"translate(168 52)\"><rect width=\"52\" height=\"44\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"26\" y=\"29\" text-anchor=\"middle\" font-size=\"20\" fill=\"var(--ink)\">3</text></g><g data-motion-id=\"fifteen\" transform=\"translate(24 192)\"><rect width=\"52\" height=\"44\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"26\" y=\"29\" text-anchor=\"middle\" font-size=\"20\" fill=\"var(--ink)\">15</text></g><g data-motion-id=\"two\" transform=\"translate(96 192)\"><rect width=\"52\" height=\"44\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"26\" y=\"29\" text-anchor=\"middle\" font-size=\"20\" fill=\"var(--ink)\">2</text></g><text x=\"358\" y=\"79\" font-size=\"17\" fill=\"var(--muted)\">Empty · total 0</text><text x=\"358\" y=\"219\" font-size=\"17\" fill=\"var(--muted)\">Empty · total 0</text><text x=\"24\" y=\"153\" font-size=\"17\" fill=\"var(--ink)\">Accept 8: batch is empty</text><text x=\"24\" y=\"293\" font-size=\"17\" fill=\"var(--ink)\">Accept 15: batch is empty</text></svg>",
+              "evidence": {
+                "filePath": "batch.ts",
+                "startLine": 6
+              }
+            },
+            {
+              "title": "Each first item leaves the queue",
+              "caption": "The batch total now includes the accepted item. The next front items are 5 and 2.",
+              "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 300\"><text x=\"24\" y=\"25\" font-size=\"17\" fill=\"var(--ink)\">Pending · front first</text><text x=\"358\" y=\"25\" font-size=\"17\" fill=\"var(--ink)\">Batch · capacity 12</text><rect x=\"340\" y=\"40\" width=\"196\" height=\"88\" rx=\"8\" fill=\"none\" stroke=\"var(--line)\"/><rect x=\"340\" y=\"180\" width=\"196\" height=\"88\" rx=\"8\" fill=\"none\" stroke=\"var(--line)\"/><path d=\"M240 76 H320 M240 216 H320\" stroke=\"var(--line)\" fill=\"none\"/><g data-motion-id=\"eight\" transform=\"translate(358 52)\"><rect width=\"52\" height=\"44\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"26\" y=\"29\" text-anchor=\"middle\" font-size=\"20\" fill=\"var(--ink)\">8</text></g><g data-motion-id=\"five\" transform=\"translate(96 52)\"><rect width=\"52\" height=\"44\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"26\" y=\"29\" text-anchor=\"middle\" font-size=\"20\" fill=\"var(--ink)\">5</text></g><g data-motion-id=\"three\" transform=\"translate(168 52)\"><rect width=\"52\" height=\"44\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"26\" y=\"29\" text-anchor=\"middle\" font-size=\"20\" fill=\"var(--ink)\">3</text></g><g data-motion-id=\"fifteen\" transform=\"translate(358 192)\"><rect width=\"52\" height=\"44\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"26\" y=\"29\" text-anchor=\"middle\" font-size=\"20\" fill=\"var(--ink)\">15</text></g><g data-motion-id=\"two\" transform=\"translate(96 192)\"><rect width=\"52\" height=\"44\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"26\" y=\"29\" text-anchor=\"middle\" font-size=\"20\" fill=\"var(--ink)\">2</text></g><text x=\"425\" y=\"80\" font-size=\"17\" fill=\"var(--ink)\">Total 8</text><text x=\"425\" y=\"220\" font-size=\"17\" fill=\"var(--ink)\">Total 15</text><text x=\"24\" y=\"153\" font-size=\"17\" fill=\"var(--ink)\">Next front item: 5</text><text x=\"24\" y=\"293\" font-size=\"17\" fill=\"var(--ink)\">Next front item: 2</text></svg>",
+              "evidence": {
+                "filePath": "batch.ts",
+                "startLine": 7
+              }
+            },
+            {
+              "title": "Both nonempty batches stop at the front",
+              "caption": "Return [8] with [5,3] pending. Return [15] with [2] pending. No item passes a rejected front item.",
+              "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 300\"><text x=\"24\" y=\"25\" font-size=\"17\" fill=\"var(--ink)\">Pending · front first</text><text x=\"358\" y=\"25\" font-size=\"17\" fill=\"var(--ink)\">Returned batch</text><rect x=\"340\" y=\"40\" width=\"196\" height=\"88\" rx=\"8\" fill=\"none\" stroke=\"var(--line)\"/><rect x=\"340\" y=\"180\" width=\"196\" height=\"88\" rx=\"8\" fill=\"none\" stroke=\"var(--line)\"/><path d=\"M240 76 H300 M300 58 V94 M240 216 H300 M300 198 V234\" stroke=\"var(--warning)\" stroke-width=\"3\" fill=\"none\"/><g data-motion-id=\"eight\" transform=\"translate(358 52)\"><rect width=\"52\" height=\"44\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"26\" y=\"29\" text-anchor=\"middle\" font-size=\"20\" fill=\"var(--ink)\">8</text></g><g data-motion-id=\"five\" transform=\"translate(96 52)\"><rect width=\"52\" height=\"44\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--warning)\" stroke-width=\"3\"/><text x=\"26\" y=\"29\" text-anchor=\"middle\" font-size=\"20\" fill=\"var(--ink)\">5</text></g><g data-motion-id=\"three\" transform=\"translate(168 52)\"><rect width=\"52\" height=\"44\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"26\" y=\"29\" text-anchor=\"middle\" font-size=\"20\" fill=\"var(--ink)\">3</text></g><g data-motion-id=\"fifteen\" transform=\"translate(358 192)\"><rect width=\"52\" height=\"44\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"26\" y=\"29\" text-anchor=\"middle\" font-size=\"20\" fill=\"var(--ink)\">15</text></g><g data-motion-id=\"two\" transform=\"translate(96 192)\"><rect width=\"52\" height=\"44\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--warning)\" stroke-width=\"3\"/><text x=\"26\" y=\"29\" text-anchor=\"middle\" font-size=\"20\" fill=\"var(--ink)\">2</text></g><text x=\"425\" y=\"80\" font-size=\"17\" fill=\"var(--ink)\">Total 8</text><text x=\"425\" y=\"220\" font-size=\"17\" fill=\"var(--ink)\">Total 15</text><text x=\"24\" y=\"153\" font-size=\"17\" fill=\"var(--ink)\">STOP: nonempty and 8 + 5 = 13 &gt; 12</text><text x=\"24\" y=\"293\" font-size=\"17\" fill=\"var(--ink)\">STOP: nonempty and 15 + 2 = 17 &gt; 12</text></svg>",
+              "evidence": {
+                "filePath": "batch.ts",
+                "startLine": 6
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "mechanism": null,
+    "d2Diagram": null,
+    "explainerIdea": null,
+    "reviewChecks": []
+  },
+  "model": "gpt-6.1-sol",
+  "generatedAt": "2026-10-29T14:14:44.307Z"
+}

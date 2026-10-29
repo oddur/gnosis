@@ -1,0 +1,565 @@
+[
+  {
+    "id": "queue",
+    "title": "Ordered batching",
+    "filePath": "batch.ts",
+    "code": "export function takeBatch(pending, maxWeight) {\n  // New: preserve order and bound total weight, instead of only item count.\n  const batch = []; let weight = 0;\n  while (pending.length > 0) {\n    const next = pending[0];\n    if (batch.length > 0 && weight + next.weight > maxWeight) break;\n    batch.push(pending.shift()); weight += next.weight;\n  }\n  return batch;\n}",
+    "questions": "Explain [8,5,3] at capacity 12 and [15,2] at capacity 12. Why does 3 not skip ahead of 5? Why does 15 not block forever?",
+    "slide": {
+      "title": "Keep item order and accept an oversized first item",
+      "narrative": "Each call takes items from the front of `pending`. It stops when the next item would exceed capacity, unless the batch is empty. This preserves order and lets an oversized first item leave the queue. Capacity is therefore not a strict upper limit on batch weight.",
+      "reviewFocus": null,
+      "contextSnippets": [],
+      "fileSummaries": [
+        {
+          "filePath": "batch.ts",
+          "summary": "Batch selection preserves queue order and limits total weight, except for an oversized first item."
+        }
+      ],
+      "inlineExplanations": [],
+      "mechanism": {
+        "version": 1,
+        "title": "Why does selection stop or continue at capacity 12?",
+        "takeaway": "Successive calls return [8], then [5,3]; or [15], then [2]. No item passes an earlier item.",
+        "assumptions": "Illustrative item weights; maxWeight is 12 in both scenarios. These are not production measurements.",
+        "nodes": [
+          {
+            "id": "pending",
+            "label": "Pending items",
+            "kind": "queue",
+            "column": 0,
+            "row": 0
+          },
+          {
+            "id": "batch",
+            "label": "Current batch",
+            "kind": "queue",
+            "column": 1,
+            "row": 0
+          }
+        ],
+        "edges": [
+          {
+            "id": "take",
+            "from": "pending",
+            "to": "batch",
+            "label": "Remove first item"
+          }
+        ],
+        "scenarios": [
+          {
+            "id": "ordered",
+            "title": "An item cannot pass the first pending item",
+            "input": "Illustrative weights [8,5,3]; capacity 12.",
+            "events": [
+              {
+                "title": "The first call starts with an empty batch",
+                "caption": "Only the first pending item, 8, is considered.",
+                "states": [
+                  {
+                    "id": "pending",
+                    "value": "First item: 8",
+                    "items": ["8", "5", "3"],
+                    "tone": "active"
+                  },
+                  {
+                    "id": "batch",
+                    "value": "Total weight: 0; capacity: 12",
+                    "items": [],
+                    "tone": "neutral"
+                  }
+                ],
+                "focus": ["pending"],
+                "evidence": {
+                  "filePath": "batch.ts",
+                  "startLine": 5
+                }
+              },
+              {
+                "title": "The empty batch accepts 8",
+                "caption": "Selection removes 8 from pending and adds its weight to the batch total.",
+                "states": [
+                  {
+                    "id": "pending",
+                    "value": "First item: 5",
+                    "items": ["5", "3"],
+                    "tone": "neutral"
+                  },
+                  {
+                    "id": "batch",
+                    "value": "Total weight: 8; capacity: 12",
+                    "items": ["8"],
+                    "tone": "active"
+                  }
+                ],
+                "focus": ["take"],
+                "transfer": {
+                  "edge": "take",
+                  "label": "8"
+                },
+                "evidence": {
+                  "filePath": "batch.ts",
+                  "startLine": 7
+                }
+              },
+              {
+                "title": "8 + 5 exceeds 12: return [8]",
+                "caption": "The batch is nonempty, so selection stops. Item 5 stays first; item 3 is not considered.",
+                "states": [
+                  {
+                    "id": "pending",
+                    "value": "Unchanged: 5 stays before 3",
+                    "items": ["5", "3"],
+                    "tone": "warning"
+                  },
+                  {
+                    "id": "batch",
+                    "value": "Returned; total weight: 8",
+                    "items": ["8"],
+                    "tone": "success"
+                  }
+                ],
+                "focus": ["pending", "batch"],
+                "evidence": {
+                  "filePath": "batch.ts",
+                  "startLine": 6
+                }
+              },
+              {
+                "title": "The next call starts a new batch",
+                "caption": "The previous batch is returned. The new call starts with weight 0 and the remaining queue.",
+                "states": [
+                  {
+                    "id": "pending",
+                    "value": "First item: 5",
+                    "items": ["5", "3"],
+                    "tone": "active"
+                  },
+                  {
+                    "id": "batch",
+                    "value": "Total weight: 0; capacity: 12",
+                    "items": [],
+                    "tone": "neutral"
+                  }
+                ],
+                "focus": ["batch"],
+                "evidence": {
+                  "filePath": "batch.ts",
+                  "startLine": 3
+                }
+              },
+              {
+                "title": "The new batch accepts 5",
+                "caption": "Item 5 leaves pending before item 3 can be considered.",
+                "states": [
+                  {
+                    "id": "pending",
+                    "value": "First item: 3",
+                    "items": ["3"],
+                    "tone": "neutral"
+                  },
+                  {
+                    "id": "batch",
+                    "value": "Total weight: 5; capacity: 12",
+                    "items": ["5"],
+                    "tone": "active"
+                  }
+                ],
+                "focus": ["take"],
+                "transfer": {
+                  "edge": "take",
+                  "label": "5"
+                },
+                "evidence": {
+                  "filePath": "batch.ts",
+                  "startLine": 7
+                }
+              },
+              {
+                "title": "5 + 3 fits: return [5,3]",
+                "caption": "The total is 8. Pending is empty, so selection ends.",
+                "states": [
+                  {
+                    "id": "pending",
+                    "value": "Empty",
+                    "items": [],
+                    "tone": "neutral"
+                  },
+                  {
+                    "id": "batch",
+                    "value": "Returned; total weight: 8",
+                    "items": ["5", "3"],
+                    "tone": "success"
+                  }
+                ],
+                "focus": ["take", "batch"],
+                "transfer": {
+                  "edge": "take",
+                  "label": "3"
+                },
+                "evidence": {
+                  "filePath": "batch.ts",
+                  "startLine": 7
+                }
+              }
+            ]
+          },
+          {
+            "id": "oversized",
+            "title": "An oversized first item does not block the queue",
+            "input": "Illustrative weights [15,2]; capacity 12.",
+            "events": [
+              {
+                "title": "The first call starts with an empty batch",
+                "caption": "Item 15 exceeds capacity, but the stop condition also requires a nonempty batch.",
+                "states": [
+                  {
+                    "id": "pending",
+                    "value": "First item: 15",
+                    "items": ["15", "2"],
+                    "tone": "active"
+                  },
+                  {
+                    "id": "batch",
+                    "value": "Total weight: 0; capacity: 12",
+                    "items": [],
+                    "tone": "neutral"
+                  }
+                ],
+                "focus": ["pending", "batch"],
+                "evidence": {
+                  "filePath": "batch.ts",
+                  "startLine": 6
+                }
+              },
+              {
+                "title": "The empty batch accepts 15",
+                "caption": "Item 15 leaves pending even though its weight exceeds 12.",
+                "states": [
+                  {
+                    "id": "pending",
+                    "value": "First item: 2",
+                    "items": ["2"],
+                    "tone": "neutral"
+                  },
+                  {
+                    "id": "batch",
+                    "value": "Total weight: 15; capacity: 12",
+                    "items": ["15"],
+                    "tone": "warning"
+                  }
+                ],
+                "focus": ["take"],
+                "transfer": {
+                  "edge": "take",
+                  "label": "15"
+                },
+                "evidence": {
+                  "filePath": "batch.ts",
+                  "startLine": 7
+                }
+              },
+              {
+                "title": "15 + 2 exceeds 12: return [15]",
+                "caption": "The batch is now nonempty, so the stop condition keeps item 2 in pending.",
+                "states": [
+                  {
+                    "id": "pending",
+                    "value": "Unchanged: first item is 2",
+                    "items": ["2"],
+                    "tone": "neutral"
+                  },
+                  {
+                    "id": "batch",
+                    "value": "Returned; total weight: 15",
+                    "items": ["15"],
+                    "tone": "success"
+                  }
+                ],
+                "focus": ["pending", "batch"],
+                "evidence": {
+                  "filePath": "batch.ts",
+                  "startLine": 6
+                }
+              },
+              {
+                "title": "The next call starts a new batch",
+                "caption": "The new call resets the total to 0. Item 15 is no longer in pending.",
+                "states": [
+                  {
+                    "id": "pending",
+                    "value": "First item: 2",
+                    "items": ["2"],
+                    "tone": "active"
+                  },
+                  {
+                    "id": "batch",
+                    "value": "Total weight: 0; capacity: 12",
+                    "items": [],
+                    "tone": "neutral"
+                  }
+                ],
+                "focus": ["batch"],
+                "evidence": {
+                  "filePath": "batch.ts",
+                  "startLine": 3
+                }
+              },
+              {
+                "title": "The next call returns [2]",
+                "caption": "The batch accepts 2. Pending is empty, so selection ends.",
+                "states": [
+                  {
+                    "id": "pending",
+                    "value": "Empty",
+                    "items": [],
+                    "tone": "neutral"
+                  },
+                  {
+                    "id": "batch",
+                    "value": "Returned; total weight: 2",
+                    "items": ["2"],
+                    "tone": "success"
+                  }
+                ],
+                "focus": ["take", "batch"],
+                "transfer": {
+                  "edge": "take",
+                  "label": "2"
+                },
+                "evidence": {
+                  "filePath": "batch.ts",
+                  "startLine": 7
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "d2Diagram": null,
+      "explainerIdea": null,
+      "reviewChecks": []
+    },
+    "model": "gpt-6.1-sol",
+    "generatedAt": "2026-10-29T11:24:45.146Z"
+  },
+  {
+    "id": "version",
+    "title": "Rejecting a stale write",
+    "filePath": "document.ts",
+    "code": "export async function updateDocument(id, expectedVersion, body) {\n  // New: replace unconditional overwrite with one atomic conditional update.\n  const result = await db.execute(\n    'UPDATE documents SET body = ?, version = version + 1 WHERE id = ? AND version = ?',\n    [body, id, expectedVersion]);\n  if (result.rowsAffected === 0) return { status: 409 };\n  return { status: 200 };\n}\n// Client supplies the version it read. There is no automatic retry.",
+    "questions": "Explain expected version 7 vs stored version 8, then the matching version 7 vs 7. Show the stored value stays unchanged on rejection. The comparison and write are one database statement, not two operations.",
+    "slide": {
+      "title": "One atomic update rejects stale writes",
+      "narrative": "The client supplies the version it read. One database statement checks the document id and version and makes the change only if both match. A rejected update preserves the stored body and version. The function does not retry automatically.",
+      "reviewFocus": null,
+      "contextSnippets": [],
+      "fileSummaries": [
+        {
+          "filePath": "document.ts",
+          "summary": "Document updates now require a matching version and return 409 when no row changes."
+        }
+      ],
+      "inlineExplanations": [],
+      "mechanism": {
+        "version": 1,
+        "title": "Does the supplied version match?",
+        "takeaway": "Expected version 7 rejects stored version 8 without a change; it updates stored version 7 to version 8.",
+        "assumptions": "These are illustrative inputs, not production measurements. Both scenarios use an existing row with the requested id.",
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Client",
+            "kind": "actor",
+            "column": 0,
+            "row": 0
+          },
+          {
+            "id": "database",
+            "label": "Database: one atomic UPDATE",
+            "kind": "record",
+            "column": 1,
+            "row": 0
+          }
+        ],
+        "edges": [
+          {
+            "id": "update",
+            "from": "client",
+            "to": "database",
+            "label": "Match id + version; write"
+          },
+          {
+            "id": "result",
+            "from": "database",
+            "to": "client",
+            "label": "Affected rows → status"
+          }
+        ],
+        "scenarios": [
+          {
+            "id": "stale",
+            "title": "Expected 7, stored 8: reject",
+            "input": "Matching id; expected version 7; requested body B; stored body A, version 8.",
+            "events": [
+              {
+                "title": "The client has an old version",
+                "caption": "The request supplies version 7, but the stored row has version 8.",
+                "states": [
+                  {
+                    "id": "client",
+                    "value": "Expected: 7; requested body: B",
+                    "tone": "neutral"
+                  },
+                  {
+                    "id": "database",
+                    "value": "Stored body: A; version: 8",
+                    "tone": "neutral"
+                  }
+                ],
+                "focus": ["client", "database"],
+                "evidence": {
+                  "filePath": "document.ts",
+                  "startLine": 9
+                }
+              },
+              {
+                "title": "The atomic UPDATE finds no matching version",
+                "caption": "The same statement checks id and version and conditionally writes; version 8 does not match 7, so nothing changes.",
+                "states": [
+                  {
+                    "id": "client",
+                    "value": "Expected: 7; requested body: B",
+                    "tone": "neutral"
+                  },
+                  {
+                    "id": "database",
+                    "value": "Body: A; version: 8; affected rows: 0",
+                    "tone": "warning"
+                  }
+                ],
+                "focus": ["update", "database"],
+                "transfer": {
+                  "edge": "update",
+                  "label": "Expected 7; body B"
+                },
+                "evidence": {
+                  "filePath": "document.ts",
+                  "startLine": 4
+                }
+              },
+              {
+                "title": "Zero affected rows returns 409",
+                "caption": "The stored body and version stay unchanged. There is no automatic retry.",
+                "states": [
+                  {
+                    "id": "client",
+                    "value": "Status: 409",
+                    "tone": "warning"
+                  },
+                  {
+                    "id": "database",
+                    "value": "Stored body: A; version: 8",
+                    "tone": "neutral"
+                  }
+                ],
+                "focus": ["result"],
+                "transfer": {
+                  "edge": "result",
+                  "label": "0 rows → 409"
+                },
+                "evidence": {
+                  "filePath": "document.ts",
+                  "startLine": 6
+                }
+              }
+            ]
+          },
+          {
+            "id": "matching",
+            "title": "Expected 7, stored 7: write",
+            "input": "Matching id; expected version 7; requested body B; stored body A, version 7.",
+            "events": [
+              {
+                "title": "The supplied and stored versions match",
+                "caption": "This separate example starts with stored version 7.",
+                "states": [
+                  {
+                    "id": "client",
+                    "value": "Expected: 7; requested body: B",
+                    "tone": "neutral"
+                  },
+                  {
+                    "id": "database",
+                    "value": "Stored body: A; version: 7",
+                    "tone": "neutral"
+                  }
+                ],
+                "focus": ["client", "database"],
+                "evidence": {
+                  "filePath": "document.ts",
+                  "startLine": 5
+                }
+              },
+              {
+                "title": "The atomic UPDATE writes body B and version 8",
+                "caption": "The id and version match, so the same statement replaces the body and increases the version by one.",
+                "states": [
+                  {
+                    "id": "client",
+                    "value": "Expected: 7; requested body: B",
+                    "tone": "neutral"
+                  },
+                  {
+                    "id": "database",
+                    "value": "Body: B; version: 8; affected rows: 1",
+                    "tone": "success"
+                  }
+                ],
+                "focus": ["update", "database"],
+                "transfer": {
+                  "edge": "update",
+                  "label": "Expected 7; body B"
+                },
+                "evidence": {
+                  "filePath": "document.ts",
+                  "startLine": 4
+                }
+              },
+              {
+                "title": "The successful update returns 200",
+                "caption": "The database now stores the requested body at version 8.",
+                "states": [
+                  {
+                    "id": "client",
+                    "value": "Status: 200",
+                    "tone": "success"
+                  },
+                  {
+                    "id": "database",
+                    "value": "Stored body: B; version: 8",
+                    "tone": "success"
+                  }
+                ],
+                "focus": ["result"],
+                "transfer": {
+                  "edge": "result",
+                  "label": "1 row → 200"
+                },
+                "evidence": {
+                  "filePath": "document.ts",
+                  "startLine": 7
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "d2Diagram": null,
+      "explainerIdea": null,
+      "reviewChecks": []
+    },
+    "model": "gpt-6.1-sol",
+    "generatedAt": "2026-10-29T11:25:26.529Z"
+  }
+]

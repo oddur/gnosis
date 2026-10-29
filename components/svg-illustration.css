@@ -1,0 +1,30 @@
+.svg-illustration-stage {
+  width: 100%;
+  min-height: 160px;
+  max-height: 480px;
+  margin-block: 12px;
+}
+.svg-illustration-stage iframe {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border: 0;
+}
+.svg-illustration-stage > [role='alert'] {
+  font-size: 13px;
+  padding: 16px;
+}
+.svg-illustration-stage > [role='alert'] p {
+  margin-bottom: 8px;
+}
+.svg-illustration-stage > [role='alert'] details {
+  margin-bottom: 12px;
+}
+.svg-illustration-dialog .svg-illustration-stage {
+  min-height: 200px;
+  max-height: 48dvh;
+  flex: 1 1 auto;
+}
+.svg-illustration .mechanism-scenarios select {
+  min-width: 0;
+}

@@ -1,3 +1,5 @@
+import { SvgIllustration } from './SvgIllustration';
+import { MechanismDiagram } from './MechanismDiagram';
 import { isMarkdownFile } from '../lib/markdown-review';
 import { useSessionScroll, useSessionDraft } from '../lib/session-drafts';
 import { ReviewImageDiff } from './ReviewImageDiff';
@@ -414,7 +416,8 @@ export function SlideView({
   const groupedHunks = useMemo(() => {
     const groups = groupHunksByFile(slide.diffHunks);
     for (const filePath of slide.affectedFiles) {
-      if (imageMimeType(filePath) && !groups.some(group => group.filePath === filePath)) groups.push({ filePath, hunks: [] });
+      if (imageMimeType(filePath) && !groups.some((group) => group.filePath === filePath))
+        groups.push({ filePath, hunks: [] });
     }
     return groups;
   }, [slide.diffHunks, slide.affectedFiles]);
@@ -521,7 +524,25 @@ export function SlideView({
 
       <Markdown className="slide-prose select-text">{slide.narrative}</Markdown>
 
-      {slide.d2Diagram?.source ? (
+      {slide.svgIllustration ? (
+        <SvgIllustration
+          key={slide.id}
+          illustration={slide.svgIllustration}
+          expanded={diagramOpen}
+          onExpandedChange={setDiagramOpen}
+          canShowCode={(source) => isAnchorable({ ...source, text: '' }, anchorable)}
+          onShowCode={(source) => handleCheckClick({ ...source, text: '' })}
+        />
+      ) : slide.mechanism ? (
+        <MechanismDiagram
+          key={slide.id}
+          scene={slide.mechanism}
+          expanded={diagramOpen}
+          onExpandedChange={setDiagramOpen}
+          canShowCode={(source) => isAnchorable({ ...source, text: '' }, anchorable)}
+          onShowCode={(source) => handleCheckClick({ ...source, text: '' })}
+        />
+      ) : slide.d2Diagram?.source ? (
         <D2Diagram
           key={slide.id}
           diagram={slide.d2Diagram}
@@ -543,6 +564,8 @@ export function SlideView({
       )}
 
       {onExplore &&
+        !slide.mechanism &&
+        !slide.svgIllustration &&
         (slide.explainerIdea ||
           slide.explainer ||
           (slide.explainerIdea === undefined && slide.diffHunks.length > 0)) && (

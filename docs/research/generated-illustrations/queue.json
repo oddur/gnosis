@@ -1,0 +1,119 @@
+{
+  "id": "queue",
+  "title": "Ordered batching",
+  "filePath": "batch.ts",
+  "code": "export function takeBatch(pending, maxWeight) {\n  // New: preserve order and bound total weight, instead of only item count.\n  const batch = []; let weight = 0;\n  while (pending.length > 0) {\n    const next = pending[0];\n    if (batch.length > 0 && weight + next.weight > maxWeight) break;\n    batch.push(pending.shift()); weight += next.weight;\n  }\n  return batch;\n}",
+  "questions": "Explain [8,5,3] at capacity 12 and [15,2] at capacity 12. Why does 3 not skip ahead of 5? Why does 15 not block forever?",
+  "slide": {
+    "title": "Ordered batches allow an oversized first item",
+    "narrative": "The function takes items in queue order. It stops at the first item that would exceed capacity after the batch has an item. It does not search for a smaller item later in the queue.\n\nCapacity is not a strict upper limit: an empty batch accepts its first item regardless of weight. Thus, an oversized first item does not prevent this call from returning an item.",
+    "reviewFocus": null,
+    "contextSnippets": [],
+    "fileSummaries": [
+      {
+        "filePath": "batch.ts",
+        "summary": "Batch selection preserves queue order and checks total weight, but permits an oversized first item."
+      }
+    ],
+    "inlineExplanations": [
+      {
+        "filePath": "batch.ts",
+        "line": 6,
+        "side": "RIGHT",
+        "code": "    if (batch.length > 0 && weight + next.weight > maxWeight) break;",
+        "text": "The empty-batch condition permits an oversized first item. Once the batch has an item, `break` stops selection rather than checking later items."
+      }
+    ],
+    "svgIllustration": {
+      "version": 1,
+      "title": "Queue order and the first-item exception",
+      "takeaway": "Selection stops at a blocked queue head, but an empty batch accepts an oversized head.",
+      "assumptions": "Weights are illustrative, not production measurements. Rectangle widths use 20 drawing units per weight unit. Queue gaps separate items and do not represent weight. Dashed extensions show attempted additions, not accepted items.",
+      "plan": {
+        "question": "Why does 5 stop selection before 3, while an oversized first item can still enter an empty batch?",
+        "visualApproach": "Keep the queue above a shared batch-weight scale. Move the accepted first item into the batch, then project the next item's width directly after it without removing that item from pending.",
+        "whyThisForm": "The projected extension exposes whether the queue head fits in the remaining capacity. Keeping the actual head ahead of the remaining queue shows why selection cannot skip it.",
+        "encodings": "Rectangle width represents weight at 20 drawing units per weight unit. The fixed capacity mark is at 12. Solid batch rectangles are accepted items; dashed extensions are attempted additions only. Queue order runs left to right.",
+        "motion": "Move only the accepted first item vertically into the batch. Keep the other queue items, scale, and capacity mark fixed. After arrival, reveal a dashed projection of the next item to expose the stopping comparison. Never move a rejected item out of pending.",
+        "prediction": "For [8,4,3] at capacity 12, selection returns [8,4] and leaves [3]: the 4-width extension reaches capacity exactly, so it is accepted.",
+        "restingState": "Each final frame retains the accepted batch, the unchanged remaining queue, and a dashed next-item extension compared directly with the capacity boundary."
+      },
+      "scenarios": [
+        {
+          "id": "ordered_stop",
+          "title": "[8,5,3] at capacity 12",
+          "input": "pending = [8,5,3]; maxWeight = 12",
+          "frames": [
+            {
+              "title": "Start with an empty batch",
+              "caption": "Selection examines the first pending item, 8. The empty batch does not trigger the stopping condition.",
+              "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 290\"><text x=\"20\" y=\"35\" font-size=\"18\" fill=\"var(--ink)\">Pending: first item on the left</text><g data-motion-id=\"item8\" transform=\"translate(100 55)\"><rect width=\"160\" height=\"44\" fill=\"var(--accent)\"/><text x=\"80\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--paper)\">8</text></g><g data-motion-id=\"item5\" transform=\"translate(268 55)\"><rect width=\"100\" height=\"44\" fill=\"var(--paper)\" stroke=\"var(--ink)\"/><text x=\"50\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">5</text></g><g data-motion-id=\"item3\" transform=\"translate(376 55)\"><rect width=\"60\" height=\"44\" fill=\"var(--paper)\" stroke=\"var(--ink)\"/><text x=\"30\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">3</text></g><text x=\"20\" y=\"145\" font-size=\"18\" fill=\"var(--ink)\">Batch</text><text x=\"20\" y=\"198\" font-size=\"18\" fill=\"var(--muted)\">empty</text><line x1=\"100\" y1=\"216\" x2=\"460\" y2=\"216\" stroke=\"var(--line)\"/><line x1=\"340\" y1=\"158\" x2=\"340\" y2=\"224\" stroke=\"var(--warning)\" stroke-width=\"2\"/><text x=\"100\" y=\"245\" font-size=\"16\" fill=\"var(--muted)\">0</text><text x=\"340\" y=\"245\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Capacity 12</text></svg>",
+              "evidence": {
+                "filePath": "batch.ts",
+                "startLine": 6
+              }
+            },
+            {
+              "title": "8 enters the batch",
+              "caption": "Accepting 8 removes it from pending. The next item is now 5; 3 remains behind it.",
+              "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 290\"><text x=\"20\" y=\"35\" font-size=\"18\" fill=\"var(--ink)\">Pending: 5 remains before 3</text><g data-motion-id=\"item8\" transform=\"translate(100 170)\"><rect width=\"160\" height=\"44\" fill=\"var(--accent)\"/><text x=\"80\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--paper)\">8</text></g><g data-motion-id=\"item5\" transform=\"translate(268 55)\"><rect width=\"100\" height=\"44\" fill=\"var(--paper)\" stroke=\"var(--ink)\"/><text x=\"50\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">5</text></g><g data-motion-id=\"item3\" transform=\"translate(376 55)\"><rect width=\"60\" height=\"44\" fill=\"var(--paper)\" stroke=\"var(--ink)\"/><text x=\"30\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">3</text></g><text x=\"20\" y=\"145\" font-size=\"18\" fill=\"var(--ink)\">Batch</text><text x=\"20\" y=\"198\" font-size=\"18\" fill=\"var(--ink)\">[8]</text><line x1=\"100\" y1=\"216\" x2=\"460\" y2=\"216\" stroke=\"var(--line)\"/><line x1=\"340\" y1=\"158\" x2=\"340\" y2=\"224\" stroke=\"var(--warning)\" stroke-width=\"2\"/><text x=\"100\" y=\"245\" font-size=\"16\" fill=\"var(--muted)\">0</text><text x=\"340\" y=\"245\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Capacity 12</text></svg>",
+              "evidence": {
+                "filePath": "batch.ts",
+                "startLine": 7
+              }
+            },
+            {
+              "title": "5 cannot fit; 3 cannot pass it",
+              "caption": "The dashed 5-width attempt extends beyond capacity. It is not accepted: return [8] and leave [5,3]. Only the queue head is examined, so 3 cannot skip ahead.",
+              "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 290\"><text x=\"20\" y=\"35\" font-size=\"18\" fill=\"var(--ink)\">Pending: 5 remains before 3</text><g data-motion-id=\"item8\" transform=\"translate(100 170)\"><rect width=\"160\" height=\"44\" fill=\"var(--accent)\"/><text x=\"80\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--paper)\">8</text></g><g data-motion-id=\"item5\" transform=\"translate(268 55)\"><rect width=\"100\" height=\"44\" fill=\"var(--paper)\" stroke=\"var(--ink)\"/><text x=\"50\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">5</text></g><g data-motion-id=\"item3\" transform=\"translate(376 55)\"><rect width=\"60\" height=\"44\" fill=\"var(--paper)\" stroke=\"var(--ink)\"/><text x=\"30\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">3</text></g><text x=\"20\" y=\"145\" font-size=\"18\" fill=\"var(--ink)\">Return</text><text x=\"20\" y=\"198\" font-size=\"18\" fill=\"var(--ink)\">[8]</text><rect x=\"340\" y=\"170\" width=\"20\" height=\"44\" fill=\"var(--danger)\" fill-opacity=\"0.18\"/><rect x=\"260\" y=\"170\" width=\"100\" height=\"44\" fill=\"none\" stroke=\"var(--danger)\" stroke-width=\"2\" stroke-dasharray=\"6 4\"/><text x=\"310\" y=\"198\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">5?</text><text x=\"380\" y=\"198\" font-size=\"18\" fill=\"var(--ink)\">not added</text><line x1=\"100\" y1=\"216\" x2=\"460\" y2=\"216\" stroke=\"var(--line)\"/><line x1=\"340\" y1=\"158\" x2=\"340\" y2=\"224\" stroke=\"var(--warning)\" stroke-width=\"2\"/><text x=\"100\" y=\"245\" font-size=\"16\" fill=\"var(--muted)\">0</text><text x=\"340\" y=\"245\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Capacity 12</text><text x=\"100\" y=\"278\" font-size=\"18\" fill=\"var(--ink)\">Dashed = attempted addition only</text></svg>",
+              "evidence": {
+                "filePath": "batch.ts",
+                "startLine": 6
+              }
+            }
+          ]
+        },
+        {
+          "id": "oversized_first",
+          "title": "[15,2] at capacity 12",
+          "input": "pending = [15,2]; maxWeight = 12",
+          "frames": [
+            {
+              "title": "Start with an empty batch",
+              "caption": "The stopping condition requires a nonempty batch. It cannot reject the first item, even when that item weighs 15.",
+              "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 290\"><text x=\"20\" y=\"35\" font-size=\"18\" fill=\"var(--ink)\">Pending: first item on the left</text><g data-motion-id=\"item15\" transform=\"translate(100 55)\"><rect width=\"300\" height=\"44\" fill=\"var(--accent)\"/><text x=\"150\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--paper)\">15</text></g><g data-motion-id=\"item2\" transform=\"translate(408 55)\"><rect width=\"40\" height=\"44\" fill=\"var(--paper)\" stroke=\"var(--ink)\"/><text x=\"20\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">2</text></g><text x=\"20\" y=\"145\" font-size=\"18\" fill=\"var(--ink)\">Batch</text><text x=\"20\" y=\"198\" font-size=\"18\" fill=\"var(--muted)\">empty</text><line x1=\"100\" y1=\"216\" x2=\"460\" y2=\"216\" stroke=\"var(--line)\"/><line x1=\"340\" y1=\"158\" x2=\"340\" y2=\"224\" stroke=\"var(--warning)\" stroke-width=\"2\"/><text x=\"100\" y=\"245\" font-size=\"16\" fill=\"var(--muted)\">0</text><text x=\"340\" y=\"245\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Capacity 12</text></svg>",
+              "evidence": {
+                "filePath": "batch.ts",
+                "startLine": 6
+              }
+            },
+            {
+              "title": "15 enters despite exceeding capacity",
+              "caption": "The first-item exception removes 15 from pending and puts it into the batch. It does not remain at the queue head blocking progress.",
+              "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 290\"><text x=\"20\" y=\"35\" font-size=\"18\" fill=\"var(--ink)\">Pending: [2]</text><g data-motion-id=\"item15\" transform=\"translate(100 170)\"><rect width=\"300\" height=\"44\" fill=\"var(--accent)\"/><text x=\"150\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--paper)\">15</text></g><g data-motion-id=\"item2\" transform=\"translate(408 55)\"><rect width=\"40\" height=\"44\" fill=\"var(--paper)\" stroke=\"var(--ink)\"/><text x=\"20\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">2</text></g><text x=\"20\" y=\"145\" font-size=\"18\" fill=\"var(--ink)\">Batch</text><text x=\"20\" y=\"198\" font-size=\"18\" fill=\"var(--ink)\">[15]</text><line x1=\"100\" y1=\"216\" x2=\"460\" y2=\"216\" stroke=\"var(--line)\"/><line x1=\"340\" y1=\"158\" x2=\"340\" y2=\"224\" stroke=\"var(--warning)\" stroke-width=\"2\"/><text x=\"100\" y=\"245\" font-size=\"16\" fill=\"var(--muted)\">0</text><text x=\"340\" y=\"245\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Capacity 12</text></svg>",
+              "evidence": {
+                "filePath": "batch.ts",
+                "startLine": 7
+              }
+            },
+            {
+              "title": "The nonempty batch stops before 2",
+              "caption": "The batch is now nonempty. Adding 2 would exceed capacity, so return [15] and leave [2].",
+              "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 290\"><text x=\"20\" y=\"35\" font-size=\"18\" fill=\"var(--ink)\">Pending: [2]</text><g data-motion-id=\"item15\" transform=\"translate(100 170)\"><rect width=\"300\" height=\"44\" fill=\"var(--accent)\"/><text x=\"150\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--paper)\">15</text></g><g data-motion-id=\"item2\" transform=\"translate(408 55)\"><rect width=\"40\" height=\"44\" fill=\"var(--paper)\" stroke=\"var(--ink)\"/><text x=\"20\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">2</text></g><text x=\"20\" y=\"145\" font-size=\"18\" fill=\"var(--ink)\">Return</text><text x=\"20\" y=\"198\" font-size=\"18\" fill=\"var(--ink)\">[15]</text><rect x=\"400\" y=\"170\" width=\"40\" height=\"44\" fill=\"var(--danger)\" fill-opacity=\"0.18\" stroke=\"var(--danger)\" stroke-width=\"2\" stroke-dasharray=\"6 4\"/><text x=\"420\" y=\"198\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">2?</text><text x=\"452\" y=\"198\" font-size=\"18\" fill=\"var(--ink)\">not added</text><line x1=\"100\" y1=\"216\" x2=\"460\" y2=\"216\" stroke=\"var(--line)\"/><line x1=\"340\" y1=\"158\" x2=\"340\" y2=\"224\" stroke=\"var(--warning)\" stroke-width=\"2\"/><text x=\"100\" y=\"245\" font-size=\"16\" fill=\"var(--muted)\">0</text><text x=\"340\" y=\"245\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Capacity 12</text><text x=\"100\" y=\"278\" font-size=\"18\" fill=\"var(--ink)\">Dashed = attempted addition only</text></svg>",
+              "evidence": {
+                "filePath": "batch.ts",
+                "startLine": 6
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "mechanism": null,
+    "d2Diagram": null,
+    "explainerIdea": null,
+    "reviewChecks": []
+  },
+  "model": "gpt-6.1-sol",
+  "generatedAt": "2026-10-29T14:44:40.133Z"
+}

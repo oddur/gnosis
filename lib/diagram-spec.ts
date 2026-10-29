@@ -71,6 +71,6 @@ export function normalizeDiagramBrief(value: unknown): DiagramBrief | string | n
     assumedKnowledge: list(input.assumedKnowledge),
     essentialConcepts: list(input.essentialConcepts),
     omit: list(input.omit),
-    visualApproach: text(input.visualApproach, 500),
+    visualApproach: text(input.visualApproach, 1200),
   };
 }

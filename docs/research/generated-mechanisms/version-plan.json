@@ -1,0 +1,35 @@
+{
+  "summary": "This change replaces an unconditional document overwrite with one atomic conditional update.\n- The client supplies the version it read.\n- A matching version permits the body update and version increase, with status 200.\n- If no row matches, the function returns status 409 and leaves stored data unchanged.\n- There is no automatic retry.",
+  "riskLevel": "high",
+  "riskRationale": "This change controls document writes and protects data integrity. The version condition and write must remain in one atomic database statement.",
+  "storyArc": "The single topic explains how the database rejects a stale write without changing stored data. It then shows how a matching version permits the update in the same atomic statement.",
+  "topics": [
+    {
+      "title": "Reject stale document writes",
+      "slideType": "bugfix",
+      "importance": "critical",
+      "hunkIds": ["hunk-0"],
+      "dependsOn": [],
+      "order": 1,
+      "narrativeBrief": "Compare expected version 7 with stored version 8, then with stored version 7. Emphasize unchanged data on rejection and the single atomic statement that checks the version and writes the update.",
+      "diagramBrief": {
+        "question": "What happens when expected version 7 meets stored version 8 or stored version 7?",
+        "takeaway": "With stored version 8, the request returns 409 and preserves the stored body and version. With stored version 7, it writes the requested body, increases the version to 8, and returns 200.",
+        "assumedKnowledge": [
+          "A database row stores a document body and version.",
+          "An UPDATE statement can have a WHERE condition."
+        ],
+        "essentialConcepts": [
+          "The client supplies expectedVersion.",
+          "Both examples use an existing row with the requested id.",
+          "One atomic UPDATE checks id and version, writes the body, and increases the version.",
+          "Zero affected rows produces status 409.",
+          "A successful update produces status 200.",
+          "There is no automatic retry."
+        ],
+        "omit": ["Database driver details", "Client recovery behavior", "Performance claims"],
+        "visualApproach": "Use a decision flow with two concrete, illustrative inputs, not production measurements. Show expected version 7 entering one atomic UPDATE boundary. Inside that boundary, label the condition as matching id and version. The stored-version-8 branch ends with the original body, version 8, and status 409. The stored-version-7 branch ends with the requested body, version 8, and status 200. Keep the comparison and write inside the same boundary so the picture does not imply two operations."
+      }
+    }
+  ]
+}

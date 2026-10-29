@@ -1,0 +1,93 @@
+{
+  "id": "version",
+  "title": "Rejecting a stale write",
+  "filePath": "document.ts",
+  "code": "export async function updateDocument(id, expectedVersion, body) {\n  // New: replace unconditional overwrite with one atomic conditional update.\n  const result = await db.execute(\n    'UPDATE documents SET body = ?, version = version + 1 WHERE id = ? AND version = ?',\n    [body, id, expectedVersion]);\n  if (result.rowsAffected === 0) return { status: 409 };\n  return { status: 200 };\n}\n// Client supplies the version it read. There is no automatic retry.",
+  "questions": "Explain expected version 7 vs stored version 8, then the matching version 7 vs 7. Show the stored value stays unchanged on rejection. The comparison and write are one database statement, not two operations.",
+  "slide": {
+    "title": "One conditional UPDATE rejects stale writes",
+    "narrative": "The database checks the ID and expected version in the same statement that changes the document. A rejected update leaves the stored body and version unchanged. A missing ID also returns 409. The function does not retry automatically.",
+    "reviewFocus": null,
+    "contextSnippets": [],
+    "fileSummaries": [
+      {
+        "filePath": "document.ts",
+        "summary": "Replaces an unconditional overwrite with one atomic update that requires a matching ID and version."
+      }
+    ],
+    "inlineExplanations": [],
+    "svgIllustration": {
+      "version": 1,
+      "title": "A version match controls the whole update",
+      "takeaway": "A mismatch changes nothing. A match replaces the body and increases the version in one database statement.",
+      "assumptions": "Both examples use the existing ID D1 and supplied body New. Values are illustrative, not production measurements. Each example starts independently.",
+      "plan": {
+        "question": "What changes when expected version 7 meets stored version 8 or stored version 7?",
+        "visualApproach": "Show two independent before-and-after examples with the stored body and version inside one atomic UPDATE boundary.",
+        "whyThisForm": "Stable positions make an unchanged row visible on rejection and show both stored fields changing together on success.",
+        "encodings": "The outer boundary contains the condition and mutation in one statement. The inner row keeps the stored body and version together. Text states each result; color only reinforces it.",
+        "motion": "Keep the input, UPDATE boundary, and stored row fixed. At the statement result, leave both stored values unchanged for rejection or change both together for success. Reveal the affected-row count and response in that same result frame.",
+        "prediction": "With expected version 7, another stored version cannot match, so the statement leaves the row unchanged and the function returns 409.",
+        "restingState": "Each result retains the supplied version, statement condition, stored body and version, affected-row count, and response."
+      },
+      "scenarios": [
+        {
+          "id": "stale",
+          "title": "Expected 7, stored 8: reject",
+          "input": "Existing ID D1; expected version 7; supplied body New; stored body Old and version 8.",
+          "frames": [
+            {
+              "title": "The supplied version is stale",
+              "caption": "The condition and both possible field changes belong to one atomic UPDATE.",
+              "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 280\"><text x=\"20\" y=\"28\" fill=\"var(--ink)\" font-size=\"17\">Input: ID D1 · expected 7 · body New</text><rect x=\"20\" y=\"48\" width=\"520\" height=\"178\" rx=\"10\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"36\" y=\"75\" fill=\"var(--ink)\" font-size=\"18\">Database: one atomic UPDATE</text><text x=\"36\" y=\"105\" fill=\"var(--ink)\" font-size=\"16\">WHERE id = D1 AND version = 7</text><text x=\"36\" y=\"132\" fill=\"var(--muted)\" font-size=\"16\">If matched: body = New; version = version + 1</text><rect x=\"36\" y=\"151\" width=\"488\" height=\"53\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"51\" y=\"184\" fill=\"var(--ink)\" font-size=\"18\">Stored: D1 · body Old · version 8</text><text x=\"20\" y=\"257\" fill=\"var(--muted)\" font-size=\"17\">Before the statement</text></svg>",
+              "evidence": {
+                "filePath": "document.ts",
+                "startLine": 4
+              }
+            },
+            {
+              "title": "Rejection preserves both stored values",
+              "caption": "Version 8 does not match expected version 7. No row changes; the function returns 409.",
+              "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 280\"><text x=\"20\" y=\"28\" fill=\"var(--ink)\" font-size=\"17\">Input: ID D1 · expected 7 · body New</text><rect x=\"20\" y=\"48\" width=\"520\" height=\"178\" rx=\"10\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"36\" y=\"75\" fill=\"var(--ink)\" font-size=\"18\">Database: one atomic UPDATE</text><text x=\"36\" y=\"105\" fill=\"var(--ink)\" font-size=\"16\">WHERE id = D1 AND version = 7</text><text x=\"36\" y=\"132\" fill=\"var(--muted)\" font-size=\"16\">If matched: body = New; version = version + 1</text><rect x=\"36\" y=\"151\" width=\"488\" height=\"53\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--warning)\"/><text x=\"51\" y=\"184\" fill=\"var(--ink)\" font-size=\"18\">Stored: D1 · body Old · version 8</text><text x=\"20\" y=\"257\" fill=\"var(--warning)\" font-size=\"17\">Unchanged · 0 affected rows · status 409</text></svg>",
+              "evidence": {
+                "filePath": "document.ts",
+                "startLine": 6
+              }
+            }
+          ]
+        },
+        {
+          "id": "matching",
+          "title": "Expected 7, stored 7: update",
+          "input": "Existing ID D1; expected version 7; supplied body New; stored body Old and version 7.",
+          "frames": [
+            {
+              "title": "The supplied version matches",
+              "caption": "This independent example starts with stored version 7 and the same supplied input.",
+              "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 280\"><text x=\"20\" y=\"28\" fill=\"var(--ink)\" font-size=\"17\">Input: ID D1 · expected 7 · body New</text><rect x=\"20\" y=\"48\" width=\"520\" height=\"178\" rx=\"10\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"36\" y=\"75\" fill=\"var(--ink)\" font-size=\"18\">Database: one atomic UPDATE</text><text x=\"36\" y=\"105\" fill=\"var(--ink)\" font-size=\"16\">WHERE id = D1 AND version = 7</text><text x=\"36\" y=\"132\" fill=\"var(--muted)\" font-size=\"16\">If matched: body = New; version = version + 1</text><rect x=\"36\" y=\"151\" width=\"488\" height=\"53\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"51\" y=\"184\" fill=\"var(--ink)\" font-size=\"18\">Stored: D1 · body Old · version 7</text><text x=\"20\" y=\"257\" fill=\"var(--muted)\" font-size=\"17\">Before the statement</text></svg>",
+              "evidence": {
+                "filePath": "document.ts",
+                "startLine": 4
+              }
+            },
+            {
+              "title": "The statement changes both fields together",
+              "caption": "The matching row receives body New and version 8. The function returns 200.",
+              "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 280\"><text x=\"20\" y=\"28\" fill=\"var(--ink)\" font-size=\"17\">Input: ID D1 · expected 7 · body New</text><rect x=\"20\" y=\"48\" width=\"520\" height=\"178\" rx=\"10\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"36\" y=\"75\" fill=\"var(--ink)\" font-size=\"18\">Database: one atomic UPDATE</text><text x=\"36\" y=\"105\" fill=\"var(--ink)\" font-size=\"16\">WHERE id = D1 AND version = 7</text><text x=\"36\" y=\"132\" fill=\"var(--muted)\" font-size=\"16\">If matched: body = New; version = version + 1</text><rect x=\"36\" y=\"151\" width=\"488\" height=\"53\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--success)\"/><text x=\"51\" y=\"184\" fill=\"var(--ink)\" font-size=\"18\">Stored: D1 · body New · version 8</text><text x=\"20\" y=\"257\" fill=\"var(--success)\" font-size=\"17\">Updated · 1 affected row · status 200</text></svg>",
+              "evidence": {
+                "filePath": "document.ts",
+                "startLine": 7
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "mechanism": null,
+    "d2Diagram": null,
+    "explainerIdea": null,
+    "reviewChecks": []
+  },
+  "model": "gpt-6.1-sol",
+  "generatedAt": "2026-10-29T14:16:09.953Z"
+}

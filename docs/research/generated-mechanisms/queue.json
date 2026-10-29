@@ -1,0 +1,344 @@
+{
+  "id": "queue",
+  "title": "Ordered batching",
+  "filePath": "batch.ts",
+  "code": "export function takeBatch(pending, maxWeight) {\n  // New: preserve order and bound total weight, instead of only item count.\n  const batch = []; let weight = 0;\n  while (pending.length > 0) {\n    const next = pending[0];\n    if (batch.length > 0 && weight + next.weight > maxWeight) break;\n    batch.push(pending.shift()); weight += next.weight;\n  }\n  return batch;\n}",
+  "questions": "Explain [8,5,3] at capacity 12 and [15,2] at capacity 12. Why does 3 not skip ahead of 5? Why does 15 not block forever?",
+  "slide": {
+    "title": "Keep item order and accept an oversized first item",
+    "narrative": "Each call takes items from the front of `pending`. It stops when the next item would exceed capacity, unless the batch is empty. This preserves order and lets an oversized first item leave the queue. Capacity is therefore not a strict upper limit on batch weight.",
+    "reviewFocus": null,
+    "contextSnippets": [],
+    "fileSummaries": [
+      {
+        "filePath": "batch.ts",
+        "summary": "Batch selection preserves queue order and limits total weight, except for an oversized first item."
+      }
+    ],
+    "inlineExplanations": [],
+    "mechanism": {
+      "version": 1,
+      "title": "Why does selection stop or continue at capacity 12?",
+      "takeaway": "Successive calls return [8], then [5,3]; or [15], then [2]. No item passes an earlier item.",
+      "assumptions": "Illustrative item weights; maxWeight is 12 in both scenarios. These are not production measurements.",
+      "nodes": [
+        {
+          "id": "pending",
+          "label": "Pending items",
+          "kind": "queue",
+          "column": 0,
+          "row": 0
+        },
+        {
+          "id": "batch",
+          "label": "Current batch",
+          "kind": "queue",
+          "column": 1,
+          "row": 0
+        }
+      ],
+      "edges": [
+        {
+          "id": "take",
+          "from": "pending",
+          "to": "batch",
+          "label": "Remove first item"
+        }
+      ],
+      "scenarios": [
+        {
+          "id": "ordered",
+          "title": "An item cannot pass the first pending item",
+          "input": "Illustrative weights [8,5,3]; capacity 12.",
+          "events": [
+            {
+              "title": "The first call starts with an empty batch",
+              "caption": "Only the first pending item, 8, is considered.",
+              "states": [
+                {
+                  "id": "pending",
+                  "value": "First item: 8",
+                  "items": ["8", "5", "3"],
+                  "tone": "active"
+                },
+                {
+                  "id": "batch",
+                  "value": "Total weight: 0; capacity: 12",
+                  "items": [],
+                  "tone": "neutral"
+                }
+              ],
+              "focus": ["pending"],
+              "evidence": {
+                "filePath": "batch.ts",
+                "startLine": 5
+              }
+            },
+            {
+              "title": "The empty batch accepts 8",
+              "caption": "Selection removes 8 from pending and adds its weight to the batch total.",
+              "states": [
+                {
+                  "id": "pending",
+                  "value": "First item: 5",
+                  "items": ["5", "3"],
+                  "tone": "neutral"
+                },
+                {
+                  "id": "batch",
+                  "value": "Total weight: 8; capacity: 12",
+                  "items": ["8"],
+                  "tone": "active"
+                }
+              ],
+              "focus": ["take"],
+              "transfer": {
+                "edge": "take",
+                "label": "8"
+              },
+              "evidence": {
+                "filePath": "batch.ts",
+                "startLine": 7
+              }
+            },
+            {
+              "title": "8 + 5 exceeds 12: return [8]",
+              "caption": "The batch is nonempty, so selection stops. Item 5 stays first; item 3 is not considered.",
+              "states": [
+                {
+                  "id": "pending",
+                  "value": "Unchanged: 5 stays before 3",
+                  "items": ["5", "3"],
+                  "tone": "warning"
+                },
+                {
+                  "id": "batch",
+                  "value": "Returned; total weight: 8",
+                  "items": ["8"],
+                  "tone": "success"
+                }
+              ],
+              "focus": ["pending", "batch"],
+              "evidence": {
+                "filePath": "batch.ts",
+                "startLine": 6
+              }
+            },
+            {
+              "title": "The next call starts a new batch",
+              "caption": "The previous batch is returned. The new call starts with weight 0 and the remaining queue.",
+              "states": [
+                {
+                  "id": "pending",
+                  "value": "First item: 5",
+                  "items": ["5", "3"],
+                  "tone": "active"
+                },
+                {
+                  "id": "batch",
+                  "value": "Total weight: 0; capacity: 12",
+                  "items": [],
+                  "tone": "neutral"
+                }
+              ],
+              "focus": ["batch"],
+              "evidence": {
+                "filePath": "batch.ts",
+                "startLine": 3
+              }
+            },
+            {
+              "title": "The new batch accepts 5",
+              "caption": "Item 5 leaves pending before item 3 can be considered.",
+              "states": [
+                {
+                  "id": "pending",
+                  "value": "First item: 3",
+                  "items": ["3"],
+                  "tone": "neutral"
+                },
+                {
+                  "id": "batch",
+                  "value": "Total weight: 5; capacity: 12",
+                  "items": ["5"],
+                  "tone": "active"
+                }
+              ],
+              "focus": ["take"],
+              "transfer": {
+                "edge": "take",
+                "label": "5"
+              },
+              "evidence": {
+                "filePath": "batch.ts",
+                "startLine": 7
+              }
+            },
+            {
+              "title": "5 + 3 fits: return [5,3]",
+              "caption": "The total is 8. Pending is empty, so selection ends.",
+              "states": [
+                {
+                  "id": "pending",
+                  "value": "Empty",
+                  "items": [],
+                  "tone": "neutral"
+                },
+                {
+                  "id": "batch",
+                  "value": "Returned; total weight: 8",
+                  "items": ["5", "3"],
+                  "tone": "success"
+                }
+              ],
+              "focus": ["take", "batch"],
+              "transfer": {
+                "edge": "take",
+                "label": "3"
+              },
+              "evidence": {
+                "filePath": "batch.ts",
+                "startLine": 7
+              }
+            }
+          ]
+        },
+        {
+          "id": "oversized",
+          "title": "An oversized first item does not block the queue",
+          "input": "Illustrative weights [15,2]; capacity 12.",
+          "events": [
+            {
+              "title": "The first call starts with an empty batch",
+              "caption": "Item 15 exceeds capacity, but the stop condition also requires a nonempty batch.",
+              "states": [
+                {
+                  "id": "pending",
+                  "value": "First item: 15",
+                  "items": ["15", "2"],
+                  "tone": "active"
+                },
+                {
+                  "id": "batch",
+                  "value": "Total weight: 0; capacity: 12",
+                  "items": [],
+                  "tone": "neutral"
+                }
+              ],
+              "focus": ["pending", "batch"],
+              "evidence": {
+                "filePath": "batch.ts",
+                "startLine": 6
+              }
+            },
+            {
+              "title": "The empty batch accepts 15",
+              "caption": "Item 15 leaves pending even though its weight exceeds 12.",
+              "states": [
+                {
+                  "id": "pending",
+                  "value": "First item: 2",
+                  "items": ["2"],
+                  "tone": "neutral"
+                },
+                {
+                  "id": "batch",
+                  "value": "Total weight: 15; capacity: 12",
+                  "items": ["15"],
+                  "tone": "warning"
+                }
+              ],
+              "focus": ["take"],
+              "transfer": {
+                "edge": "take",
+                "label": "15"
+              },
+              "evidence": {
+                "filePath": "batch.ts",
+                "startLine": 7
+              }
+            },
+            {
+              "title": "15 + 2 exceeds 12: return [15]",
+              "caption": "The batch is now nonempty, so the stop condition keeps item 2 in pending.",
+              "states": [
+                {
+                  "id": "pending",
+                  "value": "Unchanged: first item is 2",
+                  "items": ["2"],
+                  "tone": "neutral"
+                },
+                {
+                  "id": "batch",
+                  "value": "Returned; total weight: 15",
+                  "items": ["15"],
+                  "tone": "success"
+                }
+              ],
+              "focus": ["pending", "batch"],
+              "evidence": {
+                "filePath": "batch.ts",
+                "startLine": 6
+              }
+            },
+            {
+              "title": "The next call starts a new batch",
+              "caption": "The new call resets the total to 0. Item 15 is no longer in pending.",
+              "states": [
+                {
+                  "id": "pending",
+                  "value": "First item: 2",
+                  "items": ["2"],
+                  "tone": "active"
+                },
+                {
+                  "id": "batch",
+                  "value": "Total weight: 0; capacity: 12",
+                  "items": [],
+                  "tone": "neutral"
+                }
+              ],
+              "focus": ["batch"],
+              "evidence": {
+                "filePath": "batch.ts",
+                "startLine": 3
+              }
+            },
+            {
+              "title": "The next call returns [2]",
+              "caption": "The batch accepts 2. Pending is empty, so selection ends.",
+              "states": [
+                {
+                  "id": "pending",
+                  "value": "Empty",
+                  "items": [],
+                  "tone": "neutral"
+                },
+                {
+                  "id": "batch",
+                  "value": "Returned; total weight: 2",
+                  "items": ["2"],
+                  "tone": "success"
+                }
+              ],
+              "focus": ["take", "batch"],
+              "transfer": {
+                "edge": "take",
+                "label": "2"
+              },
+              "evidence": {
+                "filePath": "batch.ts",
+                "startLine": 7
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "d2Diagram": null,
+    "explainerIdea": null,
+    "reviewChecks": []
+  },
+  "model": "gpt-6.1-sol",
+  "generatedAt": "2026-10-29T11:24:45.146Z"
+}

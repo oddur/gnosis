@@ -1,0 +1,65 @@
+{
+  "id": "version",
+  "title": "Rejecting a stale write",
+  "filePath": "document.ts",
+  "code": "export async function updateDocument(id, expectedVersion, body) {\n  // New: replace unconditional overwrite with one atomic conditional update.\n  const result = await db.execute(\n    'UPDATE documents SET body = ?, version = version + 1 WHERE id = ? AND version = ?',\n    [body, id, expectedVersion]);\n  if (result.rowsAffected === 0) return { status: 409 };\n  return { status: 200 };\n}\n// Client supplies the version it read. There is no automatic retry.",
+  "questions": "Explain expected version 7 vs stored version 8, then the matching version 7 vs 7. Show the stored value stays unchanged on rejection. The comparison and write are one database statement, not two operations.",
+  "slide": {
+    "title": "One atomic UPDATE rejects stale writes",
+    "narrative": "The client supplies the version it read. The database checks the document ID and version in the same statement that writes the change. This prevents a separate check from becoming stale before the write. The function returns the result without an automatic retry.",
+    "reviewFocus": null,
+    "contextSnippets": [],
+    "fileSummaries": [
+      {
+        "filePath": "document.ts",
+        "summary": "Replaces unconditional writes with an atomic version check and returns 409 when no row changes."
+      }
+    ],
+    "inlineExplanations": [
+      {
+        "filePath": "document.ts",
+        "line": 6,
+        "side": "RIGHT",
+        "code": "  if (result.rowsAffected === 0) return { status: 409 };",
+        "text": "Zero affected rows can mean a version mismatch or no matching document ID. Both return 409."
+      }
+    ],
+    "svgIllustration": {
+      "version": 1,
+      "title": "Version mismatch and version match",
+      "takeaway": "A mismatch preserves the stored body and version. A match replaces the body and increases the version by one.",
+      "assumptions": "Both examples use a matching document ID. Body values Old and New are illustrative. Spacing does not represent time.",
+      "plan": {
+        "question": "What changes when expected version 7 differs from, or matches, the stored version?",
+        "visualApproach": "Show two independent rows with stored values before and after the statement. Put each comparison and its write action inside one shared atomic UPDATE boundary.",
+        "whyThisForm": "Aligned before and after values make the unchanged rejection state visible. The central boundary keeps the comparison and write together.",
+        "encodings": "Rows represent independent examples. Columns show stored state before, the atomic statement, and stored state after. Arrows connect each example to its result. Status labels sit outside the statement boundary.",
+        "motion": ""
+      },
+      "scenarios": [
+        {
+          "id": "comparison",
+          "title": "Reject or write",
+          "input": "Client supplies expectedVersion = 7 and body = New.",
+          "frames": [
+            {
+              "title": "Only a matching version permits the write",
+              "caption": "Read each row independently. The upper row returns 409 without a change. The lower row writes New, sets version 8, and returns 200.",
+              "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 350\"><defs><marker id=\"arrow\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"6\" markerHeight=\"6\" orient=\"auto-start-reverse\"><path d=\"M 0 0 L 10 5 L 0 10 Z\" fill=\"var(--ink)\"/></marker></defs><text x=\"280\" y=\"25\" text-anchor=\"middle\" font-size=\"17\" fill=\"var(--ink)\">Client: expectedVersion = 7, body = New</text><text x=\"85\" y=\"61\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--muted)\">Stored before</text><text x=\"475\" y=\"61\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--muted)\">Stored after</text><rect x=\"180\" y=\"43\" width=\"200\" height=\"287\" rx=\"10\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"280\" y=\"69\" text-anchor=\"middle\" font-size=\"17\" fill=\"var(--ink)\">One atomic UPDATE</text><line x1=\"195\" y1=\"207\" x2=\"365\" y2=\"207\" stroke=\"var(--line)\"/><rect x=\"15\" y=\"94\" width=\"140\" height=\"78\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"85\" y=\"124\" text-anchor=\"middle\" font-size=\"17\" fill=\"var(--ink)\">Body: Old</text><text x=\"85\" y=\"150\" text-anchor=\"middle\" font-size=\"17\" fill=\"var(--ink)\">Version: 8</text><path d=\"M 155 133 L 195 133\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#arrow)\"/><text x=\"280\" y=\"115\" text-anchor=\"middle\" font-size=\"17\" fill=\"var(--ink)\">7 ≠ 8</text><text x=\"280\" y=\"143\" text-anchor=\"middle\" font-size=\"17\" fill=\"var(--ink)\">No write</text><text x=\"280\" y=\"173\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--muted)\">0 affected rows</text><path d=\"M 365 133 L 405 133\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#arrow)\"/><rect x=\"405\" y=\"94\" width=\"140\" height=\"78\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"475\" y=\"124\" text-anchor=\"middle\" font-size=\"17\" fill=\"var(--ink)\">Body: Old</text><text x=\"475\" y=\"150\" text-anchor=\"middle\" font-size=\"17\" fill=\"var(--ink)\">Version: 8</text><text x=\"475\" y=\"196\" text-anchor=\"middle\" font-size=\"17\" fill=\"var(--ink)\">Unchanged · 409</text><rect x=\"15\" y=\"225\" width=\"140\" height=\"78\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"85\" y=\"255\" text-anchor=\"middle\" font-size=\"17\" fill=\"var(--ink)\">Body: Old</text><text x=\"85\" y=\"281\" text-anchor=\"middle\" font-size=\"17\" fill=\"var(--ink)\">Version: 7</text><path d=\"M 155 264 L 195 264\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#arrow)\"/><text x=\"280\" y=\"239\" text-anchor=\"middle\" font-size=\"17\" fill=\"var(--ink)\">7 = 7</text><text x=\"280\" y=\"267\" text-anchor=\"middle\" font-size=\"17\" fill=\"var(--ink)\">Replace body</text><text x=\"280\" y=\"293\" text-anchor=\"middle\" font-size=\"17\" fill=\"var(--ink)\">Version + 1</text><path d=\"M 365 264 L 405 264\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#arrow)\"/><rect x=\"405\" y=\"225\" width=\"140\" height=\"78\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"475\" y=\"255\" text-anchor=\"middle\" font-size=\"17\" fill=\"var(--ink)\">Body: New</text><text x=\"475\" y=\"281\" text-anchor=\"middle\" font-size=\"17\" fill=\"var(--ink)\">Version: 8</text><text x=\"475\" y=\"327\" text-anchor=\"middle\" font-size=\"17\" fill=\"var(--ink)\">Changed · 200</text></svg>",
+              "evidence": {
+                "filePath": "document.ts",
+                "startLine": 4
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "mechanism": null,
+    "d2Diagram": null,
+    "explainerIdea": null,
+    "reviewChecks": []
+  },
+  "model": "gpt-6.1-sol",
+  "generatedAt": "2026-10-29T13:08:04.220Z"
+}
