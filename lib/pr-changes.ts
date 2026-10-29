@@ -11,6 +11,10 @@ export interface PrChangeFile {
   patch?: string;
 }
 export interface PrChanges {
+  /** Patches were omitted to bound inventory memory; all listed paths remain accessible. */
+  patchesDeferred?: boolean;
+  /** GitHub capped this inventory. Listed files remain usable, but this is not the whole change. */
+  filesTruncated?: boolean;
   fileKinds?: Record<string, import('./file-kinds').FileKinds>;
   comparison?: CommitSelection;
   version: 1;
@@ -34,6 +38,7 @@ export interface InspectionRevision {
   headSha: string;
 }
 export interface InspectionLoadOptions {
+  requestId?: string;
   background?: boolean;
   revision?: Pick<InspectionRevision, 'baseSha' | 'headSha'>;
 }

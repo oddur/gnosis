@@ -538,6 +538,69 @@ void app.whenReady().then(async () => {
       `(()=>{const input=document.querySelector('#large-stream-test .changes-tree-controls input[type=checkbox]');input.click()})()`
     );
     await wait(`!document.querySelector('#large-stream-test [data-file="src/file000.ts"]')`);
+    // Real API cap: keep 3,000 usable files, isolate a failed stack member,
+    // and never let viewing the available subset imply complete review coverage.
+    await js(String.raw`(async()=>{
+      const {mountLargeComparison}=await import('/tests/fixtures/commit-stream.tsx');
+      const {inspectionData}=await import('/lib/inspection-cache.ts');inspectionData.stop();
+      const queue=await window.electronAPI.workbenchQueue();
+      const template=queue.items[0].subject.members[0];
+      const members=[9901,9902,9903].map(number=>({...template,number,url:'https://github.com/klang/engine/pull/'+number}));
+      const original=await window.electronAPI.getPrChanges(template.url);
+      window.cappedSnapshot={...original,url:members[1].url,filesTruncated:true,metadata:{...original.metadata,changedFileCount:3237},files:Array.from({length:3000},(_,i)=>({path:'src/file'+String(i).padStart(4,'0')+'.ts',status:'modified',additions:1,deletions:1,changeId:'cap-'+i,patch:'@@ -1 +1 @@\n-old\n+new'}))};
+      window.capRecovered=false;window.capOpened=[];window.capReads=[];window.capWait=new Promise(resolve=>window.releaseCap=resolve);
+      window.electronAPI.openExternal=async url=>{window.capOpened.push(url)};
+      window.electronAPI.getPrChanges=async url=>{
+        window.capReads.push(url);
+        if(url===members[0].url&&!window.capRecovered)throw Error('GitHub could not load this data (HTTP 503). Try again after '+new Date(Date.now()+2000).toISOString()+'.');
+        if(url===members[1].url){await window.capWait;return window.cappedSnapshot;}
+        return {...original,url,files:[{...window.cappedSnapshot.files[0],path:'src/small.ts'}]};
+      };
+      window.electronAPI.getReviewThreads=async()=>({headSha:original.metadata.headSha,baseSha:original.metadata.baseSha,threads:[]});
+      window.electronAPI.getFileClassifications=async()=>({});
+      window.capPreferences={...await window.electronAPI.loadPreferences(),diffLayout:'unified',diffAppearance:{contextLines:3}};
+      window.capSubject={...queue.items[0].subject,id:'capped-stack-test',kind:'stack',members,edges:[]};
+      mountLargeComparison(window.capSubject,window.cappedSnapshot,window.capPreferences,true);
+    })()`);
+    await wait("document.querySelector('#large-stream-test .changes-progress')?.textContent.includes('/ 1')");
+    assert.match(await js<string>("document.querySelector('#large-stream-test').textContent"), /Loading 1 PR/);
+    await wait("!![...document.querySelectorAll('#large-stream-test button')].find(b=>b.textContent.includes('Retry available in')&&b.disabled)");
+    await wait("!![...document.querySelectorAll('#large-stream-test button')].find(b=>b.textContent==='Waiting for current load…'&&b.disabled)");
+    await js("window.deepAll('[role=treeitem]',document.querySelector('#large-stream-test')).find(e=>e.getAttribute('data-item-path')?.endsWith('src/small.ts')).click()");
+    await wait("document.querySelector('#large-stream-test .commit-stream-row[data-active=true]')?.dataset.file.includes('#9903')");
+    await js('window.releaseCap()');
+    await wait("document.querySelector('#large-stream-test .changes-progress')?.textContent.includes('/ 3001')");
+    await wait("document.querySelector('#large-stream-test')?.textContent.includes('Showing 3,000 of 3,237 files')");
+    assert.match(await js<string>("document.querySelector('#large-stream-test').textContent"), /Could not update PR #9901/);
+    assert.ok((await js<number>("document.querySelectorAll('#large-stream-test .commit-stream-row').length")) < 16);
+    assert.match(await js<string>("document.querySelector('#large-stream-test .commit-stream-row[data-active=true]').dataset.file"), /^03 · .*#9903/,
+      'Arriving members preserve the selected file and stack numbering');
+    await js("[...document.querySelectorAll('#large-stream-test .changes-notice button')].find(b=>b.textContent==='Open on GitHub').click()");
+    assert.deepEqual(await js('window.capOpened'), ['https://github.com/klang/engine/pull/9902/files']);
+    await capture('capped-stack');
+    await wait("[...document.querySelectorAll('#large-stream-test button')].some(b=>b.textContent==='Retry this PR'&&!b.disabled)");
+    await js("window.capRecovered=true;window.capReads=[];[...document.querySelectorAll('#large-stream-test button')].find(b=>b.textContent==='Retry this PR').click()");
+    await wait("document.querySelector('#large-stream-test .changes-progress')?.textContent.includes('/ 3002')");
+    await wait("!document.querySelector('#large-stream-test')?.textContent.includes('Could not update PR #9901')");
+    assert.deepEqual(await js('window.capReads'), ['https://github.com/klang/engine/pull/9901'], 'Retry only the failed member');
+    await viewport(1024, 768);
+    window.webContents.setZoomFactor(2);
+    await capture('capped-stack-zoom');
+    assert.equal(await js('document.documentElement.scrollWidth<=innerWidth+1'), true, 'No document overflow at 200% zoom');
+    window.webContents.setZoomFactor(1);
+    await viewport(1280, 800);
+    await js(`(async()=>{
+      const {mountLargeComparison}=await import('/tests/fixtures/commit-stream.tsx');
+      const {markFileViewed}=await import('/lib/file-view-progress.ts');
+      const {fileRevisionKey}=await import('/lib/pr-changes.ts');
+      const snapshot={...window.cappedSnapshot,files:[window.cappedSnapshot.files[0]]};
+      const subject={...window.capSubject,id:'partial-completion-test',kind:'pr',members:[window.capSubject.members[1]]};
+      await markFileViewed(fileRevisionKey(snapshot.url,snapshot.files[0].path,snapshot.metadata.baseSha,snapshot.metadata.headSha),true);
+      window.electronAPI.getPrChanges=async()=>snapshot;
+      mountLargeComparison(subject,snapshot,window.capPreferences);
+    })()`);
+    await wait("document.querySelector('#large-stream-test .commit-viewed-complete strong')?.textContent==='All available files viewed'");
+    assert.match(await js<string>("document.querySelector('#large-stream-test .commit-viewed-complete').textContent"), /not the complete change/);
     console.log('PR Changes browser checks passed. Captures:', shots);
   } catch (error) {
     console.error(error);

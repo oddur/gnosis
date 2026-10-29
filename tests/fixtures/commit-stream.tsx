@@ -4,6 +4,7 @@ import { commitPositionId } from '../../lib/inspection-cache';
 import type { ReviewSubject } from '../../lib/workbench';
 import type { PrChanges } from '../../lib/pr-changes';
 import type { Preferences } from '../../lib/types';
+let unmount: (() => void) | undefined;
 
 /** Isolated large-comparison fixture; every GitHub operation still uses the browser suite's mocks. */
 export function mountLargeComparison(
@@ -12,6 +13,7 @@ export function mountLargeComparison(
   preferences: Preferences,
   changes = false
 ) {
+  unmount?.();
   localStorage.setItem(
     `gnosis-changes-position:${changes ? subject.id : commitPositionId(subject.id, snapshot)}`,
     JSON.stringify({ selected: 'src/file119.ts', scroll: {} })
@@ -26,7 +28,9 @@ export function mountLargeComparison(
     background: 'var(--background)',
   });
   document.body.appendChild(element);
-  createRoot(element).render(
+  const root = createRoot(element);
+  unmount = () => { root.unmount(); element.remove(); };
+  root.render(
     <PrChangesView
       subject={subject}
       preferences={preferences}

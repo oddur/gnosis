@@ -1,7 +1,9 @@
-import { createGitHubWork, joinGitHubWork, type GitHubWork } from '../lib/github-scheduler';
+import { createSharedGitHubRead } from '../lib/github-scheduler';
+import { createByteCache } from '../lib/byte-cache';
+import { compactInventory, INVENTORY_MEMORY_BYTES } from '../lib/inspection-limits';
 import { createHash } from 'node:crypto';
 import type { Octokit } from '@octokit/rest';
-import { getChangedFiles, getPrMetadata, getPrDiff, parsePrUrl } from '../lib/github';
+import { getChangedFiles, getPrMetadata, getPrDiff, parsePrUrl, GITHUB_PR_FILE_LIMIT } from '../lib/github';
 import { preparedDiff, preparedDiffKey } from '../lib/prepared-pr';
 import { githubCacheFor } from '../lib/github-client';
 import { isCacheRecord } from '../lib/github-cache';
@@ -28,25 +30,26 @@ function validateURL(url: string) {
 }
 /** Snapshots pin both comparison revisions. No generation, filtering, or silent version swaps. */
 export function createPrChangesService() {
-  const pending = new WeakMap<Octokit, Map<string, GitHubWork<unknown>>>();
-  const snapshots = new WeakMap<Octokit, Map<string, PrChanges>>();
-  function share<T>(client: Octokit, key: string, run: () => Promise<T>): Promise<T> {
+  const pending = new WeakMap<Octokit, Map<string, ReturnType<typeof createSharedGitHubRead<unknown>>>>();
+  const snapshots = new WeakMap<Octokit, ReturnType<typeof createByteCache<string, PrChanges>>>();
+  function share<T>(client: Octokit, key: string, run: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted();
     let work = pending.get(client);
     if (!work) {
       work = new Map();
       pending.set(client, work);
     }
     const previous = work.get(key);
-    if (previous) return joinGitHubWork(previous) as Promise<T>;
-    const job = createGitHubWork(() => run().finally(() => work.delete(key)));
+    if (previous && !previous.signal.aborted) return previous.read(signal) as Promise<T>;
+    const job = createSharedGitHubRead(() => run().finally(() => { if (work.get(key) === job) work.delete(key); }));
     work.set(key, job);
-    return job.promise;
+    return job.read(signal);
   }
   const snapshotKey = (url: string, revision: string) => `pr-changes:v2:${url}:${revision}`;
   function remember(client: Octokit, snapshot: PrChanges) {
     let values = snapshots.get(client);
     if (!values) {
-      values = new Map();
+      values = createByteCache<string, PrChanges>(INVENTORY_MEMORY_BYTES, 200);
       snapshots.set(client, values);
     }
     values.set(snapshotKey(snapshot.url, changesRevision(snapshot.metadata)), snapshot);
@@ -62,7 +65,7 @@ export function createPrChangesService() {
     if (!snapshot || !file) throw new Error('Reload this PR’s file list before opening the file.');
     return { snapshot, file };
   }
-  async function manifest(client: Octokit, url: string, refresh = false, options: InspectionLoadOptions = {}): Promise<PrChanges> {
+  async function manifest(client: Octokit, url: string, refresh = false, options: InspectionLoadOptions = {}, signal?: AbortSignal): Promise<PrChanges> {
     const { owner, repo, pullNumber } = validateURL(url);
     return share(client, `manifest:${url}:${refresh}:${options.revision ? changesRevision(options.revision) : ''}`, async () => {
       const cache = githubCacheFor(client),
@@ -88,18 +91,21 @@ export function createPrChangesService() {
         return refreshed;
       }
       const files = await getChangedFiles(client, owner, repo, pullNumber, true);
-      if (metadata.changedFileCount !== undefined && files.length !== metadata.changedFileCount)
+      const filesTruncated = files.length === GITHUB_PR_FILE_LIMIT &&
+        (metadata.changedFileCount === undefined || metadata.changedFileCount > files.length);
+      if (!filesTruncated && metadata.changedFileCount !== undefined && files.length !== metadata.changedFileCount)
         throw new Error('GitHub returned an incomplete file list. Open this PR on GitHub to inspect all files.');
       const { data: comparison } = await client.repos.compareCommits({
         owner,
         repo,
         base: metadata.baseSha,
         head: metadata.headSha,
+        per_page: 1,
       });
       const after = await getPrMetadata(client, owner, repo, pullNumber, true);
       if (changesRevision(after) !== changesRevision(metadata))
         throw new Error('This PR changed while its file list was loading. Retry to load a consistent version.');
-      const value: PrChanges = {
+      const value = compactInventory({
         version: 1,
         url,
         metadata,
@@ -121,14 +127,15 @@ export function createPrChangesService() {
             file.patch ?? comparison.merge_base_commit.sha,
           ]),
         })),
-      };
+        ...(filesTruncated ? { filesTruncated: true } : {}),
+      });
       remember(client, value);
       if (cache?.version() === version) {
         cache?.set(key, value);
         cache?.set(latestKey, value);
       }
       return value;
-    });
+    }, signal);
   }
   const loadFile = createSnapshotFileLoader();
   async function content(client: Octokit, req: PrFileRequest, beforeRequest?: () => void) {
@@ -158,6 +165,7 @@ export function createPrChangesService() {
         const cache = githubCacheFor(client), version = cache?.version();
         const before = await getPrMetadata(client, owner, repo, pullNumber);
         if (changesRevision(before) !== changesRevision(revision)) return;
+        if (before.changedFileCount !== undefined && before.changedFileCount > GITHUB_PR_FILE_LIMIT) return;
         const diff = await getPrDiff(client, owner, repo, pullNumber, undefined, true);
         const after = await getPrMetadata(client, owner, repo, pullNumber, true);
         if (changesRevision(before) !== changesRevision(after)) throw new Error('This PR changed while its diff was being prepared.');

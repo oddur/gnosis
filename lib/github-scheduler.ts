@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { createSharedRead } from './shared-read';
 
 export type GitHubPriority = 'interactive' | 'foreground' | 'background';
 const rank: Record<GitHubPriority, number> = { interactive: 2, foreground: 1, background: 0 };
@@ -7,6 +8,19 @@ interface PriorityScope {
   parent?: PriorityScope;
 }
 const context = new AsyncLocalStorage<PriorityScope>();
+const readContext = new AsyncLocalStorage<AbortSignal>();
+export const githubReadSignal = () => readContext.getStore();
+export function createSharedGitHubRead<T>(run: () => Promise<T>) {
+  let work: GitHubWork<T>;
+  const shared = createSharedRead(signal => {
+    work = readContext.run(signal, () => createGitHubWork(run));
+    return work.promise;
+  });
+  return { signal: shared.signal, read: (signal?: AbortSignal) => {
+    void joinGitHubWork(work);
+    return shared.read(signal);
+  } };
+}
 export const githubPriorityScope = (): PriorityScope => context.getStore() ?? { priority: 'foreground' };
 export function githubPriority(scope = githubPriorityScope()): GitHubPriority {
   const parent = scope.parent && githubPriority(scope.parent);

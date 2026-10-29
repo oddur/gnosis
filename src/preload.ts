@@ -69,6 +69,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getCommitComparison: (selection: CommitSelection, background?: boolean): Promise<PrChanges> => ipcRenderer.invoke('commit-comparison', selection, background),
   renderMarkdownReview: (request: MarkdownReviewRequest | ExplanationMarkdownRequest): Promise<MarkdownReview> => ipcRenderer.invoke('markdown-review', request),
   getPrChanges: (url: string, refresh = false, options?: InspectionLoadOptions): Promise<PrChanges> => ipcRenderer.invoke('pr-changes', url, refresh, options),
+  cancelInspection: (requestId: string): Promise<void> => ipcRenderer.invoke('cancel-inspection', requestId),
   getPrChangeFile: (request: PrFileRequest, background?: boolean): Promise<PrFileContents> => ipcRenderer.invoke('pr-change-file', request, background),
   checkPrChanges: (url: string): Promise<{ baseSha: string; headSha: string }> => ipcRenderer.invoke('pr-changes-revision', url),
   cancelChat: (requestId: string): Promise<void> => ipcRenderer.invoke('cancel-chat', requestId),

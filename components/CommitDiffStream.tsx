@@ -4,6 +4,7 @@ import type { PrChangeFile } from '../lib/pr-changes';
 
 export interface CommitDiffStreamHandle {
   scrollToFile: (key: string) => void;
+  preservePosition: () => void;
 }
 interface StreamFile {
   key: string;
@@ -81,7 +82,12 @@ export function CommitDiffStream({
     current.current.onPosition(key, offset);
     virtual.scrollToIndex(index, { align: 'start' });
   }
-  useImperativeHandle(ref, () => ({ scrollToFile: jump }));
+  useImperativeHandle(ref, () => ({ scrollToFile: jump, preservePosition: () => {
+    if (pending.current) return;
+    const top = viewport.current?.scrollTop ?? 0;
+    const item = virtual.getVirtualItems().find(row => row.end > top + 2);
+    if (item) pending.current = { key: String(item.key), offset: Math.max(0, top - item.start), until: Date.now() + 1500 };
+  } }));
   useLayoutEffect(() => {
     const target = pending.current;
     if (!target) return;

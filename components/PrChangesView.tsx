@@ -1,3 +1,5 @@
+import { loadInspectionBatch, inspectionFailure, type InspectionFailure } from '../lib/inspection-batch';
+import { InspectionFailureNotice } from './InspectionFailureNotice';
 import { useKeyboardShortcuts } from '../lib/use-keyboard-shortcuts';
 import { useRawFileFilters } from '../lib/use-raw-file-filters';
 import { hiddenByFileFilters, hiddenByFileExtensions } from '../lib/file-kinds';
@@ -96,6 +98,7 @@ export function PrChangesView({
     [error, setError] = useState(''),
     [newer, setNewer] = useState(false),
     [checkError, setCheckError] = useState('');
+  const [loadErrors, setLoadErrors] = useState<InspectionFailure[]>([]);
   const [query, setQuery] = useState(''),
     [unviewed, setUnviewed] = useState(false),
     [treeOpen, setTreeOpen] = useState(() => window.innerWidth > 700);
@@ -141,26 +144,41 @@ export function PrChangesView({
       /* Session position remains. */
     }
   };
-  async function load(refresh: boolean) {
+  const loadController = useRef<AbortController | undefined>(undefined);
+  const [pendingMembers, setPendingMembers] = useState<string[]>([]);
+  async function load(refresh: boolean, onlyUrl?: string) {
     if (commit) return;
     const current = ++generation.current;
-    setLoading(refresh || !loadedSnapshots.length);
+    setLoading(true);
     setError('');
+    loadController.current?.abort();
+    const controller = new AbortController();
+    loadController.current = controller;
+    const members = subject.members.filter(m => !onlyUrl || m.url === onlyUrl);
+    const waiting = new Set(members.map(m => m.url));
+    setPendingMembers([...waiting]);
+    const next = new Map(loadedSnapshots.map(s => [s.url, s]));
+    const failures = new Map(loadErrors.filter(e => onlyUrl && e.url !== onlyUrl).map(e => [e.url, e]));
+    setLoadErrors([...failures.values()]);
     try {
-      const next: PrChanges[] = [];
-      for (const member of subject.members) {
-        const snapshot = await inspectionData.readChanges(member, refresh);
-        registerChangeProgress(snapshot);
-        next.push(snapshot);
+      await loadInspectionBatch(members, (member, signal) => inspectionData.readChanges(member, refresh, false, signal), (member, result) => {
+        if (!alive.current || current !== generation.current) return;
+        if ('value' in result) {
+          registerChangeProgress(result.value);
+          next.set(member.url, result.value);
+        } else failures.set(member.url, inspectionFailure(member.url, result.error));
+        waiting.delete(member.url);
+        stream.current?.preservePosition();
+        setSnapshots(subject.members.flatMap(m => next.get(m.url) ?? []));
+        setLoadErrors([...failures.values()]);
+        setPendingMembers([...waiting]);
+      }, controller.signal);
+      if (alive.current && current === generation.current && !controller.signal.aborted) {
+        if (refresh && !failures.size) setNewer(false);
+        setCheckError('');
       }
-      if (!alive.current || current !== generation.current) return;
-      setSnapshots(next);
-      if (refresh) setNewer(false);
-      setCheckError('');
-    } catch (e) {
-      if (alive.current && current === generation.current) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      if (alive.current && current === generation.current) setLoading(false);
+      if (alive.current && current === generation.current) { setLoading(false); setPendingMembers([]); }
     }
   }
   useEffect(() => {
@@ -170,6 +188,7 @@ export function PrChangesView({
     return () => {
       alive.current = false;
       generation.current++;
+      loadController.current?.abort();
       hoverCancel.current();
     };
   }, [subject.id]);
@@ -198,7 +217,8 @@ export function PrChangesView({
   }, [revision]);
   const entries = useMemo<Entry[]>(
     () =>
-      snapshots.flatMap((snapshot, index) => {
+      snapshots.flatMap((snapshot) => {
+        const index = subject.members.findIndex(member => member.url === snapshot.url);
         const prefix =
           subject.kind === 'stack' && !commit
             ? `${String(index + 1).padStart(2, '0')} · ${snapshot.metadata.baseRepo?.replace('/', ' · ') ?? 'PR'} #${snapshot.url.split('/').pop()}/`
@@ -209,6 +229,8 @@ export function PrChangesView({
       }),
     [snapshots, subject.kind, !!commit]
   );
+  const incomplete = snapshots.some(s => s.filesTruncated) || loadErrors.length > 0 ||
+    (!commit && snapshots.length < subject.members.length);
   const filters = useRawFileFilters(snapshots);
   const kinds = new Map(entries.map((e) => [e.key, filters.kind(e.snapshot, e.file)]));
   const allowed = entries.filter(
@@ -234,13 +256,19 @@ export function PrChangesView({
       setChatFocusRequest((request) => request + 1);
     },
   }, { enabled: !!entry, capture: true, scope: workspace });
+  const awaitingSelection = loading && !!selected && !entries.some(e => e.key === selected);
+  const wasAwaiting = useRef(false);
+  useEffect(() => {
+    if (wasAwaiting.current && !awaitingSelection && entries.some(e => e.key === selected)) stream.current?.scrollToFile(selected);
+    wasAwaiting.current = awaitingSelection;
+  }, [awaitingSelection]);
   const visibleSignature = visible.map((e) => e.key).join('\n');
   useEffect(() => {
-    if (entry && !visible.some((e) => e.key === selected)) {
+    if (!awaitingSelection && entry && !visible.some((e) => e.key === selected)) {
       setSelected(entry.key);
       stream.current?.scrollToFile(entry.key);
     }
-  }, [visibleSignature]);
+  }, [visibleSignature, awaitingSelection]);
   const reveal = async () => {
     setUnviewed(false);
     await filters.update({ filters: { hideGenerated: false, hideTests: false, hiddenExtensions: [] } });
@@ -276,7 +304,9 @@ export function PrChangesView({
       setError('This annotation belongs to an older commit. Open its source on GitHub from Checks.');
     } else if (match) void select(match.key);
     else if (snapshots.length)
-      setError(`“${initialFile.path}” is not in the current PR changes. Choose another file to comment on.`);
+      setError(snapshots.some(s => s.url === initialFile.url && s.filesTruncated)
+        ? `“${initialFile.path}” is not in the files GitHub returned. This PR’s file list is incomplete.`
+        : `“${initialFile.path}” is not in the current PR changes. Choose another file to comment on.`);
   }, [initialFile, entries]);
   // Keep selection/scroll independent of tabs, queue navigation, and background discovery.
   function warmFile(key: string) {
@@ -421,6 +451,7 @@ export function PrChangesView({
         {(!commit || commit.snapshot) && (
           <span className="changes-progress">
             {entries.filter((e) => progress.isFileViewed(viewKey(e))).length} / {entries.length} viewed
+            {incomplete && ' · available files'}
           </span>
         )}
         <span className="changes-toolbar-spacer" />
@@ -457,6 +488,30 @@ export function PrChangesView({
           </Button>
         )}
       </div>
+      {snapshots.filter(s => s.filesTruncated).map(snapshot => (
+        <div className="changes-notice" role="status" key={snapshot.url}>
+          <span>
+            <strong>Partial changes · PR #{snapshot.url.split('/').pop()}</strong>{' '}
+            {snapshot.comparison
+              ? `GitHub’s file limit was reached. Showing ${snapshot.files.length.toLocaleString('en-US')} files; this comparison may be incomplete.`
+              : `Showing ${snapshot.files.length.toLocaleString('en-US')} of ${snapshot.metadata.changedFileCount?.toLocaleString('en-US') ?? 'more'} files. GitHub limits PR file lists to 3,000.`}{' '}
+            Files load as you open them.
+          </span>
+          <button onClick={() => void window.electronAPI.openExternal(snapshot.comparison
+            ? `https://github.com/${snapshot.metadata.baseRepo}/compare/${snapshot.comparisonBase}...${snapshot.metadata.headSha}`
+            : `${snapshot.url}/files`)}>Open on GitHub</button>
+        </div>
+      ))}
+      {snapshots.some(s => s.patchesDeferred) && <div className="changes-notice" role="status">
+        Large diffs load as you open each file to keep this view responsive. All available filenames remain searchable.
+      </div>}
+      {loading && <div className="changes-notice" role="status">
+        <span>Loading {pendingMembers.length} {pendingMembers.length === 1 ? 'PR' : 'PRs'}… Available files are ready to review.</span>
+        <button onClick={() => { loadController.current?.abort(); setLoadErrors(errors => [...errors, ...pendingMembers.map(url => ({ url, message: 'Loading was stopped.' }))]); setLoading(false); setPendingMembers([]); }}>Stop loading</button>
+      </div>}
+      {loadErrors.map(failure => <InspectionFailureNotice key={failure.url} failure={failure}
+        saved={snapshots.some(s => s.url === failure.url)} kind="changes" busy={pendingMembers.includes(failure.url)} retryDisabled={loading}
+        retry={() => void load(true, failure.url)} />)}
       {filters.pending && (
         <div className="changes-notice" role="status">
           File classification has updated. Your visible files are unchanged.
@@ -506,8 +561,8 @@ export function PrChangesView({
                 <div className="changes-tree-controls">
                   {!commit && (
                     <input
-                      aria-label="Find changed files"
-                      placeholder="Find a file…"
+                      aria-label={incomplete ? "Find available changed files" : "Find changed files"}
+                      placeholder={incomplete ? "Find an available file…" : "Find a file…"}
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
                     />
@@ -517,6 +572,7 @@ export function PrChangesView({
                     Unviewed only
                   </label>
                 </div>
+                {incomplete && <p className="file-filter-group">Search covers available files only.</p>}
                 {!commit &&
                   subject.kind === 'stack' &&
                   snapshots
@@ -542,7 +598,7 @@ export function PrChangesView({
                       ? `${hidden} ${hidden === 1 ? 'file' : 'files'} hidden by your filters.`
                       : unviewed
                         ? 'All files viewed. Turn off Unviewed only to browse again.'
-                        : 'No changed files.'}
+                        : loadErrors.length ? 'Changed files are unavailable.' : 'No changed files.'}
                     {hidden > 0 && (
                       <button className="file-filter-reveal" onClick={reveal}>
                         Show hidden files
@@ -589,6 +645,7 @@ export function PrChangesView({
               selected={entry?.key ?? ''}
               initialPosition={{ key: position.selected, offset: position.scroll[activeKey] ?? 0 }}
               onPosition={(key, offset) => {
+                if (awaitingSelection) return;
                 const target = entries.find((e) => e.key === key);
                 if (!target) return;
                 position.selected = key;
@@ -638,11 +695,13 @@ export function PrChangesView({
                       </Button>
                     </div>
                   )}
-                  {entries.length > 0 && entries.every((e) => progress.isFileViewed(viewKey(e))) && (
+                  {!loading && entries.length > 0 && entries.every((e) => progress.isFileViewed(viewKey(e))) && (
                     <div className="changes-empty commit-viewed-complete" role="status">
-                      <strong>All files viewed</strong>
+                      <strong>{incomplete ? 'All available files viewed' : 'All files viewed'}</strong>
                       <p>
-                        {commit
+                        {incomplete
+                          ? 'This is not the complete change. Inspect the remaining files on GitHub or in a local checkout.'
+                          : commit
                           ? 'You’ve finished this comparison. Choose another commit to continue.'
                           : 'You’ve viewed every file. Submit your review when you’re ready.'}
                       </p>
@@ -657,7 +716,7 @@ export function PrChangesView({
               }
             />
           ) : (
-            <p className="changes-empty">{loading ? 'Loading changed files…' : 'No changed files.'}</p>
+            <p className="changes-empty">{loading ? 'Loading changed files…' : loadErrors.length ? 'Changed files are unavailable. Retry or open the PR on GitHub.' : 'No changed files.'}</p>
           )}
         </div>
         {chatOpen && chatRequest && (

@@ -1,5 +1,7 @@
 import { usePrReadVisit } from '../lib/pr-read-context';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
+import { inspectionData } from '../lib/inspection-cache';
+import { GITHUB_PR_FILE_LIMIT } from '../lib/inspection-limits';
 import { ReviewPage } from '../src/pages/ReviewPage';
 import { ReviewDraftScope, useSessionDraft } from '../lib/session-drafts';
 import { loadExplanation, peekExplanation, type ExplanationDestination } from '../lib/explanation-workspace';
@@ -37,6 +39,13 @@ export function PrExplanation({
   onBack: () => void;
   onOpenChanges: () => void;
 }) {
+  useSyncExternalStore(inspectionData.subscribe, inspectionData.getVersion);
+  const limited = item.subject.members.filter(member => {
+    const snapshot = inspectionData.peekChanges(member);
+    return (member.changedFileCount ?? 0) > GITHUB_PR_FILE_LIMIT ||
+      (snapshot?.metadata.headSha === member.headSha && snapshot.metadata.baseSha === member.baseSha && snapshot.filesTruncated);
+  });
+  const generate = () => { if (!limited.length) onGenerate(); };
   const completed =
     entries.find((e) => !e.status || e.status === 'completed') ??
     (item.review?.status === 'completed' ? item.review : undefined);
@@ -112,6 +121,11 @@ export function PrExplanation({
   const model = provider?.models.find((m) => m.id === preferences?.model)?.label ?? preferences?.model;
   return (
     <div className="pr-explanation-workspace">
+      {limited.length > 0 && <div className="explanation-status" role="status">
+        <span>A complete explanation is unavailable: {limited.map(m => `PR #${m.number}`).join(', ')} exceeds GitHub’s 3,000-file limit.
+          {' '}Inspect the available files in Changes, open a smaller PR, or review a local checkout.</span>
+        <Button variant="outline" size="sm" onClick={onOpenChanges}>Open Changes</Button>
+      </div>}
       {(running || newer || changed || failed || error || loadError) && (
         <div className="explanation-status" role={error || loadError ? 'alert' : 'status'}>
           <span>
@@ -140,7 +154,7 @@ export function PrExplanation({
               Open updated explanation
             </Button>
           ) : (
-            <Button size="sm" onClick={onGenerate}>
+            <Button size="sm" onClick={generate} disabled={limited.length > 0}>
               {failed || error ? 'Retry generation' : 'Update explanation'}
             </Button>
           )}
@@ -162,7 +176,7 @@ export function PrExplanation({
             active={active}
             initialPreferences={preferences ?? undefined}
             onBack={onBack}
-            onReReview={onGenerate}
+            onReReview={generate}
             onShowActivity={onShowActivity}
             onOpenChanges={onOpenChanges}
             initialSlideId={initialSlideId}
@@ -188,7 +202,7 @@ export function PrExplanation({
             </p>
             {!wanted && !running && !failed && !error && (
               <div className="explanation-empty-actions">
-                <Button onClick={onGenerate} disabled={!preferences}>
+                <Button onClick={generate} disabled={!preferences || limited.length > 0}>
                   Generate explanation
                 </Button>
                 <span>

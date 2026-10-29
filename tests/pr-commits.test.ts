@@ -130,7 +130,7 @@ const selection = (first = 1, last = first): CommitSelection => ({
   lastSha: sha(last),
 });
 void test('commit lists coalesce, paginate beyond 100, and use paginated comparisons beyond the PR endpoint cap', async () => {
-  for (const count of [3, 125, 251]) {
+  for (const count of [3, 125, 251, 554]) {
     const f = fixture(count),
       service = createPrCommitsService(),
       client = f.pool.client('one');
@@ -219,7 +219,13 @@ void test('incomplete inventories, racing pushes, and file caps never present a 
       client = f.pool.client('one');
     await service.list(client, url);
     f.cap(cap);
-    await assert.rejects(service.comparison(client, cap === 300 ? selection(1, 3) : selection(1)), /file limit/);
+    const chosen = cap === 300 ? selection(1, 3) : selection(1);
+    const snapshot = await service.comparison(client, chosen);
+    assert.equal(snapshot.files.length, cap);
+    assert.equal(snapshot.filesTruncated, true, 'Capped comparisons must never imply full coverage');
+    const reads = f.reads.length;
+    assert.deepEqual(await service.comparison(client, chosen), snapshot);
+    assert.equal(f.reads.length, reads, 'Partial comparisons are cached too');
   }
 });
 void test('initial commit has no before side; initial-commit ranges give an explicit limitation', async () => {

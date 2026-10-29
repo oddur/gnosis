@@ -55,7 +55,10 @@ function fixture() {
         if (moveDuringDiff) head = 'moved-during-diff';
         return new Response(diff, { headers: { 'content-type': 'text/plain' } });
       }
-      if (u.pathname.endsWith('/files')) return json(files);
+      if (u.pathname.endsWith('/files')) {
+        const page = Number(u.searchParams.get('page') ?? 1);
+        return json(files.slice((page - 1) * 100, page * 100));
+      }
       if (u.pathname.includes('/compare/')) {
         if (unstable) head = 'moved';
         return json({ merge_base_commit: { sha: 'merge-base' } });
@@ -157,6 +160,36 @@ void test('incomplete inventories and mid-load commit changes are rejected', asy
   g.unstable();
   await assert.rejects(createPrChangesService().manifest(g.pool.client('one'), url), /changed while/);
 });
+void test('GitHub’s 3,000-file cap leaves an explicitly partial, reusable Changes snapshot', async () => {
+  const f = fixture();
+  f.incomplete();
+  while (f.files.length < 3000)
+    f.files.push({ ...f.files[0], filename: `src/file-${f.files.length}.ts` });
+  const client = f.pool.client('large'), service = createPrChangesService();
+  const snapshot = await service.manifest(client, url);
+  assert.equal(snapshot.files.length, 3000);
+  assert.equal(snapshot.filesTruncated, true);
+  assert.equal(snapshot.metadata.changedFileCount, 3001);
+  const reads = f.reads.length;
+  assert.deepEqual(await service.manifest(client, url), snapshot);
+  assert.equal(f.reads.length, reads, 'A known API cap must not trigger repeated downloads');
+  assert.equal(f.reads.filter(u => u.pathname.endsWith('/files')).length, 30, 'Stop at GitHub’s cap without requesting page 31');
+  assert.equal((await service.content(client, { url, path: 'src/new.ts', baseSha: 'base', headSha: 'head1' })).after.kind, 'text');
+  await service.prepareReview(client, url, snapshot.metadata);
+  const source = new GitHubDiffSource(url, null, client);
+  await assert.rejects(source.getChangedFiles(), /cannot generate a complete explanation/);
+  await assert.rejects(source.getDiff(), /cannot generate a complete explanation/);
+  assert.equal(await preparedDiff(client, url, snapshot.metadata), undefined, 'Never cache a partial diff as a complete review');
+});
+void test('exactly 3,000 changed files is complete when the PR metadata confirms that count', async () => {
+  const f = fixture();
+  while (f.files.length < 3000)
+    f.files.push({ ...f.files[0], filename: `src/file-${f.files.length}.ts` });
+  const client = f.pool.client('boundary'), service = createPrChangesService();
+  const snapshot = await service.manifest(client, url);
+  assert.equal(snapshot.filesTruncated, undefined);
+  assert.equal((await new GitHubDiffSource(url, null, client).getChangedFiles()).length, 3000);
+});
 void test('Viewed is shared by revision, retained only for unchanged content, and isolated across stack members', async () => {
   const data = new Map<string, string>();
   Object.defineProperty(globalThis, 'localStorage', {
@@ -222,6 +255,10 @@ void test('large patch inventories remain pinned in memory when too large for di
   const service = createPrChangesService(),
     client = f.pool.client('one');
   const first = await service.manifest(client, url);
+  assert.equal(first.patchesDeferred, true);
+  assert.equal(first.files[0].patch, undefined, 'The inventory must not carry a giant patch into the renderer');
+  const reviewFiles = await new GitHubDiffSource(url, null, client).getChangedFiles();
+  assert.equal(reviewFiles[0].patch?.length, 1_100_000, 'Explanation evidence must never silently inherit deferred patches');
   const count = f.reads.length;
   f.move('head2');
   assert.equal((await service.manifest(client, url)).metadata.headSha, first.metadata.headSha);
