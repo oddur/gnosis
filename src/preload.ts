@@ -21,7 +21,7 @@ import type { QueueViewAction } from '../lib/saved-views';
 import type { QueueFilters } from '../lib/queue-filters';
 import type { GitHubReviewThread, GitHubReviewThreads, ReviewThreadAction, ReviewCommentAction, CreateReviewCommentRequest } from '../lib/review-threads';
 import type { ActivityTask, ActivityAction } from '../lib/activity';
-import type { WorkbenchQueue, GroupingOverride, ReviewSnapshot } from '../lib/workbench';
+import type { WorkbenchQueue, GroupingOverride, ReviewSnapshot, ReviewSubject } from '../lib/workbench';
 import { contextBridge, ipcRenderer } from 'electron';
 import type {
   ChangedFile,
@@ -68,6 +68,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPrCommits: (url: string, refresh = false, options?: InspectionLoadOptions): Promise<PrCommits> => ipcRenderer.invoke('pr-commits', url, refresh, options),
   getCommitComparison: (selection: CommitSelection, background?: boolean): Promise<PrChanges> => ipcRenderer.invoke('commit-comparison', selection, background),
   renderMarkdownReview: (request: MarkdownReviewRequest | ExplanationMarkdownRequest): Promise<MarkdownReview> => ipcRenderer.invoke('markdown-review', request),
+  getStackChanges: (subject: ReviewSubject, refresh = false, options?: InspectionLoadOptions): Promise<PrChanges> => ipcRenderer.invoke('stack-changes', subject, refresh, options),
   getPrChanges: (url: string, refresh = false, options?: InspectionLoadOptions): Promise<PrChanges> => ipcRenderer.invoke('pr-changes', url, refresh, options),
   cancelInspection: (requestId: string): Promise<void> => ipcRenderer.invoke('cancel-inspection', requestId),
   getPrChangeFile: (request: PrFileRequest, background?: boolean): Promise<PrFileContents> => ipcRenderer.invoke('pr-change-file', request, background),

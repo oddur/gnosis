@@ -27,6 +27,7 @@ export function createSnapshotFileLoader(lfs = lfsResources) {
       baseSha: req.baseSha,
       headSha: req.headSha,
       ...(req.comparison ? { scope: 'commit' } : {}),
+      ...(req.stackComparison ? { scope: 'stack', stackComparison: req.stackComparison } : {}),
     };
     const key = hash(identity);
     let work = pending.get(client);

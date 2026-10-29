@@ -361,6 +361,7 @@ let prefs: Preferences = {
   codexPath: '',
   notifications: false,
   diffLayout: 'unified',
+  stackChangesMode: new URLSearchParams(location.search).has('stack-changes') ? undefined : 'by-pr', // Legacy suites explicitly inspect each PR's changes.
   includeAllFiles: true,
   reviewSignature: false,
   firstRunSeen: onboardingScenario ? sessionStorage.getItem('fixture-first-run-seen') === 'true' : true,
