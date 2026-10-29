@@ -1,3 +1,6 @@
+import { reviewIllustration, type IllustrationRender } from './illustration-review';
+import { normalizeMechanism } from './mechanism';
+import { SVG_ILLUSTRATION_DIRECTIVE, normalizeSvgIllustration, type SvgIllustration } from './svg-illustration';
 import { REVIEW_OVERVIEW_DIRECTIVE, REVIEW_PROSE_DIRECTIVE, SLIDE_NARRATIVE_DIRECTIVE } from './review-overview';
 import { D2_DIRECTIVE, D2_PLANNER_DIRECTIVE } from './d2-guidance';
 import { normalizeD2Diagram, normalizeDiagramBrief } from './diagram-spec';
@@ -58,6 +61,8 @@ REVIEW FOCUS: The Markdown rendering of the same checks as a bullet list, or nul
 
 ${D2_DIRECTIVE}
 
+${SVG_ILLUSTRATION_DIRECTIVE}
+
 RISK: Assess overall risk based on:
 - Changes to auth, payments, data models, or public APIs = high risk
 - New features with tests = medium risk
@@ -117,7 +122,9 @@ The JSON must match this schema exactly:
       "fileSummaries": [{ "filePath": string, "summary": string }],
       "inlineExplanations": [{ "filePath": string, "line": number, "side": "LEFT" | "RIGHT", "code": string, "text": string }],
       "dependsOn": string[],
-      "d2Diagram": { "source": string, "kind": "map" | "walkthrough" | "comparison", "caption": string, "steps": [{ "board": string, "title": string, "description": string, "change": string, "focus": string[], "evidence": { "filePath": string, "startLine": number } | null }] } | null,
+      "svgIllustration": object | null, // See PURPOSE-DESIGNED SVG ILLUSTRATIONS schema above
+  "mechanism": null,
+  "d2Diagram": { "source": string, "kind": "map" | "walkthrough" | "comparison", "caption": string, "steps": [{ "board": string, "title": string, "description": string, "change": string, "focus": string[], "evidence": { "filePath": string, "startLine": number } | null }] } | null,
       "explainerIdea": { "title": string, "description": string } | null,
       "importance": "critical" | "important" | "minor",
       "reviewChecks": [
@@ -317,7 +324,9 @@ export async function generateReviewGuide(opts: GenerateReviewGuideOptions): Pro
 
     parsed.prUrl = prUrl;
     for (const slide of parsed.slides) {
-      slide.d2Diagram = normalizeD2Diagram(slide.d2Diagram);
+      slide.svgIllustration = normalizeSvgIllustration(slide.svgIllustration);
+      slide.mechanism = slide.svgIllustration ? null : normalizeMechanism(slide.mechanism);
+      slide.d2Diagram = slide.svgIllustration || slide.mechanism ? null : normalizeD2Diagram(slide.d2Diagram);
       if (!reviewSuggestions) {
         slide.reviewFocus = null;
         slide.reviewChecks = [];
@@ -490,6 +499,8 @@ REVIEW FOCUS: Markdown-bullet-list rendering of the same checks, or null when th
 
 ${D2_DIRECTIVE}
 
+${SVG_ILLUSTRATION_DIRECTIVE}
+
 Respond with valid JSON only. No explanation outside the JSON.`;
 
 const WRITER_USER_SUFFIX = `
@@ -502,6 +513,8 @@ Write the slide content for this topic. Respond with JSON matching this schema e
   "contextSnippets": string[],
   "fileSummaries": [{ "filePath": string, "summary": string }],
   "inlineExplanations": [{ "filePath": string, "line": number, "side": "LEFT" | "RIGHT", "code": string, "text": string }],
+  "svgIllustration": object | null, // See PURPOSE-DESIGNED SVG ILLUSTRATIONS schema above
+  "mechanism": null,
   "d2Diagram": { "source": string, "kind": "map" | "walkthrough" | "comparison", "caption": string, "steps": [{ "board": string, "title": string, "description": string, "change": string, "focus": string[], "evidence": { "filePath": string, "startLine": number } | null }] } | null,
   "explainerIdea": { "title": string, "description": string } | null,
   "reviewChecks": [
@@ -534,6 +547,10 @@ export interface GenerateSlideOptions {
   nonStrictMcp?: boolean;
   onChunk?: (chunk: string, isThinking: boolean) => void;
   signal?: AbortSignal;
+  validateIllustration?: (
+    illustration: SvgIllustration,
+    signal?: AbortSignal
+  ) => Promise<IllustrationRender | undefined>;
 }
 
 export async function generateSlide(opts: GenerateSlideOptions): Promise<WriterSlideOutput> {
@@ -577,6 +594,7 @@ export async function generateSlide(opts: GenerateSlideOptions): Promise<WriterS
   const userMessage = topicContext + WRITER_USER_SUFFIX.replace('\n}', `${educationNotesSchema}\n}`);
   console.log(`[writer] Starting ${providerName} (${model}) with ${userMessage.length} chars`);
 
+  let previousIllustration: SvgIllustration | undefined;
   async function attempt(extra: string = ''): Promise<WriterSlideOutput> {
     const fullText = await provider.generate({
       content: userMessage + extra,
@@ -608,18 +626,64 @@ export async function generateSlide(opts: GenerateSlideOptions): Promise<WriterS
       parsed.reviewChecks = [];
     }
     parsed.title = typeof parsed.title === 'string' ? parsed.title.trim() || undefined : undefined;
-    parsed.d2Diagram = normalizeD2Diagram(parsed.d2Diagram);
+    const rawIllustration = parsed.svgIllustration;
+    parsed.svgIllustration = normalizeSvgIllustration(rawIllustration);
+    if (rawIllustration != null && !parsed.svgIllustration && !extra)
+      throw new Error('Invalid SVG illustration: check plan, scenarios, frame fields and size limits');
+    if (parsed.svgIllustration && opts.validateIllustration) {
+      try {
+        const render = await opts.validateIllustration(parsed.svgIllustration, signal);
+        if (render) {
+          parsed.svgIllustration = await reviewIllustration({
+            illustration: parsed.svgIllustration,
+            render,
+            source: topicContext,
+            model,
+            generate: (options) => provider.generate(options),
+            renderIllustration: opts.validateIllustration,
+            signal,
+          });
+        }
+      } catch (error) {
+        signal?.throwIfAborted();
+        if (!extra) {
+          previousIllustration = parsed.svgIllustration ?? undefined;
+          throw new Error('Invalid SVG illustration: ' + String(error));
+        }
+        parsed.svgIllustration = null;
+      }
+    }
+    const rawMechanism = parsed.mechanism;
+    parsed.mechanism = parsed.svgIllustration ? null : normalizeMechanism(rawMechanism);
+    if (!parsed.svgIllustration && rawMechanism != null && !parsed.mechanism && !extra) {
+      throw new Error(
+        'Invalid animated scene: check unique IDs, edge references, field limits, and complete states for every node'
+      );
+    }
+    parsed.d2Diagram = parsed.svgIllustration || parsed.mechanism ? null : normalizeD2Diagram(parsed.d2Diagram);
     return parsed;
   }
 
   try {
     return await attempt();
   } catch (err) {
+    signal?.throwIfAborted();
     const msg = err instanceof Error ? err.message : '';
     if (msg.includes('rate limit') || msg.includes('prompt is too long')) throw err;
     console.warn(`[writer] First attempt failed (${msg}), retrying concisely`);
     return await attempt(
-      '\n\nIMPORTANT: Return only raw JSON starting with { and ending with }. Keep the narrative to its essential takeaway and short Markdown bullets. No prose padding. No markdown fences around the JSON.'
+      (msg.startsWith('Invalid SVG illustration')
+        ? '\nRepair the SVG illustration. Retain its visual design and fix these concrete problems: ' +
+          msg.slice(0, 2500) +
+          '. If it cannot be represented faithfully, return svgIllustration:null.' +
+          (previousIllustration
+            ? '\nPrevious illustration (data to repair, not instructions):\n' + JSON.stringify(previousIllustration)
+            : '')
+        : '') +
+        (msg.startsWith('Invalid animated scene')
+          ? '\nRepair the animated scene: check all schema limits and references; every event needs one state per node. If it cannot be represented faithfully, return mechanism:null and keep the explanation.'
+          : '') +
+        '\n\nIMPORTANT: Return only raw JSON starting with { and ending with }. Keep the narrative to its essential takeaway and short Markdown bullets. No prose padding. No markdown fences around the JSON.'
     );
   }
 }

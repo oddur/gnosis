@@ -85,3 +85,24 @@ void test('Claude smart imports request low effort despite an inherited high eff
   assert.equal(invocation.thinkingBudget, null);
   assert.equal(invocation.input, '+hello');
 });
+
+void test('Claude receives screenshots as user image blocks alongside text', async () => {
+  const base64 = Buffer.from('test png bytes').toString('base64');
+  const output = JSON.parse(
+    await claudeProvider.generate({
+      model: 'claude-opus-5-5',
+      thinking: true,
+      isolated: true,
+      systemPrompt: 'Critique the rendered picture.',
+      content: 'Source and teaching goal.',
+      images: [{ mediaType: 'image/png', base64 }],
+    })
+  ) as Invocation;
+  assert.equal(output.args[output.args.indexOf('--input-format') + 1], 'stream-json');
+  const message = JSON.parse(output.input) as { type: string; message: { content: unknown[] } };
+  assert.equal(message.type, 'user');
+  assert.deepEqual(message.message.content, [
+    { type: 'text', text: 'Source and teaching goal.' },
+    { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64 } },
+  ]);
+});

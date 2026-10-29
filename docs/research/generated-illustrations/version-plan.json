@@ -1,0 +1,41 @@
+{
+  "summary": "This change replaces an unconditional document overwrite with one atomic conditional update.\n- The client supplies the version it read.\n- The database changes the body and increases the version only when the stored version matches.\n- Zero affected rows return status 409. A successful update returns status 200.\n- There is no automatic retry.",
+  "riskLevel": "high",
+  "riskRationale": "The change controls document data integrity. The version condition must prevent stale writes without separating the comparison from the write.",
+  "storyArc": "The single topic explains how the supplied version controls the document update. It first shows rejection when versions differ, then shows a successful update when versions match, within the same atomic database statement.",
+  "topics": [
+    {
+      "title": "Reject stale document writes",
+      "slideType": "bugfix",
+      "importance": "critical",
+      "hunkIds": ["hunk-0"],
+      "dependsOn": [],
+      "order": 1,
+      "narrativeBrief": "Show why expected version 7 cannot replace a document at stored version 8. Then show how matching versions permit the body change and version increase in one atomic statement; do not show a separate check and write.",
+      "diagramBrief": {
+        "question": "What changes when expected version 7 meets stored version 8, compared with stored version 7?",
+        "takeaway": "For an existing document, expected version 7 against stored version 8 leaves the body and version unchanged and returns 409. Against stored version 7, the statement replaces the body, increases the version to 8, and returns 200.",
+        "assumedKnowledge": [
+          "A database UPDATE can affect zero rows.",
+          "The client supplies the version it previously read."
+        ],
+        "essentialConcepts": [
+          "The statement requires both the document id and version to match.",
+          "The request owns the expected version and proposed body.",
+          "The stored document owns its current body and version.",
+          "The version comparison and update form one atomic database statement.",
+          "Zero affected rows return 409; this includes a missing document id.",
+          "A successful update returns 200.",
+          "There is no automatic retry."
+        ],
+        "omit": [
+          "Database driver details",
+          "Parameter binding syntax",
+          "Production measurements",
+          "Client recovery behavior not shown in the source"
+        ],
+        "visualApproach": "Use a static SVG comparison with two aligned cases: stale request first, matching request second. Static alignment makes the version difference and stored result directly comparable without an animation that could imply separate checks and writes. In each case, place the request beside the stored document before one atomic-statement boundary, and place the stored result after it. Keep expected version 7 in the request and align it with stored version 8 or 7. Show different body labels for the stored and proposed bodies. In the stale case, repeat the same stored body and version 8 after the boundary, with status 409. In the matching case, show the proposed body and version 8 after the boundary, with status 200. Label both cases as existing documents with matching ids. Keep the comparison and mutation inside the single boundary, with no intermediate state or separate check arrow. Mark all values as illustrative."
+      }
+    }
+  ]
+}

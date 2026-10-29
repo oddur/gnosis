@@ -28,7 +28,19 @@ if (input.mode === 'zero-exit-failure') {
   };
   emit(commentary);
   emit(commentary);
-  const answer = JSON.stringify({ testEnvironment: { override: process.env.GNOSIS_TEST_OVERRIDE ?? null, inherited: process.env.GNOSIS_TEST_INHERITED ?? null, onlyClaude: process.env.GNOSIS_TEST_CLAUDE ?? null, onlyCodex: process.env.GNOSIS_TEST_CODEX ?? null }, args, cwd: process.cwd(), instructions, input });
+  const answer = JSON.stringify({
+    testEnvironment: {
+      override: process.env.GNOSIS_TEST_OVERRIDE ?? null,
+      inherited: process.env.GNOSIS_TEST_INHERITED ?? null,
+      onlyClaude: process.env.GNOSIS_TEST_CLAUDE ?? null,
+      onlyCodex: process.env.GNOSIS_TEST_CODEX ?? null,
+    },
+    images: args.flatMap((arg, i) => (arg === '--image' ? [fs.readFileSync(args[i + 1]).toString('base64')] : [])),
+    args,
+    cwd: process.cwd(),
+    instructions,
+    input,
+  });
   fs.writeFileSync(output, answer);
   // Emit the last event across chunks, without a trailing newline.
   const event = JSON.stringify({ type: 'item.completed', item: { id: 'final', type: 'agent_message', text: answer } });

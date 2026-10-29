@@ -145,3 +145,17 @@ void test('upgrades saved Claude preferences within each model family and preser
     assert.equal(RETIRED_CLAUDE_MODELS[previous].label, label);
   }
 });
+
+void test('Codex receives private image attachments and removes them after generation', async () => {
+  const base64 = Buffer.from('test png bytes').toString('base64');
+  const answer = JSON.parse(
+    await codexProvider.generate({
+      ...options,
+      content: JSON.stringify({ mode: 'success' }),
+      images: [{ mediaType: 'image/png', base64 }],
+    })
+  ) as { images: string[]; args: string[] };
+  assert.deepEqual(answer.images, [base64]);
+  const file = answer.args[answer.args.indexOf('--image') + 1];
+  assert.equal(existsSync(file), false);
+});

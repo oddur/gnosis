@@ -1,0 +1,57 @@
+{
+  "id": "rotation",
+  "title": "Rotating an array",
+  "filePath": "rotate.ts",
+  "questions": "How do three in-place reversals rotate [A,B,C,D,E] right by 2 while restoring order within each moved group? What happens to the same elements during the three phases?",
+  "code": "export function rotateRight(items, k) {\n  if (!items.length) return items;\n  k = ((k % items.length) + items.length) % items.length;\n  function reverse(start, end) {\n    while (start < end) {\n      [items[start], items[end]] = [items[end], items[start]];\n      start++; end--;\n    }\n  }\n  // Replaces repeated pop/unshift with three in-place reversals.\n  reverse(0, items.length - 1);\n  reverse(0, k - 1);\n  reverse(k, items.length - 1);\n  return items;\n}",
+  "slide": {
+    "title": "Three reversals rotate the same array",
+    "narrative": "The full reversal moves the last group to the front, but reverses the order inside both groups. The two partial reversals restore each group's order without changing its new position.\n\nAll three phases change the same array. An empty array returns unchanged. For a nonempty array, normalization maps an integer count to the range from zero through `items.length - 1`.",
+    "reviewFocus": null,
+    "contextSnippets": [],
+    "fileSummaries": [
+      {
+        "filePath": "rotate.ts",
+        "summary": "Three in-place reversals replace repeated pop/unshift operations for right rotation."
+      }
+    ],
+    "inlineExplanations": [],
+    "svgIllustration": {
+      "version": 1,
+      "title": "Group positions change; group order is restored",
+      "takeaway": "The full reversal exchanges the groups. Each partial reversal restores order inside one group.",
+      "assumptions": "The example uses [A,B,C,D,E] and integer k = 2. Rows show successive states of the same array, not separate arrays.",
+      "plan": {
+        "question": "How do the same elements move through three reversals while order inside both groups is restored?",
+        "visualApproach": "Show four aligned array states. Keep positions in fixed columns and give each original group a distinct shape. Label each reversal with its inclusive range.",
+        "whyThisForm": "Aligned states show group position and internal order together. The reader can compare all phases without remembering an earlier frame.",
+        "encodings": "Columns represent array indices. Squares identify the original ABC group; circles identify the original DE group. Outlines below each changed row mark the reversed range. Shape and element labels preserve group identity without color.",
+        "motion": ""
+      },
+      "scenarios": [
+        {
+          "id": "right_two",
+          "title": "Rotate right by 2",
+          "input": "[A,B,C,D,E], k = 2",
+          "frames": [
+            {
+              "title": "Both moved groups recover their original order",
+              "caption": "Read downward. The marked range is reversed to produce that row. Each range includes both endpoints.",
+              "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 360\"><text x=\"24\" y=\"27\" font-size=\"16\" fill=\"var(--muted)\">Same array, successive states</text><g font-size=\"16\" fill=\"var(--muted)\" text-anchor=\"middle\"><text x=\"250\" y=\"51\">0</text><text x=\"308\" y=\"51\">1</text><text x=\"366\" y=\"51\">2</text><text x=\"424\" y=\"51\">3</text><text x=\"482\" y=\"51\">4</text></g><g font-size=\"16\" fill=\"var(--ink)\"><text x=\"24\" y=\"88\">Start</text><text x=\"24\" y=\"163\">Reverse 0–4</text><text x=\"24\" y=\"238\">Reverse 0–1</text><text x=\"24\" y=\"313\">Reverse 2–4</text></g><g fill=\"var(--paper)\" stroke=\"var(--line)\" stroke-width=\"2\"><rect x=\"230\" y=\"62\" width=\"40\" height=\"40\"/><rect x=\"288\" y=\"62\" width=\"40\" height=\"40\"/><rect x=\"346\" y=\"62\" width=\"40\" height=\"40\"/><circle cx=\"424\" cy=\"82\" r=\"20\"/><circle cx=\"482\" cy=\"82\" r=\"20\"/><circle cx=\"250\" cy=\"157\" r=\"20\"/><circle cx=\"308\" cy=\"157\" r=\"20\"/><rect x=\"346\" y=\"137\" width=\"40\" height=\"40\"/><rect x=\"404\" y=\"137\" width=\"40\" height=\"40\"/><rect x=\"462\" y=\"137\" width=\"40\" height=\"40\"/><circle cx=\"250\" cy=\"232\" r=\"20\"/><circle cx=\"308\" cy=\"232\" r=\"20\"/><rect x=\"346\" y=\"212\" width=\"40\" height=\"40\"/><rect x=\"404\" y=\"212\" width=\"40\" height=\"40\"/><rect x=\"462\" y=\"212\" width=\"40\" height=\"40\"/><circle cx=\"250\" cy=\"307\" r=\"20\"/><circle cx=\"308\" cy=\"307\" r=\"20\"/><rect x=\"346\" y=\"287\" width=\"40\" height=\"40\"/><rect x=\"404\" y=\"287\" width=\"40\" height=\"40\"/><rect x=\"462\" y=\"287\" width=\"40\" height=\"40\"/></g><g font-size=\"20\" fill=\"var(--ink)\" text-anchor=\"middle\"><text x=\"250\" y=\"89\">A</text><text x=\"308\" y=\"89\">B</text><text x=\"366\" y=\"89\">C</text><text x=\"424\" y=\"89\">D</text><text x=\"482\" y=\"89\">E</text><text x=\"250\" y=\"164\">E</text><text x=\"308\" y=\"164\">D</text><text x=\"366\" y=\"164\">C</text><text x=\"424\" y=\"164\">B</text><text x=\"482\" y=\"164\">A</text><text x=\"250\" y=\"239\">D</text><text x=\"308\" y=\"239\">E</text><text x=\"366\" y=\"239\">C</text><text x=\"424\" y=\"239\">B</text><text x=\"482\" y=\"239\">A</text><text x=\"250\" y=\"314\">D</text><text x=\"308\" y=\"314\">E</text><text x=\"366\" y=\"314\">A</text><text x=\"424\" y=\"314\">B</text><text x=\"482\" y=\"314\">C</text></g><g fill=\"none\" stroke=\"var(--accent)\" stroke-width=\"2\"><path d=\"M230 183v7h272v-7\"/><path d=\"M230 258v7h98v-7\"/><path d=\"M346 333v7h156v-7\"/></g></svg>",
+              "evidence": {
+                "filePath": "rotate.ts",
+                "startLine": 13
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "mechanism": null,
+    "d2Diagram": null,
+    "explainerIdea": null,
+    "reviewChecks": []
+  },
+  "model": "gpt-6.1-sol",
+  "generatedAt": "2026-10-29T13:11:28.777Z"
+}

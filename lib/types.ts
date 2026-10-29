@@ -1,3 +1,5 @@
+import type { SvgIllustration } from './svg-illustration';
+import type { MechanismScene } from './mechanism';
 import type { ReviewSnapshot } from './workbench';
 import type { ModelId, Provider } from './models';
 
@@ -106,6 +108,8 @@ export interface Slide {
   dependsOn: string[];
   mermaidDiagram?: string | null;
   d2Diagram?: D2DiagramSpec | null;
+  mechanism?: MechanismScene | null;
+  svgIllustration?: SvgIllustration | null;
   reviewChecks?: ReviewCheck[];
   educationNotes?: EducationNote[];
   // AI-assigned importance. "critical" = auth, data integrity, API
@@ -135,6 +139,8 @@ export interface AISlide {
   dependsOn: string[];
   mermaidDiagram?: string | null;
   d2Diagram?: D2DiagramSpec | null;
+  mechanism?: MechanismScene | null;
+  svgIllustration?: SvgIllustration | null;
   reviewChecks?: ReviewCheck[];
   educationNotes?: EducationNote[];
   importance?: SlideImportance;
@@ -213,6 +219,8 @@ export interface WriterSlideOutput {
   contextSnippets: string[];
   mermaidDiagram?: string | null;
   d2Diagram?: D2DiagramSpec | null;
+  mechanism?: MechanismScene | null;
+  svgIllustration?: SvgIllustration | null;
   reviewChecks?: ReviewCheck[];
   educationNotes?: EducationNote[];
   explainerIdea?: ExplainerIdea | null;

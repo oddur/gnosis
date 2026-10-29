@@ -1,0 +1,199 @@
+.mechanism-diagram {
+  margin: 0;
+  min-width: 0;
+  border-block: 1px solid var(--border);
+  padding-block: 12px;
+}
+.mechanism-intro {
+  display: flex;
+  align-items: start;
+  gap: 12px;
+}
+.mechanism-intro p,
+.mechanism-takeaway {
+  font-size: 14px;
+  line-height: 1.5;
+  font-weight: 600;
+  margin: 0;
+  flex: 1;
+}
+.mechanism-scene {
+  width: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+  max-height: 420px;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  color: var(--foreground);
+}
+.mechanism-scene text {
+  fill: currentColor;
+}
+.mechanism-node-body {
+  fill: var(--card);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+.mechanism-node[data-focus='true'] .mechanism-node-body {
+  stroke: var(--primary);
+  stroke-width: 2.5;
+}
+.mechanism-node[data-tone='warning'] .mechanism-node-body {
+  stroke: var(--color-warning);
+}
+.mechanism-node[data-tone='success'] .mechanism-node-body {
+  stroke: var(--color-success);
+}
+.mechanism-value[data-changed='true'] {
+  color: var(--primary);
+  font-weight: 600;
+}
+.mechanism-previous {
+  color: var(--muted-foreground);
+}
+.mechanism-queue-item {
+  fill: var(--accent);
+  stroke: var(--border);
+}
+.mechanism-edge path {
+  fill: none;
+  stroke: var(--muted-foreground);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+}
+.mechanism-edge[data-trace='true'] path {
+  stroke-dasharray: none;
+}
+.mechanism-edge[data-active='true'] path {
+  stroke: var(--primary);
+  stroke-width: 2.5;
+}
+.mechanism-edge-label,
+.mechanism-payload text {
+  paint-order: stroke;
+  stroke: var(--background);
+  stroke-width: 6px;
+  stroke-linejoin: round;
+}
+.mechanism-payload {
+  color: var(--primary);
+}
+.mechanism-payload circle {
+  fill: var(--primary);
+  stroke: var(--background);
+  stroke-width: 2px;
+}
+.mechanism-scenarios {
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.mechanism-scenarios label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-weight: 500;
+}
+.mechanism-scenarios p {
+  margin: 6px 0 0;
+  color: var(--muted-foreground);
+}
+.mechanism-scenarios select,
+.mechanism-speed select {
+  color: var(--foreground);
+  background: var(--background);
+  border: 1px solid var(--input);
+  border-radius: 4px;
+  padding: 4px 6px;
+  max-width: 100%;
+}
+.mechanism-caption {
+  min-height: 88px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.mechanism-caption p {
+  margin: 6px 0 0;
+}
+.mechanism-caption button {
+  padding-left: 0;
+  margin-top: 4px;
+}
+.mechanism-event-heading {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+.mechanism-event-count {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.mechanism-controls {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  margin-top: 8px;
+}
+.mechanism-controls > button {
+  flex-shrink: 0;
+}
+.mechanism-scrubber {
+  flex: 1;
+  min-width: 36px;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+.mechanism-speed {
+  font-size: 12px;
+}
+.mechanism-assumptions {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  margin-top: 12px;
+  line-height: 1.5;
+}
+.mechanism-assumptions summary {
+  cursor: pointer;
+}
+.mechanism-assumptions p {
+  margin-top: 8px;
+}
+.mechanism-diagram :focus-visible,
+.mechanism-dialog :focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+.mechanism-dialog {
+  width: min(1000px, calc(100vw - 48px));
+  max-width: none !important;
+  max-height: calc(100dvh - 48px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: auto;
+}
+.mechanism-expanded-scene {
+  flex: 1;
+  min-height: 0;
+}
+.mechanism-expanded-scene svg {
+  max-height: 48dvh;
+}
+.mechanism-dialog .mechanism-caption {
+  min-height: 80px;
+}
+@media (max-width: 540px) {
+  .mechanism-controls {
+    flex-wrap: wrap;
+  }
+  .mechanism-scrubber {
+    min-width: 70px;
+  }
+  .mechanism-dialog {
+    width: calc(100vw - 24px);
+    padding: 16px;
+  }
+}

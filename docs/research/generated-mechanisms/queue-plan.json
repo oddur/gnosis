@@ -1,0 +1,31 @@
+{
+  "summary": "This change selects batches by total weight instead of item count, while it preserves pending order.\n- At capacity 12, [8,5,3] produces [8], then [5,3]. The selection stops at 5, so 3 cannot pass it.\n- At capacity 12, [15,2] produces [15], then [2]. An empty batch accepts its first item even if that item exceeds capacity.",
+  "riskLevel": "medium",
+  "riskRationale": "This changes batch selection and permits a single item to exceed capacity. The supplied hunk contains no tests.",
+  "storyArc": "The topic explains how pending order and the weight check control batch selection. Two illustrative examples show why a smaller item cannot pass the next item and why an item above capacity does not prevent progress.",
+  "topics": [
+    {
+      "title": "Ordered batches with a first-item exception",
+      "slideType": "feature",
+      "importance": "important",
+      "hunkIds": ["hunk-0"],
+      "dependsOn": [],
+      "order": 1,
+      "narrativeBrief": "Explain that selection checks only the first pending item and stops before removing an item that would exceed capacity from a nonempty batch. Use both examples to show order preservation and the first-item exception; do not present capacity as an absolute limit.",
+      "diagramBrief": {
+        "question": "At capacity 12, why does [8,5,3] stop after 8, while [15,2] accepts 15?",
+        "takeaway": "The reviewer can predict [8] followed by [5,3], and [15] followed by [2], across successive calls. Items cannot pass earlier items, and a first item above capacity is still removed from pending.",
+        "assumedKnowledge": ["Array order", "A running sum", "Boolean AND"],
+        "essentialConcepts": [
+          "Each call starts with an empty batch and weight 0.",
+          "Only pending[0] is considered.",
+          "If the batch is nonempty and the next total exceeds maxWeight, selection stops without removing the next item.",
+          "Otherwise, the next item moves from pending to batch and its weight is added.",
+          "An empty batch accepts its first item even if its weight exceeds maxWeight."
+        ],
+        "omit": ["Production measurements", "Callers and scheduling", "Item fields other than weight"],
+        "visualApproach": "Use a decision flow with named conditions and two concrete execution walkthroughs. Show pending, batch, and total weight at each decision. For [8,5,3], show that 5 remains first when 8 + 5 exceeds 12, so 3 is not considered. For [15,2], show that the empty-batch condition permits 15, then the next check stops before 2. Show the next call for each remaining queue. Visible queue positions and totals make both outcomes easier to check than prose alone."
+      }
+    }
+  ]
+}

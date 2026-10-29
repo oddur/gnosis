@@ -1,0 +1,219 @@
+{
+  "id": "version",
+  "title": "Rejecting a stale write",
+  "filePath": "document.ts",
+  "code": "export async function updateDocument(id, expectedVersion, body) {\n  // New: replace unconditional overwrite with one atomic conditional update.\n  const result = await db.execute(\n    'UPDATE documents SET body = ?, version = version + 1 WHERE id = ? AND version = ?',\n    [body, id, expectedVersion]);\n  if (result.rowsAffected === 0) return { status: 409 };\n  return { status: 200 };\n}\n// Client supplies the version it read. There is no automatic retry.",
+  "questions": "Explain expected version 7 vs stored version 8, then the matching version 7 vs 7. Show the stored value stays unchanged on rejection. The comparison and write are one database statement, not two operations.",
+  "slide": {
+    "title": "One atomic update rejects stale writes",
+    "narrative": "The client supplies the version it read. One database statement checks the document id and version and makes the change only if both match. A rejected update preserves the stored body and version. The function does not retry automatically.",
+    "reviewFocus": null,
+    "contextSnippets": [],
+    "fileSummaries": [
+      {
+        "filePath": "document.ts",
+        "summary": "Document updates now require a matching version and return 409 when no row changes."
+      }
+    ],
+    "inlineExplanations": [],
+    "mechanism": {
+      "version": 1,
+      "title": "Does the supplied version match?",
+      "takeaway": "Expected version 7 rejects stored version 8 without a change; it updates stored version 7 to version 8.",
+      "assumptions": "These are illustrative inputs, not production measurements. Both scenarios use an existing row with the requested id.",
+      "nodes": [
+        {
+          "id": "client",
+          "label": "Client",
+          "kind": "actor",
+          "column": 0,
+          "row": 0
+        },
+        {
+          "id": "database",
+          "label": "Database: one atomic UPDATE",
+          "kind": "record",
+          "column": 1,
+          "row": 0
+        }
+      ],
+      "edges": [
+        {
+          "id": "update",
+          "from": "client",
+          "to": "database",
+          "label": "Match id + version; write"
+        },
+        {
+          "id": "result",
+          "from": "database",
+          "to": "client",
+          "label": "Affected rows → status"
+        }
+      ],
+      "scenarios": [
+        {
+          "id": "stale",
+          "title": "Expected 7, stored 8: reject",
+          "input": "Matching id; expected version 7; requested body B; stored body A, version 8.",
+          "events": [
+            {
+              "title": "The client has an old version",
+              "caption": "The request supplies version 7, but the stored row has version 8.",
+              "states": [
+                {
+                  "id": "client",
+                  "value": "Expected: 7; requested body: B",
+                  "tone": "neutral"
+                },
+                {
+                  "id": "database",
+                  "value": "Stored body: A; version: 8",
+                  "tone": "neutral"
+                }
+              ],
+              "focus": ["client", "database"],
+              "evidence": {
+                "filePath": "document.ts",
+                "startLine": 9
+              }
+            },
+            {
+              "title": "The atomic UPDATE finds no matching version",
+              "caption": "The same statement checks id and version and conditionally writes; version 8 does not match 7, so nothing changes.",
+              "states": [
+                {
+                  "id": "client",
+                  "value": "Expected: 7; requested body: B",
+                  "tone": "neutral"
+                },
+                {
+                  "id": "database",
+                  "value": "Body: A; version: 8; affected rows: 0",
+                  "tone": "warning"
+                }
+              ],
+              "focus": ["update", "database"],
+              "transfer": {
+                "edge": "update",
+                "label": "Expected 7; body B"
+              },
+              "evidence": {
+                "filePath": "document.ts",
+                "startLine": 4
+              }
+            },
+            {
+              "title": "Zero affected rows returns 409",
+              "caption": "The stored body and version stay unchanged. There is no automatic retry.",
+              "states": [
+                {
+                  "id": "client",
+                  "value": "Status: 409",
+                  "tone": "warning"
+                },
+                {
+                  "id": "database",
+                  "value": "Stored body: A; version: 8",
+                  "tone": "neutral"
+                }
+              ],
+              "focus": ["result"],
+              "transfer": {
+                "edge": "result",
+                "label": "0 rows → 409"
+              },
+              "evidence": {
+                "filePath": "document.ts",
+                "startLine": 6
+              }
+            }
+          ]
+        },
+        {
+          "id": "matching",
+          "title": "Expected 7, stored 7: write",
+          "input": "Matching id; expected version 7; requested body B; stored body A, version 7.",
+          "events": [
+            {
+              "title": "The supplied and stored versions match",
+              "caption": "This separate example starts with stored version 7.",
+              "states": [
+                {
+                  "id": "client",
+                  "value": "Expected: 7; requested body: B",
+                  "tone": "neutral"
+                },
+                {
+                  "id": "database",
+                  "value": "Stored body: A; version: 7",
+                  "tone": "neutral"
+                }
+              ],
+              "focus": ["client", "database"],
+              "evidence": {
+                "filePath": "document.ts",
+                "startLine": 5
+              }
+            },
+            {
+              "title": "The atomic UPDATE writes body B and version 8",
+              "caption": "The id and version match, so the same statement replaces the body and increases the version by one.",
+              "states": [
+                {
+                  "id": "client",
+                  "value": "Expected: 7; requested body: B",
+                  "tone": "neutral"
+                },
+                {
+                  "id": "database",
+                  "value": "Body: B; version: 8; affected rows: 1",
+                  "tone": "success"
+                }
+              ],
+              "focus": ["update", "database"],
+              "transfer": {
+                "edge": "update",
+                "label": "Expected 7; body B"
+              },
+              "evidence": {
+                "filePath": "document.ts",
+                "startLine": 4
+              }
+            },
+            {
+              "title": "The successful update returns 200",
+              "caption": "The database now stores the requested body at version 8.",
+              "states": [
+                {
+                  "id": "client",
+                  "value": "Status: 200",
+                  "tone": "success"
+                },
+                {
+                  "id": "database",
+                  "value": "Stored body: B; version: 8",
+                  "tone": "success"
+                }
+              ],
+              "focus": ["result"],
+              "transfer": {
+                "edge": "result",
+                "label": "1 row → 200"
+              },
+              "evidence": {
+                "filePath": "document.ts",
+                "startLine": 7
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "d2Diagram": null,
+    "explainerIdea": null,
+    "reviewChecks": []
+  },
+  "model": "gpt-6.1-sol",
+  "generatedAt": "2026-10-29T11:25:26.529Z"
+}

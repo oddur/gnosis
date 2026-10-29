@@ -2,7 +2,14 @@ import { claudeProvider } from './providers/claude';
 import { codexProvider } from './providers/codex';
 import type { ModelId, Provider } from './types';
 
+/** In-memory screenshots; providers own temporary attachment storage and cleanup. */
+export interface GenerationImage {
+  base64: string;
+  mediaType: 'image/png';
+}
+
 export interface GenerateOptions {
+  images?: GenerationImage[];
   content: string;
   systemPrompt: string;
   model: ModelId;

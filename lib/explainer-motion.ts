@@ -48,7 +48,9 @@ function createExplainerMotion(root, preference) {
     change();
     const changed = observer.takeRecords().some(record => {
       const element = record.target.nodeType === 1 ? record.target : record.target.parentElement;
-      return element?.closest('svg');
+      return element?.closest('svg') || (record.type === 'childList' &&
+        [...record.addedNodes, ...record.removedNodes].some(node =>
+          node.nodeType === 1 && (node.matches('svg') || node.querySelector('svg'))));
     });
     if (!changed) return;
     const before = previous;

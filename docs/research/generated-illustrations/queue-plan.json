@@ -1,0 +1,34 @@
+{
+  "summary": "This change selects items in queue order and uses total weight to limit each batch. It stops when the next item would exceed capacity, unless the batch is empty. This exception lets an oversized first item enter the batch.",
+  "riskLevel": "medium",
+  "riskRationale": "The batch selection rule changes. Review must check both queue order and the exception for an oversized first item. No tests are supplied.",
+  "storyArc": "The single topic explains how queue order and the weight limit control batch selection. Two examples show why selection stops before a smaller item and why an oversized first item can still proceed.",
+  "topics": [
+    {
+      "title": "Ordered batches with an oversized-first-item exception",
+      "slideType": "feature",
+      "importance": "important",
+      "hunkIds": ["hunk-0"],
+      "dependsOn": [],
+      "order": 1,
+      "narrativeBrief": "Explain that selection examines only the first pending item and stops when a nonempty batch cannot accept it. Use the supplied examples to show that capacity does not permit reordering and does not block an oversized first item.",
+      "diagramBrief": {
+        "question": "How does ordered selection treat a blocked next item and an oversized first item at capacity 12?",
+        "takeaway": "For [8,5,3], the call returns [8] and leaves [5,3]; 3 cannot pass 5. For [15,2], it returns [15] and leaves [2]; the empty-batch exception admits 15.",
+        "assumedKnowledge": ["A queue has a first item.", "Each item has a weight."],
+        "essentialConcepts": [
+          "Selection examines pending[0] only.",
+          "Accepted items leave pending and enter batch.",
+          "A nonempty batch stops if the next item would make total weight exceed maxWeight.",
+          "An empty batch accepts its first item even if its weight exceeds maxWeight.",
+          "The inputs are illustrative, not production measurements."
+        ],
+        "omit": [
+          "The previous item-count implementation, which is not supplied.",
+          "Caller behavior and production weight units."
+        ],
+        "visualApproach": "Use a short SVG execution walkthrough with two separately selected cases. Following the same items makes removal and stopping clearer than a static relationship map. First show [8,5,3] in a queue lane and an aligned batch-weight lane with a fixed capacity mark at 12. Move 8 into the batch. Show a tentative extension of 5 beyond the capacity mark, then stop with both 5 and 3 still in queue order. Do not move 3 toward the batch. Next reset to [15,2] with an empty batch. Move 15 into the batch as one acceptance step, with its weight visibly beyond the same capacity mark. Then show that the nonempty batch cannot accept 2. Keep item widths proportional to weight, label each case, and retain each final state. This form exposes both the weight comparison and the queue boundary without suggesting that items can skip ahead."
+      }
+    }
+  ]
+}

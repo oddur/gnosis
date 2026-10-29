@@ -1,0 +1,332 @@
+[
+  {
+    "id": "queue",
+    "title": "Ordered batching",
+    "filePath": "batch.ts",
+    "code": "export function takeBatch(pending, maxWeight) {\n  // New: preserve order and bound total weight, instead of only item count.\n  const batch = []; let weight = 0;\n  while (pending.length > 0) {\n    const next = pending[0];\n    if (batch.length > 0 && weight + next.weight > maxWeight) break;\n    batch.push(pending.shift()); weight += next.weight;\n  }\n  return batch;\n}",
+    "questions": "Explain [8,5,3] at capacity 12 and [15,2] at capacity 12. Why does 3 not skip ahead of 5? Why does 15 not block forever?",
+    "slide": {
+      "title": "Ordered batches allow an oversized first item",
+      "narrative": "The function takes items in queue order. It stops at the first item that would exceed capacity after the batch has an item. It does not search for a smaller item later in the queue.\n\nCapacity is not a strict upper limit: an empty batch accepts its first item regardless of weight. Thus, an oversized first item does not prevent this call from returning an item.",
+      "reviewFocus": null,
+      "contextSnippets": [],
+      "fileSummaries": [
+        {
+          "filePath": "batch.ts",
+          "summary": "Batch selection preserves queue order and checks total weight, but permits an oversized first item."
+        }
+      ],
+      "inlineExplanations": [
+        {
+          "filePath": "batch.ts",
+          "line": 6,
+          "side": "RIGHT",
+          "code": "    if (batch.length > 0 && weight + next.weight > maxWeight) break;",
+          "text": "The empty-batch condition permits an oversized first item. Once the batch has an item, `break` stops selection rather than checking later items."
+        }
+      ],
+      "svgIllustration": {
+        "version": 1,
+        "title": "Queue order and the first-item exception",
+        "takeaway": "Selection stops at a blocked queue head, but an empty batch accepts an oversized head.",
+        "assumptions": "Weights are illustrative, not production measurements. Rectangle widths use 20 drawing units per weight unit. Queue gaps separate items and do not represent weight. Dashed extensions show attempted additions, not accepted items.",
+        "plan": {
+          "question": "Why does 5 stop selection before 3, while an oversized first item can still enter an empty batch?",
+          "visualApproach": "Keep the queue above a shared batch-weight scale. Move the accepted first item into the batch, then project the next item's width directly after it without removing that item from pending.",
+          "whyThisForm": "The projected extension exposes whether the queue head fits in the remaining capacity. Keeping the actual head ahead of the remaining queue shows why selection cannot skip it.",
+          "encodings": "Rectangle width represents weight at 20 drawing units per weight unit. The fixed capacity mark is at 12. Solid batch rectangles are accepted items; dashed extensions are attempted additions only. Queue order runs left to right.",
+          "motion": "Move only the accepted first item vertically into the batch. Keep the other queue items, scale, and capacity mark fixed. After arrival, reveal a dashed projection of the next item to expose the stopping comparison. Never move a rejected item out of pending.",
+          "prediction": "For [8,4,3] at capacity 12, selection returns [8,4] and leaves [3]: the 4-width extension reaches capacity exactly, so it is accepted.",
+          "restingState": "Each final frame retains the accepted batch, the unchanged remaining queue, and a dashed next-item extension compared directly with the capacity boundary."
+        },
+        "scenarios": [
+          {
+            "id": "ordered_stop",
+            "title": "[8,5,3] at capacity 12",
+            "input": "pending = [8,5,3]; maxWeight = 12",
+            "frames": [
+              {
+                "title": "Start with an empty batch",
+                "caption": "Selection examines the first pending item, 8. The empty batch does not trigger the stopping condition.",
+                "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 290\"><text x=\"20\" y=\"35\" font-size=\"18\" fill=\"var(--ink)\">Pending: first item on the left</text><g data-motion-id=\"item8\" transform=\"translate(100 55)\"><rect width=\"160\" height=\"44\" fill=\"var(--accent)\"/><text x=\"80\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--paper)\">8</text></g><g data-motion-id=\"item5\" transform=\"translate(268 55)\"><rect width=\"100\" height=\"44\" fill=\"var(--paper)\" stroke=\"var(--ink)\"/><text x=\"50\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">5</text></g><g data-motion-id=\"item3\" transform=\"translate(376 55)\"><rect width=\"60\" height=\"44\" fill=\"var(--paper)\" stroke=\"var(--ink)\"/><text x=\"30\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">3</text></g><text x=\"20\" y=\"145\" font-size=\"18\" fill=\"var(--ink)\">Batch</text><text x=\"20\" y=\"198\" font-size=\"18\" fill=\"var(--muted)\">empty</text><line x1=\"100\" y1=\"216\" x2=\"460\" y2=\"216\" stroke=\"var(--line)\"/><line x1=\"340\" y1=\"158\" x2=\"340\" y2=\"224\" stroke=\"var(--warning)\" stroke-width=\"2\"/><text x=\"100\" y=\"245\" font-size=\"16\" fill=\"var(--muted)\">0</text><text x=\"340\" y=\"245\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Capacity 12</text></svg>",
+                "evidence": {
+                  "filePath": "batch.ts",
+                  "startLine": 6
+                }
+              },
+              {
+                "title": "8 enters the batch",
+                "caption": "Accepting 8 removes it from pending. The next item is now 5; 3 remains behind it.",
+                "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 290\"><text x=\"20\" y=\"35\" font-size=\"18\" fill=\"var(--ink)\">Pending: 5 remains before 3</text><g data-motion-id=\"item8\" transform=\"translate(100 170)\"><rect width=\"160\" height=\"44\" fill=\"var(--accent)\"/><text x=\"80\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--paper)\">8</text></g><g data-motion-id=\"item5\" transform=\"translate(268 55)\"><rect width=\"100\" height=\"44\" fill=\"var(--paper)\" stroke=\"var(--ink)\"/><text x=\"50\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">5</text></g><g data-motion-id=\"item3\" transform=\"translate(376 55)\"><rect width=\"60\" height=\"44\" fill=\"var(--paper)\" stroke=\"var(--ink)\"/><text x=\"30\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">3</text></g><text x=\"20\" y=\"145\" font-size=\"18\" fill=\"var(--ink)\">Batch</text><text x=\"20\" y=\"198\" font-size=\"18\" fill=\"var(--ink)\">[8]</text><line x1=\"100\" y1=\"216\" x2=\"460\" y2=\"216\" stroke=\"var(--line)\"/><line x1=\"340\" y1=\"158\" x2=\"340\" y2=\"224\" stroke=\"var(--warning)\" stroke-width=\"2\"/><text x=\"100\" y=\"245\" font-size=\"16\" fill=\"var(--muted)\">0</text><text x=\"340\" y=\"245\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Capacity 12</text></svg>",
+                "evidence": {
+                  "filePath": "batch.ts",
+                  "startLine": 7
+                }
+              },
+              {
+                "title": "5 cannot fit; 3 cannot pass it",
+                "caption": "The dashed 5-width attempt extends beyond capacity. It is not accepted: return [8] and leave [5,3]. Only the queue head is examined, so 3 cannot skip ahead.",
+                "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 290\"><text x=\"20\" y=\"35\" font-size=\"18\" fill=\"var(--ink)\">Pending: 5 remains before 3</text><g data-motion-id=\"item8\" transform=\"translate(100 170)\"><rect width=\"160\" height=\"44\" fill=\"var(--accent)\"/><text x=\"80\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--paper)\">8</text></g><g data-motion-id=\"item5\" transform=\"translate(268 55)\"><rect width=\"100\" height=\"44\" fill=\"var(--paper)\" stroke=\"var(--ink)\"/><text x=\"50\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">5</text></g><g data-motion-id=\"item3\" transform=\"translate(376 55)\"><rect width=\"60\" height=\"44\" fill=\"var(--paper)\" stroke=\"var(--ink)\"/><text x=\"30\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">3</text></g><text x=\"20\" y=\"145\" font-size=\"18\" fill=\"var(--ink)\">Return</text><text x=\"20\" y=\"198\" font-size=\"18\" fill=\"var(--ink)\">[8]</text><rect x=\"340\" y=\"170\" width=\"20\" height=\"44\" fill=\"var(--danger)\" fill-opacity=\"0.18\"/><rect x=\"260\" y=\"170\" width=\"100\" height=\"44\" fill=\"none\" stroke=\"var(--danger)\" stroke-width=\"2\" stroke-dasharray=\"6 4\"/><text x=\"310\" y=\"198\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">5?</text><text x=\"380\" y=\"198\" font-size=\"18\" fill=\"var(--ink)\">not added</text><line x1=\"100\" y1=\"216\" x2=\"460\" y2=\"216\" stroke=\"var(--line)\"/><line x1=\"340\" y1=\"158\" x2=\"340\" y2=\"224\" stroke=\"var(--warning)\" stroke-width=\"2\"/><text x=\"100\" y=\"245\" font-size=\"16\" fill=\"var(--muted)\">0</text><text x=\"340\" y=\"245\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Capacity 12</text><text x=\"100\" y=\"278\" font-size=\"18\" fill=\"var(--ink)\">Dashed = attempted addition only</text></svg>",
+                "evidence": {
+                  "filePath": "batch.ts",
+                  "startLine": 6
+                }
+              }
+            ]
+          },
+          {
+            "id": "oversized_first",
+            "title": "[15,2] at capacity 12",
+            "input": "pending = [15,2]; maxWeight = 12",
+            "frames": [
+              {
+                "title": "Start with an empty batch",
+                "caption": "The stopping condition requires a nonempty batch. It cannot reject the first item, even when that item weighs 15.",
+                "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 290\"><text x=\"20\" y=\"35\" font-size=\"18\" fill=\"var(--ink)\">Pending: first item on the left</text><g data-motion-id=\"item15\" transform=\"translate(100 55)\"><rect width=\"300\" height=\"44\" fill=\"var(--accent)\"/><text x=\"150\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--paper)\">15</text></g><g data-motion-id=\"item2\" transform=\"translate(408 55)\"><rect width=\"40\" height=\"44\" fill=\"var(--paper)\" stroke=\"var(--ink)\"/><text x=\"20\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">2</text></g><text x=\"20\" y=\"145\" font-size=\"18\" fill=\"var(--ink)\">Batch</text><text x=\"20\" y=\"198\" font-size=\"18\" fill=\"var(--muted)\">empty</text><line x1=\"100\" y1=\"216\" x2=\"460\" y2=\"216\" stroke=\"var(--line)\"/><line x1=\"340\" y1=\"158\" x2=\"340\" y2=\"224\" stroke=\"var(--warning)\" stroke-width=\"2\"/><text x=\"100\" y=\"245\" font-size=\"16\" fill=\"var(--muted)\">0</text><text x=\"340\" y=\"245\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Capacity 12</text></svg>",
+                "evidence": {
+                  "filePath": "batch.ts",
+                  "startLine": 6
+                }
+              },
+              {
+                "title": "15 enters despite exceeding capacity",
+                "caption": "The first-item exception removes 15 from pending and puts it into the batch. It does not remain at the queue head blocking progress.",
+                "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 290\"><text x=\"20\" y=\"35\" font-size=\"18\" fill=\"var(--ink)\">Pending: [2]</text><g data-motion-id=\"item15\" transform=\"translate(100 170)\"><rect width=\"300\" height=\"44\" fill=\"var(--accent)\"/><text x=\"150\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--paper)\">15</text></g><g data-motion-id=\"item2\" transform=\"translate(408 55)\"><rect width=\"40\" height=\"44\" fill=\"var(--paper)\" stroke=\"var(--ink)\"/><text x=\"20\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">2</text></g><text x=\"20\" y=\"145\" font-size=\"18\" fill=\"var(--ink)\">Batch</text><text x=\"20\" y=\"198\" font-size=\"18\" fill=\"var(--ink)\">[15]</text><line x1=\"100\" y1=\"216\" x2=\"460\" y2=\"216\" stroke=\"var(--line)\"/><line x1=\"340\" y1=\"158\" x2=\"340\" y2=\"224\" stroke=\"var(--warning)\" stroke-width=\"2\"/><text x=\"100\" y=\"245\" font-size=\"16\" fill=\"var(--muted)\">0</text><text x=\"340\" y=\"245\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Capacity 12</text></svg>",
+                "evidence": {
+                  "filePath": "batch.ts",
+                  "startLine": 7
+                }
+              },
+              {
+                "title": "The nonempty batch stops before 2",
+                "caption": "The batch is now nonempty. Adding 2 would exceed capacity, so return [15] and leave [2].",
+                "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 290\"><text x=\"20\" y=\"35\" font-size=\"18\" fill=\"var(--ink)\">Pending: [2]</text><g data-motion-id=\"item15\" transform=\"translate(100 170)\"><rect width=\"300\" height=\"44\" fill=\"var(--accent)\"/><text x=\"150\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--paper)\">15</text></g><g data-motion-id=\"item2\" transform=\"translate(408 55)\"><rect width=\"40\" height=\"44\" fill=\"var(--paper)\" stroke=\"var(--ink)\"/><text x=\"20\" y=\"28\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">2</text></g><text x=\"20\" y=\"145\" font-size=\"18\" fill=\"var(--ink)\">Return</text><text x=\"20\" y=\"198\" font-size=\"18\" fill=\"var(--ink)\">[15]</text><rect x=\"400\" y=\"170\" width=\"40\" height=\"44\" fill=\"var(--danger)\" fill-opacity=\"0.18\" stroke=\"var(--danger)\" stroke-width=\"2\" stroke-dasharray=\"6 4\"/><text x=\"420\" y=\"198\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">2?</text><text x=\"452\" y=\"198\" font-size=\"18\" fill=\"var(--ink)\">not added</text><line x1=\"100\" y1=\"216\" x2=\"460\" y2=\"216\" stroke=\"var(--line)\"/><line x1=\"340\" y1=\"158\" x2=\"340\" y2=\"224\" stroke=\"var(--warning)\" stroke-width=\"2\"/><text x=\"100\" y=\"245\" font-size=\"16\" fill=\"var(--muted)\">0</text><text x=\"340\" y=\"245\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Capacity 12</text><text x=\"100\" y=\"278\" font-size=\"18\" fill=\"var(--ink)\">Dashed = attempted addition only</text></svg>",
+                "evidence": {
+                  "filePath": "batch.ts",
+                  "startLine": 6
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "mechanism": null,
+      "d2Diagram": null,
+      "explainerIdea": null,
+      "reviewChecks": []
+    },
+    "model": "gpt-6.1-sol",
+    "generatedAt": "2026-10-29T14:44:40.133Z"
+  },
+  {
+    "id": "version",
+    "title": "Rejecting a stale write",
+    "filePath": "document.ts",
+    "code": "export async function updateDocument(id, expectedVersion, body) {\n  // New: replace unconditional overwrite with one atomic conditional update.\n  const result = await db.execute(\n    'UPDATE documents SET body = ?, version = version + 1 WHERE id = ? AND version = ?',\n    [body, id, expectedVersion]);\n  if (result.rowsAffected === 0) return { status: 409 };\n  return { status: 200 };\n}\n// Client supplies the version it read. There is no automatic retry.",
+    "questions": "Explain expected version 7 vs stored version 8, then the matching version 7 vs 7. Show the stored value stays unchanged on rejection. The comparison and write are one database statement, not two operations.",
+    "slide": {
+      "title": "Reject stale writes with one atomic update",
+      "narrative": "The client supplies the version it read. The database changes the document only when both the id and version match. The comparison and write occur in one statement, so there is no separate read before the write. The function does not retry automatically.",
+      "reviewFocus": null,
+      "contextSnippets": [],
+      "fileSummaries": [
+        {
+          "filePath": "document.ts",
+          "summary": "Document updates now require a matching version and return 409 when no row changes."
+        }
+      ],
+      "inlineExplanations": [
+        {
+          "filePath": "document.ts",
+          "line": 6,
+          "side": "RIGHT",
+          "code": "  if (result.rowsAffected === 0) return { status: 409 };",
+          "text": "Zero affected rows can mean a version mismatch or a missing document id. Both return 409."
+        }
+      ],
+      "svgIllustration": {
+        "version": 1,
+        "title": "The version determines whether stored data changes",
+        "takeaway": "Expected version 7 rejects stored version 8 without changes, but replaces the body when stored version 7 matches.",
+        "assumptions": "Values are illustrative. Both cases use an existing document with a matching id. Body A is stored; body B is proposed.",
+        "plan": {
+          "question": "What happens when expected version 7 meets stored version 8 or stored version 7?",
+          "visualApproach": "Align two cases vertically. Put each request outside a single UPDATE boundary and show the stored values before and after inside it.",
+          "whyThisForm": "The aligned values expose the one input difference and its effect without suggesting a separate comparison operation.",
+          "encodings": "Rows are independent cases. Each boundary represents one atomic database statement. Left and right columns show stored values before and after, not separate database operations.",
+          "motion": "The picture is static because direct comparison explains the rule; motion could suggest that comparison and writing are separate operations.",
+          "prediction": "A different expected version that does not match the stored version also leaves the stored body and version unchanged.",
+          "restingState": "Both expected versions, stored values, unchanged or updated results, and response statuses remain visible."
+        },
+        "scenarios": [
+          {
+            "id": "version_comparison",
+            "title": "Same request, different stored version",
+            "input": "Matching document ids; expected version 7; proposed body B.",
+            "frames": [
+              {
+                "title": "A mismatch preserves the stored document",
+                "caption": "Each boundary is one atomic UPDATE, not a check followed by a write. No intermediate database state is shown.",
+                "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 380\"><text x=\"12\" y=\"24\" font-size=\"16\" fill=\"var(--muted)\">Illustrative values · existing documents · matching ids</text><text x=\"12\" y=\"57\" font-size=\"18\" fill=\"var(--ink)\">Stale request</text><rect x=\"182\" y=\"68\" width=\"366\" height=\"122\" rx=\"10\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"196\" y=\"91\" font-size=\"16\" fill=\"var(--ink)\">One atomic UPDATE</text><text x=\"12\" y=\"108\" font-size=\"16\" fill=\"var(--ink)\">Request</text><text x=\"12\" y=\"132\" font-size=\"16\" fill=\"var(--ink)\">Expected: 7</text><text x=\"12\" y=\"156\" font-size=\"16\" fill=\"var(--ink)\">Body: B</text><path d=\"M132 135 H174 M166 130 L174 135 L166 140\" fill=\"none\" stroke=\"var(--line)\" stroke-width=\"2\"/><text x=\"196\" y=\"118\" font-size=\"16\" fill=\"var(--muted)\">Stored before</text><text x=\"196\" y=\"143\" font-size=\"16\" fill=\"var(--ink)\">Version: 8</text><text x=\"196\" y=\"168\" font-size=\"16\" fill=\"var(--ink)\">Body: A</text><path d=\"M307 145 H365 M357 140 L365 145 L357 150\" fill=\"none\" stroke=\"var(--line)\" stroke-width=\"2\"/><text x=\"380\" y=\"118\" font-size=\"16\" fill=\"var(--muted)\">Stored after</text><text x=\"380\" y=\"143\" font-size=\"16\" fill=\"var(--ink)\">Version: 8</text><text x=\"380\" y=\"168\" font-size=\"16\" fill=\"var(--ink)\">Body: A</text><text x=\"196\" y=\"213\" font-size=\"16\" fill=\"var(--danger)\">Unchanged · 0 affected rows · 409</text><text x=\"12\" y=\"248\" font-size=\"18\" fill=\"var(--ink)\">Matching request</text><rect x=\"182\" y=\"259\" width=\"366\" height=\"99\" rx=\"10\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"196\" y=\"281\" font-size=\"16\" fill=\"var(--ink)\">One atomic UPDATE</text><text x=\"12\" y=\"287\" font-size=\"16\" fill=\"var(--ink)\">Request</text><text x=\"12\" y=\"311\" font-size=\"16\" fill=\"var(--ink)\">Expected: 7</text><text x=\"12\" y=\"335\" font-size=\"16\" fill=\"var(--ink)\">Body: B</text><path d=\"M132 314 H174 M166 309 L174 314 L166 319\" fill=\"none\" stroke=\"var(--line)\" stroke-width=\"2\"/><text x=\"196\" y=\"303\" font-size=\"16\" fill=\"var(--muted)\">Stored before</text><text x=\"196\" y=\"326\" font-size=\"16\" fill=\"var(--ink)\">Version: 7</text><text x=\"196\" y=\"349\" font-size=\"16\" fill=\"var(--ink)\">Body: A</text><path d=\"M307 328 H365 M357 323 L365 328 L357 333\" fill=\"none\" stroke=\"var(--line)\" stroke-width=\"2\"/><text x=\"380\" y=\"303\" font-size=\"16\" fill=\"var(--muted)\">Stored after</text><text x=\"380\" y=\"326\" font-size=\"16\" fill=\"var(--ink)\">Version: 8</text><text x=\"380\" y=\"349\" font-size=\"16\" fill=\"var(--ink)\">Body: B</text><text x=\"196\" y=\"377\" font-size=\"16\" fill=\"var(--success)\">Body replaced · version increased · 200</text></svg>",
+                "evidence": {
+                  "filePath": "document.ts",
+                  "startLine": 4
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "mechanism": null,
+      "d2Diagram": null,
+      "explainerIdea": null,
+      "reviewChecks": []
+    },
+    "model": "gpt-6.1-sol",
+    "generatedAt": "2026-10-29T14:47:02.882Z"
+  },
+  {
+    "id": "rotation",
+    "title": "Rotating an array",
+    "filePath": "rotate.ts",
+    "questions": "How do three in-place reversals rotate [A,B,C,D,E] right by 2 while restoring order within each moved group? What happens to the same elements during the three phases?",
+    "code": "export function rotateRight(items, k) {\n  if (!items.length) return items;\n  k = ((k % items.length) + items.length) % items.length;\n  function reverse(start, end) {\n    while (start < end) {\n      [items[start], items[end]] = [items[end], items[start]];\n      start++; end--;\n    }\n  }\n  // Replaces repeated pop/unshift with three in-place reversals.\n  reverse(0, items.length - 1);\n  reverse(0, k - 1);\n  reverse(k, items.length - 1);\n  return items;\n}",
+    "slide": {
+      "title": "Three reversals rotate the same array",
+      "narrative": "The whole-array reversal puts the two groups in their final positions, but reverses the order inside each group. The next two reversals restore that order. All three operations change the same array, and the function returns that array.\n\nFor integer counts, normalization handles negative counts and counts larger than the array length. An empty array returns before normalization.",
+      "reviewFocus": null,
+      "contextSnippets": [],
+      "fileSummaries": [
+        {
+          "filePath": "rotate.ts",
+          "summary": "Rotation uses three in-place reversals instead of repeated pop/unshift operations."
+        }
+      ],
+      "inlineExplanations": [
+        {
+          "filePath": "rotate.ts",
+          "line": 13,
+          "side": "RIGHT",
+          "code": "  reverse(k, items.length - 1);",
+          "text": "Each element takes part in the whole-array reversal and one group reversal. The second reversal restores its order relative to other elements in its original group."
+        }
+      ],
+      "svgIllustration": {
+        "version": 1,
+        "title": "Follow the same five elements",
+        "takeaway": "The whole-array reversal exchanges the groups and reverses their internal order. The next two reversals restore each group's order.",
+        "assumptions": "Input: [A,B,C,D,E], k = 2. Tile marks identify original groups. Off-row routes are schematic animation, not intermediate array contents, extra storage, or the literal order of individual swaps. Completed rows show the same array after each reversal.",
+        "plan": {
+          "question": "How do three reversals move [D,E] before [A,B,C] while restoring both groups' internal order?",
+          "visualApproach": "Keep five indexed array slots fixed and move the same marked tiles through three reversal phases. Separate each exchange into departure, horizontal crossing, and arrival so identities remain readable.",
+          "whyThisForm": "Fixed slots reveal changed positions, while persistent group marks reveal preserved membership. Completed rows expose how exchanging groups and restoring their internal order are separate effects.",
+          "encodings": "Horizontal position within the fixed row means array index. Solid tiles marked 1 belong to [A,B,C]; outlined tiles marked 2 belong to [D,E]. Off-row positions mean schematic movement only. The initial group split is n − k = 3; the subsequent reversal boundary is k = 2.",
+          "motion": "Indices and empty-slot outlines remain fixed. Tiles first leave the row vertically, cross in separate lanes below the index header, then arrive vertically at their destinations. C stays fixed during the whole-array reversal. Later phases move only D/E, then A/C. Introduce the k = 2 boundary only after the whole-array reversal has completed.",
+          "prediction": "For k = 1, E finishes at index 0. Reversing the remaining four positions restores [A,B,C,D] behind it.",
+          "restingState": "The final row shows [D,E | A,B,C], with the k = 2 boundary and original group marks still visible."
+        },
+        "scenarios": [
+          {
+            "id": "right_two",
+            "title": "Rotate right by 2",
+            "input": "[A,B,C,D,E], k = 2",
+            "frames": [
+              {
+                "title": "Start with two original groups",
+                "caption": "The original groups split after index 2: n − k = 3 elements belong to [A,B,C].",
+                "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 400\"><text x=\"30\" y=\"26\" fill=\"var(--ink)\" font-size=\"18\">Array index</text><g fill=\"var(--muted)\" font-size=\"18\" text-anchor=\"middle\"><text x=\"70\" y=\"58\">0</text><text x=\"170\" y=\"58\">1</text><text x=\"270\" y=\"58\">2</text><text x=\"370\" y=\"58\">3</text><text x=\"470\" y=\"58\">4</text></g><g fill=\"none\" stroke=\"var(--line)\" stroke-dasharray=\"4 4\"><rect x=\"35\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"135\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"235\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"335\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"435\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/></g><path d=\"M320 180V258\" stroke=\"var(--line)\" stroke-dasharray=\"5 5\"/><text x=\"320\" y=\"380\" text-anchor=\"middle\" fill=\"var(--muted)\" font-size=\"18\">Original split: n − k = 3</text><g data-motion-id=\"a\" transform=\"translate(35 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">A ₁</text></g><g data-motion-id=\"b\" transform=\"translate(135 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">B ₁</text></g><g data-motion-id=\"c\" transform=\"translate(235 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">C ₁</text></g><g data-motion-id=\"d\" transform=\"translate(335 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--ink)\">D ₂</text></g><g data-motion-id=\"e\" transform=\"translate(435 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--ink)\">E ₂</text></g></svg>"
+              },
+              {
+                "title": "Reverse the whole array: depart",
+                "caption": "Separate lanes make the exchanges A ↔ E and B ↔ D visible. C stays at index 2. These routes are schematic, not additional array positions.",
+                "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 400\"><text x=\"30\" y=\"26\" fill=\"var(--ink)\" font-size=\"18\">Array index</text><g fill=\"var(--muted)\" font-size=\"18\" text-anchor=\"middle\"><text x=\"70\" y=\"58\">0</text><text x=\"170\" y=\"58\">1</text><text x=\"270\" y=\"58\">2</text><text x=\"370\" y=\"58\">3</text><text x=\"470\" y=\"58\">4</text></g><g fill=\"none\" stroke=\"var(--line)\" stroke-dasharray=\"4 4\"><rect x=\"35\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"135\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"235\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"335\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"435\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/></g><g data-motion-id=\"a\" transform=\"translate(35 85)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">A ₁</text></g><g data-motion-id=\"b\" transform=\"translate(135 140)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">B ₁</text></g><g data-motion-id=\"c\" transform=\"translate(235 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">C ₁</text></g><g data-motion-id=\"d\" transform=\"translate(335 250)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--ink)\">D ₂</text></g><g data-motion-id=\"e\" transform=\"translate(435 305)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--ink)\">E ₂</text></g></svg>",
+                "evidence": {
+                  "filePath": "rotate.ts",
+                  "startLine": 11
+                }
+              },
+              {
+                "title": "Reverse the whole array: cross",
+                "caption": "Each moving element crosses to the opposite index without obscuring the index header or another tile.",
+                "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 400\"><text x=\"30\" y=\"26\" fill=\"var(--ink)\" font-size=\"18\">Array index</text><g fill=\"var(--muted)\" font-size=\"18\" text-anchor=\"middle\"><text x=\"70\" y=\"58\">0</text><text x=\"170\" y=\"58\">1</text><text x=\"270\" y=\"58\">2</text><text x=\"370\" y=\"58\">3</text><text x=\"470\" y=\"58\">4</text></g><g fill=\"none\" stroke=\"var(--line)\" stroke-dasharray=\"4 4\"><rect x=\"35\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"135\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"235\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"335\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"435\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/></g><g data-motion-id=\"a\" transform=\"translate(435 85)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">A ₁</text></g><g data-motion-id=\"b\" transform=\"translate(335 140)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">B ₁</text></g><g data-motion-id=\"c\" transform=\"translate(235 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">C ₁</text></g><g data-motion-id=\"d\" transform=\"translate(135 250)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--ink)\">D ₂</text></g><g data-motion-id=\"e\" transform=\"translate(35 305)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--ink)\">E ₂</text></g></svg>",
+                "evidence": {
+                  "filePath": "rotate.ts",
+                  "startLine": 11
+                }
+              },
+              {
+                "title": "The groups have exchanged positions",
+                "caption": "[E,D | C,B,A]: both groups have reversed internal order. The next two reversals split at k = 2, between indices 1 and 2.",
+                "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 400\"><text x=\"30\" y=\"26\" fill=\"var(--ink)\" font-size=\"18\">Array index</text><g fill=\"var(--muted)\" font-size=\"18\" text-anchor=\"middle\"><text x=\"70\" y=\"58\">0</text><text x=\"170\" y=\"58\">1</text><text x=\"270\" y=\"58\">2</text><text x=\"370\" y=\"58\">3</text><text x=\"470\" y=\"58\">4</text></g><g fill=\"none\" stroke=\"var(--line)\" stroke-dasharray=\"4 4\"><rect x=\"35\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"135\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"235\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"335\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"435\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/></g><path d=\"M220 180V258\" stroke=\"var(--line)\" stroke-dasharray=\"5 5\"/><text x=\"220\" y=\"380\" text-anchor=\"middle\" fill=\"var(--muted)\" font-size=\"18\">Reversal boundary: k = 2</text><g data-motion-id=\"a\" transform=\"translate(435 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">A ₁</text></g><g data-motion-id=\"b\" transform=\"translate(335 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">B ₁</text></g><g data-motion-id=\"c\" transform=\"translate(235 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">C ₁</text></g><g data-motion-id=\"d\" transform=\"translate(135 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--ink)\">D ₂</text></g><g data-motion-id=\"e\" transform=\"translate(35 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--ink)\">E ₂</text></g></svg>",
+                "evidence": {
+                  "filePath": "rotate.ts",
+                  "startLine": 11
+                }
+              },
+              {
+                "title": "Reverse indices 0 through k − 1: depart",
+                "caption": "Only D and E move. Indices 2 through 4 remain unchanged.",
+                "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 400\"><text x=\"30\" y=\"26\" fill=\"var(--ink)\" font-size=\"18\">Array index</text><g fill=\"var(--muted)\" font-size=\"18\" text-anchor=\"middle\"><text x=\"70\" y=\"58\">0</text><text x=\"170\" y=\"58\">1</text><text x=\"270\" y=\"58\">2</text><text x=\"370\" y=\"58\">3</text><text x=\"470\" y=\"58\">4</text></g><g fill=\"none\" stroke=\"var(--line)\" stroke-dasharray=\"4 4\"><rect x=\"35\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"135\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"235\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"335\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"435\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/></g><path d=\"M220 180V258\" stroke=\"var(--line)\" stroke-dasharray=\"5 5\"/><text x=\"220\" y=\"380\" text-anchor=\"middle\" fill=\"var(--muted)\" font-size=\"18\">Reversal boundary: k = 2</text><g data-motion-id=\"a\" transform=\"translate(435 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">A ₁</text></g><g data-motion-id=\"b\" transform=\"translate(335 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">B ₁</text></g><g data-motion-id=\"c\" transform=\"translate(235 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">C ₁</text></g><g data-motion-id=\"d\" transform=\"translate(135 85)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--ink)\">D ₂</text></g><g data-motion-id=\"e\" transform=\"translate(35 305)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--ink)\">E ₂</text></g></svg>",
+                "evidence": {
+                  "filePath": "rotate.ts",
+                  "startLine": 12
+                }
+              },
+              {
+                "title": "Reverse the first two positions: cross",
+                "caption": "D crosses to index 0; E crosses to index 1. Their routes remain separate.",
+                "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 400\"><text x=\"30\" y=\"26\" fill=\"var(--ink)\" font-size=\"18\">Array index</text><g fill=\"var(--muted)\" font-size=\"18\" text-anchor=\"middle\"><text x=\"70\" y=\"58\">0</text><text x=\"170\" y=\"58\">1</text><text x=\"270\" y=\"58\">2</text><text x=\"370\" y=\"58\">3</text><text x=\"470\" y=\"58\">4</text></g><g fill=\"none\" stroke=\"var(--line)\" stroke-dasharray=\"4 4\"><rect x=\"35\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"135\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"235\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"335\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"435\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/></g><path d=\"M220 180V258\" stroke=\"var(--line)\" stroke-dasharray=\"5 5\"/><text x=\"220\" y=\"380\" text-anchor=\"middle\" fill=\"var(--muted)\" font-size=\"18\">Reversal boundary: k = 2</text><g data-motion-id=\"a\" transform=\"translate(435 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">A ₁</text></g><g data-motion-id=\"b\" transform=\"translate(335 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">B ₁</text></g><g data-motion-id=\"c\" transform=\"translate(235 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">C ₁</text></g><g data-motion-id=\"d\" transform=\"translate(35 85)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--ink)\">D ₂</text></g><g data-motion-id=\"e\" transform=\"translate(135 305)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--ink)\">E ₂</text></g></svg>",
+                "evidence": {
+                  "filePath": "rotate.ts",
+                  "startLine": 12
+                }
+              },
+              {
+                "title": "D and E have their original order",
+                "caption": "[D,E | C,B,A]: the first two positions are complete. The remaining group still has reversed internal order.",
+                "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 400\"><text x=\"30\" y=\"26\" fill=\"var(--ink)\" font-size=\"18\">Array index</text><g fill=\"var(--muted)\" font-size=\"18\" text-anchor=\"middle\"><text x=\"70\" y=\"58\">0</text><text x=\"170\" y=\"58\">1</text><text x=\"270\" y=\"58\">2</text><text x=\"370\" y=\"58\">3</text><text x=\"470\" y=\"58\">4</text></g><g fill=\"none\" stroke=\"var(--line)\" stroke-dasharray=\"4 4\"><rect x=\"35\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"135\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"235\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"335\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"435\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/></g><path d=\"M220 180V258\" stroke=\"var(--line)\" stroke-dasharray=\"5 5\"/><text x=\"220\" y=\"380\" text-anchor=\"middle\" fill=\"var(--muted)\" font-size=\"18\">Reversal boundary: k = 2</text><g data-motion-id=\"a\" transform=\"translate(435 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">A ₁</text></g><g data-motion-id=\"b\" transform=\"translate(335 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">B ₁</text></g><g data-motion-id=\"c\" transform=\"translate(235 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">C ₁</text></g><g data-motion-id=\"d\" transform=\"translate(35 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--ink)\">D ₂</text></g><g data-motion-id=\"e\" transform=\"translate(135 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--ink)\">E ₂</text></g></svg>",
+                "evidence": {
+                  "filePath": "rotate.ts",
+                  "startLine": 12
+                }
+              },
+              {
+                "title": "Reverse indices k through 4: depart",
+                "caption": "A and C exchange positions around B. D and E remain fixed.",
+                "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 400\"><text x=\"30\" y=\"26\" fill=\"var(--ink)\" font-size=\"18\">Array index</text><g fill=\"var(--muted)\" font-size=\"18\" text-anchor=\"middle\"><text x=\"70\" y=\"58\">0</text><text x=\"170\" y=\"58\">1</text><text x=\"270\" y=\"58\">2</text><text x=\"370\" y=\"58\">3</text><text x=\"470\" y=\"58\">4</text></g><g fill=\"none\" stroke=\"var(--line)\" stroke-dasharray=\"4 4\"><rect x=\"35\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"135\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"235\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"335\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"435\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/></g><path d=\"M220 180V258\" stroke=\"var(--line)\" stroke-dasharray=\"5 5\"/><text x=\"220\" y=\"380\" text-anchor=\"middle\" fill=\"var(--muted)\" font-size=\"18\">Reversal boundary: k = 2</text><g data-motion-id=\"a\" transform=\"translate(435 85)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">A ₁</text></g><g data-motion-id=\"b\" transform=\"translate(335 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">B ₁</text></g><g data-motion-id=\"c\" transform=\"translate(235 305)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">C ₁</text></g><g data-motion-id=\"d\" transform=\"translate(35 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--ink)\">D ₂</text></g><g data-motion-id=\"e\" transform=\"translate(135 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--ink)\">E ₂</text></g></svg>",
+                "evidence": {
+                  "filePath": "rotate.ts",
+                  "startLine": 13
+                }
+              },
+              {
+                "title": "Reverse the remaining positions: cross",
+                "caption": "A crosses to index 2; C crosses to index 4. B stays at index 3.",
+                "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 400\"><text x=\"30\" y=\"26\" fill=\"var(--ink)\" font-size=\"18\">Array index</text><g fill=\"var(--muted)\" font-size=\"18\" text-anchor=\"middle\"><text x=\"70\" y=\"58\">0</text><text x=\"170\" y=\"58\">1</text><text x=\"270\" y=\"58\">2</text><text x=\"370\" y=\"58\">3</text><text x=\"470\" y=\"58\">4</text></g><g fill=\"none\" stroke=\"var(--line)\" stroke-dasharray=\"4 4\"><rect x=\"35\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"135\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"235\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"335\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"435\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/></g><path d=\"M220 180V258\" stroke=\"var(--line)\" stroke-dasharray=\"5 5\"/><text x=\"220\" y=\"380\" text-anchor=\"middle\" fill=\"var(--muted)\" font-size=\"18\">Reversal boundary: k = 2</text><g data-motion-id=\"a\" transform=\"translate(235 85)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">A ₁</text></g><g data-motion-id=\"b\" transform=\"translate(335 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">B ₁</text></g><g data-motion-id=\"c\" transform=\"translate(435 305)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">C ₁</text></g><g data-motion-id=\"d\" transform=\"translate(35 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--ink)\">D ₂</text></g><g data-motion-id=\"e\" transform=\"translate(135 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--ink)\">E ₂</text></g></svg>",
+                "evidence": {
+                  "filePath": "rotate.ts",
+                  "startLine": 13
+                }
+              },
+              {
+                "title": "Both groups have their original internal order",
+                "caption": "[D,E | A,B,C]: the same array is now rotated right by 2. Each group's internal order has been reversed twice.",
+                "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 400\"><text x=\"30\" y=\"26\" fill=\"var(--ink)\" font-size=\"18\">Array index</text><g fill=\"var(--muted)\" font-size=\"18\" text-anchor=\"middle\"><text x=\"70\" y=\"58\">0</text><text x=\"170\" y=\"58\">1</text><text x=\"270\" y=\"58\">2</text><text x=\"370\" y=\"58\">3</text><text x=\"470\" y=\"58\">4</text></g><g fill=\"none\" stroke=\"var(--line)\" stroke-dasharray=\"4 4\"><rect x=\"35\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"135\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"235\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"335\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/><rect x=\"435\" y=\"195\" width=\"70\" height=\"48\" rx=\"6\"/></g><path d=\"M220 180V258\" stroke=\"var(--line)\" stroke-dasharray=\"5 5\"/><text x=\"220\" y=\"380\" text-anchor=\"middle\" fill=\"var(--muted)\" font-size=\"18\">Reversal boundary: k = 2</text><g data-motion-id=\"a\" transform=\"translate(235 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">A ₁</text></g><g data-motion-id=\"b\" transform=\"translate(335 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">B ₁</text></g><g data-motion-id=\"c\" transform=\"translate(435 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--accent)\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--paper)\">C ₁</text></g><g data-motion-id=\"d\" transform=\"translate(35 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--ink)\">D ₂</text></g><g data-motion-id=\"e\" transform=\"translate(135 195)\"><rect width=\"70\" height=\"48\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"35\" y=\"30\" text-anchor=\"middle\" font-size=\"22\" fill=\"var(--ink)\">E ₂</text></g></svg>",
+                "evidence": {
+                  "filePath": "rotate.ts",
+                  "startLine": 13
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "mechanism": null,
+      "d2Diagram": null,
+      "explainerIdea": null,
+      "reviewChecks": []
+    },
+    "model": "gpt-6.1-sol",
+    "generatedAt": "2026-10-29T14:29:01.159Z"
+  }
+]

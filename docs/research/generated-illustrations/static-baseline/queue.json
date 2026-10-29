@@ -1,0 +1,57 @@
+{
+  "id": "queue",
+  "title": "Ordered batching",
+  "filePath": "batch.ts",
+  "code": "export function takeBatch(pending, maxWeight) {\n  // New: preserve order and bound total weight, instead of only item count.\n  const batch = []; let weight = 0;\n  while (pending.length > 0) {\n    const next = pending[0];\n    if (batch.length > 0 && weight + next.weight > maxWeight) break;\n    batch.push(pending.shift()); weight += next.weight;\n  }\n  return batch;\n}",
+  "questions": "Explain [8,5,3] at capacity 12 and [15,2] at capacity 12. Why does 3 not skip ahead of 5? Why does 15 not block forever?",
+  "slide": {
+    "title": "Keep queue order and accept an oversized first item",
+    "narrative": "The weight limit applies only after the batch contains an item. Thus, the first item can exceed the limit and still leave the queue. This prevents an oversized head item from blocking selection forever.\n\nThe function stops at the first item that would exceed the limit. It does not search later items for a smaller weight. This preserves queue order, but can leave unused capacity.",
+    "reviewFocus": null,
+    "contextSnippets": [],
+    "fileSummaries": [
+      {
+        "filePath": "batch.ts",
+        "summary": "Batch selection preserves queue order and limits total weight, except for the first item."
+      }
+    ],
+    "inlineExplanations": [],
+    "svgIllustration": {
+      "version": 1,
+      "title": "The queue head controls where selection stops",
+      "takeaway": "A later item cannot pass the queue head, but an oversized first item can enter an empty batch.",
+      "assumptions": "Weights and capacity are illustrative. Item sizes and spacing do not represent weight.",
+      "plan": {
+        "question": "Why does capacity 12 return [8] from [8,5,3], but [15] from [15,2]?",
+        "visualApproach": "Show two aligned examples with the returned batch on the left and the remaining queue on the right. Mark the remaining queue head as the stop point.",
+        "whyThisForm": "The separation shows which items leave the queue. The visible queue order explains why 3 cannot pass 5.",
+        "encodings": "Each numbered square is one item. Left-to-right position gives queue order. Container boundaries separate returned items from remaining items. STOP labels identify the rejected queue heads.",
+        "motion": ""
+      },
+      "scenarios": [
+        {
+          "id": "ordered_selection",
+          "title": "Capacity 12: stop at the head",
+          "input": "Illustrative queues: [8,5,3] and [15,2]; maxWeight = 12.",
+          "frames": [
+            {
+              "title": "The first item enters; the next item can stop selection",
+              "caption": "For [8,5,3], 8 + 5 > 12 stops selection before 3 is examined. For [15,2], the empty batch accepts 15; 15 + 2 > 12 then stops selection.",
+              "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 350\"><text x=\"20\" y=\"25\" font-size=\"18\" fill=\"var(--ink)\">Capacity: 12</text><text x=\"20\" y=\"58\" font-size=\"16\" fill=\"var(--ink)\">Input: [8, 5, 3]</text><rect x=\"20\" y=\"72\" width=\"180\" height=\"84\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"32\" y=\"95\" font-size=\"16\" fill=\"var(--ink)\">Returned batch</text><rect x=\"32\" y=\"106\" width=\"40\" height=\"36\" rx=\"4\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"52\" y=\"131\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">8</text><rect x=\"220\" y=\"72\" width=\"320\" height=\"84\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"232\" y=\"95\" font-size=\"16\" fill=\"var(--ink)\">Remaining queue</text><rect x=\"232\" y=\"106\" width=\"40\" height=\"36\" rx=\"4\" fill=\"var(--paper)\" stroke=\"var(--warning)\" stroke-width=\"2\"/><text x=\"252\" y=\"131\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">5</text><rect x=\"284\" y=\"106\" width=\"40\" height=\"36\" rx=\"4\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"304\" y=\"131\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">3</text><text x=\"342\" y=\"130\" font-size=\"16\" fill=\"var(--ink)\">STOP: 8 + 5 &gt; 12</text><text x=\"20\" y=\"180\" font-size=\"16\" fill=\"var(--muted)\">3 stays behind 5; it is not examined.</text><text x=\"20\" y=\"216\" font-size=\"16\" fill=\"var(--ink)\">Input: [15, 2]</text><rect x=\"20\" y=\"230\" width=\"180\" height=\"84\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"32\" y=\"253\" font-size=\"16\" fill=\"var(--ink)\">Returned batch</text><rect x=\"32\" y=\"264\" width=\"40\" height=\"36\" rx=\"4\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"52\" y=\"289\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">15</text><rect x=\"220\" y=\"230\" width=\"320\" height=\"84\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"232\" y=\"253\" font-size=\"16\" fill=\"var(--ink)\">Remaining queue</text><rect x=\"232\" y=\"264\" width=\"40\" height=\"36\" rx=\"4\" fill=\"var(--paper)\" stroke=\"var(--warning)\" stroke-width=\"2\"/><text x=\"252\" y=\"289\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">2</text><text x=\"290\" y=\"288\" font-size=\"16\" fill=\"var(--ink)\">STOP: 15 + 2 &gt; 12</text><text x=\"20\" y=\"338\" font-size=\"16\" fill=\"var(--muted)\">An empty batch accepts 15 despite the limit.</text></svg>",
+              "evidence": {
+                "filePath": "batch.ts",
+                "startLine": 6
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "mechanism": null,
+    "d2Diagram": null,
+    "explainerIdea": null,
+    "reviewChecks": []
+  },
+  "model": "gpt-6.1-sol",
+  "generatedAt": "2026-10-29T13:06:51.136Z"
+}

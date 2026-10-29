@@ -27,6 +27,7 @@ export const claudeProvider: LLMProvider = {
     nonStrictMcp,
     signal,
     isolated,
+    images,
   }) {
     const claudePath = resolveClaudePath();
     let fullText = '';
@@ -95,6 +96,7 @@ export const claudeProvider: LLMProvider = {
         '--system-prompt',
         systemPrompt,
         ...toolArgs,
+        ...(images?.length ? ['--input-format', 'stream-json'] : []),
         '--output-format',
         'stream-json',
         '--verbose',
@@ -103,7 +105,25 @@ export const claudeProvider: LLMProvider = {
         '--effort',
         thinking ? 'high' : 'low',
       ],
-      stdinContent: content,
+      stdinContent: images?.length
+        ? JSON.stringify({
+            type: 'user',
+            message: {
+              role: 'user',
+              content: [
+                { type: 'text', text: content },
+                ...images.map((image) => ({
+                  type: 'image',
+                  source: {
+                    type: 'base64',
+                    media_type: image.mediaType,
+                    data: image.base64,
+                  },
+                })),
+              ],
+            },
+          }) + '\n'
+        : content,
       processLine,
       env: await harnessEnvironment('claude'),
       installHint: INSTALL_HINT,

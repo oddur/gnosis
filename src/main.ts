@@ -81,7 +81,7 @@ import { normalizeFileSummaries } from '../lib/file-summaries';
 import { normalizeInlineExplanations } from '../lib/inline-explanations';
 import { captureExplainerContext, normalizeExplainerIdea, parseExplainer } from '../lib/explainer';
 import { createExplainerService } from './explainer-service';
-import { protectExplainerFrames, validateExplainerInBrowser } from './explainer-validation';
+import { protectExplainerFrames, validateExplainerInBrowser, validateSvgIllustrationInBrowser } from './explainer-validation';
 import { checkForUpdate } from '../lib/updater';
 import { renderDiffHunk, reRenderAllHunks } from '../lib/highlight';
 import { parseDiffLines } from '../lib/diff-lines';
@@ -1955,6 +1955,7 @@ async function runBackgroundGeneration(
             );
 
             const writerOutput = await generateSlide({
+              validateIllustration: validateSvgIllustrationInBrowser,
               topicContext: topicCtx,
               providerName: provider,
               model,
@@ -1988,6 +1989,8 @@ async function runBackgroundGeneration(
               dependsOn: topic.dependsOn,
               mermaidDiagram: writerOutput.mermaidDiagram,
               d2Diagram: writerOutput.d2Diagram,
+              mechanism: writerOutput.mechanism,
+              svgIllustration: writerOutput.svgIllustration,
               explainerIdea: normalizeExplainerIdea(writerOutput.explainerIdea),
               fileSummaries: normalizeFileSummaries(writerOutput.fileSummaries, diffHunks),
               inlineExplanations: writerOutput.inlineExplanations,
@@ -2099,6 +2102,8 @@ async function runBackgroundGeneration(
           dependsOn: aiSlide.dependsOn ?? [],
           mermaidDiagram: aiSlide.mermaidDiagram,
           d2Diagram: aiSlide.d2Diagram,
+          mechanism: aiSlide.mechanism,
+          svgIllustration: aiSlide.svgIllustration,
           explainerIdea: normalizeExplainerIdea(aiSlide.explainerIdea),
           fileSummaries: normalizeFileSummaries(aiSlide.fileSummaries, diffHunks),
           inlineExplanations: aiSlide.inlineExplanations,
