@@ -7,11 +7,17 @@ import { peekMarkdownReview, prepareMarkdownReview } from '../lib/markdown-revie
 import { MarkdownReviewPreview } from './MarkdownReviewPreview';
 import { RepositoryBadge, PrBadge, CommitBadge } from './EntityBadge';
 import { useEffect, useMemo, useRef, useState, type ReactNode, type CSSProperties } from 'react';
-import { FileDiff, MultiFileDiff } from '@pierre/diffs/react';
+import { File, FileDiff, MultiFileDiff } from '@pierre/diffs/react';
 import type { DiffFileInput, FileDiffOptions, SelectedLineRange } from '@pierre/diffs';
 import { MessageSquare, ExternalLink } from 'lucide-react';
 import { inspectionFiles as fileCache, previewFor } from '../lib/inspection-cache';
-import { fileRevisionKey, type PrChanges, type PrChangeFile, type PrFileContents } from '../lib/pr-changes';
+import {
+  isUnchangedMove,
+  fileRevisionKey,
+  type PrChanges,
+  type PrChangeFile,
+  type PrFileContents,
+} from '../lib/pr-changes';
 import { useFileProgress } from '../lib/file-view-progress';
 import { useDiffAppearance } from '../lib/use-diff-appearance';
 import { diffContextLines } from '../lib/review-diff';
@@ -33,7 +39,9 @@ export interface ChangeFileEntry {
   file: PrChangeFile;
 }
 export const changeFileKey = (entry: ChangeFileEntry) =>
-  entry.snapshot.stackComparison ? stackFileProgressKey(entry.snapshot, entry.file) : `${entry.snapshot.comparison ? 'commit:' : ''}${fileRevisionKey(entry.snapshot.url, entry.file.path, entry.snapshot.metadata.baseSha, entry.snapshot.metadata.headSha)}`;
+  entry.snapshot.stackComparison
+    ? stackFileProgressKey(entry.snapshot, entry.file)
+    : `${entry.snapshot.comparison ? 'commit:' : ''}${fileRevisionKey(entry.snapshot.url, entry.file.path, entry.snapshot.metadata.baseSha, entry.snapshot.metadata.headSha)}`;
 // Electron preserves messages across IPC, but not custom Error types.
 const isUnsupportedPreview = (message: string) =>
   /This file is too large to preview|This binary file has no text preview|This file is not UTF-8 text/.test(message);
@@ -84,7 +92,7 @@ export function PrFileInspection({
   const [markdownResult, setMarkdownResult] = useState<{ key: string; value: MarkdownReview }>();
   const [markdownError, setMarkdownError] = useState<{ key: string; message: string }>();
   const [markdownAttempt, setMarkdownAttempt] = useState(0);
-  const wantsPreview = markdown && markdownView.mode === 'preview' && sourceOverride !== activeKey;
+  const [revealedMove, setRevealedMove] = useState<string>();
   const contextLines = sourceLocation ? Number.MAX_SAFE_INTEGER : diffContextLines(appearance);
   const parseDiffOptions = useMemo(() => ({ context: contextLines }), [contextLines]);
   const [loadedFile, setLoadedFile] = useState<{ key: string; data: PrFileContents }>();
@@ -124,6 +132,9 @@ export function PrFileInspection({
   };
   const preview = useMemo(() => previewFor(activeKey, entry.file, contextLines), [activeKey, entry.file, contextLines]);
   const contents = fileCache.peek(request) ?? (loadedFile?.key === activeKey ? loadedFile.data : undefined);
+  const unchangedMove = useMemo(() => isUnchangedMove(entry.file, contents), [entry.file, contents]);
+  const compactMove = unchangedMove && revealedMove !== activeKey;
+  const wantsPreview = !compactMove && markdown && markdownView.mode === 'preview' && sourceOverride !== activeKey;
   const markdownKey = activeKey + (contents?.lfs ? ':lfs' : '');
   const renderedMarkdown =
     peekMarkdownReview(markdownKey) ?? (markdownResult?.key === markdownKey ? markdownResult.value : undefined);
@@ -170,7 +181,7 @@ export function PrFileInspection({
         headSha: entry.snapshot.metadata.headSha,
         path: entry.file.path,
         comparison: entry.snapshot.comparison,
-    stackComparison: combined?.key,
+        stackComparison: combined?.key,
       })
       .then((value) => {
         if (!cancelled) setLoadedFile({ key: activeKey, data: value });
@@ -189,6 +200,7 @@ export function PrFileInspection({
   useEffect(() => {
     if (
       !markdown ||
+      compactMove ||
       !contents ||
       viewed ||
       ![contents.before.kind, contents.after.kind].every((kind) => kind === 'text' || kind === 'absent')
@@ -223,7 +235,7 @@ export function PrFileInspection({
     return () => {
       cancelled = true;
     };
-  }, [markdownKey, contents, viewed, markdownAttempt]);
+  }, [markdownKey, contents, viewed, markdownAttempt, compactMove]);
   useEffect(() => {
     setSourceLocation(undefined);
     sourceJump.current = undefined;
@@ -263,18 +275,24 @@ export function PrFileInspection({
     ? stackFileDiscussions(entry.snapshot, entry.file, discussion.discussions)
     : undefined;
   const combinedThreads = combinedDiscussion?.threads.map((t) => ({ ...t, inline: !contents?.lfs && t.inline })) ?? [];
-  const other = combined ? combinedThreads.filter(t => !t.inline).map(t => t.thread) : matching.filter((t) => !inline.includes(t));
-  const sourceOptions = combined?.members.filter(m => combined.fileSources[entry.file.path]?.includes(m.metadata.url)) ?? [];
-  const commentSources = sourceOptions.length ? sourceOptions : combined?.members ?? [];
+  const other = combined
+    ? combinedThreads.filter((t) => !t.inline).map((t) => t.thread)
+    : matching.filter((t) => !inline.includes(t));
+  const sourceOptions =
+    combined?.members.filter((m) => combined.fileSources[entry.file.path]?.includes(m.metadata.url)) ?? [];
+  const commentSources = sourceOptions.length ? sourceOptions : (combined?.members ?? []);
   const renderCombinedThread = (thread: (typeof inline)[number]) => {
-    const source = combinedThreads.find(t => t.thread.id === thread.id)?.source;
-    return <div key={thread.id} className="combined-thread">
-      <Button variant="link" size="sm" onClick={() => source && onOpenSource?.(source.metadata.url, thread.path)}>
-        PR #{source?.metadata.url.split('/').pop()} · Open to reply
-      </Button>
-      <GitHubReviewThread thread={thread} />
-    </div>;
+    const source = combinedThreads.find((t) => t.thread.id === thread.id)?.source;
+    return (
+      <div key={thread.id} className="combined-thread">
+        <Button variant="link" size="sm" onClick={() => source && onOpenSource?.(source.metadata.url, thread.path)}>
+          PR #{source?.metadata.url.split('/').pop()} · Open to reply
+        </Button>
+        <GitHubReviewThread thread={thread} />
+      </div>
+    );
   };
+  const visibleDiscussions = unchangedMove ? (combined ? combinedThreads.map((t) => t.thread) : matching) : other;
   const refreshThreads = discussion.refresh;
   const comments = useChangesComments({
     enabled: !commit && !combined,
@@ -282,11 +300,37 @@ export function PrFileInspection({
     renderThreadOverride: combined ? renderCombinedThread : undefined,
     path: entry.file.path,
     activeKey,
-    inline: combined ? combinedThreads.filter(t => t.inline).map(t => t.thread) : inline,
+    // Unchanged moves keep all published discussions below both source and Markdown views.
+    inline: unchangedMove ? [] : combined ? combinedThreads.filter((t) => t.inline).map((t) => t.thread) : inline,
     refresh: refreshThreads,
     replaceThread: discussion.replace,
   });
   const annotations = comments.annotations;
+  const hasInlineDrafts = annotations.some((a) => a.metadata.drafts.length > 0 || a.metadata.composer);
+  useEffect(() => {
+    if (unchangedMove && hasInlineDrafts) setRevealedMove(activeKey);
+  }, [activeKey, unchangedMove, hasInlineDrafts]);
+  const revealSource = (node: HTMLElement) => {
+    const location = sourceJump.current;
+    if (!location || showingPreview) return;
+    requestAnimationFrame(() => {
+      if (!node.isConnected || currentFile.current !== activeKey || sourceJump.current !== location) return;
+      const lines = [...(node.shadowRoot?.querySelectorAll<HTMLElement>('[data-code] [data-line]') ?? [])];
+      const target = lines.find(
+        (line) =>
+          Number(line.dataset.line) >= location.start &&
+          Number(line.dataset.line) <= location.end &&
+          (unchangedMove || (location.side === 'before') === isBeforeDiffLine(line))
+      );
+      if (!target) return;
+      sourceJump.current = undefined;
+      target.scrollIntoView({ block: 'center', behavior: 'instant' });
+      // The highlighter may replace line nodes. Keep keyboard focus on its stable host.
+      node.tabIndex = -1;
+      node.setAttribute('aria-label', `Source at ${location.side === 'before' ? 'old' : 'new'} line ${location.start}`);
+      node.focus({ preventScroll: true });
+    });
+  };
   const options: FileDiffOptions<(typeof annotations)[number]['metadata'], undefined> = {
     enableGutterUtility: comments.writable && !contents?.lfs,
     onGutterUtilityClick: contents?.lfs ? undefined : comments.begin,
@@ -307,30 +351,7 @@ export function PrFileInspection({
     overflow: appearance.wrap ? 'wrap' : 'scroll',
     enableLineSelection: true,
     onLineSelected: setRange,
-    onPostRender: (node) => {
-      const location = sourceJump.current;
-      if (!location || showingPreview) return;
-      requestAnimationFrame(() => {
-        if (!node.isConnected || currentFile.current !== activeKey || sourceJump.current !== location) return;
-        const lines = [...(node.shadowRoot?.querySelectorAll<HTMLElement>('[data-code] [data-line]') ?? [])];
-        const target = lines.find(
-          (line) =>
-            Number(line.dataset.line) >= location.start &&
-            Number(line.dataset.line) <= location.end &&
-            (location.side === 'before') === isBeforeDiffLine(line)
-        );
-        if (!target) return;
-        sourceJump.current = undefined;
-        target.scrollIntoView({ block: 'center', behavior: 'instant' });
-        // The highlighter may replace line nodes. Keep keyboard focus on its stable host.
-        node.tabIndex = -1;
-        node.setAttribute(
-          'aria-label',
-          `Source at ${location.side === 'before' ? 'old' : 'new'} line ${location.start}`
-        );
-        node.focus({ preventScroll: true });
-      });
-    },
+    onPostRender: revealSource,
     loadDiffFiles: async () => {
       try {
         if (alive.current && currentFile.current === activeKey) setFileError('');
@@ -394,6 +415,7 @@ export function PrFileInspection({
       : '';
   };
   function openMarkdownSource(location?: MarkdownLocation) {
+    setRevealedMove(activeKey);
     setSourceOverride(activeKey);
     setRange(null);
     if (location) {
@@ -402,7 +424,10 @@ export function PrFileInspection({
     }
   }
   useEffect(() => {
-    if (sourceLine) { opened.current = true; openMarkdownSource({ side: 'after', start: sourceLine, end: sourceLine }); }
+    if (sourceLine) {
+      opened.current = true;
+      openMarkdownSource({ side: 'after', start: sourceLine, end: sourceLine });
+    }
   }, [sourceLine, activeKey]);
   function chooseMarkdownMode(mode: 'source' | 'preview') {
     const section = sectionRef.current;
@@ -457,21 +482,43 @@ export function PrFileInspection({
             <CommitBadge sha={entry.snapshot.metadata.headSha} repo={entry.snapshot.metadata.headRepo} />
           </span>
         )}
-        {combined && <span className="changes-source">
-          <span>Combined changes</span>
-          {sourceOptions.slice(0, 3).map(source => <Button key={source.metadata.url} size="sm" variant="link" onClick={() => onOpenSource?.(source.metadata.url, combinedSourcePath(source.metadata.url))}>#{source.metadata.url.split('/').pop()}</Button>)}
-          {sourceOptions.length > 3 && <span>+{sourceOptions.length - 3} PRs</span>}
-        </span>}
+        {combined && (
+          <span className="changes-source">
+            <span>Combined changes</span>
+            {sourceOptions.slice(0, 3).map((source) => (
+              <Button
+                key={source.metadata.url}
+                size="sm"
+                variant="link"
+                onClick={() => onOpenSource?.(source.metadata.url, combinedSourcePath(source.metadata.url))}
+              >
+                #{source.metadata.url.split('/').pop()}
+              </Button>
+            ))}
+            {sourceOptions.length > 3 && <span>+{sourceOptions.length - 3} PRs</span>}
+          </span>
+        )}
         <h2 title={entry.file.path}>
           {entry.file.previousPath && <span>{entry.file.previousPath} → </span>}
           {entry.file.path}
         </h2>
         <span className="changes-file-stats">
-          {entry.file.status} · <DiffStats additions={entry.file.additions} deletions={entry.file.deletions} />
+          {unchangedMove ? (
+            'Moved · contents unchanged'
+          ) : (
+            <>
+              {entry.file.status} · <DiffStats additions={entry.file.additions} deletions={entry.file.deletions} />
+            </>
+          )}
         </span>
       </div>
       <div className="changes-file-actions">
-        {markdown && (
+        {compactMove && !viewed && (
+          <Button variant="ghost" size="sm" onClick={() => setRevealedMove(activeKey)}>
+            Show file
+          </Button>
+        )}
+        {markdown && !compactMove && (
           <div className="markdown-view-switch" role="group" aria-label="Markdown view">
             <Button
               variant={!wantsPreview ? 'secondary' : 'ghost'}
@@ -503,7 +550,7 @@ export function PrFileInspection({
         <Button variant="outline" size="sm" data-viewed-next onClick={() => mark(true)}>
           Viewed & next
         </Button>
-        {!commit && !combined && !showingPreview && (
+        {!commit && !combined && !showingPreview && !compactMove && (
           <Button
             variant="ghost"
             size="sm"
@@ -514,9 +561,19 @@ export function PrFileInspection({
             <MessageSquare size={14} /> Comment
           </Button>
         )}
-        {combined && <SearchableSelect label="Comment in source PR" value="" triggerLabel="Comment in PR…" popupBoundary="viewport"
-          options={commentSources.map(s => ({ value: s.metadata.url, label: `#${s.metadata.url.split('/').pop()} · ${s.metadata.title}` }))}
-          onValueChange={url => onOpenSource?.(url, combinedSourcePath(url))} />}
+        {combined && (
+          <SearchableSelect
+            label="Comment in source PR"
+            value=""
+            triggerLabel="Comment in PR…"
+            popupBoundary="viewport"
+            options={commentSources.map((s) => ({
+              value: s.metadata.url,
+              label: `#${s.metadata.url.split('/').pop()} · ${s.metadata.title}`,
+            }))}
+            onValueChange={(url) => onOpenSource?.(url, combinedSourcePath(url))}
+          />
+        )}
         {commit && (
           <Button
             variant="ghost"
@@ -536,128 +593,166 @@ export function PrFileInspection({
   );
   const fileContent = (
     <div className="changes-code-scroll">
-      {!contents && !preview && !fileError && (
-        <div className="changes-loading" role="status">
-          Loading file contents…
-        </div>
-      )}
-      {fileError && (
-        <div className="changes-empty" role="alert">
-          <p>{fileError}</p>
-          {!isUnsupportedPreview(fileError) &&
-            (preview ? (
-              <p>
-                Could not load more surrounding lines.{' '}
-                <button className="underline" onClick={() => setFileAttempt((n) => n + 1)}>
-                  Retry
-                </button>
-              </p>
-            ) : (
-              <Button variant="outline" size="sm" onClick={() => setFileAttempt((n) => n + 1)}>
-                Retry
+      {!compactMove && (
+        <>
+          {!contents && !preview && !fileError && (
+            <div className="changes-loading" role="status">
+              Loading file contents…
+            </div>
+          )}
+          {fileError && (
+            <div className="changes-empty" role="alert">
+              <p>{fileError}</p>
+              {!isUnsupportedPreview(fileError) &&
+                (preview ? (
+                  <p>
+                    Could not load more surrounding lines.{' '}
+                    <button className="underline" onClick={() => setFileAttempt((n) => n + 1)}>
+                      Retry
+                    </button>
+                  </p>
+                ) : (
+                  <Button variant="outline" size="sm" onClick={() => setFileAttempt((n) => n + 1)}>
+                    Retry
+                  </Button>
+                ))}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  void window.electronAPI.openExternal(
+                    combined
+                      ? `https://github.com/${entry.snapshot.metadata.baseRepo}/compare/${entry.snapshot.comparisonBase}...${entry.snapshot.metadata.headSha}`
+                      : `${entry.snapshot.url}/files`
+                  )
+                }
+              >
+                Open on GitHub <ExternalLink size={14} />
               </Button>
-            ))}
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() =>
-              void window.electronAPI.openExternal(
-                combined
-                  ? `https://github.com/${entry.snapshot.metadata.baseRepo}/compare/${entry.snapshot.comparisonBase}...${entry.snapshot.metadata.headSha}`
-                  : `${entry.snapshot.url}/files`
-              )
-            }
-          >
-            Open on GitHub <ExternalLink size={14} />
-          </Button>
-        </div>
-      )}
-      {lfsSides.length > 0 && (
-        <LfsDownload
-          pointers={lfsSides.map((side) => side.pointer)}
-          busy={lfsDownload?.key === activeKey && lfsDownload.busy}
-          error={lfsDownload?.key === activeKey ? lfsDownload.error : undefined}
-          onDownload={() => void downloadLfs()}
-        />
-      )}
-      {contents?.lfs && files && (
-        <p className="changes-notice">
-          Downloaded Git LFS contents. GitHub line comments refer to the pointer file; use the file discussion for this
-          resource.
-        </p>
-      )}
-      {wantsPreview && !renderedMarkdown && !lfsSides.length && (
-        <div className="markdown-preview-status" role={markdownError?.key === markdownKey ? 'alert' : 'status'}>
-          <span>
-            {markdownError?.key === markdownKey
-              ? markdownError.message
-              : 'Preparing rendered view… Source remains available below.'}
-          </span>
-          {markdownError?.key === markdownKey && (
-            <button onClick={() => setMarkdownAttempt((n) => n + 1)}>Retry</button>
+            </div>
           )}
-          <button onClick={() => openMarkdownSource()}>Use source</button>
-        </div>
-      )}
-      {showingPreview && (
-        <MarkdownReviewPreview
-          key={markdownKey}
-          review={renderedMarkdown}
-          revealLocation={previewJump.current}
-          showChanges={markdownView.changes}
-          onChanges={(changes) => changeMarkdownView({ changes })}
-          onSource={openMarkdownSource}
-          onAsk={ask}
-          canComment={!commit && comments.writable && !contents?.lfs}
-          annotations={annotations.map((annotation) => ({
-            ...annotation,
-            content: comments.renderAnnotation(annotation),
-          }))}
-        />
-      )}
-      {!showingPreview && (
-        <div ref={code} className="changes-code">
-          <ReviewSelectionActions containerRef={code} resetKey={activeKey} onAsk={ask} />
-          {preview && !(contextLines > 3 && files) && (
-            <FileDiff
-              key={activeKey}
-              fileDiff={preview}
-              options={options}
-              lineAnnotations={annotations}
-              renderAnnotation={comments.renderAnnotation}
-              style={
-                {
-                  '--diffs-font-family': 'var(--font-mono)',
-                  '--diffs-font-size': 'var(--type-code)',
-                  '--diffs-line-height': 'var(--leading-code)',
-                } as CSSProperties
-              }
+          {lfsSides.length > 0 && (
+            <LfsDownload
+              pointers={lfsSides.map((side) => side.pointer)}
+              busy={lfsDownload?.key === activeKey && lfsDownload.busy}
+              error={lfsDownload?.key === activeKey ? lfsDownload.error : undefined}
+              onDownload={() => void downloadLfs()}
             />
           )}
-          {files && (!preview || contextLines > 3) && (
-            <MultiFileDiff
-              key={activeKey}
-              {...files}
-              options={options}
-              lineAnnotations={annotations}
-              renderAnnotation={comments.renderAnnotation}
-              style={
-                {
-                  '--diffs-font-family': 'var(--font-mono)',
-                  '--diffs-font-size': 'var(--type-code)',
-                  '--diffs-line-height': 'var(--leading-code)',
-                } as CSSProperties
-              }
+          {contents?.lfs && files && (
+            <p className="changes-notice">
+              Downloaded Git LFS contents. GitHub line comments refer to the pointer file; use the file discussion for
+              this resource.
+            </p>
+          )}
+          {wantsPreview && !renderedMarkdown && !lfsSides.length && (
+            <div className="markdown-preview-status" role={markdownError?.key === markdownKey ? 'alert' : 'status'}>
+              <span>
+                {markdownError?.key === markdownKey
+                  ? markdownError.message
+                  : 'Preparing rendered view… Source remains available below.'}
+              </span>
+              {markdownError?.key === markdownKey && (
+                <button onClick={() => setMarkdownAttempt((n) => n + 1)}>Retry</button>
+              )}
+              <button onClick={() => openMarkdownSource()}>Use source</button>
+            </div>
+          )}
+          {showingPreview && (
+            <MarkdownReviewPreview
+              key={markdownKey}
+              review={renderedMarkdown}
+              revealLocation={previewJump.current}
+              showChanges={markdownView.changes}
+              onChanges={(changes) => changeMarkdownView({ changes })}
+              onSource={openMarkdownSource}
+              onAsk={ask}
+              canComment={!commit && comments.writable && !contents?.lfs}
+              annotations={annotations.map((annotation) => ({
+                ...annotation,
+                content: comments.renderAnnotation(annotation),
+              }))}
             />
           )}
-          {contents && !lfsSides.length && (contents.before.kind === 'image' || contents.after.kind === 'image') && (
-            <ReviewImageDiff
-              enabled
-              filePath={entry.file.path}
-              comparison={{ before: imageSide(true), after: imageSide(false) }}
-            />
+          {!showingPreview && (
+            <div ref={code} className="changes-code">
+              <ReviewSelectionActions containerRef={code} resetKey={activeKey} onAsk={ask} />
+              {preview && !unchangedMove && !(contextLines > 3 && files) && (
+                <FileDiff
+                  key={activeKey}
+                  fileDiff={preview}
+                  options={options}
+                  lineAnnotations={annotations}
+                  renderAnnotation={comments.renderAnnotation}
+                  style={
+                    {
+                      '--diffs-font-family': 'var(--font-mono)',
+                      '--diffs-font-size': 'var(--type-code)',
+                      '--diffs-line-height': 'var(--leading-code)',
+                    } as CSSProperties
+                  }
+                />
+              )}
+              {files && !unchangedMove && (!preview || contextLines > 3) && (
+                <MultiFileDiff
+                  key={activeKey}
+                  {...files}
+                  options={options}
+                  lineAnnotations={annotations}
+                  renderAnnotation={comments.renderAnnotation}
+                  style={
+                    {
+                      '--diffs-font-family': 'var(--font-mono)',
+                      '--diffs-font-size': 'var(--type-code)',
+                      '--diffs-line-height': 'var(--leading-code)',
+                    } as CSSProperties
+                  }
+                />
+              )}
+              {unchangedMove && contents?.after.kind === 'text' && (
+                <File
+                  file={{ name: entry.file.path, contents: contents.after.content }}
+                  lineAnnotations={annotations
+                    .filter((a) => a.metadata.drafts.length > 0 || a.metadata.composer)
+                    .map((a) => ({ ...a, metadata: { ...a.metadata, threads: [] } }))}
+                  renderAnnotation={(annotation) => comments.renderAnnotation({ ...annotation, side: 'additions' })}
+                  options={{
+                    theme: options.theme,
+                    themeType: options.themeType,
+                    disableFileHeader: true,
+                    disableLineNumbers: options.disableLineNumbers,
+                    overflow: options.overflow,
+                    enableLineSelection: true,
+                    onLineSelected: setRange,
+                    enableGutterUtility: comments.writable && !contents.lfs,
+                    onGutterUtilityClick: contents.lfs ? undefined : comments.begin,
+                    onLineNumberClick: contents.lfs
+                      ? undefined
+                      : (event) =>
+                          comments.begin({ start: event.lineNumber, end: event.lineNumber, side: 'additions' }),
+                    onPostRender: revealSource,
+                  }}
+                  style={
+                    {
+                      '--diffs-font-family': 'var(--font-mono)',
+                      '--diffs-font-size': 'var(--type-code)',
+                      '--diffs-line-height': 'var(--leading-code)',
+                    } as CSSProperties
+                  }
+                />
+              )}
+              {contents &&
+                !lfsSides.length &&
+                (contents.before.kind === 'image' || contents.after.kind === 'image') && (
+                  <ReviewImageDiff
+                    enabled
+                    filePath={entry.file.path}
+                    comparison={{ before: imageSide(true), after: imageSide(false) }}
+                  />
+                )}
+            </div>
           )}
-        </div>
+        </>
       )}
       {combinedDiscussion?.failures.map((failure) => (
         <p className="changes-notice" role="status" key={failure.url}>
@@ -676,11 +771,11 @@ export function PrFileInspection({
           <button onClick={() => void refreshThreads(entry.snapshot.url)}>Retry</button>
         </p>
       )}
-      {!!other.length && (
+      {!!visibleDiscussions.length && (
         <section className="changes-other-threads">
-          <h3>Other discussions on this file</h3>
-          <p>These comments refer to a different revision or no longer have an inline location.</p>
-          {other.map(comments.renderThread)}
+          <h3>{unchangedMove ? 'Discussions on this file' : 'Other discussions on this file'}</h3>
+          {!unchangedMove && <p>These comments refer to a different revision or no longer have an inline location.</p>}
+          {visibleDiscussions.map(comments.renderThread)}
         </section>
       )}
     </div>

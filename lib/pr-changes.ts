@@ -69,3 +69,14 @@ export interface FileChatRequest extends PrFileRequest {
 export const changesRevision = (value: Pick<PrMetadata, 'baseSha' | 'headSha'>) => `${value.baseSha}:${value.headSha}`;
 export const fileRevisionKey = (url: string, path: string, baseSha: string, headSha: string) =>
   JSON.stringify([url, path, baseSha, headSha]);
+
+/** Zero changed lines alone is not proof: binary replacements also report zero. */
+export function isUnchangedMove(file: PrChangeFile, contents?: PrFileContents): boolean {
+  if (file.status !== 'renamed' || !file.previousPath || file.additions || file.deletions || !contents) return false;
+  const { before, after } = contents;
+  if (before.kind === 'text' && after.kind === 'text') return before.content === after.content;
+  if (before.kind === 'image' && after.kind === 'image') return before.dataUrl === after.dataUrl;
+  if (before.kind === 'lfs' && after.kind === 'lfs')
+    return before.pointer.oid === after.pointer.oid && before.pointer.size === after.pointer.size;
+  return false;
+}
