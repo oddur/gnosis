@@ -41,6 +41,8 @@ These checks improve quality but do not prove source accuracy or educational val
 
 ## Evaluate and compare
 
+Retained example screenshots live in `docs/images/svg-explanations/`. Browser checks write disposable captures under the ignored `.impeccable/review/` directory.
+
 ```sh
 npm run eval:illustrations -- --live
 npm run diagrams:mechanisms

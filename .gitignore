@@ -47,3 +47,7 @@ yarn-error.log*
 /.agents/
 /.claude/
 /skills-lock.json
+
+# Generated design review artifacts
+/.impeccable/review/
+/.impeccable/critique/

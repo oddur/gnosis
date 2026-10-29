@@ -28,10 +28,10 @@ The earlier [MechanismDiagram](../../components/MechanismDiagram.tsx) player rem
 
 This documentation pass inspected the current implementation, guide, and these fresh captures:
 
-- [Ordered batching, light, 1000px](../review/svg-illustrations/queue-light-1000-figure.png): two input cases show the queue-order constraint and oversized-first-item exception beside source.
-- [Atomic version check, light, 1280px](../review/svg-illustrations/version-light-1280-figure.png): two independent rows compare a rejected stale write with a successful update.
-- [Array rotation, dark, 1280px](../review/svg-illustrations/rotation-dark-1280-figure.png): successive array states show reversal ranges and preserve group identity with shapes.
-- [Authored playback fixture, next step](../review/svg-illustrations/motion-next.png): a stable object appears at position two with scenario selection and shared playback controls.
+- [Ordered batching, light, 1000px](../../docs/images/svg-explanations/queue-light-1000-figure.png): two input cases show the queue-order constraint and oversized-first-item exception beside source.
+- [Atomic version check, light, 1280px](../../docs/images/svg-explanations/version-light-1280-figure.png): two independent rows compare a rejected stale write with a successful update.
+- [Array rotation, dark, 1280px](../../docs/images/svg-explanations/rotation-dark-1280-figure.png): successive array states show reversal ranges and preserve group identity with shapes.
+- [Authored playback fixture, next step](../../docs/images/svg-explanations/motion-next.png): a stable object appears at position two with scenario selection and shared playback controls.
 
 The first model outputs chose static compositions. The newer generation adds explicit animation briefs and rendered educational review. After user feedback, batching now uses separately selectable cases with proportional weights and a projected rejected addition. The stale-write example is a static comparison with directly aligned expected and stored versions; its earlier playback added no useful information. The user-approved rotation is unchanged. Evaluation artifacts and their contact sheets are in `docs/research/generated-illustrations/`. The older static outputs remain in its `static-baseline/` directory. The independently authored motion fixture covers playback, backward navigation, scenario switching, expansion, and reduced motion in browser checks.
 
