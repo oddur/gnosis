@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-import fs from 'node:fs';
+import { text } from 'node:stream/consumers';
 import process from 'node:process';
 
 const args = process.argv.slice(2);
 const result = JSON.stringify({
   testEnvironment: { override: process.env.GNOSIS_TEST_OVERRIDE ?? null, inherited: process.env.GNOSIS_TEST_INHERITED ?? null, onlyClaude: process.env.GNOSIS_TEST_CLAUDE ?? null, onlyCodex: process.env.GNOSIS_TEST_CODEX ?? null },
   args,
-  input: fs.readFileSync(0, 'utf8'),
+  input: await text(process.stdin),
   effortOverride: process.env.CLAUDE_CODE_EFFORT_LEVEL ?? null,
   thinkingBudget: process.env.MAX_THINKING_TOKENS ?? null,
 });
