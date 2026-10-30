@@ -1,3 +1,4 @@
+import { initializeDiffHighlighter } from '../lib/diff-highlighter';
 import { initializeReviewState } from '../lib/renderer-review-state';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
@@ -28,7 +29,15 @@ if (!container) throw new Error('No #root element found');
 
 const root = createRoot(container);
 async function start() {
-  try { await initializeReviewState(); root.render(<App />); }
+  try {
+    const [, preferences] = await Promise.all([
+      initializeReviewState(),
+      // Settings recovery remains available if preferences cannot be read.
+      window.electronAPI.loadPreferences().catch(() => undefined),
+    ]);
+    initializeDiffHighlighter(preferences);
+    root.render(<App />);
+  }
   catch (error) {
     root.render(<main role="alert" className="p-8 max-w-xl"><h1>Could not load saved review progress</h1>
       <p className="my-4">Your existing drafts have been kept. {error instanceof Error ? error.message : String(error)}</p>

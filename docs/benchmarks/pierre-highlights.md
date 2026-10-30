@@ -4,11 +4,15 @@ Highlights substantially reduces synchronous diff rendering time on the tested T
 
 ## Try it
 
+Open **Settings → Appearance → Syntax highlighting**. Choose **Highlights — faster rendering** or **Shiki — broader language support**. The choice saves automatically. Quit and reopen Gnosis to apply it; changing the setting leaves current reviews and background work running.
+
+Shiki is the default for existing installs. A saved choice takes precedence over the developer trial flag:
+
 ```sh
 VITE_GNOSIS_HIGHLIGHTER=highlights npm start
 ```
 
-Without this variable, Gnosis keeps `shiki-js`. The selection is fixed for the renderer lifetime. It applies to Changes, Commits, explanation diffs, unchanged moved files, and downloaded LFS text. Markdown code blocks and saved Shiki HTML remain on their existing paths.
+Without a saved choice or this variable, Gnosis keeps `shiki-js`. The selection is fixed for the renderer lifetime. It applies to Changes, Commits, explanation diffs, unchanged moved files, and downloaded LFS text. Markdown code blocks and saved Shiki HTML remain on their existing paths.
 
 ## Measurements
 
@@ -70,9 +74,10 @@ Pierre allows only one highlighter backend per thread. A safe per-language Shiki
 
 ## Verification
 
-- 31 targeted unit tests: contrast, Highlights source preservation/fallback, and review diffs.
+- 33 targeted unit tests: contrast, Highlights source preservation/fallback, review diffs, and saved-choice precedence.
 - TypeScript and ESLint for changed code.
 - Production renderer build with Highlights enabled.
+- Settings browser checks: persistence, startup selection in both directions, deferred switching, save failure/retry, and light/dark narrow layout.
 - Seven browser suites with Highlights enabled: Changes, Commits, Explanation, moved files, LFS, context controls, and split diff/comments/selection.
 
 ## Reproduce
