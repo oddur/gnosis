@@ -1,3 +1,4 @@
+import { watchGitHub } from '../lib/watch-github';
 import { useEffect, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { PrChangesView, rememberChangesFile } from './PrChangesView';
@@ -135,6 +136,13 @@ export function StackChangesView({
         if (!stopped) setCheckError('Could not check for new commits. Showing the saved comparison.');
       }
     };
+    const stop = watchGitHub({ kind: 'metadata', priority: 'active', targets: members.map(source => ({ url: source.metadata.url })) }, update => {
+      if (update.kind !== 'metadata') return;
+      const source = members.find(source => source.metadata.url === update.url);
+      if (source && (update.value.headSha !== source.metadata.headSha || update.value.baseSha !== source.metadata.baseSha)) setNewer(true);
+      setCheckError('');
+    }, () => setCheckError('Could not check for new commits. Showing the saved version; retrying automatically.'));
+    if (stop) return stop;
     void check();
     const timer = setInterval(() => void check(), 60_000);
     return () => {

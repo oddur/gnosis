@@ -1,3 +1,5 @@
+import { mergePrStatus } from '../../lib/merge-pr-status';
+import { watchGitHub } from '../../lib/watch-github';
 import { useOnboarding } from '../../lib/use-onboarding';
 import { OnboardingSetup } from '../../components/OnboardingSetup';
 import { GuidedTour } from '../../components/GuidedTour';
@@ -385,9 +387,13 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
     : '';
 
   const queueRefresh = useRef<Promise<void> | null>(null);
+  const pendingLocalRefresh = useRef(false);
   const refreshVersion = useRef(0);
-  const refresh = useCallback((force = false): Promise<void> => {
-    if (queueRefresh.current && !force) return queueRefresh.current;
+  const refresh = useCallback((force = false, cachedOnly = false): Promise<void> => {
+    if (queueRefresh.current && !force) {
+      if (cachedOnly) pendingLocalRefresh.current = true;
+      return queueRefresh.current;
+    }
     const requestVersion = ++refreshVersion.current;
     const current = () => alive.current && requestVersion === refreshVersion.current;
     const request = (async () => {
@@ -418,7 +424,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       // a visible queue; fetching both would transfer and render it twice.
       if (!filtersLoaded.current) await window.electronAPI.workbenchSnapshot().then(next => { applyQueue(next); if (current() && next.items.length) setLoading(false); }).catch(() => {});
       await Promise.all([
-        window.electronAPI.workbenchQueue(force).then(applyQueue),
+        (cachedOnly ? window.electronAPI.workbenchSnapshot() : window.electronAPI.workbenchQueue(force)).then(applyQueue),
         window.electronAPI.listReviews().then((entries) => {
           if (current()) setHistory(entries);
         }),
@@ -435,7 +441,13 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       }
     }
     })().finally(() => {
-      if (queueRefresh.current === request) queueRefresh.current = null;
+      if (queueRefresh.current === request) {
+        queueRefresh.current = null;
+        if (pendingLocalRefresh.current && alive.current) {
+          pendingLocalRefresh.current = false;
+          void refresh(false, true);
+        }
+      }
     });
     queueRefresh.current = request;
     return request;
@@ -470,7 +482,10 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
     alive.current = true;
     void initialize();
     const poll = () => { if (initialized.current && document.visibilityState !== 'hidden') void refresh(); };
-    const timer = setInterval(poll, 4000);
+    const stop = window.electronAPI.githubSyncVersion === 1 ? window.electronAPI.onWorkbenchChanged?.(() => {
+      if (initialized.current) void refresh(false, true);
+    }) : undefined;
+    const timer = stop ? undefined : setInterval(poll, 4000);
     document.addEventListener('visibilitychange', poll);
     const afterPrAction = () => { void refresh(); setStatusAttempt(n => n + 1); };
     window.addEventListener('gnosis-pr-action-completed', afterPrAction);
@@ -479,6 +494,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       refreshVersion.current++;
       queueRefresh.current = null;
       clearInterval(timer);
+      stop?.();
       document.removeEventListener('visibilitychange', poll);
       window.removeEventListener('gnosis-pr-action-completed', afterPrAction);
     };
@@ -532,7 +548,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
     const refreshStatuses = () => {
       if (statusSubject && !refreshingStatus && document.visibilityState !== 'hidden') {
         refreshingStatus = true;
-        setStatusRefreshing(true);
+        if (force || !statusSubject.members.every(member => cachedStatuses.current.has(cacheKey(member.url, member.headSha)))) setStatusRefreshing(true);
         const refreshNow = force;
         force = false;
         void Promise.allSettled(
@@ -560,7 +576,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
             setStatuses((previous) => ({
               ...previous,
               ...Object.fromEntries(
-                results.flatMap((r) => (r.status === 'fulfilled' ? [[r.value.url, r.value.status]] : []))
+                results.flatMap((r) => (r.status === 'fulfilled' ? [[r.value.url, mergePrStatus(previous[r.value.url], r.value.status)]] : []))
               ),
             }));
           }
@@ -568,7 +584,8 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       }
     };
     refreshStatuses();
-    const timer = setInterval(refreshStatuses, 120000);
+    const stopMetadata = statusSubject && watchGitHub({ kind: 'metadata', priority: 'active', targets: statusSubject.members.map(member => ({ url: member.url })) }, () => refreshStatuses());
+    const timer = stopMetadata ? undefined : setInterval(refreshStatuses, 120000);
     document.addEventListener('visibilitychange', refreshStatuses);
     let refreshingSignals = false;
     const refreshSignals = async () => {
@@ -594,11 +611,30 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       } catch { /* Keep the last checked status; the shared client owns backoff. */ }
       finally { refreshingSignals = false; }
     };
-    const signalTimer = setInterval(() => void refreshSignals(), 30000);
+    const stopSignals = statusSubject && watchGitHub({ kind: 'signals', priority: 'active', targets: statusSubject.members.map(member => ({ url: member.url, headSha: member.headSha })) }, update => {
+      if (update.kind !== 'signals' || !auth?.login) return;
+      const signals = update.value;
+      publishQueueSignals(auth.login, [signals]);
+      setStatuses(previous => {
+        const status = previous[signals.url];
+        return status ? { ...previous, [signals.url]: mergePrStatus(status, { ...status, signals, ciConclusion: signals.checks.state }) } : previous;
+      });
+    });
+    const stopChecks = statusSubject && watchGitHub({ kind: 'checks', priority: 'active', targets: statusSubject.members.map(member => ({ url: member.url, headSha: member.headSha })) }, update => {
+      if (update.kind !== 'checks') return;
+      setStatuses(previous => {
+        const status = previous[update.url];
+        return status ? { ...previous, [update.url]: mergePrStatus(status, { ...status, checkSnapshot: update.value, ciChecks: update.value.checks, ciError: undefined }) } : previous;
+      });
+    });
+    const signalTimer = stopSignals ? undefined : setInterval(() => void refreshSignals(), 30000);
     return () => {
       cancelled = true;
       clearInterval(timer);
       clearInterval(signalTimer);
+      if (stopMetadata) stopMetadata();
+      if (stopSignals) stopSignals();
+      if (stopChecks) stopChecks();
       document.removeEventListener('visibilitychange', refreshStatuses);
     };
   }, [

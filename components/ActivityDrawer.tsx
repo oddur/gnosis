@@ -131,12 +131,16 @@ export function ActivityDrawer({
   useEffect(() => {
     alive.current = true;
     void refresh();
-    const timer = setInterval(() => void refresh(), 2000);
+    const stopPreload = inspectionData.subscribe(() => setPreloadTask(inspectionData.activity()));
+    const stop = window.electronAPI.githubSyncVersion === 1 ? window.electronAPI.onActivityChanged?.(() => void refresh()) : undefined;
+    const timer = setInterval(() => void refresh(), stop ? 60_000 : 2000);
     return () => {
       alive.current = false;
       refreshVersion.current++;
       refreshRequest.current = null;
       clearInterval(timer);
+      stop?.();
+      stopPreload();
     };
   }, [refresh]);
   const close = () => {

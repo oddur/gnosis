@@ -95,7 +95,10 @@ void app.whenReady().then(async () => {
     );
     await toggleExplanations();
     await wait("document.querySelectorAll('.inline-code-explanation').length===1");
-    assert.equal(await js('document.body.dataset.discussionPr'), 'https://github.com/klang/engine/pull/121');
+    assert.ok(
+      await js("JSON.parse(document.body.dataset.discussionPrs ?? '[]').includes('https://github.com/klang/engine/pull/121')"),
+      'The displayed file source is fetched even when other stack discussions refresh too'
+    );
     assert.equal(await js("document.querySelectorAll('.review-diff .github-thread').length"), 3);
     assert.equal(await js("document.querySelectorAll('.github-unplaced-threads .github-thread').length"), 2);
     assert.equal(await js("document.querySelectorAll('.review-diff .github-thread[open]').length"), 2);

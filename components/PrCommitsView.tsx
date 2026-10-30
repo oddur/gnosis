@@ -1,3 +1,4 @@
+import { watchGitHub } from '../lib/watch-github';
 import { loadInspectionBatch, inspectionFailure, type InspectionFailure } from '../lib/inspection-batch';
 import { InspectionFailureNotice } from './InspectionFailureNotice';
 import { PrBadge, RepositoryBadge, CommitBadge } from './EntityBadge';
@@ -306,6 +307,12 @@ export function PrCommitsView({
         /* Explicit Update commits reports errors without interrupting a cached comparison. */
       }
     };
+    const stop = watchGitHub({ kind: 'metadata', priority: 'active', targets: lists.map(list => ({ url: list.url })) }, update => {
+      if (update.kind !== 'metadata') return;
+      const list = lists.find(list => list.url === update.url);
+      if (list && (update.value.headSha !== list.metadata.headSha || update.value.baseSha !== list.metadata.baseSha)) setNewer(true);
+    });
+    if (stop) return stop;
     void check();
     const timer = setInterval(() => void check(), 60_000);
     return () => {

@@ -1,9 +1,10 @@
+import { watchGitHub } from './watch-github';
 import { useEffect, useRef, useState } from 'react';
 import type { ReviewSubject } from './workbench';
 import type { PrStatus } from './types';
 import type { PrChecks } from './pr-checks';
 
-/** The active overview owns one poller; cache reads never trigger network requests. */
+/** Native views share a backend subscription; local cache reads never trigger network requests. */
 export function usePrChecks(
   subject: ReviewSubject,
   account: string | null,
@@ -71,7 +72,45 @@ export function usePrChecks(
       loading = false;
       if (!cachedOnly) update((current) => ({ ...current, busy: false }));
     };
-    void load(true).then(() => load(false, force));
+    const stop = watchGitHub(
+      {
+        kind: 'checks',
+        priority: 'active',
+        targets: subject.members.map((member) => ({ url: member.url, headSha: member.headSha })),
+      },
+      (value) => {
+        if (value.kind !== 'checks') return;
+        update((current) => ({
+          ...current,
+          busy: false,
+          values: { ...current.values, [value.url]: value.value },
+          errors: { ...current.errors, [value.url]: '' },
+        }));
+      },
+      (failure) =>
+        update((current) => ({
+          ...current,
+          busy: false,
+          errors: { ...current.errors, [failure.url]: failure.message },
+        }))
+    );
+    if (stop)
+      update((current) => ({
+        ...current,
+        busy: subject.members.some((member) => !current.values[member.url] && !current.errors[member.url]),
+      }));
+    void load(true).then(() => {
+      if (!stop || force) return load(false, force);
+      update((current) => ({
+        ...current,
+        busy: subject.members.some((member) => !current.values[member.url] && !current.errors[member.url]),
+      }));
+    });
+    if (stop)
+      return () => {
+        live = false;
+        stop();
+      };
     const refresh = () => {
       void load(false);
     };

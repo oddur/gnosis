@@ -1,3 +1,4 @@
+import { watchGitHub } from '../lib/watch-github';
 import { stackFileDiscussions } from '../lib/stack-changes';
 import { loadInspectionBatch, inspectionFailure, type InspectionFailure } from '../lib/inspection-batch';
 import { InspectionFailureNotice } from './InspectionFailureNotice';
@@ -222,6 +223,13 @@ export function PrChangesView({
         if (!cancelled) setCheckError('Could not check for new commits. Showing the saved version.');
       }
     };
+    const stop = watchGitHub({ kind: 'metadata', priority: 'active', targets: snapshots.map(snapshot => ({ url: snapshot.url })) }, update => {
+      if (update.kind !== 'metadata') return;
+      const snapshot = snapshots.find(snapshot => snapshot.url === update.url);
+      if (snapshot && changesRevision(update.value) !== changesRevision(snapshot.metadata)) setNewer(true);
+      setCheckError('');
+    }, () => setCheckError('Could not check for new commits. Showing the saved version; retrying automatically.'));
+    if (stop) return stop;
     void check();
     const timer = setInterval(() => void check(), 60_000);
     return () => {

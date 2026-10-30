@@ -188,3 +188,11 @@ void test('active PR statuses refresh sooner and share their result with visible
   await h.get(h.client, [request]);
   assert.equal(h.calls(), 2, 'The queue reuses the active PR refresh');
 });
+
+void test('a head mismatch signals a targeted metadata refresh without publishing checks for the wrong revision', async () => {
+  const h = harness();
+  const changed: string[] = [];
+  const read = createQueueSignalsService(() => 1_000_000, (_client, url, sha) => changed.push(`${url}@${sha}`));
+  assert.deepEqual(await read(h.client, [{ ...request, headSha: 'oldsha' }]), []);
+  assert.deepEqual(changed, [`${request.url}@abc123`]);
+});

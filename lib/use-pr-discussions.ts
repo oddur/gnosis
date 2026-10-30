@@ -1,5 +1,7 @@
+import { watchGitHub } from './watch-github';
 import {
   readDiscussion,
+  receiveDiscussion,
   refreshDiscussion,
   peekDiscussion,
   subscribeDiscussions,
@@ -41,6 +43,9 @@ export function usePrDiscussions(urls: string[]) {
   }
   useEffect(() => {
     alive.current = true;
+    const stop = watchGitHub({ kind: 'discussion', priority: 'active', targets: urls.map(url => ({ url })) }, update => {
+      if (update.kind === 'discussion') receiveDiscussion(update.url, update.value);
+    }, failure => setDiscussions(old => ({ ...old, [failure.url]: { ...old[failure.url], error: 'Could not update comments. Showing saved comments; retrying automatically.' } })));
     const controller = new AbortController();
     void (async () => {
       for (const url of urls) {
@@ -49,6 +54,7 @@ export function usePrDiscussions(urls: string[]) {
       }
     })();
     return () => {
+      stop?.();
       controller.abort();
       alive.current = false;
       versions.current.clear();

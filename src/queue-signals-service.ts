@@ -74,7 +74,7 @@ export function cachedQueueSignals(client: Octokit, requests: QueueSignalRequest
   return requests.flatMap(request => cache?.get(`queue-signals:v3:${queueSignalKey(request)}`, isSignals)?.value ?? []);
 }
 /** Visible-row reads, batched across repositories, with credential-scoped snapshots and backoff. */
-export function createQueueSignalsService(now = Date.now) {
+export function createQueueSignalsService(now = Date.now, revisionChanged?: (client: Octokit, url: string, headSha: string) => void) {
   const accounts = new WeakMap<Octokit, { retryAt: number; pending: Map<string, GitHubWork<QueueSignals[]>> }>();
   return async (
     client: Octokit,
@@ -144,7 +144,8 @@ export function createQueueSignalsService(now = Date.now) {
         for (const [i, { request }] of missing.entries()) {
           const pr = data[`p${i}`]?.pullRequest;
           // Never attach a green check from a different revision to the displayed PR.
-          if (!pr || pr.headRefOid !== request.headSha) continue;
+          if (!pr) continue;
+          if (pr.headRefOid !== request.headSha) { revisionChanged?.(client, request.url, pr.headRefOid); continue; }
           const rollup = pr.commits.nodes[0]?.commit.statusCheckRollup;
           const counts = rollup
             ? [...rollup.contexts.checkRunCountsByState, ...rollup.contexts.statusContextCountsByState]

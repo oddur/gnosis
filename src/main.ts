@@ -1,3 +1,6 @@
+import { parseGitHubSyncInterest } from '../lib/github-sync';
+import { createGitHubSyncService } from './github-sync-service';
+import type { GitHubSyncInterest, GitHubSyncUpdate, GitHubSyncKind, GitHubSyncFailure } from '../lib/github-sync';
 import { createStackChangesService } from './stack-changes-service';
 import { approximateBytes } from '../lib/byte-cache';
 import type { PreparedInventories } from '../lib/pr-inspection-cache';
@@ -50,12 +53,12 @@ import type { ActivityAction } from '../lib/activity';
 import { createWorkbenchService } from './workbench-service';
 import { StackDiffSource } from '../lib/stack-source';
 import { snapshot, fingerprint, type ReviewSubject, type ReviewSnapshot, type GroupingOverride } from '../lib/workbench';
-import { app, autoUpdater, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell, session } from 'electron';
+import { app, autoUpdater, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell, session, net, powerMonitor } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import crypto from 'crypto';
-import { getGitHubClient, githubClients, fetchGitHubLogin, githubRateLimit } from '../lib/github-client';
+import { getGitHubClient, githubClients, githubCacheFor, fetchGitHubLogin, githubRateLimit } from '../lib/github-client';
 import { createGitHubWebAuth } from './github-web-auth';
 import { createGitHubAuthService } from './github-auth-service';
 import { checkGitHubPrAccess, githubAccessMessage } from '../lib/github-auth';
@@ -841,7 +844,7 @@ function backfillSummaries(): void {
 
 // ── Background generation tracking ──────────────────────────────
 
-const activities = createActivityService();
+const activities = createActivityService(Date.now, () => notifyLocalChange('activity-changed'));
 const activeGenerations = new Map<string, { abortController?: AbortController; prUrl?: string }>();
 
 /** Cancel any in-flight generation for the same PR URL. */
@@ -884,6 +887,7 @@ function createPendingHistoryEntry(
   index.unshift(entry);
   fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
   rebuildTrayMenu();
+  notifyLocalChange('workbench-changed');
 }
 
 function updateHistoryEntry(id: string, updates: Partial<ReviewHistoryEntry>): void {
@@ -893,6 +897,16 @@ function updateHistoryEntry(id: string, updates: Partial<ReviewHistoryEntry>): v
   index[idx] = { ...index[idx], ...updates };
   fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
   rebuildTrayMenu();
+  notifyLocalChange('workbench-changed');
+}
+
+const localChangeTimers = new Map<string, ReturnType<typeof setTimeout>>();
+function notifyLocalChange(channel: string) {
+  if (localChangeTimers.has(channel)) return;
+  localChangeTimers.set(channel, setTimeout(() => {
+    localChangeTimers.delete(channel);
+    broadcastToAllWindows(channel);
+  }, 150));
 }
 
 function broadcastToAllWindows(channel: string, ...args: unknown[]): void {
@@ -1301,6 +1315,7 @@ ipcMain.handle('mark-review-read', (_event, id: string) => {
   );
   fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
   rebuildTrayMenu();
+  notifyLocalChange('workbench-changed');
 });
 
 ipcMain.handle('delete-review', (_event, id: string) => {
@@ -1311,6 +1326,7 @@ ipcMain.handle('delete-review', (_event, id: string) => {
   const index = readReviewsIndex().filter((e) => e.id !== id);
   fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
   rebuildTrayMenu();
+  notifyLocalChange('workbench-changed');
 });
 
 ipcMain.handle('export-review', async (event, id: string): Promise<string | null> => {
@@ -1384,6 +1400,7 @@ ipcMain.handle('delete-all-reviews', () => {
   }
   fs.writeFileSync(getReviewsIndexPath(), JSON.stringify([], null, 2));
   rebuildTrayMenu();
+  notifyLocalChange('workbench-changed');
 });
 
 ipcMain.handle(
@@ -2271,6 +2288,7 @@ function formatMs(ms: number): string {
 }
 
 const workbench = createWorkbenchService({
+  changed: () => { notifyLocalChange('workbench-changed'); notifyLocalChange('activity-changed'); },
   storage: appData,
   signals: (client, requests) => getQueueSignals(client, requests),
   cachedSignals: requests => { const token = getResolvedToken(); return token ? cachedQueueSignals(getGitHubClient(token), requests) : []; },
@@ -2509,7 +2527,12 @@ ipcMain.handle('send-slide-chat', async (_event, req: SendSlideChatRequest) => {
 });
 
 const getGitHubProfile = createGitHubProfileService();
-const getQueueSignals = createQueueSignalsService();
+const signalRevisions = new WeakMap<ReturnType<typeof getGitHubClient>, Map<string, string>>();
+const getQueueSignals = createQueueSignalsService(Date.now, (client, url, headSha) => {
+  let revisions = signalRevisions.get(client);
+  if (!revisions) { revisions = new Map(); signalRevisions.set(client, revisions); }
+  revisions.set(url, headSha);
+});
 ipcMain.handle('get-queue-signals', async (_event, requests: QueueSignalRequest[], options?: QueueSignalOptions) => {
   const token = getResolvedToken();
   if (!token) return [];
@@ -2560,17 +2583,22 @@ handleInteractive('review-thread-action', async (_event, req: ReviewThreadAction
   const account = cachedLogin;
   const result = await reviewThreads.act(discussionClient(), req);
   if (account && req.action === 'reply') workbench.noteOwnReview(account, req.prUrl, 1);
+  refreshAfterGitHubWrite([req.prUrl], ['discussion', 'signals']);
   return result;
 });
 
-handleInteractive('review-comment-action', (_event, req: ReviewCommentAction) =>
-  reviewThreads.comment(discussionClient(), req));
+handleInteractive('review-comment-action', async (_event, req: ReviewCommentAction) => {
+  const result = await reviewThreads.comment(discussionClient(), req);
+  refreshAfterGitHubWrite([req.prUrl], ['discussion', 'signals']);
+  return result;
+});
 handleInteractive('create-review-comment', async (_event, req: CreateReviewCommentRequest) => {
   const client = discussionClient();
   const account = cachedLogin;
   await createReviewComment(client, req);
   if (account) workbench.noteOwnReview(account, req.prUrl, 1);
   reviewThreads.invalidate(client, req.prUrl);
+  refreshAfterGitHubWrite([req.prUrl]);
 });
 handleInteractive('submit-review', async (_event, req: SubmitReviewRequest) => {
   const client = discussionClient();
@@ -2578,6 +2606,7 @@ handleInteractive('submit-review', async (_event, req: SubmitReviewRequest) => {
   const result = await submitPrReview(client, req, loadPreferences().reviewSignature);
   if (account) workbench.noteOwnReview(account, req.prUrl, req.comments.length - result.droppedCommentCount, result.reviewUrl);
   reviewThreads.invalidate(client, req.prUrl);
+  refreshAfterGitHubWrite([req.prUrl]);
   return result;
 });
 
@@ -2589,6 +2618,8 @@ async function refreshActionTargets(client: ReturnType<typeof getGitHubClient>, 
     // Do not reconcile an old account's result into the newly signed-in account.
     if (client !== getGitHubClient(getResolvedToken())) return;
     workbench.updatePrMetadata(metadata, true);
+    publishGitHubUpdates([{ kind: 'metadata', url, value: metadata }]);
+    refreshAfterGitHubWrite([url]);
   }
 }
 const prMergeMonitor = createPrMergeMonitor({
@@ -2646,6 +2677,180 @@ ipcMain.handle('file-classifications', async (_event, request: PrFileRequest) =>
 const prChanges = createPrChangesService();
 const prCommits = createPrCommitsService();
 const stackChanges = createStackChangesService(prChanges);
+// Background synchronization is owned by Electron, never by a screen's render lifecycle.
+const syncSubscriptions = new Map<string, { owner: Electron.WebContents; id: string; token: string | null; interest: GitHubSyncInterest }>();
+const syncSignals = new Map<string, QueueSignals>();
+const syncMetadata = new Map<string, PrMetadata>();
+function sendSyncUpdates(updates: GitHubSyncUpdate[], failures: GitHubSyncFailure[] = []) {
+  const token = cachedToken;
+  for (const subscription of syncSubscriptions.values()) {
+    if (subscription.token !== token || subscription.owner.isDestroyed()) continue;
+    const matches = (update: {kind: GitHubSyncKind; url: string}) => subscription.interest.kind === update.kind && subscription.interest.targets.some(target => target.url === update.url);
+    const relevant = updates.filter(matches), errors = failures.filter(matches);
+    if (relevant.length || errors.length) subscription.owner.send('github-sync', {
+      account: cachedLogin, subscriptionId: subscription.id, updates: relevant, failures: errors,
+    });
+  }
+}
+let syncCredential: string | null = null;
+let suspended = false;
+const syncEnabled = () => !suspended && net.isOnline() && BrowserWindow.getAllWindows().some(win => win.isVisible() && !win.isMinimized());
+function publishGitHubUpdates(updates: GitHubSyncUpdate[]) {
+  if (!cachedLogin) return;
+  for (const update of updates) {
+    if (update.kind === 'metadata') {
+      const previous = syncMetadata.get(update.url);
+      if (previous && (previous.headSha !== update.value.headSha || previous.baseSha !== update.value.baseSha)) {
+        githubSync.invalidate([update.url], ['signals', 'checks', 'discussion']);
+      }
+      syncMetadata.delete(update.url);
+      syncMetadata.set(update.url, update.value);
+      while (syncMetadata.size > 500) syncMetadata.delete(syncMetadata.keys().next().value as string);
+      workbench.updatePrMetadata(update.value);
+    } else if (update.kind === 'signals') {
+      const previous = syncSignals.get(update.url);
+      syncSignals.delete(update.url);
+      syncSignals.set(update.url, update.value);
+      while (syncSignals.size > 500) syncSignals.delete(syncSignals.keys().next().value as string);
+      if (previous && JSON.stringify(previous.activity) !== JSON.stringify(update.value.activity)) {
+        reviewThreads.invalidate(getGitHubClient(cachedToken), update.url);
+        githubSync.invalidate([update.url], ['discussion']);
+      }
+      if (previous && JSON.stringify(previous.checks) !== JSON.stringify(update.value.checks)) {
+        githubCacheFor(getGitHubClient(cachedToken))?.delete(`pr-checks:v1:${update.url}@${update.value.headSha}`);
+        githubSync.invalidate([update.url], ['checks']);
+      }
+      if (workbench.observeReadSignals(cachedLogin, [update.value])) notifyLocalChange('workbench-changed');
+    }
+  }
+  sendSyncUpdates(updates);
+}
+const githubSync = createGitHubSyncService({
+  account: () => cachedToken,
+  enabled: syncEnabled,
+  backoff: kind => {
+    const token = cachedToken;
+    const resources = kind === 'metadata' ? ['core'] : kind === 'checks' ? ['core', 'graphql'] : ['graphql'];
+    return token ? githubClients.backoff(token, true, resources)?.retryAt ?? 0 : 0;
+  },
+  read: async (kind, targets, priority) => {
+    const token = cachedToken;
+    const client = getGitHubClient(token);
+    const values = await withGitHubPriority(priority === 'active' ? 'foreground' : 'background', async (): Promise<GitHubSyncUpdate[]> => {
+      if (kind === 'signals') {
+        const requests = targets.flatMap(target => {
+          const headSha = target.headSha ?? syncMetadata.get(target.url)?.headSha;
+          return headSha ? [{ url: target.url, headSha }] : [];
+        });
+        const values = await getQueueSignals(client, requests, { active: priority === 'active' });
+        // A changed head intentionally produces no signals for the old SHA. Refresh just that PR.
+        for (const request of requests) if (signalRevisions.get(client)?.has(request.url)) {
+          signalRevisions.get(client)?.delete(request.url);
+          const { owner, repo, pullNumber } = parsePrUrl(request.url);
+          const metadata = await getPrMetadata(client, owner, repo, pullNumber, true);
+          if (token === cachedToken) publishGitHubUpdates([{ kind: 'metadata', url: request.url, value: metadata }]);
+        }
+        return values.map(value => ({ kind, url: value.url, value }));
+      }
+      const results: GitHubSyncUpdate[] = [];
+      for (const target of targets) {
+        if (kind === 'metadata') {
+          const { owner, repo, pullNumber } = parsePrUrl(target.url);
+          const value = await getPrMetadata(client, owner, repo, pullNumber, true);
+          results.push({ kind, url: target.url, value });
+        } else if (kind === 'checks') {
+          const headSha = target.headSha ?? syncMetadata.get(target.url)?.headSha;
+          if (headSha) {
+            const value = await readPrChecks(client, { url: target.url, headSha });
+            if (value) results.push({ kind, url: target.url, value });
+          }
+        } else results.push({ kind, url: target.url, value: await reviewThreads.list(client, target.url) });
+      }
+      return results;
+    });
+    return token === cachedToken ? values : [];
+  },
+  publish: publishGitHubUpdates,
+  failed: failures => sendSyncUpdates([], failures),
+});
+const syncOwners = new Set<number>();
+ipcMain.on('github-sync-watch', (event, id: unknown, raw: unknown) => {
+  if (event.senderFrame !== event.sender.mainFrame || typeof id !== 'string' || id.length > 100) return;
+  const interest = parseGitHubSyncInterest(raw);
+  if (interest === undefined) return;
+  const owner = event.sender.id;
+  if (!syncOwners.has(owner)) {
+    syncOwners.add(owner);
+    event.sender.once('destroyed', () => {
+      githubSync.removeOwner(String(owner)); syncOwners.delete(owner);
+      for (const key of syncSubscriptions.keys()) if (key.startsWith(`${owner}:`)) syncSubscriptions.delete(key);
+    });
+  }
+  const key = `${owner}:${id}`;
+  if (interest) syncSubscriptions.set(key, { owner: event.sender, id, token: cachedToken, interest });
+  else syncSubscriptions.delete(key);
+  githubSync.observe(key, interest);
+  if (syncCredential === cachedToken && interest?.kind === 'metadata') sendSyncUpdates(interest.targets.flatMap(target => {
+    const value = syncMetadata.get(target.url);
+    return value ? [{ kind: 'metadata' as const, url: target.url, value }] : [];
+  }));
+});
+let discoveryDue = 0;
+let discoveryPending = false;
+let syncWasAvailable = false;
+async function tickGitHubSync() {
+  const token = cachedToken;
+  if (token !== syncCredential) {
+    syncCredential = token; syncMetadata.clear(); syncSignals.clear(); discoveryDue = 0;
+    for (const subscription of syncSubscriptions.values()) if (!subscription.owner.isDestroyed())
+      subscription.owner.send('github-sync', { account: cachedLogin, subscriptionId: subscription.id, reset: true, updates: [] });
+  }
+  const available = !!token && syncEnabled();
+  if (!available) { syncWasAvailable = false; return; }
+  if (!syncWasAvailable) { githubSync.wake(); discoveryDue = Math.min(discoveryDue, Date.now() + 10_000); }
+  syncWasAvailable = true;
+  void githubSync.tick();
+  prMergeMonitor.tick();
+  if (discoveryPending || Date.now() < discoveryDue) return;
+  discoveryPending = true;
+  discoveryDue = Date.now() + 120_000;
+  try {
+    if (!cachedLogin) {
+      const login = await resolveGitHubLogin(token);
+      if (token !== cachedToken) return;
+      cachedLogin = login;
+    }
+    if (token !== cachedToken) return;
+    const queue = await workbench.queue();
+    if (token !== cachedToken) return;
+    discoveryDue = queue.sync?.retryAt ?? Date.now() + 120_000;
+  } catch (error) {
+    discoveryDue = githubRateLimit(error)?.retryAt ?? Date.now() + 60_000;
+  } finally { discoveryPending = false; }
+}
+void app.whenReady().then(() => {
+  const timer = setInterval(() => void tickGitHubSync(), 1000);
+  timer.unref();
+  const wake = () => { suspended = false; githubSync.wake(); discoveryDue = Math.min(discoveryDue, Date.now() + 10_000); void tickGitHubSync(); };
+  powerMonitor.on('suspend', () => { suspended = true; });
+  powerMonitor.on('resume', wake);
+  app.on('browser-window-focus', wake);
+  app.once('will-quit', () => clearInterval(timer));
+});
+function refreshAfterGitHubWrite(urls: string[], kinds?: GitHubSyncKind[]) {
+  const client = getGitHubClient(cachedToken);
+  const cache = githubCacheFor(client);
+  for (const url of urls) {
+    const sha = syncMetadata.get(url)?.headSha ?? workbench.prPreview(url)?.member.headSha;
+    if (sha) {
+      if (!kinds || kinds.includes('signals')) cache?.delete(`queue-signals:v3:${url}@${sha}`);
+      if (!kinds || kinds.includes('checks')) cache?.delete(`pr-checks:v1:${url}@${sha}`);
+    }
+  }
+  githubSync.invalidate(urls, kinds);
+  void githubSync.tick();
+}
+
 const changesClient = () => {
   const token = getResolvedToken();
   if (!token) throw new Error('Connect GitHub to view PR changes.');
@@ -2666,7 +2871,10 @@ ipcMain.handle('pr-checks', (_event, input: CheckTarget, options: ChecksOptions 
   })));
 handleInteractive('check-details', (_event, input: CheckSelection) => checkAccount(client => readCheckDetails(client, input)));
 handleInteractive('check-log', (_event, input: CheckSelection) => checkAccount(client => readCheckLog(client, input)));
-handleInteractive('rerun-checks', (_event, input: CheckSelection & { mode: 'failed' | 'all' }) => checkAccount(client => rerunChecks(client, input)));
+handleInteractive('rerun-checks', async (_event, input: CheckSelection & { mode: 'failed' | 'all' }) => {
+  await checkAccount(client => rerunChecks(client, input));
+  refreshAfterGitHubWrite([input.url], ['checks', 'signals']);
+});
 ipcMain.handle('clear-github-cache', () => {
   if (activeGenerations.size || activeForegroundChats || workbench.isGenerating() ||
     activities.list().some(task => task.kind !== 'github' && task.status === 'running'))
