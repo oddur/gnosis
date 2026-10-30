@@ -20,7 +20,10 @@ import type { ExplanationDestination } from '../lib/explanation-workspace';
 import type { ReviewHistoryEntry } from '../lib/types';
 import { Tabs } from 'radix-ui';
 import { PrCommitsView } from './PrCommitsView';
-import { PrChangesView } from './PrChangesView';
+import { PrChangesView, type ChangesInitialFile } from './PrChangesView';
+import { AgentBriefView } from './AgentBriefView';
+import { useAgentBrief, type AgentBriefComment } from '../lib/agent-brief';
+import type { WorkspaceTab } from '../lib/navigation-history';
 import type { Preferences } from '../lib/types';
 import { GitHubAuthor } from './GitHubAuthor';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -93,8 +96,8 @@ function PrSummaryContent({
   onStarChange: (members: QueueItem['subject']['members'], starred: boolean) => void;
   account: string | null;
   statusRefreshing: boolean;
-  tab: 'summary' | 'changes' | 'commits' | 'explanation' | 'checks';
-  onTabChange: (tab: 'summary' | 'changes' | 'commits' | 'explanation' | 'checks') => void;
+  tab: WorkspaceTab;
+  onTabChange: (tab: WorkspaceTab) => void;
   preferences: Preferences | null;
   starting: boolean;
   error: string;
@@ -134,7 +137,23 @@ function PrSummaryContent({
   const [name, setName] = useState(item.subject.name ?? '');
   const [nameBusy, setNameBusy] = useState(false);
   const [nameError, setNameError] = useState('');
-  const [initialFile, setInitialFile] = useState<{ url: string; path: string; line?: number; headSha?: string }>();
+  const [initialFile, setInitialFile] = useState<ChangesInitialFile>();
+  // A jump happens once. Returning to Changes later restores where the reviewer left off.
+  useEffect(() => {
+    if (tab !== 'changes') setInitialFile(undefined);
+  }, [tab]);
+  const brief = useAgentBrief(item.subject.id);
+  const openBriefComment = (comment: AgentBriefComment) => {
+    setInitialFile({
+      url: comment.url,
+      path: comment.path,
+      line: comment.line,
+      headSha: comment.headSha,
+      side: comment.side === 'LEFT' ? 'before' : 'after',
+      view: comment.view,
+    });
+    onTabChange('changes');
+  };
   const checks = usePrChecks(item.subject, account, tab === 'summary' || tab === 'checks', statuses);
   const [checkFocus, setCheckFocus] = useState<CheckFocus>();
   const checkTotals = checkCounts(item.subject.members.flatMap(m => checks.values[m.url]?.checks ?? []));
@@ -276,13 +295,13 @@ function PrSummaryContent({
   useReviewBreadcrumbs('summary', []);
   const changeScope = (id: string) => { remember(); onScopeChange?.(id); };
   const tabs = [{ value: 'summary', label: 'Summary' }, { value: 'changes', label: 'Changes' },
-    { value: 'commits', label: 'Commits' }, { value: 'checks', label: 'Checks' }, { value: 'explanation', label: 'Explanation' }];
+    { value: 'commits', label: 'Commits' }, { value: 'checks', label: 'Checks' }, { value: 'explanation', label: 'Explanation' }, { value: 'brief', label: 'Agent brief' }];
   return (
     <Tabs.Root
       value={tab}
       onValueChange={(value) => {
         if (tab === 'summary') remember();
-        onTabChange(value as 'summary' | 'changes' | 'commits' | 'explanation' | 'checks');
+        onTabChange(value as WorkspaceTab);
       }}
       asChild
     >
@@ -386,6 +405,7 @@ function PrSummaryContent({
           <Tabs.Trigger value="commits">Commits</Tabs.Trigger>
           <Tabs.Trigger value="checks">Checks{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>
           <Tabs.Trigger value="explanation" data-tour="explanation">Explanation</Tabs.Trigger>
+          <Tabs.Trigger value="brief">Agent brief{brief.comments.length > 0 && <span className="brief-tab-count">{brief.comments.length}</span>}</Tabs.Trigger>
         </Tabs.List>
         {scopeStack && onScopeChange && <nav className="stack-scope-bar" aria-label="Stack navigation">
           <Layers size={15} aria-hidden="true" /><SearchableSelect label="Review scope" value={item.subject.id} triggerLabel={stacked ? 'Whole stack' : `#${first.number} · ${scopeStack.members.findIndex(m => m.url === first.url) + 1} of ${scopeStack.members.length}`} options={stackScopeChoices(scopeStack)} onValueChange={changeScope} popupBoundary="viewport" popupClassName="stack-scope-popup" />
@@ -393,14 +413,18 @@ function PrSummaryContent({
         </nav>}
         </div>
         <Tabs.Content value="changes" className="pr-changes-tab">
-          {preferences && (stacked ? <StackChangesView key={`${account}:${item.subject.id}`} subject={item.subject} preferences={preferences} account={account ?? ''} initialFile={initialFile} onOpenPr={changeScope} /> :
+          {preferences && (stacked ? <StackChangesView key={`${account}:${item.subject.id}`} subject={item.subject} preferences={preferences} account={account ?? ''} initialFile={initialFile} onOpenPr={changeScope} onOpenBrief={() => onTabChange('brief')} /> :
             <PrChangesView
               key={item.subject.id}
               subject={item.subject}
               preferences={preferences}
               initialFile={initialFile}
+              onOpenBrief={() => onTabChange('brief')}
             />
           )}
+        </Tabs.Content>
+        <Tabs.Content value="brief" className="pr-changes-tab">
+          <AgentBriefView subject={item.subject} onOpenComment={openBriefComment} onOpenChanges={() => onTabChange('changes')} />
         </Tabs.Content>
         <Tabs.Content value="checks" className="pr-changes-tab">
           <PrChecksView key={`${account}:${item.subject.id}`} subject={item.subject} {...checks} focus={checkFocus}

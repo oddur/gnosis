@@ -46,7 +46,7 @@ import {
   type QueueFilters,
 } from '../../lib/queue-filters';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { HomeLocation } from '../../lib/navigation-history';
+import type { HomeLocation, WorkspaceTab } from '../../lib/navigation-history';
 import {
   ArrowRight,
   Check,
@@ -111,7 +111,7 @@ const labels = {
 };
 
 export function HomePage({ navigationRestoration, onNavigationChange, onReviewOriginChange, onReviewReady, prefillPrUrl, initialSubjectId, commandDestination, explanationDestination, onShowActivity }: Props) {
-  const [overviewTab,setOverviewTab] = useState<'summary'|'changes'|'commits'|'explanation'|'checks'>('summary');
+  const [overviewTab,setOverviewTab] = useState<WorkspaceTab>('summary');
   const [reviewRequest, setReviewRequest] = useState<PrReviewRequest>();
   const commandCenter = useCommandCenter();
   const handledCommand = useRef<number>(0);

@@ -17,6 +17,7 @@ import {
   type PrChanges,
   type PrChangeFile,
   type PrFileContents,
+  type PrFileSide,
 } from '../lib/pr-changes';
 import { useFileProgress } from '../lib/file-view-progress';
 import { useDiffAppearance } from '../lib/use-diff-appearance';
@@ -26,6 +27,8 @@ import { CODE_THEMES } from '../lib/constants';
 import type { Preferences } from '../lib/types';
 import type { usePrDiscussions } from '../lib/use-pr-discussions';
 import type { ReviewImageSide } from '../lib/review-images';
+import { briefCode, briefPin, type AgentBriefLocation } from '../lib/agent-brief';
+import type { ReviewSubject } from '../lib/workbench';
 import { useChangesComments } from './useChangesComments';
 import { DiffStats } from './DiffStats';
 import { LfsDownload } from './LfsDownload';
@@ -62,10 +65,17 @@ export function PrFileInspection({
   onOpenCurrentFile,
   classificationControl,
   sourceLine,
+  sourceSide = 'after',
   onOpenSource,
+  briefSubject,
+  onOpenBrief,
 }: {
   entry: ChangeFileEntry;
   sourceLine?: number;
+  sourceSide?: 'before' | 'after';
+  /** The stack or PR whose agent brief collects comments made here. */
+  briefSubject?: ReviewSubject;
+  onOpenBrief?: () => void;
   onOpenSource?: (url: string, path: string) => void;
   classificationControl?: ReactNode;
   preferences: Preferences;
@@ -79,8 +89,11 @@ export function PrFileInspection({
   const activeKey = changeFileKey(entry);
   const progress = useFileProgress();
   const viewed = progress.isFileViewed(activeKey);
-  const opened = useRef(!viewed);
-  if (!viewed) opened.current = true;
+  // Jumping to a line must show it, without changing the reviewer's viewed progress.
+  const [jumpedOpen, setJumpedOpen] = useState(false);
+  const collapsed = viewed && !jumpedOpen;
+  const opened = useRef(!collapsed);
+  if (!collapsed) opened.current = true;
   const appearance = useDiffAppearance(prefs.diffAppearance);
   const markdown = isMarkdownFile(entry.file.path);
   const [markdownView, changeMarkdownView] = useMarkdownView();
@@ -159,7 +172,7 @@ export function PrFileInspection({
     }
   }
   useEffect(() => {
-    if (viewed) return;
+    if (collapsed) return;
     let cancelled = false;
     setLoadedFile((previous) => (previous?.key === activeKey ? previous : undefined));
     setRange(null);
@@ -196,13 +209,13 @@ export function PrFileInspection({
     return () => {
       cancelled = true;
     };
-  }, [activeKey, fileAttempt, contextLines, viewed]);
+  }, [activeKey, fileAttempt, contextLines, collapsed]);
   useEffect(() => {
     if (
       !markdown ||
       compactMove ||
       !contents ||
-      viewed ||
+      collapsed ||
       ![contents.before.kind, contents.after.kind].every((kind) => kind === 'text' || kind === 'absent')
     )
       return;
@@ -235,7 +248,7 @@ export function PrFileInspection({
     return () => {
       cancelled = true;
     };
-  }, [markdownKey, contents, viewed, markdownAttempt, compactMove]);
+  }, [markdownKey, contents, collapsed, markdownAttempt, compactMove]);
   useEffect(() => {
     setSourceLocation(undefined);
     sourceJump.current = undefined;
@@ -294,7 +307,33 @@ export function PrFileInspection({
   };
   const visibleDiscussions = unchangedMove ? (combined ? combinedThreads.map((t) => t.thread) : matching) : other;
   const refreshThreads = discussion.refresh;
+  const sideLine = (text: PrFileSide | undefined, previewSide: 'deletions' | 'additions', line: number) =>
+    text?.kind === 'text'
+      ? (text.content.split('\n')[line - 1] ?? '')
+      : preview
+        ? prPreviewSelection(preview, { start: line, end: line, side: previewSide }).replace(/^\d+: /, '')
+        : '';
+  const briefLineCode = ({ line, startLine, side, startSide }: AgentBriefLocation) => {
+    const start = startLine ?? line;
+    // Only the ends of a two-sided region are known here. The agent has the diff for what lies between.
+    if (startSide)
+      return briefCode(
+        `old ${start}: ${sideLine(contents?.before, 'deletions', start)}\nnew ${line}: ${sideLine(contents?.after, 'additions', line)}`
+      );
+    const text = contents && (side === 'LEFT' ? contents.before : contents.after);
+    if (text?.kind === 'text') return briefCode(text.content.split('\n').slice(start - 1, line).join('\n'));
+    if (!preview) return {};
+    const selected = prPreviewSelection(preview, { start, end: line, side: side === 'LEFT' ? 'deletions' : 'additions' });
+    // A partial patch prefixes each line with its number. The comment already says which lines these are.
+    return briefCode(preview.isPartial ? selected.replace(/^\d+: /gm, '') : selected);
+  };
   const comments = useChangesComments({
+    brief: briefSubject && {
+      subjectId: briefSubject.id,
+      pin: briefPin(briefSubject, entry.snapshot, entry.file),
+      code: briefLineCode,
+      onOpen: onOpenBrief,
+    },
     enabled: !commit && !combined,
     snapshot: commit || combined ? undefined : entry.snapshot,
     renderThreadOverride: combined ? renderCombinedThread : undefined,
@@ -306,7 +345,9 @@ export function PrFileInspection({
     replaceThread: discussion.replace,
   });
   const annotations = comments.annotations;
-  const hasInlineDrafts = annotations.some((a) => a.metadata.drafts.length > 0 || a.metadata.composer);
+  const hasInlineDrafts = annotations.some(
+    (a) => a.metadata.drafts.length > 0 || a.metadata.brief.length > 0 || a.metadata.composer
+  );
   useEffect(() => {
     if (unchangedMove && hasInlineDrafts) setRevealedMove(activeKey);
   }, [activeKey, unchangedMove, hasInlineDrafts]);
@@ -332,7 +373,7 @@ export function PrFileInspection({
     });
   };
   const options: FileDiffOptions<(typeof annotations)[number]['metadata'], undefined> = {
-    enableGutterUtility: comments.writable && !contents?.lfs,
+    enableGutterUtility: comments.canComment && !contents?.lfs,
     onGutterUtilityClick: contents?.lfs ? undefined : comments.begin,
     onLineNumberClick: contents?.lfs
       ? undefined
@@ -397,6 +438,7 @@ export function PrFileInspection({
       : { status: 'absent' };
   };
   function mark(andNext: boolean) {
+    setJumpedOpen(false);
     void progress.markFileViewed(activeKey, true);
     if (andNext) onViewedNext();
   }
@@ -426,9 +468,10 @@ export function PrFileInspection({
   useEffect(() => {
     if (sourceLine) {
       opened.current = true;
-      openMarkdownSource({ side: 'after', start: sourceLine, end: sourceLine });
+      setJumpedOpen(true);
+      openMarkdownSource({ side: sourceSide, start: sourceLine, end: sourceLine });
     }
-  }, [sourceLine, activeKey]);
+  }, [sourceLine, sourceSide, activeKey]);
   function chooseMarkdownMode(mode: 'source' | 'preview') {
     const section = sectionRef.current;
     const top = Math.max(0, section?.closest('.commit-diff-stream')?.getBoundingClientRect().top ?? 0) + 130;
@@ -543,18 +586,18 @@ export function PrFileInspection({
           <input
             type="checkbox"
             checked={viewed}
-            onChange={(e) => (e.target.checked ? mark(false) : progress.markFileViewed(activeKey, false))}
+            onChange={(e) => (e.target.checked ? mark(false) : void progress.markFileViewed(activeKey, false))}
           />
           Viewed
         </label>
         <Button variant="outline" size="sm" data-viewed-next onClick={() => mark(true)}>
           Viewed & next
         </Button>
-        {!commit && !combined && !showingPreview && !compactMove && (
+        {!commit && !showingPreview && !compactMove && (
           <Button
             variant="ghost"
             size="sm"
-            disabled={!range || !comments.writable || contents?.lfs}
+            disabled={!range || !comments.canComment || contents?.lfs}
             onClick={() => range && !contents?.lfs && comments.begin(range)}
             title="Select lines in the diff to comment"
           >
@@ -667,7 +710,7 @@ export function PrFileInspection({
               onChanges={(changes) => changeMarkdownView({ changes })}
               onSource={openMarkdownSource}
               onAsk={ask}
-              canComment={!commit && comments.writable && !contents?.lfs}
+              canComment={!commit && comments.canComment && !contents?.lfs}
               annotations={annotations.map((annotation) => ({
                 ...annotation,
                 content: comments.renderAnnotation(annotation),
@@ -713,7 +756,7 @@ export function PrFileInspection({
                 <File
                   file={{ name: entry.file.path, contents: contents.after.content }}
                   lineAnnotations={annotations
-                    .filter((a) => a.metadata.drafts.length > 0 || a.metadata.composer)
+                    .filter((a) => a.metadata.drafts.length > 0 || a.metadata.brief.length > 0 || a.metadata.composer)
                     .map((a) => ({ ...a, metadata: { ...a.metadata, threads: [] } }))}
                   renderAnnotation={(annotation) => comments.renderAnnotation({ ...annotation, side: 'additions' })}
                   options={{
@@ -724,7 +767,7 @@ export function PrFileInspection({
                     overflow: options.overflow,
                     enableLineSelection: true,
                     onLineSelected: setRange,
-                    enableGutterUtility: comments.writable && !contents.lfs,
+                    enableGutterUtility: comments.canComment && !contents.lfs,
                     onGutterUtilityClick: contents.lfs ? undefined : comments.begin,
                     onLineNumberClick: contents.lfs
                       ? undefined
@@ -785,7 +828,7 @@ export function PrFileInspection({
       {fileHeader}
       {!commit && comments.feedback}
       {/* Keep editor state and pending-write guards alive when the file collapses. */}
-      <div className="commit-stream-file-body" hidden={viewed}>
+      <div className="commit-stream-file-body" hidden={collapsed}>
         {opened.current && fileContent}
       </div>
     </section>

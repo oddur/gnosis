@@ -29,6 +29,7 @@ import { Button } from './ui/button';
 import { diffContextLines } from '../lib/review-diff';
 import { changesRevision, type PrChanges } from '../lib/pr-changes';
 import { registerChangeProgress, useFileProgress } from '../lib/file-view-progress';
+import type { AgentBriefView } from '../lib/agent-brief';
 import type { ReviewSubject } from '../lib/workbench';
 import type { Preferences } from '../lib/types';
 import { usePrDiscussions } from '../lib/use-pr-discussions';
@@ -58,6 +59,15 @@ export function rememberChangesFile(subjectId: string, path: string) {
   position.selected = path;
   try { localStorage.setItem(`gnosis-changes-position:${subjectId}`, JSON.stringify(position)); } catch { /* Optional position. */ }
 }
+export interface ChangesInitialFile {
+  url: string;
+  path: string;
+  line?: number;
+  headSha?: string;
+  side?: 'before' | 'after';
+  /** Set when jumping from an agent brief comment, which belongs to the view it was written in. */
+  view?: AgentBriefView;
+}
 export interface CommitWorkspace {
   breadcrumbs?: ReviewCrumb[];
   snapshot?: PrChanges;
@@ -79,6 +89,7 @@ export function PrChangesView({
   toolbar,
   preferredPath,
   onActiveFile,
+  onOpenBrief,
 }: {
   subject: ReviewSubject;
   preferences: Preferences;
@@ -87,7 +98,8 @@ export function PrChangesView({
   toolbar?: ReactNode;
   preferredPath?: string;
   onActiveFile?: (path: string) => void;
-  initialFile?: { url: string; path: string; line?: number; headSha?: string };
+  onOpenBrief?: () => void;
+  initialFile?: ChangesInitialFile;
 }) {
   const positionId = combined ? `combined:${subject.id}` : commit ? commitPositionId(subject.id, commit.snapshot) : subject.id;
   const stream = useRef<CommitDiffStreamHandle>(null);
@@ -331,10 +343,11 @@ export function PrChangesView({
     if (!initialFile) return;
     const match = entries.find(
       (e) =>
-        e.snapshot.url === initialFile.url &&
+        // The combined diff has one source; its tip may have changed since a brief comment was written.
+        (!!combined || e.snapshot.url === initialFile.url) &&
         (e.file.path === initialFile.path || e.file.previousPath === initialFile.path)
     );
-    if (match && initialFile.headSha && match.snapshot.metadata.headSha !== initialFile.headSha) {
+    if (match && !initialFile.view && initialFile.headSha && match.snapshot.metadata.headSha !== initialFile.headSha) {
       setError('This annotation belongs to an older commit. Open its source on GitHub from Checks.');
     } else if (match) void select(match.key);
     else if (snapshots.length)
@@ -699,6 +712,9 @@ export function PrChangesView({
                     key={viewKey(e)}
                     entry={e}
                     sourceLine={initialFile?.url === e.snapshot.url && initialFile.path === e.file.path && initialFile.headSha === e.snapshot.metadata.headSha ? initialFile.line : undefined}
+                    sourceSide={initialFile?.side}
+                    briefSubject={commit ? undefined : subject}
+                    onOpenBrief={onOpenBrief}
                     preferences={prefs}
                     classificationControl={
                       <FileKindControl

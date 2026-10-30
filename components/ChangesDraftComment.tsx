@@ -10,8 +10,10 @@ export function ChangesDraftComment({
   onRemove,
   disabled = false,
   onBusyChange,
+  noun = 'draft',
 }: {
-  comment: PendingReviewComment;
+  comment: Pick<PendingReviewComment, 'id' | 'body'>;
+  noun?: 'draft' | 'comment';
   onEdit: (id: string, body: string) => void | Promise<void>;
   onRemove: (id: string) => void | Promise<void>;
   disabled?: boolean;
@@ -44,7 +46,7 @@ export function ChangesDraftComment({
             } finally {setSaving(false);}
           }}
         >
-          <label htmlFor={id}>Edit draft comment</label>
+          <label htmlFor={id}>{noun === 'draft' ? 'Edit draft comment' : 'Edit comment'}</label>
           <MarkdownCommentEditor
             id={id}
             rows={3}
@@ -60,7 +62,7 @@ export function ChangesDraftComment({
               Cancel
             </Button>
             <Button size="sm" disabled={disabled || !body.trim()}>
-              Save draft
+              Save {noun}
             </Button>
           </div>
         </form>
@@ -77,7 +79,7 @@ export function ChangesDraftComment({
                 setEditing(true);
               }}
             >
-              Edit draft
+              Edit {noun}
             </Button>
             <Button
               variant="ghost"
@@ -89,11 +91,11 @@ export function ChangesDraftComment({
                   await onRemove(comment.id);
                   setError('');
                 } catch {
-                  setError('Could not remove this draft. Try again.');
+                  setError(`Could not remove this ${noun}. Try again.`);
                 } finally {setSaving(false);}
               }}
             >
-              Remove draft
+              Remove {noun}
             </Button>
           </div>
           {error && <p role="alert">{error}</p>}

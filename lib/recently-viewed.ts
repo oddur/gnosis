@@ -64,7 +64,7 @@ function restore(value: unknown, account: string): RecentVisit[] {
       if (location?.page === 'review') return typeof location.reviewId === 'string';
       if (location?.page !== 'home' || location.home?.account !== account) return false;
       const h = location.home;
-      if (!h.tab || !['summary', 'changes', 'commits', 'explanation', 'checks'].includes(h.tab)) return false;
+      if (!h.tab || !['summary', 'changes', 'commits', 'explanation', 'checks', 'brief'].includes(h.tab)) return false;
       if (
         h.item &&
         (!Object.hasOwn(h.item, 'subject') ||

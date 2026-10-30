@@ -18,6 +18,7 @@ It runs locally. AI features use the [Claude Code CLI](https://claude.ai/code) o
 - **Deeper reasoning** — use more reasoning effort (slower, more thorough)
 - **Custom instructions** — steer the review with free-text prompts (e.g. _focus on security_, _explain the auth flow_)
 - **Inline review comments** — add comments on specific diff lines and submit directly to GitHub as an approval, request for changes, or comment
+- **Agent briefs** — collect comments on lines or regions while reviewing a stack (Combined or By PR) or a single PR, then copy them as Markdown for any agent. The brief records the file, lines and view of each comment and explains how you reviewed
 - **Split diff view** — toggle between unified and side-by-side diff layout; preference persists across sessions
 - **Slide chat** — ask follow-up questions about any slide in an inline resizable side panel, with tool call indicators shown as pills during streaming
 - **Web research** — optionally allow the AI to search the web and fetch pages during review generation and slide chat (Claude only)

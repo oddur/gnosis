@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
-import { PrChangesView, rememberChangesFile } from './PrChangesView';
+import { PrChangesView, rememberChangesFile, type ChangesInitialFile } from './PrChangesView';
 import { Button } from './ui/button';
 import { BranchBadge, CommitBadge } from './EntityBadge';
 import { SearchableSelect } from './SearchableSelect';
@@ -24,15 +24,18 @@ export function StackChangesView({
   account,
   initialFile,
   onOpenPr,
+  onOpenBrief,
 }: {
   subject: ReviewSubject;
   preferences: Preferences;
   account: string;
-  initialFile?: { url: string; path: string; line?: number; headSha?: string };
+  initialFile?: ChangesInitialFile;
   onOpenPr: (url: string) => void;
+  onOpenBrief?: () => void;
 }) {
-  const [mode, setMode] = useState<Mode>(() =>
-    initialFile ? 'by-pr' : (rememberedMode ?? preferences.stackChangesMode ?? 'combined')
+  const initialMode: Mode | undefined = initialFile && (initialFile.view === 'combined' ? 'combined' : 'by-pr');
+  const [mode, setMode] = useState<Mode>(
+    () => initialMode ?? rememberedMode ?? preferences.stackChangesMode ?? 'combined'
   );
   const [snapshot, setSnapshot] = useState(() => peekStackChanges(account, subject));
   const [busy, setBusy] = useState(false);
@@ -114,7 +117,7 @@ export function StackChangesView({
     };
   }, [subject.id, account]);
   useEffect(() => {
-    if (initialFile) setMode('by-pr');
+    if (initialMode) setMode(initialMode);
   }, [initialFile]);
   useEffect(() => {
     if (!snapshot) return;
@@ -334,7 +337,8 @@ export function StackChangesView({
           subject={subject}
           preferences={preferences}
           toolbar={toolbar}
-          initialFile={initialFile}
+          initialFile={initialMode === 'by-pr' ? initialFile : undefined}
+          onOpenBrief={onOpenBrief}
           preferredPath={selectedPath.current}
           onActiveFile={(path) => {
             selectedPath.current = path;
@@ -347,6 +351,8 @@ export function StackChangesView({
           preferences={preferences}
           toolbar={toolbar}
           combined={{ snapshot, onOpenSource: openSource }}
+          initialFile={initialMode === 'combined' ? initialFile : undefined}
+          onOpenBrief={onOpenBrief}
           preferredPath={selectedPath.current}
           onActiveFile={(path) => {
             selectedPath.current = path;

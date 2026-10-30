@@ -3,6 +3,7 @@ import type { DiffLineAnnotation, SelectedLineRange } from '@pierre/diffs';
 import type { PrChanges } from '../lib/pr-changes';
 import type { GitHubReviewThread as Thread } from '../lib/review-threads';
 import { useChangesReviewDrafts, type ChangesReviewDraft } from '../lib/changes-review-drafts';
+import { briefAppliesTo, briefLines, useAgentBrief, type AgentBriefComment, type AgentBriefPin } from '../lib/agent-brief';
 import { ReviewDraftScope, useSessionDraft } from '../lib/session-drafts';
 import { GitHubReviewThread } from './GitHubReviewThread';
 import { ChangesCommentComposer } from './ChangesCommentComposer';
@@ -10,13 +11,22 @@ import { ChangesDraftComment } from './ChangesDraftComment';
 import { SubmitReviewDialog } from './SubmitReviewDialog';
 import { Button } from './ui/button';
 
-type Location = { line: number; startLine?: number; side: 'LEFT' | 'RIGHT' };
+type Location = { line: number; startLine?: number; side: 'LEFT' | 'RIGHT'; startSide?: 'LEFT' };
 interface Annotation {
   threads: Thread[];
   drafts: ChangesReviewDraft[];
+  brief: AgentBriefComment[];
   composer?: Location;
 }
+/** Where a comment goes when it is added to the agent brief of the subject under review. */
+export interface ChangesBriefTarget {
+  subjectId: string;
+  pin: AgentBriefPin;
+  code: (location: Location) => Pick<AgentBriefComment, 'code' | 'codeLinesOmitted'>;
+  onOpen?: () => void;
+}
 export function useChangesComments({
+  brief,
   snapshot,
   path,
   activeKey,
@@ -28,6 +38,7 @@ export function useChangesComments({
   onSubmitted,
   onOpenChanges,
 }: {
+  brief?: ChangesBriefTarget;
   enabled?: boolean;
   renderThreadOverride?: (thread: Thread) => ReactNode;
   onOpenChanges?: (filePath: string) => void;
@@ -61,6 +72,7 @@ export function useChangesComments({
   }, [enabled]);
   const url = snapshot?.url ?? '';
   const { drafts, update } = useChangesReviewDrafts(account, url);
+  const agentBrief = useAgentBrief(brief?.subjectId ?? '');
   const [composer, setComposer] = useSessionDraft<Location | null>(`changes-composer:${account}:${activeKey}`, null);
   const [reviewOpen, setReviewOpen] = useState(false),
     [draftsOpen, setDraftsOpen] = useState(false),
@@ -90,6 +102,15 @@ export function useChangesComments({
     }
   };
   const edit = (id: string, body: string) => change((list) => list.map((d) => (d.id === id ? { ...d, body } : d)));
+  const changeBrief = async (fn: (list: AgentBriefComment[]) => AgentBriefComment[]) => {
+    try {
+      await agentBrief.update(fn);
+      setError('');
+    } catch {
+      setError('Could not save your agent brief on this computer. Free some disk space and try again.');
+      throw new Error('Could not save your agent brief.');
+    }
+  };
   const renderThread = (thread: Thread) => renderThreadOverride ? renderThreadOverride(thread) : (
     <GitHubReviewThread
       key={thread.id}
@@ -128,18 +149,34 @@ export function useChangesComments({
     const name = side === 'LEFT' ? 'deletions' : 'additions';
     let a = annotations.find((a) => a.lineNumber === line && a.side === name);
     if (!a) {
-      a = { lineNumber: line, side: name, metadata: { threads: [], drafts: [] } };
+      a = { lineNumber: line, side: name, metadata: { threads: [], drafts: [], brief: [] } };
       annotations.push(a);
     }
     return a.metadata;
   };
   inline.forEach((t) => t.line !== null && location(t.line, t.diffSide).threads.push(t));
   drafts.filter((d) => current(d) && d.filePath === path).forEach((d) => location(d.line, d.side).drafts.push(d));
+  if (brief)
+    agentBrief.comments
+      .filter((c) => briefAppliesTo(c, brief.pin))
+      .forEach((c) => location(c.line, c.side).brief.push(c));
   if (composer) location(composer.line, composer.side).composer = composer;
+  const canComment = writable || !!brief;
   function begin(range: SelectedLineRange) {
-    if (!writable) return;
+    if (!canComment) return;
     if (range.endSide && range.endSide !== range.side) {
-      setError('Select lines on one side of the diff to comment.');
+      if (!brief) {
+        setError('Select lines on one side of the diff to comment.');
+        return;
+      }
+      // Dragging across a changed block is natural. Only GitHub requires a single side.
+      setError('');
+      setComposer({
+        line: range.side === 'additions' ? range.start : range.end,
+        startLine: range.side === 'additions' ? range.end : range.start,
+        side: 'RIGHT',
+        startSide: 'LEFT',
+      });
       return;
     }
     setError('');
@@ -160,31 +197,74 @@ export function useChangesComments({
           <ChangesDraftComment comment={d} onRemove={remove} onEdit={edit} />
         </div>
       ))}
-      {metadata.composer && snapshot && path && (
+      {metadata.brief.map((c) => (
+        <div className="changes-pending-comment" key={c.id}>
+          <span>
+            In agent brief · Only you can see this
+            {brief?.onOpen && (
+              <button type="button" className="changes-brief-link" onClick={brief.onOpen}>
+                Open brief
+              </button>
+            )}
+          </span>
+          <ChangesDraftComment
+            noun="comment"
+            comment={c}
+            onRemove={(id) => changeBrief((list) => list.filter((d) => d.id !== id))}
+            onEdit={(id, body) => changeBrief((list) => list.map((d) => (d.id === id ? { ...d, body } : d)))}
+          />
+        </div>
+      ))}
+      {metadata.composer && path && (snapshot || brief) && (
         <ChangesCommentComposer
-          key={`${activeKey}:${metadata.composer.side}:${metadata.composer.startLine ?? ''}:${metadata.composer.line}`}
-          draftKey={`${account}:${activeKey}:${metadata.composer.side}:${metadata.composer.startLine ?? ''}:${metadata.composer.line}`}
-          label={`Comment on ${metadata.composer.side === 'LEFT' ? 'old' : 'new'} ${metadata.composer.startLine ? `lines ${metadata.composer.startLine}–${metadata.composer.line}` : `line ${metadata.composer.line}`} · PR #${url.split('/').pop()}`}
+          key={`${activeKey}:${metadata.composer.startSide ?? ''}:${metadata.composer.side}:${metadata.composer.startLine ?? ''}:${metadata.composer.line}`}
+          draftKey={`${account}:${activeKey}:${metadata.composer.startSide ?? ''}:${metadata.composer.side}:${metadata.composer.startLine ?? ''}:${metadata.composer.line}`}
+          label={`Comment on ${briefLines(metadata.composer)} · ${brief?.pin.view === 'combined' ? 'Combined stack' : `PR #${(url || (brief?.pin.url ?? '')).split('/').pop()}`}`}
           onCancel={() => setComposer(null)}
-          onSave={async (body, now) => {
-            const req = {
-              prUrl: url,
-              headSha: snapshot.metadata.headSha,
-              baseSha: snapshot.metadata.baseSha,
-              baseBranch: snapshot.metadata.baseBranch,
-              path,
-              body,
-              ...(metadata.composer as Location),
-            };
-            if (now) {
-              await window.electronAPI.createReviewComment(req);
-              await refresh(url);
-            } else
-              await change((list) => [
-                ...list,
-                { id: crypto.randomUUID(), filePath: path, hunkHeader: '', codeSnippet: '', slideIndex: 0, ...req },
-              ]);
-          }}
+          note={
+            writable && metadata.composer.startSide
+              ? 'GitHub comments need lines from one side of the diff, so this selection can only go in the brief.'
+              : undefined
+          }
+          onSave={
+            writable && !metadata.composer.startSide
+              ? async (body, now) => {
+                  const req = {
+                    prUrl: url,
+                    headSha: snapshot.metadata.headSha,
+                    baseSha: snapshot.metadata.baseSha,
+                    baseBranch: snapshot.metadata.baseBranch,
+                    path,
+                    body,
+                    ...(metadata.composer as Location),
+                  };
+                  if (now) {
+                    await window.electronAPI.createReviewComment(req);
+                    await refresh(url);
+                  } else
+                    await change((list) => [
+                      ...list,
+                      { id: crypto.randomUUID(), filePath: path, hunkHeader: '', codeSnippet: '', slideIndex: 0, ...req },
+                    ]);
+                }
+              : undefined
+          }
+          onAddToBrief={
+            brief
+              ? async (body) => {
+                  const where = metadata.composer as Location;
+                  const comment: AgentBriefComment = {
+                    ...brief.pin,
+                    ...where,
+                    ...brief.code(where),
+                    id: crypto.randomUUID(),
+                    createdAt: new Date().toISOString(),
+                    body,
+                  };
+                  await changeBrief((list) => [...list, comment]);
+                }
+              : undefined
+          }
         />
       )}
     </>
@@ -216,6 +296,7 @@ export function useChangesComments({
     renderThread,
     begin,
     writable,
+    canComment,
     composer,
     controls: (
       <>
