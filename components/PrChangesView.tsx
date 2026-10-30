@@ -653,6 +653,7 @@ export function PrChangesView({
                   </p>
                 ) : (
                   <ChangesFileTree
+                    key={`${positionId}:${revision}`}
                     entries={treeEntries}
                     selected={entry?.key ?? ''}
                     query={query}

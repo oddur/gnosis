@@ -1,7 +1,8 @@
 import { TreeViewedMenu } from './TreeViewedMenu';
 import { DIFF_STAT_COLORS } from './DiffStats';
-import { useEffect, useMemo, useRef } from 'react';
-import { FileTree, useFileTree } from '@pierre/trees/react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { FileTree, useFileTree, useFileTreeSelection } from '@pierre/trees/react';
+import { selectedTreeFiles } from '../lib/tree-viewed-files';
 import { prepareFileTreeInput, type GitStatusEntry } from '@pierre/trees';
 // Lucide MessageSquare (ISC), used inside Pierre's shadow-DOM text decoration.
 const commentIcon = `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z"/></svg>')}")`;
@@ -91,6 +92,16 @@ export function ChangesFileTree({
       };
     },
   });
+  const selectedPaths = useFileTreeSelection(model);
+  const [matchingPaths, setMatchingPaths] = useState<ReadonlySet<string>>();
+  const selectOnly = (path?: string) => {
+    for (const key of model.getSelectedPaths()) if (key !== path) model.getItem(key)?.deselect();
+    if (path) model.getItem(path)?.select();
+  };
+  const rowPath = (event: Event) => {
+    const row = event.composedPath().find(node => node instanceof Element && node.hasAttribute('data-item-path'));
+    return row instanceof Element ? row.getAttribute('data-item-path') : null;
+  };
   useEffect(() => {
     // Resetting with the prepared input also refreshes Pierre's row decorations.
     model.resetPaths({ preparedInput: prepared });
@@ -103,12 +114,25 @@ export function ChangesFileTree({
   }, [model, prepared, entries]);
   useEffect(() => {
     model.setSearch(query || null);
-  }, [model, query]);
+    const matching = query.trim() ? new Set(model.getSearchMatchingPaths()) : undefined;
+    setMatchingPaths(matching);
+    if (matching) {
+      const files = new Set(selectedTreeFiles(current.current.entries, model.getSelectedPaths(), matching).map(entry => entry.key));
+      for (const path of model.getSelectedPaths()) {
+        if (!files.has(path) && ![...files].some(file => path.endsWith('/') && file.startsWith(path)))
+          model.getItem(path)?.deselect();
+      }
+    }
+  }, [model, query, prepared]);
   const revealed = useRef<{ model: typeof model; path: string } | null>(null);
   useEffect(() => {
     const item = model.getItem(selected);
-    item?.select();
-    if (!item || !revealSelected) {
+    // The scrolling diff identifies the current file; it must not expand a user's bulk selection.
+    if (model.getSelectedPaths().length <= 1) {
+      for (const path of model.getSelectedPaths()) if (path !== selected) model.getItem(path)?.deselect();
+      item?.select();
+    }
+    if (!item || !revealSelected || model.getSelectedPaths().length > 1) {
       revealed.current = null;
       return;
     }
@@ -123,7 +147,14 @@ export function ChangesFileTree({
     const item = model.getFocusedItem();
     if (item && !item.isDirectory()) current.current.onSelect(item.getPath());
   };
-  return (
+  const selectedFiles = selectedTreeFiles(entries, selectedPaths, matchingPaths);
+  return <div className="file-tree-selection-workspace">
+    <div className="file-tree-selection-status">
+      {selectedPaths.length > 1 ? <>
+        <span role="status">{selectedFiles.length} files selected</span>
+        <button type="button" onClick={() => { selectOnly(); model.getFocusedItem()?.focus(); }} aria-label="Clear file selection">Clear</button>
+      </> : <span>Shift-click to select a range</span>}
+    </div>
     <FileTree
       model={model}
       renderContextMenu={onSetViewed ? (item, context) => (
@@ -132,12 +163,19 @@ export function ChangesFileTree({
           context={context}
           entries={entries}
           matchingPaths={query.trim() ? new Set(model.getSearchMatchingPaths()) : undefined}
+          selectedPaths={model.getSelectedPaths()}
           onSetViewed={onSetViewed}
         />
       ) : undefined}
       className="changes-file-tree"
       aria-label="Changed files"
-      onClick={activate}
+      onClick={event => {
+        if (!event.shiftKey && !event.metaKey && !event.ctrlKey && rowPath(event.nativeEvent)) activate();
+      }}
+      onContextMenuCapture={event => {
+        const path = rowPath(event.nativeEvent);
+        if (path && !model.getSelectedPaths().includes(path)) selectOnly(path);
+      }}
       onPointerOver={(event) => {
         const row = event.nativeEvent
           .composedPath()
@@ -156,7 +194,14 @@ export function ChangesFileTree({
         if (item && !item.isDirectory()) onPreview?.(item.getPath());
       }}
       onKeyDownCapture={(event) => {
-        if (event.target instanceof Element && event.target.closest('[data-file-tree-context-menu-root]')) return;
+        if (event.nativeEvent.composedPath().some(node => node instanceof Element && node.closest('[data-file-tree-context-menu-root]'))) return;
+        if (event.key === 'Escape' && model.getSelectedPaths().length > 1) {
+          event.preventDefault(); event.stopPropagation(); selectOnly(); return;
+        }
+        if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+          const path = model.getFocusedPath();
+          if (path && !model.getSelectedPaths().includes(path)) selectOnly(path);
+        }
         if (event.key === 'Enter' && model.getFocusedItem()?.isDirectory() === false) {
           event.preventDefault();
           event.stopPropagation();
@@ -164,5 +209,5 @@ export function ChangesFileTree({
         }
       }}
     />
-  );
+  </div>;
 }

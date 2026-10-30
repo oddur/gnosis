@@ -46,10 +46,14 @@ void app.whenReady().then(async () => {
       const originalStart=window.electronAPI.startReview;
       window.electronAPI.startReview=async request=>{window.__generationRequests.push(request);return originalStart(request)};
       window.electronAPI.workbenchBriefing=async id=>{window.__briefingRequests.push(id);return window.electronAPI.workbenchQueue()};void 0`);
-    const selection = await js("document.querySelector('.queue-item.is-selected .queue-title')?.textContent");
+    await js("document.querySelector('.queue-row-main').click()");
+    await wait("!!document.querySelector('.briefing-panel h2')");
+    const preview = await js("document.querySelector('.briefing-panel h2').textContent");
+    const selection = 'Add trace context to scheduled jobs';
     await rightClick('.queue-row:has([aria-label="Actions for PR #152"])');
     await wait("!!document.querySelector('[role=menuitem]')");
     assert.equal(await js("document.querySelector('.queue-item.is-selected .queue-title')?.textContent"), selection);
+    assert.equal(await js("document.querySelector('.briefing-panel h2')?.textContent"), preview);
     await capture('queue-light');
     await js(
       "[...document.querySelectorAll('[role=menuitem]')].find(e=>e.textContent==='Refresh GitHub status').click()"

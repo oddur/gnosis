@@ -22,6 +22,7 @@ export function EntryActions({
   restoreFocus = true,
   buttonClassName = '',
   description,
+  onBeforeOpen,
 }: {
   label: string;
   groups: EntryActionGroups;
@@ -29,6 +30,7 @@ export function EntryActions({
   restoreFocus?: boolean;
   buttonClassName?: string;
   description?: ReactNode;
+  onBeforeOpen?: () => void;
 }) {
   const descriptionId = useId();
   const explanation = description ? (
@@ -97,7 +99,7 @@ export function EntryActions({
     onKeyDown: (event: React.KeyboardEvent) => event.stopPropagation(),
   };
   const button = (
-    <Menu.Root open={menuOpen} onOpenChange={setMenuOpen}>
+    <Menu.Root open={menuOpen} onOpenChange={open => { if (open) onBeforeOpen?.(); setMenuOpen(open); }}>
       <Menu.Trigger
         ref={trigger}
         className={`pr-star-button entry-menu-trigger ${buttonClassName}`}
@@ -119,7 +121,7 @@ export function EntryActions({
   );
   if (!children) return button;
   return (
-    <ContextMenu open={contextOpen} onOpenChange={setContextOpen}>
+    <ContextMenu open={contextOpen} onOpenChange={open => { if (open) onBeforeOpen?.(); setContextOpen(open); }}>
       <ContextMenuTrigger
         render={children(button)}
         onContextMenu={(event) => event.stopPropagation()}
@@ -127,6 +129,7 @@ export function EntryActions({
           if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
             event.preventDefault();
             event.stopPropagation();
+            onBeforeOpen?.();
             setContextOpen(false);
             setMenuOpen(true);
           }
