@@ -364,6 +364,8 @@ export interface Preferences {
   enableWebResearch: boolean;
   proactiveMode: boolean;
   watchedRepos: string[];
+  /** Applied at renderer startup, before any diffs mount. */
+  diffHighlighter?: import('./diff-highlighter-preference').DiffHighlighter;
   codeTheme: string;
   codeFont: string;
   claudePath: string;

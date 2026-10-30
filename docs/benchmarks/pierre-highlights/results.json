@@ -1,0 +1,1677 @@
+{
+  "versions": {
+    "node": "24.14.1",
+    "acorn": "8.15.0",
+    "ada": "3.4.2",
+    "amaro": "1.1.7",
+    "ares": "1.34.6",
+    "brotli": "1.0.9",
+    "cldr": "47.0",
+    "icu": "77.1",
+    "llhttp": "9.3.0",
+    "merve": "1.0.0",
+    "modules": "145",
+    "napi": "10",
+    "nbytes": "0.1.1",
+    "ncrypto": "0.0.1",
+    "nghttp2": "1.68.0",
+    "openssl": "0.0.0",
+    "simdjson": "4.2.4",
+    "simdutf": "7.7.0",
+    "sqlite": "3.51.2",
+    "tz": "2025b",
+    "undici": "7.24.4",
+    "unicode": "16.0",
+    "uv": "1.51.0",
+    "uvwasi": "0.0.23",
+    "v8": "14.6.202.33-electron.0",
+    "zlib": "1.3.1",
+    "zstd": "1.6.0",
+    "electron": "41.2.1",
+    "chrome": "146.0.7680.188"
+  },
+  "platform": "darwin",
+  "arch": "arm64",
+  "cpu": "Apple M5 Max",
+  "date": "2026-10-30T08:34:01.268Z",
+  "samples": [
+    {
+      "name": "PrFileInspection.tsx",
+      "lang": "tsx",
+      "added": false,
+      "characters": 34162,
+      "lines": 796,
+      "sha256": "aa0c5cc821207216521c8193a93c9f10fcdffa659ee7856d6ee57d4ed3949292"
+    },
+    {
+      "name": "PrFileInspection-added.tsx",
+      "lang": "tsx",
+      "added": true,
+      "characters": 34162,
+      "lines": 796,
+      "sha256": "aa0c5cc821207216521c8193a93c9f10fcdffa659ee7856d6ee57d4ed3949292"
+    },
+    {
+      "name": "main-excerpt.ts",
+      "lang": "typescript",
+      "added": false,
+      "characters": 79949,
+      "lines": 2070,
+      "sha256": "48745b80320e23b77ee281fd7c56d1d813f5c2a57578ba236d4ecbfc7c797a45"
+    },
+    {
+      "name": "globals-excerpt.css",
+      "lang": "css",
+      "added": false,
+      "characters": 79939,
+      "lines": 1947,
+      "sha256": "c296489cbbca4a5580f5c1134e2c7f5adfe2325ef5fa04295c329cbed30a913a"
+    },
+    {
+      "name": "package-lock-excerpt.json",
+      "lang": "json",
+      "added": false,
+      "characters": 79937,
+      "lines": 2130,
+      "sha256": "2156b17d575737c12c037f9e5aae0174e5302a776e4370c8e4a8a0389e5261c0"
+    },
+    {
+      "name": "main-large.ts",
+      "lang": "typescript",
+      "added": false,
+      "characters": 118314,
+      "lines": 2813,
+      "sha256": "a156acc7bf144c946c736c40f28f65ffa2e66da96b0b134f5f57b2cbb1075b6e"
+    },
+    {
+      "name": "globals-large.css",
+      "lang": "css",
+      "added": false,
+      "characters": 211403,
+      "lines": 3408,
+      "sha256": "511cc2b02ce54243fdabc7492c49580124f447fb4d70af51ed8989765eeecaa0"
+    },
+    {
+      "name": "package-lock-large.json",
+      "lang": "json",
+      "added": false,
+      "characters": 794219,
+      "lines": 21961,
+      "sha256": "60835cb0c7a992776d297947739990db65735b0cc9117c616bccc50901aaec7e"
+    }
+  ],
+  "runs": [
+    {
+      "backend": "shiki-js",
+      "setupMs": 37.099999994039536,
+      "results": [
+        {
+          "name": "PrFileInspection.tsx",
+          "bytes": 34178,
+          "supported": true,
+          "tokenMs": [
+            134.59999999403954,
+            122.19999998807907,
+            126.30000001192093,
+            107.90000000596046,
+            112.40000000596046
+          ],
+          "tokenCount": 4873,
+          "distinctColors": 9,
+          "textPreserved": true,
+          "renderMs": [
+            243,
+            239.7999999821186,
+            235.5,
+            242.7000000178814,
+            231.30000001192093
+          ],
+          "paintedMs": [
+            255,
+            245.89999997615814,
+            245.7999999821186,
+            248.60000002384186,
+            243
+          ],
+          "maxBlockMs": 1091.699999988079,
+          "renderedLines": 42,
+          "renderedColors": 7
+        },
+        {
+          "name": "PrFileInspection-added.tsx",
+          "bytes": 34178,
+          "supported": true,
+          "tokenMs": [
+            100.59999999403954,
+            102.7000000178814,
+            103.09999999403954,
+            122.2999999821186,
+            118.19999998807907
+          ],
+          "tokenCount": 4873,
+          "distinctColors": 9,
+          "textPreserved": true,
+          "renderMs": [
+            121.5,
+            114.7999999821186,
+            135.40000000596046,
+            125.19999998807907,
+            138
+          ],
+          "paintedMs": [
+            177.39999997615814,
+            254.7999999821186,
+            202.7000000178814,
+            270.69999998807907,
+            192.19999998807907
+          ],
+          "maxBlockMs": 281,
+          "renderedLines": 796,
+          "renderedColors": 9
+        },
+        {
+          "name": "main-excerpt.ts",
+          "bytes": 81326,
+          "supported": true,
+          "tokenMs": [
+            294.80000001192093,
+            333.30000001192093,
+            299.7999999821186,
+            263.5,
+            317.09999999403954
+          ],
+          "tokenCount": 11299,
+          "distinctColors": 9,
+          "textPreserved": true,
+          "renderMs": [
+            665,
+            636.5999999940395,
+            585,
+            572.5,
+            596.9000000059605
+          ],
+          "paintedMs": [
+            671.1999999880791,
+            648.0999999940395,
+            591.0999999940395,
+            582.6999999880791,
+            601.8000000119209
+          ],
+          "maxBlockMs": 911.7999999821186,
+          "renderedLines": 42,
+          "renderedColors": 7
+        },
+        {
+          "name": "globals-excerpt.css",
+          "bytes": 81389,
+          "supported": true,
+          "tokenMs": [
+            70,
+            68.7000000178814,
+            70.5,
+            69,
+            64.7000000178814
+          ],
+          "tokenCount": 15114,
+          "distinctColors": 9,
+          "textPreserved": true,
+          "renderMs": [
+            150.80000001192093,
+            146.30000001192093,
+            150.5,
+            153.09999999403954,
+            165.40000000596046
+          ],
+          "paintedMs": [
+            156,
+            156.40000000596046,
+            155.5,
+            164,
+            170.90000000596046
+          ],
+          "maxBlockMs": 299.19999998807907,
+          "renderedLines": 42,
+          "renderedColors": 7
+        },
+        {
+          "name": "package-lock-excerpt.json",
+          "bytes": 79937,
+          "supported": true,
+          "tokenMs": [
+            11.599999994039536,
+            13.099999994039536,
+            11.299999982118607,
+            11.099999994039536,
+            20.30000001192093
+          ],
+          "tokenCount": 7813,
+          "distinctColors": 3,
+          "textPreserved": true,
+          "renderMs": [
+            33.5,
+            33.099999994039536,
+            28.900000005960464,
+            26.700000017881393,
+            26.200000017881393
+          ],
+          "paintedMs": [
+            44.70000001788139,
+            45.29999998211861,
+            39.900000005960464,
+            31.200000017881393,
+            30.700000017881393
+          ],
+          "maxBlockMs": 41.10000002384186,
+          "renderedLines": 42,
+          "renderedColors": 3
+        },
+        {
+          "name": "main-large.ts",
+          "bytes": 119699,
+          "supported": true,
+          "tokenMs": [
+            506.5,
+            475.2999999821186,
+            497,
+            469.60000002384186,
+            480.19999998807907
+          ],
+          "tokenCount": 16685,
+          "distinctColors": 9,
+          "textPreserved": true,
+          "renderMs": [
+            908.5999999940395,
+            904.5,
+            958.9000000059605,
+            984.5,
+            974.8000000119209
+          ],
+          "paintedMs": [
+            913.5,
+            916.9000000059605,
+            964.5999999940395,
+            995.4000000059605,
+            980.3000000119209
+          ],
+          "maxBlockMs": 986.5999999940395,
+          "renderedLines": 42,
+          "renderedColors": 6
+        },
+        {
+          "name": "globals-large.css",
+          "bytes": 212856,
+          "supported": true,
+          "tokenMs": [
+            195.90000000596046,
+            181.5,
+            180.40000000596046,
+            179,
+            199.90000000596046
+          ],
+          "tokenCount": 42152,
+          "distinctColors": 9,
+          "textPreserved": true,
+          "renderMs": [
+            417.60000002384186,
+            462.59999999403954,
+            400.39999997615814,
+            440.80000001192093,
+            428.69999998807907
+          ],
+          "paintedMs": [
+            423.90000000596046,
+            480.09999999403954,
+            406.2999999821186,
+            459.5,
+            440.80000001192093
+          ],
+          "maxBlockMs": 471.40000000596046,
+          "renderedLines": 42,
+          "renderedColors": 7
+        },
+        {
+          "name": "package-lock-large.json",
+          "bytes": 794219,
+          "supported": true,
+          "tokenMs": [
+            124.19999998807907,
+            115.89999997615814,
+            115.89999997615814,
+            109.19999998807907,
+            117.89999997615814
+          ],
+          "tokenCount": 79342,
+          "distinctColors": 3,
+          "textPreserved": true,
+          "renderMs": [
+            271.40000000596046,
+            273.80000001192093,
+            280.80000001192093,
+            313.5,
+            299.5
+          ],
+          "paintedMs": [
+            276.59999999403954,
+            284.80000001192093,
+            286.90000000596046,
+            325.7999999821186,
+            310.19999998807907
+          ],
+          "maxBlockMs": 313.2999999821186,
+          "renderedLines": 42,
+          "renderedColors": 3
+        }
+      ]
+    },
+    {
+      "backend": "highlights",
+      "setupMs": 10,
+      "results": [
+        {
+          "name": "PrFileInspection.tsx",
+          "bytes": 34178,
+          "supported": true,
+          "tokenMs": [
+            1.199999988079071,
+            1,
+            0.800000011920929,
+            0.7999999821186066,
+            0.699999988079071
+          ],
+          "tokenCount": 6719,
+          "distinctColors": 7,
+          "textPreserved": true,
+          "renderMs": [
+            10.400000005960464,
+            10.400000005960464,
+            10.100000023841858,
+            8.900000005960464,
+            9.300000011920929
+          ],
+          "paintedMs": [
+            16.900000005960464,
+            21.299999982118607,
+            17.100000023841858,
+            22.5,
+            15.699999988079071
+          ],
+          "maxBlockMs": 20.299999982118607,
+          "renderedLines": 42,
+          "renderedColors": 6
+        },
+        {
+          "name": "PrFileInspection-added.tsx",
+          "bytes": 34178,
+          "supported": true,
+          "tokenMs": [
+            0.699999988079071,
+            0.5999999940395355,
+            0.5999999940395355,
+            0.7999999821186066,
+            0.800000011920929
+          ],
+          "tokenCount": 6719,
+          "distinctColors": 7,
+          "textPreserved": true,
+          "renderMs": [
+            21.599999994039536,
+            19.5,
+            17,
+            20.80000001192093,
+            19.900000005960464
+          ],
+          "paintedMs": [
+            201.5,
+            82.09999999403954,
+            74.59999999403954,
+            222.90000000596046,
+            85.5
+          ],
+          "maxBlockMs": 211.5,
+          "renderedLines": 796,
+          "renderedColors": 7
+        },
+        {
+          "name": "main-excerpt.ts",
+          "bytes": 81326,
+          "supported": true,
+          "tokenMs": [
+            1.300000011920929,
+            1.199999988079071,
+            1.0999999940395355,
+            1.0999999940395355,
+            1.4000000059604645
+          ],
+          "tokenCount": 14293,
+          "distinctColors": 6,
+          "textPreserved": true,
+          "renderMs": [
+            12.900000005960464,
+            13.900000005960464,
+            14.200000017881393,
+            13.5,
+            14.099999994039536
+          ],
+          "paintedMs": [
+            19,
+            19,
+            19.30000001192093,
+            43.30000001192093,
+            20.700000017881393
+          ],
+          "maxBlockMs": 34.400000005960464,
+          "renderedLines": 42,
+          "renderedColors": 6
+        },
+        {
+          "name": "globals-excerpt.css",
+          "bytes": 81389,
+          "supported": true,
+          "tokenMs": [
+            1.699999988079071,
+            1.2000000178813934,
+            1.2000000178813934,
+            1.100000023841858,
+            1.0999999940395355
+          ],
+          "tokenCount": 13925,
+          "distinctColors": 7,
+          "textPreserved": true,
+          "renderMs": [
+            13,
+            13.799999982118607,
+            12.5,
+            13.099999994039536,
+            13.099999994039536
+          ],
+          "paintedMs": [
+            18,
+            19.099999994039536,
+            17.099999994039536,
+            17.799999982118607,
+            18.900000005960464
+          ],
+          "maxBlockMs": 12.199999988079071,
+          "renderedLines": 42,
+          "renderedColors": 6
+        },
+        {
+          "name": "package-lock-excerpt.json",
+          "bytes": 79937,
+          "supported": true,
+          "tokenMs": [
+            4.0999999940395355,
+            0.5999999940395355,
+            0.5,
+            0.5,
+            0.5999999940395355
+          ],
+          "tokenCount": 8801,
+          "distinctColors": 3,
+          "textPreserved": true,
+          "renderMs": [
+            9.399999976158142,
+            10.099999994039536,
+            12,
+            9.099999994039536,
+            8.800000011920929
+          ],
+          "paintedMs": [
+            15.399999976158142,
+            15.400000005960464,
+            17.299999982118607,
+            14.099999994039536,
+            15.800000011920929
+          ],
+          "maxBlockMs": 12,
+          "renderedLines": 42,
+          "renderedColors": 3
+        },
+        {
+          "name": "main-large.ts",
+          "bytes": 119699,
+          "supported": true,
+          "tokenMs": [
+            2.300000011920929,
+            2.4000000059604645,
+            2.199999988079071,
+            2.2999999821186066,
+            2.4000000059604645
+          ],
+          "tokenCount": 21900,
+          "distinctColors": 6,
+          "textPreserved": true,
+          "renderMs": [
+            16.100000023841858,
+            17.799999982118607,
+            16.099999994039536,
+            19.900000005960464,
+            30.80000001192093
+          ],
+          "paintedMs": [
+            28.30000001192093,
+            23.099999994039536,
+            21,
+            25.5,
+            36.900000005960464
+          ],
+          "maxBlockMs": 28.30000001192093,
+          "renderedLines": 42,
+          "renderedColors": 5
+        },
+        {
+          "name": "globals-large.css",
+          "bytes": 212856,
+          "supported": true,
+          "tokenMs": [
+            3.199999988079071,
+            3.2999999821186066,
+            3.2999999821186066,
+            3.0999999940395355,
+            3.199999988079071
+          ],
+          "tokenCount": 39819,
+          "distinctColors": 7,
+          "textPreserved": true,
+          "renderMs": [
+            34.400000005960464,
+            30.600000023841858,
+            34.099999994039536,
+            33.5,
+            27
+          ],
+          "paintedMs": [
+            42.099999994039536,
+            40.10000002384186,
+            41.29999998211861,
+            40.79999998211861,
+            45
+          ],
+          "maxBlockMs": 42.30000001192093,
+          "renderedLines": 42,
+          "renderedColors": 6
+        },
+        {
+          "name": "package-lock-large.json",
+          "bytes": 794219,
+          "supported": true,
+          "tokenMs": [
+            5.100000023841858,
+            4.100000023841858,
+            8.800000011920929,
+            4.9000000059604645,
+            4.0999999940395355
+          ],
+          "tokenCount": 89774,
+          "distinctColors": 3,
+          "textPreserved": true,
+          "renderMs": [
+            71.40000000596046,
+            93.80000001192093,
+            87.5,
+            77.19999998807907,
+            88.2000000178814
+          ],
+          "paintedMs": [
+            75.80000001192093,
+            99.30000001192093,
+            98.59999999403954,
+            82.30000001192093,
+            94.2000000178814
+          ],
+          "maxBlockMs": 90.09999999403954,
+          "renderedLines": 42,
+          "renderedColors": 3
+        }
+      ]
+    },
+    {
+      "backend": "highlights",
+      "setupMs": 17,
+      "results": [
+        {
+          "name": "PrFileInspection.tsx",
+          "bytes": 34178,
+          "supported": true,
+          "tokenMs": [
+            1.300000011920929,
+            1,
+            1,
+            1.100000023841858,
+            1
+          ],
+          "tokenCount": 6719,
+          "distinctColors": 7,
+          "textPreserved": true,
+          "renderMs": [
+            13,
+            10.5,
+            10,
+            9,
+            8.699999988079071
+          ],
+          "paintedMs": [
+            19.599999994039536,
+            21.099999994039536,
+            16.400000005960464,
+            15.5,
+            14.799999982118607
+          ],
+          "maxBlockMs": 37.5,
+          "renderedLines": 42,
+          "renderedColors": 6
+        },
+        {
+          "name": "PrFileInspection-added.tsx",
+          "bytes": 34178,
+          "supported": true,
+          "tokenMs": [
+            0.699999988079071,
+            0.7000000178813934,
+            2,
+            0.699999988079071,
+            0.7000000178813934
+          ],
+          "tokenCount": 6719,
+          "distinctColors": 7,
+          "textPreserved": true,
+          "renderMs": [
+            21.099999994039536,
+            21.900000005960464,
+            20.400000005960464,
+            21.19999998807907,
+            21.19999998807907
+          ],
+          "paintedMs": [
+            83.89999997615814,
+            224.30000001192093,
+            87.80000001192093,
+            92.40000000596046,
+            202.69999998807907
+          ],
+          "maxBlockMs": 215.80000001192093,
+          "renderedLines": 796,
+          "renderedColors": 7
+        },
+        {
+          "name": "main-excerpt.ts",
+          "bytes": 81326,
+          "supported": true,
+          "tokenMs": [
+            3.100000023841858,
+            1.4000000059604645,
+            1.699999988079071,
+            1.5,
+            1.7000000178813934
+          ],
+          "tokenCount": 14293,
+          "distinctColors": 6,
+          "textPreserved": true,
+          "renderMs": [
+            15,
+            16.900000005960464,
+            16.799999982118607,
+            31.100000023841858,
+            14.599999994039536
+          ],
+          "paintedMs": [
+            21.400000005960464,
+            24.69999998807907,
+            24.799999982118607,
+            38.60000002384186,
+            20.899999976158142
+          ],
+          "maxBlockMs": 30.799999982118607,
+          "renderedLines": 42,
+          "renderedColors": 6
+        },
+        {
+          "name": "globals-excerpt.css",
+          "bytes": 81389,
+          "supported": true,
+          "tokenMs": [
+            1.5999999940395355,
+            1.4000000059604645,
+            1.199999988079071,
+            1.0999999940395355,
+            1.199999988079071
+          ],
+          "tokenCount": 13925,
+          "distinctColors": 7,
+          "textPreserved": true,
+          "renderMs": [
+            13.900000005960464,
+            14.199999988079071,
+            13.800000011920929,
+            15,
+            14.099999994039536
+          ],
+          "paintedMs": [
+            19,
+            19.900000005960464,
+            20.30000001192093,
+            20.399999976158142,
+            19.700000017881393
+          ],
+          "maxBlockMs": 21.599999994039536,
+          "renderedLines": 42,
+          "renderedColors": 6
+        },
+        {
+          "name": "package-lock-excerpt.json",
+          "bytes": 79937,
+          "supported": true,
+          "tokenMs": [
+            0.699999988079071,
+            0.5999999940395355,
+            0.5999999940395355,
+            0.5,
+            0.5
+          ],
+          "tokenCount": 8801,
+          "distinctColors": 3,
+          "textPreserved": true,
+          "renderMs": [
+            9.5,
+            11.5,
+            13.399999976158142,
+            9.099999994039536,
+            8.900000005960464
+          ],
+          "paintedMs": [
+            15.599999994039536,
+            17.899999976158142,
+            27.299999982118607,
+            14.699999988079071,
+            19
+          ],
+          "maxBlockMs": 18.400000005960464,
+          "renderedLines": 42,
+          "renderedColors": 3
+        },
+        {
+          "name": "main-large.ts",
+          "bytes": 119699,
+          "supported": true,
+          "tokenMs": [
+            2.4000000059604645,
+            2.4000000059604645,
+            2.199999988079071,
+            2.199999988079071,
+            2.399999976158142
+          ],
+          "tokenCount": 21900,
+          "distinctColors": 6,
+          "textPreserved": true,
+          "renderMs": [
+            21.19999998807907,
+            23.30000001192093,
+            18.799999982118607,
+            34.599999994039536,
+            19.400000005960464
+          ],
+          "paintedMs": [
+            28.099999994039536,
+            30,
+            33.599999994039536,
+            40.900000005960464,
+            25.69999998807907
+          ],
+          "maxBlockMs": 33,
+          "renderedLines": 42,
+          "renderedColors": 5
+        },
+        {
+          "name": "globals-large.css",
+          "bytes": 212856,
+          "supported": true,
+          "tokenMs": [
+            3.0999999940395355,
+            3.2999999821186066,
+            3.2999999821186066,
+            3,
+            3.300000011920929
+          ],
+          "tokenCount": 39819,
+          "distinctColors": 7,
+          "textPreserved": true,
+          "renderMs": [
+            29.200000017881393,
+            27.799999982118607,
+            30.099999994039536,
+            32.29999998211861,
+            28.19999998807907
+          ],
+          "paintedMs": [
+            47.099999994039536,
+            34.599999994039536,
+            36.599999994039536,
+            39.599999994039536,
+            35
+          ],
+          "maxBlockMs": 38.79999998211861,
+          "renderedLines": 42,
+          "renderedColors": 6
+        },
+        {
+          "name": "package-lock-large.json",
+          "bytes": 794219,
+          "supported": true,
+          "tokenMs": [
+            4.899999976158142,
+            4.9000000059604645,
+            16.200000017881393,
+            5.0999999940395355,
+            4.699999988079071
+          ],
+          "tokenCount": 89774,
+          "distinctColors": 3,
+          "textPreserved": true,
+          "renderMs": [
+            77.7000000178814,
+            97.2000000178814,
+            93.09999999403954,
+            71.40000000596046,
+            83.80000001192093
+          ],
+          "paintedMs": [
+            88.7000000178814,
+            103.5,
+            99.80000001192093,
+            82.09999999403954,
+            89.5
+          ],
+          "maxBlockMs": 89,
+          "renderedLines": 42,
+          "renderedColors": 3
+        }
+      ]
+    },
+    {
+      "backend": "shiki-js",
+      "setupMs": 33,
+      "results": [
+        {
+          "name": "PrFileInspection.tsx",
+          "bytes": 34178,
+          "supported": true,
+          "tokenMs": [
+            122.90000000596046,
+            110.80000001192093,
+            101.90000000596046,
+            112,
+            122.80000001192093
+          ],
+          "tokenCount": 4873,
+          "distinctColors": 9,
+          "textPreserved": true,
+          "renderMs": [
+            223.69999998807907,
+            242.69999998807907,
+            209.69999998807907,
+            199.09999999403954,
+            207.5
+          ],
+          "paintedMs": [
+            229.2999999821186,
+            255,
+            214.59999999403954,
+            210.59999999403954,
+            213.19999998807907
+          ],
+          "maxBlockMs": 984.7999999821186,
+          "renderedLines": 42,
+          "renderedColors": 7
+        },
+        {
+          "name": "PrFileInspection-added.tsx",
+          "bytes": 34178,
+          "supported": true,
+          "tokenMs": [
+            120.90000000596046,
+            120.39999997615814,
+            122.5,
+            109.59999999403954,
+            94
+          ],
+          "tokenCount": 4873,
+          "distinctColors": 9,
+          "textPreserved": true,
+          "renderMs": [
+            112.59999999403954,
+            126.2000000178814,
+            130.2000000178814,
+            137.39999997615814,
+            117.09999999403954
+          ],
+          "paintedMs": [
+            160.19999998807907,
+            285.09999999403954,
+            204.5,
+            305,
+            164.90000000596046
+          ],
+          "maxBlockMs": 301.10000002384186,
+          "renderedLines": 796,
+          "renderedColors": 9
+        },
+        {
+          "name": "main-excerpt.ts",
+          "bytes": 81326,
+          "supported": true,
+          "tokenMs": [
+            323.5,
+            269.5,
+            258.90000000596046,
+            293.69999998807907,
+            286.09999999403954
+          ],
+          "tokenCount": 11299,
+          "distinctColors": 9,
+          "textPreserved": true,
+          "renderMs": [
+            592.0999999940395,
+            541,
+            620.8000000119209,
+            576.2999999821186,
+            609.3000000119209
+          ],
+          "paintedMs": [
+            604.1999999880791,
+            545.7999999821186,
+            633,
+            581.1999999880791,
+            623
+          ],
+          "maxBlockMs": 1013,
+          "renderedLines": 42,
+          "renderedColors": 7
+        },
+        {
+          "name": "globals-excerpt.css",
+          "bytes": 81389,
+          "supported": true,
+          "tokenMs": [
+            73.40000000596046,
+            61.599999994039536,
+            59.89999997615814,
+            58.70000001788139,
+            60.5
+          ],
+          "tokenCount": 15114,
+          "distinctColors": 9,
+          "textPreserved": true,
+          "renderMs": [
+            150.59999999403954,
+            132.7000000178814,
+            153.90000000596046,
+            161.7999999821186,
+            147.5
+          ],
+          "paintedMs": [
+            155.7999999821186,
+            137.60000002384186,
+            164.60000002384186,
+            167,
+            157.90000000596046
+          ],
+          "maxBlockMs": 353.80000001192093,
+          "renderedLines": 42,
+          "renderedColors": 7
+        },
+        {
+          "name": "package-lock-excerpt.json",
+          "bytes": 79937,
+          "supported": true,
+          "tokenMs": [
+            9.699999988079071,
+            10.400000005960464,
+            9.599999994039536,
+            9.599999994039536,
+            13.099999994039536
+          ],
+          "tokenCount": 7813,
+          "distinctColors": 3,
+          "textPreserved": true,
+          "renderMs": [
+            26.900000005960464,
+            27.399999976158142,
+            29.900000005960464,
+            30,
+            30.700000017881393
+          ],
+          "paintedMs": [
+            31.099999994039536,
+            35.5,
+            34.599999994039536,
+            34.900000005960464,
+            35.20000001788139
+          ],
+          "maxBlockMs": 27.5,
+          "renderedLines": 42,
+          "renderedColors": 3
+        },
+        {
+          "name": "main-large.ts",
+          "bytes": 119699,
+          "supported": true,
+          "tokenMs": [
+            507.69999998807907,
+            442.80000001192093,
+            425.09999999403954,
+            461.5,
+            423.7999999821186
+          ],
+          "tokenCount": 16685,
+          "distinctColors": 9,
+          "textPreserved": true,
+          "renderMs": [
+            963.5999999940395,
+            963.6000000238419,
+            924.4000000059605,
+            919.3999999761581,
+            933.8000000119209
+          ],
+          "paintedMs": [
+            970.4000000059605,
+            976.2000000178814,
+            931.4000000059605,
+            931.8999999761581,
+            938.8000000119209
+          ],
+          "maxBlockMs": 967.7000000178814,
+          "renderedLines": 42,
+          "renderedColors": 6
+        },
+        {
+          "name": "globals-large.css",
+          "bytes": 212856,
+          "supported": true,
+          "tokenMs": [
+            207.2000000178814,
+            211.5,
+            241.7999999821186,
+            225,
+            182.7000000178814
+          ],
+          "tokenCount": 42152,
+          "distinctColors": 9,
+          "textPreserved": true,
+          "renderMs": [
+            452.60000002384186,
+            460.10000002384186,
+            400.7000000178814,
+            483.5,
+            414.90000000596046
+          ],
+          "paintedMs": [
+            459.90000000596046,
+            477,
+            407.60000002384186,
+            503.30000001192093,
+            425.90000000596046
+          ],
+          "maxBlockMs": 495,
+          "renderedLines": 42,
+          "renderedColors": 7
+        },
+        {
+          "name": "package-lock-large.json",
+          "bytes": 794219,
+          "supported": true,
+          "tokenMs": [
+            116.19999998807907,
+            115.09999999403954,
+            122.69999998807907,
+            120.69999998807907,
+            107.80000001192093
+          ],
+          "tokenCount": 79342,
+          "distinctColors": 3,
+          "textPreserved": true,
+          "renderMs": [
+            288.5,
+            268.40000000596046,
+            302.90000000596046,
+            316.40000000596046,
+            260.40000000596046
+          ],
+          "paintedMs": [
+            293.59999999403954,
+            276.7999999821186,
+            309.40000000596046,
+            327.80000001192093,
+            264.90000000596046
+          ],
+          "maxBlockMs": 322.89999997615814,
+          "renderedLines": 42,
+          "renderedColors": 3
+        }
+      ]
+    },
+    {
+      "backend": "shiki-js",
+      "setupMs": 40.400000005960464,
+      "results": [
+        {
+          "name": "PrFileInspection.tsx",
+          "bytes": 34178,
+          "supported": true,
+          "tokenMs": [
+            114.30000001192093,
+            108.10000002384186,
+            112.59999999403954,
+            120.30000001192093,
+            112.69999998807907
+          ],
+          "tokenCount": 4873,
+          "distinctColors": 9,
+          "textPreserved": true,
+          "renderMs": [
+            246.7999999821186,
+            254.60000002384186,
+            234.39999997615814,
+            226.59999999403954,
+            220.5
+          ],
+          "paintedMs": [
+            251.7999999821186,
+            267.80000001192093,
+            240.7999999821186,
+            240.40000000596046,
+            225.5
+          ],
+          "maxBlockMs": 996.2000000178814,
+          "renderedLines": 42,
+          "renderedColors": 7
+        },
+        {
+          "name": "PrFileInspection-added.tsx",
+          "bytes": 34178,
+          "supported": true,
+          "tokenMs": [
+            98.5,
+            117.09999999403954,
+            119.09999999403954,
+            98.7000000178814,
+            94.40000000596046
+          ],
+          "tokenCount": 4873,
+          "distinctColors": 9,
+          "textPreserved": true,
+          "renderMs": [
+            115.30000001192093,
+            119.59999999403954,
+            122.5,
+            128.5,
+            126.7999999821186
+          ],
+          "paintedMs": [
+            171.59999999403954,
+            255.89999997615814,
+            188.09999999403954,
+            267.2999999821186,
+            180.69999998807907
+          ],
+          "maxBlockMs": 275.09999999403954,
+          "renderedLines": 796,
+          "renderedColors": 9
+        },
+        {
+          "name": "main-excerpt.ts",
+          "bytes": 81326,
+          "supported": true,
+          "tokenMs": [
+            335.40000000596046,
+            320.69999998807907,
+            285.59999999403954,
+            312.69999998807907,
+            290.5
+          ],
+          "tokenCount": 11299,
+          "distinctColors": 9,
+          "textPreserved": true,
+          "renderMs": [
+            675,
+            666.1000000238419,
+            608.6999999880791,
+            538.0999999940395,
+            548.4000000059605
+          ],
+          "paintedMs": [
+            689.9000000059605,
+            672.7000000178814,
+            619.3999999761581,
+            542.7999999821186,
+            560.9000000059605
+          ],
+          "maxBlockMs": 1029.6000000238419,
+          "renderedLines": 42,
+          "renderedColors": 7
+        },
+        {
+          "name": "globals-excerpt.css",
+          "bytes": 81389,
+          "supported": true,
+          "tokenMs": [
+            59.30000001192093,
+            57.900000005960464,
+            63.099999994039536,
+            71.19999998807907,
+            86.7000000178814
+          ],
+          "tokenCount": 15114,
+          "distinctColors": 9,
+          "textPreserved": true,
+          "renderMs": [
+            131.19999998807907,
+            129.7000000178814,
+            131,
+            140.40000000596046,
+            153.30000001192093
+          ],
+          "paintedMs": [
+            135.5,
+            134.10000002384186,
+            139.60000002384186,
+            145.19999998807907,
+            165.09999999403954
+          ],
+          "maxBlockMs": 315.7999999821186,
+          "renderedLines": 42,
+          "renderedColors": 7
+        },
+        {
+          "name": "package-lock-excerpt.json",
+          "bytes": 79937,
+          "supported": true,
+          "tokenMs": [
+            45.30000001192093,
+            11.900000005960464,
+            11,
+            12,
+            11
+          ],
+          "tokenCount": 7813,
+          "distinctColors": 3,
+          "textPreserved": true,
+          "renderMs": [
+            31.599999994039536,
+            31.5,
+            33.80000001192093,
+            32.599999994039536,
+            30.200000017881393
+          ],
+          "paintedMs": [
+            41.80000001192093,
+            36.599999994039536,
+            38.60000002384186,
+            37.099999994039536,
+            35.400000005960464
+          ],
+          "maxBlockMs": 51.599999994039536,
+          "renderedLines": 42,
+          "renderedColors": 3
+        },
+        {
+          "name": "main-large.ts",
+          "bytes": 119699,
+          "supported": true,
+          "tokenMs": [
+            498.80000001192093,
+            416.40000000596046,
+            478,
+            461.09999999403954,
+            380.7999999821186
+          ],
+          "tokenCount": 16685,
+          "distinctColors": 9,
+          "textPreserved": true,
+          "renderMs": [
+            848,
+            919.5999999940395,
+            883.3999999761581,
+            917.5,
+            967.5999999940395
+          ],
+          "paintedMs": [
+            853.8000000119209,
+            933,
+            889.0999999940395,
+            929.9000000059605,
+            972.5
+          ],
+          "maxBlockMs": 964.2999999821186,
+          "renderedLines": 42,
+          "renderedColors": 6
+        },
+        {
+          "name": "globals-large.css",
+          "bytes": 212856,
+          "supported": true,
+          "tokenMs": [
+            217.40000000596046,
+            186.2999999821186,
+            171.80000001192093,
+            180.59999999403954,
+            177.59999999403954
+          ],
+          "tokenCount": 42152,
+          "distinctColors": 9,
+          "textPreserved": true,
+          "renderMs": [
+            405.40000000596046,
+            386.59999999403954,
+            390.59999999403954,
+            415.69999998807907,
+            422.39999997615814
+          ],
+          "paintedMs": [
+            411.30000001192093,
+            401.39999997615814,
+            396.69999998807907,
+            437.30000001192093,
+            433.69999998807907
+          ],
+          "maxBlockMs": 428.5,
+          "renderedLines": 42,
+          "renderedColors": 7
+        },
+        {
+          "name": "package-lock-large.json",
+          "bytes": 794219,
+          "supported": true,
+          "tokenMs": [
+            105.69999998807907,
+            119.19999998807907,
+            106.7000000178814,
+            100.09999999403954,
+            114.59999999403954
+          ],
+          "tokenCount": 79342,
+          "distinctColors": 3,
+          "textPreserved": true,
+          "renderMs": [
+            271.40000000596046,
+            301,
+            257,
+            292.5,
+            277.2000000178814
+          ],
+          "paintedMs": [
+            276.80000001192093,
+            311.09999999403954,
+            261.59999999403954,
+            302.39999997615814,
+            282.60000002384186
+          ],
+          "maxBlockMs": 301.90000000596046,
+          "renderedLines": 42,
+          "renderedColors": 3
+        }
+      ]
+    },
+    {
+      "backend": "highlights",
+      "setupMs": 8.699999988079071,
+      "results": [
+        {
+          "name": "PrFileInspection.tsx",
+          "bytes": 34178,
+          "supported": true,
+          "tokenMs": [
+            1,
+            0.800000011920929,
+            0.800000011920929,
+            0.699999988079071,
+            0.699999988079071
+          ],
+          "tokenCount": 6719,
+          "distinctColors": 7,
+          "textPreserved": true,
+          "renderMs": [
+            9.400000005960464,
+            10.5,
+            9.400000005960464,
+            9,
+            8.400000005960464
+          ],
+          "paintedMs": [
+            15.199999988079071,
+            20.400000005960464,
+            15.5,
+            15.199999988079071,
+            21.900000005960464
+          ],
+          "maxBlockMs": 28.69999998807907,
+          "renderedLines": 42,
+          "renderedColors": 6
+        },
+        {
+          "name": "PrFileInspection-added.tsx",
+          "bytes": 34178,
+          "supported": true,
+          "tokenMs": [
+            0.699999988079071,
+            0.7000000178813934,
+            0.5999999940395355,
+            0.699999988079071,
+            0.7000000178813934
+          ],
+          "tokenCount": 6719,
+          "distinctColors": 7,
+          "textPreserved": true,
+          "renderMs": [
+            17.599999994039536,
+            18.30000001192093,
+            17.400000005960464,
+            19.799999982118607,
+            18
+          ],
+          "paintedMs": [
+            169.59999999403954,
+            84.5,
+            77,
+            228.7999999821186,
+            74.30000001192093
+          ],
+          "maxBlockMs": 216.80000001192093,
+          "renderedLines": 796,
+          "renderedColors": 7
+        },
+        {
+          "name": "main-excerpt.ts",
+          "bytes": 81326,
+          "supported": true,
+          "tokenMs": [
+            2.899999976158142,
+            1.5999999940395355,
+            1.2999999821186066,
+            1.199999988079071,
+            1.300000011920929
+          ],
+          "tokenCount": 14293,
+          "distinctColors": 6,
+          "textPreserved": true,
+          "renderMs": [
+            12.400000005960464,
+            13.400000005960464,
+            13,
+            16.599999994039536,
+            14.199999988079071
+          ],
+          "paintedMs": [
+            17.400000005960464,
+            18.900000005960464,
+            18.799999982118607,
+            45.099999994039536,
+            20.19999998807907
+          ],
+          "maxBlockMs": 36.5,
+          "renderedLines": 42,
+          "renderedColors": 6
+        },
+        {
+          "name": "globals-excerpt.css",
+          "bytes": 81389,
+          "supported": true,
+          "tokenMs": [
+            1.699999988079071,
+            1.2000000178813934,
+            1.2000000178813934,
+            1.100000023841858,
+            1.100000023841858
+          ],
+          "tokenCount": 13925,
+          "distinctColors": 7,
+          "textPreserved": true,
+          "renderMs": [
+            12.5,
+            14,
+            11.799999982118607,
+            12.300000011920929,
+            12.5
+          ],
+          "paintedMs": [
+            16.900000005960464,
+            18.69999998807907,
+            16.399999976158142,
+            17.400000005960464,
+            17.100000023841858
+          ],
+          "maxBlockMs": 11.699999988079071,
+          "renderedLines": 42,
+          "renderedColors": 6
+        },
+        {
+          "name": "package-lock-excerpt.json",
+          "bytes": 79937,
+          "supported": true,
+          "tokenMs": [
+            3,
+            0.5999999940395355,
+            0.3999999761581421,
+            0.5,
+            0.5
+          ],
+          "tokenCount": 8801,
+          "distinctColors": 3,
+          "textPreserved": true,
+          "renderMs": [
+            8.599999994039536,
+            8.5,
+            8.300000011920929,
+            8.5,
+            8.599999994039536
+          ],
+          "paintedMs": [
+            13,
+            14.800000011920929,
+            13.900000005960464,
+            15.800000011920929,
+            15.699999988079071
+          ],
+          "maxBlockMs": 9.800000011920929,
+          "renderedLines": 42,
+          "renderedColors": 3
+        },
+        {
+          "name": "main-large.ts",
+          "bytes": 119699,
+          "supported": true,
+          "tokenMs": [
+            2.0999999940395355,
+            2.100000023841858,
+            2.0999999940395355,
+            2,
+            2.2000000178813934
+          ],
+          "tokenCount": 21900,
+          "distinctColors": 6,
+          "textPreserved": true,
+          "renderMs": [
+            15.800000011920929,
+            17.30000001192093,
+            15.599999994039536,
+            27.099999994039536,
+            16.400000005960464
+          ],
+          "paintedMs": [
+            20.5,
+            29.30000001192093,
+            20.5,
+            33,
+            21.600000023841858
+          ],
+          "maxBlockMs": 24.099999994039536,
+          "renderedLines": 42,
+          "renderedColors": 5
+        },
+        {
+          "name": "globals-large.css",
+          "bytes": 212856,
+          "supported": true,
+          "tokenMs": [
+            2.7000000178813934,
+            2.5999999940395355,
+            2.7000000178813934,
+            2.5999999940395355,
+            2.5999999940395355
+          ],
+          "tokenCount": 39819,
+          "distinctColors": 7,
+          "textPreserved": true,
+          "renderMs": [
+            24.5,
+            22.799999982118607,
+            25.69999998807907,
+            27.799999982118607,
+            22.900000005960464
+          ],
+          "paintedMs": [
+            39.29999998211861,
+            28.299999982118607,
+            31.400000005960464,
+            33.69999998807907,
+            29.099999994039536
+          ],
+          "maxBlockMs": 30.69999998807907,
+          "renderedLines": 42,
+          "renderedColors": 6
+        },
+        {
+          "name": "package-lock-large.json",
+          "bytes": 794219,
+          "supported": true,
+          "tokenMs": [
+            5,
+            4.899999976158142,
+            7,
+            4.700000017881393,
+            4.800000011920929
+          ],
+          "tokenCount": 89774,
+          "distinctColors": 3,
+          "textPreserved": true,
+          "renderMs": [
+            80.90000000596046,
+            85.5,
+            77.69999998807907,
+            66.2000000178814,
+            65.09999999403954
+          ],
+          "paintedMs": [
+            92.7000000178814,
+            90.90000000596046,
+            84.2999999821186,
+            74.5,
+            69.40000000596046
+          ],
+          "maxBlockMs": 87.90000000596046,
+          "renderedLines": 42,
+          "renderedColors": 3
+        }
+      ]
+    }
+  ]
+}

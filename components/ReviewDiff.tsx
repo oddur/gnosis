@@ -4,11 +4,10 @@ import { useMemo, useState, useRef, type CSSProperties, type ReactNode } from 'r
 import type { GitHubReviewThread } from '../lib/review-threads';
 import { FileDiff } from '@pierre/diffs/react';
 import { bundledLanguages } from 'shiki/langs';
-import { bundledThemes } from 'shiki/themes';
-import { processFile, registerCustomTheme } from '@pierre/diffs';
+import { processFile } from '@pierre/diffs';
 import type { DiffLineAnnotation, FileDiffOptions } from '@pierre/diffs';
 import { ChevronsUpDown, FoldVertical, UnfoldVertical } from 'lucide-react';
-import { readableCodeTheme } from '@/lib/code-contrast';
+import { DIFF_HIGHLIGHTER } from '@/lib/diff-highlighter';
 import { CODE_THEMES } from '@/lib/constants';
 import {
   DEFAULT_DIFF_APPEARANCE,
@@ -24,14 +23,6 @@ import { DiffHunkGroup } from './DiffHunk';
 import { InteractiveDiffHunkGroup } from './InteractiveDiffHunk';
 import { SplitDiffHunkGroup } from './SplitDiffHunk';
 import { CommentBubble, InlineCommentForm, extractShikiStyles, type CommentCallbacks } from './shared-diff-utils';
-
-// Each preference keeps its syntax palette, adjusted for changed-line surfaces.
-for (const { id } of CODE_THEMES) {
-  registerCustomTheme(`gnosis-${id}`, async () => {
-    const { default: theme } = await bundledThemes[id]();
-    return readableCodeTheme(theme, `gnosis-${id}`);
-  });
-}
 
 type Location = { line: number; side: DiffSide };
 interface Props {
@@ -121,6 +112,7 @@ function ReviewHunk({
   const options = useMemo<FileDiffOptions<Location, undefined>>(
     () => ({
       theme: `gnosis-${theme}`,
+      preferredHighlighter: DIFF_HIGHLIGHTER,
       themeType: 'dark',
       diffStyle: prepared?.singleSide ? 'unified' : diffLayout,
       disableFileHeader: true,
