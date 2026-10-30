@@ -3406,3 +3406,24 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .combined-thread { margin-block: 8px; }
 .stack-changes-view > .changes-notice { flex-shrink: 0; }
 .combined-thread { background: var(--color-card); color: var(--color-foreground); font-family: var(--font-sans); }
+.brief-tab-count { margin-left:6px; color:var(--muted-foreground); font-size:12px; font-variant-numeric:tabular-nums; }
+.changes-pending-comment > span:has(.changes-brief-link) { display:inline-block; margin-left:12px; padding:2px 8px; border-radius:var(--radius); background:var(--card); }
+.changes-brief-link { margin-left:8px; color:var(--primary); text-decoration:underline; }
+.agent-brief { flex:1; min-height:0; overflow:auto; padding:16px var(--pr-frame-inset) 32px; font-size:var(--type-control); }
+.agent-brief-header { display:flex; flex-wrap:wrap; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:16px; }
+.agent-brief-header h2 { font-size:var(--type-body); font-weight:600; }
+.agent-brief-header p { color:var(--muted-foreground); }
+.agent-brief-actions, .agent-brief-confirm { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.agent-brief-empty { text-align:left; }
+.agent-brief-group { margin-bottom:24px; }
+.agent-brief-group h3 { font-weight:600; overflow-wrap:anywhere; }
+.agent-brief-group h3 span { font-weight:400; }
+.agent-brief-revision { color:var(--muted-foreground); font:var(--type-caption)/1.5 var(--font-mono); overflow-wrap:anywhere; }
+.agent-brief-comment { margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
+.agent-brief-location { color:var(--primary); text-align:left; overflow-wrap:anywhere; }
+.agent-brief-location:hover { text-decoration:underline; }
+.agent-brief-location span { font-family:var(--font-mono); }
+.agent-brief-comment pre { margin-top:8px; max-height:240px; overflow:auto; padding:8px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--secondary); font:var(--type-caption)/1.5 var(--font-mono); }
+.agent-brief-comment .changes-draft-comment { margin-inline:0; }
+.agent-brief-preview summary { cursor:pointer; color:var(--muted-foreground); }
+.agent-brief-preview pre { margin-top:8px; padding:12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); font:var(--type-caption)/1.6 var(--font-mono); white-space:pre-wrap; overflow-wrap:anywhere; }

@@ -6,25 +6,30 @@ export function ChangesCommentComposer({
   draftKey,
   label,
   onSave,
+  onAddToBrief,
   onCancel,
+  note,
 }: {
   draftKey: string;
   label: string;
-  onSave: (body: string, now: boolean) => Promise<void>;
+  /** Absent when this diff cannot be commented on in GitHub, such as the combined stack diff. */
+  onSave?: (body: string, now: boolean) => Promise<void>;
+  onAddToBrief?: (body: string) => Promise<void>;
   onCancel: () => void;
+  note?: string;
 }) {
   const id = useId();
   const [body, setBody] = useSessionDraft(`changes-comment:${draftKey}`, '');
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const pending = useRef(false);
-  async function save(now: boolean) {
+  async function run(action: (text: string) => Promise<void>) {
     if (pending.current || !body.trim()) return;
     pending.current = true;
     setBusy(true);
     setError('');
     try {
-      await onSave(body.trim(), now);
+      await action(body.trim());
       setBody('');
       onCancel();
     } catch (e) {
@@ -34,12 +39,15 @@ export function ChangesCommentComposer({
       setBusy(false);
     }
   }
+  const save = (now: boolean) => (onSave ? run((text) => onSave(text, now)) : Promise.resolve());
+  const addToBrief = () => (onAddToBrief ? run(onAddToBrief) : Promise.resolve());
+  const submit = () => (onSave ? save(false) : addToBrief());
   return (
     <form
       className="changes-comment-composer"
       onSubmit={(e) => {
         e.preventDefault();
-        void save(false);
+        void submit();
       }}
     >
       <label htmlFor={id}>{label}</label>
@@ -56,12 +64,15 @@ export function ChangesCommentComposer({
           if (e.nativeEvent.isComposing) return;
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
             e.preventDefault();
-            void save(false);
+            void (e.shiftKey ? addToBrief() : submit());
           }
         }}
       />
       <p className="changes-comment-help">
-        Add to review saves a private draft. Comment now posts to GitHub immediately.
+        {onSave
+          ? `${onAddToBrief ? 'Add to brief saves a note for your agent. ' : ''}Add to review saves a private draft. Comment now posts to GitHub immediately.`
+          : 'Add to brief saves a note for your agent on this computer. Nothing is posted to GitHub.'}
+        {note && ` ${note}`}
       </p>
       {error && (
         <p role="alert" className="github-thread-error">
@@ -72,17 +83,31 @@ export function ChangesCommentComposer({
         <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={onCancel}>
           Cancel
         </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={busy || !body.trim()}
-          onClick={() => void save(true)}
-        >
-          Comment now
-        </Button>
+        {onAddToBrief && onSave && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={busy || !body.trim()}
+            title="Shift+Cmd+Enter"
+            onClick={() => void addToBrief()}
+          >
+            Add to brief
+          </Button>
+        )}
+        {onSave && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={busy || !body.trim()}
+            onClick={() => void save(true)}
+          >
+            Comment now
+          </Button>
+        )}
         <Button type="submit" size="sm" disabled={busy || !body.trim()}>
-          {busy ? 'Saving…' : 'Add to review'}
+          {busy ? 'Saving…' : onSave ? 'Add to review' : 'Add to brief'}
         </Button>
       </div>
     </form>
