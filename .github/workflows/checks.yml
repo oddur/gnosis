@@ -8,10 +8,17 @@ on:
 permissions:
   contents: read
 
+# Supersede stale PR runs, but keep a distinct full run for EVERY main push.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check:
+    # Preserve the existing required-check names.
     name: Check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -22,6 +29,14 @@ jobs:
         with:
           node-version: '24'
           cache: npm
+      - name: Cache Electron
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/Library/Caches/electron
+            ~/AppData/Local/electron/Cache
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm test
@@ -30,11 +45,72 @@ jobs:
         run: |
           sudo chown root:root node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
-      - run: xvfb-run -a npm run test:explainer
+      - name: Electron integration smoke (Linux)
         if: runner.os == 'Linux'
-      - run: npm run test:explainer
+        run: xvfb-run -a npm run test:electron-smoke
+      - name: Electron integration smoke (macOS / Windows)
         if: runner.os != 'Linux'
-      - run: xvfb-run -a npm run test:workbench
+        run: npm run test:electron-smoke
+      - name: Full browser suite (Linux)
         if: runner.os == 'Linux'
-      - run: npm run test:workbench
-        if: runner.os != 'Linux'
+        shell: bash
+        run: |
+          xvfb-run -a npm run test:explainer
+          xvfb-run -a npm run test:workbench
+          xvfb-run -a npm run test:diagrams
+      - name: Full browser suite (main, macOS / Windows)
+        if: github.event_name == 'push' && runner.os != 'Linux'
+        shell: bash
+        run: |
+          npm run test:explainer
+          npm run test:workbench
+          npm run test:diagrams
+      - name: Browser smoke (PR, macOS / Windows)
+        if: github.event_name == 'pull_request' && runner.os != 'Linux'
+        run: npm run test:browser-smoke
+      - name: Native swipe navigation (PR, macOS)
+        if: github.event_name == 'pull_request' && runner.os == 'macOS'
+        run: node scripts/test-workbench.mjs --navigation-swipe
+
+  package:
+    name: Package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # Match release packaging: the RPM maker needs the older rpmbuild layout.
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+    env:
+      # PR builds must not use signing, notarization, publishing, or OAuth secrets.
+      APPLE_TEAM_ID: ''
+      APPLE_ID: ''
+      APPLE_ID_PASSWORD: ''
+      GH_CLIENT_SECRET: ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Cache Electron
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/Library/Caches/electron
+            ~/AppData/Local/electron/Cache
+          key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+      - name: Install Linux packaging tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm fakeroot
+      - run: npm ci
+      - name: Build unsigned app and installers
+        run: npm run make
+      - name: Upload unsigned preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: gnosis-unsigned-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          path: out/make/**
+          if-no-files-found: error
+          retention-days: 7

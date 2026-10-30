@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
+import { text } from 'node:stream/consumers';
 import process from 'node:process';
 import { setInterval, setTimeout } from 'node:timers';
 
-const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+const input = JSON.parse(await text(process.stdin));
 const args = process.argv.slice(2);
 const output = args[args.indexOf('--output-last-message') + 1];
 const instructionArg = args.find((arg) => arg.startsWith('model_instructions_file='));
