@@ -58,20 +58,9 @@ Unscoped writes, including GraphQL mutations without a known PR, conservatively 
 
 ## Status checks
 
-| Data | Cadence while visible |
-| --- | --- |
-| Selected PR or stack: CI, review decision, mergeability | 30 seconds |
-| Selected PR or stack: complete status details | 2 minutes |
-| Visible queue rows: compact status | 2 minutes |
-| Queue discovery | 2 minutes |
-| Full repository reconciliation | 30 minutes |
+Screens now subscribe to a shared Electron coordinator. It batches visible-row status reads, prioritizes the open PR, and slows unchanged resources. Backend cache updates reach the renderer through IPC. Queue discovery still runs every two minutes.
 
-Status requests use GraphQL batches of up to 25 PRs. Selected PR results also update the queue cache.
-Checks remain attached to their source revision. A result for a different head SHA cannot mark the displayed revision successful.
-GitHub latency and backoff can extend these intervals. Cached data remains visible with its last check time.
-
-Hidden windows stop recurring discovery and selected PR status requests. Existing background jobs can finish.
-Diffs and file contents retain their separate revision-based caches.
+See [Reactive GitHub sync](reactive-github-sync.md) for the current cadences, account isolation, resume behavior, and local push updates. Checks remain attached to their source revision, and GitHub backoff can extend all network intervals.
 
 ## Preparing PR revisions
 

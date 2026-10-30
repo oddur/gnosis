@@ -1,3 +1,4 @@
+import type { GitHubSyncInterest, GitHubSyncEvent } from '../lib/github-sync';
 import type { OnboardingState, SetupDraft } from '../lib/onboarding';
 import type { HarnessEnvironment, EnvironmentVariable } from '../lib/harness-environment';
 import type { CheckTarget, CheckSelection, ChecksOptions, PrChecks, CheckDetails, CheckLog } from '../lib/pr-checks';
@@ -43,6 +44,21 @@ import type {
 } from '../lib/types';
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  githubSyncVersion: 1 as const,
+  watchGitHub: (id: string, interest: GitHubSyncInterest | null) => ipcRenderer.send('github-sync-watch', id, interest),
+  onGitHubSync: (callback: (event: GitHubSyncEvent) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, value: GitHubSyncEvent) => callback(value);
+    ipcRenderer.on('github-sync', handler);
+    return () => ipcRenderer.removeListener('github-sync', handler);
+  },
+  onWorkbenchChanged: (callback: () => void) => {
+    ipcRenderer.on('workbench-changed', callback);
+    return () => ipcRenderer.removeListener('workbench-changed', callback);
+  },
+  onActivityChanged: (callback: () => void) => {
+    ipcRenderer.on('activity-changed', callback);
+    return () => ipcRenderer.removeListener('activity-changed', callback);
+  },
   getPrBadgePreview: (url: string): Promise<import('../lib/pr-badge-preview').PrBadgePreview | null> => ipcRenderer.invoke('pr-badge-preview', url),
   loadFileFilters: (): Promise<FileFilterState> => ipcRenderer.invoke('load-file-filters'),
   updateFileFilters: (action: FileFilterAction): Promise<FileFilterState> => ipcRenderer.invoke('update-file-filters', action),

@@ -740,6 +740,10 @@ if (new URLSearchParams(location.search).has('checks')) {
     readiness: value.readiness ? { ...value.readiness, mergeState: 'BLOCKED' } : undefined,
   }));
 }
+if (new URLSearchParams(location.search).has('github-sync')) {
+  const { installSyncFixture } = await import('./github-sync');
+  installSyncFixture(mocks, items);
+}
 Object.defineProperty(window, 'electronAPI', {
   value: new Proxy(mocks, {
     get: (target, key) => (key in target ? target[key as keyof typeof target] : () => Promise.resolve()),

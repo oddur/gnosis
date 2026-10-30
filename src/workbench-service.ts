@@ -85,6 +85,7 @@ export type WorkbenchPreferences = Pick<
 > &
   Partial<Pick<Preferences, 'proactiveReviewOverrides' | 'proactiveProvider' | 'proactiveModel' | 'proactiveThinking'>>;
 interface Deps {
+  changed?: () => void;
   storage?: StateStorage;
   directory: () => string;
   auth: () => { token: string | null; login: string | null };
@@ -174,6 +175,7 @@ export function createWorkbenchService(deps: Deps) {
     return state;
   }
   function save() {
+    deps.changed?.();
     if (deps.storage) { deps.storage.write(`workbench:${load().account.toLowerCase()}`, load()); return; }
     fs.mkdirSync(deps.directory(), { recursive: true });
     const temp = cachePath() + '.tmp';
@@ -805,6 +807,7 @@ export function createWorkbenchService(deps: Deps) {
       })
       .finally(() => {
         refresh = undefined;
+        deps.changed?.();
       })));
     if (!force && load().subjects.length) {
       void refresh.promise.catch(() => {});
@@ -1035,7 +1038,9 @@ export function createWorkbenchService(deps: Deps) {
           changed = subjectChanged = true;
           return next;
         });
-        return subjectChanged ? { ...subject, members } : subject;
+        // The member mapping above sets subjectChanged when metadata differs.
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        return subjectChanged ? { ...subject, members, ...(subject.kind === 'pr' ? { title: members[0].title } : {}) } : subject;
       });
       const saved = stars.load(s.account).find(entry => entry.member.url === metadata.url);
       if (saved) stars.update(s.account, [{ ...saved.member, ...metadata }]);

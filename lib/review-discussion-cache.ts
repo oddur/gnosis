@@ -62,3 +62,9 @@ export function refreshDiscussion(url: string) {
   pending.delete(url);
   return readDiscussion(url, true);
 }
+
+/** Backend refreshes share the same renderer cache as local comment writes. */
+export function receiveDiscussion(url: string, data: GitHubReviewThreads) {
+  pending.delete(url);
+  publish(url, data);
+}

@@ -1,3 +1,4 @@
+import { watchGitHub } from './watch-github';
 import { useEffect, useRef, useState } from 'react';
 import { QUEUE_SIGNALS_TTL, queueSignalKey, type QueueSignalRequest, type QueueSignals } from './queue-signals';
 
@@ -105,9 +106,14 @@ export function useQueueSignals(scope: string | null, requests: QueueSignalReque
         setLoaded(true);
       });
     };
+    let stop: (() => void) | undefined;
     const observer = new IntersectionObserver((entries) => {
       visible = entries[0].isIntersecting;
+      if (!visible) { stop?.(); stop = undefined; }
       if (visible) {
+        stop ??= watchGitHub({ kind: 'signals', priority: 'visible', targets: members }, update => {
+          if (update.kind === 'signals') { publishQueueSignals(scope, [update.value]); setLoaded(true); }
+        });
         // Restore persisted snapshots before waiting on GitHub, including expired snapshots.
         void (async () => {
           for (let i = 0; i < members.length; i += 25) {
@@ -117,18 +123,20 @@ export function useQueueSignals(scope: string | null, requests: QueueSignalReque
             if (cancelled) return;
             publishQueueSignals(scope, cached);
           }
-          load();
+          if (!stop) load(); else { update(); setLoaded(true); }
         })();
       }
     });
     observer.observe(element);
-    const timer = setInterval(load, QUEUE_SIGNALS_TTL);
-    document.addEventListener('visibilitychange', load);
+    const timer = window.electronAPI.githubSyncVersion === 1 ? undefined : setInterval(load, QUEUE_SIGNALS_TTL);
+    const onVisibility = () => { if (window.electronAPI.githubSyncVersion !== 1) load(); };
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
       cancelled = true;
       observer.disconnect();
+      stop?.();
       clearInterval(timer);
-      document.removeEventListener('visibilitychange', load);
+      document.removeEventListener('visibilitychange', onVisibility);
       updates.removeEventListener(scope, update);
     };
   }, [scope, key]);

@@ -1735,6 +1735,7 @@ test('unchanged PR metadata does not rewrite the queue file', async (t) => {
     s.service.updatePrMetadata(metadata);
     assert.equal(writes.mock.callCount(), 0);
     s.service.updatePrMetadata({ ...metadata, title: 'Updated title' });
+    assert.equal(s.service.snapshot().items[0].subject.title, 'Updated title');
     assert.ok(writes.mock.callCount() > 0);
     assert.equal(s.service.snapshot().items[0].subject.members[0].title, 'Updated title');
   } finally { t.mock.restoreAll(); s.cleanup(); }

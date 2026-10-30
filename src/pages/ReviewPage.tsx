@@ -1,3 +1,5 @@
+import { watchGitHub } from '../../lib/watch-github';
+import { usePrDiscussions } from '../../lib/use-pr-discussions';
 import { RecentlyViewed } from '../../components/RecentlyViewed';
 import { ReviewBreadcrumbProvider, useReviewBreadcrumbs } from '../../lib/review-breadcrumbs';
 import { ReviewBreadcrumbs } from '../../components/ReviewBreadcrumbs';
@@ -452,6 +454,17 @@ function ReviewPageContent({
   }, []);
 
   const isLocal = isLocalUrl(review.prUrl);
+  const syncMembers = explanationSubject(review).members;
+  usePrDiscussions(active && !isLocal ? syncMembers.map(member => member.url) : []);
+  useEffect(() => {
+    if (!active || isLocal) return;
+    return watchGitHub({ kind: 'metadata', priority: 'active', targets: syncMembers.map(member => ({ url: member.url })) }, update => {
+      if (update.kind !== 'metadata') return;
+      const shown = syncMembers.find(member => member.url === update.url);
+      if (shown && (shown.headSha !== update.value.headSha || shown.baseSha !== update.value.baseSha))
+        setFreshness({ status: 'stale', aheadBy: 0, commits: [], reason: 'New commits are available. This explanation still shows its saved revision.' });
+    });
+  }, [active, isLocal, review.reviewId]);
   useEffect(() => {
     try {
       localStorage.setItem(`gnosis-position:${subjectForReview(review)}:${review.reviewId}`, String(currentSlide));
