@@ -4,9 +4,10 @@ import { compactInventory, INVENTORY_MEMORY_BYTES } from '../lib/inspection-limi
 import { createHash } from 'node:crypto';
 import type { Octokit } from '@octokit/rest';
 import { changesRevision, type InspectionLoadOptions } from '../lib/pr-changes';
-import { getPrMetadata, parsePrUrl } from '../lib/github';
+import { getPrMetadata, getPrMetadataForClone, parsePrUrl } from '../lib/github';
 import { githubCacheFor } from '../lib/github-client';
 import { isCacheRecord } from '../lib/github-cache';
+import { localClones, EMPTY_TREE } from '../lib/local-clone';
 import { createSnapshotFileLoader } from './snapshot-file-loader';
 import {
   selectedCommits,
@@ -123,11 +124,10 @@ function fileValue(file: ApiFile): PrChangeFile {
     changeId: hash(file),
   };
 }
-const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
-export function createPrCommitsService() {
+export function createPrCommitsService(clones = localClones) {
   const memory = new WeakMap<Octokit, ReturnType<typeof createByteCache<string, unknown>>>(),
     pending = new WeakMap<Octokit, Map<string, ReturnType<typeof createSharedGitHubRead<unknown>>>>();
-  const loadFile = createSnapshotFileLoader();
+  const loadFile = createSnapshotFileLoader(undefined, clones);
   function map(client: Octokit) {
     let m = memory.get(client);
     if (!m) {
@@ -179,7 +179,7 @@ export function createPrCommitsService() {
         remember(client, listKey(url, saved.metadata.baseSha, saved.metadata.headSha), saved);
         return saved;
       }
-      const metadata = await getPrMetadata(client, t.owner, t.repo, t.pull_number, true);
+      const metadata = await getPrMetadataForClone(client, t.owner, t.repo, t.pull_number, options.revision, clones);
       const key = listKey(url, metadata.baseSha, metadata.headSha);
       const known = read(client, key, isList) ?? await githubCacheFor(client)?.getPrepared(key, isList);
       if (known) {
@@ -187,6 +187,14 @@ export function createPrCommitsService() {
         const current = { ...known, metadata };
         save(client, latestKey(url), current, version);
         return current;
+      }
+      const local = await clones.read(`${t.owner}/${t.repo}`, (clone) => clone.commits(metadata.baseSha, metadata.headSha));
+      // A different count means the clone and GitHub disagree about the PR's base. GitHub decides.
+      if (local && local.length === metadata.commitCount) {
+        const value: PrCommits = { version: 1, url, metadata, commits: local, fetchedAt: Date.now() };
+        save(client, key, value, version);
+        save(client, latestKey(url), value, version);
+        return value;
       }
       let commits: PrCommit[] = [];
       // GitHub's PR-commits endpoint is capped at 250. Comparison pagination covers larger PRs.
@@ -257,9 +265,22 @@ export function createPrCommitsService() {
         first = chosen[0],
         last = chosen[chosen.length - 1];
       const parent = selection.parentSha ?? first.parents.at(0) ?? EMPTY_TREE;
-      let files: ApiFile[] = [];
+      const repoName = `${t.owner}/${t.repo}`;
+      const single = chosen.length === 1 && (!selection.parentSha || selection.parentSha === first.parents[0]);
+      const local = await clones.read(repoName, async (clone) => {
+        if (!single && parent === EMPTY_TREE) return undefined;
+        if (!single && await clone.mergeBase(parent, last.sha) !== parent) return 'diverged' as const;
+        return clone.between(parent, last.sha);
+      });
+      if (local === 'diverged')
+        throw new Error(
+          'These commits are on different ancestry paths. Select a range on one path, or inspect them individually.'
+        );
+      let files: ApiFile[] = local ?? [];
       let filesTruncated = false;
-      if (chosen.length === 1 && (!selection.parentSha || selection.parentSha === first.parents[0])) {
+      if (local) {
+        // Complete by construction: no API page or file caps apply.
+      } else if (single) {
         let page = 1;
         for (;;) {
           beforeRequest?.();

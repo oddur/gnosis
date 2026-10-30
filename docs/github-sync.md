@@ -108,6 +108,28 @@ When the selected PR leaves memory, preparation restores it from SQLite. Account
 Preparation can finish the eligible queue within the available API allowance and disk budget. A smaller budget can evict earlier downloads.
 Cold data, new revisions, expired or evicted downloads, and unsupported previews can still require loading or a fallback.
 
+## Local clones
+
+**Settings → Integrations → Local clones** registers a clone on this computer. Its GitHub remotes decide which repositories it serves. Shallow clones are rejected because they cannot compute a merge base. A clone that later becomes shallow falls back to GitHub until its history is complete.
+A blobless clone (`git clone --filter=blob:none --no-checkout <url>`) also works. It is small, and Git downloads file contents as needed.
+
+With a clone registered, these reads come from Git instead of the API:
+
+| Source | Data |
+| --- | --- |
+| Clone | Changed files and patches, review diffs, merge bases, commit lists, commit and range comparisons, combined stack changes, stack ancestry, file contents, images, and file history |
+| GitHub | Discovery, PR details and descriptions, comments, reviews, checks, profiles, LFS downloads, and every write |
+
+GitHub still supplies each PR's base and head SHAs. While the API is paused, a queued PR keeps using its last known revision, so the clone can continue preparing it.
+
+Gnosis checks for a commit before reading it. A missing commit starts `git fetch <remote> <sha>`, and readers that arrive during a fetch share the next batch.
+This adds Git objects only. It leaves refs, `FETCH_HEAD`, branches, and the working tree alone, and Git can prune these objects later. Fetches use the clone's own Git credentials.
+
+Clone reads skip the request scheduler and use at most eight Git processes per clone. They also have no 3,000-file or 300-file limit.
+Any clone failure falls back to GitHub: a moved folder, a failed fetch, or a commit list whose length differs from the PR's. A commit that fails to fetch is not retried for five minutes. An interactive read waits thirty seconds for a fetch, then uses GitHub while the fetch finishes.
+
+Commit lists from a clone show a GitHub username only when the author email is a GitHub noreply address. They never show the **Verified** badge, because signature verdicts come from GitHub.
+
 ## Clearing downloaded data
 
 Use **Settings → Integrations → GitHub cache → Clear cache & restart** to remove downloaded GitHub data.
