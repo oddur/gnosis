@@ -649,6 +649,11 @@ export function PrChangesView({
                     selected={entry?.key ?? ''}
                     query={query}
                     onSelect={select}
+                    onSetViewed={(keys, viewed) => {
+                      const targets = new Set(keys);
+                      stream.current?.preservePosition();
+                      return progress.markFilesViewed(entries.filter(e => targets.has(e.key)).map(viewKey), viewed);
+                    }}
                     onPreview={(key) => {
                       hoverCancel.current();
                       hoverCancel.current = warmFile(key);
