@@ -28,13 +28,15 @@ import { createPrMergeMonitor } from './pr-merge-monitor';
 import type { PrActionRequest } from '../lib/pr-actions';
 import { requestGitHubCacheClear, applyPendingGitHubCacheClear } from './github-cache-reset';
 import { withGitHubPriority, githubPriority } from '../lib/github-scheduler';
-import type { InspectionRevision, InspectionLoadOptions } from '../lib/pr-changes';
+import { changesRevision, type InspectionRevision, type InspectionLoadOptions } from '../lib/pr-changes';
 import { normalizePrInactivityDays, DEFAULT_PR_INACTIVITY_DAYS } from '../lib/pr-inactivity';
 import type { MutePrRequest } from '../lib/muted-prs';
 import type { StarPrRequest } from '../lib/starred-prs';
 import { createPrCommitsService } from './pr-commits-service';
 import type { CommitSelection } from '../lib/pr-commits';
 import { createPrChangesService } from './pr-changes-service';
+import { createLocalCloneStore } from './local-clone-store';
+import { localClones } from '../lib/local-clone';
 import type { FileChatRequest, PrFileRequest } from '../lib/pr-changes';
 import { createGitHubProfileService } from './github-profile-service';
 import { createQueueSignalsService, cachedQueueSignals } from './queue-signals-service';
@@ -689,6 +691,7 @@ void app.whenReady().then(async () => {
     return;
   }
   await githubClients.setCacheSizeMB(loadPreferences().githubCacheSizeMB);
+  localClones.configure(localCloneStore.load());
   await githubClients.setStorage(path.join(app.getPath('userData'), 'github-budget.json'));
 
   // Expose packaged state to preload via env var (before creating windows)
@@ -1552,6 +1555,17 @@ handleInteractive('get-pr-files', async (_event, prUrl: string): Promise<Changed
 });
 
 // ── Local git repo selection ────────────────────────────────────
+
+const localCloneStore = createLocalCloneStore(() => path.join(app.getPath('userData'), 'local-clones.json'));
+ipcMain.handle('local-clones', () => localClones.status());
+ipcMain.handle('add-local-clone', async (_event, directory: string) => {
+  localClones.configure(await localCloneStore.add(directory));
+  return localClones.status();
+});
+ipcMain.handle('remove-local-clone', (_event, directory: string) => {
+  localClones.configure(localCloneStore.remove(directory));
+  return localClones.status();
+});
 
 ipcMain.handle('pick-repo-dir', async (): Promise<string | null> => {
   const windows = BrowserWindow.getAllWindows();
@@ -2708,6 +2722,10 @@ function runInspection<T>(event: Electron.IpcMainInvokeEvent, options: Inspectio
 ipcMain.handle('cancel-inspection', (event, id: string) => {
   if (event.senderFrame === event.sender.mainFrame && typeof id === 'string') inspectionRequests.cancel(event.sender.id, id);
 });
+const withKnownMember = (url: string, options: InspectionLoadOptions): InspectionLoadOptions => {
+  const member = options.revision && workbench.knownMember(url);
+  return member && options.revision && changesRevision(member) === changesRevision(options.revision) ? { ...options, revision: member } : options;
+};
 ipcMain.handle('stack-changes', (event, subject: ReviewSubject, refresh: boolean, options: InspectionLoadOptions = {}) =>
   withGitHubPriority(options.background ? 'background' : 'interactive', () => runInspection(event, options, async signal => {
     const client = changesClient();
@@ -2716,11 +2734,11 @@ ipcMain.handle('stack-changes', (event, subject: ReviewSubject, refresh: boolean
 ipcMain.handle('pr-changes', (event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) =>
   withGitHubPriority(options.background ? 'background' : 'interactive', () => runInspection(event, options, async signal => {
     const client = changesClient();
-    return classifySnapshot(client, await prChanges.manifest(client, url, refresh, options, signal));
+    return classifySnapshot(client, await prChanges.manifest(client, url, refresh, withKnownMember(url, options), signal));
   })));
 ipcMain.handle('pr-commits', (event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) =>
   withGitHubPriority(options.background ? 'background' : 'interactive', () => runInspection(event, options,
-    signal => prCommits.list(changesClient(), url, refresh, options, signal))));
+    signal => prCommits.list(changesClient(), url, refresh, withKnownMember(url, options), signal))));
 const inspectionPrefetchGuard = (background: boolean) => {
   const token = getResolvedToken();
   return background ? () => {

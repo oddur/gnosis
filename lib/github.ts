@@ -1,7 +1,8 @@
 import { readCommitChecks } from './github-checks';
 import type { Octokit } from '@octokit/rest';
 import { parseGitHubLabels } from './github-labels';
-import { getGitHubClient, githubRateLimit } from './github-client';
+import { getGitHubClient, GitHubBackoffError, githubRateLimit } from './github-client';
+import { localClones, type LocalClone, type LocalCloneFile, type LocalClones } from './local-clone';
 import { preparedChanges, preparedFile, preparedDiff } from './prepared-pr';
 import { GITHUB_PR_FILE_LIMIT } from './inspection-limits';
 export { GITHUB_PR_FILE_LIMIT } from './inspection-limits';
@@ -81,6 +82,47 @@ export async function getPrMetadata(
     milestone: data.milestone ? { title: data.milestone.title, dueOn: data.milestone.due_on } : null,
   };
 }
+
+const isCompleteMetadata = (known: Partial<PrMetadata> | undefined): known is PrMetadata =>
+  typeof known?.title === 'string' &&
+  typeof known.headRepo === 'string' &&
+  typeof known.baseSha === 'string' &&
+  typeof known.headSha === 'string';
+
+/** With a clone, a queue member already pins everything a read needs. Only an explicit refresh has to wait for GitHub. */
+export const knownMetadataForClone = (
+  known: Partial<PrMetadata> | undefined,
+  repo: string,
+  refresh: boolean,
+  clones: LocalClones
+): PrMetadata | undefined => (!refresh && isCompleteMetadata(known) && clones.has(repo) ? known : undefined);
+
+/** A registered clone only needs the revision, so a paused API must not stop reads the caller can describe itself. */
+export async function getPrMetadataForClone(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  pullNumber: number,
+  known: Partial<PrMetadata> | undefined,
+  clones: LocalClones
+): Promise<PrMetadata> {
+  try {
+    return await getPrMetadata(octokit, owner, repo, pullNumber, true);
+  } catch (error) {
+    if (error instanceof GitHubBackoffError && isCompleteMetadata(known) && clones.has(`${owner}/${repo}`)) return known;
+    throw error;
+  }
+}
+
+export const changedFileFromClone = (file: LocalCloneFile): ChangedFile => ({
+  filename: file.filename,
+  sha: file.sha ?? undefined,
+  status: file.status === 'removed' ? 'deleted' : file.status,
+  additions: file.additions,
+  deletions: file.deletions,
+  previous_filename: file.previous_filename,
+  patch: file.patch,
+});
 
 export async function getPrDiff(
   octokit: Octokit,
@@ -425,7 +467,8 @@ export async function getNeighborFiles(
   changedFilePaths: string[],
   changedFileContents: Record<string, string>,
   ref: string,
-  smartImportsProvider?: Provider
+  smartImportsProvider?: Provider,
+  readFile: (path: string) => Promise<string | null> = (path) => getFileContent(octokit, owner, repo, path, ref)
 ): Promise<Record<string, string>> {
   if (smartImportsProvider) {
     console.log(`[github] Using smart (${smartImportsProvider}) import extraction`);
@@ -443,7 +486,7 @@ export async function getNeighborFiles(
       const batch = pathsToFetch.slice(i, i + concurrency);
       await Promise.all(
         batch.map(async (filePath) => {
-          const content = await getFileContent(octokit, owner, repo, filePath, ref);
+          const content = await readFile(filePath);
           if (content !== null) {
             results[filePath] = content;
           }
@@ -480,7 +523,7 @@ export async function getNeighborFiles(
       batch.map(async (basePath) => {
         for (const ext of TS_EXTENSIONS) {
           const fullPath = basePath + ext;
-          const content = await getFileContent(octokit, owner, repo, fullPath, ref);
+          const content = await readFile(fullPath);
           if (content !== null) {
             results[fullPath] = content;
             break;
@@ -672,11 +715,23 @@ export class GitHubDiffSource implements DiffSource {
     return this.metadataPromise;
   }
 
+  private fromClone<T>(operation: (clone: LocalClone) => Promise<T>) {
+    return localClones.read(`${this.owner}/${this.repo}`, operation);
+  }
+  /** Clone first; null there means the path is absent, which GitHub would only confirm at a cost. */
+  private async readAt(owner: string, repo: string, filePath: string, ref: string, signal?: AbortSignal) {
+    const local = await this.fromClone((clone) => clone.blob(ref, filePath));
+    if (local !== undefined) return local && local.toString('utf-8');
+    return getFileContent(this.octokit, owner, repo, filePath, ref, signal);
+  }
+
   private comparisonBase: Promise<string> | null = null;
   getComparisonBase(): Promise<string> {
     this.comparisonBase ??= this.getMetadata().then(async meta => {
       const prepared = await preparedChanges(this.octokit, this.key, meta);
       if (prepared) return prepared.comparisonBase;
+      const local = await this.fromClone((clone) => clone.mergeBase(meta.baseSha, meta.headSha));
+      if (local) return local;
       const { data } = await this.octokit.repos.compareCommits({ owner: this.owner, repo: this.repo, base: meta.baseSha, head: meta.headSha });
       return data.merge_base_commit.sha;
     }).catch((error: unknown) => {
@@ -696,21 +751,24 @@ export class GitHubDiffSource implements DiffSource {
 
   async getDiff(changedFiles?: ChangedFile[]): Promise<string> {
     const metadata = await this.getMetadata();
-    if (metadata.changedFileCount !== undefined && metadata.changedFileCount > GITHUB_PR_FILE_LIMIT)
-      throw new Error(LARGE_PR_EXPLANATION_ERROR);
     const cached = await preparedDiff(this.octokit, this.key, metadata);
     if (cached !== undefined) return cached;
+    const local = await this.fromClone((clone) => clone.diff(metadata.baseSha, metadata.headSha));
+    if (local !== undefined) return local;
+    if (metadata.changedFileCount !== undefined && metadata.changedFileCount > GITHUB_PR_FILE_LIMIT)
+      throw new Error(LARGE_PR_EXPLANATION_ERROR);
     return getPrDiff(this.octokit, this.owner, this.repo, this.pullNumber, changedFiles, true);
   }
 
   async getChangedFiles(): Promise<ChangedFile[]> {
     const metadata = await this.getMetadata();
-    if (metadata.changedFileCount !== undefined && metadata.changedFileCount > GITHUB_PR_FILE_LIMIT)
-      throw new Error(LARGE_PR_EXPLANATION_ERROR);
     const cached = await preparedChanges(this.octokit, this.key, metadata);
-    if (cached?.filesTruncated) throw new Error(LARGE_PR_EXPLANATION_ERROR);
-    if (cached && !cached.patchesDeferred) return cached.files.map(file => ({ filename: file.path, previous_filename: file.previousPath,
+    if (cached && !cached.filesTruncated && !cached.patchesDeferred) return cached.files.map(file => ({ filename: file.path, previous_filename: file.previousPath,
       status: file.status, additions: file.additions, deletions: file.deletions, patch: file.patch }));
+    const local = await this.fromClone((clone) => clone.changes(metadata.baseSha, metadata.headSha));
+    if (local) return local.files.map(changedFileFromClone);
+    if (cached?.filesTruncated || (metadata.changedFileCount !== undefined && metadata.changedFileCount > GITHUB_PR_FILE_LIMIT))
+      throw new Error(LARGE_PR_EXPLANATION_ERROR);
     return getChangedFiles(this.octokit, this.owner, this.repo, this.pullNumber, true);
   }
 
@@ -729,11 +787,24 @@ export class GitHubDiffSource implements DiffSource {
     }
     const gitRef = ref === 'base' ? await this.getComparisonBase() : meta.headSha;
     const [owner, repo] = ((ref === 'base' ? meta.baseRepo : meta.headRepo) ?? `${this.owner}/${this.repo}`).split('/');
-    return getFileContent(this.octokit, owner, repo, filePath, gitRef, signal);
+    return this.readAt(owner, repo, filePath, gitRef, signal);
   }
 
   async getFileMetadata(changedFiles: ChangedFile[], signal?: AbortSignal): Promise<FileMetadata[]> {
     const meta = await this.getMetadata();
+    const local = await this.fromClone((clone) => clone.fileHistory(meta.baseSha, meta.headSha, changedFiles));
+    if (local) {
+      const history = new Map(local.map((item) => [item.filename, item]));
+      return changedFiles.map((file) => ({
+        filename: file.filename,
+        previousFilename: file.previous_filename,
+        status: file.status,
+        additions: file.additions,
+        deletions: file.deletions,
+        prCommitCount: history.get(file.filename)?.commitCount ?? 1,
+        lastModified: history.get(file.filename)?.lastModified ?? null,
+      }));
+    }
     return getFileMetadata(this.octokit, this.owner, this.repo, this.pullNumber, meta.baseSha, changedFiles, signal);
   }
 
@@ -745,11 +816,16 @@ export class GitHubDiffSource implements DiffSource {
   ): Promise<Record<string, string>> {
     const meta = await this.getMetadata();
     const gitRef = ref === 'base' ? await this.getComparisonBase() : meta.headSha;
-    return getNeighborFiles(this.octokit, this.owner, this.repo, paths, contents, gitRef, smartImportsProvider);
+    return getNeighborFiles(this.octokit, this.owner, this.repo, paths, contents, gitRef, smartImportsProvider,
+      (filePath) => this.readAt(this.owner, this.repo, filePath, gitRef));
   }
 
   async getProjectClaudeContext(opts?: { unfiltered?: boolean }): Promise<ProjectClaudeContext | null> {
     const meta = await this.getMetadata();
-    return getProjectClaudeContext(this.octokit, this.owner, this.repo, meta.headSha, opts);
+    const github = makeGithubClaudeIO(this.octokit, this.owner, this.repo, meta.headSha);
+    return probeClaudeContext({
+      readFile: (p) => this.readAt(this.owner, this.repo, p, meta.headSha),
+      listDir: async (p, kind) => (await this.fromClone((clone) => clone.listDirectory(meta.headSha, p, kind))) ?? github.listDir(p, kind),
+    }, opts);
   }
 }

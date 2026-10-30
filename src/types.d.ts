@@ -172,6 +172,9 @@ declare global {
       getPrState: (prUrl: string) => Promise<{ prState: 'open' | 'merged' | 'closed'; headSha: string }>;
       getPrFiles: (prUrl: string) => Promise<ChangedFile[]>;
       pickRepoDir: () => Promise<string | null>;
+      getLocalClones: () => Promise<import('../lib/local-clone').LocalCloneStatus[]>;
+      addLocalClone: (directory: string) => Promise<import('../lib/local-clone').LocalCloneStatus[]>;
+      removeLocalClone: (directory: string) => Promise<import('../lib/local-clone').LocalCloneStatus[]>;
       listRepoRefs: (
         repoPath: string,
       ) => Promise<{
