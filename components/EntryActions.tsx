@@ -7,6 +7,8 @@ import { toast } from './ui/toast';
 
 export interface EntryAction {
   label: string;
+  displayLabel?: string;
+  detail?: string;
   icon?: ReactNode;
   disabled?: boolean;
   destructive?: boolean;
@@ -60,6 +62,7 @@ export function EntryActions({
           <Menu.Item
             key={action.label}
             className="entry-menu-item"
+            aria-label={action.label}
             disabled={pending || action.disabled}
             data-destructive={action.destructive || undefined}
             onClick={() => {
@@ -83,7 +86,8 @@ export function EntryActions({
             }}
           >
             {action.icon}
-            <span>{action.label}</span>
+            <span className="entry-menu-label">{action.displayLabel ?? action.label}</span>
+            {action.detail && <span className="entry-menu-detail" aria-hidden="true">{action.detail}</span>}
           </Menu.Item>
         ))}
       </Menu.Group>

@@ -2839,7 +2839,7 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 /* Entry actions share one catalog across context and overflow menus. */
 .entry-menu-positioner { z-index: 80; }
 .entry-menu {
-  min-width: 210px;
+  min-width: min(210px, var(--available-width));
   max-width: min(320px, var(--available-width));
   max-height: var(--available-height);
   overflow: auto;
@@ -2850,14 +2850,23 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
   color: var(--popover-foreground);
   outline: none;
 }
+.entry-menu:has(.entry-menu-description) { width: 304px; }
+.entry-menu-description { padding: 8px 8px 12px; font-size: var(--type-control); line-height: 20px; }
+.entry-menu-selection-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-variant-numeric: tabular-nums; }
+.entry-menu-selection-title strong { font-weight: 600; }
+.entry-menu-selection-title > span { flex-shrink: 0; color: var(--muted-foreground); font-size: var(--type-caption); }
+.entry-menu-selection-note { margin-top: 4px; color: var(--muted-foreground); font-size: var(--type-caption); line-height: 1.5; text-wrap: pretty; }
+.entry-menu-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.entry-menu-detail { flex-shrink: 0; margin-inline-start: 12px; color: var(--muted-foreground); font-size: var(--type-caption); font-variant-numeric: tabular-nums; }
+.entry-menu-item[data-highlighted] .entry-menu-detail { color: inherit; }
 .entry-menu-item {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   min-height: 32px;
   padding: 6px 8px;
   border-radius: 4px;
-  font-size: 13px;
+  font-size: var(--type-control);
   line-height: 20px;
   cursor: default;
   outline: none;

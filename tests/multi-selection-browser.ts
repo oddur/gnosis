@@ -76,7 +76,8 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.queue-selection-summary')?.textContent.includes('3 selected')");
     assert.equal(await js("document.querySelectorAll('.queue-row-main[aria-pressed=true]').length"), 3);
     await context(row('Reduce allocations'));
-    assert.match(await js<string>("document.querySelector('[role=menu]').textContent"), /3 entries selected · 5 PRs/);
+    assert.equal(await js("document.querySelector('.entry-menu-selection-title strong').textContent"), '3 entries selected');
+    assert.equal(await js("document.querySelector('.entry-menu-selection-title > span').textContent"), '5 PRs');
     await capture('queue-light');
     await click('Copy PR links');
     assert.equal(await js("window.copiedSelection.split('\\n').length"), 5);
@@ -130,6 +131,11 @@ void app.whenReady().then(async () => {
     await js("document.documentElement.classList.add('dark')");
     win.setSize(900, 700);
     await capture('queue-dark-laptop');
+    win.webContents.setZoomFactor(1.5);
+    await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    assert.ok(await js("(()=>{const r=document.querySelector('[role=menu]').getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight})()"));
+    await capture('queue-dark-zoom');
+    win.webContents.setZoomFactor(1);
     assert.ok(await js('document.documentElement.scrollWidth<=innerWidth'));
     await closeMenu();
     await click('Clear entry selection');

@@ -1132,7 +1132,14 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
     },
   });
   const selectedMembers = [...new Map(selectedItems.flatMap(item => item.subject.members).map(member => [member.url, member])).values()];
-  const selectionDescription = `${selectedItems.length} entries selected · ${selectedMembers.length} PRs${selectedItems.some(item => item.subject.kind === 'stack') ? '. Includes every PR in selected stacks.' : ''}`;
+  const selectionDescription = <>
+    <div className="entry-menu-selection-title">
+      <strong>{selectedItems.length} entries selected</strong>
+      <span>{selectedMembers.length} PRs</span>
+    </div>
+    {selectedItems.some(item => item.subject.kind === 'stack') &&
+      <p className="entry-menu-selection-note">Includes every PR in selected stacks.</p>}
+  </>;
   const runBatch = async <T,>(targets: T[], run: (target: T) => Promise<unknown>, name: (target: T) => string, complete: string) => {
     if (batchRunning.current) return;
     batchRunning.current = true; setBatchBusy(true);
