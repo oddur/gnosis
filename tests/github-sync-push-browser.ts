@@ -66,7 +66,8 @@ void app.whenReady().then(async () => {
     app.exit(0);
   } catch (error) {
     console.error(error);
-    console.log(await js('document.body.innerText'));
+    // A failed page load can also make DOM diagnostics fail. Preserve the failing exit code.
+    try { console.log(await js('document.body.innerText')); } catch { /* The renderer is unavailable. */ }
     app.exit(1);
   }
 });

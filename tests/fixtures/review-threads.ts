@@ -57,7 +57,8 @@ export function threadMocks() {
   };
   return {
     getReviewThreads: (prUrl: string) => {
-      document.body.dataset.discussionPr = prUrl;
+      const requested = JSON.parse(document.body.dataset.discussionPrs ?? '[]') as string[];
+      document.body.dataset.discussionPrs = JSON.stringify([...new Set([...requested, prUrl])]);
       if (document.body.dataset.discussionFail === 'true')
         return Promise.reject(new Error('GitHub requests can resume after the rate limit resets.'));
       return Promise.resolve(
