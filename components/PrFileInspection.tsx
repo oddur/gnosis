@@ -1,3 +1,4 @@
+import { DIFF_HIGHLIGHTER } from '../lib/diff-highlighter';
 import { stackFileProgressKey, stackFileSourcePath, stackFileDiscussions } from '../lib/stack-changes';
 import { GitHubReviewThread } from './GitHubReviewThread';
 import { SearchableSelect } from './SearchableSelect';
@@ -332,6 +333,7 @@ export function PrFileInspection({
     });
   };
   const options: FileDiffOptions<(typeof annotations)[number]['metadata'], undefined> = {
+    preferredHighlighter: DIFF_HIGHLIGHTER,
     enableGutterUtility: comments.writable && !contents?.lfs,
     onGutterUtilityClick: contents?.lfs ? undefined : comments.begin,
     onLineNumberClick: contents?.lfs
@@ -717,6 +719,7 @@ export function PrFileInspection({
                     .map((a) => ({ ...a, metadata: { ...a.metadata, threads: [] } }))}
                   renderAnnotation={(annotation) => comments.renderAnnotation({ ...annotation, side: 'additions' })}
                   options={{
+                    preferredHighlighter: DIFF_HIGHLIGHTER,
                     theme: options.theme,
                     themeType: options.themeType,
                     disableFileHeader: true,
