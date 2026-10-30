@@ -7,7 +7,7 @@ void app.whenReady().then(async () => {
     show: true,
     webPreferences: { backgroundThrottling: false, sandbox: true, contextIsolation: true },
   });
-  const js = <T = unknown>(code: string) => window.webContents.executeJavaScript(code) as Promise<T>;
+  const js = <T = unknown>(code: string) => window.webContents.executeJavaScript(code).catch((error: unknown) => { throw Error(`${code}: ${String(error)}`); }) as Promise<T>;
   const wait = async (expression: string) => {
     for (let i = 0; i < 100; i++) {
       if (await js(expression)) return;

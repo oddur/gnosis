@@ -11,3 +11,15 @@ export function treeViewedFiles<T extends { key: string }>(
       (!matchingPaths || matchingPaths.has(entry.key))
   );
 }
+
+/** A folder and its selected descendants contribute each matching file only once. */
+export function selectedTreeFiles<T extends { key: string }>(
+  entries: readonly T[],
+  selectedPaths: readonly string[],
+  matchingPaths?: ReadonlySet<string>
+): T[] {
+  const selected = new Set(selectedPaths);
+  const directories = selectedPaths.filter(path => path.endsWith('/'));
+  return entries.filter(entry => (!matchingPaths || matchingPaths.has(entry.key)) &&
+    (selected.has(entry.key) || directories.some(path => entry.key.startsWith(path))));
+}

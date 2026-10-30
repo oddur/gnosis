@@ -2,7 +2,7 @@ import { useEffect, useRef, useId } from 'react';
 import { Menu } from '@base-ui/react/menu';
 import type { ContextMenuItem, ContextMenuOpenContext } from '@pierre/trees';
 import type { ChangeTreeEntry } from './ChangesFileTree';
-import { treeViewedFiles } from '../lib/tree-viewed-files';
+import { treeViewedFiles, selectedTreeFiles } from '../lib/tree-viewed-files';
 import { setEntryMenuOpen } from '../lib/entry-menu-state';
 import { toast } from './ui/toast';
 
@@ -12,12 +12,14 @@ export function TreeViewedMenu({
   context,
   entries,
   matchingPaths,
+  selectedPaths = [],
   onSetViewed,
 }: {
   item: ContextMenuItem;
   context: ContextMenuOpenContext;
   entries: ChangeTreeEntry[];
   matchingPaths?: ReadonlySet<string>;
+  selectedPaths?: readonly string[];
   onSetViewed: (paths: string[], viewed: boolean) => Promise<boolean>;
 }) {
   const descriptionId = useId();
@@ -27,8 +29,9 @@ export function TreeViewedMenu({
     setEntryMenuOpen(current, true);
     return () => setEntryMenuOpen(current, false);
   }, []);
-  const files = treeViewedFiles(entries, item, matchingPaths);
-  const noun = item.kind === 'directory' ? 'folder' : 'file';
+  const multiple = selectedPaths.length > 1 && selectedPaths.includes(item.path);
+  const files = multiple ? selectedTreeFiles(entries, selectedPaths, matchingPaths) : treeViewedFiles(entries, item, matchingPaths);
+  const noun = multiple ? 'selected files' : item.kind === 'directory' ? 'folder' : 'file';
   const run = (viewed: boolean) => {
     const keys = files.filter((file) => file.viewed !== viewed).map((file) => file.key);
     // Restore tree focus before Unviewed only removes the affected folder.
@@ -58,7 +61,7 @@ export function TreeViewedMenu({
         >
           <Menu.Popup
             className="entry-menu"
-            aria-label={`Actions for ${item.path}`}
+            aria-label={multiple ? `Actions for ${files.length} selected files` : `Actions for ${item.path}`}
             aria-describedby={descriptionId}
             data-file-tree-context-menu-root="true"
             finalFocus={() => {
@@ -69,7 +72,7 @@ export function TreeViewedMenu({
             onKeyDown={(event) => event.stopPropagation()}
           >
             <div id={descriptionId} className="px-2 py-1 text-xs text-muted-foreground">
-              {files.length} {files.length === 1 ? 'file matches' : 'files match'} your filters
+              {multiple ? `${files.length} selected files match your filters` : `${files.length} ${files.length === 1 ? 'file matches' : 'files match'} your filters`}
             </div>
             <Menu.Item
               className="entry-menu-item"

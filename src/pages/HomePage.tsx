@@ -1,4 +1,8 @@
 import { mergePrStatus } from '../../lib/merge-pr-status';
+import { useEntrySelection } from '../../lib/use-entry-selection';
+import { runSelectionTasks, type SelectionModifiers } from '../../lib/entry-selection';
+import { queueSelectionGroups } from '../../components/QueueSelectionActions';
+import { toast } from '../../components/ui/toast';
 import { watchGitHub } from '../../lib/watch-github';
 import { useOnboarding } from '../../lib/use-onboarding';
 import { OnboardingSetup } from '../../components/OnboardingSetup';
@@ -52,6 +56,8 @@ import type { HomeLocation } from '../../lib/navigation-history';
 import {
   ArrowRight,
   Check,
+  Square,
+  SquareCheck,
   ChevronDown,
   ChevronRight,
   GitPullRequest,
@@ -707,10 +713,12 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       setShowUrl(false);
       setUrl('');
       await refresh();
+      return true;
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       if (openedItem?.subject.id === requestKey) setSummaryErrors((previous) => ({ ...previous, [requestKey]: message }));
       else setError(message);
+      return false;
     } finally {
       startingReviews.current.delete(requestKey);
       setPendingStarts((previous) => {
@@ -753,6 +761,12 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
   const saved = useListOrder(sortSavedReviews(
     visibleHistory.filter(h => `${h.prTitle} ${h.prUrl}`.toLowerCase().includes(query.toLowerCase())), savedSort, starredUrls, sortSignals), entry => entry.id);
   const orderedItems = useListOrder(sortQueueItems(items, filters.sort, sortSignals), item => item.subject.id);
+  const selection = useEntrySelection(orderedItems.map(item => item.subject.id),
+    JSON.stringify([auth?.login, section, mutedOpen, openedItem?.subject.id, filters, queue.savedViews?.activeId]), selected);
+  const selectedItems = orderedItems.filter(item => selection.keys.has(item.subject.id));
+  const multiple = selectedItems.length > 1;
+  const [batchBusy, setBatchBusy] = useState(false);
+  const batchRunning = useRef(false);
   useListScrollAnchor(section === 'saved' ? queueScrollElement : null, saved.map(entry => entry.id));
   const changeSort = (sort: PrListSort) => {
     if (section !== 'saved') { updateFilters({ sort }); return; }
@@ -1004,20 +1018,26 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
             id: 'context:review',
             label: `Generate AI review · ${commandItem.subject.title}`,
             group: 'Uses your selected model · tracked in Activity',
-            perform: () =>
-              start(
+            perform: async () => {
+              await start(
                 commandItem.subject.members[0].url,
                 [...queue.items, ...(queue.starredItems ?? [])].some((item) => item.subject.id === commandItem.subject.id)
                   ? commandItem.subject
                   : undefined,
                 undefined,
                 commandItem.subject.scope === 'single'
-              ),
+              );
+            },
           },
         ]
       : []),
   ]);
-  const moveSelection = (direction: number) => {
+  const selectQueueEntry = (id: string, modifiers?: SelectionModifiers) => {
+    selection.select(id, modifiers);
+    setSelected(id);
+    if (!modifiers?.shiftKey && !modifiers?.metaKey && !modifiers?.ctrlKey) setStatuses({});
+  };
+  const moveSelection = (direction: number, modifiers?: SelectionModifiers) => {
     const index = orderedItems.findIndex((item) => item.subject.id === selected);
     const next = orderedItems.at(
       index < 0
@@ -1028,7 +1048,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
     );
     if (!next) return;
     pendingRowFocus.current = next.subject.id;
-    setSelected(next.subject.id);
+    selectQueueEntry(next.subject.id, modifiers);
     rowButtons.current.get(next.subject.id)?.focus({ preventScroll: true });
   };
   useKeyboardShortcuts(
@@ -1091,7 +1111,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
     setReviewRequest({ id: crypto.randomUUID(), member: { ...member } });
   };
   const entryActions = (members: QueueItem['subject']['members']) => ({
-    members, starredUrls, busy: starBusy || muteBusy,
+    members, starredUrls, busy: starBusy || muteBusy || readBusy || batchBusy,
     ...generationActions(members),
     unread: members.some(member => queue.readStates?.[member.url]?.unread.length),
     onReadChange: auth?.login && members.some(member => queue.readStates?.[member.url]) ? (read: boolean) => changeRead(members.map(member => member.url), read) : undefined,
@@ -1102,6 +1122,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
     onRefresh: async () => {
       const results = await Promise.allSettled(members.map(async member => {
         const status = await window.electronAPI.getPrStatus(member.url, true);
+        if (readAccount.current !== auth?.login) throw new Error('GitHub account changed. Select the PRs again.');
         cachedStatuses.current.set(`${auth?.login}:${member.url}@${member.headSha}`, status);
         if (auth?.login && status.signals) publishQueueSignals(auth.login, [status.signals]);
         setStatuses(previous => ({ ...previous, [member.url]: status }));
@@ -1110,12 +1131,55 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       if (failed?.status === 'rejected') throw failed.reason;
     },
   });
+  const selectedMembers = [...new Map(selectedItems.flatMap(item => item.subject.members).map(member => [member.url, member])).values()];
+  const selectionDescription = `${selectedItems.length} entries selected · ${selectedMembers.length} PRs${selectedItems.some(item => item.subject.kind === 'stack') ? '. Includes every PR in selected stacks.' : ''}`;
+  const runBatch = async <T,>(targets: T[], run: (target: T) => Promise<unknown>, name: (target: T) => string, complete: string) => {
+    if (batchRunning.current) return;
+    batchRunning.current = true; setBatchBusy(true);
+    const account = auth?.login;
+    try {
+      const result = await runSelectionTasks(targets, target => {
+        if (readAccount.current !== account) throw new Error('GitHub account changed. Select the entries again.');
+        return run(target);
+      });
+      toast.add({
+        type: result.failed.length ? 'error' : 'success',
+        title: `${result.succeeded.length} of ${targets.length} ${complete}`,
+        description: result.failed.length
+          ? `Could not complete: ${result.failed.slice(0, 3).map(failure => name(failure.target)).join(', ')}${result.failed.length > 3 ? ` and ${result.failed.length - 3} more` : ''}. Select those entries to retry.`
+          : complete.includes('requested') ? 'Follow progress in Activity.' : undefined,
+      });
+    } finally { batchRunning.current = false; setBatchBusy(false); }
+  };
+  const selectionGroups = queueSelectionGroups({
+    members: selectedMembers, starredUrls, readStates: queue.readStates ?? {},
+    explanations: selectedItems.filter(item => !generationActions(item.subject.members).explanationDisabled),
+    briefings: selectedItems.filter(item => !generationActions(item.subject.members).briefingDisabled),
+    busy: batchBusy || readBusy || starBusy || muteBusy, authenticated: !!auth?.authenticated,
+    onRead: changeRead, onStar: changeStars, onMute: members => changeMutes(members, true),
+    onRefresh: members => runBatch(members, member => entryActions([member]).onRefresh(), member => `#${member.number}`, 'PR statuses refreshed'),
+    onExplain: targets => runBatch(targets, async item => {
+      if (!await start(item.subject.members[0].url, item.subject, undefined, item.subject.scope === 'single'))
+        throw new Error('Explanation could not start');
+    }, item => item.subject.title, 'explanations requested'),
+    onBrief: targets => runBatch(targets, async item => {
+      await window.electronAPI.workbenchBriefing(item.subject.id);
+      await refresh();
+    }, item => item.subject.title, 'briefings requested'),
+  });
   function row(item: QueueItem) {
     const s = item.subject,
-      active = selected === s.id;
+      focused = selected === s.id,
+      active = selection.keys.size ? selection.keys.has(s.id) : focused;
+    const bulkTarget = multiple && active;
     return (
       <div key={s.id} className={`queue-item ${active ? 'is-selected' : ''} ${item.unreadUrls?.length ? 'is-unread' : ''}`}>
-        <PrEntryActions {...entryActions(s.members)}>{actions => <div className="queue-row">
+        <EntryActions
+          label={bulkTarget ? `Actions for ${selectedItems.length} selected entries` : s.kind === 'stack' ? 'Stack actions' : `Actions for PR #${s.members[0].number}`}
+          groups={bulkTarget ? selectionGroups : prEntryActionGroups(entryActions(s.members))}
+          description={bulkTarget ? selectionDescription : undefined}
+          onBeforeOpen={() => selection.context(s.id)}
+        >{actions => <div className="queue-row">
           {s.kind !== 'stack' ? <span className="queue-pr-gutter"><PrStateIcon member={s.members[0]} /></span> : <button
             className="queue-disclosure"
             aria-label={`${expanded.has(s.id) ? 'Collapse' : 'Expand'} ${s.title}`}
@@ -1133,8 +1197,8 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
             {expanded.has(s.id) ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
           </button>}
           <div className="queue-row-content"
-            onClick={event=>{if((event.target as HTMLElement).closest('a,button'))return;setSelected(s.id);setStatuses({});}}
-            onDoubleClick={event=>{if((event.target as HTMLElement).closest('a,button'))return;setError('');setOpenedItem(item);}}>
+            onClick={event=>{if((event.target as HTMLElement).closest('a,button'))return;selectQueueEntry(s.id,event);}}
+            onDoubleClick={event=>{if(event.shiftKey||event.metaKey||event.ctrlKey||(event.target as HTMLElement).closest('a,button'))return;setError('');setOpenedItem(item);}}>
           <div className="queue-row-heading">
           <button
             className="queue-row-main"
@@ -1149,28 +1213,33 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
             }}
             aria-pressed={active}
             tabIndex={
-              active || (!items.some((i) => i.subject.id === selected) && orderedItems[0]?.subject.id === s.id) ? 0 : -1
+              focused || (!items.some((i) => i.subject.id === selected) && orderedItems[0]?.subject.id === s.id) ? 0 : -1
             }
             aria-describedby="queue-keyboard-help"
             onKeyDown={(e) => {
               if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
                 e.preventDefault();
-                moveSelection(e.key === 'ArrowDown' ? 1 : -1);
+                moveSelection(e.key === 'ArrowDown' ? 1 : -1, e);
+              } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
+                e.preventDefault(); selection.all();
+              } else if ((e.metaKey || e.ctrlKey) && e.key === ' ') {
+                e.preventDefault(); selection.select(s.id, e);
+              } else if (e.key === 'Escape' && selection.keys.size) {
+                e.preventDefault(); e.stopPropagation(); selection.clear();
               } else if (e.key === 'Enter' && active && !e.repeat) {
                 e.preventDefault();
                 activate(item);
               }
             }}
-            onClick={() => {
-              setSelected(s.id);
-              setStatuses({});
-            }}
-            onDoubleClick={() => {
+            onClick={event => selectQueueEntry(s.id, event)}
+            onDoubleClick={event => {
+              if (event.shiftKey || event.metaKey || event.ctrlKey) return;
               setError('');
               setOpenedItem(item);
             }}
           >
             <span className="queue-title-line">
+              {multiple && (active ? <SquareCheck size={16} className="queue-selection-check" aria-hidden="true" /> : <Square size={16} className="queue-selection-check" aria-hidden="true" />)}
               {s.kind === 'stack' && <Layers size={16} aria-label="PR stack" className="queue-stack-icon" />}
               <span className="queue-title">{s.title}</span>
               <PrLabels members={s.members} limit={3} />
@@ -1206,14 +1275,14 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
             {s.kind === 'stack' && matchingStackMembers(item, filters, auth?.login).length < s.members.length && <span className="queue-stack-matches">{matchingStackMembers(item, filters, auth?.login).length} of {s.members.length} PRs match</span>}
             {item.briefing?.summary && <span className="queue-summary">{item.briefing.summary}</span>}
           </div>
-        </div>}</PrEntryActions>
+        </div>}</EntryActions>
         {expanded.has(s.id) && (
           <div id={`members-${s.id}`}>
             {s.members.map((m) => (
-              <PrEntryActions key={m.url} {...entryActions([m])}>{actions => <div className={`queue-member ${queue.readStates?.[m.url]?.unread.length ? 'is-unread' : ''}`}>
+              <PrEntryActions key={m.url} {...entryActions([m])} onBeforeOpen={selection.clear}>{actions => <div className={`queue-member ${queue.readStates?.[m.url]?.unread.length ? 'is-unread' : ''}`}>
                 <PrStateIcon member={m} />
                 <div className="queue-member-content">
-                  <button className="queue-member-title" onClick={() => { setSelected(s.id); setOpenedItem(focusStackPr(item, m)); }}>
+                  <button className="queue-member-title" onClick={event => { if (event.shiftKey || event.metaKey || event.ctrlKey) { selectQueueEntry(s.id, event); return; } setSelected(s.id); setOpenedItem(focusStackPr(item, m)); }}>
                     <span className="truncate">{m.title}</span>
                     <PrLabels members={[m]} />
                   </button>
@@ -1640,7 +1709,12 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
             {section !== 'saved' && auth?.authenticated && queue.savedViews && (
               <SaveViewControls view={activeQueueView} filters={filters} busy={viewBusy} onAction={viewAction} />
             )}
-            <span
+            {multiple && section !== 'saved' ? <div className="queue-selection-summary">
+              <span role="status">{selectedItems.length} selected</span>
+              <EntryActions label="Selected entry actions" groups={selectionGroups} description={selectionDescription} />
+              <button type="button" className="workbench-icon" aria-label="Clear entry selection" title="Clear selection · Escape"
+                onClick={() => { selection.clear(); rowButtons.current.get(selected ?? '')?.focus({ preventScroll: true }); }}><X size={15} /></button>
+            </div> : <span
               className="queue-count"
               aria-live="polite"
                 title={
@@ -1650,7 +1724,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                 }
             >
               {section === 'saved' ? `${saved.length} reviews` : `${items.length} of ${queueItems.length} items`}
-            </span>
+            </span>}
           </div>
           {section !== 'saved' && filterCount > 0 && (
             <div className="queue-active-filters">
@@ -1671,7 +1745,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
           {section !== 'saved' && (
             <p className="sr-only" id="queue-keyboard-help">
                 <kbd>↑</kbd> <kbd>↓</kbd> or <kbd>j</kbd> <kbd>k</kbd> select · <kbd>Enter</kbd> open · <kbd>/</kbd>{' '}
-                search
+                search · Shift-click or Shift+arrows select a range · Command/Control-click toggles · Command/Control+A selects all · Escape clears selection
             </p>
           )}
           <div className="queue-content">

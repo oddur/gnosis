@@ -123,12 +123,14 @@ export function prEntryActionGroups({
 export function PrEntryActions(
   props: Parameters<typeof prEntryActionGroups>[0] & {
     children?: ComponentProps<typeof EntryActions>['children'];
+    onBeforeOpen?: () => void;
   }
 ) {
   const read = useContext(PrReadContext);
   const canMark = read && props.members.some(member => read.states[member.url]);
   return (
     <EntryActions
+      onBeforeOpen={props.onBeforeOpen}
       label={props.members.length > 1 ? 'Stack actions' : `Actions for PR #${props.members[0]?.number}`}
       groups={prEntryActionGroups({ ...props, ...(canMark ? {
         unread: props.members.some(member => read.states[member.url]?.unread.length),

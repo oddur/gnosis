@@ -1643,6 +1643,10 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .queue-item { border-bottom:1px solid var(--border); }
 .queue-item:hover { background:var(--secondary); }
 .queue-item.is-selected { background:var(--accent); }
+.queue-selection-check { flex-shrink:0;color:var(--accent-foreground); }
+.queue-selection-summary { display:flex;align-items:center;gap:6px;margin-inline-start:auto;color:var(--accent-foreground);font-size:13px;white-space:nowrap;font-variant-numeric:tabular-nums; }
+.queue-selection-summary .entry-menu-trigger { opacity:1; }
+.queue-row-main, .queue-row-content { user-select:none; }
 .queue-row { display:flex; gap:8px; padding:13px 20px 13px 14px; align-items:flex-start; }
 .queue-disclosure { display:flex; align-items:center; justify-content:center; width:24px; min-height:24px; color:var(--muted-foreground); flex-shrink:0; }
 .queue-disclosure:disabled { opacity:1; cursor:default; }
@@ -2432,6 +2436,11 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 @media(max-width:700px) { .changes-tree-pane { position:absolute;top:0;bottom:0;left:0;width:min(300px,80%);max-width:80%;z-index:4;border-right:1px solid var(--border); } .changes-resize{display:none;} .changes-progress { display:none; } .changes-toolbar { gap:4px;padding:6px; } }
 
 .dark .changes-file-tree { color-scheme:dark; }
+.file-tree-selection-workspace { display:flex;flex-direction:column;flex:1;min-height:0;height:100%; }
+.file-tree-selection-status { display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:28px;padding:2px 4px 6px;color:var(--muted-foreground);font-size:12px;font-variant-numeric:tabular-nums; }
+.file-tree-selection-status button { color:var(--primary);padding:3px 5px;border-radius:var(--radius-sm); }
+.file-tree-selection-status button:hover { background:var(--accent); }
+.file-tree-selection-status button:focus-visible { outline:2px solid var(--ring);outline-offset:2px; }
 
 /* Bound reading text within the full-width summary; media keeps the flexible column. */
 .pr-summary-body .pr-markdown :is(p,ul,ol,blockquote):not(:has(img,.markdown-image,.mermaid-diagram)) { max-width:var(--measure-prose); }
