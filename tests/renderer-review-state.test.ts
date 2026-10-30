@@ -6,13 +6,14 @@ import os from 'node:os';
 import { createAppDataStore } from '../src/app-data-store';
 import { initializeReviewState } from '../lib/renderer-review-state';
 import { readReviewDrafts, updateReviewDrafts, type ChangesReviewDraft } from '../lib/changes-review-drafts';
-import { markFileViewed, isFileViewed } from '../lib/file-view-progress';
+import { markFileViewed, markFilesViewed, isFileViewed } from '../lib/file-view-progress';
 import type { ReviewStateWrite, FileProgressPatch } from '../lib/review-state';
-test('renderer migration uses real SQLite, serializes concurrent drafts and never touches browser storage afterward', async () => {
+void test('renderer migration uses real SQLite, serializes concurrent drafts and never touches browser storage afterward', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-renderer-state-'));
   let store = createAppDataStore(),
     failed = false,
     browserForbidden = false;
+  const progressWrites: FileProgressPatch[] = [];
   const draft: ChangesReviewDraft = {
     id: 'first',
     body: 'Keep this note',
@@ -70,7 +71,7 @@ test('renderer migration uses real SQLite, serializes concurrent drafts and neve
         loadReviewState: (legacy: Record<string, string>) => store.loadReviewState(legacy),
         saveReviewState: (value: ReviewStateWrite) =>
           failed ? Promise.reject(new Error('Disk full')) : store.saveReviewState(value),
-        saveFileProgress: (value: FileProgressPatch) => store.saveFileProgress(value),
+        saveFileProgress: (value: FileProgressPatch) => { progressWrites.push(value); return store.saveFileProgress(value); },
       },
     },
   });
@@ -98,12 +99,22 @@ test('renderer migration uses real SQLite, serializes concurrent drafts and neve
     assert.deepEqual(readReviewDrafts('bob', url), []);
     failed = false;
     await markFileViewed('revision', false);
+    const keys = Array.from({ length: 3000 }, (_, i) => `folder/file-${i}`);
+    const writesBefore = progressWrites.length;
+    await markFilesViewed([...keys, 'revision', 'revision'], true);
+    assert.equal(progressWrites.length, writesBefore + 1, 'one IPC/database patch for a whole folder');
+    assert.equal(Object.keys((progressWrites.at(-1) as FileProgressPatch).marks).length, 3001);
+    assert.equal((progressWrites.at(-1) as FileProgressPatch).marks.content, true, 'revision aliases remain shared with explanations');
+    await markFilesViewed(keys, true);
+    assert.equal(progressWrites.length, writesBefore + 1, 'already viewed files do not need another write');
+    await markFilesViewed(['revision'], false);
     await store.close();
     store = createAppDataStore();
     await store.open(directory);
     const restored = await store.loadReviewState({});
     assert.equal((restored[key] as unknown[]).length, 3);
     assert.equal((restored['gnosis-file-progress:v1'] as FileProgressPatch).marks.content, false);
+    assert.ok(keys.every(key => (restored['gnosis-file-progress:v1'] as FileProgressPatch).marks[key]));
   } finally {
     await store.close();
     fs.rmSync(directory, { recursive: true, force: true });

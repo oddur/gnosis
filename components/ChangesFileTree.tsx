@@ -1,3 +1,4 @@
+import { TreeViewedMenu } from './TreeViewedMenu';
 import { DIFF_STAT_COLORS } from './DiffStats';
 import { useEffect, useMemo, useRef } from 'react';
 import { FileTree, useFileTree } from '@pierre/trees/react';
@@ -28,6 +29,7 @@ export function ChangesFileTree({
   query,
   onSelect,
   onPreview,
+  onSetViewed,
   showComments = true,
   revealSelected = false,
 }: {
@@ -38,6 +40,7 @@ export function ChangesFileTree({
   query: string;
   onSelect: (path: string) => void;
   onPreview?: (path: string) => void;
+  onSetViewed?: (paths: string[], viewed: boolean) => Promise<boolean>;
 }) {
   const current = useRef({ entries, onSelect });
   current.current = { entries, onSelect };
@@ -51,6 +54,7 @@ export function ChangesFileTree({
   const { model } = useFileTree({
     preparedInput: prepared,
     initialExpansion: 'open',
+    composition: { contextMenu: { triggerMode: 'right-click' } },
     search: false,
     unsafeCSS: decorationCSS + (showComments ? commentDecorationCSS : ''),
     fileTreeSearchMode: 'hide-non-matches',
@@ -122,6 +126,15 @@ export function ChangesFileTree({
   return (
     <FileTree
       model={model}
+      renderContextMenu={onSetViewed ? (item, context) => (
+        <TreeViewedMenu
+          item={item}
+          context={context}
+          entries={entries}
+          matchingPaths={query.trim() ? new Set(model.getSearchMatchingPaths()) : undefined}
+          onSetViewed={onSetViewed}
+        />
+      ) : undefined}
       className="changes-file-tree"
       aria-label="Changed files"
       onClick={activate}
@@ -143,6 +156,7 @@ export function ChangesFileTree({
         if (item && !item.isDirectory()) onPreview?.(item.getPath());
       }}
       onKeyDownCapture={(event) => {
+        if (event.target instanceof Element && event.target.closest('[data-file-tree-context-menu-root]')) return;
         if (event.key === 'Enter' && model.getFocusedItem()?.isDirectory() === false) {
           event.preventDefault();
           event.stopPropagation();
