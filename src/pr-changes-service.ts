@@ -3,7 +3,7 @@ import { createByteCache } from '../lib/byte-cache';
 import { compactInventory, INVENTORY_MEMORY_BYTES } from '../lib/inspection-limits';
 import { createHash } from 'node:crypto';
 import type { Octokit } from '@octokit/rest';
-import { getChangedFiles, getPrMetadata, getPrMetadataForClone, getPrDiff, parsePrUrl, changedFileFromClone, GITHUB_PR_FILE_LIMIT } from '../lib/github';
+import { getChangedFiles, getPrMetadata, getPrMetadataForClone, knownMetadataForClone, getPrDiff, parsePrUrl, changedFileFromClone, GITHUB_PR_FILE_LIMIT } from '../lib/github';
 import { preparedDiff, preparedDiffKey } from '../lib/prepared-pr';
 import { githubCacheFor } from '../lib/github-client';
 import { isCacheRecord } from '../lib/github-cache';
@@ -78,7 +78,9 @@ export function createPrChangesService(clones = localClones) {
         remember(client, saved);
         return saved;
       }
-      const metadata = await getPrMetadataForClone(client, owner, repo, pullNumber, options.revision, clones);
+      const member = knownMetadataForClone(options.revision, `${owner}/${repo}`, refresh, clones);
+      const memberChanges = member && await clones.read(`${owner}/${repo}`, (clone) => clone.changes(member.baseSha, member.headSha));
+      const metadata = member && memberChanges ? member : await getPrMetadataForClone(client, owner, repo, pullNumber, options.revision, clones);
       const key = snapshotKey(url, changesRevision(metadata));
       const existing = snapshots.get(client)?.get(key) ?? await cache?.getPrepared(key, isSnapshot);
       if (existing) {
@@ -92,7 +94,7 @@ export function createPrChangesService(clones = localClones) {
         return refreshed;
       }
       // Both sides are pinned by SHA, so a clone's answer cannot change during the read.
-      const local = await clones.read(`${owner}/${repo}`, (clone) => clone.changes(metadata.baseSha, metadata.headSha));
+      const local = memberChanges ?? await clones.read(`${owner}/${repo}`, (clone) => clone.changes(metadata.baseSha, metadata.headSha));
       const files = local ? local.files.map(changedFileFromClone) : await getChangedFiles(client, owner, repo, pullNumber, true);
       const filesTruncated = !local && files.length === GITHUB_PR_FILE_LIMIT &&
         (metadata.changedFileCount === undefined || metadata.changedFileCount > files.length);

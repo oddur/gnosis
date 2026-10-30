@@ -83,6 +83,20 @@ export async function getPrMetadata(
   };
 }
 
+const isCompleteMetadata = (known: Partial<PrMetadata> | undefined): known is PrMetadata =>
+  typeof known?.title === 'string' &&
+  typeof known.headRepo === 'string' &&
+  typeof known.baseSha === 'string' &&
+  typeof known.headSha === 'string';
+
+/** With a clone, a queue member already pins everything a read needs. Only an explicit refresh has to wait for GitHub. */
+export const knownMetadataForClone = (
+  known: Partial<PrMetadata> | undefined,
+  repo: string,
+  refresh: boolean,
+  clones: LocalClones
+): PrMetadata | undefined => (!refresh && isCompleteMetadata(known) && clones.has(repo) ? known : undefined);
+
 /** A registered clone only needs the revision, so a paused API must not stop reads the caller can describe itself. */
 export async function getPrMetadataForClone(
   octokit: Octokit,
@@ -95,8 +109,7 @@ export async function getPrMetadataForClone(
   try {
     return await getPrMetadata(octokit, owner, repo, pullNumber, true);
   } catch (error) {
-    const complete = typeof known?.title === 'string' && typeof known.headRepo === 'string';
-    if (error instanceof GitHubBackoffError && complete && clones.has(`${owner}/${repo}`)) return known as PrMetadata;
+    if (error instanceof GitHubBackoffError && isCompleteMetadata(known) && clones.has(`${owner}/${repo}`)) return known;
     throw error;
   }
 }

@@ -414,6 +414,48 @@ void test('a paused API does not stop a clone when discovery already knows the r
   await assert.rejects(createPrChangesService(createLocalClones()).manifest(third, url, false, { revision: pr }), GitHubBackoffError);
 });
 
+void test('a queued revision reads from the clone without waiting for GitHub; a refresh still asks', async () => {
+  const f = fixture();
+  const pr = member(1, f.base, f.second, 2);
+  const { client, reads } = github({ 1: pr });
+  const changes = createPrChangesService(f.clones);
+  const commits = createPrCommitsService(f.clones);
+  const snapshot = await changes.manifest(client, url, false, { revision: pr });
+  const list = await commits.list(client, url, false, { revision: pr });
+  assert.equal(snapshot.metadata.description, 'From discovery');
+  assert.equal(snapshot.comparisonBase, f.base);
+  assert.equal(list.commits.length, 2);
+  assert.deepEqual(reads, []);
+  // A bare revision has no details to show, so it still needs GitHub.
+  const { client: bare, reads: bareReads } = github({ 1: pr });
+  await createPrCommitsService(f.clones).list(bare, url, false, { revision: { baseSha: f.base, headSha: f.second } });
+  assert.deepEqual(bareReads, ['/repos/o/r/pulls/1']);
+  const { client: fresh, reads: freshReads } = github({ 1: pr });
+  const refreshed = await createPrCommitsService(f.clones).list(fresh, url, true, { revision: pr });
+  assert.equal(refreshed.metadata.description, 'From GitHub');
+  assert.deepEqual(freshReads, ['/repos/o/r/pulls/1']);
+});
+
+void test('a queued revision with a disagreeing commit count defers to GitHub', async () => {
+  const f = fixture();
+  const stale = member(1, f.base, f.second, 5);
+  const { client, reads } = github({ 1: member(1, f.base, f.second, 2) });
+  const list = await createPrCommitsService(f.clones).list(client, url, false, { revision: stale });
+  assert.equal(list.commits.length, 2);
+  assert.equal(list.metadata.description, 'From GitHub');
+  assert.deepEqual(reads, ['/repos/o/r/pulls/1']);
+});
+
+void test('a clone that cannot answer a queued revision uses fresh GitHub details', async () => {
+  const f = fixture();
+  fs.rmSync(f.clone, { recursive: true });
+  const pr = member(1, f.base, f.second, 2);
+  const { client, reads } = github({ 1: pr });
+  await assert.rejects(createPrChangesService(f.clones).manifest(client, url, false, { revision: pr }));
+  assert.equal(reads[0], '/repos/o/r/pulls/1');
+  assert.ok(reads.some((read) => read.endsWith('/pulls/1/files')));
+});
+
 void test('commit lists and comparisons come from the clone', async () => {
   const f = fixture();
   const { client, reads } = github({ 1: member(1, f.base, f.second, 2) });

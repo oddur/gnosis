@@ -120,7 +120,7 @@ With a clone registered, these reads come from Git instead of the API:
 | Clone | Changed files and patches, review diffs, merge bases, commit lists, commit and range comparisons, combined stack changes, stack ancestry, file contents, images, and file history |
 | GitHub | Discovery, PR details and descriptions, comments, reviews, checks, profiles, LFS downloads, and every write |
 
-GitHub still supplies each PR's base and head SHAs. While the API is paused, a queued PR keeps using its last known revision, so the clone can continue preparing it.
+Changes and Commits for a queued PR use the revision and details from the last queue update, without waiting for a GitHub request. This also lets the clone keep preparing PRs while the API is paused. **Update changes** and other explicit refreshes still ask GitHub first, and the next queue update picks up newer commits.
 
 Gnosis checks for a commit before reading it. A missing commit starts `git fetch <remote> <sha>`, and readers that arrive during a fetch share the next batch.
 This adds Git objects only. It leaves refs, `FETCH_HEAD`, branches, and the working tree alone, and Git can prune these objects later. Fetches use the clone's own Git credentials.

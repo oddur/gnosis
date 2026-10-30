@@ -4,7 +4,7 @@ import { compactInventory, INVENTORY_MEMORY_BYTES } from '../lib/inspection-limi
 import { createHash } from 'node:crypto';
 import type { Octokit } from '@octokit/rest';
 import { changesRevision, type InspectionLoadOptions } from '../lib/pr-changes';
-import { getPrMetadata, getPrMetadataForClone, parsePrUrl } from '../lib/github';
+import { getPrMetadata, getPrMetadataForClone, knownMetadataForClone, parsePrUrl } from '../lib/github';
 import { githubCacheFor } from '../lib/github-client';
 import { isCacheRecord } from '../lib/github-cache';
 import { localClones, EMPTY_TREE } from '../lib/local-clone';
@@ -178,6 +178,14 @@ export function createPrCommitsService(clones = localClones) {
       if (saved && !refresh && (!options.revision || changesRevision(saved.metadata) === changesRevision(options.revision))) {
         remember(client, listKey(url, saved.metadata.baseSha, saved.metadata.headSha), saved);
         return saved;
+      }
+      const member = knownMetadataForClone(options.revision, `${t.owner}/${t.repo}`, refresh, clones);
+      const memberCommits = member && await clones.read(`${t.owner}/${t.repo}`, (clone) => clone.commits(member.baseSha, member.headSha));
+      if (member && memberCommits?.length === member.commitCount) {
+        const value: PrCommits = { version: 1, url, metadata: member, commits: memberCommits, fetchedAt: Date.now() };
+        save(client, listKey(url, member.baseSha, member.headSha), value, version);
+        save(client, latestKey(url), value, version);
+        return value;
       }
       const metadata = await getPrMetadataForClone(client, t.owner, t.repo, t.pull_number, options.revision, clones);
       const key = listKey(url, metadata.baseSha, metadata.headSha);
