@@ -6,7 +6,7 @@ void app.whenReady().then(async () => {
   const win = new BrowserWindow({ width: 1280, height: 850, show: true, webPreferences: { backgroundThrottling: false } });
   win.webContents.on('console-message', ({ level, message }) => { if (level === 'error') console.error(message); });
   const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
-  const wait = async (code: string) => { for (let i = 0; i < 160; i++) { if (await js(code)) return; await new Promise(r => setTimeout(r, 30)); } throw Error('Timed out: ' + code); };
+  const wait = async (code: string, attempts = 160) => { for (let i = 0; i < attempts; i++) { if (await js(code)) return; await new Promise(r => setTimeout(r, 30)); } throw Error('Timed out: ' + code); };
   const click = async (selector: string) => { await js(`(()=>{const b=document.querySelector(${JSON.stringify(selector)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`); await new Promise(r => setTimeout(r, 50)); };
   const button = (text: string) => js(`[...document.querySelectorAll('.repository-editor button')].find(b=>b.textContent.trim()===${JSON.stringify(text)}).click()`);
   const fill = (selector: string, value: string) => js(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`);
@@ -15,7 +15,8 @@ void app.whenReady().then(async () => {
     const fixtureUrl = process.env.GNOSIS_WORKBENCH_URL;
     assert.ok(fixtureUrl);
     await win.loadURL(fixtureUrl + '?filters');
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    // A cold Vite module graph can take longer than an interaction on a shared CI runner.
+    await wait("!!document.querySelector('.queue-item') && window.electronAPI.workbenchQueue().then(queue=>queue.items.length===7)", 500);
     await js("(()=>{const snapshot=window.electronAPI.workbenchSnapshot;window.electronAPI.workbenchSnapshot=async()=>({...await snapshot(),briefingBudget:{limit:10,used:3,remaining:7,resetsAt:new Date().toISOString(),repositories:{'klang/engine':{limit:10,used:2,remaining:8,automatic:true}}}})})()");
     await js("document.body.dispatchEvent(new KeyboardEvent('keydown',{key:',',metaKey:true,bubbles:true,cancelable:true}))");
     await wait("!!document.querySelector('[role=tab][data-state=active]')");

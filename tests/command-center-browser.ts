@@ -49,7 +49,7 @@ void app.whenReady().then(async () => {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     if (!url) throw Error('Missing fixture URL');
     await win.loadURL(url + '?polish');
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    await wait("!!document.querySelector('.queue-item') && window.electronAPI.workbenchQueue().then(queue=>queue.items.length===7)");
     await js(
       `(()=>{window.remoteSearchCalls=0;const remote=window.electronAPI.commandGitHubSearch;window.electronAPI.commandGitHubSearch=(...args)=>{window.remoteSearchCalls++;return remote(...args)};document.querySelector('.queue-search input').focus();})()`
     );

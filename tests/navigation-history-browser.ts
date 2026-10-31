@@ -49,7 +49,7 @@ void app.whenReady().then(async () => {
     if (!url) throw Error('Missing fixture URL');
     await win.loadURL(url + '?pr-summary&navigation-history&keep-progress');
     win.webContents.debugger.attach('1.3');
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    await wait("!!document.querySelector('.queue-item') && window.electronAPI.workbenchQueue().then(queue=>queue.items.length===7)");
     await mouse(3);
     assert.ok(await js("!!document.querySelector('.queue-list')"), 'Back at start does nothing');
     await js(
