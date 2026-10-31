@@ -37,13 +37,25 @@ interface Deps {
   remote?: (repo: string) => string;
   dependents?: (url: string) => string[];
 }
+/** A single scope hash leaves room for Git's internal worktree paths on Windows. */
+export async function conflictSessionDirectory(root: string, account: string, id: string): Promise<string> {
+  const legacy = path.join(root, hash(account), id);
+  try {
+    await fs.access(legacy);
+    return legacy;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  return path.join(root, 'sessions', hash(JSON.stringify([account, id])));
+}
+
 export function createConflictResolutionService(deps: Deps) {
   const memory = createConflictMemory(() => path.join(deps.directory(), 'resolution-memory'));
   const memoryScope = (session: Pick<ConflictSession, 'account' | 'headRepo'>) =>
     `${session.account.toLowerCase()}:${session.headRepo.toLowerCase()}`;
   const busy = new Set<string>();
   const storageKey = (account: string, id: string) => `conflict-draft:${account}:${id}`;
-  const directory = (account: string, id: string) => path.join(deps.directory(), hash(account), id);
+  const directory = (account: string, id: string) => conflictSessionDirectory(deps.directory(), account, id);
   async function persist(session: ConflictSession) {
     deps.storage.write(storageKey(session.account, session.id), session);
     await deps.storage.flush();
@@ -100,7 +112,7 @@ export function createConflictResolutionService(deps: Deps) {
         `protocol.file.allow=${deps.remote ? 'always' : 'never'}`,
         ...args,
       ],
-      { cwd: directory(ctx.account, id), env, input, signal, timeout: 180_000 }
+      { cwd: await directory(ctx.account, id), env, input, signal, timeout: 180_000 }
     );
     if (!allowed.includes(result.code)) {
       const safe = result.stderr.replaceAll(ctx.token, '[redacted]').replace(/AUTHORIZATION:[^\r\n]*/gi, '[redacted]');
@@ -201,7 +213,7 @@ export function createConflictResolutionService(deps: Deps) {
           saved.headRepo !== state.headRepo ||
           saved.baseRepo !== state.repository,
       };
-    await fs.mkdir(directory(ctx.account, id), { recursive: true, mode: 0o700 });
+    await fs.mkdir(await directory(ctx.account, id), { recursive: true, mode: 0o700 });
     await git(ctx, id, ['init', '--bare', '.'], signal);
     for (const branch of [state.headBranch, state.baseBranch])
       await git(ctx, id, ['check-ref-format', `refs/heads/${branch}`], signal);
@@ -407,7 +419,7 @@ export function createConflictResolutionService(deps: Deps) {
             git: (args: string[], input?: string, allowed?: number[], overrideSignal?: AbortSignal) =>
               git(ctx, id, args, overrideSignal ?? signal, input, allowed),
             read: deps.read,
-            directory: directory(ctx.account, id),
+            directory: await directory(ctx.account, id),
             remote,
             signal,
             report,
@@ -421,7 +433,7 @@ export function createConflictResolutionService(deps: Deps) {
                   'worktree',
                   'remove',
                   '--force',
-                  await restackWorktreePath(directory(ctx.account, id), session.restack.token),
+                  await restackWorktreePath(await directory(ctx.account, id), session.restack.token),
                 ],
                 signal,
                 undefined,
@@ -432,7 +444,7 @@ export function createConflictResolutionService(deps: Deps) {
             await persist(session);
             session.dependents = deps.dependents?.(session.url) ?? [];
             await memory.record(memoryScope(session), session.files, signal);
-            session.restack = await memory.withRepository(memoryScope(session), directory(ctx.account, id), () =>
+            session.restack = await memory.withRepository(memoryScope(session), await directory(ctx.account, id), () =>
               prepareRestack(session, session.dependents ?? [], restackDeps)
             );
           } else if (request.kind === 'restack-save') {
@@ -451,7 +463,7 @@ export function createConflictResolutionService(deps: Deps) {
           } else if (request.kind === 'restack-continue') {
             if (session.restack?.status !== 'blocked') throw new Error('No restack is paused.');
             await memory.record(memoryScope(session), session.restack.blocked?.files ?? [], signal);
-            session.restack = await memory.withRepository(memoryScope(session), directory(ctx.account, id), () =>
+            session.restack = await memory.withRepository(memoryScope(session), await directory(ctx.account, id), () =>
               prepareRestack(session, session.dependents ?? [], restackDeps, true)
             );
           } else {
@@ -473,7 +485,7 @@ export function createConflictResolutionService(deps: Deps) {
         if (request.kind === 'discard') {
           deps.storage.write(key, null);
           await deps.storage.flush();
-          await fs.rm(directory(ctx.account, id), { recursive: true, force: true });
+          await fs.rm(await directory(ctx.account, id), { recursive: true, force: true });
           return { session };
         }
         if (request.kind === 'save') {
@@ -513,7 +525,7 @@ export function createConflictResolutionService(deps: Deps) {
               }
               file.explanation = result.explanation;
             } else {
-              const temp = await fs.mkdtemp(path.join(directory(ctx.account, id), 'mergiraf-'));
+              const temp = await fs.mkdtemp(path.join(await directory(ctx.account, id), 'mergiraf-'));
               try {
                 const names = ['base', 'ours', 'theirs'].map((name) => path.join(temp, name));
                 await Promise.all(

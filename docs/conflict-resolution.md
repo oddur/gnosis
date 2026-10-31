@@ -20,7 +20,7 @@ Git 2.38 or newer must be installed and available to the app. Mergiraf 0.20.0 is
 
 All network, Git, model and disk work runs in Electron's backend. The renderer receives bounded text and parsed preview metadata. Editor code loads only when the workspace opens.
 
-Drafts use the existing SQLite app-data store, scoped by GitHub account and PR URL. They are saved work, so clearing the GitHub cache does not delete them. Private bare repositories are kept under `userData/conflict-objects/<account-hash>/<PR-hash>`. Fetches request blob filtering; the Git server decides whether to honor it. No user checkout is created or changed.
+Drafts use the existing SQLite app-data store, scoped by GitHub account and PR URL. They are saved work, so clearing the GitHub cache does not delete them. Private bare repositories are kept under `userData/conflict-objects/sessions/<account-and-PR-hash>` (existing account/PR directories remain in use for saved sessions). Fetches request blob filtering; the Git server decides whether to honor it. No user checkout is created or changed.
 
 Mergiraf receives temporary files that Gnosis deletes after the operation. Upstream Mergiraf also retains a local attempt cache, capped at 128 attempts, in its platform application-data directory. This cache is shared with standalone Mergiraf; Gnosis does not delete it. The bundled executable, matching upstream source archive, license and build directions are under the app's `Resources/mergiraf` directory.
 

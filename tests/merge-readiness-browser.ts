@@ -116,8 +116,8 @@ void app.whenReady().then(async () => {
     await capture('queue');
     await js("document.querySelector('.queue-item:has(.queue-disclosure) .queue-row-main').click()");
     await click('Open stack overview');
-    await wait("document.querySelector('.pr-merge-status')?.textContent.includes('Cannot merge stack')");
-    await js("document.querySelector('[aria-label=\"Open PR #121\"]').click()");
+    await wait("document.querySelector('.pr-merge-status')?.textContent.includes('Not ready to merge')");
+    await js("document.querySelector('.stack-overview-member[data-pr-url$=\"/121\"] .stack-member-title > button:not(.entity-badge)').click()");
     assert.match(
       await js<string>("document.querySelector('.pr-merge-detail').textContent"),
       /Rebase onto queue-0, or merge queue-0/
@@ -134,10 +134,9 @@ void app.whenReady().then(async () => {
       'https://github.com/klang/engine/pull/122':null
     }`);
     await click('Refresh status');
-    await wait("document.querySelector('.pr-merge-status .pr-review-statuses')?.textContent.includes('1 PR · No review decision')");
-    assert.deepEqual(await js("[...document.querySelectorAll('.pr-merge-status .pr-review-status')].map(s=>s.textContent)"),
-      ['1 PR · Changes requested', '1 PR · Awaiting review', '1 PR · No review decision']);
-    assert.equal(await js("document.querySelector('.stack-overview-member .pr-review-status').textContent"), 'Changes requested');
+    await wait("document.querySelector('.stack-overview-member[data-pr-url$=\"/120\"] .pr-review-status')?.textContent==='Changes requested'");
+    assert.deepEqual(await js("[...document.querySelectorAll('.stack-overview-member .pr-review-status')].map(s=>s.textContent)"),
+      ['No review decision', 'Awaiting review', 'Changes requested']);
     assert.equal(await js("document.querySelector('.stack-overview-member:first-child .merge-readiness-badge')"), null);
     await capture('stack-review-status');
     win.setSize(640, 800);

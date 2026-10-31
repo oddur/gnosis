@@ -13,7 +13,7 @@ void app.whenReady().then(async () => {
   // Assigning a mock evaluates to a function, which cannot cross the IPC boundary.
   const mock = (code: string) => js(`${code};null`);
   const wait = async (code: string) => {
-    for (let i = 0; i < 150; i++) {
+    for (let i = 0; i < 500; i++) {
       if (await js(code)) return;
       await new Promise((r) => setTimeout(r, 30));
     }

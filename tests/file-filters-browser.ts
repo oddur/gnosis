@@ -30,6 +30,8 @@ void app.whenReady().then(async () => {
     if (!(await js("!!document.querySelector('.raw-file-filter-popover')"))) await click('Filter files');
   };
   const close = async () => {
+    // The nested extension picker must finish closing before Escape targets its parent.
+    await wait("!document.querySelector('.file-extension-popup')");
     await js(
       "document.querySelector('.raw-file-filter-popover')?.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
     );

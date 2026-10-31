@@ -123,7 +123,7 @@ void app.whenReady().then(async () => {
     );
     await wait("document.querySelectorAll('.stack-overview-member').length===3");
     assert.ok(await js<number>(unread(121)), 'Stack overview leaves member PRs unread');
-    await js("document.querySelector('[aria-label=\"Open PR #121\"]').click()");
+    await js("document.querySelector('.stack-overview-member[data-pr-url$=\"/121\"] .stack-member-title > button:not(.entity-badge)').click()");
     await wait(`${unread(121)}.then(n=>n===0)`);
     await click('Back to stack');
     await menuAction(js, 'Stack actions', 'Mark as read');

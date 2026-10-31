@@ -5,7 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { createConflictResolutionService } from '../src/conflict-resolution-service';
+import crypto from 'node:crypto';
+import { createConflictResolutionService, conflictSessionDirectory } from '../src/conflict-resolution-service';
 import { restackWorktreePath } from '../src/conflict-restack';
 import { createConflictMemory } from '../src/conflict-rerere';
 import { hasConflictMarkers, conflictFileStage, type ConflictFile } from '../lib/conflict-resolution';
@@ -692,4 +693,17 @@ void test('restack paths stay compact and preserve existing paused worktrees', a
   const legacy = path.join(directory, `restack-${token}`);
   await fs.mkdir(legacy);
   assert.equal(await restackWorktreePath(directory, token), legacy);
+});
+
+void test('conflict session directories reserve room for Git metadata and retain legacy caches', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-session-path-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const id = 'a'.repeat(64);
+  const directory = await conflictSessionDirectory(root, 'tester', id);
+  assert.equal(path.relative(root, directory).length, 'sessions/'.length + 64);
+  assert.notEqual(directory, await conflictSessionDirectory(root, 'other', id));
+  assert.notEqual(directory, await conflictSessionDirectory(root, 'tester', 'b'.repeat(64)));
+  const legacy = path.join(root, crypto.createHash('sha256').update('tester').digest('hex'), id);
+  await fs.mkdir(legacy, { recursive: true });
+  assert.equal(await conflictSessionDirectory(root, 'tester', id), legacy);
 });

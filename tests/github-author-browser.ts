@@ -30,6 +30,8 @@ void app.whenReady().then(async () => {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     if (!url) throw Error('Missing fixture URL');
     await win.loadURL(url + '?polish');
+    win.webContents.debugger.attach('1.3');
+    await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
     win.webContents.setZoomFactor(1);
     await wait("document.querySelectorAll('.queue-item').length===7");
     await js(
