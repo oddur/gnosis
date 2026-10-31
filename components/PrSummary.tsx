@@ -32,6 +32,7 @@ import { type QueueItem } from '../lib/workbench';
 import type { PrStatus } from '../lib/types';
 import { timeAgo } from '../lib/utils';
 import { useQueueSignals } from '../lib/use-queue-signals';
+import { stackMergeStatus } from '../lib/stack-merge-status';
 import { subjectReadiness } from '../lib/merge-readiness';
 import { ReadinessBadge, ReadinessCheckedAt } from './MergeReadiness';
 import { SubjectReviewStatus } from './PrReviewStatus';
@@ -195,7 +196,8 @@ function PrSummaryContent({
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', tick); };
   }, []);
   const statusNow = Date.now();
-  const readiness = subjectReadiness(item.subject, signals, statusNow);
+  const stackStatus = stacked ? stackMergeStatus(item.subject, signals, checks.values, statusNow) : undefined;
+  const readiness = stackStatus?.summary ?? subjectReadiness(item.subject, signals, statusNow);
   const commonRepo = stacked && new Set(item.subject.members.map(m => m.repo)).size === 1 ? first.repo : undefined;
   const state = first.merged ? 'Merged' : first.state === 'closed' ? 'Closed' : first.isDraft ? 'Draft' : 'Open';
   useEffect(() => {
@@ -373,11 +375,13 @@ function PrSummaryContent({
             )}
           </div>
         </header>}</PrEntryActions>
-        <div ref={statusRef} className="pr-merge-status" data-tour="summary" aria-label="PR status">
-          <SubjectReviewStatus subject={item.subject} signals={signals} checking={!signalsLoaded && !!account} now={statusNow} />
+        <div ref={statusRef} className="pr-merge-status" data-tour="summary" aria-label={stacked ? 'Stack status' : 'PR status'}>
+          {!stacked && <SubjectReviewStatus subject={item.subject} signals={signals} checking={!signalsLoaded && !!account} now={statusNow} />}
           <ReadinessBadge readiness={readiness} reviewStatusShown staleLabel={stacked ? 'Status needs refresh' : undefined} />
-          <ReadinessCheckedAt readiness={readiness} label={stacked ? 'Status checked' : undefined} />
+          {stackStatus && stackStatus.unconfirmed > 0 && stackStatus.blocked > 0 && <span className="merge-readiness-checked">{stackStatus.unconfirmed} {stackStatus.unconfirmed === 1 ? 'PR still unconfirmed' : 'PRs still unconfirmed'}</span>}
+          {stacked && readiness.checkedAt === undefined ? null : <ReadinessCheckedAt readiness={readiness} label={stacked ? 'Status checked' : undefined} />}
           {stacked && <button aria-label="Refresh status" title="Refresh status" disabled={statusRefreshing || !account} onClick={onRetryStatus}><RefreshCw size={14} className={statusRefreshing ? 'animate-spin' : undefined} /></button>}
+          {stacked && <div className="stack-human-review-status"><span>Reviews</span><SubjectReviewStatus subject={item.subject} signals={signals} checking={!signalsLoaded && !!account} now={statusNow} /></div>}
           {!stacked && <div className="pr-summary-review-actions" inert={tab !== 'summary' || stacked} style={{ visibility: tab === 'summary' && !stacked ? 'visible' : 'hidden' }}>{summaryReview.controls}</div>}
         </div>
         <div className="pr-workspace-navigation">
@@ -462,7 +466,7 @@ function PrSummaryContent({
                   onOpen={member => changeScope(member.url)} onChecks={member => { changeScope(member.url); onTabChange('checks'); }} />
                 <StackBriefing briefing={item.briefing} actions={generationActions?.(item.subject.members)} onActivity={onShowActivity} onSetup={onGitHubAuth} connected={!!account} />
               </div>
-              <StackMergeDetails subject={item.subject} signals={signals} checks={checks.values} now={statusNow}
+              <StackMergeDetails subject={item.subject} status={stackStatus!} onRefresh={onRetryStatus} refreshDisabled={statusRefreshing || !account}
                 onOpen={member => changeScope(member.url)} onChecks={member => { changeScope(member.url); onTabChange('checks'); }} />
             </div> : <PrSubjectDetails
               generationActions={generationActions}

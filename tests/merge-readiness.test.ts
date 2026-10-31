@@ -105,3 +105,50 @@ void test('stacks name only the next dependency-eligible PR and never promise th
   assert.equal(subjectReadiness(subject, [signals({ state: 'CLOSED' }), childSignals], now).ready, false);
   assert.equal(subjectReadiness(subject, [], now).label, 'Stack readiness unknown');
 });
+
+void test('stack summary leads with blockers even when its base PR can merge', async () => {
+  const { stackMergeStatus } = await import('../lib/stack-merge-status');
+  const child = { ...member, url: member.url + '2', number: 2 };
+  const subject = { kind: 'stack', members: [member, child], edges: [] } as unknown as ReviewSubject;
+  const result = stackMergeStatus(subject, [signals(), { ...signals({ isDraft: true }), url: child.url }], {}, now);
+  assert.equal(result.summary.ready, false);
+  assert.equal(result.summary.label, 'Cannot merge stack · 1 PR is blocked');
+  assert.equal(result.entries[1].category, 'blocked');
+});
+
+void test('stack presentation separates optional failures, unknown evidence and queued merges', async () => {
+  const { stackMergeStatus, stackMergeMessage } = await import('../lib/stack-merge-status');
+  const subject = { kind: 'stack', members: [member], edges: [] } as unknown as ReviewSubject;
+  const warning = stackMergeStatus(subject, [{ ...signals(), checks: { state: 'failure', total: 1, passed: 0 } }], {}, now);
+  assert.equal(warning.entries[0].category, 'warning');
+  assert.equal(warning.summary.ready, true);
+  assert.match(stackMergeMessage(warning.entries[0]).details[0], /do not block/);
+  const queued = stackMergeStatus(subject, [signals({ queueState: 'QUEUED' })], {}, now);
+  assert.equal(queued.entries[0].category, 'waiting');
+  assert.equal(queued.blocked, 0);
+  const unstable = stackMergeStatus(subject, [signals({ mergeState: 'UNSTABLE' })], {}, now);
+  assert.equal(unstable.entries[0].category, 'unconfirmed');
+  assert.equal(unstable.summary.ready, false);
+  const stale = stackMergeStatus(subject, [signals({ mergeState: 'DIRTY' })], {}, now + QUEUE_SIGNALS_TTL);
+  assert.equal(stale.blocked, 0);
+  assert.equal(stale.unconfirmed, 1);
+  assert.equal(stackMergeMessage(stale.entries[0]).details.length, 1);
+  assert.match(stackMergeMessage(stale.entries[0]).details[0], /Last reported/);
+  assert.equal(stackMergeStatus(subject, [{ ...signals(), headSha: 'old' }], {}, now).entries[0].category, 'unconfirmed');
+});
+
+void test('check evidence must be fresh and belong to the displayed head', async () => {
+  const { stackMergeStatus, stackMergeMessage } = await import('../lib/stack-merge-status');
+  const subject = { kind: 'stack', members: [member], edges: [] } as unknown as ReviewSubject;
+  const value = { url: member.url, headSha: member.headSha, checkedAt: now, checks: [
+    { id: 'build', name: 'Build', status: 'completed', conclusion: 'cancelled', required: false },
+  ] } as import('../lib/pr-checks').PrChecks;
+  const fresh = stackMergeStatus(subject, [signals()], { [member.url]: value }, now);
+  assert.equal(fresh.entries[0].category, 'warning');
+  assert.equal(stackMergeMessage(fresh.entries[0]).title, 'Optional checks did not pass');
+  for (const invalid of [{ ...value, headSha: 'old' }, { ...value, checkedAt: now - QUEUE_SIGNALS_TTL }]) {
+    const result = stackMergeStatus(subject, [signals()], { [member.url]: invalid }, now);
+    assert.equal(result.entries[0].category, 'ready');
+    assert.equal(result.entries[0].failedChecks.length, 0);
+  }
+});

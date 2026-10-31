@@ -3460,3 +3460,13 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .stack-merge-details :is(button,a,summary):focus-visible { outline:2px solid var(--ring);outline-offset:3px;border-radius:2px; }
 .stack-merge-more { margin-top:12px; }
 .stack-merge-more summary { cursor:pointer;width:fit-content; }
+
+/* Human review decisions and GitHub merge eligibility answer different questions. */
+.stack-human-review-status { display:flex;align-items:center;flex-wrap:wrap;gap:8px;flex-basis:100%; }
+.stack-human-review-status > span:first-child { font-size:var(--type-caption);color:var(--muted-foreground); }
+.stack-merge-group { margin-top:16px; }
+.stack-merge-group h3 { display:flex;align-items:baseline;flex-wrap:wrap;gap:8px;font-size:var(--type-caption);font-weight:600; }
+.stack-merge-group h3 span { font-weight:400;color:var(--muted-foreground); }
+.stack-merge-group .stack-merge-issue:first-child { padding-top:8px; }
+.stack-merge-group + .stack-merge-group { border-top:1px solid var(--border);padding-top:16px;margin-top:0; }
+.stack-merge-issue-actions button:disabled { opacity:.5;cursor:wait; }

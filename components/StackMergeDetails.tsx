@@ -1,60 +1,37 @@
 import { AlertCircle, CircleHelp, ExternalLink } from 'lucide-react';
-import { mergeReadiness } from '../lib/merge-readiness';
-import { QUEUE_SIGNALS_TTL, type QueueSignals } from '../lib/queue-signals';
-import { checkGroup, checkLabel, type PrChecks } from '../lib/pr-checks';
+import { checkLabel } from '../lib/pr-checks';
+import { stackMergeMessage, type StackMergeStatus, type StackMergeEntry, type StackMergeCategory } from '../lib/stack-merge-status';
 import type { ReviewMember, ReviewSubject } from '../lib/workbench';
 
 /** Explain saved merge evidence without fetching or changing merge policy. */
 export function StackMergeDetails({
   subject,
-  signals,
-  checks,
-  now,
+  status,
   onOpen,
   onChecks,
+  onRefresh,
+  refreshDisabled,
 }: {
   subject: ReviewSubject;
-  signals: QueueSignals[];
-  checks: Record<string, PrChecks | undefined>;
-  now: number;
+  status: StackMergeStatus;
   onOpen: (member: ReviewMember) => void;
   onChecks: (member: ReviewMember) => void;
+  onRefresh: () => void;
+  refreshDisabled: boolean;
 }) {
-  const issues = subject.members.flatMap((member) => {
-    const signal = signals.find((value) => value.url === member.url && value.headSha === member.headSha);
-    const readiness = mergeReadiness(member, signal, now);
-    if (['Merged', 'Closed'].includes(readiness.label)) return [];
-    const checkWarning = signal?.checks.state === 'failure';
-    if (readiness.ready && !checkWarning) return [];
-    const uncertain = readiness.stale || readiness.label === 'Readiness unknown';
-    const value = checks[member.url];
-    const failedChecks =
-      !uncertain && value?.headSha === member.headSha && now - value.checkedAt < QUEUE_SIGNALS_TTL
-        ? value.checks.filter((check) => checkGroup(check) === 'attention')
-        : [];
-    return [{ member, readiness, uncertain, failedChecks, checkWarning }];
-  });
+  const issues = status.entries.filter(entry => entry.category !== 'ready');
   if (!issues.length) return null;
-  // Known causes come first; missing/stale information must never hide a conflict.
-  const ordered = [...issues].sort(
-    (a, b) => Number(a.uncertain) - Number(b.uncertain) || Number(a.readiness.ready) - Number(b.readiness.ready)
-  );
   const mixedRepos = new Set(subject.members.map((member) => member.repo)).size > 1;
-  const row = ({ member, readiness, uncertain, failedChecks, checkWarning }: (typeof issues)[number]) => {
+  const row = (entry: StackMergeEntry) => {
+    const { member, category, failedChecks, checkWarning } = entry;
+    const uncertain = category === 'unconfirmed';
     const Icon = uncertain ? CircleHelp : AlertCircle;
-    const title = readiness.stale
-      ? 'Status needs refresh'
-      : readiness.ready
-        ? 'Checks need attention'
-        : readiness.label;
-    const details = readiness.ready
-      ? ['GitHub reports this PR can merge, but some checks need attention.']
-      : readiness.details.filter((detail) => !(failedChecks.length && detail.startsWith('Some checks are failing.')));
+    const { title, details } = stackMergeMessage(entry);
     return (
       <li key={member.url} className="stack-merge-issue">
         <Icon
           size={16}
-          className={`stack-merge-issue-icon is-${uncertain ? 'muted' : readiness.tone === 'danger' ? 'danger' : 'warning'}`}
+          className={`stack-merge-issue-icon is-${uncertain ? 'muted' : category === 'blocked' ? 'danger' : 'warning'}`}
           aria-hidden="true"
         />
         <div className="stack-merge-issue-content">
@@ -77,14 +54,15 @@ export function StackMergeDetails({
                   {check.required === true ? ' (required)' : check.required === false ? ' (optional)' : ''}
                 </li>
               ))}
-              {failedChecks.length > 2 && <li>{failedChecks.length - 2} more</li>}
+              {failedChecks.length > 2 && <li>{failedChecks.length - 2} more checks · View checks for details</li>}
             </ul>
           )}
           <div className="stack-merge-issue-actions">
-            {(checkWarning || failedChecks.length > 0 || readiness.label === 'Checks need attention') && (
-              <button onClick={() => onChecks(member)}>View checks</button>
+            {(checkWarning || failedChecks.length > 0 || entry.readiness.label === 'Checks need attention') && (
+              <button aria-label={`View checks for PR #${member.number}`} onClick={() => onChecks(member)}>View checks</button>
             )}
-            <a href={member.url} target="_blank" rel="noopener noreferrer">
+            {uncertain && <button disabled={refreshDisabled} onClick={onRefresh}>Refresh status</button>}
+            <a aria-label={`View PR #${member.number} on GitHub`} href={member.url} target="_blank" rel="noopener noreferrer">
               View on GitHub <ExternalLink size={12} aria-hidden="true" />
             </a>
           </div>
@@ -92,21 +70,27 @@ export function StackMergeDetails({
       </li>
     );
   };
+  const groups: { category: StackMergeCategory; title: string }[] = [
+    { category: 'blocked', title: 'Blocking merge' },
+    { category: 'waiting', title: 'Waiting on GitHub' },
+    { category: 'unconfirmed', title: 'Not yet confirmed' },
+    { category: 'warning', title: 'Checks that do not block merging' },
+  ];
   return (
-    <section className="stack-merge-details" aria-label="Stack merge requirements">
-      <h2>
-        Merge requirements{' '}
-        <span>
-          {issues.length} {issues.length === 1 ? 'PR needs' : 'PRs need'} attention
-        </span>
-      </h2>
-      <ul className="stack-merge-issues">{ordered.slice(0, 3).map(row)}</ul>
-      {ordered.length > 3 && (
-        <details className="stack-merge-more">
-          <summary>Show {ordered.length - 3} more PRs</summary>
-          <ul className="stack-merge-issues">{ordered.slice(3).map(row)}</ul>
-        </details>
-      )}
+    <section className="stack-merge-details" aria-label="Stack merge status">
+      <h2>Merge status</h2>
+      {groups.map(({ category, title }) => {
+        const entries = issues.filter(entry => entry.category === category);
+        if (!entries.length) return null;
+        return <section key={category} className="stack-merge-group" aria-label={title}>
+          <h3>{title} <span>{entries.length} {entries.length === 1 ? 'PR' : 'PRs'}</span></h3>
+          <ul className="stack-merge-issues">{entries.slice(0, 3).map(row)}</ul>
+          {entries.length > 3 && <details className="stack-merge-more">
+            <summary>Show {entries.length - 3} more {entries.length === 4 ? 'PR' : 'PRs'}</summary>
+            <ul className="stack-merge-issues">{entries.slice(3).map(row)}</ul>
+          </details>}
+        </section>;
+      })}
     </section>
   );
 }

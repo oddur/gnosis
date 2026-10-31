@@ -52,7 +52,7 @@ export function StackOverview({ now, checking, onRefresh, refreshBusy, item, sig
   return <section className="stack-overview" aria-label="Stack overview">
     <div className="stack-overview-heading">
       <div><h2>PRs in dependency order</h2>{filtered && <span className="stack-filter-context">{matchingUrls.length} of {subject.members.length} match filters; dependencies included.</span>}{!openMembers.length && <span className="stack-filter-context">All PRs complete.</span>}</div>
-      {next && <Button size="sm" onClick={() => onOpen(next)}>Continue with #{next.number}<ArrowRight size={14} /></Button>}
+      {next && <Button size="sm" onClick={() => onOpen(next)}>Open PR #{next.number}<ArrowRight size={14} /></Button>}
     </div>
     {signals.some(s => now - s.checkedAt >= QUEUE_SIGNALS_TTL) && <div className="stack-status-refresh"><span>Saved review and merge status needs refresh.</span><button disabled={refreshBusy} onClick={onRefresh}>{refreshBusy ? 'Refreshing…' : 'Refresh status'}</button></div>}
     <ol className="stack-overview-members">

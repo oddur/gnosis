@@ -116,7 +116,7 @@ void app.whenReady().then(async () => {
     await capture('queue');
     await js("document.querySelector('.queue-item:has(.queue-disclosure) .queue-row-main').click()");
     await click('Open stack overview');
-    await wait("document.querySelector('.pr-merge-status')?.textContent.includes('Stack has merge blockers')");
+    await wait("document.querySelector('.pr-merge-status')?.textContent.includes('Cannot merge stack')");
     await js("document.querySelector('[aria-label=\"Open PR #121\"]').click()");
     assert.match(
       await js<string>("document.querySelector('.pr-merge-detail').textContent"),
@@ -126,7 +126,7 @@ void app.whenReady().then(async () => {
     await click('Back to stack');
     await js("window.mode='clean'");
     await click('Refresh status');
-    await wait("document.querySelector('.pr-merge-status')?.textContent.includes('Next: #120 ready to merge')");
+    await wait("document.querySelector('.pr-merge-status')?.textContent.includes('All open PRs meet merge requirements')");
     await capture('stack-next');
     await js(`window.reviewDecisions={
       'https://github.com/klang/engine/pull/120':'CHANGES_REQUESTED',
@@ -134,9 +134,9 @@ void app.whenReady().then(async () => {
       'https://github.com/klang/engine/pull/122':null
     }`);
     await click('Refresh status');
-    await wait("document.querySelector('.pr-merge-status .pr-review-statuses')?.textContent.includes('1 no review decision')");
+    await wait("document.querySelector('.pr-merge-status .pr-review-statuses')?.textContent.includes('1 PR · No review decision')");
     assert.deepEqual(await js("[...document.querySelectorAll('.pr-merge-status .pr-review-status')].map(s=>s.textContent)"),
-      ['1 changes requested', '1 awaiting review', '1 no review decision']);
+      ['1 PR · Changes requested', '1 PR · Awaiting review', '1 PR · No review decision']);
     assert.equal(await js("document.querySelector('.stack-overview-member .pr-review-status').textContent"), 'Changes requested');
     assert.equal(await js("document.querySelector('.stack-overview-member:first-child .merge-readiness-badge')"), null);
     await capture('stack-review-status');
@@ -149,7 +149,7 @@ void app.whenReady().then(async () => {
     win.setSize(1280, 800);
     await js("document.documentElement.classList.remove('dark')");
     await click('Review queue');
-    await wait("[...document.querySelectorAll('.queue-status-line')].some(e=>e.textContent.includes('changes requested'))");
+    await wait("[...document.querySelectorAll('.queue-status-line')].some(e=>e.textContent.includes('Changes requested'))");
     await capture('queue-review-status');
     await js("document.querySelector('.queue-disclosure').click()");
     await wait("document.querySelector('.queue-member .pr-review-status')?.textContent==='Changes requested'");

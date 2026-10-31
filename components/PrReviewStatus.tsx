@@ -35,7 +35,7 @@ export function StatusBadge({
   staleLabel?: string;
 }) {
   const Icon = icons[status.kind];
-  const label = count === undefined ? status.label : `${count} ${status.label.toLowerCase()}`;
+  const label = count === undefined ? status.label : `${count} ${count === 1 ? 'PR' : 'PRs'} · ${status.label}`;
   return (
     <span className={`pr-review-status is-${status.tone}`} data-review-status={status.kind} title={details}>
       <Icon size={14} aria-hidden="true" />
