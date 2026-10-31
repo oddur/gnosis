@@ -61,11 +61,29 @@ void app.whenReady().then(async () => {
     assert.match(text, /Required approvals are missing/);
     assert.match(text, /#121Readiness unknown/);
     assert.ok(text.indexOf('#122') < text.indexOf('#121'), 'Known requirements precede unknown status');
+    const viewport = async (width: number, height: number) => {
+      await win.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', {
+        width, height, deviceScaleFactor: 1, mobile: false,
+      });
+      await wait(`innerWidth === ${width} && innerHeight === ${height}`);
+    };
+    const besideList = () => js<boolean>(`(()=>{
+      const list=document.querySelector('.stack-overview').getBoundingClientRect();
+      const issues=document.querySelector('.stack-merge-details').getBoundingClientRect();
+      return issues.left >= list.right && Math.abs(issues.top-list.top)<2;
+    })()`);
+    await viewport(1100, 850);
+    assert.ok(await besideList(), 'Merge details support the PR list in a separate column');
     await capture('light');
     await js("document.documentElement.classList.add('dark')");
-    win.setSize(900, 700);
+    await viewport(1747, 1100);
+    await capture('user-1747');
+    await viewport(1100, 850);
     await capture('dark-laptop');
-    win.setSize(640, 700);
+    await viewport(900, 1050);
+    assert.ok(await js(`document.querySelector('.stack-merge-details').getBoundingClientRect().top >= document.querySelector('.stack-summary-main').getBoundingClientRect().bottom`), 'Narrow layout follows the DOM reading order');
+    await capture('compact');
+    await viewport(640, 1100);
     await capture('narrow');
     assert.ok(await js('document.documentElement.scrollWidth<=innerWidth'));
     // Old status remains explicitly qualified, and old check names are not presented as current failures.

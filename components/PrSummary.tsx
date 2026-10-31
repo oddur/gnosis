@@ -447,19 +447,24 @@ function PrSummaryContent({
                 {warning}
               </p>
             ))}
-            {stacked && <StackMergeDetails subject={item.subject} signals={signals} checks={checks.values} now={statusNow}
-              onOpen={member => changeScope(member.url)} onChecks={member => { changeScope(member.url); onTabChange('checks'); }} />}
-            {stacked ? <StackBriefing briefing={item.briefing} actions={generationActions?.(item.subject.members)} onActivity={onShowActivity} onSetup={onGitHubAuth} connected={!!account} /> : item.briefing?.status === 'ready' && (
+            {!stacked && item.briefing?.status === 'ready' && (
               <details className="pr-briefing" open>
-                <summary>{stacked ? 'Stack briefing' : 'AI briefing'}</summary>
+                <summary>AI briefing</summary>
                 <Markdown>{item.briefing.summary ?? ''}</Markdown>
               </details>
             )}
             {parentStack && <p className="pr-member-relationship">{parentStack.edges.some(edge => edge.child === first.url)
               ? `Builds on ${parentStack.edges.filter(edge => edge.child === first.url).map(edge => `#${parentStack.members.find(m => m.url === edge.parent)?.number ?? '?'}`).join(', ')}`
               : 'Base of stack'} · {parentStack.title}</p>}
-            {stacked ? <StackOverview now={statusNow} checking={!signalsLoaded && !!account} onRefresh={onRetryStatus} refreshBusy={statusRefreshing} item={item} signals={signals} checks={checks.values} checkErrors={checks.errors} checksBusy={checks.busy} matchingUrls={matchingUrls}
-              onOpen={member => changeScope(member.url)} onChecks={member => { changeScope(member.url); onTabChange('checks'); }} /> : <PrSubjectDetails
+            {stacked ? <div className="stack-summary-layout">
+              <div className="stack-summary-main">
+                <StackOverview now={statusNow} checking={!signalsLoaded && !!account} onRefresh={onRetryStatus} refreshBusy={statusRefreshing} item={item} signals={signals} checks={checks.values} checkErrors={checks.errors} checksBusy={checks.busy} matchingUrls={matchingUrls}
+                  onOpen={member => changeScope(member.url)} onChecks={member => { changeScope(member.url); onTabChange('checks'); }} />
+                <StackBriefing briefing={item.briefing} actions={generationActions?.(item.subject.members)} onActivity={onShowActivity} onSetup={onGitHubAuth} connected={!!account} />
+              </div>
+              <StackMergeDetails subject={item.subject} signals={signals} checks={checks.values} now={statusNow}
+                onOpen={member => changeScope(member.url)} onChecks={member => { changeScope(member.url); onTabChange('checks'); }} />
+            </div> : <PrSubjectDetails
               generationActions={generationActions}
               onReview={onReview}
               reviewDisabled={!account}

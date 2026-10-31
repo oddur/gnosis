@@ -70,16 +70,15 @@ export function StackMergeDetails({
             ))}
           </ul>
           {failedChecks.length > 0 && (
-            <p className="stack-merge-check-names">
-              {failedChecks
-                .slice(0, 2)
-                .map(
-                  (check) =>
-                    `${check.name} — ${checkLabel(check).toLowerCase()}${check.required === true ? ' (required)' : check.required === false ? ' (optional)' : ''}`
-                )
-                .join(' · ')}
-              {failedChecks.length > 2 && ` · ${failedChecks.length - 2} more`}
-            </p>
+            <ul className="stack-merge-check-names">
+              {failedChecks.slice(0, 2).map((check) => (
+                <li key={check.id}>
+                  {check.name} — {checkLabel(check).toLowerCase()}
+                  {check.required === true ? ' (required)' : check.required === false ? ' (optional)' : ''}
+                </li>
+              ))}
+              {failedChecks.length > 2 && <li>{failedChecks.length - 2} more</li>}
+            </ul>
           )}
           <div className="stack-merge-issue-actions">
             {(checkWarning || failedChecks.length > 0 || readiness.label === 'Checks need attention') && (
