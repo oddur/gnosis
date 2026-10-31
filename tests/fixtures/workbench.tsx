@@ -356,6 +356,7 @@ let prefs: Preferences = {
   briefingDailyLimit: 10,
   watchedRepos: new URLSearchParams(location.search).has('ftue') ? [] : ['klang/engine'],
   codeTheme: 'github-light',
+  diffHighlighter: (sessionStorage.getItem('fixture-diff-highlighter') || undefined) as Preferences['diffHighlighter'],
   codeFont: 'jetbrains-mono',
   claudePath: '',
   codexPath: '',
@@ -587,6 +588,7 @@ const mocks = {
   loadPreferences: () => Promise.resolve(prefs),
   savePreferences: (next: Preferences) => {
     prefs = next;
+    if (next.diffHighlighter) sessionStorage.setItem('fixture-diff-highlighter', next.diffHighlighter);
     sessionStorage.setItem('fixture-inactivity-days', JSON.stringify(next.prInactivityDays ?? 30));
     if (onboardingScenario) {
       sessionStorage.setItem('fixture-first-run-seen', String(next.firstRunSeen));
@@ -756,6 +758,8 @@ for (const topic of review.slides)
       polishScenario ? 'aurora-x' : 'github-dark',
       hunk.hunkHeader
     );
+const { initializeDiffHighlighter } = await import('../../lib/diff-highlighter');
+initializeDiffHighlighter(prefs);
 const { App } = await import('../../src/App');
 const root = document.getElementById('root');
 if (root) {

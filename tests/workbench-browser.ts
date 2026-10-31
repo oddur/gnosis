@@ -309,7 +309,10 @@ void app.whenReady().then(async () => {
       "[...document.querySelectorAll('[role=tab]')].find(b=>b.textContent==='Appearance').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}))"
     );
     await wait("document.querySelector('[role=tabpanel][data-state=active]')?.textContent.includes('Code font')");
-    assert.equal(await js("document.querySelectorAll('[role=tabpanel][data-state=active] [data-slot=combobox-trigger]').length"), 2);
+    assert.deepEqual(
+      await js("[...document.querySelectorAll('[role=tabpanel][data-state=active] [data-slot=combobox-trigger]')].map(control => control.getAttribute('aria-label'))"),
+      ['Code font', 'Code theme', 'Syntax highlighting']
+    );
     match(await js("document.querySelector('[role=tabpanel][data-state=active]').textContent"), /Light/);
     window.setSize(800, 700);
     await capture('settings-appearance-narrow');

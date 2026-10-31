@@ -1,3 +1,4 @@
+import { DIFF_HIGHLIGHTER } from '../lib/diff-highlighter';
 import { useEffect, useState, useRef } from 'react';
 import type { DiffFileInput } from '@pierre/diffs';
 import { useDiffAppearance } from '../lib/use-diff-appearance';
@@ -199,6 +200,7 @@ export function ReviewImageDiff({
                 result.after.status === 'text' ? { name: result.after.path, contents: result.after.content } : null,
             } as DiffFileInput)}
             options={{
+              preferredHighlighter: DIFF_HIGHLIGHTER,
               diffStyle: single ? 'unified' : diffLayout,
               disableFileHeader: true,
               theme: `gnosis-${diffTheme}`,

@@ -1,3 +1,5 @@
+import { DIFF_HIGHLIGHTER, DEFAULT_DIFF_HIGHLIGHTER } from '../lib/diff-highlighter';
+import { resolveDiffHighlighter, type DiffHighlighter } from '../lib/diff-highlighter-preference';
 import { HarnessEnvironmentSettings } from './HarnessEnvironmentSettings';
 import { GITHUB_CACHE_SIZES_MB, DEFAULT_GITHUB_CACHE_MB, normalizeGitHubCacheMB } from '../lib/github-cache-settings';
 import { SearchableSelect } from './SearchableSelect';
@@ -162,6 +164,7 @@ export function SettingsDialog({
     if (open) setSection(initialSection);
   }, [open, initialSection]);
   const [appTheme, setAppTheme] = useState<ThemeChoice>('system');
+  const [diffHighlighter, setDiffHighlighter] = useState<DiffHighlighter>(DIFF_HIGHLIGHTER);
   const [codeTheme, setCodeTheme] = useState<CodeTheme>('aurora-x');
   const [codeFont, setCodeFont] = useState<CodeFont>('jetbrains-mono');
   const [enableTools, setEnableTools] = useState(false);
@@ -222,6 +225,7 @@ export function SettingsDialog({
         lastSaved.current = prefs;
         setLoadState('ready');
         setAppTheme(prefs.theme);
+        setDiffHighlighter(resolveDiffHighlighter(prefs.diffHighlighter, DEFAULT_DIFF_HIGHLIGHTER));
         if (prefs.codeTheme) setCodeTheme(prefs.codeTheme as CodeTheme);
         if (prefs.codeFont) setCodeFont(prefs.codeFont as CodeFont);
         setEnableTools(prefs.enableTools);
@@ -769,6 +773,29 @@ export function SettingsDialog({
                   onValueChange={value => handleSelectTheme(value as CodeTheme)}
                 />
                 <span className="text-xs text-muted-foreground">Code colors are independent of the app theme.</span>
+              </div>
+              <div className="settings-field">
+                <label htmlFor="settings-diff-highlighter">Syntax highlighting</label>
+                <SearchableSelect id="settings-diff-highlighter" label="Syntax highlighting" value={diffHighlighter}
+                  describedBy="settings-diff-highlighter-description settings-diff-highlighter-restart"
+                  options={[
+                    { value: 'shiki-js', label: 'Shiki — broader language support' },
+                    { value: 'highlights', label: 'Highlights — faster rendering' },
+                  ]}
+                  onValueChange={value => {
+                    const next = resolveDiffHighlighter(value);
+                    setDiffHighlighter(next);
+                    saveField({ diffHighlighter: next });
+                  }}
+                />
+                <span id="settings-diff-highlighter-description" className="text-xs text-muted-foreground">
+                  Highlights speeds up large diffs. Unsupported languages appear as plain text. Code themes work with both.
+                </span>
+                <span id="settings-diff-highlighter-restart" className="text-xs text-muted-foreground" role="status">
+                  {!saving && !saveError && diffHighlighter !== DIFF_HIGHLIGHTER
+                    ? 'Saved. Quit and reopen Gnosis to apply.'
+                    : 'Changes take effect after you quit and reopen Gnosis.'}
+                </span>
               </div>
             </Tabs.Content>
             <Tabs.Content value="integrations" className="settings-panel">

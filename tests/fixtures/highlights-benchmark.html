@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Gnosis highlighter benchmark</title>
+    <style>
+      body {
+        margin: 0;
+        background: #101218;
+        color: #ddd;
+        font: 14px system-ui;
+      }
+      header {
+        padding: 12px;
+      }
+      #diff {
+        height: 720px;
+        overflow: auto;
+      }
+      diffs-container {
+        --diffs-font-size: 12px;
+        --diffs-line-height: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <header id="label">Highlighter comparison</header>
+    <main id="diff"></main>
+    <script type="module" src="./highlights-benchmark.ts"></script>
+  </body>
+</html>
