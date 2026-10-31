@@ -68,23 +68,34 @@ export function isFileViewed(key: string): boolean {
   const s = load();
   return !!s.marks[s.aliases[key] ?? key];
 }
-export function markFileViewed(key: string, viewed: boolean) {
+/** Update a folder with one notification and one persisted patch, even for thousands of files. */
+export function markFilesViewed(keys: readonly string[], viewed: boolean) {
   const s = load();
-  s.marks[s.aliases[key] ?? key] = viewed;
-  const marks = { [s.aliases[key] ?? key]: viewed };
-  // A range can share a file's exact comparison with a previously completed
-  // commit. Unviewing it must clear that summary even when its row is not open.
-  if (!viewed && key.startsWith('commit:')) {
-    try {
-      const [url, , base, head] = JSON.parse(key.slice('commit:'.length)) as string[];
-      const summary = commitViewedKey(url, head, base === '4b825dc642cb6eb9a060e54bf8d69288fbee4904' ? '' : base);
-      if (s.marks[summary]) {
-        s.marks[summary] = false;
-        marks[summary] = false;
+  const marks: Record<string, boolean> = {};
+  for (const key of new Set(keys)) {
+    const resolved = s.aliases[key] ?? key;
+    if (!!s.marks[resolved] !== viewed) {
+      s.marks[resolved] = viewed;
+      marks[resolved] = viewed;
+    }
+    // Clearing any file must also clear the completed-commit summary.
+    if (!viewed && key.startsWith('commit:')) {
+      try {
+        const [url, , base, head] = JSON.parse(key.slice('commit:'.length)) as string[];
+        const summary = commitViewedKey(url, head, base === '4b825dc642cb6eb9a060e54bf8d69288fbee4904' ? '' : base);
+        if (s.marks[summary]) {
+          s.marks[summary] = false;
+          marks[summary] = false;
+        }
+      } catch {
+        /* An unknown legacy key still retains its file mark. */
       }
-    } catch { /* An unknown legacy key still retains its file mark. */ }
+    }
   }
-  return changed({ aliases: {}, marks });
+  return Object.keys(marks).length ? changed({ aliases: {}, marks }) : Promise.resolve(true);
+}
+export function markFileViewed(key: string, viewed: boolean) {
+  return markFilesViewed([key], viewed);
 }
 export function useFileProgress() {
   useSyncExternalStore(
@@ -94,5 +105,5 @@ export function useFileProgress() {
     },
     () => version
   );
-  return { isFileViewed, markFileViewed };
+  return { isFileViewed, markFileViewed, markFilesViewed };
 }
