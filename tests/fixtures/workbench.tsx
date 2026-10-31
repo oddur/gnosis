@@ -1,3 +1,4 @@
+import { automaticBriefingBlock } from '../../lib/repository-settings';
 import { setupViews, setupPreferences, type OnboardingState, type SetupDraft } from '../../lib/onboarding';
 import { checksMocks } from './pr-checks';
 import { markdownBefore, markdownAfter, markdownFiles } from './markdown-review';
@@ -777,6 +778,9 @@ if (root) {
 
 function visibleFixtureItems() {
   return items.flatMap(item => {
+    if (polishScenario && item.briefing?.status === 'paused') {
+      item = { ...item, briefing: { ...item.briefing, pauseDetail: automaticBriefingBlock(item.subject, prefs, prefs.briefingDailyLimit ?? 10, {}) } };
+    }
     const subject = withoutMutedMembers(item.subject, fixtureMutedUrls());
     if (!subject || !matchesPrInactivity(subject, normalizePrInactivityDays(prefs.prInactivityDays), Date.now(), new Set(fixtureStars.map(entry => entry.member.url)))) return [];
     if (subject === item.subject) return [item];

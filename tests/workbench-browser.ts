@@ -287,7 +287,7 @@ void app.whenReady().then(async () => {
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
     await wait("document.querySelector('.saved-briefing')?.textContent.includes('Cancellation must release')");
-    match(await js("document.querySelector('.briefing-status').textContent"), /Daily briefing attempt limit reached/);
+    match(await js("document.querySelector('.briefing-status').textContent"), /Overall daily automatic briefing limit reached/);
     match(await js("document.querySelector('.saved-briefing').textContent"), /latest changes are not verified/);
     assert.equal(await js("[...document.querySelectorAll('button')].some(b=>b.textContent==='Open saved')"), false);
     await wait("document.querySelectorAll('.member-status-error').length === 3");
