@@ -70,6 +70,7 @@ void app.whenReady().then(async () => {
     );
     await click('Resolve conflicts…');
     await wait("document.querySelector('.conflict-choice-actions button')");
+
     assert.equal(await js('window.conflictCalls[0].url'), 'https://github.com/klang/engine/pull/120');
     await capture('light');
     await js("document.documentElement.classList.add('dark')");
@@ -184,6 +185,40 @@ void app.whenReady().then(async () => {
     await click('Check latest branches');
     assert.equal(await js('window.conflictCalls.at(-1).restart'), true);
 
+    await click('Close');
+    // Exercise lazy JSON/JavaScript grammars and the long script lines seen in real conflicts.
+    const command = Array.from({ length: 180 }, (_, i) => `node scripts/check-${i}.mjs`).join(' && ');
+    const files = ['package.json', 'scripts/test-workbench.mjs'].map((name) => {
+      const wrap = (text: string) =>
+        name.endsWith('.json')
+          ? `{\n  "scripts": {\n    "test": "${text}"\n  }\n}\n`
+          : `export const command = ${JSON.stringify(text)};\n`;
+      const base = wrap(command),
+        ours = wrap(command + ' --pr'),
+        theirs = wrap(command + ' --main');
+      const original = `<<<<<<< ${'a'.repeat(40)}\n${ours}||||||| ${'b'.repeat(40)}\n${base}=======\n${theirs}>>>>>>> ${'c'.repeat(40)}\n`;
+      return {
+        path: name,
+        mode: '100644',
+        base,
+        ours,
+        theirs,
+        original,
+        result: original,
+        resolved: false,
+        source: 'manual',
+      };
+    });
+    await js(
+      `window.conflictFixture.files=${JSON.stringify(files)};window.conflictFixture.stale=false;window.conflictFixture.preparation='conflicts';window.dispatchEvent(new CustomEvent('gnosis-resolve-conflicts',{detail:window.conflictFixture.url}))`
+    );
+    for (const file of files) {
+      await click(file.path);
+      await wait(
+        "document.querySelector('.conflict-choice-actions button') && document.querySelector('.conflict-code diffs-container')?.shadowRoot?.querySelector('[data-line]')"
+      );
+    }
+    await capture('long-script-conflict');
     console.log(
       'Conflict workspace passed: Pierre choices, editable result, saved draft, explicit preview/publication, stale guard, themes and narrow layout.'
     );
