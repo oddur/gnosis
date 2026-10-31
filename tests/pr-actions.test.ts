@@ -26,6 +26,7 @@ function fixture(native = false) {
     headRefOid: `head-${n}`,
     baseRefName: n === 1 ? 'main' : `branch-${n - 1}`,
     baseRefOid: `base-${n}`,
+    baseRef: { target: { oid: `base-${n}` } } as { target: { oid: string } } | null,
     state: 'OPEN',
     isDraft: false,
     headRepository: { nameWithOwner: 'o/r' },
@@ -148,7 +149,7 @@ void test('reject changed head, base, account, permissions, draft and disallowed
     const f = fixture(),
       req = await f.request();
     if (change === 'head') f.prs[0].headRefOid = 'new-head';
-    if (change === 'base') f.prs[0].baseRefOid = 'new-base';
+    if (change === 'base') f.prs[0].baseRef = { target: { oid: 'new-base' } };
     if (change === 'branch') f.prs[0].baseRefName = 'release';
     if (change === 'account') f.setAccount('someone-else');
     if (change === 'permissions') f.repo.viewerPermission = 'READ';
@@ -489,4 +490,12 @@ void test('branch updates stop before a write when fresh GitHub state reports co
       assert.equal(f.writes.length, 0);
     }
   }
+});
+
+void test('branch actions pin the live base branch tip, not the PR base snapshot', async () => {
+  const f = fixture();
+  f.prs[0].baseRefOid = 'old-base-already-in-pr';
+  f.prs[0].baseRef = { target: { oid: 'current-main' } };
+  const state = await f.service.read(f.client, url(1), true);
+  assert.equal(state.baseSha, 'current-main');
 });

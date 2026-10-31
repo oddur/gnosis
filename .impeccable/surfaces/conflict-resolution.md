@@ -33,3 +33,7 @@ Only regular UTF-8 text conflicts are editable in this version. Structural, bina
 The finish reviewer returned **ship** with no required fixes. The documenter compared the workspace components and conflict styles with `DESIGN.md` and `.impeccable/design.json`. The surface retains the existing palette, compact controls, bordered panes, focus rings, and responsive breakpoints. The design system files remain unchanged because this extension introduces no system change.
 
 The documenter checked two subsequent corrections in source. The heading uses the existing `--type-panel-title` token. Repository, PR, and branch identifiers use `RepositoryBadge`, `PrBadge`, and `BranchBadge`. These corrections resolve both deviations from the documented system. This final check covers those source changes. It does not claim a new browser review.
+
+## Empty preparation states
+
+A user screenshot exposed the ambiguous “0/0 files reviewed / No conflicts remain” state. The corrected surface replaces the empty file editor with an explicit result: Git prepared a clean local merge (review the branch update), or the PR already contains the live base (check latest branches; publication is unavailable). Both state that nothing was committed or pushed. Browser regression captures are `clean-merge.png` and `up-to-date.png`; native Git tests distinguish both states and reject an unnecessary update. Live PR #206 confirmed the root cause: its historical base snapshot was an ancestor, while its live main tip produced two conflicts.

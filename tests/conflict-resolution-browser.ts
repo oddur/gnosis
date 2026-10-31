@@ -154,6 +154,36 @@ void app.whenReady().then(async () => {
     win.setSize(760, 800);
     await capture('narrow');
     assert.ok(await js('document.documentElement.scrollWidth<=innerWidth'));
+    await click('Close');
+    await js(
+      "window.conflictFixture.files=[];window.conflictFixture.stale=false;window.conflictFixture.preparation='clean-merge';window.dispatchEvent(new CustomEvent('gnosis-resolve-conflicts',{detail:window.conflictFixture.url}))"
+    );
+    await wait(
+      "document.querySelector('.conflict-empty')?.textContent.includes('Git can merge these branches cleanly')"
+    );
+    assert.ok(
+      await js("document.querySelector('.conflict-empty').textContent.includes('Nothing has been committed or pushed')")
+    );
+    assert.equal(await js("document.querySelector('.conflict-workspace').textContent.includes('0/0')"), false);
+    await capture('clean-merge');
+    await click('Review branch update…');
+    await wait("document.querySelector('.conflict-publish')");
+    await click('Close');
+    await js(
+      "window.conflictFixture.preparation='up-to-date';window.dispatchEvent(new CustomEvent('gnosis-resolve-conflicts',{detail:window.conflictFixture.url}))"
+    );
+    await wait("document.querySelector('.conflict-empty')?.textContent.includes('PR branch is already up to date')");
+    assert.equal(await js("!!document.querySelector('.conflict-publish,.conflict-footer')"), false);
+    await capture('up-to-date');
+    await click('Close');
+    await js(
+      "window.conflictFixture.preparation='clean-merge';window.conflictFixture.stale=true;window.dispatchEvent(new CustomEvent('gnosis-resolve-conflicts',{detail:window.conflictFixture.url}))"
+    );
+    await wait("document.querySelector('.conflict-notice')?.textContent.includes('base branch changed')");
+    await capture('empty-stale');
+    await click('Check latest branches');
+    assert.equal(await js('window.conflictCalls.at(-1).restart'), true);
+
     console.log(
       'Conflict workspace passed: Pierre choices, editable result, saved draft, explicit preview/publication, stale guard, themes and narrow layout.'
     );

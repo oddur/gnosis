@@ -251,3 +251,30 @@ void test('reopen recognizes a successful push when saving the published state f
   assert.equal(reopened.session.status, 'published');
   assert.equal(reopened.session.commitSha, f.state.headSha);
 });
+void test('distinguishes a clean local merge from an already incorporated base and refuses an empty update', async (t) => {
+  const f = await fixture(t);
+  await f.git('checkout', 'feature', '--', 'sample.ts');
+  await f.git('commit', '-am', 'Base now agrees with PR change');
+  f.state.baseSha = await f.git('rev-parse', 'main');
+  const clean = (await f.run({ kind: 'open', url: f.state.url, restart: true })).session;
+  assert.equal(clean.files.length, 0);
+  assert.equal(clean.preparation, 'clean-merge');
+  assert.match(
+    (await f.run({ kind: 'preview', id: clean.id, version: clean.version })).preview?.patch ?? '',
+    /from-main.txt/
+  );
+  f.state.baseSha = await f.git('rev-parse', 'feature^');
+  const upToDate = (await f.run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(upToDate.preparation, 'up-to-date', 'An empty draft is refreshed against current branch revisions');
+  await assert.rejects(f.run({ kind: 'preview', id: upToDate.id, version: upToDate.version }), /No update is needed/);
+  await assert.rejects(
+    f.run({
+      kind: 'publish',
+      id: upToDate.id,
+      version: upToDate.version,
+      previewToken: 'not-reviewed',
+      message: 'Empty update',
+    }),
+    /No update is needed/
+  );
+});

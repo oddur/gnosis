@@ -26,6 +26,7 @@ export interface ConflictSession {
   files: ConflictFile[];
   version: number;
   status: 'editing' | 'published';
+  preparation?: 'conflicts' | 'clean-merge' | 'up-to-date';
   commitSha?: string;
   stale?: boolean;
 }

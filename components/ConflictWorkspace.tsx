@@ -322,6 +322,33 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
               </Button>
             </div>
           </>
+        ) : session.files.length === 0 ? (
+          <div className="conflict-empty" role="status">
+            <Check size={28} />
+            <h2>
+              {session.preparation === 'up-to-date'
+                ? 'PR branch is already up to date'
+                : 'Git can merge these branches cleanly'}
+            </h2>
+            <p>
+              {session.preparation === 'up-to-date'
+                ? `${session.headBranch} already contains the checked version of ${session.baseBranch}. No merge is needed.`
+                : 'Git prepared a clean merge locally. No conflicts need your input. Mergiraf and agents were not used.'}
+            </p>
+            <p>Nothing has been committed or pushed to GitHub.</p>
+            {session.preparation === 'up-to-date' || session.stale || error ? (
+              <Button variant="outline" disabled={busy} onClick={() => void load(true)}>
+                Check latest branches
+              </Button>
+            ) : (
+              <Button
+                disabled={busy || session.stale}
+                onClick={() => void act((s) => ({ kind: 'preview', id: s.id, version: s.version }))}
+              >
+                Review branch update…
+              </Button>
+            )}
+          </div>
         ) : (
           <>
             <div className="conflict-toolbar">
@@ -362,7 +389,6 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                     {f.unsupported && <small>Local tool required</small>}
                   </button>
                 ))}
-                {!session.files.length && <p>No conflicts remain. Review the branch update before publishing.</p>}
               </nav>
               <section className="conflict-file-pane" aria-label="Selected conflict">
                 {file && (

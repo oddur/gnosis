@@ -83,6 +83,8 @@ export function createConflictResolutionService(deps: Deps) {
       [
         '--literal-pathspecs',
         '-c',
+        'core.longpaths=true',
+        '-c',
         'core.hooksPath=/dev/null',
         '-c',
         'credential.helper=',
@@ -155,7 +157,7 @@ export function createConflictResolutionService(deps: Deps) {
       await persist(saved);
       return saved;
     }
-    if (saved?.status === 'editing' && !restart)
+    if (saved?.status === 'editing' && !restart && saved.files.length > 0)
       return {
         ...saved,
         stale:
@@ -281,6 +283,14 @@ export function createConflictResolutionService(deps: Deps) {
     }
     if (merge.code === 1 && !files.length)
       throw new Error('Git reported a repository-level conflict. Resolve it with a local merge tool.');
+    const containsBase = await git(
+      ctx,
+      id,
+      ['merge-base', '--is-ancestor', state.baseSha, state.headSha],
+      signal,
+      undefined,
+      [0, 1]
+    );
     const session: ConflictSession = {
       id,
       account: ctx.account,
@@ -296,6 +306,7 @@ export function createConflictResolutionService(deps: Deps) {
       files,
       version: (saved?.version ?? 0) + 1,
       status: 'editing',
+      preparation: files.length ? 'conflicts' : containsBase.code === 0 ? 'up-to-date' : 'clean-merge',
     };
     signal.throwIfAborted();
     assertAccount(ctx);
@@ -303,6 +314,8 @@ export function createConflictResolutionService(deps: Deps) {
     return session;
   }
   async function resultTree(ctx: Context, session: ConflictSession, signal: AbortSignal) {
+    if (session.preparation === 'up-to-date')
+      throw new Error('The PR already contains the base branch. No update is needed.');
     if (session.files.some((f) => !f.resolved || f.unsupported || hasConflictMarkers(f.result)))
       throw new Error('Resolve and mark every file reviewed before publishing.');
     await git(ctx, session.id, ['read-tree', session.tree], signal);

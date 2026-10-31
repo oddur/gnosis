@@ -10,7 +10,8 @@ import type {
 import { singleMergePlan, draftActionBlockedReason, branchUpdateBlockedReason } from '../lib/pr-actions';
 
 const METHODS: MergeMethod[] = ['MERGE', 'SQUASH', 'REBASE'];
-const memberFields = 'url number title headRefName headRefOid baseRefName baseRefOid state isDraft';
+const memberFields =
+  'url number title headRefName headRefOid baseRefName baseRefOid baseRef{target{oid}} state isDraft';
 interface GraphMember {
   url: string;
   number: number;
@@ -19,6 +20,7 @@ interface GraphMember {
   headRefOid: string;
   baseRefName: string;
   baseRefOid: string;
+  baseRef: { target: { oid: string } } | null;
   state: string;
   isDraft: boolean;
 }
@@ -64,7 +66,8 @@ const member = (pr: GraphMember): PrActionMember => ({
   title: pr.title,
   headBranch: pr.headRefName,
   headSha: pr.headRefOid,
-  baseSha: pr.baseRefOid,
+  // baseRefOid is the PR's historical base snapshot, not necessarily the current branch tip.
+  baseSha: pr.baseRef?.target.oid ?? '',
   baseBranch: pr.baseRefName,
   state: pr.state,
   isDraft: pr.isDraft,
