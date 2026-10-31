@@ -12,6 +12,7 @@ import type { ReviewSubject } from '../lib/workbench';
 import type { PrChanges, PrFileRequest } from '../lib/pr-changes';
 import { createPrChangesService } from './pr-changes-service';
 import { createSnapshotFileLoader } from './snapshot-file-loader';
+import { localClones } from '../lib/local-clone';
 
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const storageKey = (key: string) => `stack-changes:v1:${key}`;
@@ -24,7 +25,7 @@ const isSnapshot = (v: unknown): v is PrChanges =>
   Array.isArray(v.files) &&
   isCacheRecord(v.metadata);
 
-export function createStackChangesService(prs: Pick<ReturnType<typeof createPrChangesService>, 'manifest'>) {
+export function createStackChangesService(prs: Pick<ReturnType<typeof createPrChangesService>, 'manifest'>, clones = localClones) {
   const memory = new WeakMap<Octokit, ReturnType<typeof createByteCache<string, PrChanges>>>();
   const pending = new WeakMap<Octokit, Map<string, ReturnType<typeof createSharedGitHubRead<PrChanges>>>>();
   function cache(client: Octokit) {
@@ -89,25 +90,30 @@ export function createStackChangesService(prs: Pick<ReturnType<typeof createPrCh
         for (let i = 1; i < snapshots.length; i++) {
           const parent = snapshots[i - 1],
             child = snapshots[i];
-          const { data } = await client.repos.compareCommits({
-            owner,
-            repo,
-            base: parent.metadata.headSha,
-            head: child.metadata.headSha,
-            per_page: 1,
-          });
-          if (data.merge_base_commit.sha !== parent.metadata.headSha)
+          const base =
+            (await clones.read(root.metadata.baseRepo, (clone) => clone.mergeBase(parent.metadata.headSha, child.metadata.headSha))) ??
+            (await client.repos.compareCommits({
+              owner,
+              repo,
+              base: parent.metadata.headSha,
+              head: child.metadata.headSha,
+              per_page: 1,
+            })).data.merge_base_commit.sha;
+          if (base !== parent.metadata.headSha)
             throw new Error(
               `PR #${child.url.split('/').pop()} does not include the current commits from PR #${parent.url.split('/').pop()}. Update its branch or review by PR.`
             );
         }
-        const { data } = await client.repos.compareCommits({
-          owner,
-          repo,
-          base: root.metadata.baseSha,
-          head: tip.metadata.headSha,
-          per_page: 1,
-        });
+        const local = await clones.read(root.metadata.baseRepo, (clone) => clone.changes(root.metadata.baseSha, tip.metadata.headSha));
+        const data = local
+          ? { files: local.files, merge_base_commit: { sha: local.mergeBase } }
+          : (await client.repos.compareCommits({
+              owner,
+              repo,
+              base: root.metadata.baseSha,
+              head: tip.metadata.headSha,
+              per_page: 1,
+            })).data;
         if (!data.files) throw new Error('GitHub did not return this comparison’s files. Retry or review by PR.');
         const key = hash(stackRevisionKey(actual));
         const snapshot = compactInventory({
@@ -136,7 +142,7 @@ export function createStackChangesService(prs: Pick<ReturnType<typeof createPrCh
               ])
             ),
           },
-          filesTruncated: data.files.length >= 300,
+          filesTruncated: !local && data.files.length >= 300,
           files: data.files.map((f) => ({
             path: f.filename,
             previousPath: f.previous_filename,
@@ -181,7 +187,7 @@ export function createStackChangesService(prs: Pick<ReturnType<typeof createPrCh
       throw new Error('Reload the combined changes before opening this file.');
     return { snapshot, file };
   }
-  const load = createSnapshotFileLoader();
+  const load = createSnapshotFileLoader(undefined, clones);
   return {
     read,
     find,

@@ -584,6 +584,9 @@ const mocks = {
   saveHarnessEnvironment: async () => {},
   onPreferencesChanged: () => () => {},
   onWorkbenchChanged: () => () => {},
+  getLocalClones: async () => [],
+  addLocalClone: async () => [],
+  removeLocalClone: async () => [],
   loadPreferences: () => Promise.resolve(prefs),
   savePreferences: (next: Preferences) => {
     prefs = next;
