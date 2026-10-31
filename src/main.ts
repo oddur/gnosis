@@ -2657,7 +2657,7 @@ handleInteractive('conflict-resolution', async (_event, request: ConflictRequest
   const controller = new AbortController();
   const id = `pr-action:conflicts:${crypto.randomUUID()}`;
   const tracked = !['save', 'discard'].includes(request.kind);
-  if (tracked) activities.start({ id, kind: 'pr-action', account: cachedLogin, title: request.kind === 'publish' ? 'Updating PR with conflict resolutions' : request.kind === 'resolve' ? 'Proposing conflict resolutions' : 'Preparing conflict resolution', detail: 'Preparing the selected PR.' }, request.kind === 'publish' ? {} : { cancel: () => controller.abort() });
+  if (tracked) activities.start({ id, kind: 'pr-action', account: cachedLogin, conflictTarget: request.kind === 'open' ? request.url : request.id, title: request.kind === 'publish' ? 'Updating PR with conflict resolutions' : request.kind === 'resolve' ? 'Proposing conflict resolutions' : 'Preparing conflict resolution', detail: 'Preparing the selected PR.' }, request.kind === 'publish' ? {} : { cancel: () => controller.abort() });
   try {
     const result = await conflicts.run(request, controller.signal, detail => { if (tracked) activities.update(id, detail); });
     if (result.session.status === 'published') {

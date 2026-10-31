@@ -123,3 +123,27 @@ void test('rate-limit waits retain progress and cancellation, then resume withou
   service.resume(task.id);
   assert.equal(service.list()[0].status, 'completed');
 });
+
+void test('conflict outcomes stay inline only for their visible workspace and notify after leaving', () => {
+  const service = createActivityService();
+  const completions = createActivityCompletionTracker();
+  const active = { url: 'https://github.com/oddur/gnosis/pull/206', id: 'session-206' };
+  completions([]);
+  for (const [id, target, status] of [
+    ['open', active.url, 'completed'],
+    ['resolve', active.id, 'completed'],
+    ['error', active.id, 'failed'],
+    ['other-pr', 'session-207', 'completed'],
+  ] as const) {
+    service.start({ id, kind: 'pr-action', title: 'Conflicts', detail: '', conflictTarget: target }, {});
+    service.finish(id, status, 'Ready');
+  }
+  assert.deepEqual(completions(service.list(), active).map(t => t.id), ['other-pr']);
+  assert.deepEqual(completions(service.list()), [], 'Closing does not replay already-seen inline outcomes');
+  service.start({ id: 'background', kind: 'pr-action', title: 'Conflicts', detail: '', conflictTarget: active.id }, {});
+  service.finish('background', 'completed', 'Ready');
+  assert.deepEqual(completions(service.list()).map(t => t.id), ['background']);
+  service.start({ id: 'merge', kind: 'pr-action', title: 'Merge', detail: '' }, {});
+  service.finish('merge', 'completed', 'Merged');
+  assert.deepEqual(completions(service.list(), active).map(t => t.id), ['merge'], 'Other PR actions still notify');
+});

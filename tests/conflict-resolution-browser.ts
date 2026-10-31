@@ -72,6 +72,72 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.conflict-choice-actions button')");
 
     assert.equal(await js('window.conflictCalls[0].url'), 'https://github.com/klang/engine/pull/120');
+    // A physical pointer click must dismiss the notification, not the conflict workspace.
+    await js(
+      `(async()=>{const {toast}=await import('/components/ui/toast.tsx');toast.add({title:'Conflict notification regression',description:'A background result is ready.',timeout:0});})()`
+    );
+    await wait('document.querySelector(\'.app-toast [aria-label="Dismiss notification"]\')');
+    assert.ok(await js("document.querySelector('.conflict-workspace').contains(document.querySelector('.app-toast'))"));
+    assert.ok(
+      await js(
+        "document.querySelector('.app-toast').getBoundingClientRect().bottom < document.querySelector('.conflict-footer').getBoundingClientRect().top"
+      ),
+      'Notification has reserved space above the controls'
+    );
+    await capture('notification');
+    await js("document.querySelector('.activity-trigger').click()");
+    await wait("document.querySelector('.activity-drawer')");
+    assert.equal(await js("getComputedStyle(document.querySelector('.app-toasts')).top"), '0px');
+    assert.equal(await js("getComputedStyle(document.querySelector('.app-toasts')).maxHeight"), '120px');
+    await capture('notification-activity');
+    await js('document.querySelector(\'[aria-label="Close activity"]\').click()');
+
+    win.setSize(760, 800);
+    await capture('notification-narrow');
+    assert.ok(
+      await js(
+        "document.querySelector('.app-toast').getBoundingClientRect().bottom <= document.querySelector('.conflict-body').getBoundingClientRect().top"
+      )
+    );
+    win.setSize(1280, 900);
+    await js('document.querySelector(\'.app-toast [aria-label="Dismiss notification"]\').focus()');
+    assert.ok(
+      await js("document.activeElement?.getAttribute('aria-label')==='Dismiss notification'"),
+      'The modal permits keyboard focus on notifications'
+    );
+
+    const toastPoint = await js<{ x: number; y: number }>(
+      `(()=>{const r=document.querySelector('.app-toast [aria-label="Dismiss notification"]').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`
+    );
+    await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      ...toastPoint,
+      button: 'left',
+      clickCount: 1,
+    });
+    await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      ...toastPoint,
+      button: 'left',
+      clickCount: 1,
+    });
+    await new Promise((r) => setTimeout(r, 350));
+    assert.ok(
+      await js("!!document.querySelector('.conflict-workspace')"),
+      'Dismissing a notification must not close Resolve conflicts'
+    );
+    assert.ok(await js("!document.querySelector('.app-toast')"), 'The notification itself is dismissed');
+    // Moving back to the global viewport keeps pending notifications and their actions.
+    await js(
+      `(async()=>{const {toast}=await import('/components/ui/toast.tsx');toast.add({title:'Background result',timeout:0});})()`
+    );
+    await click('Close');
+    await wait("!document.querySelector('.conflict-workspace') && document.querySelector('.app-toast')");
+    assert.equal(await js("!!document.querySelector('.app-toast-host .app-toast')"), false);
+    await js('document.querySelector(\'.app-toast [aria-label="Dismiss notification"]\').click()');
+    await wait("!document.querySelector('.app-toast')");
+    await js("window.dispatchEvent(new CustomEvent('gnosis-resolve-conflicts',{detail:window.conflictFixture.url}))");
+    await wait("document.querySelector('.conflict-choice-actions button')");
     await capture('light');
     await click('How to resolve');
     await wait("document.querySelector('#conflict-help')?.textContent.includes('Neither runs project tests')");

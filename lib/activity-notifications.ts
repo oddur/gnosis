@@ -4,7 +4,7 @@ import type { ActivityTask } from './activity';
 export function createActivityCompletionTracker() {
   let initialized = false;
   const announced = new Map<string, string>();
-  return (tasks: ActivityTask[]): ActivityTask[] => {
+  return (tasks: ActivityTask[], activeConflict?: { url?: string; id?: string }): ActivityTask[] => {
     const completed = tasks.filter((task) =>
       task.kind === 'pr-action'
         ? task.status === 'completed' || task.status === 'failed'
@@ -13,6 +13,12 @@ export function createActivityCompletionTracker() {
     const fresh = initialized ? completed.filter((task) => announced.get(task.id) !== task.updatedAt) : [];
     for (const task of completed) announced.set(task.id, task.updatedAt);
     initialized = true;
-    return fresh;
+    // The active workspace already shows both success and failure inline.
+    return fresh.filter(
+      (task) =>
+        !task.conflictTarget ||
+        !activeConflict ||
+        (task.conflictTarget !== activeConflict.url && task.conflictTarget !== activeConflict.id)
+    );
   };
 }

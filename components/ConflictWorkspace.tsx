@@ -4,6 +4,7 @@ import { CodeView, EditProvider, File, MultiFileDiff } from '@pierre/diffs/react
 import { Editor, type EditorFactory } from '@pierre/diffs/edit';
 import { Check, Circle, Loader2, RotateCcw, Sparkles } from 'lucide-react';
 import { Button } from './ui/button';
+import { ToastHost } from './ui/toast';
 import { BranchBadge, PrBadge, RepositoryBadge } from './EntityBadge';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
 import {
@@ -249,7 +250,12 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
         if (!open) void close();
       }}
     >
-      <DialogContent className="conflict-workspace" showCloseButton={false}>
+      <DialogContent
+        className="conflict-workspace"
+        data-conflict-url={url}
+        data-conflict-id={session?.id}
+        showCloseButton={false}
+      >
         <div className="conflict-heading">
           <div>
             <DialogTitle>
@@ -276,6 +282,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
             {busy ? 'Continue in background' : 'Close'}
           </Button>
         </div>
+        <ToastHost />
         {session?.status === 'editing' && (
           <div className="conflict-workflow">
             <ol aria-label="Resolution steps">

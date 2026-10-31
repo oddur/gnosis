@@ -49,3 +49,12 @@ Native Mergiraf tests prove independent JSON edits survive in the final merge an
 The documenter checked the guidance components and final conflict styles against the existing system. The workflow strip uses caption text, neutral colors, and a semibold current step. The optional guide uses control text within a bounded, scrollable region. File status labels and automatic outcome messages preserve the Status Rule. The shared button supplies the next-file action.
 
 The editor and preview retain at least 200px of height. The file pane and dialog scroll when support content exceeds their available space. These dimensions belong to this surface. Existing palette, typography, focus, and border tokens remain authoritative. `DESIGN.md` and `.impeccable/design.json` remain unchanged. This source check identifies no new system change and records no finish verdict for the guidance extension.
+
+
+## Notifications inside the workspace
+
+A user screenshot exposed floating notifications covering the review action; clicking their close button also dismissed the modal. A real-pointer browser regression reproduced that failure. The workspace now hosts notifications below its heading in reserved space, inside the modal boundary. The notification region is limited to 120px and scrolls when needed. Closing a notification leaves the workspace open; closing the workspace returns pending notifications to the normal app viewport.
+
+Conflict activity carries its workspace URL or session ID. The notification tracker suppresses outcomes already displayed in that workspace, while other PRs and work that completes after leaving still notify. This reuses the existing toast controls and palette. Evidence: `notification.png`, `notification-narrow.png`, actual pointer dismissal and focus checks, host cleanup, and activity notification tests. The full unit suite passes 542 tests without skips; the conflict browser flow and TypeScript check pass.
+
+The finish reviewer found an Activity-drawer positioning override that also affected hosted notifications. The rule now excludes inline hosts. The browser verifies the real Activity drawer case (`notification-activity.png`), including the 120px limit. The final scored verdict is **ship**, with no remaining findings.

@@ -2045,7 +2045,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 
 /* Notifications stay above Activity and never take keyboard focus on arrival. */
 .app-toasts { max-height:calc(100dvh - 58px); overflow-y:auto; overscroll-behavior:contain; position:fixed; right:12px; bottom:46px; z-index:60; width:min(380px,calc(100vw - 24px)); display:flex; flex-direction:column-reverse; gap:8px; outline:none; pointer-events:none; }
-body:has(.activity-drawer) .app-toasts { bottom:auto; top:64px; max-height:calc(100dvh - 76px); }
+body:has(.activity-drawer) .app-toasts:not([data-inline]) { bottom:auto; top:64px; max-height:calc(100dvh - 76px); }
 .app-toast { flex-shrink:0; pointer-events:auto; background:var(--popover); color:var(--popover-foreground); border:1px solid var(--border); border-radius:8px; transition:opacity 180ms ease-out,transform 180ms ease-out; }
 .app-toast[data-starting-style],.app-toast[data-ending-style] { opacity:0; transform:translateY(8px); }
 .app-toast[data-limited] { display:none; }
@@ -3520,3 +3520,12 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-next-step { padding:8px 16px;font-size:var(--type-caption);color:var(--muted-foreground);border-bottom:1px solid var(--border); }
 .conflict-next-step span { display:block;margin-top:4px; }
 .conflict-files button small { padding-left:22px; }
+
+/* Workspace notifications reserve space, never cover code actions or sit outside the modal. */
+.app-toast-host { flex-shrink:0; }
+.app-toast-host:has(.app-toast:not([data-ending-style])) { border-bottom:1px solid var(--border); }
+.app-toast-host .app-toasts { position:relative;inset:auto;z-index:auto;width:100%;max-height:120px;gap:0; }
+.app-toast-host .app-toast { border:0;border-radius:0; }
+.app-toast-host .app-toast-content { padding:10px 16px; }
+.app-toast-host .app-toast-title { font-size:var(--type-control); }
+.app-toast-host .app-toast-description { font-size:var(--type-caption); }

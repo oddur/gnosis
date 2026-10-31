@@ -13,6 +13,8 @@ export interface ActivityTask {
   reviewId?: string;
   slideId?: string;
   subjectId?: string;
+  /** Conflict workspace URL during preparation, session ID for later operations. */
+  conflictTarget?: string;
   canCancel: boolean;
   canRetry: boolean;
 }

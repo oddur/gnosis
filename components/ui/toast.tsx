@@ -1,8 +1,34 @@
+import { useSyncExternalStore } from 'react';
 import { Toast } from '@base-ui/react/toast';
 import { CheckCircle2, Info, AlertCircle, X } from 'lucide-react';
 
 // Shadcn's Base UI toast pattern, styled with the workbench's existing tokens.
 export const toast = Toast.createToastManager();
+
+// A focused workspace can reserve space for notifications inside its modal boundary.
+// Keep the manager global so pending notifications survive mounting/unmounting a host.
+const hosts: HTMLElement[] = [];
+const hostListeners = new Set<() => void>();
+const subscribeHost = (listener: () => void) => {
+  hostListeners.add(listener);
+  return () => {
+    hostListeners.delete(listener);
+  };
+};
+const currentHost = () => hosts.at(-1);
+function registerHost(element: HTMLDivElement | null) {
+  if (!element) return;
+  hosts.push(element);
+  hostListeners.forEach((listener) => listener());
+  return () => {
+    const index = hosts.indexOf(element);
+    if (index >= 0) hosts.splice(index, 1);
+    hostListeners.forEach((listener) => listener());
+  };
+}
+export function ToastHost() {
+  return <div ref={registerHost} className="app-toast-host" />;
+}
 
 function ToastList() {
   const { toasts } = Toast.useToastManager();
@@ -27,10 +53,11 @@ function ToastList() {
 }
 
 export function Toaster() {
+  const host = useSyncExternalStore(subscribeHost, currentHost, () => undefined);
   return (
     <Toast.Provider toastManager={toast} timeout={10000} limit={3}>
-      <Toast.Portal>
-        <Toast.Viewport className="app-toasts" aria-label="Notifications">
+      <Toast.Portal container={host}>
+        <Toast.Viewport className="app-toasts" data-inline={host ? true : undefined} aria-label="Notifications">
           <ToastList />
         </Toast.Viewport>
       </Toast.Portal>
