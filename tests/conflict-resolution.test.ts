@@ -6,7 +6,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createConflictResolutionService } from '../src/conflict-resolution-service';
-import { hasConflictMarkers } from '../lib/conflict-resolution';
+import { hasConflictMarkers, conflictFileStage, type ConflictFile } from '../lib/conflict-resolution';
 import type { PrActionState } from '../lib/pr-actions';
 const exec = promisify(execFile);
 async function fixture(
@@ -345,4 +345,28 @@ void test('Mergiraf structurally combines both JSON edits, persists the proposal
   });
   assert.deepEqual(JSON.parse(await f.git('show', 'feature:settings.json')), { left: 1, right: 2 });
   assert.equal(await f.git('show', 'feature:from-main.txt'), 'Retain this clean base change.');
+});
+
+void test('file stages distinguish unresolved code, automatic proposals, human review, and later edits', () => {
+  const file: ConflictFile = {
+    path: 'a.ts',
+    mode: '100644',
+    base: '',
+    ours: '',
+    theirs: '',
+    original: '',
+    result: 'const x = 1;',
+    resolved: false,
+    source: 'mergiraf',
+  };
+  assert.equal(conflictFileStage(file), 'resolved', 'Automatic success still needs human review');
+  file.resolved = true;
+  assert.equal(conflictFileStage(file), 'reviewed');
+  assert.equal(conflictFileStage(file, 'const x = 2;'), 'resolved', 'Unsaved edits invalidate review');
+  assert.equal(conflictFileStage(file, '<<<<<<< PR\nconst x = 2;\n=======\nconst x = 3;\n>>>>>>> main'), 'conflicted');
+  assert.equal(
+    conflictFileStage({ ...file, unsupported: 'Binary conflict' }),
+    'conflicted',
+    'Unsupported conflicts cannot appear resolved without markers'
+  );
 });

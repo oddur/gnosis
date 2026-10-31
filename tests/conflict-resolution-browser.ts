@@ -148,12 +148,22 @@ void app.whenReady().then(async () => {
     await click('Hide guide');
     await js("document.documentElement.classList.add('dark')");
     await capture('dark');
+    await wait("document.querySelector('.conflict-file-pane > header [data-stage]')?.dataset.stage==='conflicted'");
     await click('Use PR version');
-    await click('Mark file reviewed');
+    await wait("document.querySelector('.conflict-file-pane > header [data-stage]')?.dataset.stage==='resolved'");
+    assert.ok(
+      await js("document.querySelector('.conflict-progress [data-stage=resolved]').textContent.includes('1 Resolved')")
+    );
+    await capture('file-resolved');
+    await click('Mark as reviewed');
+    await wait("document.querySelector('.conflict-file-pane > header [data-stage]')?.dataset.stage==='reviewed'");
+    await capture('file-reviewed');
     assert.equal(await js('window.conflictFixture.files[0].resolved'), true);
     await click('Reset file');
-    await wait("document.querySelector('.conflict-files').textContent.includes('Changed · Review again')");
-    assert.ok(await js("document.querySelector('.conflict-toolbar').textContent.includes('0/1 files reviewed')"));
+    await wait("document.querySelector('.conflict-files [data-stage]')?.dataset.stage==='conflicted'");
+    assert.ok(
+      await js("document.querySelector('.conflict-progress [data-stage=reviewed]').textContent.trim()==='0 Reviewed'")
+    );
     assert.ok(await js("!document.querySelector('.conflict-footer').textContent.includes('All files reviewed')"));
     await capture('edited-reviewed');
     await click('Ask agent');
@@ -165,7 +175,7 @@ void app.whenReady().then(async () => {
     );
     assert.ok(
       await js(
-        "document.querySelector('.conflict-notice[role=status]').textContent.includes('1 file is ready to review')"
+        "document.querySelector('.conflict-notice[role=status]').textContent.includes('1 resolved, 0 conflicted')"
       )
     );
     assert.ok(
@@ -211,12 +221,16 @@ void app.whenReady().then(async () => {
     });
     await win.webContents.debugger.sendCommand('Input.insertText', { text: '// Manual review note\n' });
     await wait(`document.querySelector('.conflict-file-pane > header').textContent.includes('Unsaved changes')`);
+    assert.equal(
+      await js("document.querySelector('.conflict-file-pane > header [data-stage]').dataset.stage"),
+      'resolved'
+    );
     await click('Save draft');
     assert.match(await js<string>('window.conflictFixture.files[0].result'), /Manual review note/);
     await capture('editor');
     await click('Compare with PR');
     await capture('proposal');
-    await click('Mark file reviewed');
+    await click('Mark as reviewed');
     await click('Close');
     await wait("!document.querySelector('.conflict-workspace')");
     await js("window.dispatchEvent(new CustomEvent('gnosis-resolve-conflicts',{detail:window.conflictFixture.url}))");
@@ -330,7 +344,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.conflictFixture.files[1].resolved'), true);
     assert.equal(await js('window.conflictFixture.files[0].resolved'), false);
     await click('Use base version');
-    await click('Mark file reviewed');
+    await click('Mark as reviewed');
     assert.equal(await js('window.conflictFixture.files.every(f=>f.resolved)'), true);
     assert.equal(
       await js("window.conflictCalls.filter(r=>r.kind==='publish').length"),

@@ -6,6 +6,7 @@ export interface ConflictFile {
   theirs: string;
   original: string;
   result: string;
+  /** Human review acknowledgement; marker-free proposals alone are not reviewed. */
   resolved: boolean;
   source: 'manual' | 'mergiraf' | 'agent';
   explanation?: string;
@@ -44,6 +45,13 @@ export interface ConflictReply {
 export const CONFLICT_FILE_LIMIT = 1024 * 1024;
 export function hasConflictMarkers(text: string) {
   return /^(?:<{7,}|={7,}|>{7,}|\|{7,})(?:\s|$)/m.test(text);
+}
+
+export type ConflictFileStage = 'conflicted' | 'resolved' | 'reviewed';
+/** Derive the stage from the displayed draft, including edits not saved yet. */
+export function conflictFileStage(file: ConflictFile, contents = file.result): ConflictFileStage {
+  if (file.unsupported || hasConflictMarkers(contents)) return 'conflicted';
+  return file.resolved && contents === file.result ? 'reviewed' : 'resolved';
 }
 
 /** IPC is an untyped boundary even when renderer callers use TypeScript. */

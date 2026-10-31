@@ -58,3 +58,14 @@ A user screenshot exposed floating notifications covering the review action; cli
 Conflict activity carries its workspace URL or session ID. The notification tracker suppresses outcomes already displayed in that workspace, while other PRs and work that completes after leaving still notify. This reuses the existing toast controls and palette. Evidence: `notification.png`, `notification-narrow.png`, actual pointer dismissal and focus checks, host cleanup, and activity notification tests. The full unit suite passes 542 tests without skips; the conflict browser flow and TypeScript check pass.
 
 The finish reviewer found an Activity-drawer positioning override that also affected hosted notifications. The rule now excludes inline hosts. The browser verifies the real Activity drawer case (`notification-activity.png`), including the 120px limit. The final scored verdict is **ship**, with no remaining findings.
+
+
+## Explicit file stages
+
+The user confirmed three file stages: **Conflicted**, **Resolved**, and **Reviewed**. One shared derivation uses the displayed draft: unsupported conflicts or remaining markers are Conflicted; marker-free code is Resolved; only explicit human acknowledgement of unchanged content makes it Reviewed. Manual edits immediately invalidate the previous review.
+
+The list and selected-file heading share labeled status badges with distinct icons and the existing danger, primary, and success colors. The toolbar counts each stage, with zero counts muted. Helper text explains that Resolved still needs review; the footer names whether resolution or review is blocking the next step. **Mark as reviewed** remains explicit. Bulk proposal controls only appear for multiple files.
+
+Evidence: native stage assertions, real Mergiraf tests, and browser transitions from Conflicted to Resolved to Reviewed and back after editing. Fresh captures include `file-resolved.png`, `file-reviewed.png`, and `edited-reviewed.png`. Existing light, dark, narrow, and notification captures are regenerated. No new design tokens or persistence migration are needed.
+
+The finish reviewer returned **ship** for the three-stage clarification with no required fixes. Ten conflict tests (including native Mergiraf), TypeScript, touched-file lint, and the complete conflict browser flow pass.

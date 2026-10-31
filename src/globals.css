@@ -3519,7 +3519,6 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-help li + li { margin-top:8px; }
 .conflict-next-step { padding:8px 16px;font-size:var(--type-caption);color:var(--muted-foreground);border-bottom:1px solid var(--border); }
 .conflict-next-step span { display:block;margin-top:4px; }
-.conflict-files button small { padding-left:22px; }
 
 /* Workspace notifications reserve space, never cover code actions or sit outside the modal. */
 .app-toast-host { flex-shrink:0; }
@@ -3529,3 +3528,16 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .app-toast-host .app-toast-content { padding:10px 16px; }
 .app-toast-host .app-toast-title { font-size:var(--type-control); }
 .app-toast-host .app-toast-description { font-size:var(--type-caption); }
+
+.conflict-progress { display:flex;flex-wrap:wrap;gap:6px; }
+.conflict-file-status { display:inline-flex;align-items:center;gap:5px;width:fit-content;padding:2px 6px;border-radius:var(--radius-sm);font-size:var(--type-caption);font-weight:600;line-height:1.5;white-space:nowrap; }
+.conflict-file-status[data-stage=conflicted] { color:var(--color-danger);background:color-mix(in srgb,var(--color-danger) 10%,var(--background)); }
+.conflict-file-status[data-stage=resolved] { color:var(--primary);background:color-mix(in srgb,var(--primary) 10%,var(--background)); }
+.conflict-file-status[data-stage=reviewed] { color:var(--color-success);background:color-mix(in srgb,var(--color-success) 10%,var(--background)); }
+.conflict-files button small { padding-left:0;display:flex;flex-direction:column;gap:4px; }
+.conflict-files button .conflict-file-status { flex:none; }
+.conflict-file-limitation { font-size:var(--type-caption); }
+
+.conflict-file-status[data-empty] { color:var(--muted-foreground);background:var(--secondary); }
+
+.conflict-bulk-actions { display:flex;flex-wrap:wrap;gap:8px; }

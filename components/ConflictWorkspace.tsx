@@ -2,13 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { UnresolvedFile } from '@pierre/diffs';
 import { CodeView, EditProvider, File, MultiFileDiff } from '@pierre/diffs/react';
 import { Editor, type EditorFactory } from '@pierre/diffs/edit';
-import { Check, Circle, Loader2, RotateCcw, Sparkles } from 'lucide-react';
+import { Check, CircleAlert, CircleCheck, CheckCheck, Loader2, RotateCcw, Sparkles } from 'lucide-react';
 import { Button } from './ui/button';
 import { ToastHost } from './ui/toast';
 import { BranchBadge, PrBadge, RepositoryBadge } from './EntityBadge';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
 import {
   hasConflictMarkers,
+  conflictFileStage,
+  type ConflictFileStage,
   type ConflictReply,
   type ConflictRequest,
   type ConflictSession,
@@ -103,6 +105,18 @@ function ResultEditor({
   const [file] = useState(() => ({ name, contents: initial }));
   return <File file={file} edit options={options} onEditChange={(event) => onChange(event.file.contents)} />;
 }
+const fileStageLabels = { conflicted: 'Conflicted', resolved: 'Resolved', reviewed: 'Reviewed' } as const;
+const fileStageIcons = { conflicted: CircleAlert, resolved: CircleCheck, reviewed: CheckCheck };
+function FileStageBadge({ stage, count }: { stage: ConflictFileStage; count?: number }) {
+  const Icon = fileStageIcons[stage];
+  return (
+    <span className="conflict-file-status" data-stage={stage} data-empty={count === 0 || undefined}>
+      <Icon size={13} aria-hidden="true" />
+      {count === undefined ? fileStageLabels[stage] : `${count} ${fileStageLabels[stage]}`}
+    </span>
+  );
+}
+
 export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () => void }) {
   const options = useCodeOptions();
   const [session, setSession] = useState<ConflictSession>();
@@ -121,7 +135,13 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   const [helpOpen, setHelpOpen] = useState(false);
   const file = session?.files.find((f) => f.path === selected);
   const dirty = !!file && contents !== file.result;
-  const unresolved = session?.files.filter((f) => !f.resolved || (f.path === selected && dirty)).length ?? 0;
+  const fileStates =
+    session?.files.map((f) => ({ file: f, stage: conflictFileStage(f, f.path === selected ? contents : f.result) })) ??
+    [];
+  const counts = { conflicted: 0, resolved: 0, reviewed: 0 };
+  for (const { stage } of fileStates) counts[stage]++;
+  const unresolved = counts.conflicted + counts.resolved;
+  const fileStage = fileStates.find(({ file: f }) => f.path === selected)?.stage;
   const nextFile = session?.files.find((f) => f.path !== selected && !f.resolved && !f.unsupported);
   const markersRemain = hasConflictMarkers(contents);
   const previewItems = useMemo(
@@ -172,7 +192,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
         const ready = proposed.length - remaining;
         const engine = request.engine === 'mergiraf' ? 'Mergiraf' : 'The agent';
         setOutcome(
-          `${engine} finished. ${ready} ${ready === 1 ? 'file is' : 'files are'} ready to review; ${remaining} still ${remaining === 1 ? 'needs' : 'need'} conflict resolution. Nothing was pushed.`
+          `${engine} finished: ${ready} resolved, ${remaining} conflicted. Resolved files still need your review. Nothing was pushed.`
         );
         const current = reply.session.files.find((f) => f.path === selected);
         setMode(current && !hasConflictMarkers(current.result) ? 'compare' : 'conflicts');
@@ -310,9 +330,10 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                 “Keep both” puts the PR block first; check for duplicates.
               </li>
               <li>
-                <strong>Review the result.</strong> Mergiraf makes a local structural merge proposal. The agent uses
-                your selected model. Neither runs project tests. Compare each result with the PR, then mark the file
-                reviewed.
+                <strong>Resolved means ready for review.</strong> No conflict markers remain; correctness is not
+                verified. Mergiraf makes a local structural merge proposal. The agent uses your selected model. Neither
+                runs project tests. Compare each result with the PR, then mark the file reviewed. Only you can move a
+                file to Reviewed.
               </li>
               <li>
                 <strong>Review the complete update, then commit &amp; push.</strong> This adds a merge commit to the PR
@@ -437,50 +458,56 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
         ) : (
           <>
             <div className="conflict-toolbar">
-              <span>
-                {session.files.length - unresolved}/{session.files.length} files reviewed
-              </span>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy || session.stale || !unresolved}
-                onClick={() => void act((s) => ({ kind: 'resolve', engine: 'mergiraf', id: s.id, version: s.version }))}
-              >
-                Mergiraf: unreviewed files
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy || session.stale || !unresolved}
-                onClick={() =>
-                  void act((s) => ({ kind: 'resolve', engine: 'agent', id: s.id, version: s.version, instructions }))
-                }
-              >
-                <Sparkles size={14} />
-                Agent: unreviewed files
-              </Button>
+              <div className="conflict-progress" role="group" aria-label="File states">
+                {(['conflicted', 'resolved', 'reviewed'] as const).map((stage) => (
+                  <FileStageBadge key={stage} stage={stage} count={counts[stage]} />
+                ))}
+              </div>
+              {session.files.length > 1 && (
+                <div className="conflict-bulk-actions">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy || session.stale || !unresolved}
+                    onClick={() =>
+                      void act((s) => ({ kind: 'resolve', engine: 'mergiraf', id: s.id, version: s.version }))
+                    }
+                  >
+                    Mergiraf: unreviewed files
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy || session.stale || !unresolved}
+                    onClick={() =>
+                      void act((s) => ({
+                        kind: 'resolve',
+                        engine: 'agent',
+                        id: s.id,
+                        version: s.version,
+                        instructions,
+                      }))
+                    }
+                  >
+                    <Sparkles size={14} />
+                    Agent: unreviewed files
+                  </Button>
+                </div>
+              )}
             </div>
             <div className="conflict-body">
-              <nav aria-label="Conflicted files" className="conflict-files">
-                {session.files.map((f) => (
+              <nav aria-label="Files to resolve and review" className="conflict-files">
+                {fileStates.map(({ file: f, stage }) => (
                   <button
                     key={f.path}
                     disabled={busy}
                     aria-current={f.path === selected ? 'true' : undefined}
                     onClick={() => void choose(f.path)}
                   >
-                    {f.resolved && !(f.path === selected && dirty) ? <Check size={14} /> : <Circle size={12} />}
                     <span>{f.path}</span>
                     <small>
-                      {f.unsupported
-                        ? 'Local tool required'
-                        : f.path === selected && dirty
-                          ? 'Changed · Review again'
-                          : f.resolved
-                            ? 'Reviewed'
-                            : hasConflictMarkers(f.path === selected ? contents : f.result)
-                              ? 'Needs resolution'
-                              : 'Ready to review'}
+                      <FileStageBadge stage={stage} />
+                      {f.unsupported && <span className="conflict-file-limitation">Local tool required</span>}
                     </small>
                   </button>
                 ))}
@@ -490,7 +517,8 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                   <>
                     <header>
                       <strong>{file.path}</strong>
-                      <span>{dirty ? 'Unsaved changes' : file.resolved ? 'Reviewed' : 'Draft saved locally'}</span>
+                      {fileStage && <FileStageBadge stage={fileStage} />}
+                      <span>{dirty ? 'Unsaved changes' : 'Saved locally'}</span>
                     </header>
                     {file.unsupported ? (
                       <div className="conflict-empty">
@@ -541,10 +569,12 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                           {session.stale
                             ? 'These branches changed. Start a new resolution below to continue with the latest code.'
                             : markersRemain
-                              ? 'Choose a version for each conflict below, or edit the result.'
+                              ? 'Conflicts remain. Choose a version for each block, edit the result, or request a proposal.'
                               : file.resolved && !dirty
                                 ? 'File reviewed. Continue to the next file or review the complete branch update.'
-                                : 'No conflict markers remain. Compare the result with the PR, then mark this file reviewed.'}
+                                : dirty && file.resolved
+                                  ? 'Changed since your review. Compare the new result, then mark it as reviewed again.'
+                                  : 'Resolved, not yet reviewed. Compare the result with the PR, then mark it as reviewed.'}
                           {file.source !== 'manual' && !dirty && (
                             <span>
                               {' '}
@@ -649,7 +679,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                               )
                             }
                           >
-                            {nextFile ? 'Mark reviewed & next' : 'Mark file reviewed'}
+                            {nextFile ? 'Mark reviewed & next' : 'Mark as reviewed'}
                           </Button>
                         </div>
                         <details className="conflict-agent-context" open={!!file.explanation}>
@@ -698,9 +728,11 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                       ? 'Working… You can continue elsewhere; progress is in Activity.'
                       : session.stale
                         ? 'Start over to resolve the latest branch versions.'
-                        : unresolved > 0
-                          ? `${unresolved} ${unresolved === 1 ? 'file needs' : 'files need'} review before you can continue.`
-                          : 'All files reviewed. Inspect the complete update before pushing.'}
+                        : counts.conflicted > 0
+                          ? `Resolve ${counts.conflicted} conflicted ${counts.conflicted === 1 ? 'file' : 'files'} to continue.`
+                          : counts.resolved > 0
+                            ? `Review ${counts.resolved} resolved ${counts.resolved === 1 ? 'file' : 'files'} to continue.`
+                            : 'All files reviewed. Inspect the complete update before pushing.'}
                   </span>
                   <Button
                     size="sm"
