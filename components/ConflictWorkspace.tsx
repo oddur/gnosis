@@ -59,12 +59,18 @@ function ConflictChoices({
         const group = document.createElement('div');
         group.className = 'conflict-choice-actions';
         for (const [resolution, label] of [
-          ['current', `Keep ${ours}`],
-          ['incoming', `Keep ${theirs}`],
+          ['current', 'Use PR version'],
+          ['incoming', 'Use base version'],
           ['both', 'Keep both'],
         ] as const) {
           const button = document.createElement('button');
           button.textContent = label;
+          button.title =
+            resolution === 'current'
+              ? `Keep this block from ${ours}`
+              : resolution === 'incoming'
+                ? `Keep this block from ${theirs}`
+                : 'Keep the PR block followed by the base block. Check for duplicate or incompatible code.';
           button.onclick = () => {
             const next = owner.resolveConflict(action.conflictIndex, resolution);
             if (next) {
@@ -110,9 +116,13 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   const [instructions, setInstructions] = useState('');
   const [message, setMessage] = useState('');
   const [resetPrompt, setResetPrompt] = useState(false);
+  const [outcome, setOutcome] = useState('');
+  const [helpOpen, setHelpOpen] = useState(false);
   const file = session?.files.find((f) => f.path === selected);
   const dirty = !!file && contents !== file.result;
-  const unresolved = session?.files.filter((f) => !f.resolved).length ?? 0;
+  const unresolved = session?.files.filter((f) => !f.resolved || (f.path === selected && dirty)).length ?? 0;
+  const nextFile = session?.files.find((f) => f.path !== selected && !f.resolved && !f.unsupported);
+  const markersRemain = hasConflictMarkers(contents);
   const previewItems = useMemo(
     () => preview?.files.map((fileDiff, i) => ({ id: String(i), type: 'diff' as const, fileDiff })) ?? [],
     [preview]
@@ -141,15 +151,33 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     setSession(reply.session);
     return reply.session;
   }
-  async function act(build: (value: ConflictSession) => ConflictRequest) {
+  async function act(build: (value: ConflictSession) => ConflictRequest, advance = false) {
     if (!session || pending.current) return;
     pending.current = true;
     setBusy(true);
     setError('');
     try {
       const saved = await saveDraft(session);
-      const reply = await window.electronAPI.conflictResolution(build(saved));
-      apply(reply);
+      const request = build(saved);
+      const reply = await window.electronAPI.conflictResolution(request);
+      const destination = advance ? (nextFile?.path ?? selected) : selected;
+      apply(reply, destination);
+      if (advance) setMode('conflicts');
+      if (request.kind === 'resolve') {
+        const proposed = reply.session.files.filter(
+          (f) => !f.unsupported && (request.path ? f.path === request.path : !f.resolved)
+        );
+        const remaining = proposed.filter((f) => hasConflictMarkers(f.result)).length;
+        const ready = proposed.length - remaining;
+        const engine = request.engine === 'mergiraf' ? 'Mergiraf' : 'The agent';
+        setOutcome(
+          `${engine} finished. ${ready} ${ready === 1 ? 'file is' : 'files are'} ready to review; ${remaining} still ${remaining === 1 ? 'needs' : 'need'} conflict resolution. Nothing was pushed.`
+        );
+        const current = reply.session.files.find((f) => f.path === selected);
+        setMode(current && !hasConflictMarkers(current.result) ? 'compare' : 'conflicts');
+      } else {
+        setOutcome('');
+      }
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -165,6 +193,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     try {
       apply(await window.electronAPI.conflictResolution({ kind: 'open', url, restart }));
       setResetPrompt(false);
+      setOutcome('');
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -183,6 +212,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     try {
       const saved = await saveDraft(session);
       apply({ session: saved }, path);
+      setMode(hasConflictMarkers(saved.files.find((f) => f.path === path)?.result ?? '') ? 'conflicts' : 'compare');
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -234,9 +264,8 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
             <DialogDescription>
               {session ? (
                 <>
-                  <BranchBadge branch={session.headBranch} repo={session.headRepo} /> ←{' '}
-                  <BranchBadge branch={session.baseBranch} repo={session.baseRepo} /> · Updates the PR branch; does not
-                  merge the PR.
+                  Bring <BranchBadge branch={session.baseBranch} repo={session.baseRepo} /> into{' '}
+                  <BranchBadge branch={session.headBranch} repo={session.headRepo} />. The PR stays open.
                 </>
               ) : (
                 'Prepare a private merge workspace. Your checkout stays unchanged.'
@@ -247,6 +276,49 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
             {busy ? 'Continue in background' : 'Close'}
           </Button>
         </div>
+        {session?.status === 'editing' && (
+          <div className="conflict-workflow">
+            <ol aria-label="Resolution steps">
+              <li aria-current={!preview ? 'step' : undefined}>1. Resolve files</li>
+              <li aria-current={preview ? 'step' : undefined}>2. Review update</li>
+              <li>3. Commit &amp; push</li>
+            </ol>
+            <span>Local draft · Nothing pushed</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-expanded={helpOpen}
+              aria-controls="conflict-help"
+              onClick={() => setHelpOpen(!helpOpen)}
+            >
+              {helpOpen ? 'Hide guide' : 'How to resolve'}
+            </Button>
+          </div>
+        )}
+        {helpOpen && session?.status === 'editing' && (
+          <div id="conflict-help" className="conflict-help">
+            <ol>
+              <li>
+                <strong>Resolve each file.</strong> Use the PR or base version for each conflict, or edit the result.
+                “Keep both” puts the PR block first; check for duplicates.
+              </li>
+              <li>
+                <strong>Review the result.</strong> Mergiraf makes a local structural merge proposal. The agent uses
+                your selected model. Neither runs project tests. Compare each result with the PR, then mark the file
+                reviewed.
+              </li>
+              <li>
+                <strong>Review the complete update, then commit &amp; push.</strong> This adds a merge commit to the PR
+                branch. It does not merge the PR. Closing saves your draft locally.
+              </li>
+            </ol>
+          </div>
+        )}
+        {outcome && (
+          <div className="conflict-notice" role="status">
+            {outcome}
+          </div>
+        )}
         {error && (
           <div className="conflict-notice" role="alert">
             {error}
@@ -276,7 +348,10 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
           <div className="conflict-empty">
             <Check size={30} />
             <h2>PR branch updated</h2>
-            <p>Your resolution is committed. GitHub will evaluate checks and merge requirements again.</p>
+            <p>
+              Your merge commit was pushed to the PR branch. The PR stays open. GitHub will evaluate checks and merge
+              requirements again.
+            </p>
             <a href={session.url} target="_blank" rel="noreferrer">
               Open PR on GitHub
             </a>
@@ -285,9 +360,12 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
           <>
             <div className="conflict-toolbar">
               <Button size="sm" variant="outline" onClick={() => setPreview(undefined)}>
-                Back to conflicts
+                Back to files
               </Button>
-              <p>Review all changes, including changes from {session.baseBranch}. Project tests have not been run.</p>
+              <p>
+                Compare the current PR with the proposed update, including changes from {session.baseBranch}. Project
+                tests have not been run.
+              </p>
             </div>
             {preview.validation && (
               <details className="conflict-notice">
@@ -303,7 +381,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
             />
             <div className="conflict-publish">
               <label>
-                Commit message
+                Merge commit message · {session.headBranch}
                 <input value={message} maxLength={2000} onChange={(e) => setMessage(e.target.value)} />
               </label>
               <Button
@@ -318,7 +396,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                   }))
                 }
               >
-                {busy ? 'Updating PR…' : 'Commit resolution & update PR'}
+                {busy ? 'Pushing merge commit…' : 'Commit & push to PR branch'}
               </Button>
             </div>
           </>
@@ -361,7 +439,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                 disabled={busy || session.stale || !unresolved}
                 onClick={() => void act((s) => ({ kind: 'resolve', engine: 'mergiraf', id: s.id, version: s.version }))}
               >
-                Try Mergiraf on remaining files
+                Mergiraf: unreviewed files
               </Button>
               <Button
                 size="sm"
@@ -372,7 +450,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                 }
               >
                 <Sparkles size={14} />
-                Ask agent about remaining files
+                Agent: unreviewed files
               </Button>
             </div>
             <div className="conflict-body">
@@ -384,9 +462,19 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                     aria-current={f.path === selected ? 'true' : undefined}
                     onClick={() => void choose(f.path)}
                   >
-                    {f.resolved ? <Check size={14} /> : <Circle size={12} />}
+                    {f.resolved && !(f.path === selected && dirty) ? <Check size={14} /> : <Circle size={12} />}
                     <span>{f.path}</span>
-                    {f.unsupported && <small>Local tool required</small>}
+                    <small>
+                      {f.unsupported
+                        ? 'Local tool required'
+                        : f.path === selected && dirty
+                          ? 'Changed · Review again'
+                          : f.resolved
+                            ? 'Reviewed'
+                            : hasConflictMarkers(f.path === selected ? contents : f.result)
+                              ? 'Needs resolution'
+                              : 'Ready to review'}
+                    </small>
                   </button>
                 ))}
               </nav>
@@ -442,6 +530,21 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                             Reset file
                           </Button>
                         </div>
+                        <div className="conflict-next-step" role="status">
+                          {session.stale
+                            ? 'These branches changed. Start a new resolution below to continue with the latest code.'
+                            : markersRemain
+                              ? 'Choose a version for each conflict below, or edit the result.'
+                              : file.resolved && !dirty
+                                ? 'File reviewed. Continue to the next file or review the complete branch update.'
+                                : 'No conflict markers remain. Compare the result with the PR, then mark this file reviewed.'}
+                          {file.source !== 'manual' && !dirty && (
+                            <span>
+                              {' '}
+                              Proposal by {file.source === 'mergiraf' ? 'Mergiraf' : 'the agent'} · Not tested
+                            </span>
+                          )}
+                        </div>
                         <div className="conflict-editor selectable" inert={busy || session.stale}>
                           {mode === 'conflicts' && !hasConflictMarkers(contents) ? (
                             <File file={{ name: selected, contents }} options={options} />
@@ -486,7 +589,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                               }))
                             }
                           >
-                            Try Mergiraf
+                            Suggest with Mergiraf
                           </Button>
                           <Button
                             size="sm"
@@ -524,23 +627,28 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                           </Button>
                           <Button
                             size="sm"
-                            disabled={!canEdit || hasConflictMarkers(contents)}
+                            disabled={!canEdit || markersRemain || (file.resolved && !dirty)}
                             onClick={() =>
-                              void act((s) => ({
-                                kind: 'save',
-                                id: s.id,
-                                version: s.version,
-                                path: selected,
-                                contents,
-                                resolved: true,
-                              }))
+                              void act(
+                                (s) => ({
+                                  kind: 'save',
+                                  id: s.id,
+                                  version: s.version,
+                                  path: selected,
+                                  contents,
+                                  resolved: true,
+                                }),
+                                !!nextFile
+                              )
                             }
                           >
-                            Mark reviewed
+                            {nextFile ? 'Mark reviewed & next' : 'Mark file reviewed'}
                           </Button>
                         </div>
                         <details className="conflict-agent-context" open={!!file.explanation}>
-                          <summary>Agent guidance{file.explanation ? ' · Proposal notes' : ''}</summary>
+                          <summary>
+                            {file.explanation ? 'Proposal notes & agent instructions' : 'Agent instructions (optional)'}
+                          </summary>
                           {file.explanation && <p>{file.explanation}</p>}
                           <label>
                             Instructions or answer to the agent
@@ -581,14 +689,18 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                   <span>
                     {busy
                       ? 'Working… You can continue elsewhere; progress is in Activity.'
-                      : 'Review automatic suggestions before marking files reviewed.'}
+                      : session.stale
+                        ? 'Start over to resolve the latest branch versions.'
+                        : unresolved > 0
+                          ? `${unresolved} ${unresolved === 1 ? 'file needs' : 'files need'} review before you can continue.`
+                          : 'All files reviewed. Inspect the complete update before pushing.'}
                   </span>
                   <Button
                     size="sm"
                     disabled={busy || session.stale || unresolved > 0 || dirty}
                     onClick={() => void act((s) => ({ kind: 'preview', id: s.id, version: s.version }))}
                   >
-                    Review resolution…
+                    Review branch update…
                   </Button>
                 </>
               )}

@@ -51,7 +51,7 @@ void app.whenReady().then(async () => {
       window.electronAPI.conflictResolution=async req=>{
         window.conflictCalls.push(req);const s=window.conflictFixture;
         if(req.kind==='open')return {session:structuredClone(s)};
-        if(req.kind==='save'){s.files[0].result=req.contents;s.files[0].resolved=req.resolved;}
+        if(req.kind==='save'){const f=s.files.find(f=>f.path===req.path);f.result=req.contents;f.resolved=req.resolved;}
         if(req.kind==='resolve'){s.files[0].result='export function retryDelay(attempt: number) {\\n  return Math.min(5000, Math.max(100, attempt * 200));\\n}\\n';s.files[0].explanation='Preserved the minimum delay from main and the cap from this PR. Tests have not been run.';s.files[0].resolved=false;s.files[0].source=req.engine;}
         if(req.kind==='preview')return {session:structuredClone(s),preview:{token:'reviewed',patch:'',validation:'',files:window.conflictPreview}};
         if(req.kind==='publish'){s.status='published';s.commitSha='d'.repeat(40);}
@@ -73,17 +73,39 @@ void app.whenReady().then(async () => {
 
     assert.equal(await js('window.conflictCalls[0].url'), 'https://github.com/klang/engine/pull/120');
     await capture('light');
+    await click('How to resolve');
+    await wait("document.querySelector('#conflict-help')?.textContent.includes('Neither runs project tests')");
+    await capture('guide');
+    await click('Hide guide');
+    assert.equal(await js("!!document.querySelector('#conflict-help')"), false);
+    await click('How to resolve');
+    await click('Hide guide');
     await js("document.documentElement.classList.add('dark')");
     await capture('dark');
-    await click('Keep feature/retry');
-    await click('Mark reviewed');
+    await click('Use PR version');
+    await click('Mark file reviewed');
     assert.equal(await js('window.conflictFixture.files[0].resolved'), true);
+    await click('Reset file');
+    await wait("document.querySelector('.conflict-files').textContent.includes('Changed · Review again')");
+    assert.ok(await js("document.querySelector('.conflict-toolbar').textContent.includes('0/1 files reviewed')"));
+    assert.ok(await js("!document.querySelector('.conflict-footer').textContent.includes('All files reviewed')"));
+    await capture('edited-reviewed');
     await click('Ask agent');
     await wait("document.querySelector('.conflict-agent-context').textContent.includes('Preserved the minimum')");
     assert.equal(
       await js('window.conflictFixture.files[0].resolved'),
       false,
       'Agent cannot mark its own proposal reviewed'
+    );
+    assert.ok(
+      await js(
+        "document.querySelector('.conflict-notice[role=status]').textContent.includes('1 file is ready to review')"
+      )
+    );
+    assert.ok(
+      await js(
+        "[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Compare with PR').getAttribute('aria-pressed')==='true'"
+      )
     );
     await click('Edit result');
     await wait("document.querySelector('.conflict-editor diffs-container')");
@@ -128,19 +150,19 @@ void app.whenReady().then(async () => {
     await capture('editor');
     await click('Compare with PR');
     await capture('proposal');
-    await click('Mark reviewed');
+    await click('Mark file reviewed');
     await click('Close');
     await wait("!document.querySelector('.conflict-workspace')");
     await js("window.dispatchEvent(new CustomEvent('gnosis-resolve-conflicts',{detail:window.conflictFixture.url}))");
     await wait(
-      "document.querySelector('.conflict-footer') && ![...document.querySelectorAll('button')].find(b=>b.textContent==='Review resolution…')?.disabled"
+      "document.querySelector('.conflict-footer') && ![...document.querySelectorAll('button')].find(b=>b.textContent==='Review branch update…')?.disabled"
     );
-    await click('Review resolution…');
+    await click('Review branch update…');
     await wait("document.querySelector('.conflict-publish')");
     await wait("document.querySelector('.conflict-preview diffs-container')");
     await capture('preview');
     assert.equal(await js("window.conflictCalls.filter(r=>r.kind==='publish').length"), 0, 'Preview never publishes');
-    await click('Commit resolution & update PR');
+    await click('Commit & push to PR branch');
     await wait("document.querySelector('.conflict-empty').textContent.includes('PR branch updated')");
     assert.equal(await js("window.conflictCalls.filter(r=>r.kind==='publish').length"), 1);
     await capture('published');
@@ -150,10 +172,22 @@ void app.whenReady().then(async () => {
     );
     await wait("document.querySelector('.conflict-notice')?.textContent.includes('base branch changed')");
     assert.ok(
-      await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Review resolution…').disabled")
+      await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Review branch update…').disabled")
     );
     win.setSize(760, 800);
     await capture('narrow');
+    const codeHeight = () => js<number>("document.querySelector('.conflict-editor').getBoundingClientRect().height");
+    assert.ok((await codeHeight()) >= 200, 'Code remains usable beside expanded proposal notes');
+    await click('How to resolve');
+    await capture('narrow-guide');
+    assert.ok((await codeHeight()) >= 200, 'Help must not collapse the editor');
+    assert.ok(
+      await js(
+        "document.querySelector('.conflict-workspace').scrollHeight <= document.querySelector('.conflict-workspace').clientHeight + 400"
+      ),
+      'Supporting content stays reachable'
+    );
+    await click('Hide guide');
     assert.ok(await js('document.documentElement.scrollWidth<=innerWidth'));
     await click('Close');
     await js(
@@ -212,13 +246,32 @@ void app.whenReady().then(async () => {
     await js(
       `window.conflictFixture.files=${JSON.stringify(files)};window.conflictFixture.stale=false;window.conflictFixture.preparation='conflicts';window.dispatchEvent(new CustomEvent('gnosis-resolve-conflicts',{detail:window.conflictFixture.url}))`
     );
+    await wait("document.querySelectorAll('.conflict-files button').length===2");
     for (const file of files) {
-      await click(file.path);
+      await js(`document.querySelectorAll('.conflict-files button')[${files.indexOf(file)}].click()`);
+      await wait(
+        `document.querySelector('.conflict-file-pane > header strong')?.textContent===${JSON.stringify(file.path)}`
+      );
       await wait(
         "document.querySelector('.conflict-choice-actions button') && document.querySelector('.conflict-code diffs-container')?.shadowRoot?.querySelector('[data-line]')"
       );
     }
     await capture('long-script-conflict');
+    // Reviewing one file advances without publishing; each file keeps its own saved content.
+    await click('Use PR version');
+    await click('Mark reviewed & next');
+    await wait("document.querySelector('.conflict-file-pane > header strong').textContent==='package.json'");
+    assert.equal(await js('window.conflictFixture.files[1].resolved'), true);
+    assert.equal(await js('window.conflictFixture.files[0].resolved'), false);
+    await click('Use base version');
+    await click('Mark file reviewed');
+    assert.equal(await js('window.conflictFixture.files.every(f=>f.resolved)'), true);
+    assert.equal(
+      await js("window.conflictCalls.filter(r=>r.kind==='publish').length"),
+      1,
+      'File review never publishes'
+    );
+    await capture('files-reviewed');
     console.log(
       'Conflict workspace passed: Pierre choices, editable result, saved draft, explicit preview/publication, stale guard, themes and narrow layout.'
     );

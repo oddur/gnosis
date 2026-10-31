@@ -366,9 +366,12 @@ export function createConflictResolutionService(deps: Deps) {
             throw new Error('This file cannot be saved in the conflict editor.');
           if (request.resolved && hasConflictMarkers(request.contents))
             throw new Error('Remove the remaining conflict markers first.');
+          if (file.result !== request.contents) {
+            file.source = 'manual';
+            file.explanation = undefined;
+          }
           file.result = request.contents;
           file.resolved = request.resolved;
-          file.source = 'manual';
         } else if (request.kind === 'resolve') {
           if (!['mergiraf', 'agent'].includes(request.engine) || (request.instructions?.length ?? 0) > 10000)
             throw new Error('Invalid resolution request.');
@@ -417,7 +420,7 @@ export function createConflictResolutionService(deps: Deps) {
                   throw new Error('The proposed result is too large.');
                 file.explanation = hasConflictMarkers(file.result)
                   ? 'Mergiraf left conflicts that need your input.'
-                  : 'Mergiraf proposed a result. Review it before marking the file resolved.';
+                  : 'Mergiraf proposed a result. Review it before marking the file reviewed.';
               } finally {
                 await fs.rm(temp, { recursive: true, force: true });
               }
