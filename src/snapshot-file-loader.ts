@@ -8,10 +8,11 @@ import { githubCacheFor } from '../lib/github-client';
 import { isCacheRecord } from '../lib/github-cache';
 import { parseLfsPointer } from '../lib/git-lfs';
 import { lfsResources } from './git-lfs-service';
+import { localClones } from '../lib/local-clone';
 import { imageMimeType } from '../lib/review-images';
 import type { PrChanges, PrChangeFile, PrFileRequest, PrFileContents, PrFileSide } from '../lib/pr-changes';
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-export function createSnapshotFileLoader(lfs = lfsResources) {
+export function createSnapshotFileLoader(lfs = lfsResources, clones = localClones) {
   const pending = new WeakMap<Octokit, Map<string, GitHubWork<PrFileContents>>>();
   return async (
     client: Octokit,
@@ -61,6 +62,11 @@ export function createSnapshotFileLoader(lfs = lfsResources) {
           let bytes: Buffer | undefined;
           let pointer = savedSide?.pointer;
           if (!pointer) {
+            // Forks too: the base repository can fetch a PR's head commits by SHA.
+            const { owner: baseOwner, repo: baseRepo } = parsePrUrl(req.url);
+            bytes = (await clones.read(`${baseOwner}/${baseRepo}`, (clone) => clone.blob(ref, path))) ?? undefined;
+          }
+          if (!pointer && !bytes) {
             beforeRequest?.();
             const { data } = await client.request('GET /repos/{owner}/{repo}/contents/{path}', {
               owner,
@@ -79,8 +85,8 @@ export function createSnapshotFileLoader(lfs = lfsResources) {
                     ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
                     : undefined;
             if (!bytes) throw new Error('GitHub did not return file contents. Open the file on GitHub.');
-            pointer = parseLfsPointer(bytes.toString('utf8'));
           }
+          if (!pointer && bytes) pointer = parseLfsPointer(bytes.toString('utf8'));
           if (pointer) {
             lfsSides.add(before);
             const resource = await lfs.remote(client, repoName, pointer, req.downloadLfs === true);

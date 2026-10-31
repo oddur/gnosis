@@ -14,6 +14,7 @@ import type { ReviewGuide } from '../lib/types';
 import { sourceForPath } from '../lib/workbench';
 import { parsePrUrl } from '../lib/github';
 import { parseLocalUrl } from '../lib/localGit';
+import { localClones } from '../lib/local-clone';
 
 const execFileAsync = promisify(execFile);
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -145,6 +146,8 @@ export function createReviewImageService(io: {
               });
               return dataUrl(stdout, mime ?? 'application/octet-stream');
             }
+            const cloned = await localClones.read(baseRepo, (clone) => clone.blob(revision, imagePath));
+            if (cloned) return dataUrl(cloned, mime ?? 'application/octet-stream');
             if (!repoName || !client) throw new Error('The source repository is unavailable.');
             const [owner, repo] = repoName.split('/');
             const response = await client.request('GET /repos/{owner}/{repo}/contents/{path}', {
