@@ -10,9 +10,10 @@ void app.whenReady().then(async () => {
     show: true,
     webPreferences: { backgroundThrottling: false },
   });
+  win.webContents.on('console-message', ({ message }) => { if (/error|failed/i.test(message)) console.error('Renderer:', message); });
   const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
-  const wait = async (expression: string) => {
-    for (let i = 0; i < 200; i++) {
+  const wait = async (expression: string, attempts = 200) => {
+    for (let i = 0; i < attempts; i++) {
       if (await js(expression)) return;
       await new Promise((r) => setTimeout(r, 50));
     }
@@ -49,7 +50,8 @@ void app.whenReady().then(async () => {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     if (!url) throw Error('Missing fixture URL');
     await win.loadURL(url + '?polish');
-    await wait("!!document.querySelector('.queue-item') && window.electronAPI.workbenchQueue().then(queue=>queue.items.length===7)");
+    // The first dev-page load includes Vite compilation; keep interaction waits short.
+    await wait("!!document.querySelector('.queue-item') && window.electronAPI.workbenchQueue().then(queue=>queue.items.length===7)", 1200);
     await js(
       `(()=>{window.remoteSearchCalls=0;const remote=window.electronAPI.commandGitHubSearch;window.electronAPI.commandGitHubSearch=(...args)=>{window.remoteSearchCalls++;return remote(...args)};document.querySelector('.queue-search input').focus();})()`
     );

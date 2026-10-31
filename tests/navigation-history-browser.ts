@@ -11,9 +11,10 @@ void app.whenReady().then(async () => {
     show: true,
     webPreferences: { backgroundThrottling: false },
   });
+  win.webContents.on('console-message', ({ message }) => { if (/error|failed/i.test(message)) console.error('Renderer:', message); });
   const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
-  const wait = async (code: string) => {
-    for (let i = 0; i < 200; i++) {
+  const wait = async (code: string, attempts = 200) => {
+    for (let i = 0; i < attempts; i++) {
       if (await js(code)) return;
       await new Promise((r) => setTimeout(r, 50));
     }
@@ -49,7 +50,8 @@ void app.whenReady().then(async () => {
     if (!url) throw Error('Missing fixture URL');
     await win.loadURL(url + '?pr-summary&navigation-history&keep-progress');
     win.webContents.debugger.attach('1.3');
-    await wait("!!document.querySelector('.queue-item') && window.electronAPI.workbenchQueue().then(queue=>queue.items.length===7)");
+    // The first dev-page load includes Vite compilation; keep interaction waits short.
+    await wait("!!document.querySelector('.queue-item') && window.electronAPI.workbenchQueue().then(queue=>queue.items.length===7)", 1200);
     await mouse(3);
     assert.ok(await js("!!document.querySelector('.queue-list')"), 'Back at start does nothing');
     await js(
