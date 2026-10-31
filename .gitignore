@@ -51,3 +51,5 @@ yarn-error.log*
 # Generated design review artifacts
 /.impeccable/review/
 /.impeccable/critique/
+
+/resources/mergiraf/runtime/

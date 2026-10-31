@@ -1,3 +1,4 @@
+import { openConflictWorkspace } from '../lib/open-conflict-workspace';
 import { AlertCircle, CircleHelp, ExternalLink } from 'lucide-react';
 import { checkLabel } from '../lib/pr-checks';
 import { stackMergeMessage, type StackMergeStatus, type StackMergeEntry, type StackMergeCategory } from '../lib/stack-merge-status';
@@ -58,6 +59,7 @@ export function StackMergeDetails({
             </ul>
           )}
           <div className="stack-merge-issue-actions">
+            {entry.readiness.label === 'Merge conflicts' && !entry.readiness.stale && <button onClick={() => openConflictWorkspace(member.url)}>Resolve conflicts…</button>}
             {(checkWarning || failedChecks.length > 0 || entry.readiness.label === 'Checks need attention') && (
               <button aria-label={`View checks for PR #${member.number}`} onClick={() => onChecks(member)}>View checks</button>
             )}

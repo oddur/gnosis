@@ -1,3 +1,4 @@
+import { openConflictWorkspace } from '../lib/open-conflict-workspace';
 import { PrBadge, BranchBadge, CommitBadge } from './EntityBadge';
 import { useEffect, useRef, useState } from 'react';
 import { GitMerge, RefreshCw, GitBranch, ChevronDown, Loader2, ExternalLink } from 'lucide-react';
@@ -210,6 +211,7 @@ export function PrActions({
       ) : (
         <>
           <div className="pr-action-controls">
+            {(state?.mergeable === 'CONFLICTING' || state?.mergeState === 'DIRTY') && <Button size="sm" variant="outline" onClick={() => openConflictWorkspace(member.url)}>Resolve conflicts…</Button>}
             <Button
               size="sm"
               onClick={() => void open('merge')}

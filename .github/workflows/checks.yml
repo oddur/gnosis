@@ -38,6 +38,7 @@ jobs:
             ~/AppData/Local/electron/Cache
           key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
       - run: npm ci
+      - run: npm run prepare:mergiraf
       - run: npx tsc --noEmit
       - run: npm test
       - name: Configure Electron sandbox

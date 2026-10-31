@@ -1,3 +1,4 @@
+import { ConflictWorkspaceHost } from '../components/ConflictWorkspaceHost';
 import { RecentlyViewedContext } from '../components/RecentlyViewed';
 import { createRecentlyViewed, homeVisit, reviewVisit, type RecentVisit } from '../lib/recently-viewed';
 import { readReviewState, writeReviewState } from '../lib/renderer-review-state';
@@ -431,6 +432,7 @@ export function App() {
         )}
       </div>
       <ActivityDrawer onOpen={openActivity} open={activityOpen} onOpenChange={setActivityOpen} />
+      <ConflictWorkspaceHost />
       <Toaster />
     </CommandCenter>
     </RecentlyViewedContext.Provider>
