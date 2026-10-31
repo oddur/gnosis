@@ -321,7 +321,7 @@ if (new URLSearchParams(location.search).has('filters')) {
     }
 }
 if (polishScenario) {
-  items[0].briefing = { key: 'paused', status: 'paused', updatedAt: date };
+  items[0].briefing = { key: 'paused', status: 'paused', pauseDetail: 'Daily briefing attempt limit reached. Resets at midnight.', updatedAt: date };
   // A long file followed by a different stack member exercises sticky attribution.
   const first = review.slides[0].diffHunks[0];
   first.content =

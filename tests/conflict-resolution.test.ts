@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createConflictResolutionService } from '../src/conflict-resolution-service';
+import { restackWorktreePath } from '../src/conflict-restack';
 import { createConflictMemory } from '../src/conflict-rerere';
 import { hasConflictMarkers, conflictFileStage, type ConflictFile } from '../lib/conflict-resolution';
 import type { PrActionState } from '../lib/pr-actions';
@@ -681,4 +682,14 @@ void test('file stages distinguish unresolved code, automatic proposals, human r
     'conflicted',
     'Unsupported conflicts cannot appear resolved without markers'
   );
+});
+
+void test('restack paths stay compact and preserve existing paused worktrees', async (t) => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-restack-path-'));
+  t.after(() => fs.rm(directory, { recursive: true, force: true }));
+  const token = 'a'.repeat(64);
+  assert.equal(await restackWorktreePath(directory, token), path.join(directory, `restack-${token.slice(0, 16)}`));
+  const legacy = path.join(directory, `restack-${token}`);
+  await fs.mkdir(legacy);
+  assert.equal(await restackWorktreePath(directory, token), legacy);
 });

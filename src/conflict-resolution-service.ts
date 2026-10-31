@@ -14,7 +14,7 @@ import type { StateStorage } from './app-data-store';
 import type { PrActionState } from '../lib/pr-actions';
 import { runConflictProcess } from './conflict-process';
 import { createConflictMemory } from './conflict-rerere';
-import { prepareRestack, publishRestack } from './conflict-restack';
+import { prepareRestack, publishRestack, restackWorktreePath } from './conflict-restack';
 
 const hash = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
 const oid = (value: string) => /^[a-f0-9]{40,64}$/.test(value);
@@ -421,7 +421,7 @@ export function createConflictResolutionService(deps: Deps) {
                   'worktree',
                   'remove',
                   '--force',
-                  path.join(directory(ctx.account, id), `restack-${session.restack.token}`),
+                  await restackWorktreePath(directory(ctx.account, id), session.restack.token),
                 ],
                 signal,
                 undefined,

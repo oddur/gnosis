@@ -221,6 +221,8 @@ void app.whenReady().then(async () => {
       code: 'Home',
       windowsVirtualKeyCode: 36,
     });
+    // Let the native caret change reach Pierre's selection listener before typing.
+    await js('new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))');
     await win.webContents.debugger.sendCommand('Input.insertText', { text: '// Manual review note\n' });
     await wait(`document.querySelector('.conflict-file-pane > header').textContent.includes('Unsaved changes')`);
     assert.equal(

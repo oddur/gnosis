@@ -35,6 +35,18 @@ function writable(state: PrActionState, session: ConflictSession): asserts state
     );
 }
 
+/** Keep Git's worktree metadata path below its Windows limit; resume older drafts in place. */
+export async function restackWorktreePath(directory: string, token: string): Promise<string> {
+  const legacy = path.join(directory, `restack-${token}`);
+  try {
+    await fs.access(legacy);
+    return legacy;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  return path.join(directory, `restack-${token.slice(0, 16)}`);
+}
+
 /** Prepare in a private linked worktree; no remote branch is changed here. */
 export async function prepareRestack(
   session: ConflictSession,
@@ -86,7 +98,7 @@ export async function prepareRestack(
     expected,
     branches: [],
   };
-  const worktree = path.join(deps.directory, `restack-${plan.token}`);
+  const worktree = await restackWorktreePath(deps.directory, plan.token);
   let keepWorktree = resume;
   const git: Git = (args, input, allowed, signal) =>
     deps.git(
