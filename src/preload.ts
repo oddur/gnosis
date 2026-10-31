@@ -209,6 +209,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   offChatToolUse: (): void => {
     ipcRenderer.removeAllListeners('chat-tool-use');
   },
+  conflictResolution: (request: import('../lib/conflict-resolution').ConflictRequest): Promise<import('../lib/conflict-resolution').ConflictReply> => ipcRenderer.invoke('conflict-resolution', request),
   getPrActionState: (url: string, force = false): Promise<import('../lib/pr-actions').PrActionState> => ipcRenderer.invoke('get-pr-action-state', url, force),
   getStackMergePlan: (urls: string[]): Promise<import('../lib/pr-actions').PrMergePlan> => ipcRenderer.invoke('get-stack-merge-plan', urls),
   performPrAction: (request: import('../lib/pr-actions').PrActionRequest): Promise<import('../lib/pr-actions').PrActionResult> => ipcRenderer.invoke('perform-pr-action', request),
