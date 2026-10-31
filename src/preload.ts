@@ -259,6 +259,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('get-pr-state', prUrl),
   getPrFiles: (prUrl: string): Promise<ChangedFile[]> => ipcRenderer.invoke('get-pr-files', prUrl),
   pickRepoDir: (): Promise<string | null> => ipcRenderer.invoke('pick-repo-dir'),
+  getLocalClones: (): Promise<import('../lib/local-clone').LocalCloneStatus[]> => ipcRenderer.invoke('local-clones'),
+  addLocalClone: (directory: string): Promise<import('../lib/local-clone').LocalCloneStatus[]> => ipcRenderer.invoke('add-local-clone', directory),
+  removeLocalClone: (directory: string): Promise<import('../lib/local-clone').LocalCloneStatus[]> => ipcRenderer.invoke('remove-local-clone', directory),
   listRepoRefs: (
     repoPath: string,
   ): Promise<{

@@ -982,6 +982,13 @@ export function createWorkbenchService(deps: Deps) {
       const historical = saved?.members.find(member => member.url === url);
       return historical ? prBadgePreview(historical, saved, undefined, true) : null;
     },
+    /** Local only: lets a registered clone keep answering while the API is paused. */
+    knownMember(url: string) {
+      if (!deps.auth().token || !deps.auth().login) return undefined;
+      const s = load();
+      return s.subjects.flatMap(subject => subject.members).find(member => member.url === url)
+        ?? stars.load(s.account).find(entry => entry.member.url === url)?.member;
+    },
     cached: () => view(true),
     snapshot: (): WorkbenchQueue => deps.auth().token && deps.auth().login ? view() : { items: [], warnings: [], remaining: 0 },
     queue,
