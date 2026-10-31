@@ -582,6 +582,9 @@ const mocks = {
   },
   loadHarnessEnvironment: async () => ({ claude: [], codex: [] }),
   saveHarnessEnvironment: async () => {},
+  getLocalClones: async () => [],
+  addLocalClone: async () => [],
+  removeLocalClone: async () => [],
   loadPreferences: () => Promise.resolve(prefs),
   savePreferences: (next: Preferences) => {
     prefs = next;
