@@ -159,3 +159,16 @@ void test('Codex receives private image attachments and removes them after gener
   const file = answer.args[answer.args.indexOf('--image') + 1];
   assert.equal(existsSync(file), false);
 });
+
+void test('Codex receives explicit effort and clamps Ultra for Luna', async () => {
+  for (const effort of ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const) {
+    const { args } = JSON.parse(await codexProvider.generate({
+      ...options, thinking: false, effort, content: JSON.stringify({ mode: 'success' }),
+    })) as { args: string[] };
+    assert.ok(args.includes(`model_reasoning_effort="${effort}"`));
+  }
+  const { args } = JSON.parse(await codexProvider.generate({
+    ...options, model: 'gpt-6-luna', effort: 'ultra', content: JSON.stringify({ mode: 'success' }),
+  })) as { args: string[] };
+  assert.ok(args.includes('model_reasoning_effort="max"'));
+});

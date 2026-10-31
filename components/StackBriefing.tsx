@@ -24,7 +24,7 @@ export function StackBriefing({ briefing, actions, onActivity, onSetup, connecte
     : running ? 'Generating stack briefing…'
     : status === 'failed' ? 'Stack briefing failed.'
     : status === 'cancelled' ? 'Stack briefing cancelled.'
-    : status === 'paused' ? briefing?.pauseReason === 'filter' ? 'Automatic briefing paused by your filters.' : 'Automatic briefing paused.'
+    : status === 'paused' ? briefing?.pauseReason === 'filter' ? 'Automatic briefing paused by your filters.' : briefing?.pauseDetail ?? 'Automatic briefing paused.'
     : status === 'queued' ? 'Stack briefing queued.' : 'No stack briefing yet.';
   return <div className="stack-briefing-state">
     <span role="status">{message}</span>

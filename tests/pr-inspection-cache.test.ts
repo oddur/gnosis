@@ -386,3 +386,61 @@ void test('preload activity reports the current PR, pending counts, backoff, and
     assert.equal(f.cache.activity(), undefined, 'Sign-out removes the old account activity');
   } finally { f.cache.stop(); }
 });
+
+void test('one GitHub cooldown pauses the entire preload queue until the advertised deadline', async () => {
+  let now = 1_000_000;
+  const retryAt = now + 600_000;
+  const calls: string[] = [];
+  let limited = true;
+  const cache = createPrInspectionCache({
+    now: () => now, visible: () => true,
+    changes: revision => {
+      calls.push(revision.url);
+      if (limited) return Promise.reject(new Error(`Error invoking remote method: GitHub updates are paused to protect your API allowance. GitHub requests can resume after ${new Date(retryAt).toISOString()}.`));
+      return Promise.resolve({ version: 1, ...revision, metadata: { ...revision, title: 'PR' } as PrMetadata, comparisonBase: 'base', fetchedAt: now, files: [] });
+    },
+    commits: revision => Promise.resolve({ version: 1, url: revision.url, metadata: revision as PrMetadata, fetchedAt: now, commits: [] }),
+    file: async () => {}, comparison: () => Promise.resolve(undefined), review: async () => {},
+  });
+  try {
+    const targets = Array.from({ length: 10 }, (_, i) => ({ ...r, url: `${r.url}${i}` }));
+    cache.setTargets('account', targets);
+    await cache.flush();
+    assert.equal(calls.length, 1, 'Do not retry the same account cooldown for every PR');
+    assert.equal(cache.activity()?.status, 'paused');
+    now += 31_000;
+    cache.setTargets('account', targets, { active: [targets[4].url] });
+    await cache.flush();
+    assert.equal(calls.length, 1, 'Navigation and the generic retry interval cannot bypass the deadline');
+    limited = false;
+    await cache.readChanges(targets[4]);
+    assert.equal(calls.length, 2, 'Explicit UI reads still reach the backend, which enforces the actual allowance');
+    now = retryAt;
+    await cache.flush();
+    assert.equal(cache.activity(), undefined, 'All queued PRs resume automatically at the deadline');
+  } finally { cache.stop(); }
+});
+
+void test('a late cooldown from the previous account cannot pause new account preloads', async () => {
+  let reject!: (error: Error) => void;
+  let reads = 0;
+  const cache = createPrInspectionCache({
+    visible: () => true,
+    changes: revision => {
+      if (++reads === 1) return new Promise<PrChanges>((_resolve, fail) => { reject = fail; });
+      return Promise.resolve({ version: 1, ...revision, metadata: { ...revision, title: 'PR' } as PrMetadata, comparisonBase: 'base', fetchedAt: 1, files: [] });
+    },
+    commits: revision => Promise.resolve({ version: 1, url: revision.url, metadata: revision as PrMetadata, fetchedAt: 1, commits: [] }),
+    file: async () => {}, comparison: () => Promise.resolve(undefined), review: async () => {},
+  });
+  try {
+    cache.setTargets('old', [r]);
+    const old = cache.flush();
+    cache.setTargets('new', [r]);
+    reject(new Error(`GitHub requests can resume after ${new Date(Date.now() + 600_000).toISOString()}.`));
+    await old;
+    await cache.flush();
+    assert.equal(reads, 2);
+    assert.equal(cache.activity(), undefined);
+  } finally { cache.stop(); }
+});

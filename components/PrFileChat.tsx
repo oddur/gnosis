@@ -57,7 +57,7 @@ function FileConversation({
   const [question, setQuestion] = useSessionDraft(`file-question:${conversationId}`, '');
   const [dismissedSelection, setDismissedSelection] = useState<string | null>(null);
   const quote = selection !== dismissedSelection ? selection : '';
-  const context = { ...request, provider: preferences.provider, model: preferences.model };
+  const context = { ...request, provider: preferences.provider, model: preferences.model, effort: preferences.effort };
   const send = (value = question) => {
     if (!value.trim() || chat.busy) return;
     setQuestion('');

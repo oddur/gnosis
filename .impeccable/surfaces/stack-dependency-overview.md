@@ -10,7 +10,7 @@ OWN-WORLD: Existing neutral surfaces, compact controls, entity badges, semantic 
 
 STORY: Read the stack status, follow a specific blocker to its source PR, inspect each PR in its dependency context, and recheck dependent branches after an update. The user's viewed-file progress is separate from GitHub approval and merge readiness.
 
-FIRST VIEWPORT: A concrete next-step sentence and action precede the PR chain. Linear stacks show the tip above the base branch. Every PR shows branch direction and a textual merge state. Detailed requirements remain in the existing supporting column.
+FIRST VIEWPORT: One stack verdict and independently dated merge requirements and check results precede a compact “To merge this stack” action list and a single dependency list. Linear stacks show the tip above the base branch. Each row separates Review status, Checks, and Branch. Each affected PR shows its blocker and remedy without expansion; details contain supporting check results. Required running checks are waiting states, not unspecified failures.
 
 FORM: Code-led extension of the inherited workbench. Branching or incomplete groups show explicit relationships without a false linear rail. The single-PR summary includes an expandable cached stack navigator with the current PR highlighted. Desktop and laptop are shipping targets; narrow windows reflow controls.
 
@@ -18,14 +18,18 @@ FINISH: Inspect rendered desktop/narrow/dark views, verify exact action scope, s
 
 ## Implementation evidence
 
-`stackDependencyOrder` checks the actual edge graph before drawing a chain. `stackMergeTarget` uses matching fresh base-branch evidence, so retargeted PRs do not falsely report conflicts with their historical parent. Current merge labels distinguish conflicts, required review, running/failing checks, ready, stale, and unknown. Display labels never authorize a merge.
+`stackDependencyOrder` validates the dependency chain. `stackMemberStatus` separates merge blockers from check outcomes and optional branch updates. Current-head evidence and freshness are required; unknown requirements stay explicit. GitHub eligibility remains authoritative.
 
-`StackDependencyChain` is shared by the overview and single-PR context. The context reads local signal snapshots only. `StackOverview` presents a concrete next merge step and preserves file progress, GitHub reviews, and check navigation as separate evidence.
+The stack header states whether merging is blocked. The action list links to affected PRs in dependency order, opening their PR overview. The draft group offers one-click “Mark all ready” with inline progress; successful changes are kept if a later PR fails, and Retry only handles the remaining PRs. Optional updates and check failures do not join that list. Review decisions, check outcomes, and branch state use independent columns. Viewed-file progress sits quietly beside branch metadata. Optional cancelled checks use amber and never appear in the blocker list. Ready rows omit redundant detail disclosures.
 
-## Verification and finish
+Each PR shows confirmed blockers, direct actions, and the names of up to two required failing checks. It can disclose up to three results per required/non-blocking group, and more results on request. Actions reuse the existing confirmation flows for draft status and branch updates. Conflict resolution opens the exact PR. Failed jobs and cancelled workflows have different rerun actions, with the workflow scope and current revision checked before submission. Permission reads start only when an action is invoked.
 
-All 546 unit tests pass, including chain validation, actual base-target selection, stale evidence, and merge-label cases. Browser suites `--stack-merge-details`, `--stack-layout`, and `--stack-hierarchy` pass. They cover exact conflict-action scope, sibling navigation, current-PR highlighting, and stack density. TypeScript, targeted ESLint, and `git diff --check` pass. The final layout detector reports no findings.
+## Verification
 
-Rendered light, dark, narrow-window, current-PR, and ten-PR views were inspected. Six complete PR rows fit at 1280×800; three fit at 900×600. Captures are in `.impeccable/review/stack-merge-details/` and `.impeccable/review/stack-layout/`.
+Unit tests cover combined blockers, optional cancellations, required checks, unknown policy, and stale revisions. Browser checks cover action scope, lazy permissions, rerun modes, navigation, viewed progress, and light/dark layouts. Six ready PR rows fit at 1280×800; three fit at 900×600. Narrow windows and 200% zoom preserve the content without horizontal page scrolling.
 
-Independent Impeccable finish review: **disposition: ship**. No material fixes remain. Keep exact per-PR actions, truthful dependency relationships, and the distinction between personal review progress and GitHub readiness. Existing DESIGN.md remains the visual authority.
+The existing typography, palette, and dependency navigation remain. No raster assets are used. Visual evidence is in `.impeccable/review/stack-merge-details/` and `.impeccable/review/stack-layout/`.
+
+The action-guidance pass adds regression coverage for optional results, waiting checks, incomplete freshness, stale evidence, visible remedies, and keyboard navigation from the action list. Refreshing or opening an action uses the existing authenticated paths; rendering the guidance does not fetch permissions.
+
+The action-guidance pass passed 567 unit tests, the final targeted readiness regressions, TypeScript, targeted lint, and stack status/layout and PR action browser checks. The ready state removes the checklist and emphasizes the existing merge confirmation button. Six ready PR rows fit at 1280×800 and three at 900×600. The scoped design scan found no anti-patterns; existing stylesheet token advisories remain outside this change.

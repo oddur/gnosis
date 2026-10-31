@@ -274,3 +274,20 @@ void test('worker search reads saved files, persists its index and isolates acco
     assert.ok((await service.search('rqslots')).hits.length>0);
   } finally {await storage.close();await fs.rm(dir,{recursive:true,force:true});}
 });
+
+void test('repository Dependabot rules apply to cached reviews and update without a network request', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-repo-search-'));
+  let ignoreBots = true;
+  let repositoryBotSettings: Record<string, boolean> = { 'acme/core': false };
+  try {
+    const botReview = { ...review, author: 'dependabot[bot]' };
+    await fs.writeFile(path.join(dir, 'saved.json'), JSON.stringify(botReview));
+    const service = createCommandSearchService({ directory: () => dir, queue: () => queue,
+      history: () => [{ ...entry, author: 'dependabot[bot]' }], account: () => 'maya',
+      ignoreBots: () => ignoreBots, repositoryBotSettings: () => repositoryBotSettings, threads: () => undefined });
+    assert.ok((await service.search('cancellation')).hits.length > 0);
+    ignoreBots = false; repositoryBotSettings = { 'acme/core': true };
+    assert.equal((await service.search('cancellation')).hits.length, 0);
+    assert.ok((await service.search('cancellation', true)).hits.length > 0);
+  } finally { await fs.rm(dir, { recursive: true, force: true }); }
+});

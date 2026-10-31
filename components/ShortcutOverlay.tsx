@@ -42,6 +42,7 @@ const groups: ShortcutGroup[] = [
     heading: 'Review controls',
     shortcuts: [
       { keys: window.electronAPI.platform === 'darwin' ? '⌘ K' : 'Ctrl K', label: 'Open command palette' },
+      { keys: window.electronAPI.platform === 'darwin' ? '⌘ ,' : 'Ctrl ,', label: 'Open Settings' },
       { keys: '?', label: 'Show this cheatsheet' },
       { keys: 'Esc', label: 'Dismiss dialog or overlay' },
     ],
@@ -71,7 +72,7 @@ export function ShortcutOverlay({ open, onClose }: Props) {
         <DialogHeader>
           <DialogTitle>Keyboard shortcuts</DialogTitle>
           <DialogDescription>
-            Use these while reviewing. Shortcuts pause when you type or open a dialog.
+            Use these while reviewing. Reading and reviewing shortcuts pause when you type or open a dialog.
           </DialogDescription>
         </DialogHeader>
         <div className="shortcut-groups">

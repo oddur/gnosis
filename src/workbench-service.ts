@@ -1,10 +1,11 @@
+import { repositorySettings, repositoryDiscoverySettings, subjectRecentlyUpdated, discoveryInactivityDays, subjectRepositories, localBriefingDay, briefingBudget, automaticBriefingBlock } from '../lib/repository-settings';
 import { prBadgePreview, type PrBadgePreview } from '../lib/pr-badge-preview';
 import { focusStackPr } from '../lib/stack-workspace';
 import type { StateStorage } from './app-data-store';
 import { createPrReadStore } from './pr-read-store';
 import type { MarkPrReadRequest } from '../lib/pr-read-state';
 import type { QueueSignals, QueueSignalRequest } from '../lib/queue-signals';
-import { normalizePrInactivityDays, matchesPrInactivity, isPrRecentlyUpdated } from '../lib/pr-inactivity';
+import { normalizePrInactivityDays, isPrRecentlyUpdated } from '../lib/pr-inactivity';
 import { createMutedPrStore } from './muted-pr-store';
 import { isMutedReview, withoutMutedMembers, type MutePrRequest } from '../lib/muted-prs';
 import { createSavedViewStore } from './saved-view-store';
@@ -64,6 +65,7 @@ interface State {
   briefs: Partial<Record<string, Briefing>>;
   day: string;
   used: number;
+  repositoryUsed?: Record<string, number>;
   checkedAt?: Record<string, number>;
   filters?: QueueFilters;
   discoveredAt?: number;
@@ -83,7 +85,7 @@ export type WorkbenchPreferences = Pick<
   Preferences,
   'provider' | 'model' | 'watchedRepos' | 'autoBriefings' | 'briefingDailyLimit' | 'ignoreDependabotPrs' | 'prInactivityDays'
 > &
-  Partial<Pick<Preferences, 'proactiveReviewOverrides' | 'proactiveProvider' | 'proactiveModel' | 'proactiveThinking'>>;
+  Partial<Pick<Preferences, 'proactiveReviewOverrides' | 'proactiveProvider' | 'proactiveModel' | 'proactiveThinking' | 'proactiveEffort' | 'effort' | 'repositorySettings' | 'repositoryBriefingDailyLimit'>>;
 interface Deps {
   changed?: () => void;
   storage?: StateStorage;
@@ -143,6 +145,7 @@ export function createWorkbenchService(deps: Deps) {
           [...deps.preferences().watchedRepos].sort(),
           deps.preferences().ignoreDependabotPrs !== false,
           involvement === 'all' ? 'all' : 'mine',
+          ...repositoryDiscoverySettings(deps.preferences()),
         ])
       )
       .digest('hex');
@@ -167,10 +170,11 @@ export function createWorkbenchService(deps: Deps) {
       if (subject.kind === 'stack' && name) { subject.name = name; subject.title = name; }
     }
     state.filters = activeViewFilters(savedViews.load(account, state.filters));
-    const day = new Date().toISOString().slice(0, 10);
+    const day = localBriefingDay(now());
     if (state.day !== day) {
       state.day = day;
       state.used = 0;
+      state.repositoryUsed = {};
     }
     return state;
   }
@@ -185,15 +189,17 @@ export function createWorkbenchService(deps: Deps) {
   const modelSettings = (preferences = deps.preferences()) => briefingModel(preferences);
   function key(subject: ReviewSubject, p = modelSettings()) {
     return createHash('sha256')
-      .update(JSON.stringify([fingerprint(subject), p.provider, p.model, p.thinking, 'briefing-v2']))
+      // Keep existing low/high cache keys so upgrading does not regenerate briefings.
+      .update(JSON.stringify([fingerprint(subject), p.provider, p.model, p.effort !== 'low', 'briefing-v2',
+        ...(['low', 'high'].includes(p.effort) ? [] : [p.effort])]))
       .digest('hex');
   }
   const limit = (preferences = deps.preferences()) => Math.min(100, Math.max(0, (preferences.briefingDailyLimit ?? 10) || 0));
   function isArchived(member: ReviewMember) {
     return member.repoArchived === true || (load().archivedRepos ?? []).includes(member.repo.toLowerCase());
   }
-  const inactivityDays = (preferences = deps.preferences()) => normalizePrInactivityDays(preferences.prInactivityDays);
-  const withinInactivity = (subject: ReviewSubject, starred: ReadonlySet<string> = new Set(stars.load(load().account).map(entry => entry.member.url)), preferences = deps.preferences()) => matchesPrInactivity(subject, inactivityDays(preferences), now(), starred);
+  const inactivityDays = (preferences = deps.preferences()) => discoveryInactivityDays(preferences);
+  const withinInactivity = (subject: ReviewSubject, starred: ReadonlySet<string> = new Set(stars.load(load().account).map(entry => entry.member.url)), preferences = deps.preferences()) => subjectRecentlyUpdated(subject, preferences, now(), starred);
   function includeSubject(subject: ReviewSubject, muted = mutedUrls(), starred: ReadonlySet<string> = new Set(stars.load(load().account).map(entry => entry.member.url)), preferences = deps.preferences()) {
     if (load().retiredIds?.includes(subject.id)) return false;
     if (load().retainedInactiveIds?.includes(subject.id) && !subject.members.some(member =>
@@ -201,7 +207,7 @@ export function createWorkbenchService(deps: Deps) {
     )) return false;
     // Retain necessary parent context when a human-authored change depends on a bot PR.
     return withinInactivity(subject, starred, preferences) && !subject.members.some(m => muted.has(m.url) || isArchived(m)) && subject.members.some(
-      (m) => m.state === 'open' && (preferences.ignoreDependabotPrs === false || !isDependabot(m.author))
+      (m) => m.state === 'open' && (!repositorySettings(preferences, m.repo).ignoreDependabotPrs || !isDependabot(m.author))
     );
   }
   function view(includeHidden = false): WorkbenchQueue {
@@ -237,16 +243,14 @@ export function createWorkbenchService(deps: Deps) {
         history.find((h) => subject.members.some((m) => m.url === h.prUrl));
       const k = key(subject, selection);
       const cached = s.briefs[k];
-      const briefing = cached ?? {
-        key: k,
-        status:
-          activeSubjects.has(subject) &&
-          (preferences.autoBriefings !== false || requestedBriefings.has(requestKey(k))) &&
-          s.used < limit(preferences)
-            ? ('queued' as const)
-            : ('paused' as const),
-        updatedAt: new Date().toISOString(),
-      };
+      const block = automaticBriefingBlock(subject, preferences, s.used, s.repositoryUsed ?? {});
+      const manual = requestedBriefings.has(requestKey(k));
+      const briefing: Briefing = !cached || cached.status === 'paused' ? {
+        ...(cached ?? {}), key: k,
+        status: activeSubjects.has(subject) && (manual || !block) ? (cached?.status ?? 'queued') : 'paused',
+        pauseDetail: manual ? undefined : block,
+        updatedAt: cached?.updatedAt ?? new Date(now()).toISOString(),
+      } : cached;
       const item = {
         subject,
         review,
@@ -299,6 +303,7 @@ export function createWorkbenchService(deps: Deps) {
       warnings,
       sync: sync ?? { status: 'idle', checkedAt: s.discoveredAt },
       remaining: Math.max(0, limit(preferences) - s.used),
+      briefingBudget: briefingBudget(preferences, [...preferences.watchedRepos, ...Object.keys(preferences.repositorySettings ?? {}), ...allMembers.map(m => m.repo)], s.used, s.repositoryUsed ?? {}, now()),
       filters,
       savedViews: { ...structuredClone(views), counts },
     };
@@ -351,7 +356,7 @@ export function createWorkbenchService(deps: Deps) {
     };
     const prefs = deps.preferences();
     const days = inactivityDays();
-    const isRecent = (updatedAt: string) => isPrRecentlyUpdated(updatedAt, days, now());
+    const isRecent = (updatedAt: string, repo: string) => isPrRecentlyUpdated(updatedAt, repositorySettings(prefs, repo).prInactivityDays, now());
     const previousMembers = new Map([
       ...s.subjects.flatMap((sub) => sub.members.map((m) => [m.url, m] as const)),
       ...(pending?.members ?? []).map((m) => [m.url, m] as const),
@@ -412,7 +417,7 @@ export function createWorkbenchService(deps: Deps) {
       // Search excludes archived repositories, so these are active even after an unarchive.
       for (const repo of new Set(found.map(pr => `${pr.repoOwner}/${pr.repoName}`))) setArchiveState(repo, false);
       const seeds = new Map<string, Pick<PrSearchResult, 'url' | 'role' | 'updatedAt'>>(
-        found.filter((m) => isRecent(m.updatedAt) && (prefs.ignoreDependabotPrs === false || !isDependabot(m.author))).map((m) => [m.url, m])
+        found.filter((m) => isRecent(m.updatedAt, `${m.repoOwner}/${m.repoName}`) && (!repositorySettings(prefs, `${m.repoOwner}/${m.repoName}`).ignoreDependabotPrs || !isDependabot(m.author))).map((m) => [m.url, m])
       );
       for (const [index, fullName] of (mineOnly ? [] : prefs.watchedRepos).entries()) {
         progress(`Checking ${fullName}`, { completed: index, total: prefs.watchedRepos.length, unit: 'repositories' });
@@ -422,8 +427,8 @@ export function createWorkbenchService(deps: Deps) {
           for (const pr of (await listRepo(fullName)).data)
             if (
               !seeds.has(pr.html_url) &&
-              isRecent(pr.updated_at) &&
-              (prefs.ignoreDependabotPrs === false || !isDependabot(pr.user?.login ?? 'unknown'))
+              isRecent(pr.updated_at, fullName) &&
+              (!repositorySettings(prefs, fullName).ignoreDependabotPrs || !isDependabot(pr.user?.login ?? 'unknown'))
             )
               seeds.set(pr.html_url, { url: pr.html_url, role: 'watched', updatedAt: pr.updated_at });
         } catch (error) {
@@ -432,9 +437,9 @@ export function createWorkbenchService(deps: Deps) {
             if (
               m.repo === fullName &&
               m.state === 'open' &&
-              isRecent(m.updatedAt) &&
+              isRecent(m.updatedAt, m.repo) &&
               !seeds.has(m.url) &&
-              (prefs.ignoreDependabotPrs === false || !isDependabot(m.author))
+              (!repositorySettings(prefs, m.repo).ignoreDependabotPrs || !isDependabot(m.author))
             )
               seeds.set(m.url, { ...m, role: 'watched' });
           warnings.push(`Could not refresh ${fullName}. Some changes may be missing.`);
@@ -820,8 +825,6 @@ export function createWorkbenchService(deps: Deps) {
     if (
       pumping ||
       deps.busy() ||
-      (preferences.autoBriefings === false &&
-        ![...requestedBriefings].some((k) => k.startsWith(`${deps.auth().login}:`))) ||
       !deps.auth().token ||
       (cooldown && cooldown.error.retryAt > now()) ||
       githubClients.backoff(deps.auth().token, true, ['core'])
@@ -841,14 +844,11 @@ export function createWorkbenchService(deps: Deps) {
           )
       );
       const manualItem = items.find((i) => requestedBriefings.has(requestKey(key(i.subject, p))));
-      const item =
-        manualItem ??
-        (preferences.autoBriefings === false
-          ? undefined
-          : prioritizeBriefings(candidates, filters, now(), deps.auth().login, filters.sort.key === 'status' ? deps.cachedSignals?.(candidates.flatMap(item => item.subject.members)) : undefined).find(
-              (i) => !s.briefs[key(i.subject, p)] || s.briefs[key(i.subject, p)]?.status === 'paused'
-            ));
-      if (!item || s.used >= limit(preferences)) return;
+      const item = manualItem ?? prioritizeBriefings(candidates, filters, now(), deps.auth().login, filters.sort.key === 'status' ? deps.cachedSignals?.(candidates.flatMap(item => item.subject.members)) : undefined).find(
+        i => !automaticBriefingBlock(i.subject, preferences, s.used, s.repositoryUsed ?? {}) &&
+          (!s.briefs[key(i.subject, p)] || s.briefs[key(i.subject, p)]?.status === 'paused')
+      );
+      if (!item) return;
       const subject = item.subject,
         k = key(subject, p);
       const controller = new AbortController();
@@ -858,13 +858,18 @@ export function createWorkbenchService(deps: Deps) {
       const preempt = setInterval(() => {
         if (
           deps.busy() ||
-          (!manualItem && deps.preferences().autoBriefings === false) ||
-          !includeSubject(subject) ||
+          subject.members.some(m => mutedUrls().has(m.url)) ||
           key(subject) !== k
         )
           controller.abort(new BriefingPaused());
       }, 500);
-      s.used++;
+      const chargedDay = s.day;
+      const chargedRepos = manualItem ? [] : subjectRepositories(subject);
+      if (!manualItem) {
+        s.used++;
+        s.repositoryUsed ??= {};
+        for (const repo of chargedRepos) s.repositoryUsed[repo] = (s.repositoryUsed[repo] ?? 0) + 1;
+      }
       s.briefs[k] = { key: k, status: 'generating', updatedAt: new Date().toISOString() };
       save();
       const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-briefing-'));
@@ -899,13 +904,14 @@ export function createWorkbenchService(deps: Deps) {
           if (last.files.length) last.files.pop();
           else evidence.members.pop();
         }
-        if (!includeSubject(subject) || key(subject) !== k) controller.abort(new BriefingPaused());
+        if (subject.members.some(m => mutedUrls().has(m.url)) || key(subject) !== k) controller.abort(new BriefingPaused());
         controller.signal.throwIfAborted();
         let output = 0;
         generationStarted = true;
         const raw = await (deps.provider ?? getProvider)(p.provider).generate({
           model: p.model,
           thinking: p.thinking,
+          effort: p.effort,
           isolated: true,
           cwd,
           signal: controller.signal,
@@ -934,7 +940,7 @@ export function createWorkbenchService(deps: Deps) {
                 .slice(0, max)
                 .map((v) => v.slice(0, 400))
             : [];
-        if (s.account !== deps.auth().login || !s.subjects.some((sub) => key(sub) === k)) return;
+        if (s.account !== deps.auth().login) return;
         s.briefs[k] = {
           key: k,
           status: 'ready',
@@ -947,7 +953,11 @@ export function createWorkbenchService(deps: Deps) {
         const limited = githubRateLimit(error, now());
         if (limited) {
           cooldown = { account: s.account, error: limited };
-          if (!generationStarted) s.used = Math.max(0, s.used - 1);
+          if (!generationStarted && !manualItem && s.day === chargedDay) {
+            s.used = Math.max(0, s.used - 1);
+            s.repositoryUsed ??= {};
+            for (const repo of chargedRepos) s.repositoryUsed[repo] = Math.max(0, (s.repositoryUsed[repo] ?? 0) - 1);
+          }
         }
         s.briefs[k] = {
           key: k,
@@ -1106,7 +1116,7 @@ export function createWorkbenchService(deps: Deps) {
                 : status === 'running'
                   ? 'Preparing a short briefing'
                   : status === 'paused'
-                    ? 'Waiting for foreground work or the daily limit'
+                    ? (projected.pauseDetail ?? 'Waiting for foreground work')
                     : status === 'queued'
                       ? 'Waiting to start'
                       : status === 'completed'
@@ -1114,10 +1124,7 @@ export function createWorkbenchService(deps: Deps) {
                         : 'Cancelled',
             updatedAt: briefing.updatedAt,
             canCancel: ['running', 'queued', 'paused'].includes(status),
-            canRetry:
-              ['failed', 'cancelled'].includes(status) &&
-              preferences.autoBriefings !== false &&
-              load().used < limit(preferences),
+            canRetry: ['failed', 'cancelled'].includes(status),
           },
         ];
       });
@@ -1190,8 +1197,6 @@ export function createWorkbenchService(deps: Deps) {
       if (explicit) {
         if (!sub || !includeSubject(sub))
           throw new Error('This PR is no longer available for briefing. Refresh the queue and try again.');
-        if (load().used >= limit())
-          throw new Error('The daily briefing limit is reached. Increase it in Settings → Review queue or try tomorrow.');
         if (runningKey === key(sub)) return view();
         requestedBriefings.add(requestKey(key(sub)));
       }

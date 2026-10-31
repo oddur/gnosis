@@ -41,6 +41,7 @@ export interface SearchDocument {
   author?: string;
   state?: string;
   bot?: boolean;
+  botHidden?: boolean;
   destination: SearchDestination;
   reviewId?: string;
 }
@@ -107,7 +108,7 @@ export function searchDocuments(documents: SearchDocument[], query: string, incl
   const terms = q.split(/\s+/);
   return documents
     .flatMap((document) => {
-      if (document.bot && !includeBots) return [];
+      if (document.bot && document.botHidden !== false && !includeBots) return [];
       const title = document.title.toLowerCase(),
         source = document.source.toLowerCase();
       const text =

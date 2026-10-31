@@ -1,3 +1,6 @@
+import { RepositoryMark } from './RepositoryAppearance';
+import { useRepositorySettings } from '../lib/use-repository-settings';
+import { repositoryKey, validRepository } from '../lib/repository-settings';
 import { useMemo, useRef, useState } from 'react';
 import {
   Combobox,
@@ -18,6 +21,7 @@ export interface SelectionOption {
 /** A compact selector with local search. Typing never changes the committed value. */
 export function SearchableSelect({
   options,
+  repositoryOptions = false,
   value,
   onValueChange,
   label,
@@ -31,6 +35,7 @@ export function SearchableSelect({
   current,
   placeholder = 'Choose an option',
 }: {
+  repositoryOptions?: boolean;
   options: SelectionOption[];
   value: string;
   onValueChange: (value: string) => void;
@@ -46,6 +51,8 @@ export function SearchableSelect({
   current?: boolean;
   placeholder?: string;
 }) {
+  const { settings } = useRepositorySettings();
+  const optionLabel = (value: string, label: string | undefined) => repositoryOptions && validRepository(value) ? <RepositoryMark repo={label ?? value} settings={settings[repositoryKey(value)]} /> : label;
   const trigger = useRef<HTMLButtonElement>(null);
   const [container, setContainer] = useState<HTMLElement | null>(null);
   const [query, setQuery] = useState('');
@@ -106,7 +113,7 @@ export function SearchableSelect({
           setOpen(true);
         }}
       >
-        {triggerLabel ?? labels.get(value) ?? placeholder}
+        {triggerLabel ?? optionLabel(value, labels.get(value)) ?? placeholder}
       </ComboboxTrigger>
       <ComboboxContent container={container} collisionBoundary={popupBoundary === 'viewport' ? [] : undefined} className={popupClassName}>
         <ComboboxInput aria-label={`Search ${label.toLowerCase()}`} placeholder="Type to search…" />
@@ -114,7 +121,7 @@ export function SearchableSelect({
         <ComboboxList>
           {(item: string) => (
             <ComboboxItem key={item} value={item} data-value={item}>
-              {labels.get(item) ?? item}
+              {optionLabel(item, labels.get(item)) ?? item}
             </ComboboxItem>
           )}
         </ComboboxList>

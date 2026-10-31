@@ -249,3 +249,34 @@ void test('setup drafts and walkthrough progress survive SQLite restart and cach
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
+
+void test('setup persists independent efforts and safely changes installed harnesses', () => {
+  const draft = initialSetup({ ...prefs, firstRunSeen: true, provider: 'codex', model: 'gpt-6.1-sol',
+    effort: 'ultra', proactiveEffort: 'medium', proactiveReviewOverrides: false });
+  assert.equal(draft.effort, 'ultra');
+  assert.equal(draft.briefingEffort, 'medium');
+  const claudeOnly = setupForInstalledProviders(draft, ['claude']);
+  assert.equal(claudeOnly.effort, 'max');
+  assert.equal(claudeOnly.briefingEffort, 'medium');
+  const saved = setupPreferences(prefs, claudeOnly);
+  assert.equal(saved.effort, 'max');
+  assert.equal(saved.proactiveEffort, 'medium');
+  const legacy = initialSetup({ ...prefs, thinking: false, proactiveThinking: true });
+  assert.equal(legacy.effort, 'low');
+  assert.equal(legacy.briefingEffort, 'low');
+  const invalid = normalizeSetup({ ...draft, effort: 'invalid', briefingEffort: 'invalid' });
+  assert.equal(invalid.effort, 'high');
+  assert.equal(invalid.briefingEffort, 'low');
+});
+
+void test('onboarding applies repository overrides and retains unwatched repository settings', () => {
+  const draft = initialSetup({ ...prefs, repositorySettings: { 'org/old': { color: 'blue', autoBriefings: false } } });
+  draft.repositories = ['org/new'];
+  draft.repositorySettings = { ...draft.repositorySettings, 'ORG/New': { autoBriefings: true, prInactivityDays: 90, briefingDailyLimit: 3, icon: 'rocket' } };
+  draft.repositoryDailyLimit = 8;
+  const saved = setupPreferences(prefs, draft);
+  assert.equal(saved.repositorySettings?.['org/new'].briefingDailyLimit, 3);
+  assert.equal(saved.repositorySettings?.['org/old'].color, 'blue');
+  assert.equal(saved.repositoryBriefingDailyLimit, 8);
+  assert.deepEqual(normalizeSetup(draft).repositorySettings, saved.repositorySettings);
+});

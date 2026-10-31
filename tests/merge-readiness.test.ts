@@ -94,7 +94,8 @@ void test('stacks name only the next dependency-eligible PR and never promise th
     warnings: [],
   };
   const childSignals = { ...signals(), url: child.url, headSha: child.headSha };
-  const draftChild = { ...childSignals, readiness: { ...childSignals.readiness!, isDraft: true } };
+  assert.ok(childSignals.readiness);
+  const draftChild = { ...childSignals, readiness: { ...childSignals.readiness, isDraft: true } };
   const partial = subjectReadiness(subject, [signals(), draftChild], now);
   assert.equal(partial.blockedCount, 1);
   assert.doesNotMatch(partial.label, /blocked/);
@@ -193,4 +194,68 @@ void test('stack labels distinguish current check results without overriding mer
   assert.equal(stackMergeLabel(member, failed, now + QUEUE_SIGNALS_TTL).label, 'Status needs refresh');
   assert.equal(stackMergeLabel(member, undefined, now, true).label, 'Checking…');
   assert.equal(stackMergeLabel(member, undefined, now, false).label, 'Not checked');
+});
+
+void test('stack rows separate draft and branch blockers from optional cancelled checks', async () => {
+  const { stackMemberStatus, stackStatusReasons } = await import('../lib/stack-member-status');
+  const check = { id: 'check:1', name: 'Build', status: 'completed', conclusion: 'cancelled', required: false };
+  const checks = { url: member.url, headSha: member.headSha, checkedAt: now, checks: [check] } as import('../lib/pr-checks').PrChecks;
+  const signal = signals({ isDraft: true, behindBy: 5 });
+  const result = stackMemberStatus(member, signal, checks, now);
+  assert.deepEqual(result.blockers.map(b => b.key), ['draft']);
+  assert.equal(result.checkLabel, '1 cancelled');
+  assert.equal(result.checksTone, 'warning');
+  assert.equal(result.branch.detail, 'Update optional');
+  assert.equal(stackStatusReasons([member], [signal], { [member.url]: checks }, now), '1 draft PR');
+  const conflicting = stackMemberStatus(member, signals({ isDraft: true, mergeState: 'DIRTY', reviewDecision: 'REVIEW_REQUIRED' }), checks, now);
+  assert.deepEqual(conflicting.blockers.map(b => b.key), ['draft', 'conflicts', 'review']);
+});
+
+void test('stack check requirements and stale evidence never invent merge blockers', async () => {
+  const { stackMemberStatus } = await import('../lib/stack-member-status');
+  const check = { id: 'check:1', name: 'Build', status: 'completed', conclusion: 'failure', required: null };
+  const checks = { url: member.url, headSha: member.headSha, checkedAt: now, checks: [check] } as import('../lib/pr-checks').PrChecks;
+  const result = stackMemberStatus(member, signals({ mergeState: 'UNSTABLE' }), checks, now);
+  assert.equal(result.checkLabel, '1 failed');
+  assert.equal(result.blockers.length, 0);
+  assert.equal(result.checksTone, 'warning');
+  checks.checks[0].required = true;
+  assert.equal(stackMemberStatus(member, signals({ mergeState: 'UNSTABLE' }), checks, now).blockers[0].key, 'checks');
+  assert.equal(stackMemberStatus(member, undefined, checks, now).blockers[0].key, 'checks', 'Known required checks remain visible while other requirements are unknown');
+  assert.equal(stackMemberStatus(member, signals(), checks, now).blockers.length, 0, 'GitHub clean eligibility remains authoritative');
+  const stale = stackMemberStatus(member, signals({ isDraft: true }), checks, now + QUEUE_SIGNALS_TTL);
+  assert.equal(stale.blockers.length, 0);
+  assert.equal(stale.branch.label, 'Status needs refresh');
+  assert.equal(stale.checkList, undefined);
+  assert.equal(stackMemberStatus(member, signals(), { ...checks, headSha: 'old' }, now).checkList, undefined);
+});
+
+void test('merge plan separates actions, waiting and optional results, and orders PR links base first', async () => {
+  const { stackMergePlan } = await import('../lib/stack-merge-plan');
+  const { stackMergeStatus } = await import('../lib/stack-merge-status');
+  const child = { ...member, url: member.url + '2', number: 2 };
+  const subject = { kind: 'stack', members: [child, member], edges: [{ parent: member.url, child: child.url, evidence: 'branch' }] } as ReviewSubject;
+  const check = { id: 'check:1', name: 'Build', status: 'completed', conclusion: 'cancelled', required: false };
+  const checks = { url: member.url, headSha: member.headSha, checkedAt: now - 30_000, checks: [check] } as import('../lib/pr-checks').PrChecks;
+  const drafts = [signals({ isDraft: true, behindBy: 5 }), { ...signals({ isDraft: true }), url: child.url }];
+  const plan = stackMergePlan(subject, drafts, { [member.url]: checks }, now);
+  assert.deepEqual(plan.groups.map(g => g.key), ['draft']);
+  assert.deepEqual(plan.groups[0].entries.map(e => e.member.number), [1, 2]);
+  assert.equal(plan.checksCheckedAt, undefined, 'A missing PR must not be covered by a fresh timestamp');
+  assert.equal(plan.loadedChecks, 1);
+  const loaded = { [member.url]: checks, [child.url]: { ...checks, url: child.url, checkedAt: now } };
+  assert.equal(stackMergePlan(subject, drafts, loaded, now).checksCheckedAt, now - 30_000);
+  const stale = stackMergePlan(subject, drafts, loaded, now + QUEUE_SIGNALS_TTL);
+  assert.deepEqual(stale.groups.map(g => g.key), ['refresh']);
+  assert.equal(stale.ready, false);
+  const running: import('../lib/pr-checks').PrChecks = { ...checks, checkedAt: now, checks: [{ ...checks.checks[0], required: true, status: 'in_progress', conclusion: null }] };
+  const single = { ...subject, members: [member], edges: [] };
+  const policy = signals({ mergeState: 'BLOCKED' });
+  assert.deepEqual(stackMergePlan(single, [policy], { [member.url]: running }, now).groups.map(g => g.key), ['waiting']);
+  assert.equal(stackMergeStatus(single, [policy], { [member.url]: running }, now).summary.label, 'Waiting for required checks');
+  assert.equal(stackMergeStatus(single, [policy], { [member.url]: running }, now).blocked, 0);
+  assert.equal(stackMergePlan(single, [signals()], { [member.url]: checks }, now).ready, true, 'Optional cancelled checks and optional updates do not prevent readiness');
+  const unknown: import('../lib/pr-checks').PrChecks = { ...running, checks: [{ ...running.checks[0], status: 'completed', conclusion: 'failure', required: null }] };
+  assert.deepEqual(stackMergePlan(single, [signals({ mergeState: 'UNSTABLE' })], { [member.url]: unknown }, now).groups.map(g => g.key), ['check-status']);
+  assert.deepEqual(stackMergePlan(single, [signals({ mergeState: 'UNSTABLE' })], { [member.url]: unknown }, now + QUEUE_SIGNALS_TTL).groups.map(g => g.key), ['refresh']);
 });

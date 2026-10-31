@@ -93,7 +93,7 @@ void app.whenReady().then(async () => {
     await click('Check again');
     await wait("document.querySelector('.getting-started-setup').textContent.includes('found. Make sure')");
     await js(
-      `window.selectOption('[aria-label="Review model"]', 'codex:gpt-6.1-sol')`
+      `window.selectOption('[aria-label="Review model"]', 'gpt-6.1-sol')`
     );
     await wait("document.querySelector('.getting-started-setup').textContent.includes('Codex found')");
     await click('AI setup');

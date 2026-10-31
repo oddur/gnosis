@@ -295,3 +295,32 @@ void test('cancelled optional history leaves the queue without making a GitHub r
   await turn();
   assert.deepEqual(calls, ['/block', '/clicked']);
 });
+
+void test('pacing between file sides completes the preload without restarting downloads', async () => {
+  let now = 1_000_000;
+  const calls: string[] = [];
+  const pool = createGitHubClientPool({ now: () => now, minSpacingMs: 0, sleep: ms => { now += ms; return Promise.resolve(); },
+    fetch: ((url: string) => {
+      calls.push(url);
+      return Promise.resolve(new Response('const value = 1;', { headers: {
+        'content-type': 'application/octet-stream', 'x-ratelimit-resource': 'core',
+        'x-ratelimit-remaining': '900', 'x-ratelimit-limit': '5000', 'x-ratelimit-reset': '4600',
+      } }));
+    }) as typeof fetch,
+  });
+  const client = pool.client('account'), load = createSnapshotFileLoader();
+  const request = { url: 'https://github.com/o/r/pull/1', path: 'file.ts', baseSha: 'base', headSha: 'head' };
+  const file = { path: 'file.ts', status: 'modified' as const, additions: 1, deletions: 1, changeId: 'file' };
+  const snapshot = { version: 1, url: request.url, metadata: {
+    ...request, title: 'PR', description: '', author: 'dev', baseRepo: 'o/r', headRepo: 'o/r',
+    baseBranch: 'main', headBranch: 'feature', merged: false, state: 'open', createdAt: '', updatedAt: '',
+    labels: [], mergeable: true, isDraft: false, commitCount: 1, requestedReviewers: [], requestedTeams: [],
+    mergeableState: 'clean', autoMerge: null, milestone: null,
+  },
+    comparisonBase: 'base', fetchedAt: 1, files: [file] } as PrChanges;
+  const read = () => withGitHubPriority('background', () => load(client, request, snapshot, file));
+  const result = await read();
+  assert.equal(result.before.kind, 'text');
+  assert.equal(result.after.kind, 'text');
+  assert.equal(calls.length, 2, 'Exactly one download per side, even across a rate-limit retry');
+});

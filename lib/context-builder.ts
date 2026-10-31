@@ -13,6 +13,37 @@ function truncateFileContent(content: string, maxLines: number): string {
   return lines.slice(0, maxLines).join('\n') + `\n... [truncated after ${maxLines} lines]`;
 }
 
+/** Preserve nearby source with original line numbers instead of always showing the file's first 200 lines. */
+function nearbyFileContent(content: string, hunks: IndexedHunk[], side: 'base' | 'head') {
+  if (content.length <= 16_000) return content;
+  const lines = content.split('\n');
+  const selected = new Set<number>();
+  for (const hunk of hunks) {
+    const match = /@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(hunk.expandedHunkHeader);
+    if (!match) continue;
+    const start = Number(match[side === 'base' ? 1 : 3]);
+    const countText: string | undefined = match[side === 'base' ? 2 : 4];
+    const count = Number(countText || 1);
+    for (const anchor of [start, start + count])
+      for (
+        let i = Math.max(0, anchor - 16);
+        i < Math.min(lines.length, anchor + 15) && selected.size < MAX_FILE_LINES;
+        i++
+      )
+        selected.add(i);
+  }
+  let excerpt = 'Source excerpts near changed ranges (original line numbers; omitted regions are not empty):\n';
+  for (const index of [...selected].sort((a, b) => a - b)) {
+    const line = `${index + 1}: ${lines[index]}\n`;
+    if (excerpt.length + line.length > 16_000) {
+      excerpt += '[Further surrounding source omitted; see diff hunks.]';
+      break;
+    }
+    excerpt += line;
+  }
+  return excerpt;
+}
+
 // Render the Claude-conventions block for the prompt. Returns empty
 // string when there's nothing to include — callers can concatenate
 // unconditionally. Omits inner tags with no content so the prompt
@@ -327,7 +358,11 @@ PR Description: ${prDescription || '(none)'}
   let beforeSection = '\n\n<file_contents_before>\n';
   for (const filePath of affectedFiles) {
     if (fileContents[filePath]) {
-      beforeSection += `  <file path="${filePath}">\n${truncateFileContent(fileContents[filePath], MAX_FILE_LINES)}\n  </file>\n`;
+      beforeSection += `  <file path="${filePath}">\n${nearbyFileContent(
+        fileContents[filePath],
+        relevantHunks.filter((h) => h.filePath === filePath),
+        'base'
+      )}\n  </file>\n`;
       hasBeforeContent = true;
     }
   }
@@ -338,7 +373,11 @@ PR Description: ${prDescription || '(none)'}
   let afterSection = '\n\n<file_contents_after>\n';
   for (const filePath of affectedFiles) {
     if (headFileContents[filePath]) {
-      afterSection += `  <file path="${filePath}">\n${truncateFileContent(headFileContents[filePath], MAX_FILE_LINES)}\n  </file>\n`;
+      afterSection += `  <file path="${filePath}">\n${nearbyFileContent(
+        headFileContents[filePath],
+        relevantHunks.filter((h) => h.filePath === filePath),
+        'head'
+      )}\n  </file>\n`;
       hasAfterContent = true;
     }
   }

@@ -1,3 +1,4 @@
+import { normalizeEffort } from '../effort';
 import { harnessEnvironment } from './environment';
 import os from 'os';
 import { CLAUDE_MODELS } from '../models';
@@ -19,6 +20,7 @@ export const claudeProvider: LLMProvider = {
     systemPrompt,
     model,
     thinking,
+    effort,
     onChunk,
     onToolUse,
     mcpConfigPath,
@@ -103,7 +105,7 @@ export const claudeProvider: LLMProvider = {
         '--include-partial-messages',
         '--no-session-persistence',
         '--effort',
-        thinking ? 'high' : 'low',
+        normalizeEffort('claude', model, effort, thinking),
       ],
       stdinContent: images?.length
         ? JSON.stringify({

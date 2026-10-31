@@ -1,3 +1,4 @@
+import { normalizeEffort } from './effort';
 import type { QueueViewsSnapshot } from './saved-views';
 import type { QueueFilters } from './queue-filters';
 import type { Preferences, PrMetadata, PrSearchResult, ReviewGuide, ReviewHistoryEntry, Slide } from './types';
@@ -39,6 +40,7 @@ export interface Briefing {
   priorities?: string[];
   error?: string;
   pauseReason?: 'filter';
+  pauseDetail?: string;
   updatedAt: string;
 }
 export interface QueueItem {
@@ -53,6 +55,7 @@ export interface QueueItem {
   attention: 'updated' | 'requested' | 'other';
 }
 export interface WorkbenchQueue {
+  briefingBudget?: import('./repository-settings').BriefingBudget;
   /** Locally retained hierarchy, including completed stacks outside the active queue. */
   stacks?: ReviewSubject[];
   readStates?: Partial<Record<string, import('./pr-read-state').PrReadState>>;
@@ -243,7 +246,7 @@ export function coverageKey(review: ReviewGuide, slide: Slide): string {
 export function briefingModel(
   p: Pick<Preferences, 'provider' | 'model'> &
     Partial<
-      Pick<Preferences, 'proactiveReviewOverrides' | 'proactiveProvider' | 'proactiveModel' | 'proactiveThinking'>
+      Pick<Preferences, 'proactiveReviewOverrides' | 'proactiveProvider' | 'proactiveModel' | 'proactiveThinking' | 'proactiveEffort' | 'effort'>
     >
 ) {
   return p.proactiveReviewOverrides
@@ -251,8 +254,9 @@ export function briefingModel(
         provider: p.proactiveProvider ?? p.provider,
         model: p.proactiveModel ?? p.model,
         thinking: p.proactiveThinking ?? false,
+        effort: normalizeEffort(p.proactiveProvider ?? p.provider, p.proactiveModel ?? p.model, p.proactiveEffort, p.proactiveThinking ?? false),
       }
-    : { provider: p.provider, model: p.model, thinking: false };
+    : { provider: p.provider, model: p.model, thinking: false, effort: normalizeEffort(p.provider, p.model, p.proactiveEffort, false) };
 }
 
 /** Match GitHub bot identities, never PR titles or dependency-related labels. */

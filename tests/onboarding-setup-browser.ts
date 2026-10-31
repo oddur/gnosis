@@ -74,9 +74,15 @@ void app.whenReady().then(async () => {
     await js(
       "document.querySelector('[aria-label=\"Search repositories\"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))"
     );
+    await click('Configure klang/engine');
+    await js("document.querySelector('[aria-label=\"Use global default for daily briefing count\"]').click()");
+    await fill('[aria-label="Repository daily automatic briefings"]', '7');
+    await click('blue repository color');
+    await click('Save settings');
     await click('Finish later');
     await wait("!document.querySelector('.setup-dialog')");
     assert.equal(await js("JSON.parse(sessionStorage.getItem('fixture-onboarding')).draft.repositories.length"), 2);
+    assert.equal(await js("JSON.parse(sessionStorage.getItem('fixture-onboarding')).draft.repositorySettings['klang/engine'].briefingDailyLimit"), 7);
     win.reload();
     await wait("document.body.innerText.includes('Resume setup')");
     await click('Resume setup');
@@ -114,6 +120,8 @@ void app.whenReady().then(async () => {
     await fill('[aria-label="Search explanation model"]', 'Opus');
     await wait("[...document.querySelectorAll('[role=option]')].some(e=>e.textContent.includes('Opus 5.5'))");
     await js("[...document.querySelectorAll('[role=option]')].find(e=>e.textContent.includes('Opus 5.5')).click()");
+    await js("window.selectOption('[aria-label=\"Explanation model effort\"]', 'xhigh')");
+    await js("window.selectOption('[aria-label=\"Briefing model effort\"]', 'medium')");
     await capture('ai-light');
     assert.equal(
       await js("document.querySelector('.setup-body > fieldset:not([hidden]) input[type=checkbox]').checked"),
@@ -128,6 +136,8 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.setup-cli')?.textContent.includes('Claude Code and Codex found')");
     assert.match(await js<string>("document.querySelector('[aria-label=\"Explanation model\"]').textContent"), /Opus 5.5/);
     assert.match(await js<string>("document.querySelector('[aria-label=\"Briefing model\"]').textContent"), /GPT-6.1 Terra/);
+    assert.equal(await js("document.querySelector('[aria-label=\"Explanation model effort\"]').value"), 'xhigh');
+    assert.equal(await js("document.querySelector('[aria-label=\"Briefing model effort\"]').value"), 'medium');
     await js("document.documentElement.classList.add('dark')");
     win.setSize(640, 700);
     await capture('ai-narrow-dark');
@@ -147,14 +157,15 @@ void app.whenReady().then(async () => {
     await js("sessionStorage.setItem('ftue-retry','true')");
     await click('Apply setup');
     await wait("!document.querySelector('.setup-dialog')");
-    assert.equal(await js("window.electronAPI.loadPreferences().then(p=>p.model==='claude-opus-5-5' && p.proactiveProvider==='codex' && p.proactiveModel==='gpt-6.1-terra' && p.proactiveReviewOverrides)"), true);
-    await js("window.selectOption('[aria-label=\"Review model\"]', 'codex:gpt-6.1-sol')");
+    assert.equal(await js("window.electronAPI.loadPreferences().then(p=>p.model==='claude-opus-5-5' && p.proactiveProvider==='codex' && p.proactiveModel==='gpt-6.1-terra' && p.proactiveReviewOverrides && p.effort==='xhigh' && p.proactiveEffort==='medium')"), true);
+    await js("window.selectOption('[aria-label=\"Review model\"]', 'gpt-6.1-sol')");
     await wait("document.querySelector('[aria-label=\"Review model\"]')?.textContent.includes('GPT-6.1 Sol')");
     assert.equal(await js("window.electronAPI.loadPreferences().then(p=>p.proactiveReviewOverrides && p.proactiveModel==='gpt-6.1-terra')"), true, 'queue model changes preserve the briefing choice');
     assert.equal(
       await js("Object.values(JSON.parse(sessionStorage.getItem('fixture-views'+location.search))).length>0"),
       true
     );
+    assert.equal(await js("window.electronAPI.loadPreferences().then(p=>p.repositorySettings['klang/engine'].color)"), 'blue');
     await click('Show walkthrough');
     await wait("!!document.querySelector('.gnosis-tour')");
     await capture('tour-queue');

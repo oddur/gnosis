@@ -1,3 +1,9 @@
+import { RepositorySettingsList } from './RepositorySettingsList';
+import { RepositorySettingsEditor } from './RepositorySettingsEditor';
+import { preferencesUpdated } from '../lib/use-repository-settings';
+import { normalizeRepositorySettings, repositoryKey, normalizeBriefingLimit, type RepositorySettingsMap, type BriefingBudget } from '../lib/repository-settings';
+import { ModelEffortSelect, EffortSelect } from './ModelEffortSelect';
+import { normalizeEffort, type Effort } from '../lib/effort';
 import { DIFF_HIGHLIGHTER, DEFAULT_DIFF_HIGHLIGHTER } from '../lib/diff-highlighter';
 import { resolveDiffHighlighter, type DiffHighlighter } from '../lib/diff-highlighter-preference';
 import { HarnessEnvironmentSettings } from './HarnessEnvironmentSettings';
@@ -12,10 +18,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { CODE_THEMES, CODE_FONTS } from '@/lib/constants';
 import type { CodeTheme, CodeFont } from '@/lib/constants';
 import { applyTheme, type ThemeChoice } from '@/lib/theme';
-import { PROVIDERS, PROVIDER_IDS, DEFAULT_FAST_CLAUDE_MODEL } from '@/lib/models';
+import { DEFAULT_CLAUDE_MODEL, DEFAULT_FAST_CLAUDE_MODEL } from '@/lib/models';
 import type { ModelId, Preferences, Provider, RepoSearchResult } from '@/lib/types';
 
-export type SettingsSection = 'queue' | 'review' | 'appearance' | 'integrations';
+export type SettingsSection = 'queue' | 'repositories' | 'review' | 'appearance' | 'integrations';
 
 interface Props {
   initialSection?: SettingsSection;
@@ -158,9 +164,17 @@ export function SettingsDialog({
       setClearingCache(false);
     }
   }
+  const [addingRepository, setAddingRepository] = useState(false);
+  const [narrowSettings, setNarrowSettings] = useState(() => window.matchMedia('(max-width: 760px)').matches);
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 760px)');
+    const update = () => setNarrowSettings(media.matches);
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
   const [section, setSection] = useState<SettingsSection>(initialSection);
   useEffect(() => {
-    if (open) setSection(initialSection);
+    if (open) { setSection(initialSection); setAddingRepository(false); }
   }, [open, initialSection]);
   const [appTheme, setAppTheme] = useState<ThemeChoice>('system');
   const [diffHighlighter, setDiffHighlighter] = useState<DiffHighlighter>(DIFF_HIGHLIGHTER);
@@ -168,11 +182,27 @@ export function SettingsDialog({
   const [codeFont, setCodeFont] = useState<CodeFont>('jetbrains-mono');
   const [enableTools, setEnableTools] = useState(false);
   const [instructions, setInstructions] = useState('');
-  const [thinking, setThinking] = useState(false);
+  const [provider, setProvider] = useState<Provider>('claude');
+  const [model, setModel] = useState<ModelId>(DEFAULT_CLAUDE_MODEL);
+  const [effort, setEffort] = useState<Effort>('high');
   const [smartImports, setSmartImports] = useState(true);
   const [prInactivityDays, setPrInactivityDays] = useState(DEFAULT_PR_INACTIVITY_DAYS);
   const [ignoreDependabotPrs, setIgnoreDependabotPrs] = useState(true);
   const [autoBriefings, setAutoBriefings] = useState(false);
+  const [repositorySettings, setRepositorySettings] = useState<RepositorySettingsMap>({});
+  const [repositoryDailyLimit, setRepositoryDailyLimit] = useState(10);
+  const [pendingRepository, setPendingRepository] = useState('');
+  useEffect(() => {
+    if (pendingRepository) document.querySelector<HTMLElement>('.repository-editor input')?.focus();
+  }, [pendingRepository]);
+  const [budget, setBudget] = useState<BriefingBudget>();
+  useEffect(() => {
+    if (!open) return;
+    let live = true;
+    const update = () => { void Promise.resolve().then(() => window.electronAPI.workbenchSnapshot()).then(q => { if (live) setBudget(q.briefingBudget); }).catch(() => {}); };
+    const unsubscribe = window.electronAPI.onWorkbenchChanged?.(update);
+    return () => { live = false; unsubscribe?.(); };
+  }, [open]);
   const [watchedRepos, setWatchedRepos] = useState<string[]>([]);
   const [watchedRepoInput, setWatchedRepoInput] = useState('');
   const [repoSuggestions, setRepoSuggestions] = useState<RepoSearchResult[]>([]);
@@ -189,7 +219,7 @@ export function SettingsDialog({
   const [analytics, setAnalytics] = useState(true);
   const [proactiveReviewOverrides, setProactiveReviewOverrides] = useState(false);
   const [proactiveModel, setProactiveModel] = useState<ModelId>(DEFAULT_FAST_CLAUDE_MODEL);
-  const [proactiveThinking, setProactiveThinking] = useState(false);
+  const [proactiveEffort, setProactiveEffort] = useState<Effort>('low');
   const [proactiveProvider, setProactiveProvider] = useState<Provider>('claude');
   const [codexPath, setCodexPath] = useState('');
   const [codexDetected, setCodexDetected] = useState('');
@@ -229,13 +259,17 @@ export function SettingsDialog({
         if (prefs.codeFont) setCodeFont(prefs.codeFont as CodeFont);
         setEnableTools(prefs.enableTools);
         setInstructions(prefs.instructions);
-        setThinking(prefs.thinking);
+        setProvider(prefs.provider);
+        setModel(prefs.model);
+        setEffort(normalizeEffort(prefs.provider, prefs.model, prefs.effort, prefs.thinking));
         setSmartImports(prefs.smartImports);
         setAutoBriefings(prefs.autoBriefings !== false);
         setIgnoreDependabotPrs(prefs.ignoreDependabotPrs !== false);
         setPrInactivityDays(normalizePrInactivityDays(prefs.prInactivityDays));
         setCacheSizeMB(normalizeGitHubCacheMB(prefs.githubCacheSizeMB));
         setWatchedRepos(prefs.watchedRepos);
+        setRepositorySettings(normalizeRepositorySettings(prefs.repositorySettings));
+        setRepositoryDailyLimit(normalizeBriefingLimit(prefs.repositoryBriefingDailyLimit));
         setNotifications(prefs.notifications);
         setTrayEnabled(prefs.trayEnabled);
         setBriefingDailyLimit(prefs.briefingDailyLimit ?? 10);
@@ -247,12 +281,20 @@ export function SettingsDialog({
         setProactiveProvider(prefs.proactiveProvider);
         setProactiveModel(prefs.proactiveModel);
         setCodexPath(prefs.codexPath);
-        setProactiveThinking(prefs.proactiveThinking);
+        setProactiveEffort(
+          normalizeEffort(
+            prefs.proactiveReviewOverrides ? prefs.proactiveProvider : prefs.provider,
+            prefs.proactiveReviewOverrides ? prefs.proactiveModel : prefs.model,
+            prefs.proactiveEffort,
+            prefs.proactiveReviewOverrides ? prefs.proactiveThinking : false
+          )
+        );
         setClaudePath(prefs.claudePath || '');
       })
       .catch(() => {
         if (active) setLoadState('error');
       });
+    void Promise.resolve().then(() => window.electronAPI.workbenchSnapshot()).then(q => { if (active) setBudget(q.briefingBudget); }).catch(() => {});
     // Detection is optional: an unavailable tool must not prevent editing settings.
     void window.electronAPI
       .detectBinaryPath('claude')
@@ -293,6 +335,8 @@ export function SettingsDialog({
           const next = { ...current, ...patch };
           await window.electronAPI.savePreferences(next);
           lastSaved.current = next;
+          preferencesUpdated(next);
+          void Promise.resolve().then(() => window.electronAPI.workbenchSnapshot()).then(q => setBudget(q.briefingBudget)).catch(() => {});
         } catch {
           // Keep newer edits when a failed write and another edit share a field.
           pendingChanges.current = { ...patch, ...pendingChanges.current };
@@ -364,11 +408,9 @@ export function SettingsDialog({
       return;
     }
     if (watchedRepos.some((repo) => repo.toLowerCase() === name.toLowerCase())) return;
-    const next = [...watchedRepos, name];
-    setWatchedRepos(next);
+    setPendingRepository(name);
     searchRepositories('');
-    saveField({ watchedRepos: next });
-    document.getElementById('watched-repos')?.focus();
+
   }
 
   function handleSelectTheme(theme: CodeTheme) {
@@ -383,10 +425,12 @@ export function SettingsDialog({
     applyCodeFont(font);
   }
 
+  const repositoryDefaults = { prInactivityDays, ignoreDependabotPrs, autoBriefings, briefingDailyLimit, repositoryBriefingDailyLimit: repositoryDailyLimit, repositorySettings };
+  const unwatchedSettings = Object.keys(repositorySettings).filter(repo => !watchedRepos.some(watched => repositoryKey(watched) === repo));
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
-        className="settings-dialog bg-card sm:max-w-2xl"
+        className="settings-dialog bg-card"
         showCloseButton={!saving && !saveError}
         onEscapeKeyDown={(event) => {
           if (event.target instanceof Element && event.target.closest('[data-slot="combobox-content"]')) {
@@ -411,7 +455,7 @@ export function SettingsDialog({
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription aria-live="polite">
-            {saving ? 'Saving changes…' : saveError ? 'You have unsaved changes.' : 'Changes save automatically.'}
+            {saving ? 'Saving changes…' : saveError ? 'You have unsaved changes.' : 'Global settings save automatically. Repository edits have a Save button.'}
           </DialogDescription>
         </DialogHeader>
         {saveError && (
@@ -437,54 +481,36 @@ export function SettingsDialog({
         {loadState === 'ready' && (
           <Tabs.Root
             className="settings-tabs"
+            orientation={narrowSettings ? 'horizontal' : 'vertical'}
             value={section}
             onValueChange={(value) => setSection(value as SettingsSection)}
           >
             <Tabs.List className="settings-sections" aria-label="Settings sections">
               <Tabs.Trigger value="queue">Queue &amp; briefings</Tabs.Trigger>
+              <Tabs.Trigger value="repositories">Repositories</Tabs.Trigger>
               <Tabs.Trigger value="review">Review</Tabs.Trigger>
               <Tabs.Trigger value="appearance">Appearance</Tabs.Trigger>
               <Tabs.Trigger value="integrations">Integrations</Tabs.Trigger>
             </Tabs.List>
-            <Tabs.Content value="queue" className="settings-panel">
-              <SettingRow label="Ignore PRs inactive for…"
-                description="Uses the last GitHub update. Keep starred PRs and any stack with a recent or starred PR. Applies to all saved views.">
-                <PrInactivitySetting days={prInactivityDays} onChange={days => {
-                  setPrInactivityDays(days); saveField({ prInactivityDays: days });
-                }} />
-              </SettingRow>
-              <SettingRow
-                label="Ignore Dependabot PRs"
-                description="Hide Dependabot PRs from the queue and automatic briefings. Keep them visible when a PR by a person builds on them."
-              >
-                <Toggle
-                  checked={ignoreDependabotPrs}
-                  ariaLabel="Ignore Dependabot PRs"
-                  onChange={() => {
-                    const next = !ignoreDependabotPrs;
-                    setIgnoreDependabotPrs(next);
-                    saveField({ ignoreDependabotPrs: next });
-                  }}
-                />
-              </SettingRow>
-              <SettingRow
-                label="Automatic briefings"
-                description="Generate short AI summaries in the background. Queue filters control which PRs and stacks are included; the daily attempt limit still applies."
-              >
-                <Toggle
-                  checked={autoBriefings}
-                  ariaLabel="Automatic briefings"
-                  onChange={() => {
-                    const next = !autoBriefings;
-                    setAutoBriefings(next);
-                    saveField({ autoBriefings: next });
-                  }}
-                />
-              </SettingRow>
-
-              <div className="flex flex-col gap-2 ml-0.5">
+            <Tabs.Content forceMount value="repositories" className="settings-panel settings-repositories">
+              <div className="repository-panel-heading">
+                <div><h2>Repositories</h2><p className="settings-description">Choose what appears in your queue and configure each repository.</p></div>
+                <Button type="button" variant="outline" size="sm" onClick={() => { setAddingRepository(v => !v); requestAnimationFrame(() => document.getElementById('watched-repos')?.focus()); }}>Add repository</Button>
+              </div>
+              {pendingRepository ? <div className="repository-settings-focus repository-new-editor">
+                {pendingRepository && <RepositorySettingsEditor key={pendingRepository} repo={pendingRepository}
+                  value={repositorySettings[repositoryKey(pendingRepository)] ?? {}} defaults={repositoryDefaults} budget={budget}
+                  onCancel={() => setPendingRepository('')} action="Watch repository" onApply={value => {
+                    const next = [...watchedRepos, pendingRepository];
+                    const settings = normalizeRepositorySettings({ ...repositorySettings, [repositoryKey(pendingRepository)]: value });
+                    setWatchedRepos(next); setRepositorySettings(settings); setPendingRepository('');
+                    saveField({ watchedRepos: next, repositorySettings: settings });
+                    requestAnimationFrame(() => document.getElementById('watched-repos')?.focus());
+                  }} />}
+              </div> : <>
+              {addingRepository && <div className="repository-add">
                 <label htmlFor="watched-repos" className="text-sm font-medium text-foreground">
-                  Repositories in your queue
+                  Add a repository
                 </label>
                 <p className="settings-description">
                   Add open PRs from these repositories. This does not change your GitHub Watch subscriptions.
@@ -537,35 +563,65 @@ export function SettingsDialog({
                     </ul>
                   )}
                 </div>
-                {watchedRepos.length > 0 && (
-                  <ul className="flex flex-col gap-1 mt-1">
-                    {watchedRepos.map((repo) => (
-                      <li key={repo} className="flex items-center justify-between gap-2 text-sm text-foreground">
-                        <span className="min-w-0 break-words font-mono text-xs">{repo}</span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const next = watchedRepos.filter((r) => r !== repo);
-                            setWatchedRepos(next);
-                            saveField({ watchedRepos: next });
-                          }}
-                          aria-label={`Remove ${repo} from your queue`}
-                          className="shrink-0 text-xs text-muted-foreground hover:text-destructive transition-colors"
-                        >
-                          Remove
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+              </div>}
+                <RepositorySettingsList focused repositories={watchedRepos} settings={repositorySettings} defaults={repositoryDefaults} budget={budget}
+                  onChange={settings => { setRepositorySettings(settings); saveField({ repositorySettings: settings }); }}
+                  onRemove={repo => { const next = watchedRepos.filter(r => r !== repo); setWatchedRepos(next); saveField({ watchedRepos: next }); }} />
+                {unwatchedSettings.length > 0 && <details className="repository-retained"><summary>Settings for unwatched repositories ({unwatchedSettings.length})</summary>
+                  <p className="settings-description">These settings still apply to personal PRs and review requests. Unwatching keeps your configuration.</p>
+                  <RepositorySettingsList focused repositories={unwatchedSettings} settings={repositorySettings} defaults={repositoryDefaults} budget={budget}
+                    onChange={settings => { setRepositorySettings(settings); saveField({ repositorySettings: settings }); }} />
+                </details>}
+              </>}
+            </Tabs.Content>
+            <Tabs.Content value="queue" className="settings-panel">
+              <p className="settings-description">Defaults for all repositories. Customize individual repositories in Repositories.</p>
+              <SettingRow label="Ignore PRs inactive for…"
+                description="Global default. Repository overrides take precedence. Starred PRs and necessary stack context stay available.">
+                <PrInactivitySetting days={prInactivityDays} onChange={days => {
+                  setPrInactivityDays(days); saveField({ prInactivityDays: days });
+                }} />
+              </SettingRow>
+              <SettingRow
+                label="Ignore Dependabot PRs"
+                description="Hide Dependabot PRs from the queue and automatic briefings. Keep them visible when a PR by a person builds on them."
+              >
+                <Toggle
+                  checked={ignoreDependabotPrs}
+                  ariaLabel="Ignore Dependabot PRs"
+                  onChange={() => {
+                    const next = !ignoreDependabotPrs;
+                    setIgnoreDependabotPrs(next);
+                    saveField({ ignoreDependabotPrs: next });
+                  }}
+                />
+              </SettingRow>
+              <SettingRow
+                label="Automatic briefings"
+                description="Default for repositories without an override. Queue filters and automatic briefing limits also apply."
+              >
+                <Toggle
+                  checked={autoBriefings}
+                  ariaLabel="Automatic briefings"
+                  onChange={() => {
+                    const next = !autoBriefings;
+                    setAutoBriefings(next);
+                    saveField({ autoBriefings: next });
+                  }}
+                />
+              </SettingRow>
+
+              <div className="flex flex-col gap-2 ml-0.5">
+                <div className="flex items-center justify-between gap-4 mt-2"><div><label htmlFor="settings-repository-briefing-limit" className="text-sm font-medium">Default daily automatic briefings per repository</label><p className="settings-description">Repositories inherit this allowance unless overridden. The overall cap also applies.</p></div>
+                  <input id="settings-repository-briefing-limit" type="number" min={0} max={100} value={repositoryDailyLimit} className="w-20 shrink-0" onChange={e => { const value = Number(e.target.value); if (Number.isInteger(value) && value >= 0 && value <= 100) { setRepositoryDailyLimit(value); saveField({ repositoryBriefingDailyLimit: value }); } }} />
+                </div>
                 <div className="flex items-center justify-between gap-4 mt-2">
                   <div className="flex flex-col gap-0.5">
                     <label htmlFor="settings-briefing-limit" className="text-sm font-medium text-foreground">
-                      Daily briefing limit
+                      Overall daily automatic briefing cap
                     </label>
                     <p className="settings-description">
-                      Maximum automatic briefing attempts per day, including retries. AI explanations do not count
-                      toward this limit.
+                      Maximum automatic attempts across all repositories, including retries. Manual briefings and explanations do not count. Resets at midnight.
                     </p>
                   </div>
                   <input
@@ -604,47 +660,41 @@ export function SettingsDialog({
                   </div>
                 </div>
 
-                {proactiveReviewOverrides && (
-                  <div className="flex flex-col gap-3 mt-1">
-                    {PROVIDER_IDS.map((id) => (
-                      <div key={id} className="flex flex-wrap items-center gap-x-5 gap-y-2 slide-meta">
-                        <span className="text-foreground/60">{PROVIDERS[id].label}</span>
-                        {PROVIDERS[id].models.map((m) => (
-                          <button
-                            key={m.id}
-                            type="button"
-                            aria-pressed={proactiveProvider === id && proactiveModel === m.id}
-                            onClick={() => {
-                              setProactiveProvider(id);
-                              setProactiveModel(m.id);
-                              saveField({ proactiveProvider: id, proactiveModel: m.id });
-                            }}
-                            className={`pb-0.5 border-b transition-colors ${proactiveModel === m.id ? 'text-foreground border-[var(--ring)]' : 'border-transparent hover:text-foreground'}`}
-                          >
-                            {m.label}
-                          </button>
-                        ))}
-                      </div>
-                    ))}
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="flex flex-col gap-0.5 min-w-0">
-                        <span className="text-sm font-medium text-foreground">Deeper reasoning</span>
-                        <span className="slide-meta">Off is usually faster and cheaper for background runs.</span>
-                      </div>
-                      <div className="shrink-0">
-                        <Toggle
-                          checked={proactiveThinking}
-                          ariaLabel="Proactive deeper reasoning"
-                          onChange={() => {
-                            const next = !proactiveThinking;
-                            setProactiveThinking(next);
-                            saveField({ proactiveThinking: next });
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
+                <div className="flex flex-col gap-2 mt-1">
+                  {proactiveReviewOverrides ? (
+                    <ModelEffortSelect
+                      label="Briefing model"
+                      provider={proactiveProvider}
+                      model={proactiveModel}
+                      effort={proactiveEffort}
+                      onChange={(selection) => {
+                        setProactiveProvider(selection.provider);
+                        setProactiveModel(selection.model);
+                        setProactiveEffort(selection.effort);
+                        saveField({
+                          proactiveProvider: selection.provider,
+                          proactiveModel: selection.model,
+                          proactiveEffort: selection.effort,
+                        });
+                      }}
+                    />
+                  ) : (
+                    <EffortSelect
+                      label="Briefing effort"
+                      provider={provider}
+                      model={model}
+                      effort={proactiveEffort}
+                      onChange={(value) => {
+                        setProactiveEffort(value);
+                        saveField({ proactiveEffort: value });
+                      }}
+                    />
+                  )}
+                  <p className="settings-description">
+                    Higher effort allows more reasoning time and can take longer. Briefings keep their own effort
+                    setting.
+                  </p>
+                </div>
               </div>
             </Tabs.Content>
             <Tabs.Content value="review" className="settings-panel">
@@ -708,16 +758,25 @@ export function SettingsDialog({
                 />
               </SettingRow>
 
-              <SettingRow label="Deeper review reasoning" description="Give detailed reviews more reasoning time.">
-                <Toggle
-                  checked={thinking}
-                  ariaLabel="Deeper review reasoning"
-                  onChange={() => {
-                    setThinking(!thinking);
-                    saveField({ thinking: !thinking });
+              <div className="flex flex-col gap-2 py-1">
+                <span className="text-sm font-medium text-foreground">Explanation model and effort</span>
+                <p className="settings-description">
+                  Used for explanations, chat, and interactive diagrams. Higher effort allows more reasoning time and
+                  can take longer.
+                </p>
+                <ModelEffortSelect
+                  label="Explanation model"
+                  provider={provider}
+                  model={model}
+                  effort={effort}
+                  onChange={(selection) => {
+                    setProvider(selection.provider);
+                    setModel(selection.model);
+                    setEffort(selection.effort);
+                    saveField(selection);
                   }}
                 />
-              </SettingRow>
+              </div>
               <SettingRow
                 label="Simplify import changes"
                 description="Condense import-only changes in the guided review."

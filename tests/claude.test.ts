@@ -106,3 +106,13 @@ void test('Claude receives screenshots as user image blocks alongside text', asy
     { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64 } },
   ]);
 });
+
+void test('explicit effort overrides the legacy thinking toggle for Claude', async () => {
+  for (const effort of ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const) {
+    const invocation = JSON.parse(await claudeProvider.generate({
+      model: 'claude-opus-5-5', thinking: false, effort,
+      content: 'Explain the code.', systemPrompt: 'Return JSON.',
+    })) as Invocation;
+    assert.equal(invocation.args[invocation.args.indexOf('--effort') + 1], effort === 'ultra' ? 'max' : effort);
+  }
+});

@@ -8,7 +8,7 @@ import type {
 const intervals: Record<GitHubSyncKind, number> = {
   metadata: 30_000,
   signals: 25_000,
-  checks: 30_000,
+  checks: 15_000,
   discussion: 60_000,
 };
 interface Task {
@@ -25,11 +25,13 @@ interface Task {
   failures: number;
   version: number;
   blockedUntil?: number;
+  followUpUntil?: number;
+  followUpRemaining?: number;
 }
 interface Deps {
   account: () => string | null;
   enabled: () => boolean;
-  backoff: (kind?: GitHubSyncKind) => number;
+  backoff: (kind: GitHubSyncKind, background: boolean) => { retryAt: number; message: string } | undefined;
   read: (
     kind: GitHubSyncKind,
     targets: GitHubSyncTarget[],
@@ -103,41 +105,59 @@ export function createGitHubSyncService(deps: Deps) {
     for (const [key, task] of tasks)
       if (!task.observed && !task.pending && now() - task.lastObserved > 300_000) tasks.delete(key);
   }
+  const followingUp = (task: Task) => (task.followUpUntil ?? 0) > now() && (task.followUpRemaining ?? 0) > 0;
+  const pause = (task: Task) => deps.backoff(task.kind, !followingUp(task));
   async function tick() {
     reconcile();
     if (!account || !deps.enabled()) return;
     const generation = epoch;
     const paused: GitHubSyncFailure[] = [];
     for (const task of tasks.values()) {
-      const retryAt = deps.backoff(task.kind);
-      if (task.observed && !task.pending && task.due <= now() && retryAt > now() && task.blockedUntil !== retryAt) {
+      const blocked = pause(task);
+      const retryAt = blocked?.retryAt ?? 0;
+      if (
+        blocked &&
+        task.observed &&
+        !task.pending &&
+        task.due <= now() &&
+        retryAt > now() &&
+        task.blockedUntil !== retryAt
+      ) {
         task.blockedUntil = retryAt;
         paused.push({
           kind: task.kind,
           url: task.target.url,
           retryAt,
-          message:
-            'GitHub updates are paused by the API limit. Saved data is still available; updates will resume automatically.',
+          message: blocked.message,
         });
       }
     }
     if (paused.length) deps.failed?.(paused);
     const due = [...tasks.values()]
-      .filter((task) => task.observed && !task.pending && task.due <= now() && deps.backoff(task.kind) <= now())
-      .sort((a, b) => Number(b.priority === 'active') - Number(a.priority === 'active') || a.due - b.due);
+      .filter((task) => task.observed && !task.pending && task.due <= now() && (pause(task)?.retryAt ?? 0) <= now())
+      .sort(
+        (a, b) =>
+          Number(followingUp(b)) - Number(followingUp(a)) ||
+          Number(b.priority === 'active') - Number(a.priority === 'active') ||
+          a.due - b.due
+      );
     await Promise.all(
       (Object.keys(intervals) as GitHubSyncKind[]).map(async (kind) => {
         if (pendingKinds.has(kind)) return;
         const candidates = due.filter((task) => task.kind === kind);
         if (!candidates.length) return;
-        const priority = candidates[0].priority;
-        // Only signals have a batched GraphQL endpoint. Keep other work small so newly active PRs can run next.
-        const batch = candidates.filter((task) => task.priority === priority).slice(0, kind === 'signals' ? 25 : 1);
+        const followUp = followingUp(candidates[0]);
+        const priority = followUp ? 'active' : candidates[0].priority;
+        // Batch light signals and bounded check pages; leave capacity for newly active PRs.
+        const batch = candidates
+          .filter((task) => followingUp(task) === followUp && (followUp || task.priority === priority))
+          .slice(0, kind === 'signals' ? 25 : kind === 'checks' ? 5 : 1);
         const versions = batch.map((task) => task.version);
         pendingKinds.add(kind);
         batch.forEach((task) => {
           task.pending = true;
           task.lastAttempt = now();
+          if (followUp) task.followUpRemaining = (task.followUpRemaining ?? 1) - 1;
         });
         try {
           const updates = await deps.read(
@@ -166,7 +186,12 @@ export function createGitHubSyncService(deps: Deps) {
             task.blockedUntil = undefined;
             task.signature = next;
             task.failures = 0;
-            task.due = now() + Math.max(task.interval, priority === 'visible' ? 120_000 : 0);
+            task.due =
+              now() +
+              Math.max(
+                followUp && followingUp(task) ? (kind === 'checks' ? 5_000 : intervals[kind]) : task.interval,
+                priority === 'visible' ? 120_000 : 0
+              );
             if (changed || recovered || kind === 'signals' || kind === 'checks') accepted.push(update);
           }
           if (accepted.length) deps.publish(accepted);
@@ -177,7 +202,7 @@ export function createGitHubSyncService(deps: Deps) {
             if (task.version !== versions[index]) continue;
             task.failures++;
             task.due = Math.max(
-              deps.backoff(kind),
+              deps.backoff(kind, !followUp)?.retryAt ?? 0,
               now() + Math.min(300_000, 15_000 * 2 ** Math.min(task.failures, 5))
             );
             failures.push({
@@ -207,12 +232,21 @@ export function createGitHubSyncService(deps: Deps) {
       for (const id of interests.keys()) if (id.startsWith(`${owner}:`)) interests.delete(id);
       reconcile();
     },
-    invalidate(urls: string[], kinds: GitHubSyncKind[] = Object.keys(intervals) as GitHubSyncKind[]) {
+    invalidate(
+      urls: string[],
+      kinds: GitHubSyncKind[] = Object.keys(intervals) as GitHubSyncKind[],
+      options: { followUp?: boolean } = {}
+    ) {
       const wanted = new Set(urls);
       for (const task of tasks.values())
         if (wanted.has(task.target.url) && kinds.includes(task.kind)) {
           task.due = 0;
           task.version++;
+          if (options.followUp) {
+            // Only explicit writes get a bounded allowance; passive invalidation cannot spend the reserve.
+            task.followUpUntil = now() + 120_000;
+            task.followUpRemaining = 4;
+          }
           task.interval = intervals[task.kind];
         }
     },

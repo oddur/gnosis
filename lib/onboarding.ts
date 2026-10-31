@@ -1,3 +1,5 @@
+import { normalizeRepositorySettings, normalizeBriefingLimit, type RepositorySettingsMap } from './repository-settings';
+import { normalizeEffort, type Effort } from './effort';
 import type { Preferences } from './types';
 import { DEFAULT_QUEUE_FILTERS, normalizeQueueFilters, type QueueFilters } from './queue-filters';
 import type { QueueViewsState } from './saved-views';
@@ -34,6 +36,8 @@ export interface SetupDraft {
   local: boolean;
   goals: SetupGoal[];
   repositories: string[];
+  repositorySettings?: RepositorySettingsMap;
+  repositoryDailyLimit?: number;
   days: number;
   ignoreDependabot: boolean;
   autoBriefings: boolean;
@@ -41,8 +45,10 @@ export interface SetupDraft {
   dailyLimit: number;
   provider: Provider;
   model: ModelId;
+  effort?: Effort;
   briefingProvider: Provider;
   briefingModel: ModelId;
+  briefingEffort?: Effort;
   names: Record<SetupGoal, string>;
   start: SetupGoal;
   refinements: Partial<QueueFilters>;
@@ -75,6 +81,19 @@ export function setupForInstalledProviders(draft: SetupDraft, providers: Provide
     configureAI: true,
     provider,
     model: provider === draft.provider ? draft.model : recommendedSetupModel(provider, 'explanation'),
+    effort: normalizeEffort(
+      provider,
+      provider === draft.provider ? draft.model : recommendedSetupModel(provider, 'explanation'),
+      draft.effort
+    ),
+    briefingEffort: normalizeEffort(
+      briefingProvider,
+      briefingProvider === draft.briefingProvider
+        ? draft.briefingModel
+        : recommendedSetupModel(briefingProvider, 'briefing'),
+      draft.briefingEffort,
+      false
+    ),
     briefingProvider,
     briefingModel:
       briefingProvider === draft.briefingProvider
@@ -98,11 +117,20 @@ export function initialSetup(prefs: Preferences, views?: QueueViewsState): Setup
     local: prefs.guestMode,
     goals: ['review'],
     repositories: [...prefs.watchedRepos],
+    repositorySettings: normalizeRepositorySettings(prefs.repositorySettings),
+    repositoryDailyLimit: normalizeBriefingLimit(prefs.repositoryBriefingDailyLimit),
     days: prefs.prInactivityDays ?? 30,
     ignoreDependabot: prefs.ignoreDependabotPrs !== false,
     configureAI: false,
     autoBriefings: prefs.autoBriefings === true,
     dailyLimit: prefs.briefingDailyLimit ?? 10,
+    effort: normalizeEffort(prefs.provider, prefs.model, prefs.effort, prefs.thinking),
+    briefingEffort: normalizeEffort(
+      prefs.proactiveReviewOverrides ? prefs.proactiveProvider : prefs.provider,
+      prefs.proactiveReviewOverrides ? prefs.proactiveModel : prefs.model,
+      prefs.proactiveEffort,
+      prefs.proactiveReviewOverrides ? prefs.proactiveThinking : false
+    ),
     provider: prefs.provider,
     model: prefs.firstRunSeen ? prefs.model : recommendedSetupModel(prefs.provider, 'explanation'),
     briefingProvider: prefs.proactiveReviewOverrides ? prefs.proactiveProvider : prefs.provider,
@@ -149,6 +177,8 @@ export function normalizeSetup(input: unknown): SetupDraft {
     local: value.local === true,
     goals,
     repositories,
+    repositorySettings: value.repositorySettings === undefined ? undefined : normalizeRepositorySettings(value.repositorySettings),
+    repositoryDailyLimit: normalizeBriefingLimit(value.repositoryDailyLimit),
     days: typeof value.days === 'number' && [0, 7, 14, 30, 90, 180, 365].includes(value.days) ? value.days : 30,
     ignoreDependabot: value.ignoreDependabot !== false,
     configureAI: value.configureAI === true,
@@ -158,6 +188,8 @@ export function normalizeSetup(input: unknown): SetupDraft {
         ? Math.min(100, Math.max(1, Math.round(value.dailyLimit)))
         : 10,
     ...selection,
+    effort: normalizeEffort(selection.provider, selection.model, value.effort),
+    briefingEffort: normalizeEffort(briefing.provider, briefing.model, value.briefingEffort, false),
     briefingProvider: briefing.provider,
     briefingModel: briefing.model,
     names,
@@ -190,6 +222,8 @@ export function setupPreferences(prefs: Preferences, input: SetupDraft): Prefere
   return {
     ...prefs,
     watchedRepos: draft.local ? prefs.watchedRepos : draft.repositories,
+    repositorySettings: draft.local ? prefs.repositorySettings : draft.repositorySettings ?? prefs.repositorySettings,
+    repositoryBriefingDailyLimit: draft.local ? prefs.repositoryBriefingDailyLimit : draft.repositoryDailyLimit,
     prInactivityDays: draft.days,
     ignoreDependabotPrs: draft.ignoreDependabot,
     autoBriefings: !draft.local && draft.autoBriefings,
@@ -198,9 +232,11 @@ export function setupPreferences(prefs: Preferences, input: SetupDraft): Prefere
       ? {
           provider: draft.provider,
           model: draft.model,
+          effort: draft.effort,
           proactiveReviewOverrides: true,
           proactiveProvider: draft.briefingProvider,
           proactiveModel: draft.briefingModel,
+          proactiveEffort: draft.briefingEffort,
         }
       : {}),
     firstRunSeen: true,

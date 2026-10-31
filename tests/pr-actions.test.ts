@@ -499,3 +499,57 @@ void test('branch actions pin the live base branch tip, not the PR base snapshot
   const state = await f.service.read(f.client, url(1), true);
   assert.equal(state.baseSha, 'current-main');
 });
+
+void test('mark all ready skips ready PRs, guards writes, and reports partial failures', async () => {
+  const { markPrsReady } = await import('../lib/mark-prs-ready');
+  const f = fixture(true);
+  f.prs[0].isDraft = true;
+  f.prs[2].isDraft = true;
+  const members = f.prs.map((pr) => ({ url: pr.url, number: pr.number })) as import('../lib/workbench').ReviewMember[];
+  const ready: string[] = [];
+  let fail = true;
+  const deps = {
+    read: (url: string, force: boolean) => f.service.read(f.client, url, force),
+    act: async (request: PrActionRequest) => {
+      if (request.url === url(3) && fail) throw Error('Rate limit reached');
+      return f.service.act(f.client, request);
+    },
+    active: () => true,
+    ready: (url: string) => {
+      ready.push(url);
+    },
+  };
+  const first = await markPrsReady(members, 'reviewer', deps);
+  assert.deepEqual(first.completed, [url(1), url(2)]);
+  assert.equal(first.failure?.member.number, 3);
+  assert.equal(f.writes.length, 1, 'Already-ready PRs do not receive a mutation');
+  fail = false;
+  const second = await markPrsReady(
+    members.filter((m) => !ready.includes(m.url)),
+    'reviewer',
+    deps
+  );
+  assert.equal(second.failure, undefined);
+  assert.deepEqual(
+    f.writes.map((write) => write.params.input),
+    [{ pullRequestId: 'PR_1' }, { pullRequestId: 'PR_3' }]
+  );
+});
+
+void test('bulk draft changes stop before writing after an account switch or navigation', async () => {
+  const { markPrsReady } = await import('../lib/mark-prs-ready');
+  const f = fixture();
+  f.prs[0].isDraft = true;
+  const members = [{ url: url(1), number: 1 }] as import('../lib/workbench').ReviewMember[];
+  const deps = {
+    read: (url: string, force: boolean) => f.service.read(f.client, url, force),
+    act: (request: PrActionRequest) => f.service.act(f.client, request),
+    active: () => true,
+    ready: () => {},
+  };
+  const result = await markPrsReady(members, 'other-account', deps);
+  assert.match(result.failure?.message ?? '', /account changed/);
+  const navigated = await markPrsReady(members, 'reviewer', { ...deps, active: () => false });
+  assert.deepEqual(navigated.completed, []);
+  assert.equal(f.writes.length, 0);
+});

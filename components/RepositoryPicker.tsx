@@ -1,3 +1,6 @@
+import { RepositoryMark } from './RepositoryAppearance';
+import { useRepositorySettings } from '../lib/use-repository-settings';
+import { repositoryKey } from '../lib/repository-settings';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import {
@@ -22,6 +25,7 @@ export function RepositoryPicker({
   options?: string[];
   search?: boolean;
 }) {
+  const { settings } = useRepositorySettings();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<RepoSearchResult[]>([]);
   const [state, setState] = useState<'idle' | 'loading' | 'error'>('idle');
@@ -105,7 +109,7 @@ export function RepositoryPicker({
           <ComboboxList>
             {(repo: string) => (
               <ComboboxItem key={repo} value={repo}>
-                {repo}
+                <RepositoryMark repo={repo} settings={settings[repositoryKey(repo)]} />
               </ComboboxItem>
             )}
           </ComboboxList>
@@ -122,7 +126,7 @@ export function RepositoryPicker({
       <div className="setup-repo-tags">
         {value.map((repo) => (
           <span key={repo}>
-            {repo}
+            <RepositoryMark repo={repo} settings={settings[repositoryKey(repo)]} />
             <button
               type="button"
               aria-label={`Remove ${repo}`}

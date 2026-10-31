@@ -1,98 +1,204 @@
-import { openConflictWorkspace } from '../lib/open-conflict-workspace';
-import { AlertCircle, CircleHelp, ExternalLink } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 import { checkLabel } from '../lib/pr-checks';
-import { stackMergeMessage, type StackMergeStatus, type StackMergeEntry, type StackMergeCategory } from '../lib/stack-merge-status';
-import type { ReviewMember, ReviewSubject } from '../lib/workbench';
+import { stackMemberStatus } from '../lib/stack-member-status';
+import { openConflictWorkspace } from '../lib/open-conflict-workspace';
+import type { ReviewMember } from '../lib/workbench';
+import { PrActions } from './PrActions';
+import { StackCheckRerun } from './StackCheckRerun';
 
-/** Explain saved merge evidence without fetching or changing merge policy. */
-export function StackMergeDetails({
-  subject,
-  status,
-  onOpen,
+/** Facts and remedies belong to the same PR; optional checks never join its blocker list. */
+export function StackMemberDetails({
+  member,
+  facts,
   onChecks,
   onRefresh,
   refreshDisabled,
 }: {
-  subject: ReviewSubject;
-  status: StackMergeStatus;
-  onOpen: (member: ReviewMember) => void;
-  onChecks: (member: ReviewMember) => void;
+  member: ReviewMember;
+  facts: ReturnType<typeof stackMemberStatus>;
+  onChecks: () => void;
   onRefresh: () => void;
   refreshDisabled: boolean;
 }) {
-  const issues = status.entries.filter(entry => entry.category !== 'ready');
-  if (!issues.length) return null;
-  const mixedRepos = new Set(subject.members.map((member) => member.repo)).size > 1;
-  const row = (entry: StackMergeEntry) => {
-    const { member, category, failedChecks, checkWarning } = entry;
-    const uncertain = category === 'unconfirmed';
-    const Icon = uncertain ? CircleHelp : AlertCircle;
-    const { title, details } = stackMergeMessage(entry);
-    return (
-      <li key={member.url} className="stack-merge-issue">
-        <Icon
-          size={16}
-          className={`stack-merge-issue-icon is-${uncertain ? 'muted' : category === 'blocked' ? 'danger' : 'warning'}`}
-          aria-hidden="true"
+  const uncertain = facts.readiness.stale || !facts.policy || facts.readiness.label === 'Readiness unknown';
+  const keys = new Set(facts.blockers.map((b) => b.key));
+  const checkRow = (check: (typeof facts.attention)[number]) => (
+    <li key={check.id}>
+      <div>
+        <strong>{check.name}</strong>
+        <span>
+          {checkLabel(check)} ·{' '}
+          {facts.readiness.ready
+            ? 'Does not block merging'
+            : check.required === true
+              ? 'Required to merge'
+              : check.required === false
+                ? 'Optional · Does not block merging'
+                : 'Merge requirement unknown'}
+        </span>
+      </div>
+      {!facts.finished && (
+        <StackCheckRerun
+          key={`${member.headSha}:${check.id}:${check.startedAt}:${check.completedAt}`}
+          member={member}
+          check={check}
+          onChanged={onRefresh}
         />
-        <div className="stack-merge-issue-content">
-          <div className="stack-merge-issue-title">
-            <button onClick={() => onOpen(member)} title={member.title}>
-              {mixedRepos ? `${member.repo} #${member.number}` : `#${member.number}`}
-            </button>
-            <strong>{title}</strong>
-          </div>
-          <ul className="stack-merge-reasons">
-            {details.map((detail) => (
-              <li key={detail}>{detail}</li>
-            ))}
-          </ul>
-          {failedChecks.length > 0 && (
-            <ul className="stack-merge-check-names">
-              {failedChecks.slice(0, 2).map((check) => (
-                <li key={check.id}>
-                  {check.name} — {checkLabel(check).toLowerCase()}
-                  {check.required === true ? ' (required)' : check.required === false ? ' (optional)' : ''}
-                </li>
-              ))}
-              {failedChecks.length > 2 && <li>{failedChecks.length - 2} more checks · View checks for details</li>}
-            </ul>
+      )}
+    </li>
+  );
+  if (facts.readiness.ready && !facts.attention.length && !facts.branch.detail) return null;
+  return (
+    <div className="stack-member-resolution">
+      {facts.blockers.length > 0 && (
+        <ul className="stack-visible-blockers" aria-label={`Merge blockers for PR #${member.number}`}>
+          {facts.blockers.map((blocker) => (
+            <li key={blocker.key} data-blocker-key={blocker.key}>
+              <span className="stack-blocker-reason">{blocker.text}</span>
+              <div className="stack-inline-actions">
+                {blocker.key === 'conflicts' && (
+                  <button onClick={() => openConflictWorkspace(member.url)}>Resolve conflicts…</button>
+                )}
+                {['draft', 'update'].includes(blocker.key) && (
+                  <PrActions
+                    member={member}
+                    onChanged={onRefresh}
+                    trigger={(open, busy) =>
+                      blocker.key === 'draft' ? (
+                        <button disabled={busy} onClick={() => open('mark-ready')}>
+                          Mark ready for review…
+                        </button>
+                      ) : (
+                        <>
+                          <button disabled={busy} onClick={() => open('update-merge')}>
+                            Update with merge…
+                          </button>
+                          <button disabled={busy} onClick={() => open('update-rebase')}>
+                            Update with rebase…
+                          </button>
+                        </>
+                      )
+                    }
+                  />
+                )}
+                {blocker.key === 'checks' && <button onClick={onChecks}>Inspect required checks</button>}
+                {blocker.key === 'review' && (
+                  <a href={member.url} target="_blank" rel="noopener noreferrer">
+                    View reviews on GitHub <ExternalLink size={12} />
+                  </a>
+                )}
+                {blocker.key === 'rules' && (
+                  <a href={member.url} target="_blank" rel="noopener noreferrer">
+                    View requirements on GitHub <ExternalLink size={12} />
+                  </a>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {keys.has('checks') && (
+        <p className="stack-required-check-names">
+          {facts.required
+            .slice(0, 2)
+            .map((check) => `${check.name}: ${checkLabel(check).toLowerCase()}`)
+            .join(' · ')}
+          {facts.required.length > 2 && ` · ${facts.required.length - 2} more required checks`}
+        </p>
+      )}
+      {facts.requiredRunning.length > 0 && (
+        <p className="stack-inline-wait" data-blocker-key="waiting">
+          Waiting for {facts.requiredRunning.length} required {facts.requiredRunning.length === 1 ? 'check' : 'checks'}.
+          <button onClick={onChecks}>View progress</button>
+        </p>
+      )}
+      {!!facts.policy?.queueState && !facts.finished && (
+        <p className="stack-inline-wait" data-blocker-key="queue">
+          Waiting in the GitHub merge queue.{' '}
+          <a href={member.url} target="_blank" rel="noopener noreferrer">
+            View queue on GitHub
+          </a>
+        </p>
+      )}
+      {uncertain && !facts.finished && (
+        <p className="stack-inline-wait" data-blocker-key="refresh">
+          {facts.readiness.stale ? 'Saved merge status needs refresh.' : 'Some merge requirements are not confirmed.'}
+          <button disabled={refreshDisabled} onClick={onRefresh}>
+            Refresh status
+          </button>
+        </p>
+      )}
+      {facts.checksUnconfirmed && (
+        <p className="stack-inline-wait" data-blocker-key="check-status">
+          Check requirements are not confirmed. <button onClick={onChecks}>Inspect checks</button>
+        </p>
+      )}
+      <details className="stack-member-disclosure">
+        <summary>
+          View check details and merge requirements<span className="sr-only"> for PR #{member.number}</span>
+        </summary>
+        <div className="stack-member-evidence">
+          {uncertain && !facts.finished && (
+            <section>
+              <h3>{facts.readiness.stale ? 'Status needs refresh' : 'Merge requirements unknown'}</h3>
+              <p>
+                {facts.readiness.stale
+                  ? facts.readiness.details[0]
+                  : 'GitHub has not confirmed all merge requirements for this revision.'}
+              </p>
+              <button disabled={refreshDisabled} onClick={onRefresh}>
+                Refresh status
+              </button>
+            </section>
           )}
-          <div className="stack-merge-issue-actions">
-            {entry.readiness.label === 'Merge conflicts' && !entry.readiness.stale && <button onClick={() => openConflictWorkspace(member.url)}>Resolve conflicts…</button>}
-            {(checkWarning || failedChecks.length > 0 || entry.readiness.label === 'Checks need attention') && (
-              <button aria-label={`View checks for PR #${member.number}`} onClick={() => onChecks(member)}>View checks</button>
-            )}
-            {uncertain && <button disabled={refreshDisabled} onClick={onRefresh}>Refresh status</button>}
-            <a aria-label={`View PR #${member.number} on GitHub`} href={member.url} target="_blank" rel="noopener noreferrer">
-              View on GitHub <ExternalLink size={12} aria-hidden="true" />
+          {!facts.blockers.length && !uncertain && (
+            <p>
+              {facts.readiness.ready
+                ? 'GitHub reports merge requirements satisfied for this revision.'
+                : facts.readiness.details[0]}
+            </p>
+          )}
+          {[
+            { title: 'Required checks that did not pass', checks: facts.readiness.ready ? [] : facts.required },
+            {
+              title: facts.readiness.ready ? 'Checks that do not block merging' : 'Other check results',
+              checks: facts.readiness.ready
+                ? facts.attention
+                : facts.attention.filter((check) => check.required !== true),
+            },
+          ]
+            .filter((group) => group.checks.length)
+            .map((group) => (
+              <section
+                key={group.title}
+                className="stack-check-evidence"
+                aria-label={`${group.title} for PR #${member.number}`}
+              >
+                <h3>{group.title}</h3>
+                <ul>{group.checks.slice(0, 3).map(checkRow)}</ul>
+                {group.checks.length > 3 && (
+                  <details className="stack-more-checks">
+                    <summary>Show {group.checks.length - 3} more check results</summary>
+                    <ul>{group.checks.slice(3).map(checkRow)}</ul>
+                  </details>
+                )}
+              </section>
+            ))}
+          {facts.branch.detail && (
+            <p>
+              {facts.branch.label} {facts.policy?.baseBranch || member.baseBranch} · {facts.branch.detail}.
+            </p>
+          )}
+          <div className="stack-remedies">
+            <button aria-label={`View checks for PR #${member.number}`} onClick={onChecks}>
+              View all checks
+            </button>
+            <a href={member.url} target="_blank" rel="noopener noreferrer">
+              View on GitHub <ExternalLink size={12} />
             </a>
           </div>
         </div>
-      </li>
-    );
-  };
-  const groups: { category: StackMergeCategory; title: string }[] = [
-    { category: 'blocked', title: 'Blocking merge' },
-    { category: 'waiting', title: 'Waiting on GitHub' },
-    { category: 'unconfirmed', title: 'Not yet confirmed' },
-    { category: 'warning', title: 'Checks that do not block merging' },
-  ];
-  return (
-    <section className="stack-merge-details" aria-label="Stack merge status">
-      <h2>Merge status</h2>
-      {groups.map(({ category, title }) => {
-        const entries = issues.filter(entry => entry.category === category);
-        if (!entries.length) return null;
-        return <section key={category} className="stack-merge-group" aria-label={title}>
-          <h3>{title} <span>{entries.length} {entries.length === 1 ? 'PR' : 'PRs'}</span></h3>
-          <ul className="stack-merge-issues">{entries.slice(0, 3).map(row)}</ul>
-          {entries.length > 3 && <details className="stack-merge-more">
-            <summary>Show {entries.length - 3} more {entries.length === 4 ? 'PR' : 'PRs'}</summary>
-            <ul className="stack-merge-issues">{entries.slice(3).map(row)}</ul>
-          </details>}
-        </section>;
-      })}
-    </section>
+      </details>
+    </div>
   );
 }

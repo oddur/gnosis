@@ -1,3 +1,6 @@
+import { RepositorySettingsList } from './RepositorySettingsList';
+import { ModelEffortSelect } from './ModelEffortSelect';
+import { effortLabels, normalizeEffort } from '../lib/effort';
 import { GitHubIcon } from '../lib/constants';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowRight, Check, X } from 'lucide-react';
@@ -66,16 +69,6 @@ export function OnboardingSetup({
         label: `${PROVIDERS[provider].label} · ${model.label}${model.id === recommendedSetupModel(provider, role) ? ' (recommended)' : ''}`,
       }))
     );
-  const chooseModel = (model: string, role: 'explanation' | 'briefing') => {
-    const provider = available.find((id) => PROVIDERS[id].models.some((item) => item.id === model));
-    const selected = provider && PROVIDERS[provider].models.find((item) => item.id === model);
-    if (!provider || !selected) return;
-    patch(
-      role === 'explanation'
-        ? { provider, model: selected.id, configureAI: true }
-        : { briefingProvider: provider, briefingModel: selected.id, configureAI: true }
-    );
-  };
   const patch = (next: Partial<SetupDraft>) => {
     setError('');
     onChange({ ...draft, ...next });
@@ -123,6 +116,7 @@ export function OnboardingSetup({
     }
     patch({ step: step as SetupStep });
   };
+  const automaticEnabled = draft.autoBriefings || Object.values(draft.repositorySettings ?? {}).some(s => s.autoBriefings === true);
   const goals = SETUP_GOALS.filter((goal) => draft.goals.includes(goal.id));
   return (
     <Dialog
@@ -245,6 +239,9 @@ export function OnboardingSetup({
                   onChange={(repositories) => patch({ repositories })}
                   search
                 />
+                <RepositorySettingsList repositories={draft.repositories} settings={draft.repositorySettings ?? {}}
+                  defaults={{ prInactivityDays: draft.days, ignoreDependabotPrs: draft.ignoreDependabot, autoBriefings: draft.autoBriefings, briefingDailyLimit: draft.dailyLimit, repositoryBriefingDailyLimit: draft.repositoryDailyLimit }}
+                  onChange={repositorySettings => patch({ repositorySettings })} />
                 <p className="setup-note">
                   This adds open PRs to Gnosis. It does not change GitHub Watch subscriptions.
                 </p>
@@ -323,6 +320,7 @@ export function OnboardingSetup({
                 ))}
               {available.length > 0 && (
                 <div className="setup-ai-roles">
+                  <p className="setup-note">Higher effort allows more reasoning time and can take longer.</p>
                   <div className="setup-ai-role">
                     <div>
                       <label htmlFor="setup-explanation-model">Explanations</label>
@@ -330,13 +328,15 @@ export function OnboardingSetup({
                         Guided walkthroughs of the code. Start one when you need it.
                       </p>
                     </div>
-                    <SearchableSelect
+                    <ModelEffortSelect
                       id="setup-explanation-model"
                       label="Explanation model"
                       describedBy="setup-explanation-help"
-                      value={draft.model}
+                      provider={draft.provider}
+                      model={draft.model}
+                      effort={normalizeEffort(draft.provider, draft.model, draft.effort)}
                       options={modelOptions('explanation')}
-                      onValueChange={(model) => chooseModel(model, 'explanation')}
+                      onChange={(selection) => patch({ ...selection, configureAI: true })}
                     />
                   </div>
                   {!draft.local && (
@@ -347,13 +347,27 @@ export function OnboardingSetup({
                           Short summaries to help you triage the review queue.
                         </p>
                       </div>
-                      <SearchableSelect
+                      <ModelEffortSelect
                         id="setup-briefing-model"
                         label="Briefing model"
                         describedBy="setup-briefing-help"
-                        value={draft.briefingModel}
+                        provider={draft.briefingProvider}
+                        model={draft.briefingModel}
+                        effort={normalizeEffort(
+                          draft.briefingProvider,
+                          draft.briefingModel,
+                          draft.briefingEffort,
+                          false
+                        )}
                         options={modelOptions('briefing')}
-                        onValueChange={(model) => chooseModel(model, 'briefing')}
+                        onChange={(selection) =>
+                          patch({
+                            briefingProvider: selection.provider,
+                            briefingModel: selection.model,
+                            briefingEffort: selection.effort,
+                            configureAI: true,
+                          })
+                        }
                       />
                     </div>
                   )}
@@ -401,11 +415,11 @@ export function OnboardingSetup({
                       checked={draft.autoBriefings}
                       onChange={(event) => patch({ autoBriefings: event.target.checked })}
                     />
-                    Create briefings automatically for my active view
+                    Create automatic briefings by default
                   </label>
-                  {draft.autoBriefings && (
+                  {automaticEnabled && (
                     <label className="setup-field">
-                      Daily briefing limit
+                      Overall daily automatic briefing cap
                       <input
                         type="number"
                         min={1}
@@ -416,7 +430,7 @@ export function OnboardingSetup({
                         }
                       />
                       <span className="setup-note">
-                        Uses your briefing model and its account allowance. Explanations start only when you ask.
+                        Counts automatic attempts across repositories. Manual briefings do not count. Resets at midnight.
                       </span>
                     </label>
                   )}
@@ -425,7 +439,7 @@ export function OnboardingSetup({
               <Button
                 type="button"
                 variant="ghost"
-                onClick={() => patch({ autoBriefings: false, configureAI: false, step: 'finish' })}
+                onClick={() => patch({ autoBriefings: false, configureAI: false, repositorySettings: Object.fromEntries(Object.entries(draft.repositorySettings ?? {}).map(([repo, settings]) => [repo, settings.autoBriefings === true ? { ...settings, autoBriefings: false } : settings])), step: 'finish' })}
               >
                 Set up AI later
               </Button>
@@ -468,6 +482,7 @@ export function OnboardingSetup({
                     <li>
                       Explanations: {PROVIDERS[draft.provider].label} ·{' '}
                       {PROVIDERS[draft.provider].models.find((model) => model.id === draft.model)?.label}
+                      {` · ${effortLabels[normalizeEffort(draft.provider, draft.model, draft.effort)]} effort`}
                     </li>
                     {!draft.local && (
                       <li>
@@ -476,6 +491,7 @@ export function OnboardingSetup({
                           PROVIDERS[draft.briefingProvider].models.find((model) => model.id === draft.briefingModel)
                             ?.label
                         }
+                        {` · ${effortLabels[normalizeEffort(draft.briefingProvider, draft.briefingModel, draft.briefingEffort, false)]} effort`}
                       </li>
                     )}
                   </>
@@ -486,9 +502,10 @@ export function OnboardingSetup({
                     {draft.days ? `updated within ${draft.days} days` : 'any update date'}
                   </li>
                 )}
+                {!draft.local && <li>{Object.keys(draft.repositorySettings ?? {}).length} repositories with custom settings</li>}
                 {!draft.local && <li>{draft.ignoreDependabot ? 'Dependabot hidden' : 'Dependabot included'}</li>}
                 <li>
-                  {draft.autoBriefings && !draft.local
+                  {automaticEnabled && !draft.local
                     ? `Automatic briefings · up to ${draft.dailyLimit}/day`
                     : 'AI generation starts only when you ask'}
                 </li>

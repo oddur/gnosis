@@ -143,6 +143,7 @@ declare global {
       applyOnboarding: (draft: SetupDraft, account: string | null) => Promise<Preferences>;
       loadHarnessEnvironment: () => Promise<HarnessEnvironment>;
       saveHarnessEnvironment: (provider: import('../lib/models').Provider, variables: EnvironmentVariable[]) => Promise<void>;
+      onPreferencesChanged?: (callback: (prefs: Preferences) => void) => () => void;
       loadPreferences: () => Promise<Preferences>;
       savePreferences: (prefs: Preferences) => Promise<void>;
       searchPullRequests: () => Promise<PrSearchResult[]>;

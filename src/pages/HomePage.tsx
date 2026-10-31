@@ -1,3 +1,7 @@
+import { useSettingsShortcut } from '../../lib/use-settings-shortcut';
+import { preferencesUpdated } from '../../lib/use-repository-settings';
+import { ModelEffortSelect } from '../../components/ModelEffortSelect';
+import { normalizeEffort } from '../../lib/effort';
 import { mergePrStatus } from '../../lib/merge-pr-status';
 import { useEntrySelection } from '../../lib/use-entry-selection';
 import { runSelectionTasks, type SelectionModifiers } from '../../lib/entry-selection';
@@ -98,7 +102,7 @@ import {
   type ReviewSubject,
   type WorkbenchQueue,
 } from '../../lib/workbench';
-import type { Preferences, PrStatus, ReviewGuide, ReviewHistoryEntry, ModelId, Provider } from '../../lib/types';
+import type { Preferences, PrStatus, ReviewGuide, ReviewHistoryEntry } from '../../lib/types';
 
 interface Props {
   navigationRestoration?: { location: HomeLocation; nonce: number };
@@ -676,8 +680,14 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
   useEffect(() => {
     rowButtons.current.get(selected ?? '')?.scrollIntoView({ block: 'nearest' });
   }, [selected, loading, section, selectionFilterKey]);
+  useEffect(() => {
+    const listener = (event: Event) => { setPrefs((event as CustomEvent<Preferences>).detail); void refresh(); };
+    window.addEventListener('gnosis-preferences-changed', listener);
+    return () => window.removeEventListener('gnosis-preferences-changed', listener);
+  }, [refresh]);
   const savePrefs = async (next: Preferences) => {
     await window.electronAPI.savePreferences(next);
+    preferencesUpdated(next);
     setPrefs(next);
     void refresh();
   };
@@ -701,6 +711,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
         model: prefs.model,
         instructions: prefs.instructions,
         thinking: prefs.thinking,
+        effort: prefs.effort,
         smartImports: prefs.smartImports,
         reviewSuggestions: prefs.reviewSuggestions,
         webResearch: prefs.enableWebResearch,
@@ -894,6 +905,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
     setSettingsSection(next);
     setSettings(true);
   };
+  useSettingsShortcut(() => openSettings());
   const dismissGettingStarted = async () => {
     setShowGettingStarted(false);
     try {
@@ -1347,17 +1359,9 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
         <RecentlyViewed />
         <div className="ml-auto flex items-center gap-2">
           {prefs && (
-            <SearchableSelect
-              label="Review model"
-              className="model-select"
-              value={`${prefs.provider}:${prefs.model}`}
-              options={Object.entries(PROVIDERS).flatMap(([provider, p]) =>
-                p.models.map(m => ({ value: `${provider}:${m.id}`, label: `${p.label} · ${m.label}` })))}
-              onValueChange={(value) => {
-                const [provider, ...rest] = value.split(':');
-                void savePrefs({ ...prefs, provider: provider as Provider, model: rest.join(':') as ModelId });
-              }}
-            />
+            <ModelEffortSelect provider={prefs.provider} model={prefs.model}
+              effort={normalizeEffort(prefs.provider, prefs.model, prefs.effort, prefs.thinking)}
+              onChange={selection => { void savePrefs({ ...prefs, ...selection }); }} />
           )}
           <GitHubSyncStatus sync={queue.sync} onRefresh={() => void refresh(true)} />
           <button
@@ -1370,7 +1374,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
             <kbd className="kbd">{window.electronAPI.platform === 'darwin' ? '⌘ K' : 'Ctrl K'}</kbd>
           </button>
           <WorkbenchHelp onGettingStarted={replayGettingStarted} onWalkthrough={() => onboarding.startTour()} />
-          <button className="workbench-icon" title="Settings" aria-label="Settings" onClick={() => openSettings()}>
+          <button className="workbench-icon" title={window.electronAPI.platform === 'darwin' ? 'Settings (⌘,)' : 'Settings (Ctrl+,)'} aria-label="Settings" onClick={() => openSettings()}>
             <Settings size={17} />
           </button>
           <button
@@ -1667,6 +1671,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
             {section !== 'saved' && (
               <SearchableSelect
                 label="Filter repository"
+                repositoryOptions
                 value={repo}
                 onValueChange={setRepo}
                 options={[{ value: 'all', label: 'All repositories' }, ...repos.map(r => ({ value: r, label: r }))]}
@@ -1698,7 +1703,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                         <X size={16} />
                       </Popover.Close>
                     </div>
-                    <QueueFilterPanel filters={filters} items={queueItems} onChange={updateFilters} prInactivityDays={prefs?.prInactivityDays} onManageInactivity={() => { setFiltersOpen(false); openSettings('queue'); }} />
+                    <QueueFilterPanel filters={filters} items={queueItems} onChange={updateFilters} prInactivityDays={prefs?.prInactivityDays} hasRepositoryOverrides={Object.values(prefs?.repositorySettings ?? {}).some(s => s.prInactivityDays !== undefined)} onManageInactivity={() => { setFiltersOpen(false); openSettings('queue'); }} />
                   </Popover.Content>
                 </Popover.Portal>
               </Popover.Root>
@@ -1781,7 +1786,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                   githubLogin={auth?.authenticated ? auth.login : null}
                   hasQueueItems={queue.items.length > 0}
                   onSettings={() => openSettings('integrations')}
-                  onRepositories={() => openSettings('queue')}
+                  onRepositories={() => openSettings('repositories')}
                   onOpenPr={() => setShowUrl(true)}
                   onLocal={() => setLocalOpen(true)}
                   onDismiss={() => void dismissGettingStarted()}
@@ -1885,7 +1890,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                           : section !== 'all'
                             ? 'Try the full review queue to see other changes.'
                             : normalizePrInactivityDays(prefs?.prInactivityDays)
-                              ? `No matching PRs were active within ${normalizePrInactivityDays(prefs?.prInactivityDays)} days. Starred PRs are included. Adjust the inactivity limit in Settings, or open a PR by URL.`
+                              ? 'No PRs match your filters and repository inactivity settings. Starred PRs are included. Adjust Settings, or open a PR by URL.'
                               : 'Open a pull request by URL, or add repositories to follow in Settings. Dependabot PRs are hidden by default.'}
                   </p>
                   <Button
@@ -2024,11 +2029,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                             : selectedItem.briefing?.status === 'paused'
                               ? selectedItem.briefing.pauseReason === 'filter'
                                 ? 'Outside your current filters. Automatic briefings are limited to matching changes.'
-                                : prefs?.autoBriefings === false
-                                  ? 'Automatic briefings are off.'
-                                  : queue.remaining <= 0
-                                    ? 'Daily briefing attempt limit reached. Increase it in Settings or wait until tomorrow.'
-                                    : 'Briefing is paused. Check Activity or briefing settings for details.'
+                                : selectedItem.briefing.pauseDetail ?? 'Briefing is paused. Check Activity or briefing settings for details.'
                               : 'Waiting to generate an AI briefing. You can open the PR overview or generate an AI explanation now.'}
                     </p>
                     {selectedItem.briefing?.status === 'failed' && selectedItem.briefing.error && (
@@ -2172,13 +2173,13 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                   checked={prefs.autoBriefings !== false}
                   onChange={(e) => void savePrefs({ ...prefs, autoBriefings: e.target.checked })}
                 />
-                Automatic briefings
+                Automatic briefings by default
               </label>
-              {prefs.autoBriefings !== false && (
+              {(prefs.autoBriefings !== false || Object.values(prefs.repositorySettings ?? {}).some(s => s.autoBriefings)) && (
                 <span>
                   {filters.briefingScope === 'matches' ? 'Matches only' : 'Matches first'}
                     {' · '}
-                    {queue.remaining} attempts left today
+                    {queue.remaining} automatic attempts left overall · Resets at midnight
                 </span>
               )}
               <button className="workbench-help-link ml-auto" onClick={() => openSettings('queue')}>

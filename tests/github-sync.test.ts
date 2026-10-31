@@ -21,7 +21,7 @@ function fixture() {
     now: () => now,
     account: () => account,
     enabled: () => enabled,
-    backoff: () => backoff,
+    backoff: () => (backoff ? { retryAt: backoff, message: 'GitHub API limit reached' } : undefined),
     read: (kind, targets, priority) => {
       assert.equal(kind, 'signals');
       calls.push({ urls: targets.map((t) => t.url), priority });
@@ -155,7 +155,7 @@ void test('an invalidation during a read rejects its result and schedules a fres
   const sync = createGitHubSyncService({
     account: () => 'alice',
     enabled: () => true,
-    backoff: () => 0,
+    backoff: () => undefined,
     read: () => {
       calls++;
       return new Promise((resolve) => {
@@ -189,7 +189,7 @@ void test('failed requests back off and retain existing snapshots', async () => 
     now: () => now,
     account: () => 'alice',
     enabled: () => true,
-    backoff: () => 0,
+    backoff: () => undefined,
     read: () => {
       calls++;
       return Promise.reject(Error('Offline'));
@@ -217,7 +217,7 @@ void test('switching accounts while a request runs discards its result', async (
   const sync = createGitHubSyncService({
     account: () => account,
     enabled: () => true,
-    backoff: () => 0,
+    backoff: () => undefined,
     read: () =>
       new Promise((resolve) => {
         release = resolve;
@@ -260,7 +260,7 @@ void test('a depleted REST budget does not stop GraphQL signals', async () => {
     account: () => 'alice',
     now: () => 0,
     enabled: () => true,
-    backoff: (kind) => (kind === 'metadata' ? 60_000 : 0),
+    backoff: (kind) => (kind === 'metadata' ? { retryAt: 60_000, message: 'GitHub API limit reached' } : undefined),
     read: (kind) => {
       kinds.push(kind);
       return Promise.resolve([]);
@@ -285,7 +285,7 @@ void test('recovery republishes unchanged data so screens can clear an error', a
     now: () => now,
     account: () => 'alice',
     enabled: () => true,
-    backoff: () => 0,
+    backoff: () => undefined,
     read: () => (fail ? Promise.reject(Error('Offline')) : Promise.resolve([value])),
     publish: (values) => published.push(values),
   });
@@ -311,4 +311,100 @@ void test('IPC subscriptions reject malformed URLs, revisions and unbounded batc
     parseGitHubSyncInterest({ ...watch(), targets: Array.from({ length: 201 }, () => target()) }),
     undefined
   );
+});
+
+void test('rerun follow-up uses reserved allowance only for the affected PR and still honors real limits', async () => {
+  let now = 0;
+  let limited = false;
+  const calls: string[] = [];
+  const failures: { message: string; retryAt: number }[] = [];
+  const sync = createGitHubSyncService({
+    now: () => now,
+    account: () => 'alice',
+    enabled: () => true,
+    backoff: (_kind, background) =>
+      limited
+        ? { retryAt: 90_000, message: 'GitHub API limit reached' }
+        : background
+          ? { retryAt: 300_000, message: 'Background updates paused to preserve API allowance' }
+          : undefined,
+    failed: (values) => failures.push(...values),
+    read: (kind, targets) => {
+      calls.push(...targets.map((t) => t.url));
+      return Promise.resolve(
+        targets.map((t) => ({
+          kind: 'checks' as const,
+          url: t.url,
+          value: { ...t, headSha: t.headSha ?? '', checkedAt: now, checks: [] },
+        }))
+      );
+    },
+    publish: () => {},
+  });
+  sync.observe('1:checks', { kind: 'checks', priority: 'active', targets: [target(), target(2)] });
+  await sync.tick();
+  assert.equal(calls.length, 0);
+  assert.equal(failures[0].message, 'Background updates paused to preserve API allowance');
+  assert.equal(failures[0].retryAt, 300_000);
+  sync.invalidate([target().url], ['checks'], { followUp: true });
+  await sync.tick();
+  assert.deepEqual(calls, [target().url]);
+  now = 30_000;
+  limited = true;
+  await sync.tick();
+  assert.equal(calls.length, 1, 'Real rate limits still apply to user-triggered follow-up');
+  now = 90_000;
+  limited = false;
+  await sync.tick();
+  assert.equal(calls.length, 2);
+  now = 120_000;
+  await sync.tick();
+  assert.equal(calls.length, 2, 'Follow-up expires; ordinary polling cannot drain the reserve');
+});
+
+void test('checks batch five PRs and follow reruns quickly with a bounded allowance', async () => {
+  let now = 0;
+  const batches: string[][] = [];
+  const sync = createGitHubSyncService({
+    now: () => now,
+    account: () => 'alice',
+    enabled: () => true,
+    backoff: () => undefined,
+    read: (_kind, targets) => {
+      batches.push(targets.map((t) => t.url));
+      return Promise.resolve(
+        targets.map((t) => ({
+          kind: 'checks' as const,
+          url: t.url,
+          value: { ...t, headSha: t.headSha ?? '', checkedAt: now, checks: [] },
+        }))
+      );
+    },
+    publish: () => {},
+  });
+  sync.observe('1:stack', {
+    kind: 'checks',
+    priority: 'active',
+    targets: Array.from({ length: 6 }, (_, i) => target(i + 1)),
+  });
+  await sync.tick();
+  await sync.tick();
+  assert.deepEqual(
+    batches.map((b) => b.length),
+    [5, 1]
+  );
+  sync.observe('1:stack', { kind: 'checks', priority: 'active', targets: [target()] });
+  sync.invalidate([target().url], ['checks'], { followUp: true });
+  for (now = 0; now <= 15_000; now += 5_000) await sync.tick();
+  assert.equal(batches.length, 6);
+  now = 19_999;
+  await sync.tick();
+  assert.equal(batches.length, 6);
+  now = 20_000;
+  await sync.tick();
+  // The short follow-up has ended; ordinary adaptive polling resumes.
+  assert.equal(batches.length, 6);
+  now = 25_000;
+  await sync.tick();
+  assert.equal(batches.length, 6);
 });

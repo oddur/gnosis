@@ -141,3 +141,19 @@ void test('paged searches retain ranking, exact totals, bots and recent destinat
     db.close();
   }
 });
+
+void test('SQLite and in-memory search agree on repository-specific bot visibility', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    const index = createSqliteSearchIndex(db);
+    const visible = docs.map(d => d.bot ? { ...d, botHidden: false } : d);
+    index.replace('alice', visible);
+    for (const query of ['', 'queue']) {
+      const hits = index.search('alice', query, false, []).hits;
+      assert.ok(hits.some(h => h.document.id === 'bot'));
+    }
+    index.replace('alice', docs.map(d => d.bot ? { ...d, botHidden: true } : d));
+    assert.ok(!index.search('alice', 'queue', false, []).hits.some(h => h.document.id === 'bot'));
+    assert.ok(index.search('alice', 'queue', true, []).hits.some(h => h.document.id === 'bot'));
+  } finally { db.close(); }
+});

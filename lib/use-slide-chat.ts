@@ -101,7 +101,12 @@ function reducer(state: MessagesMap, action: Action): MessagesMap {
   }
 }
 
-export function useSlideChat(review: ReviewGuide, provider: Provider, model: ModelId) {
+export function useSlideChat(
+  review: ReviewGuide,
+  provider: Provider,
+  model: ModelId,
+  effort?: import('./effort').Effort
+) {
   const key = `${review.reviewId ?? review.prUrl}:${review.snapshot?.fingerprint ?? review.headSha ?? ''}`;
   const [sessionBusy, setSessionBusy] = useState(anyStreaming);
   const [messages, setMessages] = useState<MessagesMap>(() => sessions.get(key) ?? new Map());
@@ -199,6 +204,7 @@ export function useSlideChat(review: ReviewGuide, provider: Provider, model: Mod
           question: chatQuestion(question, selection),
           provider,
           model,
+          effort,
         };
 
         const content = await window.electronAPI.sendSlideChat(req);
@@ -216,7 +222,7 @@ export function useSlideChat(review: ReviewGuide, provider: Provider, model: Mod
         isStreamingRef.current = false;
       }
     },
-    [review, provider, model, dispatch, key]
+    [review, provider, model, effort, dispatch, key]
   );
 
   const retry = useCallback(

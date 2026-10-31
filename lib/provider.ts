@@ -14,6 +14,7 @@ export interface GenerateOptions {
   systemPrompt: string;
   model: ModelId;
   thinking: boolean;
+  effort?: import('./effort').Effort;
   onChunk?: (chunk: string, isThinking: boolean) => void;
   onToolUse?: (toolName: string) => void;
   mcpConfigPath?: string;

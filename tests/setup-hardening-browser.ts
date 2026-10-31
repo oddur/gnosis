@@ -89,6 +89,8 @@ void app.whenReady().then(async () => {
     await click('Retry saving');
     await wait("!document.querySelector('.settings-save-error')");
     await click('Queue & briefings');
+    await click('Repositories');
+    await click('Add repository');
     await fill('#watched-repos', 'long');
     await wait("!!document.querySelector('#watched-repos').closest('.relative').querySelector('li button')");
     win.focus();
@@ -105,6 +107,8 @@ void app.whenReady().then(async () => {
     win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' });
     win.webContents.sendInputEvent({ type: 'char', keyCode: '\r' });
     win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
+    await wait("!!document.querySelector('.repository-editor')");
+    await js("[...document.querySelectorAll('.repository-editor button')].find(b=>b.textContent==='Watch repository').click()");
     await wait("window.savedPrefs.watchedRepos.some(r=>r.includes('long-repository-'))");
     assert.equal(
       await js('document.activeElement.id'),
@@ -126,7 +130,7 @@ void app.whenReady().then(async () => {
       'Escape from a suggestion dismisses search before Settings'
     );
     win.setSize(640, 740);
-    await js("document.querySelector('[aria-label^=\"Remove team/long\"]').scrollIntoView({block:'center'})");
+    await js("document.querySelector('[aria-label^=\"Stop watching team/long\"]').scrollIntoView({block:'center'})");
     await capture('settings-long-repository');
     assert.equal(
       await js(

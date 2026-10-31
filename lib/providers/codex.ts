@@ -1,3 +1,4 @@
+import { normalizeEffort } from '../effort';
 import { harnessEnvironment } from './environment';
 import fs from 'fs/promises';
 import os from 'os';
@@ -85,7 +86,7 @@ async function generate(opts: GenerateOptions): Promise<string> {
         '-c',
         `model_instructions_file=${JSON.stringify(instructionsPath)}`,
         '-c',
-        `model_reasoning_effort="${opts.thinking ? 'high' : 'low'}"`,
+        `model_reasoning_effort="${normalizeEffort('codex', opts.model, opts.effort, opts.thinking)}"`,
         '-c',
         'approval_policy="never"',
         '-c',

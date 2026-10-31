@@ -160,7 +160,7 @@ void test('successful last-quota responses stop later requests; background refre
     json({}, 200, { 'x-ratelimit-remaining': '50', 'x-ratelimit-limit': '5000', 'x-ratelimit-reset': '1100' })
   );
   await h.pool.client('fixture').request('GET /test');
-  assert.ok(h.pool.backoff('fixture', true));
+  assert.match(h.pool.backoff('fixture', true)?.reason ?? '', /preserve your API allowance/);
   assert.equal(h.pool.backoff('fixture'), undefined);
   const empty = harness(() =>
     json({}, 200, { 'x-ratelimit-remaining': '0', 'x-ratelimit-limit': '5000', 'x-ratelimit-reset': '1100' })
@@ -168,6 +168,7 @@ void test('successful last-quota responses stop later requests; background refre
   await empty.pool.client('fixture').request('GET /test');
   await assert.rejects(empty.pool.client('fixture').request('GET /another'), GitHubBackoffError);
   assert.equal(empty.calls.length, 1);
+  assert.match(empty.pool.backoff('fixture', true)?.reason ?? '', /API limit was reached/);
 });
 
 void test('cooldowns and verified usernames survive restart without storing credentials', async () => {
@@ -561,5 +562,78 @@ void test('primary limits pause their own resource without blocking other GitHub
   await assert.rejects(client.request('GET /search/issues'), GitHubBackoffError);
   assert.deepEqual((await client.request('GET /repos/o/r/pulls/1')).data, { value: 'available' });
   await assert.rejects(client.request('GET /search/issues'), GitHubBackoffError);
+  assert.equal(h.calls.length, 2);
+});
+
+void test('preloads pace early without blocking cached or interactive reads', async () => {
+  let now = 1_000_000;
+  const calls: string[] = [];
+  let release!: () => void;
+  const pool = createGitHubClientPool({ now: () => now, minSpacingMs: 0,
+    sleep: ms => new Promise<void>(resolve => { release = () => { now += ms; resolve(); }; }),
+    fetch: ((url: string) => {
+      calls.push(url);
+      return Promise.resolve(json({ ok: true }, 200, { 'x-ratelimit-resource': 'core', 'x-ratelimit-remaining': '4000',
+        'x-ratelimit-limit': '5000', 'x-ratelimit-reset': '4600' }));
+    }) as typeof fetch,
+  });
+  const client = pool.client('one');
+  await withGitHubPriority('background', () => client.request('GET /first-preload'));
+  let completed = false;
+  const waiting = withGitHubPriority('background', () => client.request('GET /second-preload')).then(() => { completed = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls.length, 1, 'Preloads must pace before the low-budget threshold');
+  await withGitHubPriority('background', () => client.request('GET /first-preload'));
+  assert.equal(calls.length, 1, 'Cached reads remain immediate');
+  await client.request('GET /user-request');
+  assert.equal(calls.length, 2, 'The scheduler is free for interactive work during pacing');
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- the pending request changes this flag
+  for (let i = 0; i < 30 && !completed; i++) {
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.equal(completed, true, 'The same background request resumes without being restarted by its caller');
+  await waiting;
+  assert.equal(calls.length, 3);
+});
+
+void test('a click promotes a paced preload and cancellation stops a waiting request', async () => {
+  let wake!: () => void;
+  const calls: string[] = [];
+  const pool = createGitHubClientPool({ now: () => 1_000_000, minSpacingMs: 0,
+    sleep: () => new Promise<void>(resolve => { wake = resolve; }),
+    fetch: ((url: string) => {
+      calls.push(url);
+      return Promise.resolve(json({}, 200, { 'x-ratelimit-resource': 'core', 'x-ratelimit-remaining': '4000',
+        'x-ratelimit-limit': '5000', 'x-ratelimit-reset': '4600' }));
+    }) as typeof fetch,
+  });
+  const client = pool.client('one');
+  await withGitHubPriority('background', () => client.request('GET /seed'));
+  const preload = withGitHubPriority('background', () => client.request('GET /wanted'));
+  await new Promise(resolve => setImmediate(resolve));
+  const clicked = withGitHubPriority('interactive', () => client.request('GET /wanted'));
+  await new Promise(resolve => setImmediate(resolve));
+  wake();
+  await Promise.all([preload, clicked]);
+  assert.equal(calls.length, 2, 'Promotion bypasses speculative pacing and shares the download');
+  const controller = new AbortController();
+  const waiting = withGitHubPriority('background', () => client.request('GET /cancelled', { request: { signal: controller.signal } }));
+  const cancelled = assert.rejects(waiting, /cancelled/);
+  await new Promise(resolve => setImmediate(resolve));
+  controller.abort(new Error('cancelled'));
+  wake();
+  await cancelled;
+  assert.equal(calls.length, 2, 'No request after cancellation');
+});
+
+void test('background work preserves ten percent of the standard REST allowance', async () => {
+  const h = harness(() => json({}, 200, { 'x-ratelimit-resource': 'core', 'x-ratelimit-remaining': '500',
+    'x-ratelimit-limit': '5000', 'x-ratelimit-reset': '4600' }));
+  const client = h.pool.client('one');
+  await client.request('GET /seed');
+  assert.ok(h.pool.backoff('one', true, ['core']));
+  await assert.rejects(withGitHubPriority('background', () => client.request('GET /background')), GitHubBackoffError);
+  await client.request('GET /user-request');
   assert.equal(h.calls.length, 2);
 });

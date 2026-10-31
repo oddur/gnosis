@@ -91,6 +91,7 @@ export function createExplainerService(deps: Dependencies) {
           systemPrompt: EXPLAINER_SYSTEM,
           model: selection.model,
           thinking: true,
+          effort: prefs.effort,
           isolated: true,
           cwd,
           signal,

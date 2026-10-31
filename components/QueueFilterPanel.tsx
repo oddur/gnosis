@@ -14,7 +14,9 @@ export function QueueFilterPanel({
   onChange,
   prInactivityDays,
   onManageInactivity,
+  hasRepositoryOverrides = false,
 }: {
+  hasRepositoryOverrides?: boolean;
   setup?: boolean;
   prInactivityDays?: number;
   onManageInactivity?: () => void;
@@ -76,8 +78,8 @@ export function QueueFilterPanel({
     <section id="queue-filter-panel" className="queue-filter-panel" aria-label="Queue filters">
       {onManageInactivity && <div className="queue-filter-policy">
         <button type="button" className="queue-inactivity-link" onClick={onManageInactivity}
-          title="Change the global inactivity limit. Saved-view filters narrow this scope.">
-          {days ? `Active within ${days} days · starred PRs included` : 'No inactivity limit · change in Settings'}
+          title="Change global defaults and repository overrides. Saved-view filters narrow this scope.">
+          {hasRepositoryOverrides ? 'Repository inactivity settings apply · starred PRs included' : days ? `Active within ${days} days · starred PRs included` : 'No inactivity limit · change in Settings'}
         </button>
       </div>}
       {!setup && <div className="queue-filter-policy queue-filter-scope">

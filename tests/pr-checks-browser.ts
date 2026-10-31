@@ -87,10 +87,30 @@ void app.whenReady().then(async () => {
     assert.ok(
       await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Re-run failed jobs').disabled")
     );
+    // A rerun on the same commit follows the new attempt without a second user action.
+    await js(`(()=>{
+      const original=window.electronAPI.getCheckDetails;
+      window.electronAPI.getCheckDetails=async input=>{
+        const value=await original(input);
+        return input.id==='check:101' ? {...value,summary:'',text:'',annotations:[],state:{status:'queued',conclusion:null,startedAt:null,completedAt:null},job:{...value.job,id:101,attempt:2,status:'queued',steps:[]}} : value;
+      };
+      for(const [url,snapshot] of window.checksFixture.snapshots){
+        window.checksFixture.snapshots.set(url,{...snapshot,checkedAt:Date.now()+1,checks:snapshot.checks.map(c=>c.id==='check:1'?{...c,id:'check:101',databaseId:101,status:'queued',conclusion:null,startedAt:null,completedAt:null}:c)});
+      }
+      document.querySelector('[aria-label="Refresh checks"]').click();
+    })()`);
+    await wait("document.querySelector('.check-detail-header').textContent.includes('Queued')");
+    assert.ok(!(await js("!!document.querySelector('.checks-update')")));
+    assert.ok(!(await js('!!document.querySelector(\'[aria-label="Job log"]\')')), 'Old attempt logs must be cleared');
+    assert.ok(!(await js("document.querySelector('.check-job-steps').textContent.includes('0 of 0')")));
+    assert.ok(await js("document.querySelector('.check-detail-header').textContent.includes('Attempt 2')"));
+    await capture('rerun-queued');
+    await click('Load log');
+    await wait('!!document.querySelector(\'[aria-label="Job log"]\')');
     // A refresh must preserve the old detail and log until the reader accepts newer results.
     await js('window.checksFixture.advance();document.querySelector(\'[aria-label="Refresh checks"]\').click()');
     await wait("!!document.querySelector('.checks-update')");
-    assert.ok(await js("document.querySelector('[aria-label=\"Job log\"]').textContent.includes('check:1')"));
+    assert.ok(await js("document.querySelector('[aria-label=\"Job log\"]').textContent.includes('check:101')"));
     await capture('updated-results');
     await click('View latest results');
     await wait("!document.querySelector('.checks-update') && !!document.querySelector('.check-steps')");
@@ -187,6 +207,86 @@ void app.whenReady().then(async () => {
     assert.ok(await js("document.querySelector('.check-steps').textContent.includes('1m 10s')"));
     assert.ok(await js("document.querySelector('.check-steps [data-state=skipped]').textContent.includes('Skipped')"));
     await capture('finished-narrow');
+    // Native subscriptions preserve the pause reason/time and scope a retry to one PR.
+    win.setContentSize(1280, 800);
+    await win.loadURL(url + '?checks&github-sync');
+    await wait("document.querySelectorAll('.queue-item').length===7");
+    await js(
+      "document.querySelector('.queue-stack-icon').closest('.queue-item').querySelector('.queue-checks').click()"
+    );
+    await wait("document.querySelectorAll('.checks-pr-group').length===3");
+    await js(`(()=>{
+      window.forcedCheckUrls=[];
+      const original=window.electronAPI.getPrChecks;
+      window.electronAPI.getPrChecks=(input,options)=>{if(options?.force)window.forcedCheckUrls.push(input.url);return original(input,options)};
+      window.syncFixture.pauseChecks();
+    })()`);
+    await wait("document.querySelectorAll('.checks-sync-status').length===3");
+    assert.ok(
+      await js("document.querySelector('.checks-sync-status').textContent.includes('preserve your API allowance')")
+    );
+    assert.ok(
+      await js("document.querySelector('.checks-sync-status').textContent.includes('Automatic updates resume at')")
+    );
+    await capture('allowance-paused');
+    await js("document.querySelector('.checks-sync-status button').click()");
+    await wait('window.forcedCheckUrls.length===1');
+    assert.equal(await js('window.forcedCheckUrls.length'), 1);
+    // Reruns are already followed by the backend; no duplicate foreground refresh.
+    await js("[...document.querySelectorAll('.check-row')].find(b=>b.textContent.includes('Tests / macOS')).click()");
+    await wait("!!document.querySelector('.check-steps')");
+    await click('Re-run failed jobs');
+    await wait("document.querySelector('.check-detail').textContent.includes('Rerun requested')");
+    assert.equal(await js('window.forcedCheckUrls.length'), 1);
+    await capture('rerun-requested');
+    // Same-id state transitions also update automatically, including a fast rerun completion.
+    await js(`(()=>{
+      const snapshot=[...window.checksFixture.snapshots.values()][0];
+      window.syncFixture.emit({kind:'checks',url:snapshot.url,value:{...snapshot,checkedAt:Date.now()+1000,
+        checks:snapshot.checks.map(c=>c.id==='check:1'?{...c,status:'completed',conclusion:'success',completedAt:new Date().toISOString()}:c)}});
+    })()`);
+    await wait(
+      "document.querySelector('.check-detail-header').textContent.includes('Passed') && !document.querySelector('.check-detail').textContent.includes('Rerun requested')"
+    );
+
+    await js(
+      "(()=>{const b=[...document.querySelectorAll('[role=tab]')].find(b=>b.textContent==='Summary');b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()"
+    );
+    await wait("[...window.syncFixture.subscriptions.values()].some(s=>s.kind==='checks' && s.priority==='visible')");
+    // Bulk reruns include cancellations, deduplicate workflows, and preserve partial success.
+    await js(`(()=>{
+      const snapshot=[...window.checksFixture.snapshots.values()][0];
+      const repo=new URL(snapshot.url).pathname.split('/').slice(0,3).join('/');
+      const base=snapshot.checks[0];
+      window.bulkCalls=[];window.failBulk=true;
+      window.electronAPI.rerunChecks=async request=>{
+        window.bulkCalls.push(request);
+        if(request.id==='check:22'&&window.failBulk) throw Error('API requests paused. Try again later.');
+      };
+      window.syncFixture.emit({kind:'checks',url:snapshot.url,value:{...snapshot,checkedAt:Date.now()+5000,checks:[
+        {...base,id:'check:20',status:'completed',conclusion:'failure',name:'Test one',url:'https://github.com'+repo+'/actions/runs/20/job/20'},
+        {...base,id:'check:21',status:'completed',conclusion:'failure',name:'Test two',url:'https://github.com'+repo+'/actions/runs/20/job/21'},
+        {...base,id:'check:22',status:'completed',conclusion:'cancelled',name:'Cancelled build',url:'https://github.com'+repo+'/actions/runs/22/job/22'}
+      ]}});
+    })()`);
+    await wait("[...document.querySelectorAll('button')].some(b=>b.textContent==='Re-run failed & cancelled…')");
+    await click('Re-run failed & cancelled…');
+    await wait("document.querySelectorAll('.bulk-check-rerun-list li').length===2");
+    assert.ok(await js("document.querySelector('[role=dialog]').textContent.includes('including those that passed')"));
+    await js(
+      'Promise.all(document.getAnimations().filter(a=>a.effect?.getComputedTiming().iterations!==Infinity).map(a=>a.finished.catch(()=>{})))'
+    );
+    await wait("Number(getComputedStyle(document.querySelector('[role=dialog]')).opacity)===1");
+    await capture('bulk-rerun-confirmation');
+    await click('Re-run workflows');
+    await wait("document.querySelector('[role=alert]')?.textContent.includes('API requests paused')");
+    assert.deepEqual(await js('window.bulkCalls.map(r=>r.mode)'), ['failed', 'all']);
+    assert.ok(await js("document.querySelector('.bulk-check-rerun-list').textContent.includes('Rerun requested')"));
+    await js('window.failBulk=false');
+    await click('Retry remaining workflows');
+    await wait("document.querySelector('[role=dialog]').textContent.includes('All reruns requested')");
+    assert.deepEqual(await js('window.bulkCalls.map(r=>r.id)'), ['check:21', 'check:22', 'check:22']);
+    await click('Done');
     console.log('PR Checks browser checks passed');
     win.destroy();
     app.exit(0);

@@ -1,3 +1,4 @@
+import { preferencesUpdated } from './use-repository-settings';
 import { useEffect, useRef, useState } from 'react';
 import { initialSetup, normalizeSetup, type OnboardingState, type SetupDraft } from './onboarding';
 import type { Preferences } from './types';
@@ -98,6 +99,7 @@ export function useOnboarding(
     try {
       await writes.current;
       const nextPrefs = await window.electronAPI.applyOnboarding(current.current.draft, login);
+      preferencesUpdated(nextPrefs);
       const next = { ...current.current, completed: true, paused: false, tourStep: 0, tourCompleted: false };
       current.current = next;
       setState(next);

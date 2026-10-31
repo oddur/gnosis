@@ -55,6 +55,9 @@ interface Budget {
   limit: number;
   reset: number;
 }
+// Leave ten percent of each allowance for explicit user work and other clients.
+const backgroundReserve = (resource: string, budget: Budget) =>
+  Math.min(resource === 'search' ? 3 : 1000, budget.limit * 0.1);
 interface AccountState {
   budgets: Partial<Record<string, Budget>>;
   blockedUntil: number;
@@ -129,19 +132,18 @@ export function createGitHubClientPool(options: Options = {}) {
   };
   const backoff = (token?: string | null, background = false, resources?: readonly string[]) => {
     const state = stateFor(keyFor(token));
-    const deadlines = [state.blockedUntil];
+    let hardDeadline = state.blockedUntil;
+    let reserveDeadline = 0;
     for (const [resource, budget] of Object.entries(state.budgets)) {
       if (resources && !resources.includes(resource)) continue;
       if (!budget) continue;
-      const reserve = background && resource === 'core' ? Math.min(100, budget.limit * 0.1) : 0;
-      if (budget.remaining <= reserve) deadlines.push(budget.reset);
+      if (budget.remaining <= 0) hardDeadline = Math.max(hardDeadline, budget.reset);
+      else if (background && budget.remaining <= backgroundReserve(resource, budget))
+        reserveDeadline = Math.max(reserveDeadline, budget.reset);
     }
-    const deadline = Math.max(...deadlines);
-    if (deadline > now())
-      return new GitHubBackoffError(
-        deadline,
-        background ? 'GitHub updates are paused to protect your API allowance' : undefined
-      );
+    if (hardDeadline > now()) return new GitHubBackoffError(hardDeadline);
+    if (reserveDeadline > now())
+      return new GitHubBackoffError(reserveDeadline, 'Background updates paused to preserve your API allowance');
   };
   return {
     backoff,
@@ -276,6 +278,7 @@ export function createGitHubClientPool(options: Options = {}) {
         }
         const shared = deduplicate ? inflight.get(requestKey) : undefined;
         if (shared) return joinGitHubWork(shared).then((result) => structuredClone(result));
+        const paced = Symbol('background pacing');
         const run = async () => {
           const stored = cacheable ? cache.get(requestKey, isCachedResponse) : undefined;
           const cached = stored?.value;
@@ -296,11 +299,10 @@ export function createGitHubClientPool(options: Options = {}) {
             const priority = githubPriority();
             const budget = state.budgets[resource];
             const reserve =
-              priority === 'background' && budget ? Math.min(resource === 'search' ? 3 : 100, budget.limit * 0.1) : 0;
+              priority === 'background' && budget ? backgroundReserve(resource, budget) : 0;
             const deadline = Math.max(
               state.blockedUntil,
-              budget && budget.remaining <= reserve ? budget.reset : 0,
-              priority === 'background' ? (backgroundDue.get(resource) ?? 0) : 0
+              budget && budget.remaining <= reserve ? budget.reset : 0
             );
             if (deadline > now())
               throw new GitHubBackoffError(
@@ -311,6 +313,9 @@ export function createGitHubClientPool(options: Options = {}) {
               );
           };
           gate();
+          // Pacing is not a failed operation. Release the network scheduler while
+          // waiting, and resume this request so multi-request reads keep their progress.
+          if (githubPriority() === 'background' && (backgroundDue.get(resource) ?? 0) > now()) return paced;
           const spacing = (options.minSpacingMs ?? 100) - (now() - lastRequest);
           if (spacing > 0) await sleep(spacing);
           gate();
@@ -375,8 +380,8 @@ export function createGitHubClientPool(options: Options = {}) {
             observe(response.headers);
             const budget = state.budgets[resource];
             const priority = githubPriority();
-            if (priority === 'background' && budget && budget.reset > now() && budget.remaining < budget.limit * 0.2) {
-              const reserve = Math.min(resource === 'search' ? 3 : 100, budget.limit * 0.1);
+            if (priority === 'background' && budget && budget.reset > now()) {
+              const reserve = backgroundReserve(resource, budget);
               backgroundDue.set(
                 resource,
                 now() + Math.ceil((budget.reset - now()) / Math.max(1, budget.remaining - reserve))
@@ -485,7 +490,15 @@ export function createGitHubClientPool(options: Options = {}) {
             invalidateWrite();
           }
         };
-        const work = createGitHubWork(() => schedule(githubPriorityScope(), run));
+        const work = createGitHubWork(async () => {
+          for (;;) {
+            const result = await schedule(githubPriorityScope(), run);
+            if (result !== paced) return result;
+            // A coalesced click can promote this work. Recheck often without
+            // occupying a network slot or delaying unrelated interactive requests.
+            await sleep(Math.min(100, Math.max(1, (backgroundDue.get(resource) ?? 0) - now())));
+          }
+        });
         const result = work.promise;
         if (deduplicate) {
           inflight.set(requestKey, work);

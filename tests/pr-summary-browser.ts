@@ -241,9 +241,9 @@ void app.whenReady().then(async () => {
     await wait("document.querySelectorAll('.stack-overview-member').length === 3");
     assert.equal(await js("document.querySelectorAll('.pr-summary-page .pr-details').length"), 0);
     await capture('pr-summary-stack');
-    await click('Open PR #122');
+    await js("document.querySelector('.stack-overview-member[data-pr-url$=\"/122\"] .stack-member-title > button:not(.entity-badge)').click()");
     await wait("document.querySelector('.pr-overview-heading h1')?.textContent.includes('adaptive batching')");
-    assert.match(await js<string>("document.querySelector('.pr-member-relationship').textContent"), /Builds on #121/);
+    assert.match(await js<string>("document.querySelector('.stack-context [aria-current=page] .stack-parent-link').textContent"), /#121/);
     window.setSize(980, 700);
     await js("window.selectOption('[aria-label=\"Review scope\"]', 'https://github.com/klang/engine/pull/121')");
     await wait("document.querySelector('.pr-overview-heading h1')?.textContent.includes('Route worker')");
@@ -293,9 +293,9 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelectorAll('.pr-summary-page .pr-details').length"), 0);
     assert.ok(await js("!!document.querySelector('.pr-summary-body>.workbench-notice')"));
     await capture('pr-summary-nine-pr-stack');
-    await click('Open PR #128');
+    await js("document.querySelector('.stack-overview-member[data-pr-url$=\"/128\"] .stack-member-title > button:not(.entity-badge)').click()");
     await wait("document.querySelector('.pr-overview-heading h1')?.textContent==='Stack step 9'");
-    assert.match(await js<string>("document.querySelector('.pr-member-relationship').textContent"), /Builds on #127/);
+    assert.match(await js<string>("document.querySelector('.stack-context [aria-current=page] .stack-parent-link').textContent"), /#127/);
     await js("document.querySelector('.pr-summary-content').scrollTop=350");
     await js("window.selectOption('[aria-label=\"Review scope\"]', 'https://github.com/klang/engine/pull/120')");
     await js("window.selectOption('[aria-label=\"Review scope\"]', 'https://github.com/klang/engine/pull/128')");

@@ -90,7 +90,7 @@ export function createSqliteSearchIndex(db: DatabaseSync) {
         let hit: SearchHit | undefined;
         if (!q) {
           if (
-            (includeBots || !document.bot) &&
+            (includeBots || !document.bot || document.botHidden === false) &&
             (['pr', 'stack', 'view', 'repository'].includes(document.kind) || recentIds.includes(document.id))
           )
             hit = searchHit(document);

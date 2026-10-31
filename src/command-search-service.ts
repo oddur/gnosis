@@ -26,6 +26,7 @@ interface Deps {
   history: () => ReviewHistoryEntry[];
   account: () => string;
   ignoreBots: () => boolean;
+  repositoryBotSettings?: () => Record<string, boolean>;
   threads: (url: string) => GitHubReviewThreads | undefined;
 }
 export interface LocalSearchResponse {
@@ -165,7 +166,14 @@ export function createCommandSearchService(deps: Deps) {
           .filter((entry) => isMutedReview(entry, muted))
           .map((entry) => entry.id)
       );
-      const visibleDocs = docs.filter(
+      const repoBots = deps.repositoryBotSettings?.() ?? {};
+      const visibleDocs = docs.map(doc => {
+        if (!doc.bot) return doc;
+        const repo = /github\.com\/([^/]+\/[^/]+)\//.exec(doc.sourceUrl ?? doc.source)?.[1]?.toLowerCase();
+        const repos = repo ? [repo] : [...doc.source.matchAll(/(?:^| · )([\w.-]+\/[\w.-]+) #/g)].map(match => match[1].toLowerCase());
+        const hidden = (name: string) => Object.hasOwn(repoBots, name) ? repoBots[name] : deps.ignoreBots();
+        return { ...doc, botHidden: repos.length ? repos.every(hidden) : deps.ignoreBots() };
+      }).filter(
         (doc) =>
           !(doc.sourceUrl && muted.has(doc.sourceUrl)) &&
           !(doc.reviewId && hiddenReviews.has(doc.reviewId)) &&
@@ -176,8 +184,8 @@ export function createCommandSearchService(deps: Deps) {
               doc.destination.subject?.subject.members.some((member) => muted.has(member.url)))
           )
       );
-      const bots = includeBots || !deps.ignoreBots();
-      const inputs = [indexed, httpDocuments, currentMutes, deps.history(), ...threadInputs];
+      const bots = includeBots;
+      const inputs = [JSON.stringify(repoBots), deps.ignoreBots(), indexed, httpDocuments, currentMutes, deps.history(), ...threadInputs];
       if (inputs.length !== indexedInputs.length || inputs.some((input, i) => input !== indexedInputs[i])) {
         deps.index?.replace(deps.account(), visibleDocs);
         indexedInputs = inputs;
@@ -191,7 +199,7 @@ export function createCommandSearchService(deps: Deps) {
               .filter(
                 (d) =>
                   (['pr', 'stack', 'view', 'repository'].includes(d.kind) || recentIds.includes(d.id)) &&
-                  (bots || !d.bot)
+                  (bots || !d.bot || !d.botHidden)
               )
               .sort((a, b) => {
                 const ai = recentIds.indexOf(a.id),
@@ -203,7 +211,7 @@ export function createCommandSearchService(deps: Deps) {
         account: deps.account(),
         hits: hits.slice(0, 120).map((h) => ({ ...h, document: { ...h.document, text: h.snippet, code: undefined } })),
         total: indexedResult?.total ?? hits.length,
-        ignoreBots: deps.ignoreBots(),
+        ignoreBots: deps.ignoreBots() || Object.values(repoBots).some(Boolean),
         warnings: indexed?.warnings ?? [],
       };
     },
@@ -308,6 +316,7 @@ export interface SearchInput {
   history: ReviewHistoryEntry[];
   account: string;
   ignoreBots: boolean;
+  repositoryBotSettings?: Record<string, boolean>;
   muted: string[];
   cachedResponses: { url: string; data: unknown }[];
   threads: Record<string, GitHubReviewThreads>;
@@ -320,6 +329,7 @@ export interface SearchRequest {
   recentIds: string[];
   muted: string[];
   ignoreBots: boolean;
+  repositoryBotSettings?: Record<string, boolean>;
 }
 /** Only gather snapshots on refresh; parsing, indexing, ranking and snippets stay in the worker. */
 export function createWorkerCommandSearchService(
@@ -334,7 +344,7 @@ export function createWorkerCommandSearchService(
       if (typeof query !== 'string' || query.length > 1000) throw Error('Use a search of 1,000 characters or fewer.');
       const account = deps.account(),
         muted = [...(deps.mutedUrls?.() ?? [])];
-      const request: SearchRequest = { account, query, includeBots, recentIds, muted, ignoreBots: deps.ignoreBots() };
+      const request: SearchRequest = { account, query, includeBots, recentIds, muted, ignoreBots: deps.ignoreBots(), repositoryBotSettings: deps.repositoryBotSettings?.() };
       if (account !== indexedAccount || Date.now() - refreshed > 2000) {
         const queue = deps.queue(),
           history = deps.history(),
@@ -358,6 +368,7 @@ export function createWorkerCommandSearchService(
           history,
           account,
           ignoreBots: request.ignoreBots,
+          repositoryBotSettings: request.repositoryBotSettings,
           muted,
           cachedResponses,
           threads,

@@ -13,6 +13,7 @@ void app.whenReady().then(async () => {
     show: true,
     webPreferences: { backgroundThrottling: false, sandbox: true, contextIsolation: true },
   });
+  win.webContents.on('console-message', ({ level, message }) => { if (level === 'error') console.error(message); });
   const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
   const wait = async (code: string) => {
     for (let i = 0; i < 200; i++) {
@@ -127,6 +128,29 @@ void app.whenReady().then(async () => {
     await wait("document.querySelectorAll('[data-slot=combobox-item]').length===1");
     await key('Enter');
     await wait("!document.querySelector('[data-slot=combobox-content]')");
+    await click('[data-slot=dialog-close]');
+    // Model and effort are saved together, including when changing harnesses.
+    await js("window.selectOption('[aria-label=\"Review model\"]', 'gpt-6.1-sol')");
+    await js("window.selectOption('[aria-label=\"Review model effort\"]', 'ultra')");
+    assert.equal(await js("window.electronAPI.loadPreferences().then(p=>p.effort)"), 'ultra');
+    await js("window.selectOption('[aria-label=\"Review model\"]', 'gpt-6-luna')");
+    assert.equal(await js("window.electronAPI.loadPreferences().then(p=>p.effort)"), 'max');
+    await click('[aria-label="Review model effort"]');
+    assert.equal(await js("!!document.querySelector('[role=option][data-value=ultra]')"), false);
+    await key('Escape');
+    await click('[aria-label="Settings"]');
+    await wait("!!document.querySelector('[aria-label=\"Use a different model for briefings\"]')");
+    await js("window.selectOption('[aria-label=\"Briefing model effort\"]', 'medium')");
+    await js("[...document.querySelectorAll('[role=tab]')].find(e=>e.textContent==='Review').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
+    await wait("!!document.querySelector('[aria-label=\"Explanation model effort\"]')");
+    assert.equal(await js("document.querySelector('[aria-label=\"Explanation model effort\"]').value"), 'max');
+    await js("window.selectOption('[aria-label=\"Explanation model effort\"]', 'xhigh')");
+    await capture('effort-settings-dark');
+    await click('[data-slot=dialog-close]');
+    assert.equal(await js("window.electronAPI.loadPreferences().then(p=>p.effort==='xhigh'&&p.proactiveEffort==='medium')"), true);
+    await click('[aria-label="Settings"]');
+    await wait("document.querySelector('[aria-label=\"Briefing model effort\"]')?.value==='medium'");
+    await capture('briefing-effort-dark');
     await click('[data-slot=dialog-close]');
     // A saved selection stays visible even when the cached option list no longer contains it.
     await js(

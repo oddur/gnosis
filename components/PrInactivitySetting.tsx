@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useId } from 'react';
 import { DEFAULT_PR_INACTIVITY_DAYS, MAX_PR_INACTIVITY_DAYS } from '../lib/pr-inactivity';
 
 export function PrInactivitySetting({ days, onChange }: { days: number; onChange: (days: number) => void }) {
+  const helpId = useId();
   const [draft, setDraft] = useState(String(days || DEFAULT_PR_INACTIVITY_DAYS));
   const [error, setError] = useState('');
   useEffect(() => {
@@ -25,7 +26,7 @@ export function PrInactivitySetting({ days, onChange }: { days: number; onChange
           type="number"
           className="w-20"
           aria-label="PR inactivity limit in days"
-          aria-describedby="pr-inactivity-help"
+          aria-describedby={helpId}
           min={1}
           max={MAX_PR_INACTIVITY_DAYS}
           step={1}
@@ -64,7 +65,7 @@ export function PrInactivitySetting({ days, onChange }: { days: number; onChange
         Never ignore
       </label>
       <p
-        id="pr-inactivity-help"
+        id={helpId}
         className={error ? 'text-xs text-destructive mt-2' : 'sr-only'}
         role={error ? 'alert' : undefined}
       >

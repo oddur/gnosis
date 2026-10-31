@@ -1,3 +1,4 @@
+import { sourceChunks } from './prompt-budget';
 import { readCommitChecks } from './github-checks';
 import type { Octokit } from '@octokit/rest';
 import { parseGitHubLabels } from './github-labels';
@@ -160,7 +161,7 @@ export async function getChangedFiles(
       files.push({
         filename: f.filename,
         sha: f.sha ?? undefined,
-        status: (f.status === 'removed' ? 'deleted' : f.status === 'added' || f.status === 'renamed' ? f.status : 'modified') as ChangedFile['status'],
+        status: f.status === 'removed' ? 'deleted' : f.status === 'added' || f.status === 'renamed' ? f.status : 'modified',
         additions: f.additions,
         deletions: f.deletions,
         previous_filename: f.previous_filename,
@@ -386,36 +387,34 @@ export async function extractImportsWithLLM(
   changedFilePaths: string[],
   providerName: Provider
 ): Promise<string[]> {
-  const fileEntries = changedFilePaths
-    .filter((p) => changedFileContents[p])
-    .map((p) => `--- ${p} ---\n${changedFileContents[p]}`)
-    .join('\n\n');
-
-  if (!fileEntries) return [];
-
+  const entries = changedFilePaths.flatMap((file) =>
+    sourceChunks(changedFileContents[file] ?? '', 150_000).map(
+      (source, index) => `--- ${file} (section ${index + 1}) ---\n${source}`
+    )
+  );
+  if (!entries.length) return [];
   const provider = getProvider(providerName);
-  const quickEntry = provider.models.find((m) => m.quick) ?? provider.models[0];
-  const quickModel = quickEntry.id;
-
-  try {
-    const result = await provider.quick({
-      content: fileEntries,
-      systemPrompt: SMART_IMPORTS_SYSTEM_PROMPT,
-      model: quickModel,
-    });
-
-    // Extract JSON array from response
-    const start = result.indexOf('[');
-    const end = result.lastIndexOf(']');
-    if (start === -1 || end <= start) return [];
-
-    const parsed: unknown = JSON.parse(result.slice(start, end + 1));
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((p): p is string => typeof p === 'string');
-  } catch (err) {
-    console.warn('[github] Smart import extraction failed, returning empty:', err);
-    return [];
+  const quickModel = (provider.models.find((model) => model.quick) ?? provider.models[0]).id;
+  const batches: string[] = [];
+  for (const entry of entries) {
+    if (batches.length && batches[batches.length - 1].length + entry.length < 180_000)
+      batches[batches.length - 1] += '\n\n' + entry;
+    else batches.push(entry);
   }
+  const paths = new Set<string>();
+  for (const content of batches) {
+    try {
+      const result = await provider.quick({ content, systemPrompt: SMART_IMPORTS_SYSTEM_PROMPT, model: quickModel });
+      const start = result.indexOf('['),
+        end = result.lastIndexOf(']');
+      if (start < 0 || end <= start) continue;
+      const parsed: unknown = JSON.parse(result.slice(start, end + 1));
+      if (Array.isArray(parsed)) for (const file of parsed) if (typeof file === 'string') paths.add(file);
+    } catch (error) {
+      console.warn('[github] Import analysis section failed; retaining other results:', error);
+    }
+  }
+  return [...paths];
 }
 
 export async function getNeighborFiles(

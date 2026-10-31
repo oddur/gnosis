@@ -582,6 +582,8 @@ const mocks = {
   },
   loadHarnessEnvironment: async () => ({ claude: [], codex: [] }),
   saveHarnessEnvironment: async () => {},
+  onPreferencesChanged: () => () => {},
+  onWorkbenchChanged: () => () => {},
   loadPreferences: () => Promise.resolve(prefs),
   savePreferences: (next: Preferences) => {
     prefs = next;

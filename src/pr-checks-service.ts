@@ -1,6 +1,6 @@
 import type { Octokit } from '@octokit/rest';
 import { githubCacheFor } from '../lib/github-client';
-import { readCommitChecks } from '../lib/github-checks';
+import { readChecksGraphQL } from './pr-checks-graphql';
 import {
   checkKey,
   type CheckTarget,
@@ -23,64 +23,62 @@ export async function readPrChecks(
   input: CheckTarget,
   options: { cachedOnly?: boolean; force?: boolean } = {}
 ): Promise<PrChecks | undefined> {
-  const { owner, repo, pull_number } = target(input);
-  const cache = githubCacheFor(client),
-    key = `pr-checks:v1:${checkKey(input)}`;
-  const saved = cache?.get(
-    key,
-    (v): v is PrChecks => !!v && typeof v === 'object' && 'checks' in v && Array.isArray(v.checks) && 'checkedAt' in v
-  );
-  if (
-    options.cachedOnly ||
-    (!options.force && saved && !saved.revalidate && Date.now() - saved.value.checkedAt < 25_000)
-  )
-    return saved?.value;
+  return (await readPrChecksBatch(client, [input], options))[0];
+}
+
+export async function readPrChecksBatch(
+  client: Octokit,
+  inputs: CheckTarget[],
+  options: { cachedOnly?: boolean; force?: boolean } = {}
+): Promise<PrChecks[]> {
+  const cache = githubCacheFor(client);
   let work = pending.get(client);
   if (!work) {
     work = new Map();
     pending.set(client, work);
   }
-  const current = work.get(key);
-  if (current) return joinGitHubWork(current);
-  const version = cache?.version();
-  const job = createGitHubWork(async () => {
-    const { checks } = await readCommitChecks(client, owner, repo, input.headSha, true);
-    let warning: string | undefined;
-    const requirementsKey = `pr-check-requirements:v1:${checkKey(input)}`;
-    const old = cache?.get(
-      requirementsKey,
-      (v): v is { at: number; values: Record<string, boolean> } =>
-        !!v && typeof v === 'object' && 'values' in v && 'at' in v
+  const result: Promise<PrChecks | undefined>[] = [];
+  const missing: CheckTarget[] = [];
+  for (const input of new Map(inputs.map((input) => [checkKey(input), input])).values()) {
+    target(input);
+    const saved = cache?.get(
+      `pr-checks:v1:${checkKey(input)}`,
+      (v): v is PrChecks => !!v && typeof v === 'object' && 'checks' in v && Array.isArray(v.checks) && 'checkedAt' in v
     );
-    let requirements = old && !options.force && Date.now() - old.value.at < 120_000 ? old.value.values : undefined;
-    if (!requirements) {
-      requirements = {};
-      try {
-        const ids = checks.flatMap((c) => (c.nodeId ? [c.nodeId] : []));
-        for (let i = 0; i < ids.length; i += 100) {
-          const data = await client.graphql<{ nodes: ({ id: string; isRequired: boolean } | null)[] }>(
-            `query($ids:[ID!]!,$number:Int!){nodes(ids:$ids){...on CheckRun{id isRequired(pullRequestNumber:$number)} ...on StatusContext{id isRequired(pullRequestNumber:$number)}}}`,
-            { ids: ids.slice(i, i + 100), number: pull_number }
-          );
-          for (const node of data.nodes)
-            if (node && typeof node.isRequired === 'boolean') requirements[node.id] = node.isRequired;
-        }
-        if (cache?.version() === version) cache?.set(requirementsKey, { at: Date.now(), values: requirements });
-      } catch {
-        warning = 'GitHub could not confirm which checks are required. Requirements are shown as unknown.';
-      }
+    if (
+      options.cachedOnly ||
+      (!options.force && saved && !saved.revalidate && Date.now() - saved.value.checkedAt < 25_000)
+    ) {
+      result.push(Promise.resolve(saved?.value));
+    } else {
+      const current = work.get(checkKey(input));
+      if (current) result.push(joinGitHubWork(current));
+      else missing.push(input);
     }
-    for (const check of checks) check.required = check.nodeId ? (requirements[check.nodeId] ?? null) : null;
-    const result: PrChecks = { ...input, checks, checkedAt: Date.now(), warning };
-    if (cache?.version() === version) cache?.set(key, result);
-    return result;
-  });
-  work.set(key, job);
-  try {
-    return await job.promise;
-  } finally {
-    if (work.get(key) === job) work.delete(key);
   }
+  for (let i = 0; i < missing.length; i += 5) {
+    const batch = missing.slice(i, i + 5);
+    const version = cache?.version();
+    const job = createGitHubWork(() => readChecksGraphQL(client, batch));
+    for (const [index, input] of batch.entries()) {
+      const key = checkKey(input);
+      const entry: GitHubWork<PrChecks> = {
+        scope: job.scope,
+        promise: job.promise
+          .then((values) => {
+            const value = values[index];
+            if (cache?.version() === version) cache?.set(`pr-checks:v1:${key}`, value);
+            return value;
+          })
+          .finally(() => {
+            if (work.get(key) === entry) work.delete(key);
+          }),
+      };
+      work.set(key, entry);
+      result.push(entry.promise);
+    }
+  }
+  return (await Promise.all(result)).filter((value): value is PrChecks => !!value);
 }
 async function checkedRun(client: Octokit, input: CheckSelection) {
   const { owner, repo, pull_number } = target(input);

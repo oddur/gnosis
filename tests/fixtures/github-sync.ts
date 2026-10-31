@@ -49,6 +49,23 @@ export function installSyncFixture(mocks: Record<string, unknown>, items: QueueI
       subscriptions,
       counts,
       emit,
+      pauseChecks: () => {
+        for (const [id, interest] of subscriptions)
+          if (interest.kind === 'checks')
+            receivers.forEach((callback) =>
+              callback({
+                account: 'oddur',
+                subscriptionId: id,
+                updates: [],
+                failures: interest.targets.map((target) => ({
+                  kind: 'checks',
+                  url: target.url,
+                  message: 'Background updates paused to preserve your API allowance',
+                  retryAt: Date.now() + 600_000,
+                })),
+              })
+            );
+      },
       rename: () => {
         items[1].subject.title = 'Updated through background sync';
         items[1].subject.members[0].title = items[1].subject.title;

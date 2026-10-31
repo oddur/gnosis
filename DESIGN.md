@@ -226,6 +226,14 @@ Hover adds a neutral surface. Counts use tabular numerals.
 Queue content uses rows and divided panes. The [Card](components/ui/card.tsx) primitive remains available for auxiliary content.
 Cards retain their border, larger radius, small shadow, and 24px content inset.
 
+### Stack status
+
+A stack summary has one merge verdict above a full-width dependency list. Review status, Checks, and Branch are independent columns. Branch metadata and viewed-file progress share the secondary line. Confirmed blockers use red; non-blocking check problems use amber. Optional updates and skipped checks use muted text.
+
+Checks follow new attempts on the displayed commit automatically. A new commit requires an explicit switch. After a rerun request, label old output as the previous attempt until GitHub reports new results. Background allowance pauses are informational and show the automatic retry time. Refreshing one PR must not refresh the full stack.
+
+A compact “To merge this stack” list groups required actions and links to the affected PR overviews, ordered base first within each group. Drafts have a one-click “Mark all ready” action with inline progress and partial-failure recovery. It changes only draft status, and retains the existing permission and revision guards. Show each blocker and its remedy in the PR row without expansion. Name required check failures; separate running checks as waiting. Keep optional check results outside the required-action list. Expand a row for supporting check details. Show separate timestamps for merge requirements and check results, including missing or delayed results. Permission reads start on action, with the existing confirmation and revision checks. Ready rows omit redundant details. Below 760px of content width, status columns move under the PR and retain visible labels.
+
 ### Source identity and Activity
 
 A sticky header identifies the source PR and file in each code group. It uses a panel surface and 9px by 12px padding.
@@ -263,3 +271,5 @@ Sidecar snippets illustrate the primitives without a React or Tailwind runtime; 
 - Don't turn dense queue rows into a grid of large cards.
 - Don't confuse source attribution with the review submission destination.
 - Don't rely on animation or color alone to explain status.
+
+Bulk check reruns are available in the stack overview and Checks toolbar. Group by workflow run; failed workflows rerun failed jobs and dependents, while any cancelled job makes the run use all jobs. Confirm the affected PRs and workflow scope. Exclude running workflows and external providers; retain accepted requests after partial failure so Retry only submits remaining workflows.

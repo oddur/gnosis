@@ -1,3 +1,4 @@
+import { useSettingsShortcut } from '../../lib/use-settings-shortcut';
 import { watchGitHub } from '../../lib/watch-github';
 import { usePrDiscussions } from '../../lib/use-pr-discussions';
 import { RecentlyViewed } from '../../components/RecentlyViewed';
@@ -163,6 +164,7 @@ function ReviewPageContent({
     }
   });
   const [settingsOpen, setSettingsOpen] = useState(false);
+  useSettingsShortcut(() => setSettingsOpen(true), active && !embedded);
   const [currentLogin, setCurrentLogin] = useState<string | null>(null);
   const [freshness, setFreshness] = useState<FreshnessResult | null>(null);
   const [chatOpen, setChatOpen] = useSessionDraft('chat-open', false);
@@ -387,7 +389,7 @@ function ReviewPageContent({
       setShowSubmitDialog(false);
     }
   }, [showSubmitDialog, submitUrl]);
-  const slideChat = useSlideChat(review, chatProvider, chatModel);
+  const slideChat = useSlideChat(review, chatProvider, chatModel, prefs?.effort);
   const gitFileUrlBase = useMemo(
     () => (review.snapshot?.subject.kind === 'stack' ? undefined : buildFileUrlBase(review.prUrl, review.headSha)),
     [review.prUrl, review.headSha]

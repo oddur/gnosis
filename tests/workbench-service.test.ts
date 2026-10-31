@@ -312,7 +312,7 @@ test('cached queue remains usable while GitHub refresh is pending', { timeout: 1
 
 test('clearing the briefing override routes generation to the selected Codex model', async () => {
   const s = setup(async () => '{"summary":"Ready"}', false);
-  const calls: { provider: string; model: string }[] = [];
+  const calls: { provider: string; model: string; effort: string }[] = [];
   s.prefs.provider = 'codex';
   s.prefs.model = 'gpt-6-astra';
   s.prefs.proactiveReviewOverrides = true;
@@ -320,8 +320,8 @@ test('clearing the briefing override routes generation to the selected Codex mod
   s.prefs.proactiveModel = 'claude-sonnet-5-5';
   s.prefs.briefingDailyLimit = 2;
   s.deps.provider = ((provider: string) => ({
-    generate: (req: { model: string }) => {
-      calls.push({ provider, model: req.model });
+    generate: (req: { model: string; effort: string }) => {
+      calls.push({ provider, model: req.model, effort: req.effort });
       return Promise.resolve('{"summary":"Ready"}');
     },
   })) as unknown as typeof getProvider;
@@ -333,8 +333,8 @@ test('clearing the briefing override routes generation to the selected Codex mod
     s.prefs.proactiveReviewOverrides = false;
     await settle(service, 'ready');
     assert.deepEqual(calls, [
-      { provider: 'claude', model: 'claude-sonnet-5-5' },
-      { provider: 'codex', model: 'gpt-6-astra' },
+      { provider: 'claude', model: 'claude-sonnet-5-5', effort: 'low' },
+      { provider: 'codex', model: 'gpt-6-astra', effort: 'low' },
     ]);
   } finally {
     s.cleanup();
@@ -1460,7 +1460,11 @@ void test('explicit briefing starts outside automatic filters without enabling a
     await settle(s.service,'ready');
     assert.equal(calls,1);
     assert.equal(s.prefs.autoBriefings,false);
-    assert.throws(()=>s.service.retry(q.items[0].subject.id,true),/daily briefing limit/);
+    s.prefs.briefingDailyLimit = 0;
+    s.service.retry(q.items[0].subject.id,true);
+    await settle(s.service,'ready');
+    assert.equal(calls,2);
+    assert.equal(s.service.cached().briefingBudget?.used, 0, 'manual briefings never consume automatic attempts');
   } finally {s.cleanup();}
 });
 
@@ -1835,5 +1839,123 @@ test('absent stacks leave the active queue but retain local identity across disc
     const restarted = createWorkbenchService(s.deps);
     assert.equal(restarted.snapshot().items.length, 0);
     assert.equal(restarted.snapshot().stacks?.[0].id, subject.id);
+  } finally { s.cleanup(); }
+});
+
+test('briefings reuse legacy low cache keys, but changing effort generates a distinct result', async () => {
+  let calls = 0;
+  const s = setup(async () => { calls++; return '{"summary":"Ready"}'; });
+  s.prefs.briefingDailyLimit = 3;
+  try {
+    const original = await settle(s.service, 'ready');
+    s.prefs.proactiveEffort = 'low';
+    s.prefs.effort = 'max';
+    const migrated = await settle(s.service, 'ready');
+    assert.equal(migrated.items[0].briefing?.key, original.items[0].briefing?.key);
+    assert.equal(calls, 1, 'explicit low effort and explanation changes reuse the existing briefing');
+    s.prefs.proactiveEffort = 'medium';
+    const changed = await settle(s.service, 'ready');
+    assert.notEqual(changed.items[0].briefing?.key, original.items[0].briefing?.key);
+    assert.equal(calls, 2);
+    const restarted = createWorkbenchService(s.deps);
+    assert.equal((await settle(restarted, 'ready')).items[0].briefing?.key, changed.items[0].briefing?.key);
+    assert.equal(calls, 2);
+  } finally { s.cleanup(); }
+});
+
+test('repository automation overrides global defaults and its own limit persists across restart', async () => {
+  let calls = 0;
+  const s = setup(async () => { calls++; return '{"summary":"Repository briefing"}'; }, false);
+  s.prefs.briefingDailyLimit = 10;
+  s.prefs.repositorySettings = { 'owner/repo': { autoBriefings: true, briefingDailyLimit: 1 } };
+  try {
+    await settle(s.service, 'ready');
+    const budget = s.service.cached().briefingBudget;
+    assert.equal(budget?.used, 1); assert.equal(budget?.repositories['owner/repo'].used, 1);
+    const restarted = createWorkbenchService(s.deps);
+    assert.equal(restarted.cached().briefingBudget?.repositories['owner/repo'].remaining, 0);
+    s.pr.head.sha = 'next-revision';
+    await restarted.queue(true);
+    const next = await settle(restarted, 'paused');
+    assert.match(next.items[0].briefing?.pauseDetail ?? '', /limit reached for owner\/repo/);
+    assert.equal(calls, 1);
+    restarted.retry(next.items[0].subject.id, true);
+    await settle(restarted, 'ready');
+    assert.equal(calls, 2);
+    assert.equal(restarted.cached().briefingBudget?.used, 1);
+  } finally { s.cleanup(); }
+});
+
+test('repository inactivity and bot overrides apply to personally discovered PRs', async () => {
+  const s = setup(async () => '{"summary":"unused"}', false);
+  s.pr.updated_at = '2025-01-01'; s.pr.user.login = 'dependabot[bot]';
+  s.prefs.ignoreDependabotPrs = true; s.prefs.prInactivityDays = 30;
+  const queries: string[] = [];
+  const search = s.deps.client().search.issuesAndPullRequests;
+  s.deps.client().search.issuesAndPullRequests = (async (args: { q: string }) => { queries.push(args.q); return search(args); }) as typeof search;
+  try {
+    assert.equal((await s.service.queue()).items.length, 0);
+    s.prefs.repositorySettings = { 'owner/repo': { prInactivityDays: 0, ignoreDependabotPrs: false } };
+    const next = await s.service.queue(true);
+    assert.equal(next.items.length, 1);
+    assert.ok(!queries.at(-1)?.includes('updated:'));
+    s.prefs.repositorySettings = { 'owner/repo': { prInactivityDays: 0, ignoreDependabotPrs: true } };
+    assert.equal(s.service.snapshot().items.length, 0);
+  } finally { s.cleanup(); }
+});
+
+test('changing repository settings lets an in-flight briefing finish without spending another attempt', async () => {
+  let finish: (value: string) => void = () => {};
+  const s = setup(() => new Promise(resolve => { finish = resolve; }));
+  try {
+    await s.service.queue();
+    for (let i = 0; i < 100 && !s.service.isGenerating(); i++) await new Promise(r => setTimeout(r, 10));
+    await new Promise(r => setTimeout(r, 20));
+    s.prefs.autoBriefings = false;
+    s.prefs.repositorySettings = { 'owner/repo': { autoBriefings: false, briefingDailyLimit: 0 } };
+    await new Promise(r => setTimeout(r, 600));
+    finish('{"summary":"Finished existing work"}');
+    const result = await settle(s.service, 'ready');
+    assert.equal(result.items[0].briefing?.summary, 'Finished existing work');
+    assert.equal(result.briefingBudget?.used, 1);
+  } finally { s.cleanup(); }
+});
+
+test('automatic allowances reset at local midnight independently of manual work', async () => {
+  const s = setup(async () => '{"summary":"Daily briefing"}');
+  let now = new Date(2026, 9, 31, 23, 59).getTime();
+  s.pr.updated_at = new Date(now).toISOString();
+  const service = createWorkbenchService({ ...s.deps, now: () => now });
+  try {
+    await settle(service, 'ready');
+    assert.equal(service.cached().briefingBudget?.used, 1);
+    now = new Date(2026, 10, 1, 0, 1).getTime();
+    assert.equal(service.cached().briefingBudget?.used, 0);
+    assert.equal(service.cached().briefingBudget?.repositories['owner/repo'].used, 0);
+  } finally { s.cleanup(); }
+});
+
+test('a cross-repository stack spends one overall attempt and one in each repository', async () => {
+  const s = setup(async () => '{"summary":"One stack briefing"}', false);
+  const child = { ...s.pr, title: 'Second repository', number: 2, html_url: 'https://github.com/owner/second/pull/2',
+    head: { ref: 'child', sha: 'child-sha', repo: { full_name: 'owner/second', archived: false } },
+    base: { ref: 'main', sha: 'base', repo: { full_name: 'owner/second', archived: false } } };
+  s.prefs.watchedRepos = ['owner/repo', 'owner/second']; s.prefs.briefingDailyLimit = 10;
+  Object.assign(s.deps.client().pulls, {
+    get: async (args: { pull_number: number }) => ({ data: args.pull_number === 2 ? child : s.pr }),
+    list: async (args: { repo: string; head?: string }) => ({ data: args.head ? [] : [args.repo === 'second' ? child : s.pr] }),
+  });
+  try {
+    await s.service.queue();
+    await s.service.correct({ action: 'link', parent: s.pr.html_url, child: child.html_url });
+    s.prefs.repositorySettings = { 'owner/repo': { autoBriefings: true, briefingDailyLimit: 2 }, 'owner/second': { autoBriefings: false } };
+    const paused = await settle(s.service, 'paused');
+    assert.equal(paused.items[0].subject.kind, 'stack');
+    assert.match(paused.items[0].briefing?.pauseDetail ?? '', /off for owner\/second/);
+    s.prefs.repositorySettings['owner/second'] = { autoBriefings: true, briefingDailyLimit: 2 };
+    const result = await settle(s.service, 'ready');
+    assert.equal(result.briefingBudget?.used, 1);
+    assert.equal(result.briefingBudget?.repositories['owner/repo'].used, 1);
+    assert.equal(result.briefingBudget?.repositories['owner/second'].used, 1);
   } finally { s.cleanup(); }
 });

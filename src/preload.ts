@@ -222,6 +222,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   applyOnboarding: (draft: SetupDraft, account: string | null): Promise<Preferences> => ipcRenderer.invoke('apply-onboarding', draft, account),
   loadHarnessEnvironment: (): Promise<HarnessEnvironment> => ipcRenderer.invoke('load-harness-environment'),
   saveHarnessEnvironment: (provider: import('../lib/models').Provider, variables: EnvironmentVariable[]): Promise<void> => ipcRenderer.invoke('save-harness-environment', provider, variables),
+  onPreferencesChanged: (callback: (prefs: Preferences) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, prefs: Preferences) => callback(prefs);
+    ipcRenderer.on('preferences-changed', handler);
+    return () => { ipcRenderer.removeListener('preferences-changed', handler); };
+  },
   loadPreferences: (): Promise<Preferences> => ipcRenderer.invoke('load-preferences'),
   savePreferences: (prefs: Preferences): Promise<void> => ipcRenderer.invoke('save-preferences', prefs),
   searchPullRequests: (): Promise<PrSearchResult[]> => ipcRenderer.invoke('search-pull-requests'),

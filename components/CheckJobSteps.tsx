@@ -33,9 +33,11 @@ export function CheckJobSteps({
       <div className="check-steps-heading">
         <h3>
           Job steps{' '}
-          <span>
-            {finished} of {job.steps.length} complete
-          </span>
+          {job.steps.length > 0 && (
+            <span>
+              {finished} of {job.steps.length} complete
+            </span>
+          )}
         </h3>
         <Button
           size="sm"
@@ -48,6 +50,11 @@ export function CheckJobSteps({
           <RefreshCw size={14} />
         </Button>
       </div>
+      {job.steps.length === 0 && (
+        <p className="checks-notice">
+          {job.status === 'completed' ? 'No job steps were reported.' : 'Waiting for job steps.'}
+        </p>
+      )}
       <ol className="check-steps">
         {job.steps.map((step) => {
           const active = step.status === 'in_progress' && job.status !== 'completed';

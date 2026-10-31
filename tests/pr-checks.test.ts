@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createGitHubClientPool } from './cache-test-pool';
 import { readCommitChecks } from '../lib/github-checks';
-import { readPrChecks, readCheckDetails, readCheckLog, rerunChecks } from '../src/pr-checks-service';
+import { readPrChecks, readPrChecksBatch, readCheckDetails, readCheckLog, rerunChecks } from '../src/pr-checks-service';
 import { checkSummary, checkCounts, orderedChecks, checkDuration, type PrCheck } from '../lib/pr-checks';
 const sha = 'a'.repeat(40),
   url = 'https://github.com/o/r/pull/1';
@@ -20,6 +20,49 @@ const run = {
   started_at: '2026-10-27T10:00:00Z',
   completed_at: '2026-10-27T10:02:00Z',
 };
+function graphResponse(body: string) {
+  const query = (JSON.parse(body) as { query: string }).query;
+  return Object.fromEntries(
+    [...query.matchAll(/p(\d+): repository/g)].map((match) => [
+      `p${match[1]}`,
+      {
+        pullRequest: {
+          headRefOid: sha,
+          commits: {
+            nodes: [
+              {
+                commit: {
+                  oid: sha,
+                  statusCheckRollup: {
+                    contexts: {
+                      nodes: [
+                        {
+                          __typename: 'CheckRun',
+                          id: 'CR_1',
+                          databaseId: 1,
+                          name: 'Tests',
+                          status: 'COMPLETED',
+                          conclusion: 'FAILURE',
+                          isRequired: true,
+                          detailsUrl: run.html_url,
+                          url: run.html_url,
+                          startedAt: run.started_at,
+                          completedAt: run.completed_at,
+                          checkSuite: { app: { name: 'GitHub Actions' } },
+                        },
+                      ],
+                      pageInfo: { hasNextPage: false, endCursor: null },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
+    ])
+  );
+}
 function harness(overrides: (path: string, init: RequestInit) => Response | undefined = () => undefined) {
   const calls: { path: string; method: string }[] = [];
   const json = (value: unknown, headers?: Record<string, string>) =>
@@ -38,7 +81,7 @@ function harness(overrides: (path: string, init: RequestInit) => Response | unde
       let data: unknown;
       if (p.includes('/check-runs?')) data = { total_count: 1, check_runs: [run] };
       else if (p.includes('/statuses?')) data = [];
-      else if (p === '/graphql') data = { data: { nodes: [{ id: 'CR_1', isRequired: true }] } };
+      else if (p === '/graphql') data = { data: graphResponse(typeof init.body === 'string' ? init.body : '') };
       else if (p.includes('/check-runs/1/annotations'))
         data = [
           {
@@ -108,15 +151,17 @@ void test('requirements are confirmed, cached reads make no requests, and list r
   assert.equal(h.calls.length, count);
   assert.equal(await readPrChecks(h.pool.client('another-account'), input, { cachedOnly: true }), undefined);
 });
-void test('unknown requirements do not discard usable checks', async () => {
-  const h = harness((p) =>
-    p === '/graphql'
-      ? new Response(JSON.stringify({ message: 'Forbidden' }), {
-          status: 403,
-          headers: { 'content-type': 'application/json' },
-        })
-      : undefined
-  );
+void test('unknown requirements preserve usable partial GraphQL results', async () => {
+  const h = harness((p, init) => {
+    if (p !== '/graphql') return;
+    const data = graphResponse(typeof init.body === 'string' ? init.body : '');
+    const node = data.p0.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[0];
+    Object.assign(node, { isRequired: null });
+    return new Response(
+      JSON.stringify({ data, errors: [{ message: 'Unavailable', path: ['p0', 'pullRequest', 'isRequired'] }] }),
+      { headers: { 'content-type': 'application/json' } }
+    );
+  });
   const value = await readPrChecks(h.client, input);
   assert.equal(value?.checks[0].required, null);
   assert.match(value.warning ?? '', /could not confirm/);
@@ -270,4 +315,139 @@ void test('compact check outcomes explain skipped and neutral results without im
   assert.equal(checkSummary(checks(['success', 'neutral'])), '1 passed · 1 neutral');
   assert.equal(checkSummary(checks(['success', 'failure'])), '1 check needs attention');
   assert.equal(checkSummary([]), 'No checks reported');
+});
+
+void test('bulk reruns group failed and cancelled jobs by workflow and exclude running or stale results', async () => {
+  const { checkRerunPlan } = await import('../lib/check-rerun-plan');
+  const member = { url, headSha: sha, number: 1 } as import('../lib/workbench').ReviewMember;
+  const check = (id: number, run: number, conclusion: string | null, extra: Partial<PrCheck> = {}): PrCheck => ({
+    id: `check:${id}`,
+    databaseId: id,
+    kind: 'check',
+    provider: 'github-actions',
+    name: `Job ${id}`,
+    status: conclusion ? 'completed' : 'in_progress',
+    conclusion,
+    required: false,
+    startedAt: '2026-10-31T10:00:00Z',
+    completedAt: '2026-10-31T10:01:00Z',
+    url: `https://github.com/o/r/actions/runs/${run}/job/${id}`,
+    ...extra,
+  });
+  const snapshot = {
+    url,
+    headSha: sha,
+    checkedAt: Date.now(),
+    checks: [
+      check(1, 9, 'failure'),
+      check(2, 9, 'cancelled'),
+      check(3, 9, 'success'),
+      check(4, 10, 'failure'),
+      check(5, 11, 'cancelled'),
+      check(6, 11, null),
+      check(7, 12, 'skipped'),
+      check(8, 13, 'failure', { provider: 'other' }),
+      check(9, 14, 'failure', { url: 'https://github.com/other/repo/actions/runs/14/job/9' }),
+    ],
+  };
+  const plan = checkRerunPlan([member], { [url]: snapshot });
+  assert.deepEqual(
+    plan.map((p) => [p.names, p.mode]),
+    [
+      [['Job 1', 'Job 2'], 'all'],
+      [['Job 4'], 'failed'],
+    ]
+  );
+  assert.equal(checkRerunPlan([member], { [url]: { ...snapshot, headSha: 'b'.repeat(40) } }).length, 0);
+  assert.equal(checkRerunPlan([member], {}).length, 0);
+  assert.equal(
+    checkRerunPlan([member, { ...member, url: url + '2' }], {
+      [url]: snapshot,
+      [url + '2']: { ...snapshot, url: url + '2' },
+    }).length,
+    2
+  );
+  const later = { ...snapshot, checks: snapshot.checks.map((c) => ({ ...c, completedAt: '2026-10-31T11:01:00Z' })) };
+  assert.notEqual(checkRerunPlan([member], { [url]: later })[0].revision, plan[0].revision);
+});
+
+void test('stack checks share one GraphQL request with requirements and no REST reads', async () => {
+  const h = harness();
+  const inputs = Array.from({ length: 4 }, (_, i) => ({ url: `https://github.com/o/r/pull/${i + 1}`, headSha: sha }));
+  const [results, shared] = await Promise.all([
+    readPrChecksBatch(h.client, inputs, { force: true }),
+    readPrChecks(h.client, inputs[0], { force: true }),
+  ]);
+  assert.equal(results.length, 4);
+  assert.ok(results.every((value) => value.checks[0].required));
+  assert.deepEqual(shared, results[0]);
+  assert.equal(h.calls.filter((c) => c.path !== '/graphql').length, 0, 'Check lists must not spend the REST budget');
+  assert.equal(h.calls.filter((c) => c.path === '/graphql').length, 1);
+});
+
+void test('GraphQL check pages retain every check, external status, and required flag', async () => {
+  let pages = 0;
+  const h = harness((p, init) => {
+    if (p !== '/graphql') return;
+    pages++;
+    const data = graphResponse(typeof init.body === 'string' ? init.body : '');
+    const connection = data.p0.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts;
+    if (pages === 1) Object.assign(connection.pageInfo, { hasNextPage: true, endCursor: 'next' });
+    else {
+      assert.match(typeof init.body === 'string' ? init.body : '', /next/);
+      Object.assign(connection, {
+        nodes: [
+          {
+            __typename: 'StatusContext',
+            id: 'SC_2',
+            context: 'External CI',
+            state: 'PENDING',
+            isRequired: false,
+            creator: null,
+            createdAt: run.started_at,
+            updatedAt: run.completed_at,
+            targetUrl: 'https://ci.example/result',
+            description: 'Queued',
+          },
+        ],
+      });
+    }
+    return new Response(JSON.stringify({ data }), { headers: { 'content-type': 'application/json' } });
+  });
+  const result = await readPrChecks(h.client, input);
+  assert.equal(pages, 2);
+  assert.equal(result?.checks.length, 2);
+  assert.equal(result.checks[0].required, true);
+  assert.equal(result.checks[1].kind, 'status');
+  assert.equal(result.checks[1].status, 'in_progress');
+  assert.equal(result.checks[1].required, false);
+});
+
+void test('head changes and page failures never overwrite a complete cached snapshot', async () => {
+  let scenario = 'ok';
+  let page = 0;
+  const h = harness((p, init) => {
+    if (p !== '/graphql') return;
+    const data = graphResponse(typeof init.body === 'string' ? init.body : '');
+    if (scenario === 'new-head') data.p0.pullRequest.headRefOid = 'b'.repeat(40);
+    if (scenario === 'pagination') {
+      if (page++)
+        return new Response(JSON.stringify({ message: 'Offline' }), {
+          status: 503,
+          headers: { 'content-type': 'application/json' },
+        });
+      Object.assign(data.p0.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.pageInfo, {
+        hasNextPage: true,
+        endCursor: 'next',
+      });
+    }
+    return new Response(JSON.stringify({ data }), { headers: { 'content-type': 'application/json' } });
+  });
+  const original = await readPrChecks(h.client, input);
+  scenario = 'new-head';
+  await assert.rejects(readPrChecks(h.client, input, { force: true }), /New commits/);
+  assert.deepEqual(await readPrChecks(h.client, input, { cachedOnly: true }), original);
+  scenario = 'pagination';
+  await assert.rejects(readPrChecks(h.client, input, { force: true }), /Offline/);
+  assert.deepEqual(await readPrChecks(h.client, input, { cachedOnly: true }), original);
 });

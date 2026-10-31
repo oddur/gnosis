@@ -252,6 +252,7 @@ port.on('message', (request: Request) => {
           throw new Error('Search index is not ready for this account');
         searchInput.muted = args.muted;
         searchInput.ignoreBots = args.ignoreBots;
+        searchInput.repositoryBotSettings = args.repositoryBotSettings;
         const current = () => {
           if (!searchInput) throw new Error('Search data unavailable');
           return searchInput;
@@ -264,6 +265,7 @@ port.on('message', (request: Request) => {
             history: () => current().history,
             account: () => current().account,
             ignoreBots: () => current().ignoreBots,
+            repositoryBotSettings: () => current().repositoryBotSettings ?? {},
             mutedUrls: () => new Set(current().muted),
             cachedResponses: () => current().cachedResponses,
             threads: (url) => current().threads[url],

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   groupSubjects,
+  briefingModel,
   snapshot,
   fingerprint,
   attentionFor,
@@ -218,4 +219,13 @@ test('splitting a named stack does not copy its identity or name into two stacks
   assert.equal(split.length, 2);
   assert.equal(new Set(split.map(s => s.id)).size, 2);
   assert.equal(split.filter(s => s.name === named.name).length, 1);
+});
+
+void test('briefing effort is independent of explanation effort and normalized for its model', () => {
+  const p = { provider: 'codex', model: 'gpt-6.1-sol', effort: 'ultra' } as const;
+  assert.equal(briefingModel(p).effort, 'low');
+  assert.equal(briefingModel({ ...p, proactiveThinking: true }).effort, 'low');
+  assert.equal(briefingModel({ ...p, proactiveEffort: 'medium' }).effort, 'medium');
+  assert.equal(briefingModel({ ...p, proactiveEffort: 'ultra', proactiveReviewOverrides: true,
+    proactiveProvider: 'claude', proactiveModel: 'claude-sonnet-5-5' }).effort, 'max');
 });

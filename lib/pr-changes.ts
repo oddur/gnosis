@@ -65,6 +65,7 @@ export interface FileChatRequest extends PrFileRequest {
   history: FileChatMessage[];
   provider: Provider;
   model: ModelId;
+  effort?: import('./effort').Effort;
 }
 export const changesRevision = (value: Pick<PrMetadata, 'baseSha' | 'headSha'>) => `${value.baseSha}:${value.headSha}`;
 export const fileRevisionKey = (url: string, path: string, baseSha: string, headSha: string) =>

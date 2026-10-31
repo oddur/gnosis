@@ -1,6 +1,6 @@
 import { openConflictWorkspace } from '../lib/open-conflict-workspace';
 import { PrBadge, BranchBadge, CommitBadge } from './EntityBadge';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { GitMerge, RefreshCw, GitBranch, ChevronDown, Loader2, ExternalLink } from 'lucide-react';
 import { DropdownMenu } from 'radix-ui';
 import { Button } from './ui/button';
@@ -33,10 +33,15 @@ export function PrActions({
   member,
   stackMembers,
   onChanged,
+  trigger,
+  mergeReady = false,
 }: {
   member: ReviewMember;
   stackMembers?: ReviewMember[];
   onChanged?: () => void;
+  mergeReady?: boolean;
+  /** A contextual action loads permissions only when invoked. */
+  trigger?: (open: (kind: PrActionKind) => void, busy: boolean) => ReactNode;
 }) {
   const [state, setState] = useState<PrActionState>();
   const [error, setError] = useState('');
@@ -71,7 +76,7 @@ export function PrActions({
     setDialog(undefined);
     setError('');
     setResult('');
-    if (!stackMembers) {
+    if (!stackMembers && !trigger) {
       setLoading(true);
       void window.electronAPI
         .getPrActionState(member.url)
@@ -198,10 +203,10 @@ export function PrActions({
   if (!member.url.startsWith('https://github.com/')) return null;
   return (
     <div className={`pr-actions ${stackMembers ? 'pr-actions-stack' : ''}`}>
-      {stackMembers ? (
+      {trigger ? trigger(kind => { void open(kind); }, busy) : stackMembers ? (
         <Button
           size="sm"
-          variant="outline"
+          variant={mergeReady ? 'default' : 'outline'}
           onClick={() => void open('merge')}
           disabled={busy || stackMembers.every((m) => m.merged || m.state === 'closed')}
         >

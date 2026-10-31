@@ -1,3 +1,4 @@
+import { inspectionFailure } from './inspection-batch';
 import type { ActivityTask } from './activity';
 import { changesRevision, type InspectionRevision, type PrChanges, type PrChangeFile } from './pr-changes';
 import type { PrCommits, PrCommit } from './pr-commits';
@@ -66,6 +67,7 @@ export function createPrInspectionCache(deps: Dependencies) {
   let priorities = new Map<string, number>();
   let activeUrls = new Set<string>();
   let currentJob: Job | undefined;
+  let pausedUntil = 0;
   let activitySignature = '';
   let activityUpdatedAt = new Date(now()).toISOString();
   let stopped = false;
@@ -226,7 +228,7 @@ export function createPrInspectionCache(deps: Dependencies) {
     const active = () => !stopped && !!scope && generation === epoch && deps.visible();
     const promise = (async () => {
       let steps = 0;
-      while (active()) {
+      while (active() && pausedUntil <= now()) {
         // Disk/memory hits can resolve immediately. Let navigation and viewport
         // updates run instead of consuming a long chain of renderer microtasks.
         if (++steps % 16 === 0) {
@@ -263,10 +265,14 @@ export function createPrInspectionCache(deps: Dependencies) {
           job.failures = 0;
           job.rateLimited = false;
         } catch (error) {
+          if (generation !== epoch) return;
           job.failures++;
           // Electron preserves the error message, but not custom Error properties.
           job.rateLimited = /rate.?limit|API (?:allowance|limit)|GitHub allowance|GitHub requests can resume/i.test(String(error));
-          job.retryAt = now() + Math.min(300_000, 30_000 * 2 ** Math.min(job.failures - 1, 4));
+          const deadline = inspectionFailure(job.revision.url, error).retryAt;
+          job.retryAt = deadline && deadline > now() ? deadline
+            : now() + Math.min(300_000, 30_000 * 2 ** Math.min(job.failures - 1, 4));
+          if (job.rateLimited) pausedUntil = Math.max(pausedUntil, job.retryAt);
         } finally {
           if (currentJob === job) currentJob = undefined;
         }
@@ -275,7 +281,7 @@ export function createPrInspectionCache(deps: Dependencies) {
       if (running === promise) running = undefined;
       if (!stopped && scope && jobs.size && deps.visible()) {
         const next = Math.min(...[...jobs.values()].map((job) => job.retryAt));
-        kick(Math.max(100, next - now()));
+        kick(Math.max(100, Math.max(next, pausedUntil) - now()));
       }
     });
     running = promise;
@@ -287,13 +293,14 @@ export function createPrInspectionCache(deps: Dependencies) {
     if (!pending.length) return;
     const activeJob = currentJob && jobs.get(key(currentJob.revision)) === currentJob ? currentJob : undefined;
     const waiting = pending.filter(job => job.retryAt > now());
-    const paused = !activeJob && waiting.length === pending.length;
+    const budgetPaused = pausedUntil > now();
+    const paused = !activeJob && (budgetPaused || waiting.length === pending.length);
     const job = activeJob ?? pending[0];
     const match = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)$/.exec(job.revision.url);
     const identity = match ? `${match[1]} #${match[2]}` : 'PR';
     const phase = ['Changed-file list', 'Commit list', 'Newest commit', 'Changed files', 'Review diff', 'Earlier commits'][job.stage] ?? 'Saved content';
     let detail = `${identity} · ${phase}`;
-    if (paused) detail = waiting.some(job => job.rateLimited)
+    if (paused) detail = budgetPaused || waiting.some(job => job.rateLimited)
       ? 'Waiting for GitHub’s API allowance. Retrying automatically.'
       : 'Some PRs could not be prepared. Retrying automatically.';
     else if (waiting.length) detail += ` · ${waiting.length} waiting to retry`;
@@ -329,6 +336,7 @@ export function createPrInspectionCache(deps: Dependencies) {
         activeUrls.clear();
         changed();
         currentJob = undefined;
+        pausedUntil = 0;
         deps.reset?.();
       }
       const unique = new Map<string, InspectionRevision>();

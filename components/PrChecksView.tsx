@@ -1,3 +1,4 @@
+import { BulkCheckRerun } from './BulkCheckRerun';
 import { useEffect, useRef, useState } from 'react';
 import { CircleAlert, CircleCheck, CircleMinus, Clock3, ExternalLink, RefreshCw } from 'lucide-react';
 import type { ReviewSubject } from '../lib/workbench';
@@ -48,7 +49,7 @@ export function PrChecksView({
   values: Partial<Record<string, PrChecks>>;
   errors: Partial<Record<string, string>>;
   busy: boolean;
-  refresh: () => void;
+  refresh: (url?: string) => void;
   focus?: CheckFocus;
   onSource: (url: string, path: string, line: number, headSha: string) => void;
 }) {
@@ -98,6 +99,41 @@ export function PrChecksView({
       operation.current++;
     };
   }, [selected]);
+  const latest = selected && values[selected.snapshot.url];
+  const stale = !!selected && !!latest && latest.headSha !== selected.snapshot.headSha;
+  const latestCheck =
+    selected &&
+    latest &&
+    (latest.checks.find((c) => c.id === selected.check.id) ??
+      (() => {
+        const matches = latest.checks.filter(
+          (c) =>
+            c.kind === selected.check.kind && c.name === selected.check.name && c.provider === selected.check.provider
+        );
+        // Names can repeat across workflows. Never jump to an ambiguous result.
+        const workflow = selected.check.url?.match(/\/actions\/runs\/(\d+)\//)?.[1];
+        const sameWorkflow = workflow && matches.filter((c) => c.url?.includes(`/actions/runs/${workflow}/`));
+        return sameWorkflow && sameWorkflow.length === 1
+          ? sameWorkflow[0]
+          : matches.length === 1
+            ? matches[0]
+            : undefined;
+      })());
+  const selectionChanged =
+    !!selected &&
+    !!latest &&
+    !!latestCheck &&
+    !stale &&
+    latest.checkedAt >= selected.snapshot.checkedAt &&
+    (latestCheck.id !== selected.check.id ||
+      latestCheck.status !== selected.check.status ||
+      latestCheck.conclusion !== selected.check.conclusion ||
+      latestCheck.startedAt !== selected.check.startedAt ||
+      latestCheck.completedAt !== selected.check.completedAt);
+  // Follow attempts on this commit; new commits still require an explicit transition.
+  useEffect(() => {
+    if (selectionChanged) setSelected({ snapshot: latest, check: latestCheck });
+  }, [selectionChanged, latest, latestCheck]);
   // Reuse the existing checks subscription to update only the active job. No new polling loop.
   const detailRefreshAt =
     selected &&
@@ -108,7 +144,7 @@ export function PrChecksView({
   useEffect(() => {
     let live = true;
     setError('');
-    if (!selected || selected.check.kind === 'status') {
+    if (!selected || selected.check.kind === 'status' || selectionChanged) {
       setDetailsBusy(false);
       return;
     }
@@ -127,19 +163,15 @@ export function PrChecksView({
     return () => {
       live = false;
     };
-  }, [selected, attempt, detailRefreshAt]);
+  }, [selected, attempt, detailRefreshAt, selectionChanged]);
   const detail = details && details.selection === selected ? details.value : undefined;
   const displayedCheck = selected && { ...selected.check, ...detail?.state };
   const selectedMember = selected && subject.members.find((m) => m.url === selected.snapshot.url);
-  const latest = selected && values[selected.snapshot.url];
-  const stale = !!selected && !!latest && latest.headSha !== selected.snapshot.headSha;
-  const updated =
-    !!selected &&
-    !!latest &&
-    (stale ||
-      latest.checks.find((c) => c.id === selected.check.id)?.conclusion !== selected.check.conclusion ||
-      latest.checks.find((c) => c.id === selected.check.id)?.status !== selected.check.status ||
-      latest.checks.find((c) => c.id === selected.check.id)?.completedAt !== selected.check.completedAt);
+  const awaitingCheck = (snapshot: PrChecks, check: PrCheck) =>
+    requested &&
+    selected?.snapshot.url === snapshot.url &&
+    selected.snapshot.headSha === snapshot.headSha &&
+    selected.check.id === check.id;
   const counts = checkCounts(subject.members.flatMap((m) => values[m.url]?.checks ?? []));
   async function loadLog() {
     if (!selected) return;
@@ -173,8 +205,9 @@ export function PrChecksView({
       });
       if (operation.current !== token) return;
       setRequested(true);
-      setRerunMessage('Rerun requested. GitHub will queue the jobs.');
-      refresh();
+      setRerunMessage('');
+      // The backend follows this write; avoid a duplicate forced refresh of the whole stack.
+      if (window.electronAPI.githubSyncVersion !== 1) refresh(selected.snapshot.url);
     } catch (e) {
       if (operation.current === token)
         setRerunMessage(
@@ -187,6 +220,7 @@ export function PrChecksView({
   return (
     <section className="pr-checks-workspace" aria-label="PR checks">
       <div className="checks-toolbar">
+        <BulkCheckRerun key={subject.id} members={subject.members} values={values} onChanged={() => refresh()} />
         <div role="group" aria-label="Filter checks">
           {(['all', 'attention', 'running'] as const).map((value) => (
             <Button
@@ -207,7 +241,7 @@ export function PrChecksView({
         <Button
           variant="ghost"
           size="sm"
-          onClick={refresh}
+          onClick={() => refresh()}
           disabled={busy}
           aria-label="Refresh checks"
           title="Refresh checks"
@@ -251,9 +285,16 @@ export function PrChecksView({
                   )}
                 </p>
                 {errors[member.url] && (
-                  <p className="checks-error" role="status">
+                  <p className="checks-notice checks-sync-status" role="status">
                     {snapshot ? 'Showing saved results. ' : ''}
-                    {errors[member.url]} <button onClick={refresh}>Retry</button>
+                    {errors[member.url]}{' '}
+                    <button
+                      className="underline underline-offset-4"
+                      disabled={busy}
+                      onClick={() => refresh(member.url)}
+                    >
+                      Refresh this PR
+                    </button>
                   </p>
                 )}
                 {snapshot?.warning && <p className="checks-notice">{snapshot.warning}</p>}
@@ -272,14 +313,27 @@ export function PrChecksView({
                       if (snapshot) setSelected({ snapshot, check });
                     }}
                   >
-                    <CheckIcon check={check} />
+                    <CheckIcon
+                      check={
+                        snapshot && awaitingCheck(snapshot, check)
+                          ? { ...check, status: 'queued', conclusion: null }
+                          : check
+                      }
+                    />
                     <span className="check-row-content">
                       <strong>{check.name}</strong>
                       <small>
-                        {check.provider} · <span className={`check-${checkGroup(check)}`}>{checkLabel(check)}</span>
+                        {check.provider} ·{' '}
+                        <span
+                          className={`check-${snapshot && awaitingCheck(snapshot, check) ? 'running' : checkGroup(check)}`}
+                        >
+                          {snapshot && awaitingCheck(snapshot, check) ? 'Rerun requested' : checkLabel(check)}
+                        </span>
                       </small>
                     </span>
-                    <span className="check-duration">{checkDuration(check)}</span>
+                    <span className="check-duration">
+                      {snapshot && awaitingCheck(snapshot, check) ? '' : checkDuration(check)}
+                    </span>
                   </button>
                 ))}
                 {snapshot && !checks.length && (
@@ -300,26 +354,14 @@ export function PrChecksView({
             </div>
           ) : (
             <>
-              {updated && (
+              {stale && (
                 <div className="checks-update" role="status">
-                  <p>
-                    {stale
-                      ? `These results are from previous commit ${selected.snapshot.headSha.slice(0, 7)}.`
-                      : 'This check has new results.'}
-                  </p>
+                  <p>These results are from previous commit {selected.snapshot.headSha.slice(0, 7)}.</p>
                   <Button
                     size="sm"
                     variant="outline"
                     onClick={() => {
-                      const check =
-                        latest.checks.find((c) => c.id === selected.check.id) ??
-                        latest.checks.find(
-                          (c) =>
-                            c.kind === selected.check.kind &&
-                            c.name === selected.check.name &&
-                            c.provider === selected.check.provider
-                        );
-                      if (check) setSelected({ snapshot: latest, check });
+                      if (latestCheck) setSelected({ snapshot: latest, check: latestCheck });
                       else setSelected(undefined);
                     }}
                   >
@@ -339,18 +381,25 @@ export function PrChecksView({
                     </p>
                   )}
                   <h2>
-                    <CheckIcon check={displayedCheck} />
+                    <CheckIcon
+                      check={requested ? { ...displayedCheck, status: 'queued', conclusion: null } : displayedCheck}
+                    />
                     {selected.check.name}
                   </h2>
                   <p>
                     {selected.check.provider} ·{' '}
-                    <span className={`check-${checkGroup(displayedCheck)}`}>{checkLabel(displayedCheck)}</span> ·{' '}
+                    <span className={`check-${requested ? 'running' : checkGroup(displayedCheck)}`}>
+                      {requested ? 'Rerun requested' : checkLabel(displayedCheck)}
+                    </span>{' '}
+                    ·{' '}
                     {selected.check.required === true
                       ? 'Required'
                       : selected.check.required === false
                         ? 'Optional'
                         : 'Requirement unknown'}
-                    {displayedCheck.status === 'completed' &&
+                    {detail?.job && ` · ${requested ? 'Previous attempt' : 'Attempt'} ${detail.job.attempt}`}
+                    {!requested &&
+                      displayedCheck.status === 'completed' &&
                       checkDuration(displayedCheck) &&
                       ` · ${checkDuration(displayedCheck)}`}
                   </p>
@@ -362,6 +411,12 @@ export function PrChecksView({
                   </a>
                 )}
               </header>
+              {requested && (
+                <p className="checks-notice" role="status">
+                  Waiting for GitHub to report the new attempt. Results below are from the previous attempt (
+                  {checkLabel(displayedCheck).toLowerCase()}).
+                </p>
+              )}
               {selected.check.kind === 'status' ? (
                 <p>
                   {selected.check.description ||
@@ -388,7 +443,7 @@ export function PrChecksView({
                       <Markdown>{detail.text}</Markdown>
                     </details>
                   )}
-                  {!detail.summary && !detail.text && !detail.annotations.length && !detail.job?.steps.length && (
+                  {!detail.summary && !detail.text && !detail.annotations.length && !detail.job && (
                     <p className="checks-notice">
                       This check did not supply further output. Open GitHub for more details.
                     </p>
@@ -403,20 +458,28 @@ export function PrChecksView({
                           disabled={
                             stale || rerunning || requested || !detail.job.canRerun || detail.job.status !== 'completed'
                           }
-                          onClick={() => void rerun('failed')}
+                          onClick={() => void rerun(displayedCheck.conclusion === 'cancelled' ? 'all' : 'failed')}
                         >
-                          Re-run failed jobs
+                          {displayedCheck.conclusion === 'cancelled'
+                            ? 'Re-run cancelled workflow'
+                            : 'Re-run failed jobs'}
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={
-                            stale || rerunning || requested || !detail.job.canRerun || detail.job.status !== 'completed'
-                          }
-                          onClick={() => void rerun('all')}
-                        >
-                          Re-run all jobs
-                        </Button>
+                        {displayedCheck.conclusion !== 'cancelled' && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={
+                              stale ||
+                              rerunning ||
+                              requested ||
+                              !detail.job.canRerun ||
+                              detail.job.status !== 'completed'
+                            }
+                            onClick={() => void rerun('all')}
+                          >
+                            Re-run all jobs
+                          </Button>
+                        )}
                       </div>
                       <p className="checks-notice">
                         Applies to this workflow run.{' '}

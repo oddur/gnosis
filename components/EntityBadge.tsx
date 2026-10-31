@@ -1,8 +1,12 @@
+import { RepositoryIcon } from './RepositoryAppearance';
+import { useRepositorySettings } from '../lib/use-repository-settings';
+import { repositoryKey } from '../lib/repository-settings';
 import type { PrBadgePreview } from '../lib/pr-badge-preview';
 import { PrBadgeTooltip } from './PrBadgeTooltip';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Check,
+  Settings2,
   Copy,
   ExternalLink,
   GitBranch,
@@ -53,7 +57,9 @@ export function EntityBadge({
   tooltipHeading,
   tooltipReady = true,
   onTooltipOpenChange,
+  menuActions,
 }: {
+  menuActions?: ReactNode;
   kind: Kind;
   value: string;
   label?: string;
@@ -178,6 +184,7 @@ export function EntityBadge({
           <Copy size={15} />
           {action}
         </ContextMenuItem>
+        {menuActions}
         {copyOptions.map((option) => (
           <ContextMenuItem key={option.label} className="entry-menu-item" onClick={() => copy(option.value)}>
             <Copy size={15} />
@@ -210,8 +217,11 @@ export function EntityBadge({
 }
 
 export function RepositoryBadge({ repo }: { repo?: string }) {
+  const { settings, configure } = useRepositorySettings();
   if (!repo) return null;
-  return <EntityBadge kind="repository" value={repo} href={`https://github.com/${repo}`} />;
+  const appearance = settings[repositoryKey(repo)] ?? {};
+  return <EntityBadge kind="repository" value={repo} href={`https://github.com/${repo}`} icon={<RepositoryIcon settings={appearance} />} className={`repository-color-${appearance.color ?? 'default'}`}
+    menuActions={configure && <ContextMenuItem className="entry-menu-item" onClick={() => configure(repo)}><Settings2 size={15} />Repository settings…</ContextMenuItem>} />;
 }
 export function PrBadge({ url, number, title }: { url: string; number?: number | string; title?: string }) {
   const [open, setOpen] = useState(false);
