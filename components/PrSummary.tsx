@@ -1,5 +1,6 @@
 import { StackChangesView } from './StackChangesView';
 import { StackBriefing } from './StackBriefing';
+import { StackContext } from './StackContext';
 import { StackOverview } from './StackOverview';
 import { StackMergeDetails } from './StackMergeDetails';
 import { SearchableSelect } from './SearchableSelect';
@@ -457,9 +458,7 @@ function PrSummaryContent({
                 <Markdown>{item.briefing.summary ?? ''}</Markdown>
               </details>
             )}
-            {parentStack && <p className="pr-member-relationship">{parentStack.edges.some(edge => edge.child === first.url)
-              ? `Builds on ${parentStack.edges.filter(edge => edge.child === first.url).map(edge => `#${parentStack.members.find(m => m.url === edge.parent)?.number ?? '?'}`).join(', ')}`
-              : 'Base of stack'} · {parentStack.title}</p>}
+            {parentStack && <StackContext subject={parentStack} currentUrl={first.url} account={account} now={statusNow} onOpen={changeScope} onStack={() => changeScope(parentStack.id)} />}
             {stacked ? <div className="stack-summary-layout">
               <div className="stack-summary-main">
                 <StackOverview now={statusNow} checking={!signalsLoaded && !!account} onRefresh={onRetryStatus} refreshBusy={statusRefreshing} item={item} signals={signals} checks={checks.values} checkErrors={checks.errors} checksBusy={checks.busy} matchingUrls={matchingUrls}

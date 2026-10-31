@@ -3541,3 +3541,43 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .conflict-file-status[data-empty] { color:var(--muted-foreground);background:var(--secondary); }
 
 .conflict-bulk-actions { display:flex;flex-wrap:wrap;gap:8px; }
+
+/* Stack hierarchy: tip above base; review progress is separate from GitHub merge eligibility. */
+.stack-overview-member { position:relative;padding:8px 0; }
+.stack-chain-node { flex:none;width:20px;height:24px;display:flex;align-items:center;justify-content:center;position:relative; }
+.stack-dependency-chain[data-linear=true] .stack-overview-member::after { content:"";position:absolute;left:9px;top:32px;bottom:-8px;width:1px;background:var(--border); }
+.stack-chain-node.is-success,.stack-merge-state.is-success { color:var(--color-success); }
+.stack-chain-node.is-danger,.stack-merge-state.is-danger { color:var(--color-danger); }
+.stack-chain-node.is-warning,.stack-merge-state.is-warning { color:var(--color-warning); }
+.stack-chain-node.is-muted,.stack-merge-state.is-muted { color:var(--muted-foreground); }
+.stack-member-status { flex:none;align-items:flex-start;gap:6px;max-width:180px; }
+.stack-merge-state { font-size:var(--type-caption);font-weight:600;line-height:24px; }
+.stack-member-branches,.stack-member-progress { display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;font-size:var(--type-caption);color:var(--muted-foreground); }
+.stack-member-branches .entity-badge { max-width:100%; }
+.stack-member-progress { gap:4px 12px; }
+.stack-github-review { display:inline-flex;align-items:center;gap:6px; }
+.stack-member-progress button,.stack-parent-link,.stack-context-heading button { text-decoration:underline;text-underline-offset:3px; }
+.stack-member-progress .stack-checks-failed { color:var(--color-danger); }
+.stack-personal-progress { font-variant-numeric:tabular-nums; }
+.stack-chain-base { display:flex;align-items:center;gap:10px;padding:12px 0;font-size:var(--type-caption);color:var(--muted-foreground); }
+.stack-chain-base > svg { margin-left:2px; }
+.stack-chain-note { margin-bottom:12px;font-size:var(--type-caption);color:var(--muted-foreground); }
+.stack-next-step { display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0 16px;font-size:var(--type-control); }
+.stack-next-step p + p { margin-top:4px;font-size:var(--type-caption);color:var(--muted-foreground);max-width:65ch; }
+.stack-next-step button { flex-shrink:0; }
+.stack-context { margin-bottom:20px;border-bottom:1px solid var(--border);padding-bottom:12px; }
+.stack-context > summary { cursor:pointer;font-size:var(--type-control);font-weight:600; }
+.stack-context > summary span,.stack-context-heading { color:var(--muted-foreground);font-size:var(--type-caption);font-weight:400; }
+.stack-context-heading { display:flex;justify-content:space-between;gap:12px;margin:12px 0; }
+.stack-overview-member[aria-current=page] { background:var(--accent);border-radius:var(--radius-sm); }
+.stack-current-label { font-size:var(--type-caption);color:var(--primary);white-space:nowrap; }
+.stack-member-title { flex-wrap:wrap; }
+.stack-member-title > button:not(.entity-badge) { flex:1;min-width:150px; }
+@media(max-width:700px) {
+  .stack-next-step { align-items:flex-start;flex-direction:column; }
+  .stack-member-status { max-width:110px; }
+  .stack-member-title > button:not(.entity-badge) { min-width:100px; }
+}
+
+.stack-member-main { display:flex;flex-wrap:wrap;align-items:center;column-gap:16px; }
+.stack-member-title { flex-basis:100%; }

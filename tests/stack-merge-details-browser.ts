@@ -61,13 +61,42 @@ void app.whenReady().then(async () => {
     assert.match(text, /Required approvals are missing/);
     assert.match(text, /#121Merge status not checked/);
     assert.ok(text.indexOf('#122') < text.indexOf('#121'), 'Known requirements precede unknown status');
+    assert.deepEqual(
+      await js(
+        "[...document.querySelectorAll('.stack-overview-member')].map(row=>Number(row.dataset.prUrl.split('/').pop()))"
+      ),
+      [122, 121, 120],
+      'The tip sits above the base PR'
+    );
+    assert.ok(await js("document.querySelector('.stack-chain-base').textContent.includes('main')"));
+    assert.match(
+      await js<string>("document.querySelector('.stack-next-step').textContent"),
+      /#120 conflicts with main/
+    );
+    await js(
+      "window.electronAPI.conflictResolution=async request=>{window.resolutionTarget=request.url;const member=window.testStack.subject.members.find(m=>m.url===request.url);return {session:{...member,id:'a'.repeat(64),account:'oddur',version:1,status:'editing',tree:'b'.repeat(40),files:[],preparation:'up-to-date'}}};document.querySelector('.stack-next-step button').click()"
+    );
+    await wait("document.querySelector('.conflict-workspace .conflict-heading') && window.resolutionTarget");
+    assert.equal(
+      await js('window.resolutionTarget'),
+      'https://github.com/klang/engine/pull/120',
+      'The primary action opens the actual blocking PR'
+    );
+    await js(
+      "[...document.querySelectorAll('.conflict-heading button')].find(button=>button.textContent.trim()==='Close').click()"
+    );
+    await wait("!document.querySelector('.conflict-workspace')");
     const viewport = async (width: number, height: number) => {
       await win.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', {
-        width, height, deviceScaleFactor: 1, mobile: false,
+        width,
+        height,
+        deviceScaleFactor: 1,
+        mobile: false,
       });
       await wait(`innerWidth === ${width} && innerHeight === ${height}`);
     };
-    const besideList = () => js<boolean>(`(()=>{
+    const besideList = () =>
+      js<boolean>(`(()=>{
       const list=document.querySelector('.stack-overview').getBoundingClientRect();
       const issues=document.querySelector('.stack-merge-details').getBoundingClientRect();
       return issues.left >= list.right && Math.abs(issues.top-list.top)<2;
@@ -81,15 +110,25 @@ void app.whenReady().then(async () => {
     await viewport(1100, 850);
     await capture('dark-laptop');
     await viewport(900, 1050);
-    assert.ok(await js(`document.querySelector('.stack-merge-details').getBoundingClientRect().top >= document.querySelector('.stack-summary-main').getBoundingClientRect().bottom`), 'Narrow layout follows the DOM reading order');
+    assert.ok(
+      await js(
+        `document.querySelector('.stack-merge-details').getBoundingClientRect().top >= document.querySelector('.stack-summary-main').getBoundingClientRect().bottom`
+      ),
+      'Narrow layout follows the DOM reading order'
+    );
     await capture('compact');
     await viewport(640, 1100);
     await capture('narrow');
     assert.ok(await js('document.documentElement.scrollWidth<=innerWidth'));
     // Optional checks remain visible without being counted as merge blockers.
     await js('window.optionalMode=true;window.publishStatus()');
-    await wait(`document.querySelector('[aria-label="Checks that do not block merging"]')?.textContent.includes('Optional checks did not pass')`);
-    assert.match(await js<string>("document.querySelector('.pr-merge-status').textContent"), /Cannot merge stack · 1 PR is blocked/);
+    await wait(
+      `document.querySelector('[aria-label="Checks that do not block merging"]')?.textContent.includes('Optional checks did not pass')`
+    );
+    assert.match(
+      await js<string>("document.querySelector('.pr-merge-status').textContent"),
+      /Cannot merge stack · 1 PR is blocked/
+    );
     await viewport(1100, 950);
     await capture('optional-checks');
     await js("document.documentElement.style.zoom='2'");
@@ -108,12 +147,16 @@ void app.whenReady().then(async () => {
     await js("Date.now=window.realNow;window.dispatchEvent(new Event('fixture-pr-read-change'));void 0");
     await wait("document.querySelector('.stack-merge-details').textContent.includes('Build and test')");
     // Large stacks keep the initial list short and disclose every additional cause.
-    await js(`(async()=>{const s=window.testStack.subject;for(const number of [123,124])s.members.push({...s.members[0],number,url:'https://github.com/klang/engine/pull/'+number});await window.publishStatus();window.dispatchEvent(new Event('fixture-pr-read-change'));})()`);
+    await js(
+      `(async()=>{const s=window.testStack.subject;for(const number of [123,124])s.members.push({...s.members[0],number,url:'https://github.com/klang/engine/pull/'+number});await window.publishStatus();window.dispatchEvent(new Event('fixture-pr-read-change'));})()`
+    );
     await wait("document.querySelector('.stack-merge-more summary')?.textContent==='Show 1 more PR'");
     await js("document.querySelector('.stack-merge-more summary').click()");
     await wait("document.querySelector('.stack-merge-more')?.open===true");
     assert.equal(await js("document.querySelectorAll('.stack-merge-issue').length"), 5);
-    await js(`(async()=>{window.testStack.subject.members.splice(3);await window.publishStatus();window.dispatchEvent(new Event('fixture-pr-read-change'));})()`);
+    await js(
+      `(async()=>{window.testStack.subject.members.splice(3);await window.publishStatus();window.dispatchEvent(new Event('fixture-pr-read-change'));})()`
+    );
     await wait("!document.querySelector('.stack-merge-more')");
     // Check navigation preserves the exact PR scope.
     await js(
@@ -123,6 +166,18 @@ void app.whenReady().then(async () => {
       "document.querySelector('[role=tab][data-active]')?.textContent.includes('Checks') || document.querySelector('[role=tab][aria-selected=true]')?.textContent.includes('Checks')"
     );
     assert.ok(await js("document.querySelector('.pr-overview-heading').textContent.includes('Enable adaptive')"));
+    await js(
+      "[...document.querySelectorAll('[role=tab]')].find(tab=>tab.textContent==='Summary').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}))"
+    );
+    await wait("document.querySelector('.stack-context > summary')");
+    await js("document.querySelector('.stack-context > summary').click()");
+    await wait("document.querySelector('.stack-context [aria-current=page]')?.dataset.prUrl.endsWith('/122')");
+    await viewport(1100, 950);
+    await capture('current-pr');
+    await js(
+      'document.querySelector(\'.stack-context [data-pr-url$="/121"] .stack-member-title > button:not(.entity-badge)\').click()'
+    );
+    await wait("document.querySelector('.pr-overview-heading').textContent.includes('Route worker commands')");
     console.log(
       'Stack merge details passed: exact PR causes, approval and check evidence, unknown state, action scope, light/dark and narrow layout.'
     );

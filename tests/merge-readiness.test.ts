@@ -152,3 +152,45 @@ void test('check evidence must be fresh and belong to the displayed head', async
     assert.equal(result.entries[0].failedChecks.length, 0);
   }
 });
+
+void test('stack hierarchy orders dependencies and refuses false linear chains', async () => {
+  const { stackDependencyOrder } = await import('../lib/stack-overview');
+  const child = { ...member, url: member.url + '2', number: 2 };
+  const tip = { ...member, url: member.url + '3', number: 3 };
+  const subject = { kind: 'stack', members: [tip, member, child], edges: [
+    { parent: member.url, child: child.url, evidence: 'branch' },
+    { parent: child.url, child: tip.url, evidence: 'branch' },
+  ] } as ReviewSubject;
+  assert.deepEqual(stackDependencyOrder(subject).members.map(m => m.number), [1, 2, 3]);
+  assert.equal(stackDependencyOrder(subject).linear, true);
+  assert.equal(stackDependencyOrder({ ...subject, edges: [subject.edges[0], { ...subject.edges[1], parent: member.url }] }).linear, false);
+  assert.equal(stackDependencyOrder({ ...subject, edges: [...subject.edges, { parent: tip.url, child: member.url, evidence: 'manual' }] }).linear, false);
+  assert.equal(stackDependencyOrder({ ...subject, edges: [] }).linear, false);
+});
+
+void test('stack next action names the actual target and does not reuse stale conflicts', async () => {
+  const { stackMergeStatus } = await import('../lib/stack-merge-status');
+  const { stackNextStep, stackMergeTarget } = await import('../lib/stack-overview');
+  const base = { ...member, headBranch: 'feature/base', headRepo: 'example/repo', baseRepo: 'example/repo', baseBranch: 'main' };
+  const child = { ...base, url: member.url + '2', number: 2, baseBranch: 'feature/base', headBranch: 'feature/child' };
+  const subject = { kind: 'stack', members: [child, base], edges: [{ parent: base.url, child: child.url, evidence: 'branch' }] } as ReviewSubject;
+  const conflict = { ...signals({ mergeState: 'DIRTY', baseBranch: 'feature/base' }), url: child.url };
+  assert.equal(stackMergeTarget(subject, child, conflict, now).parent?.number, 1);
+  assert.ok(conflict.readiness);
+  assert.equal(stackMergeTarget(subject, child, { ...conflict, readiness: { ...conflict.readiness, baseBranch: 'main' } }, now).parent, undefined, 'Retargeted PR conflicts with main, not its historical parent');
+  const status = stackMergeStatus(subject, [signals({ baseBranch: 'main' }), conflict], {}, now);
+  assert.equal(stackNextStep(subject, status)?.entry.member.number, 2);
+  assert.equal(stackNextStep(subject, status)?.action, 'resolve');
+  assert.equal(stackNextStep(subject, stackMergeStatus(subject, [conflict], {}, now + QUEUE_SIGNALS_TTL))?.action, 'refresh');
+});
+
+void test('stack labels distinguish current check results without overriding merge eligibility', async () => {
+  const { stackMergeLabel } = await import('../lib/stack-overview');
+  const failed = { ...signals({ mergeState: 'BLOCKED' }), checks: { state: 'failure' as const, total: 1, passed: 0 } };
+  assert.equal(stackMergeLabel(member, failed, now).label, 'Checks failing');
+  assert.equal(stackMergeLabel(member, { ...failed, checks: { state: 'pending', total: 1, passed: 0 } }, now).label, 'Checks running');
+  assert.equal(stackMergeLabel(member, { ...failed, readiness: signals().readiness }, now).label, 'Ready', 'Optional failures cannot override GitHub eligibility');
+  assert.equal(stackMergeLabel(member, failed, now + QUEUE_SIGNALS_TTL).label, 'Status needs refresh');
+  assert.equal(stackMergeLabel(member, undefined, now, true).label, 'Checking…');
+  assert.equal(stackMergeLabel(member, undefined, now, false).label, 'Not checked');
+});

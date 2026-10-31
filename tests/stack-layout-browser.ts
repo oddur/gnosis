@@ -64,7 +64,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.stack-briefing-state')?.textContent.includes('paused by your filters')");assert.equal(await js("document.querySelector('.stack-briefing-state [role=alert]')===null"),true,'A new briefing state clears the previous start error');await capture('paused');
     await click('Generate stack briefing');await wait("document.querySelector('.stack-briefing-state')?.textContent.includes('Generating stack briefing')");
     await js("window.stackItem.briefing=undefined;window.stackItem.subject.members[1].repo='klang/worker';window.dispatchEvent(new Event('fixture-pr-read-change'))");
-    await wait("document.querySelector('.stack-overview-member:nth-child(2)').textContent.includes('klang/worker')");
+    await wait("document.querySelector('.stack-overview-member[data-pr-url$=\"/121\"]').textContent.includes('klang/worker')");
     await viewport(640,600);await capture('mixed-repos-narrow');assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'),true);
     console.log('Stack layout passed: coherent freshness, compact ten-PR overview, briefing generation/retry/pause, common and mixed repositories.');app.exit(0);
   }catch(error){console.error(error);await capture('failure');app.exit(1);}
