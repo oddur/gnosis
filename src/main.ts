@@ -1,3 +1,4 @@
+import { stackDependencyOrder } from '../lib/stack-overview';
 import { createConflictResolutionService } from './conflict-resolution-service';
 import { validateConflictRequest, type ConflictRequest } from '../lib/conflict-resolution';
 import { parseGitHubSyncInterest } from '../lib/github-sync';
@@ -2614,6 +2615,14 @@ handleInteractive('submit-review', async (_event, req: SubmitReviewRequest) => {
 
 const prActions = createPrActionsService();
 const conflicts = createConflictResolutionService({
+  dependents: url => {
+    const subject = workbench.cached().items.find(item => item.subject.members.some(member => member.url === url))?.subject;
+    if (!subject) return [];
+    const order = stackDependencyOrder(subject);
+    if (!order.linear) return [];
+    const index = order.members.findIndex(member => member.url === url);
+    return order.members.slice(index + 1).filter(member => !member.merged && member.state === 'open').map(member => member.url);
+  },
   storage: appData,
   directory: () => path.join(app.getPath('userData'), 'conflict-objects'),
   context: () => ({ account: cachedLogin ?? '', token: getResolvedToken() ?? '' }),
@@ -2656,15 +2665,16 @@ handleInteractive('conflict-resolution', async (_event, request: ConflictRequest
   if (!cachedLogin) cachedLogin = await resolveGitHubLogin(token);
   const controller = new AbortController();
   const id = `pr-action:conflicts:${crypto.randomUUID()}`;
-  const tracked = !['save', 'discard'].includes(request.kind);
-  if (tracked) activities.start({ id, kind: 'pr-action', account: cachedLogin, conflictTarget: request.kind === 'open' ? request.url : request.id, title: request.kind === 'publish' ? 'Updating PR with conflict resolutions' : request.kind === 'resolve' ? 'Proposing conflict resolutions' : 'Preparing conflict resolution', detail: 'Preparing the selected PR.' }, request.kind === 'publish' ? {} : { cancel: () => controller.abort() });
+  const tracked = !['save', 'discard', 'restack-save'].includes(request.kind);
+  if (tracked) activities.start({ id, kind: 'pr-action', account: cachedLogin, conflictTarget: request.kind === 'open' ? request.url : request.id, title: request.kind === 'restack-publish' ? 'Publishing dependent PR updates' : ['restack-prepare', 'restack-continue'].includes(request.kind) ? 'Preparing dependent PR updates' : request.kind === 'publish' ? 'Updating PR with conflict resolutions' : request.kind === 'resolve' ? 'Proposing conflict resolutions' : 'Preparing conflict resolution', detail: 'Preparing the selected PR.' }, ['publish', 'restack-publish'].includes(request.kind) ? {} : { cancel: () => controller.abort() });
   try {
     const result = await conflicts.run(request, controller.signal, detail => { if (tracked) activities.update(id, detail); });
-    if (result.session.status === 'published') {
-      refreshAfterGitHubWrite([result.session.url]);
-      void refreshActionTargets(discussionClient(), [result.session.url]).catch(() => {});
+    if (request.kind === 'publish' || request.kind === 'restack-publish') {
+      const urls = request.kind === 'restack-publish' ? result.session.restack?.branches.map(branch => branch.url) ?? [] : [result.session.url];
+      refreshAfterGitHubWrite(urls);
+      void refreshActionTargets(discussionClient(), urls).catch(() => {});
     }
-    if (tracked) activities.finish(id, 'completed', result.session.status === 'published' ? 'PR branch updated. GitHub checks will run for the new commit.' : 'Conflict workspace ready. Open Resolve conflicts on the PR to continue.');
+    if (tracked) activities.finish(id, 'completed', ['restack-prepare', 'restack-continue'].includes(request.kind) ? (result.session.restack?.status === 'blocked' ? 'Restack paused on new conflicts. Open the workspace to resolve and continue.' : 'Dependent PR updates prepared. Review the result before pushing.') : request.kind === 'restack-publish' ? 'Dependent PR branches updated together.' : result.session.status === 'published' ? 'PR branch updated. GitHub checks will run for the new commit.' : 'Conflict workspace ready. Open Resolve conflicts on the PR to continue.');
     return result;
   } catch (error) {
     if (tracked) activities.finish(id, controller.signal.aborted ? 'cancelled' : 'failed', error instanceof Error ? error.message : String(error));

@@ -4,6 +4,7 @@ import { CodeView, EditProvider, File, MultiFileDiff } from '@pierre/diffs/react
 import { Editor, type EditorFactory } from '@pierre/diffs/edit';
 import { Check, CircleAlert, CircleCheck, CheckCheck, Loader2, RotateCcw, Sparkles } from 'lucide-react';
 import { Button } from './ui/button';
+import { RestackReview } from './RestackReview';
 import { ToastHost } from './ui/toast';
 import { BranchBadge, PrBadge, RepositoryBadge } from './EntityBadge';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
@@ -119,6 +120,8 @@ function FileStageBadge({ stage, count }: { stage: ConflictFileStage; count?: nu
 
 export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () => void }) {
   const options = useCodeOptions();
+  const restackDrafts = useRef<Record<string, string>>({});
+  const [restackDirty, setRestackDirty] = useState(false);
   const [session, setSession] = useState<ConflictSession>();
   const [selected, setSelected] = useState('');
   const [contents, setContents] = useState('');
@@ -134,7 +137,7 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
   const [outcome, setOutcome] = useState('');
   const [helpOpen, setHelpOpen] = useState(false);
   const file = session?.files.find((f) => f.path === selected);
-  const dirty = !!file && contents !== file.result;
+  const dirty = (!!file && contents !== file.result) || restackDirty;
   const fileStates =
     session?.files.map((f) => ({ file: f, stage: conflictFileStage(f, f.path === selected ? contents : f.result) })) ??
     [];
@@ -160,6 +163,22 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
     setMessage((previous) => previous || `Merge ${reply.session.baseBranch} into ${reply.session.headBranch}`);
   }
   async function saveDraft(value: ConflictSession) {
+    for (const [path, contents] of Object.entries(restackDrafts.current)) {
+      const saved = value.restack?.blocked?.files.find((file) => file.path === path);
+      if (saved && saved.result !== contents)
+        value = (
+          await window.electronAPI.conflictResolution({
+            kind: 'restack-save',
+            id: value.id,
+            version: value.version,
+            path,
+            contents,
+            resolved: false,
+          })
+        ).session;
+    }
+    restackDrafts.current = {};
+    setRestackDirty(false);
     if (!file || contents === file.result) return value;
     const reply = await window.electronAPI.conflictResolution({
       kind: 'save',
@@ -279,7 +298,9 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
         <div className="conflict-heading">
           <div>
             <DialogTitle>
-              Resolve conflicts
+              {session?.status === 'published' && !!session.dependents?.length
+                ? 'Restack dependent PRs'
+                : 'Resolve conflicts'}
               {session && (
                 <>
                   {' '}
@@ -288,7 +309,12 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
               )}
             </DialogTitle>
             <DialogDescription>
-              {session ? (
+              {session?.status === 'published' && !!session.dependents?.length ? (
+                <>
+                  Rebase the PRs above <BranchBadge branch={session.headBranch} repo={session.headRepo} /> onto its
+                  resolved version.
+                </>
+              ) : session ? (
                 <>
                   Bring <BranchBadge branch={session.baseBranch} repo={session.baseRepo} /> into{' '}
                   <BranchBadge branch={session.headBranch} repo={session.headRepo} />. The PR stays open.
@@ -361,6 +387,22 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
           <div className="conflict-notice" role="status">
             The PR or base branch changed. Your previous draft is preserved. Start a new resolution to work on the
             latest revisions.
+            {session.status === 'published' &&
+              (resetPrompt ? (
+                <>
+                  <p>This replaces the saved restack draft. Remembered resolutions are kept.</p>
+                  <Button disabled={busy} onClick={() => void load(true)}>
+                    Start new resolution
+                  </Button>
+                  <Button variant="ghost" onClick={() => setResetPrompt(false)}>
+                    Keep draft
+                  </Button>
+                </>
+              ) : (
+                <Button variant="outline" disabled={busy} onClick={() => setResetPrompt(true)}>
+                  Start over…
+                </Button>
+              ))}
           </div>
         )}
         {!session ? (
@@ -373,16 +415,39 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
             </p>
           </div>
         ) : session.status === 'published' ? (
-          <div className="conflict-empty">
-            <Check size={30} />
-            <h2>PR branch updated</h2>
-            <p>
-              Your merge commit was pushed to the PR branch. The PR stays open. GitHub will evaluate checks and merge
-              requirements again.
-            </p>
-            <a href={session.url} target="_blank" rel="noreferrer">
-              Open PR on GitHub
-            </a>
+          <div className="conflict-published" data-restack={!!session.dependents?.length}>
+            <div className="conflict-published-result">
+              <Check size={18} />
+              <h2>PR branch updated</h2>
+              <a href={session.url} target="_blank" rel="noreferrer">
+                Open PR on GitHub
+              </a>
+            </div>
+            <p>Your resolution was pushed. The PR stays open; GitHub will run checks again.</p>
+            {!!session.dependents?.length && (
+              <RestackReview
+                session={session}
+                busy={busy}
+                options={options}
+                onDrafts={(drafts) => {
+                  restackDrafts.current = drafts;
+                  setRestackDirty(
+                    Object.entries(drafts).some(
+                      ([path, contents]) =>
+                        session.restack?.blocked?.files.find((file) => file.path === path)?.result !== contents
+                    )
+                  );
+                }}
+                onContinue={() => void act((s) => ({ kind: 'restack-continue', id: s.id, version: s.version }))}
+                onSave={(path, contents, resolved) =>
+                  void act((s) => ({ kind: 'restack-save', id: s.id, version: s.version, path, contents, resolved }))
+                }
+                onPrepare={() => void act((s) => ({ kind: 'restack-prepare', id: s.id, version: s.version }))}
+                onPublish={(previewToken, reviewed) =>
+                  void act((s) => ({ kind: 'restack-publish', id: s.id, version: s.version, previewToken, reviewed }))
+                }
+              />
+            )}
           </div>
         ) : preview ? (
           <>
@@ -578,7 +643,13 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
                           {file.source !== 'manual' && !dirty && (
                             <span>
                               {' '}
-                              Proposal by {file.source === 'mergiraf' ? 'Mergiraf' : 'the agent'} · Not tested
+                              Proposal by{' '}
+                              {file.source === 'rerere'
+                                ? 'Git’s remembered resolution'
+                                : file.source === 'mergiraf'
+                                  ? 'Mergiraf'
+                                  : 'the agent'}{' '}
+                              · Not tested
                             </span>
                           )}
                         </div>

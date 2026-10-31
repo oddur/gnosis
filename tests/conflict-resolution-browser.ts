@@ -1,6 +1,7 @@
 import { parsePatchFiles } from '@pierre/diffs';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
+app.disableHardwareAcceleration();
 import fs from 'node:fs';
 import path from 'node:path';
 void app.whenReady().then(async () => {
@@ -100,6 +101,7 @@ void app.whenReady().then(async () => {
       )
     );
     win.setSize(1280, 900);
+    await new Promise((resolve) => setTimeout(resolve, 300));
     await js('document.querySelector(\'.app-toast [aria-label="Dismiss notification"]\').focus()');
     assert.ok(
       await js("document.activeElement?.getAttribute('aria-label')==='Dismiss notification'"),
@@ -126,7 +128,7 @@ void app.whenReady().then(async () => {
       await js("!!document.querySelector('.conflict-workspace')"),
       'Dismissing a notification must not close Resolve conflicts'
     );
-    assert.ok(await js("!document.querySelector('.app-toast')"), 'The notification itself is dismissed');
+    await wait("!document.querySelector('.app-toast')");
     // Moving back to the global viewport keeps pending notifications and their actions.
     await js(
       `(async()=>{const {toast}=await import('/components/ui/toast.tsx');toast.add({title:'Background result',timeout:0});})()`
@@ -243,9 +245,67 @@ void app.whenReady().then(async () => {
     await capture('preview');
     assert.equal(await js("window.conflictCalls.filter(r=>r.kind==='publish').length"), 0, 'Preview never publishes');
     await click('Commit & push to PR branch');
-    await wait("document.querySelector('.conflict-empty').textContent.includes('PR branch updated')");
+    await wait("document.querySelector('.conflict-published').textContent.includes('PR branch updated')");
     assert.equal(await js("window.conflictCalls.filter(r=>r.kind==='publish').length"), 1);
     await capture('published');
+    // Restacking is a separate, explicit preview-and-push flow after the root resolution.
+    await js(`(()=>{
+      window.conflictFixture.dependents=['https://github.com/klang/engine/pull/121','https://github.com/klang/engine/pull/122'];
+      const original=window.electronAPI.conflictResolution;
+      window.electronAPI.conflictResolution=async req=>{
+        const s=window.conflictFixture;
+        if(req.kind==='restack-prepare'){
+          window.conflictCalls.push(req);s.restack={token:'e'.repeat(64),status:'prepared',rootSha:s.commitSha,expected:[],branches:[121,122].map((n,i)=>({url:'https://github.com/klang/engine/pull/'+n,title:i?'Make retry metrics observable':'Apply bounded retry delays',repo:'klang/engine',branch:'feature/retry-'+n,baseBranch:i?'feature/retry-121':'feature/retry',baseRepo:'klang/engine',baseSha:'b'.repeat(40),oldSha:'a'.repeat(40),newSha:'f'.repeat(40),commits:2,reused:i?0:1,patch:'',files:window.conflictPreview}))};s.version++;return {session:structuredClone(s)};
+        }
+        if(req.kind==='restack-save'){window.conflictCalls.push(req);const f=s.restack.blocked.files.find(f=>f.path===req.path);f.result=req.contents;f.resolved=req.resolved;s.version++;return {session:structuredClone(s)};}
+        if(req.kind==='restack-continue'){window.conflictCalls.push(req);s.restack.status='prepared';s.restack.blocked=undefined;s.version++;return {session:structuredClone(s)};}
+        if(req.kind==='restack-publish'){window.conflictCalls.push(req);s.restack.status='published';s.version++;return {session:structuredClone(s)};}
+        return original(req);
+      };
+    })()`);
+    await click('Close');
+    await js("window.dispatchEvent(new CustomEvent('gnosis-resolve-conflicts',{detail:window.conflictFixture.url}))");
+    await click('Prepare restack · 2 PRs');
+    await wait("document.querySelectorAll('.restack-reviewed input').length===2");
+    assert.equal(await js("window.conflictCalls.filter(r=>r.kind==='restack-publish').length"), 0);
+    assert.ok(
+      await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Push 2 PR updates').disabled")
+    );
+    await capture('restack-desktop');
+    await js("document.documentElement.classList.add('dark')");
+    win.setSize(1000, 800);
+    await capture('restack-laptop');
+    await js("document.querySelectorAll('.restack-reviewed input').forEach(input=>input.click())");
+    await click('Push 2 PR updates');
+    await wait("document.querySelector('.restack-review h2').textContent==='Dependent PRs updated'");
+    assert.deepEqual(await js("window.conflictCalls.find(r=>r.kind==='restack-publish').reviewed"), [
+      'https://github.com/klang/engine/pull/121',
+      'https://github.com/klang/engine/pull/122',
+    ]);
+    await capture('restack-published');
+    await click('Close');
+    await js(`(()=>{
+      const s=window.conflictFixture;s.restack.status='blocked';s.restack.blocked={url:s.dependents[0],title:'Apply bounded retry delays',reason:'The restack is paused on a new conflict. Edit and review each result below, then continue. No dependent branches have been pushed.',paths:['src/retry.ts'],reused:0,files:[{...s.files[0],result:s.files[0].original,resolved:false}]};
+      window.dispatchEvent(new CustomEvent('gnosis-resolve-conflicts',{detail:s.url}));
+    })()`);
+    await wait("document.querySelector('.restack-conflict-file textarea')");
+    assert.ok(
+      await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Continue restack').disabled")
+    );
+    await capture('restack-paused');
+    await js(
+      `(()=>{const input=document.querySelector('.restack-conflict-file textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,${JSON.stringify('export const delay = 2500;\n')});input.dispatchEvent(new Event('input',{bubbles:true}));})()`
+    );
+    // Closing must save an unreviewed paused draft; it must not lose it or publish.
+    await click('Close');
+    await wait("!document.querySelector('.conflict-workspace')");
+    assert.equal(await js('window.conflictFixture.restack.blocked.files[0].result'), 'export const delay = 2500;\n');
+    assert.equal(await js('window.conflictFixture.restack.blocked.files[0].resolved'), false);
+    await js("window.dispatchEvent(new CustomEvent('gnosis-resolve-conflicts',{detail:window.conflictFixture.url}))");
+    await click('Save & mark reviewed');
+    await click('Continue restack');
+    await wait("!document.querySelector('.restack-blocked')");
+
     await click('Close');
     await js(
       "window.conflictFixture.status='editing';window.conflictFixture.stale=true;window.dispatchEvent(new CustomEvent('gnosis-resolve-conflicts',{detail:window.conflictFixture.url}));"

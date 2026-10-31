@@ -8,7 +8,7 @@ export interface ConflictFile {
   result: string;
   /** Human review acknowledgement; marker-free proposals alone are not reviewed. */
   resolved: boolean;
-  source: 'manual' | 'mergiraf' | 'agent';
+  source: 'manual' | 'mergiraf' | 'agent' | 'rerere';
   explanation?: string;
   unsupported?: string;
 }
@@ -30,6 +30,30 @@ export interface ConflictSession {
   preparation?: 'conflicts' | 'clean-merge' | 'up-to-date';
   commitSha?: string;
   stale?: boolean;
+  dependents?: string[];
+  restack?: RestackPlan;
+}
+export interface RestackPlan {
+  token: string;
+  status: 'prepared' | 'blocked' | 'published';
+  rootSha: string;
+  expected: { url: string; headSha: string; baseSha: string; headBranch: string; baseBranch: string }[];
+  branches: {
+    url: string;
+    title: string;
+    repo: string;
+    branch: string;
+    baseBranch: string;
+    baseRepo: string;
+    oldSha: string;
+    newSha: string;
+    baseSha: string;
+    commits: number;
+    reused: number;
+    patch: string;
+    files: import('@pierre/diffs').FileDiffMetadata[];
+  }[];
+  blocked?: { url: string; title: string; reason: string; paths: string[]; files: ConflictFile[]; reused: number };
 }
 export type ConflictRequest =
   | { kind: 'open'; url: string; restart?: boolean }
@@ -37,7 +61,11 @@ export type ConflictRequest =
   | { kind: 'resolve'; id: string; version: number; engine: 'mergiraf' | 'agent'; path?: string; instructions?: string }
   | { kind: 'preview'; id: string; version: number }
   | { kind: 'publish'; id: string; version: number; previewToken: string; message: string }
-  | { kind: 'discard'; id: string; version: number };
+  | { kind: 'discard'; id: string; version: number }
+  | { kind: 'restack-prepare'; id: string; version: number }
+  | { kind: 'restack-continue'; id: string; version: number }
+  | { kind: 'restack-save'; id: string; version: number; path: string; contents: string; resolved: boolean }
+  | { kind: 'restack-publish'; id: string; version: number; previewToken: string; reviewed: string[] };
 export interface ConflictReply {
   session: ConflictSession;
   preview?: { patch: string; token: string; validation: string; files: import('@pierre/diffs').FileDiffMetadata[] };
@@ -77,7 +105,7 @@ export function validateConflictRequest(value: unknown): asserts value is Confli
   )
     throw new Error('Invalid conflict session.');
   if (
-    r.kind === 'save' &&
+    (r.kind === 'save' || r.kind === 'restack-save') &&
     text('path', 4096) &&
     text('contents', CONFLICT_FILE_LIMIT) &&
     typeof r.resolved === 'boolean'
@@ -90,7 +118,16 @@ export function validateConflictRequest(value: unknown): asserts value is Confli
     (r.instructions === undefined || text('instructions', 10000))
   )
     return;
-  if (r.kind === 'preview' || r.kind === 'discard') return;
+  if (r.kind === 'preview' || r.kind === 'discard' || r.kind === 'restack-prepare' || r.kind === 'restack-continue')
+    return;
+  if (
+    r.kind === 'restack-publish' &&
+    text('previewToken', 64) &&
+    Array.isArray(r.reviewed) &&
+    r.reviewed.length <= 30 &&
+    r.reviewed.every((value) => typeof value === 'string' && value.length <= 2048)
+  )
+    return;
   if (r.kind === 'publish' && text('previewToken', 64) && text('message', 2000)) return;
   throw new Error('Invalid conflict operation.');
 }

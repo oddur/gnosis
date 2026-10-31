@@ -13,6 +13,8 @@ import {
 import type { StateStorage } from './app-data-store';
 import type { PrActionState } from '../lib/pr-actions';
 import { runConflictProcess } from './conflict-process';
+import { createConflictMemory } from './conflict-rerere';
+import { prepareRestack, publishRestack } from './conflict-restack';
 
 const hash = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
 const oid = (value: string) => /^[a-f0-9]{40,64}$/.test(value);
@@ -33,8 +35,12 @@ interface Deps {
   ) => Promise<{ contents?: string; explanation: string }>;
   /** Tests use local bare remotes. Production only constructs github.com URLs. */
   remote?: (repo: string) => string;
+  dependents?: (url: string) => string[];
 }
 export function createConflictResolutionService(deps: Deps) {
+  const memory = createConflictMemory(() => path.join(deps.directory(), 'resolution-memory'));
+  const memoryScope = (session: Pick<ConflictSession, 'account' | 'headRepo'>) =>
+    `${session.account.toLowerCase()}:${session.headRepo.toLowerCase()}`;
   const busy = new Set<string>();
   const storageKey = (account: string, id: string) => `conflict-draft:${account}:${id}`;
   const directory = (account: string, id: string) => path.join(deps.directory(), hash(account), id);
@@ -152,8 +158,35 @@ export function createConflictResolutionService(deps: Deps) {
       throw new Error('GitHub has not returned the branch revisions yet.');
     const id = hash(url);
     const saved = deps.storage.read(storageKey(ctx.account, id)) as ConflictSession | undefined;
-    if (saved?.commitSha === state.headSha) {
+    if (
+      !restart &&
+      saved?.status === 'published' &&
+      saved.restack &&
+      saved.restack.status !== 'published' &&
+      (saved.commitSha !== state.headSha || saved.headBranch !== state.headBranch || saved.headRepo !== state.headRepo)
+    ) {
+      return { ...saved, stale: true };
+    }
+    if (!restart && saved?.commitSha === state.headSha) {
       saved.status = 'published';
+      saved.dependents = deps.dependents?.(url) ?? [];
+      const restack = saved.restack;
+      if (restack?.status === 'prepared') {
+        // Recover a successful atomic push whose response or local persistence was interrupted.
+        const states = await Promise.all(restack.branches.map((branch) => deps.read(branch.url)));
+        assertAccount(ctx);
+        if (
+          states.length &&
+          states.every(
+            (value, index) =>
+              value.account === ctx.account &&
+              value.headRepo === restack.branches[index].repo &&
+              value.headBranch === restack.branches[index].branch &&
+              value.headSha === restack.branches[index].newSha
+          )
+        )
+          restack.status = 'published';
+      }
       await persist(saved);
       return saved;
     }
@@ -283,6 +316,20 @@ export function createConflictResolutionService(deps: Deps) {
     }
     if (merge.code === 1 && !files.length)
       throw new Error('Git reported a repository-level conflict. Resolve it with a local merge tool.');
+    const remembered = await memory.apply(
+      memoryScope({ account: ctx.account, headRepo: state.headRepo }),
+      files,
+      signal
+    );
+    for (const file of files) {
+      const contents = remembered.get(file.path);
+      if (contents !== undefined) {
+        file.result = contents;
+        file.source = 'rerere';
+        file.explanation =
+          'Git reused a resolution you previously reviewed in this repository. Check it in this PR context before marking the file reviewed.';
+      }
+    }
     const containsBase = await git(
       ctx,
       id,
@@ -306,6 +353,7 @@ export function createConflictResolutionService(deps: Deps) {
       files,
       version: (saved?.version ?? 0) + 1,
       status: 'editing',
+      dependents: deps.dependents?.(url) ?? [],
       preparation: files.length ? 'conflicts' : containsBase.code === 0 ? 'up-to-date' : 'clean-merge',
     };
     signal.throwIfAborted();
@@ -347,6 +395,79 @@ export function createConflictResolutionService(deps: Deps) {
         const session = sessionFor(ctx, id);
         if (request.version !== session.version)
           throw new Error('The saved resolution changed. Reopen the workspace before continuing.');
+        if (
+          request.kind === 'restack-prepare' ||
+          request.kind === 'restack-publish' ||
+          request.kind === 'restack-save' ||
+          request.kind === 'restack-continue'
+        ) {
+          if (session.status !== 'published')
+            throw new Error('Publish this PR’s conflict resolution before restacking its dependents.');
+          const restackDeps = {
+            git: (args: string[], input?: string, allowed?: number[], overrideSignal?: AbortSignal) =>
+              git(ctx, id, args, overrideSignal ?? signal, input, allowed),
+            read: deps.read,
+            directory: directory(ctx.account, id),
+            remote,
+            signal,
+            report,
+          };
+          if (request.kind === 'restack-prepare') {
+            if (session.restack?.status === 'blocked')
+              await git(
+                ctx,
+                id,
+                [
+                  'worktree',
+                  'remove',
+                  '--force',
+                  path.join(directory(ctx.account, id), `restack-${session.restack.token}`),
+                ],
+                signal,
+                undefined,
+                [0, 128]
+              );
+            // A failed preparation must not leave an older plan publishable.
+            session.restack = undefined;
+            await persist(session);
+            session.dependents = deps.dependents?.(session.url) ?? [];
+            await memory.record(memoryScope(session), session.files, signal);
+            session.restack = await memory.withRepository(memoryScope(session), directory(ctx.account, id), () =>
+              prepareRestack(session, session.dependents ?? [], restackDeps)
+            );
+          } else if (request.kind === 'restack-save') {
+            const file = session.restack?.blocked?.files.find((file) => file.path === request.path);
+            if (
+              session.restack?.status !== 'blocked' ||
+              !file ||
+              file.unsupported ||
+              Buffer.byteLength(request.contents) > CONFLICT_FILE_LIMIT
+            )
+              throw new Error('This paused file cannot be edited.');
+            if (request.resolved && hasConflictMarkers(request.contents))
+              throw new Error('Remove the remaining conflict markers first.');
+            file.result = request.contents;
+            file.resolved = request.resolved;
+          } else if (request.kind === 'restack-continue') {
+            if (session.restack?.status !== 'blocked') throw new Error('No restack is paused.');
+            await memory.record(memoryScope(session), session.restack.blocked?.files ?? [], signal);
+            session.restack = await memory.withRepository(memoryScope(session), directory(ctx.account, id), () =>
+              prepareRestack(session, session.dependents ?? [], restackDeps, true)
+            );
+          } else {
+            if (
+              !session.restack ||
+              session.restack.branches.some((branch) => !request.reviewed.includes(branch.url)) ||
+              new Set(request.reviewed).size !== session.restack.branches.length
+            )
+              throw new Error('Review every dependent PR update before pushing.');
+            await publishRestack(session, request.previewToken, restackDeps);
+          }
+          assertAccount(ctx);
+          session.version++;
+          await persist(session);
+          return { session };
+        }
         if (session.status !== 'editing')
           throw new Error('This resolution has already been published. Refresh the PR.');
         if (request.kind === 'discard') {
@@ -464,6 +585,7 @@ export function createConflictResolutionService(deps: Deps) {
             throw new Error('Review the complete resolution and enter a commit message before publishing.');
           report('Checking revisions before updating the PR branch.');
           await current(session, ctx);
+          await memory.record(memoryScope(session), session.files, signal);
           const sha = (
             await git(
               ctx,

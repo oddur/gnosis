@@ -6,6 +6,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createConflictResolutionService } from '../src/conflict-resolution-service';
+import { createConflictMemory } from '../src/conflict-rerere';
 import { hasConflictMarkers, conflictFileStage, type ConflictFile } from '../lib/conflict-resolution';
 import type { PrActionState } from '../lib/pr-actions';
 const exec = promisify(execFile);
@@ -185,6 +186,317 @@ void test('push lease rejects a remote change even if the metadata recheck races
     /could not complete/
   );
   assert.equal(await f.git('rev-parse', 'feature'), f.state.baseSha);
+});
+
+async function stackedFixture(t: TestContext, conflict = false) {
+  const f = await fixture(t);
+  await f.git('checkout', '-b', 'child', f.state.headSha);
+  const remote = f.deps.remote();
+  await fs.writeFile(
+    path.join(remote, conflict ? 'sample.ts' : 'child.txt'),
+    conflict ? 'export const answer = 4;\n' : 'child change\n'
+  );
+  await f.git('add', '.');
+  await f.git('commit', '-m', 'child change');
+  const child = await f.git('rev-parse', 'HEAD');
+  await f.git('checkout', '-b', 'tip');
+  await fs.writeFile(path.join(remote, 'tip.txt'), 'tip change\n');
+  await f.git('add', '.');
+  await f.git('commit', '-m', 'tip change');
+  const tip = await f.git('rev-parse', 'HEAD');
+  await f.git('checkout', 'main');
+  let session = (
+    await f.run({
+      kind: 'save',
+      id: f.session.id,
+      version: f.session.version,
+      path: 'sample.ts',
+      contents: 'export const answer = 3;\n',
+      resolved: true,
+    })
+  ).session;
+  const preview = (await f.run({ kind: 'preview', id: session.id, version: session.version })).preview;
+  assert.ok(preview);
+  session = (
+    await f.run({
+      kind: 'publish',
+      id: session.id,
+      version: session.version,
+      previewToken: preview.token,
+      message: 'Resolve root',
+    })
+  ).session;
+  const urls = ['https://github.com/test/repo/pull/2', 'https://github.com/test/repo/pull/3'];
+  const read = async (url: string) => {
+    const index = [f.state.url, ...urls].indexOf(url);
+    assert.ok(index >= 0);
+    const branch = ['feature', 'child', 'tip'][index],
+      baseBranch = ['main', 'feature', 'child'][index];
+    return {
+      ...f.state,
+      url,
+      title: branch,
+      headBranch: branch,
+      baseBranch,
+      headSha: await f.git('rev-parse', branch),
+      baseSha: await f.git('rev-parse', baseBranch),
+    };
+  };
+  const deps = { ...f.deps, read, dependents: () => urls };
+  const service = createConflictResolutionService(deps);
+  return {
+    ...f,
+    session,
+    child,
+    tip,
+    urls,
+    deps,
+    run: (r: Parameters<typeof service.run>[0]) => service.run(r, new AbortController().signal),
+  };
+}
+
+void test('restack replays only each PR’s commits and publishes all branches after review', async (t) => {
+  const f = await stackedFixture(t);
+  const { session } = await f.run({ kind: 'restack-prepare', id: f.session.id, version: f.session.version });
+  assert.equal(session.restack?.status, 'prepared');
+  assert.equal(session.restack.branches.length, 2);
+  assert.equal(await f.git('rev-parse', 'child'), f.child, 'Preparation must not push');
+  assert.equal(await f.git('rev-parse', 'tip'), f.tip);
+  assert.deepEqual(
+    session.restack.branches.map((b) => b.commits),
+    [1, 1]
+  );
+  assert.match(session.restack.branches[0].patch, /answer = 3/);
+  await assert.rejects(
+    f.run({
+      kind: 'restack-publish',
+      id: session.id,
+      version: session.version,
+      previewToken: session.restack.token,
+      reviewed: [],
+    }),
+    /Review every/
+  );
+  await assert.rejects(
+    f.run({
+      kind: 'restack-publish',
+      id: session.id,
+      version: session.version,
+      previewToken: 'wrong',
+      reviewed: f.urls,
+    }),
+    /Prepare and review/
+  );
+  const published = await f.run({
+    kind: 'restack-publish',
+    id: session.id,
+    version: session.version,
+    previewToken: session.restack.token,
+    reviewed: f.urls,
+  });
+  assert.equal(published.session.restack?.status, 'published');
+  assert.equal(await f.git('rev-parse', 'child^'), f.session.commitSha);
+  assert.equal(await f.git('rev-parse', 'tip^'), await f.git('rev-parse', 'child'));
+  assert.equal(await f.git('show', 'tip:sample.ts'), 'export const answer = 3;');
+  assert.equal(await f.git('show', 'tip:child.txt'), 'child change');
+  assert.equal(await f.git('show', 'tip:tip.txt'), 'tip change');
+});
+
+void test('a dependent PR already based on the resolved parent keeps its commits unchanged', async (t) => {
+  const f = await stackedFixture(t);
+  assert.ok(f.session.commitSha);
+  await f.git('rebase', '--onto', f.session.commitSha, f.state.headSha, 'child');
+  const current = await f.git('rev-parse', 'child');
+  await f.git('checkout', 'main');
+  const service = createConflictResolutionService({ ...f.deps, dependents: () => [f.urls[0]] });
+  const { session } = await service.run(
+    { kind: 'restack-prepare', id: f.session.id, version: f.session.version },
+    new AbortController().signal
+  );
+  assert.equal(session.restack?.branches[0].oldSha, current);
+  assert.equal(session.restack.branches[0].newSha, current);
+  assert.equal(session.restack.branches[0].commits, 1);
+  assert.equal(session.restack.branches[0].files.length, 0);
+});
+
+void test('restack stops on a new conflict without pushing any prepared branches', async (t) => {
+  const f = await stackedFixture(t, true);
+  const { session } = await f.run({ kind: 'restack-prepare', id: f.session.id, version: f.session.version });
+  assert.equal(session.restack?.status, 'blocked');
+  assert.deepEqual(session.restack.blocked?.paths, ['sample.ts']);
+  assert.equal(session.restack.blocked.url, f.urls[0]);
+  assert.equal(await f.git('rev-parse', 'child'), f.child);
+  assert.equal(await f.git('rev-parse', 'tip'), f.tip);
+  await assert.rejects(
+    f.run({
+      kind: 'restack-publish',
+      id: session.id,
+      version: session.version,
+      previewToken: session.restack.token,
+      reviewed: [],
+    }),
+    /Prepare and review/
+  );
+});
+
+void test('paused restack survives restart, accepts reviewed edits and reuses them on another preparation', async (t) => {
+  const f = await stackedFixture(t, true);
+  let session = (await f.run({ kind: 'restack-prepare', id: f.session.id, version: f.session.version })).session;
+  assert.equal(session.restack?.blocked?.files[0].unsupported, undefined);
+  const service = createConflictResolutionService(f.deps);
+  const run = (request: Parameters<typeof service.run>[0]) => service.run(request, new AbortController().signal);
+  session = (await run({ kind: 'open', url: f.state.url })).session;
+  assert.equal(session.restack?.status, 'blocked');
+  await assert.rejects(run({ kind: 'restack-continue', id: session.id, version: session.version }), /review every/);
+  session = (
+    await run({
+      kind: 'restack-save',
+      id: session.id,
+      version: session.version,
+      path: 'sample.ts',
+      contents: 'export const answer = 5;\n',
+      resolved: true,
+    })
+  ).session;
+  session = (await run({ kind: 'restack-continue', id: session.id, version: session.version })).session;
+  assert.equal(session.restack?.status, 'prepared');
+  assert.equal(await f.git('rev-parse', 'child'), f.child);
+  // Replaying the same conflict now uses actual Git rerere and still requires branch review.
+  session = (await run({ kind: 'restack-prepare', id: session.id, version: session.version })).session;
+  assert.equal(session.restack?.status, 'prepared');
+  assert.equal(session.restack.branches[0].reused, 1);
+  session = (
+    await run({
+      kind: 'restack-publish',
+      id: session.id,
+      version: session.version,
+      previewToken: session.restack.token,
+      reviewed: f.urls,
+    })
+  ).session;
+  assert.equal(session.restack?.status, 'published');
+  assert.equal(await f.git('show', 'tip:sample.ts'), 'export const answer = 5;');
+});
+
+void test('rerere remembers reviewed resolutions across PRs without marking the proposal reviewed', async (t) => {
+  const f = await stackedFixture(t);
+  const service = createConflictResolutionService({
+    ...f.deps,
+    read: (url) => Promise.resolve({ ...f.state, url, headBranch: 'copy' }),
+    dependents: () => [],
+  });
+  const { session } = await service.run(
+    { kind: 'open', url: 'https://github.com/test/repo/pull/4' },
+    new AbortController().signal
+  );
+  assert.equal(session.files[0].source, 'rerere');
+  assert.equal(session.files[0].result, 'export const answer = 3;\n');
+  assert.equal(session.files[0].resolved, false);
+});
+
+void test('resolution memory keeps the latest reviewed result and isolates accounts and repositories', async (t) => {
+  const f = await fixture(t);
+  const memory = createConflictMemory(() => path.join(f.deps.directory(), 'memory-test'));
+  const signal = new AbortController().signal;
+  const file = { ...f.session.files[0], result: 'export const answer = 3;\n', resolved: true };
+  await memory.record('tester:test/repo', [file], signal);
+  file.result = 'export const answer = 5;\n';
+  await memory.record('tester:test/repo', [file], signal);
+  assert.equal((await memory.apply('tester:test/repo', [file], signal)).get(file.path), file.result);
+  assert.equal((await memory.apply('other:test/repo', [file], signal)).size, 0);
+  assert.equal((await memory.apply('tester:test/other', [file], signal)).size, 0);
+});
+
+void test('restack rejects a remote race atomically even when metadata still reports old heads', async (t) => {
+  const f = await stackedFixture(t);
+  const { session } = await f.run({ kind: 'restack-prepare', id: f.session.id, version: f.session.version });
+  const states = new Map(
+    await Promise.all([f.state.url, ...f.urls].map(async (url) => [url, await f.deps.read(url)] as const))
+  );
+  assert.ok(session.restack);
+  await f.git('update-ref', 'refs/heads/tip', f.state.baseSha);
+  const service = createConflictResolutionService({
+    ...f.deps,
+    read: (url) => {
+      const state = states.get(url);
+      assert.ok(state);
+      return Promise.resolve(state);
+    },
+  });
+  await assert.rejects(
+    service.run(
+      {
+        kind: 'restack-publish',
+        id: session.id,
+        version: session.version,
+        previewToken: session.restack.token,
+        reviewed: f.urls,
+      },
+      new AbortController().signal
+    ),
+    /could not complete/
+  );
+  assert.equal(await f.git('rev-parse', 'child'), f.child);
+  assert.equal(await f.git('rev-parse', 'tip'), f.state.baseSha);
+});
+
+void test('reopen recovers an atomic restack push after local persistence fails', async (t) => {
+  const f = await stackedFixture(t);
+  const { session } = await f.run({ kind: 'restack-prepare', id: f.session.id, version: f.session.version });
+  assert.ok(session.restack);
+  let fail = true;
+  const service = createConflictResolutionService({
+    ...f.deps,
+    storage: {
+      ...f.deps.storage,
+      write: (key, value) => {
+        if (fail && (value as { restack?: { status: string } }).restack?.status === 'published') {
+          fail = false;
+          throw new Error('Simulated storage failure');
+        }
+        f.deps.storage.write(key, value);
+      },
+    },
+  });
+  await assert.rejects(
+    service.run(
+      {
+        kind: 'restack-publish',
+        id: session.id,
+        version: session.version,
+        previewToken: session.restack.token,
+        reviewed: f.urls,
+      },
+      new AbortController().signal
+    ),
+    /storage failure/
+  );
+  const reopened = await service.run({ kind: 'open', url: f.state.url }, new AbortController().signal);
+  assert.equal(reopened.session.restack?.status, 'published');
+  assert.equal(await f.git('rev-parse', 'tip'), session.restack.branches[1].newSha);
+});
+
+void test('reopening after the source branch changes preserves paused restack drafts', async (t) => {
+  const f = await stackedFixture(t, true);
+  let session = (await f.run({ kind: 'restack-prepare', id: f.session.id, version: f.session.version })).session;
+  session = (
+    await f.run({
+      kind: 'restack-save',
+      id: session.id,
+      version: session.version,
+      path: 'sample.ts',
+      contents: 'saved human draft\n',
+      resolved: false,
+    })
+  ).session;
+  await f.git('update-ref', 'refs/heads/feature', f.state.baseSha);
+  const reopened = await f.run({ kind: 'open', url: f.state.url });
+  assert.equal(reopened.session.stale, true);
+  assert.equal(reopened.session.restack?.blocked?.files[0].result, 'saved human draft\n');
+  await assert.rejects(
+    f.run({ kind: 'restack-continue', id: session.id, version: session.version }),
+    /resolved PR changed/
+  );
 });
 void test('Mergiraf executable returns a saved proposal without auto-approving it', async (t) => {
   const binary = path.resolve('resources/mergiraf/runtime', process.platform === 'win32' ? 'mergiraf.exe' : 'mergiraf');
