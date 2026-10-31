@@ -41,13 +41,13 @@ void app.whenReady().then(async () => {
   try {
     await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
     await wait("document.querySelectorAll('.queue-item').length===7");
-    const prior = await js("document.querySelector('.queue-item.is-selected .queue-title')?.textContent??null");
+    const prior = await js("document.querySelector('.briefing-panel h2')?.textContent??null");
     await click('Star PR #152');
     await wait("!!document.querySelector('.queue-item:has([aria-label=\"Actions for PR #152\"]) .entry-star-marker')");
     assert.equal(
-      await js("document.querySelector('.queue-item.is-selected .queue-title')?.textContent??null"),
+      await js("document.querySelector('.briefing-panel h2')?.textContent??null"),
       prior,
-      'Starring does not navigate'
+      'Starring selects the menu target without navigating the briefing'
     );
     assert.equal(await js("document.querySelector('.queue-section-title').textContent.trim()"), 'Starred 1');
     await capture('queue-pinned');
