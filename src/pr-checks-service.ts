@@ -115,6 +115,12 @@ export async function readCheckDetails(client: Octokit, input: CheckSelection): 
   const { owner, repo, run } = await checkedRun(client, input);
   const result: CheckDetails = {
     ...input,
+    state: {
+      status: run.status === 'completed' ? 'completed' : run.status === 'in_progress' ? 'in_progress' : 'queued',
+      conclusion: run.conclusion,
+      startedAt: run.started_at,
+      completedAt: run.completed_at,
+    },
     title: run.output.title ?? run.name,
     summary: run.output.summary ?? '',
     text: run.output.text ?? '',
@@ -161,7 +167,17 @@ export async function readCheckDetails(client: Octokit, input: CheckSelection): 
           number: s.number,
           status: s.status,
           conclusion: s.conclusion,
+          startedAt: s.started_at,
+          completedAt: s.completed_at,
         })),
+      };
+      // The job response is newer than the check-list snapshot (and can be newer than checks.get).
+      result.state = {
+        status:
+          details.status === 'completed' ? 'completed' : details.status === 'in_progress' ? 'in_progress' : 'queued',
+        conclusion: details.conclusion,
+        startedAt: details.started_at,
+        completedAt: details.completed_at,
       };
     } catch {
       result.warning = 'Actions job details are unavailable. Check repository access, or open the job on GitHub.';

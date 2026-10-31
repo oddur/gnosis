@@ -23,6 +23,7 @@ export interface CheckSelection extends CheckTarget {
   id: string;
 }
 export interface CheckDetails extends CheckSelection {
+  state?: Pick<PrCheck, 'status' | 'conclusion' | 'startedAt' | 'completedAt'>;
   title: string;
   summary: string;
   text: string;
@@ -33,9 +34,32 @@ export interface CheckDetails extends CheckSelection {
     attempt: number;
     status: string;
     canRerun: boolean;
-    steps: { name: string; number: number; status: string; conclusion: string | null }[];
+    steps: CheckStep[];
   };
   warning?: string;
+}
+export interface CheckStep {
+  name: string;
+  number: number;
+  status: string;
+  conclusion: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+}
+
+/** Pending and timestamp-less steps must not invent a duration. */
+export function checkDuration(
+  value: { status: string; startedAt?: string | null; completedAt?: string | null },
+  now = Date.now()
+) {
+  if (!value.startedAt || !['in_progress', 'completed'].includes(value.status)) return '';
+  const start = Date.parse(value.startedAt);
+  const end = value.status === 'completed' ? Date.parse(value.completedAt ?? '') : now;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return '';
+  const seconds = Math.floor((end - start) / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m ${seconds % 60}s`;
 }
 export interface CheckLog {
   text: string;
@@ -76,10 +100,18 @@ export function checkCounts(checks: CiCheck[]) {
 export function checkSummary(checks: CiCheck[]) {
   if (!checks.length) return 'No checks reported';
   const counts = checkCounts(checks);
-  if (counts.attention) return `${counts.attention} ${counts.attention === 1 ? 'check needs' : 'checks need'} attention`;
-  const skipped = checks.filter(c => c.status === 'completed' && c.conclusion === 'skipped').length;
+  if (counts.attention)
+    return `${counts.attention} ${counts.attention === 1 ? 'check needs' : 'checks need'} attention`;
+  const skipped = checks.filter((c) => c.status === 'completed' && c.conclusion === 'skipped').length;
   const neutral = counts.skipped - skipped;
-  return [counts.running && `${counts.running} running`, counts.passed && `${counts.passed} passed`, skipped && `${skipped} skipped`, neutral && `${neutral} neutral`].filter(Boolean).join(' · ');
+  return [
+    counts.running && `${counts.running} running`,
+    counts.passed && `${counts.passed} passed`,
+    skipped && `${skipped} skipped`,
+    neutral && `${neutral} neutral`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 }
 
 export function orderedChecks(checks: PrCheck[], filter: CheckFilter) {

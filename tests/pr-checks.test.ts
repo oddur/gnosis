@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createGitHubClientPool } from './cache-test-pool';
 import { readCommitChecks } from '../lib/github-checks';
 import { readPrChecks, readCheckDetails, readCheckLog, rerunChecks } from '../src/pr-checks-service';
-import { checkSummary, checkCounts, orderedChecks, type PrCheck } from '../lib/pr-checks';
+import { checkSummary, checkCounts, orderedChecks, checkDuration, type PrCheck } from '../lib/pr-checks';
 const sha = 'a'.repeat(40),
   url = 'https://github.com/o/r/pull/1';
 const input = { url, headSha: sha, id: 'check:1' };
@@ -129,6 +129,53 @@ void test('detail is tied to its commit and includes annotations without downloa
   assert.ok(!h.calls.some((c) => c.path.includes('/logs')));
   await assert.rejects(readCheckDetails(h.client, { ...input, headSha: 'b'.repeat(40) }), /different commit/);
 });
+void test('job details preserve step timing and replace an outdated queued check state', async () => {
+  const step = {
+    name: 'Install',
+    number: 2,
+    status: 'in_progress',
+    conclusion: null,
+    started_at: run.started_at,
+    completed_at: null,
+  };
+  const h = harness((p) => {
+    const value =
+      p === '/repos/o/r/check-runs/1'
+        ? { ...run, status: 'queued', conclusion: null }
+        : p === '/repos/o/r/actions/jobs/10'
+          ? {
+              id: 10,
+              run_id: 9,
+              status: 'in_progress',
+              conclusion: null,
+              started_at: run.started_at,
+              completed_at: null,
+              steps: [step],
+            }
+          : undefined;
+    return value ? new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } }) : undefined;
+  });
+  const detail = await readCheckDetails(h.client, input);
+  assert.equal(detail.state?.status, 'in_progress');
+  assert.equal(detail.state.conclusion, null);
+  assert.equal(detail.job?.steps[0].startedAt, step.started_at);
+  assert.equal(detail.job.steps[0].completedAt, null);
+});
+void test('step timing advances only running steps and keeps completed durations fixed', () => {
+  const startedAt = '2026-10-31T10:00:00Z';
+  const now = Date.parse(startedAt) + 125_000;
+  assert.equal(checkDuration({ status: 'in_progress', startedAt }, now), '2m 5s');
+  assert.equal(checkDuration({ status: 'in_progress', startedAt }, now + 1000), '2m 6s');
+  assert.equal(checkDuration({ status: 'completed', startedAt, completedAt: '2026-10-31T10:00:03Z' }, now), '3s');
+  assert.equal(checkDuration({ status: 'in_progress', startedAt }, now + 3_600_000), '1h 2m 5s');
+  for (const value of [
+    { status: 'pending', startedAt },
+    { status: 'completed', startedAt },
+    { status: 'in_progress', startedAt: 'invalid' },
+    { status: 'in_progress', startedAt: '2026-11-01T00:00:00Z' },
+  ])
+    assert.equal(checkDuration(value, now), '');
+});
 void test('reruns reject newer commits or a running workflow and never replay a write', async () => {
   for (const state of ['new-head', 'running']) {
     const h = harness((p) =>
@@ -177,16 +224,32 @@ void test('all terminal attention states rank ahead of running, passed, and neut
 });
 
 void test('job logs use an unauthenticated bounded download and strip terminal escapes', async () => {
-  const h = harness(p => p.endsWith('/logs') ? new Response(null, {status:302,headers:{location:'https://logs.blob.core.windows.net/job'}}) : undefined);
+  const h = harness((p) =>
+    p.endsWith('/logs')
+      ? new Response(null, { status: 302, headers: { location: 'https://logs.blob.core.windows.net/job' } })
+      : undefined
+  );
   const original = globalThis.fetch;
   let cancelled = false;
   globalThis.fetch = ((_url: unknown, options: RequestInit) => {
     assert.equal(options.headers, undefined);
     assert.equal(options.redirect, 'error');
-    return Promise.resolve(new Response(new ReadableStream<Uint8Array>({
-      start(controller) { controller.enqueue(new TextEncoder().encode(String.fromCharCode(27)+'[31mFAIL'+String.fromCharCode(27)+'[0m'+'x'.repeat(2_100_000))); },
-      cancel() { cancelled = true; },
-    })));
+    return Promise.resolve(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode(
+                String.fromCharCode(27) + '[31mFAIL' + String.fromCharCode(27) + '[0m' + 'x'.repeat(2_100_000)
+              )
+            );
+          },
+          cancel() {
+            cancelled = true;
+          },
+        })
+      )
+    );
   }) as typeof fetch;
   try {
     const log = await readCheckLog(h.client, input);
@@ -195,13 +258,16 @@ void test('job logs use an unauthenticated bounded download and strip terminal e
     assert.ok(log.text.length <= 2_000_000);
     assert.equal(log.text.includes(String.fromCharCode(27)), false);
     assert.equal(cancelled, true);
-  } finally { globalThis.fetch = original; }
+  } finally {
+    globalThis.fetch = original;
+  }
 });
 
 void test('compact check outcomes explain skipped and neutral results without implying failure', () => {
-  const checks = (conclusions: string[]) => conclusions.map(conclusion => ({ name: conclusion, status: 'completed' as const, conclusion, url: '' }));
-  assert.equal(checkSummary(checks(['success','success','skipped'])), '2 passed · 1 skipped');
-  assert.equal(checkSummary(checks(['success','neutral'])), '1 passed · 1 neutral');
-  assert.equal(checkSummary(checks(['success','failure'])), '1 check needs attention');
+  const checks = (conclusions: string[]) =>
+    conclusions.map((conclusion) => ({ name: conclusion, status: 'completed' as const, conclusion, url: '' }));
+  assert.equal(checkSummary(checks(['success', 'success', 'skipped'])), '2 passed · 1 skipped');
+  assert.equal(checkSummary(checks(['success', 'neutral'])), '1 passed · 1 neutral');
+  assert.equal(checkSummary(checks(['success', 'failure'])), '1 check needs attention');
   assert.equal(checkSummary([]), 'No checks reported');
 });

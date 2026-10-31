@@ -3187,11 +3187,27 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .checks-notice { color:var(--muted-foreground); }
 .checks-list .checks-notice, .checks-list .checks-error { padding:0 16px; }
 .check-rerun-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:20px; }
+.check-steps-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:24px; margin-bottom:8px; }
+.check-detail .check-steps-heading h3 { margin:0; display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; }
+.check-steps-heading h3 span { color:var(--muted-foreground); font-size:12px; font-weight:400; }
 .check-steps { list-style:none; padding:0; }
-.check-steps li { display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--border); }
-.check-steps li span { flex:1; overflow-wrap:anywhere; }
-.check-steps small { color:var(--muted-foreground); }
-.check-steps svg { flex-shrink:0; }
+.check-steps li { display:grid; grid-template-columns:16px minmax(0,1fr) auto minmax(88px,auto); align-items:center; gap:10px; padding:10px 12px; border-bottom:1px solid var(--border); font-size:13px; }
+.check-step-name { overflow-wrap:anywhere; }
+.check-step-outcome { font-size:12px; color:var(--muted-foreground); }
+.check-step-duration { text-align:right; white-space:nowrap; color:var(--muted-foreground); font-size:12px; font-variant-numeric:tabular-nums; }
+.check-steps li[data-state=running] { background:var(--accent); border-radius:var(--radius-sm); }
+.check-steps li[data-state=running] .check-step-name { font-weight:600; }
+.check-steps li[data-state=running] .check-step-outcome,.check-steps li[data-state=running] .check-step-duration,.check-step-spinner { color:var(--primary); }
+.check-steps li[data-state=pending],.check-steps li[data-state=skipped] > svg { color:var(--muted-foreground); }
+.check-steps li[data-state=passed] > svg { color:var(--color-success); }
+.check-steps li[data-state=attention] > svg,.check-steps li[data-state=attention] .check-step-outcome { color:var(--color-danger); }
+.check-step-spinner { animation:spin 1.2s linear infinite; }
+@media (prefers-reduced-motion:reduce) { .check-step-spinner { animation:none; } }
+@media (max-width:700px) {
+  .check-steps li { grid-template-columns:16px minmax(0,1fr) auto; gap:4px 8px; }
+  .check-step-outcome { grid-column:2; grid-row:2; }
+  .check-step-duration { grid-column:3; grid-row:1 / 3; }
+}
 .check-annotations article { padding:12px 0; border-top:1px solid var(--border); }
 .check-annotations strong { display:block; font-weight:600; }
 .check-annotations button { text-align:left; }

@@ -54,3 +54,9 @@ Finish disposition: **ship**. The final review accepted the sticky source identi
 The detector report at `/tmp/gnosis-pr-checks-detect.json` contains 97 advisory findings, all in preexisting global CSS through line 3025. None targets the appended Checks rules. Existing drift remains outside this extension.
 
 DESIGN.md and `.impeccable/design.json` need no change: their existing rules already cover this surface. Captures are review evidence, not shipping image assets.
+
+## Live job-step clarity
+
+Running steps use a distinct selected surface, spinner, explicit Running label, and a local elapsed timer. Completed steps retain their duration; pending and skipped steps stay visually quiet. Missing timestamps display no invented duration. Job steps precede rerun controls. Fresh job evidence updates the selected header and row, avoiding Queued beside a running step. Active details reuse the checks subscription rather than adding polling; logs remain intact during updates.
+
+Verified with 11 checks unit tests, TypeScript, targeted ESLint, and the checks browser suite. The browser test verifies elapsed timers make no API calls, completion freezes duration, and fresh job state supersedes a queued snapshot. Rendered running-desktop, running-laptop, running-narrow, and finished-narrow captures are in the existing review directory. The test uses software rendering to avoid intermittent Electron compositor capture failures.

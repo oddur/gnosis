@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { app, BrowserWindow } from 'electron';
+app.disableHardwareAcceleration();
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({
     width: 1280,
@@ -11,7 +12,9 @@ void app.whenReady().then(async () => {
     webPreferences: { backgroundThrottling: false },
   });
   const rendererErrors: string[] = [];
-  win.webContents.on('console-message', ({ level, message }) => { if (level === 'error') rendererErrors.push(message); });
+  win.webContents.on('console-message', ({ level, message }) => {
+    if (level === 'error') rendererErrors.push(message);
+  });
   const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
   const wait = async (code: string, timeout = 10_000) => {
     const deadline = Date.now() + timeout;
@@ -19,7 +22,14 @@ void app.whenReady().then(async () => {
       if (await js(code)) return;
       await new Promise((r) => setTimeout(r, 50));
     }
-    throw Error('Timed out: ' + code + '\nRenderer errors: ' + rendererErrors.join('\n') + '\nScreen: ' + await js('document.body.innerText.slice(0, 4000)'));
+    throw Error(
+      'Timed out: ' +
+        code +
+        '\nRenderer errors: ' +
+        rendererErrors.join('\n') +
+        '\nScreen: ' +
+        (await js<string>('document.body.innerText.slice(0, 4000)'))
+    );
   };
   const click = (label: string) =>
     js(
@@ -59,8 +69,12 @@ void app.whenReady().then(async () => {
     await click('All checks');
     await js("document.querySelector('.check-annotations button').click()");
     await wait("document.querySelector('[role=tab][aria-selected=true]')?.textContent==='Changes'");
-    await wait("Array.from(document.querySelectorAll('[data-diff-host]')).some(n=>n.getAttribute('aria-label')==='Source at new line 35') || document.querySelector('[aria-label=\"Source at new line 35\"]') !== null");
-    await js("(()=>{const b=[...document.querySelectorAll('[role=tab]')].find(b=>b.textContent.startsWith('Checks'));b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()");
+    await wait(
+      "Array.from(document.querySelectorAll('[data-diff-host]')).some(n=>n.getAttribute('aria-label')==='Source at new line 35') || document.querySelector('[aria-label=\"Source at new line 35\"]') !== null"
+    );
+    await js(
+      "(()=>{const b=[...document.querySelectorAll('[role=tab]')].find(b=>b.textContent.startsWith('Checks'));b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()"
+    );
     await wait("document.querySelectorAll('.check-row').length===6");
     await js("[...document.querySelectorAll('.check-row')].find(b=>b.textContent.includes('Tests / macOS')).click()");
     await wait("!!document.querySelector('.check-steps')");
@@ -96,6 +110,7 @@ void app.whenReady().then(async () => {
     assert.ok(!(await js("!!document.querySelector('.check-logs')")));
     // Queue checks shortcut preserves the stack and its source groups.
     await win.loadURL(url + '?checks');
+    await js("void Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })");
     await wait("document.querySelectorAll('.queue-item').length===7");
     await js(
       "document.querySelector('.queue-stack-icon').closest('.queue-item').querySelector('.queue-checks').click()"
@@ -124,6 +139,54 @@ void app.whenReady().then(async () => {
     await new Promise((r) => setTimeout(r, 150));
     assert.ok(await js('document.documentElement.scrollWidth<=innerWidth'));
     await capture('narrow-dark');
+    // A stale queued list entry must use fresh job state, with a local live clock.
+    await js(`(()=>{
+      const original=window.electronAPI.getCheckDetails;
+      window.stepDetailCalls=0;
+      const start=new Date(Date.now()-65_000).toISOString();
+      window.electronAPI.getCheckDetails=async input=>{
+        if(input.id!=='check:3')return original(input);
+        window.stepDetailCalls++;
+        const done=!!window.stepsFinished;
+        return {...input,title:'Build / Linux',summary:'',text:'',annotations:[],
+          state:{status:done?'completed':'in_progress',conclusion:done?'success':null,startedAt:start,completedAt:done?new Date(Date.parse(start)+70_000).toISOString():null},
+          job:{id:3,runId:9,attempt:1,status:done?'completed':'in_progress',canRerun:true,steps:[
+            {name:'Set up job',number:1,status:'completed',conclusion:'success',startedAt:start,completedAt:new Date(Date.parse(start)+3000).toISOString()},
+            {name:'Install dependencies',number:2,status:done?'completed':'in_progress',conclusion:done?'success':null,startedAt:start,completedAt:done?new Date(Date.parse(start)+70_000).toISOString():null},
+            {name:'Run unit tests',number:3,status:done?'completed':'pending',conclusion:done?'skipped':null}
+          ]}};
+      };
+      for(const snapshot of window.checksFixture.snapshots.values())snapshot.checks.find(c=>c.id==='check:3').status='queued';
+      [...document.querySelectorAll('.check-row')].find(b=>b.textContent.includes('Build / Linux')).click();
+    })()`);
+    await wait("document.querySelector('.check-steps [aria-current=step]')?.textContent.includes('Running')");
+    assert.ok(await js("document.querySelector('.check-detail-header').textContent.includes('Running')"));
+    assert.ok(await js("document.querySelector('.check-steps [data-state=passed]').textContent.includes('3s')"));
+    assert.ok(
+      await js("document.querySelector('.check-steps [data-state=pending]').textContent.includes('Not started')")
+    );
+    const initialTime = await js("document.querySelector('[aria-current=step] .check-step-duration').textContent");
+    const initialCalls = await js('window.stepDetailCalls');
+    await wait(
+      `document.querySelector('[aria-current=step] .check-step-duration').textContent!==${JSON.stringify(initialTime)}`
+    );
+    assert.equal(await js('window.stepDetailCalls'), initialCalls, 'Timer must not request GitHub data');
+    win.setContentSize(1280, 800);
+    await capture('running-desktop');
+    win.setContentSize(900, 760);
+    await capture('running-laptop');
+    win.setContentSize(620, 1000);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await js("document.querySelector('.check-job-steps').scrollIntoView({block:'end'})");
+    assert.ok(await js('document.documentElement.scrollWidth<=innerWidth'));
+    await capture('running-narrow');
+    await js('window.stepsFinished=true;document.querySelector(\'[aria-label="Refresh job steps"]\').click()');
+    await wait(
+      "!document.querySelector('.check-steps [aria-current=step]') && document.querySelector('.check-detail-header').textContent.includes('Passed')"
+    );
+    assert.ok(await js("document.querySelector('.check-steps').textContent.includes('1m 10s')"));
+    assert.ok(await js("document.querySelector('.check-steps [data-state=skipped]').textContent.includes('Skipped')"));
+    await capture('finished-narrow');
     console.log('PR Checks browser checks passed');
     win.destroy();
     app.exit(0);

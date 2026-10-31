@@ -3,6 +3,7 @@ import { CircleAlert, CircleCheck, CircleMinus, Clock3, ExternalLink, RefreshCw 
 import type { ReviewSubject } from '../lib/workbench';
 import {
   checkCounts,
+  checkDuration,
   checkGroup,
   checkLabel,
   orderedChecks,
@@ -12,6 +13,7 @@ import {
   type CheckDetails,
   type CheckLog,
 } from '../lib/pr-checks';
+import { CheckJobSteps } from './CheckJobSteps';
 import { Markdown } from './Markdown';
 import { Button } from './ui/button';
 import { timeAgo } from '../lib/utils';
@@ -21,15 +23,6 @@ export interface CheckFocus {
   nonce: number;
 }
 type Selection = { snapshot: PrChecks; check: PrCheck };
-function duration(check: PrCheck) {
-  if (!check.startedAt || !check.completedAt) return '';
-  const seconds = Math.max(0, Math.round((Date.parse(check.completedAt) - Date.parse(check.startedAt)) / 1000));
-  return Number.isFinite(seconds)
-    ? seconds < 60
-      ? `${seconds}s`
-      : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
-    : '';
-}
 export function CheckIcon({ check }: { check: PrCheck }) {
   const group = checkGroup(check),
     Icon =
@@ -63,8 +56,9 @@ export function PrChecksView({
   const [requested, setRequested] = useState(false);
   const [filter, setFilter] = useState<CheckFilter>('all');
   const [selected, setSelected] = useState<Selection>();
-  const [details, setDetails] = useState<{ selection: Selection; value: CheckDetails }>();
+  const [details, setDetails] = useState<{ selection: Selection; value: CheckDetails; receivedAt: number }>();
   const [error, setError] = useState('');
+  const [detailsBusy, setDetailsBusy] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [log, setLog] = useState<CheckLog>();
   const [logBusy, setLogBusy] = useState(false);
@@ -92,7 +86,6 @@ export function PrChecksView({
     }
   }, [values, focus, handledFocus, selected]);
   useEffect(() => {
-    let live = true;
     operation.current++;
     setRequested(false);
     setError('');
@@ -101,24 +94,42 @@ export function PrChecksView({
     setLogBusy(false);
     setRerunMessage('');
     setRerunning(false);
-    if (!selected || selected.check.kind === 'status')
-      return () => {
-        operation.current++;
-      };
+    return () => {
+      operation.current++;
+    };
+  }, [selected]);
+  // Reuse the existing checks subscription to update only the active job. No new polling loop.
+  const detailRefreshAt =
+    selected &&
+    selected.check.status !== 'completed' &&
+    values[selected.snapshot.url]?.headSha === selected.snapshot.headSha
+      ? values[selected.snapshot.url]?.checkedAt
+      : undefined;
+  useEffect(() => {
+    let live = true;
+    setError('');
+    if (!selected || selected.check.kind === 'status') {
+      setDetailsBusy(false);
+      return;
+    }
+    setDetailsBusy(true);
     void window.electronAPI
       .getCheckDetails({ url: selected.snapshot.url, headSha: selected.snapshot.headSha, id: selected.check.id })
       .then((value) => {
-        if (live) setDetails({ selection: selected, value });
+        if (live) setDetails({ selection: selected, value, receivedAt: Date.now() });
       })
       .catch((e: unknown) => {
         if (live) setError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        if (live) setDetailsBusy(false);
       });
     return () => {
       live = false;
-      operation.current++;
     };
-  }, [selected, attempt]);
+  }, [selected, attempt, detailRefreshAt]);
   const detail = details && details.selection === selected ? details.value : undefined;
+  const displayedCheck = selected && { ...selected.check, ...detail?.state };
   const selectedMember = selected && subject.members.find((m) => m.url === selected.snapshot.url);
   const latest = selected && values[selected.snapshot.url];
   const stale = !!selected && !!latest && latest.headSha !== selected.snapshot.headSha;
@@ -208,7 +219,21 @@ export function PrChecksView({
         <nav className="checks-list" aria-label="Checks by PR">
           {subject.members.map((member) => {
             const snapshot = values[member.url];
-            const checks = snapshot ? orderedChecks(snapshot.checks, filter) : [];
+            const checks = snapshot
+              ? orderedChecks(
+                  snapshot.checks.map((check) =>
+                    detail?.state &&
+                    details &&
+                    selected?.snapshot.url === snapshot.url &&
+                    selected.snapshot.headSha === snapshot.headSha &&
+                    selected.check.id === check.id &&
+                    snapshot.checkedAt <= details.receivedAt
+                      ? { ...check, ...detail.state }
+                      : check
+                  ),
+                  filter
+                )
+              : [];
             return (
               <section key={member.url} className="checks-pr-group">
                 <h2>
@@ -254,7 +279,7 @@ export function PrChecksView({
                         {check.provider} · <span className={`check-${checkGroup(check)}`}>{checkLabel(check)}</span>
                       </small>
                     </span>
-                    <span className="check-duration">{duration(check)}</span>
+                    <span className="check-duration">{checkDuration(check)}</span>
                   </button>
                 ))}
                 {snapshot && !checks.length && (
@@ -267,7 +292,7 @@ export function PrChecksView({
           })}
         </nav>
         <div className="check-detail" aria-label="Selected check details">
-          {!selected ? (
+          {!selected || !displayedCheck ? (
             <div className="checks-empty">
               <CircleCheck size={24} />
               <h2>Select a check</h2>
@@ -314,18 +339,20 @@ export function PrChecksView({
                     </p>
                   )}
                   <h2>
-                    <CheckIcon check={selected.check} />
+                    <CheckIcon check={displayedCheck} />
                     {selected.check.name}
                   </h2>
                   <p>
                     {selected.check.provider} ·{' '}
-                    <span className={`check-${checkGroup(selected.check)}`}>{checkLabel(selected.check)}</span> ·{' '}
+                    <span className={`check-${checkGroup(displayedCheck)}`}>{checkLabel(displayedCheck)}</span> ·{' '}
                     {selected.check.required === true
                       ? 'Required'
                       : selected.check.required === false
                         ? 'Optional'
                         : 'Requirement unknown'}
-                    {duration(selected.check) && ` · ${duration(selected.check)}`}
+                    {displayedCheck.status === 'completed' &&
+                      checkDuration(displayedCheck) &&
+                      ` · ${checkDuration(displayedCheck)}`}
                   </p>
                 </div>
                 {selected.check.url && (
@@ -340,7 +367,7 @@ export function PrChecksView({
                   {selected.check.description ||
                     'This provider has not supplied further details. Open its result to investigate.'}
                 </p>
-              ) : error ? (
+              ) : error && !detail ? (
                 <p className="checks-error" role="alert">
                   {error} <button onClick={() => setAttempt((n) => n + 1)}>Retry details</button>
                 </p>
@@ -348,6 +375,11 @@ export function PrChecksView({
                 <p role="status">Loading check details…</p>
               ) : (
                 <>
+                  {error && (
+                    <p className="checks-error" role="status">
+                      Could not update job steps. Showing the last result. {error}
+                    </p>
+                  )}
                   {detail.warning && <p className="checks-notice">{detail.warning}</p>}
                   {detail.summary && <Markdown>{detail.summary}</Markdown>}
                   {detail.text && (
@@ -363,6 +395,7 @@ export function PrChecksView({
                   )}
                   {detail.job && (
                     <>
+                      <CheckJobSteps busy={detailsBusy} job={detail.job} onRefresh={() => setAttempt((n) => n + 1)} />
                       <div className="check-rerun-actions">
                         <Button
                           size="sm"
@@ -390,27 +423,6 @@ export function PrChecksView({
                         {!detail.job.canRerun && 'Repository write access is required to rerun jobs.'}
                       </p>
                       {rerunMessage && <p role="status">{rerunMessage}</p>}
-                      <h3>Job steps</h3>
-                      <ol className="check-steps">
-                        {detail.job.steps.map((step) => (
-                          <li key={step.number}>
-                            <CheckIcon
-                              check={{
-                                ...selected.check,
-                                status:
-                                  step.status === 'completed'
-                                    ? 'completed'
-                                    : step.status === 'in_progress'
-                                      ? 'in_progress'
-                                      : 'queued',
-                                conclusion: step.conclusion,
-                              }}
-                            />
-                            <span>{step.name}</span>
-                            <small>{step.conclusion ?? step.status.replaceAll('_', ' ')}</small>
-                          </li>
-                        ))}
-                      </ol>
                     </>
                   )}
                   {!!detail.annotations.length && (
