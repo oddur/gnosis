@@ -3470,3 +3470,6 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .stack-merge-group .stack-merge-issue:first-child { padding-top:8px; }
 .stack-merge-group + .stack-merge-group { border-top:1px solid var(--border);padding-top:16px;margin-top:0; }
 .stack-merge-issue-actions button:disabled { opacity:.5;cursor:wait; }
+
+/* Keep stack status compact while reading code or chatting. */
+.pr-summary-page:has(.pr-changes-tab[data-state=active]) .stack-human-review-status { flex-basis:auto; }
