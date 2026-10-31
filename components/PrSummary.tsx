@@ -1,6 +1,7 @@
 import { StackChangesView } from './StackChangesView';
 import { StackBriefing } from './StackBriefing';
 import { StackOverview } from './StackOverview';
+import { StackMergeDetails } from './StackMergeDetails';
 import { SearchableSelect } from './SearchableSelect';
 import { stackScopeChoices } from '../lib/stack-workspace';
 import { Button } from './ui/button';
@@ -446,6 +447,8 @@ function PrSummaryContent({
                 {warning}
               </p>
             ))}
+            {stacked && <StackMergeDetails subject={item.subject} signals={signals} checks={checks.values} now={statusNow}
+              onOpen={member => changeScope(member.url)} onChecks={member => { changeScope(member.url); onTabChange('checks'); }} />}
             {stacked ? <StackBriefing briefing={item.briefing} actions={generationActions?.(item.subject.members)} onActivity={onShowActivity} onSetup={onGitHubAuth} connected={!!account} /> : item.briefing?.status === 'ready' && (
               <details className="pr-briefing" open>
                 <summary>{stacked ? 'Stack briefing' : 'AI briefing'}</summary>

@@ -3424,3 +3424,29 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .combined-thread { margin-block: 8px; }
 .stack-changes-view > .changes-notice { flex-shrink: 0; }
 .combined-thread { background: var(--color-card); color: var(--color-foreground); font-family: var(--font-sans); }
+
+/* Keep stack merge causes readable before the briefing and dependency list. */
+.stack-merge-details { border-bottom:1px solid var(--border);padding-bottom:16px;margin-bottom:16px; }
+.stack-merge-details h2 { display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;font-size:var(--type-control);font-weight:600; }
+.stack-merge-details h2 > span { font-size:var(--type-caption);font-weight:400;color:var(--muted-foreground); }
+.stack-merge-issues { list-style:none;margin:0;padding:0; }
+.stack-merge-issue { display:flex;gap:8px;padding-top:12px; }
+.stack-merge-issue-icon { flex-shrink:0;margin-top:3px; }
+.stack-merge-issue-icon.is-danger { color:var(--color-danger); }
+.stack-merge-issue-icon.is-warning { color:var(--color-warning); }
+.stack-merge-issue-icon.is-muted { color:var(--muted-foreground); }
+.stack-merge-issue-content { min-width:0;flex:1;font-size:var(--type-control);line-height:1.5; }
+.stack-merge-issue-title { display:flex;align-items:baseline;gap:8px;flex-wrap:wrap; }
+.stack-merge-issue-title strong { font-weight:600; }
+.stack-merge-issue-title button { color:var(--primary);font-variant-numeric:tabular-nums; }
+.stack-merge-reasons { list-style:disc;padding-left:16px;margin:4px 0 0;max-width:78ch; }
+.stack-merge-reasons:has(>li:only-child) { list-style:none;padding-left:0; }
+.stack-merge-reasons li + li { margin-top:4px; }
+.stack-merge-check-names { margin-top:4px;color:var(--muted-foreground);overflow-wrap:anywhere; }
+.stack-merge-issue-actions { display:flex;gap:16px;flex-wrap:wrap;margin-top:4px; }
+.stack-merge-issue-actions :is(button,a), .stack-merge-more summary { color:var(--primary);font-size:var(--type-caption); }
+.stack-merge-issue-actions a { display:inline-flex;align-items:center;gap:4px; }
+.stack-merge-details :is(button,a):hover { text-decoration:underline;text-underline-offset:3px; }
+.stack-merge-details :is(button,a,summary):focus-visible { outline:2px solid var(--ring);outline-offset:3px;border-radius:2px; }
+.stack-merge-more { margin-top:12px; }
+.stack-merge-more summary { cursor:pointer;width:fit-content; }
