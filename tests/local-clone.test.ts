@@ -253,7 +253,8 @@ void test('an interactive reader stops waiting for a slow fetch; a background re
   // A fetch through a remote helper that sleeps first.
   const slow = path.join(f.root, 'slow.sh');
   fs.writeFileSync(slow, `#!/bin/sh\nsleep 1\nexec git upload-pack "$@"\n`, { mode: 0o755 });
-  git(f.clone, 'config', 'remote.origin.uploadpack', slow);
+  // Git runs this setting through a shell; Windows separators must not become escapes.
+  git(f.clone, 'config', 'remote.origin.uploadpack', `sh "${slow.replaceAll('\\', '/')}"`);
   const clones = createLocalClones({ interactiveFetchWaitMs: 50 });
   clones.configure([f.entry]);
   const started = Date.now();
@@ -328,7 +329,8 @@ void test('inspectLocalClone reads remotes and rejects unusable folders', async 
     entries.map((e) => [e.repo, e.remote]).sort(),
     [['Owner/Name', 'origin'], ['org/name', 'upstream']]
   );
-  assert.equal(fs.realpathSync(entries[0].path), fs.realpathSync(f.clone));
+  // Native realpath expands Windows 8.3 temporary directory aliases on both sides.
+  assert.equal(fs.realpathSync.native(entries[0].path), fs.realpathSync.native(f.clone));
   const shallow = path.join(f.root, 'shallow');
   git(f.root, 'clone', '-q', '--depth', '1', `file://${f.upstream}`, shallow);
   await assert.rejects(inspectLocalClone(shallow), /shallow/);
