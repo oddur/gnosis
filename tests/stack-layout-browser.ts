@@ -42,6 +42,11 @@ void app.whenReady().then(async () => {
       for(let i=3;i<10;i++){const member={...base,number:120+i,url:'https://github.com/klang/engine/pull/'+(120+i),title:'Clarify worker recovery and preserve command ordering',headBranch:'queue-'+i,baseBranch:'queue-'+(i-1)};item.subject.edges.push({parent:item.subject.members.at(-1).url,child:member.url,evidence:'branch'});item.subject.members.push(member);}
       window.briefingCalls=0;window.electronAPI.workbenchBriefing=async()=>{window.briefingCalls++;if(window.failBriefing)throw Error('offline');item.briefing={key:'test',status:'generating',updatedAt:new Date().toISOString()};};
       const readChecks=window.electronAPI.getPrChecks;window.electronAPI.getPrChecks=async(r,o)=>{const result=await readChecks(r,o);return {...result,checks:[{...result.checks[0],status:'completed',conclusion:'success'},{...result.checks[0],id:'skipped',status:'completed',conclusion:'skipped'}]};};
+      // Measure the ordinary dependency list with no outstanding merge requirements.
+      const readSignals=window.electronAPI.getQueueSignals;
+      window.electronAPI.getQueueSignals=async requests=>(await readSignals(requests)).map(s=>({...s,checks:{state:'success',total:1,passed:1},readiness:{...s.readiness,mergeState:'CLEAN'}}));
+      const {publishQueueSignals}=await import('/lib/use-queue-signals.ts');
+      publishQueueSignals('oddur',await window.electronAPI.getQueueSignals(item.subject.members.map(({url,headSha})=>({url,headSha}))));
       window.dispatchEvent(new Event('fixture-pr-read-change'));
     })()`);
     await wait("document.querySelectorAll('.stack-overview-member').length===10 && document.querySelector('.stack-briefing-state')?.textContent.includes('No stack briefing yet')");
