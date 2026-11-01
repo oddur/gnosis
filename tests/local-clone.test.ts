@@ -367,7 +367,7 @@ void test('connecting validates the repository and preserves other mappings and 
   assert.equal(replaced.length, 2);
   const replacement = replaced.find((e) => e.repo.toLowerCase() === 'o/r');
   assert.ok(replacement);
-  assert.equal(fs.realpathSync(replacement.path), fs.realpathSync(f.work));
+  assert.equal(fs.realpathSync.native(replacement.path), fs.realpathSync.native(f.work));
   assert.deepEqual(
     replaced.find((e) => e.repo === 'team/project'),
     shared.find((e) => e.repo === 'team/project')
