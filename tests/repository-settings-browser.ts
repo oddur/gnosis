@@ -16,6 +16,8 @@ void app.whenReady().then(async () => {
     const fixtureUrl = process.env.GNOSIS_WORKBENCH_URL;
     assert.ok(fixtureUrl);
     await loadWorkbenchPage(win, fixtureUrl + '?filters');
+    win.webContents.debugger.attach('1.3');
+    await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
     await waitForWorkbenchQueue(win.webContents);
     await js("(()=>{const snapshot=window.electronAPI.workbenchSnapshot;window.electronAPI.workbenchSnapshot=async()=>({...await snapshot(),briefingBudget:{limit:10,used:3,remaining:7,resetsAt:new Date().toISOString(),repositories:{'klang/engine':{limit:10,used:2,remaining:8,automatic:true}}}})})()");
     await js("document.body.dispatchEvent(new KeyboardEvent('keydown',{key:',',metaKey:true,bubbles:true,cancelable:true}))");
