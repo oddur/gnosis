@@ -1,3 +1,4 @@
+import { loadWorkbenchPage } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -43,7 +44,7 @@ void app.whenReady().then(async () => {
       `document.querySelector('.setup-body > fieldset:not([hidden])')?.getAttribute('name')===${JSON.stringify(name)} || document.querySelector('.setup-body > fieldset:not([hidden])')?.textContent.includes(${JSON.stringify(name)})`
     );
   try {
-    await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL ?? ''}?ftue&ftue-fail`);
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL ?? ''}?ftue&ftue-fail`);
     win.webContents.debugger.attach('1.3');
     await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
     await wait("!!document.querySelector('.setup-dialog')");

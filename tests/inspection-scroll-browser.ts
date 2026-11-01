@@ -1,3 +1,4 @@
+import { loadWorkbenchPage } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 void app.whenReady().then(async () => {
@@ -16,7 +17,7 @@ void app.whenReady().then(async () => {
     throw Error(`Timed out: ${expression}`);
   };
   try {
-    await window.loadURL((process.env.GNOSIS_WORKBENCH_URL ?? '').replace('workbench.html', 'inspection-scroll.html'));
+    await loadWorkbenchPage(window, (process.env.GNOSIS_WORKBENCH_URL ?? '').replace('workbench.html', 'inspection-scroll.html'));
     await wait("!!document.querySelector('.changes-file-tree')?.shadowRoot");
     await js(
       `window.deepAll=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].flatMap(e=>e.shadowRoot?window.deepAll(selector,e.shadowRoot):[])];void 0;`

@@ -1,3 +1,4 @@
+import { loadWorkbenchPage } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow, clipboard } from 'electron';
 import fs from 'node:fs';
@@ -56,7 +57,7 @@ void app.whenReady().then(async () => {
   const emit = (text: string) => js(`window.chatFixture.chunk(${JSON.stringify(text)})`);
   const finish = (text: string) => js(`window.chatFixture.finish(${JSON.stringify(text)})`);
   try {
-    await win.loadURL(new URL('/tests/fixtures/chat.html', process.env.GNOSIS_WORKBENCH_URL).href);
+    await loadWorkbenchPage(win, new URL('/tests/fixtures/chat.html', process.env.GNOSIS_WORKBENCH_URL).href);
     win.webContents.debugger.attach('1.3');
     await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
     await viewport(900, 760);
@@ -175,7 +176,7 @@ void app.whenReady().then(async () => {
       await new Promise((resolve) => setTimeout(resolve, 250));
       fs.writeFileSync(path.join(shots, name + '.png'), (await win.webContents.capturePage()).toPNG());
     };
-    await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
     await viewport(1280, 720);
     await wait("!!document.querySelector('.queue-item .queue-disclosure:not(:disabled)')");
     await js("document.querySelector('.queue-item:has(.queue-disclosure:not(:disabled)) .queue-row-main').click()");

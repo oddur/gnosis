@@ -1,3 +1,4 @@
+import { loadWorkbenchPage } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -37,7 +38,7 @@ void app.whenReady().then(async () => {
   try {
     const fixtureUrl = process.env.GNOSIS_WORKBENCH_URL;
     if (!fixtureUrl) throw new Error('Missing fixture URL');
-    await win.loadURL(fixtureUrl + '?hardening');
+    await loadWorkbenchPage(win, fixtureUrl + '?hardening');
     win.webContents.setZoomFactor(1);
     await wait('innerWidth > 1000');
     await wait("!!document.querySelector('.chat-sheet')");

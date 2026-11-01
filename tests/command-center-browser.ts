@@ -1,4 +1,4 @@
-import { waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -50,7 +50,7 @@ void app.whenReady().then(async () => {
   try {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     if (!url) throw Error('Missing fixture URL');
-    await win.loadURL(url + '?polish');
+    await loadWorkbenchPage(win, url + '?polish');
     await waitForWorkbenchQueue(win.webContents);
     await js(
       `(()=>{window.remoteSearchCalls=0;const remote=window.electronAPI.commandGitHubSearch;window.electronAPI.commandGitHubSearch=(...args)=>{window.remoteSearchCalls++;return remote(...args)};document.querySelector('.queue-search input').focus();})()`

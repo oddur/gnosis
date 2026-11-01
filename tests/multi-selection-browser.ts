@@ -1,4 +1,4 @@
-import { waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -54,7 +54,7 @@ void app.whenReady().then(async () => {
   };
   const url = `${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary&unread&file-filters`;
   try {
-    await win.loadURL(url);
+    await loadWorkbenchPage(win, url);
     win.webContents.debugger.attach('1.3');
     await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
     await waitForWorkbenchQueue(win.webContents);
@@ -163,7 +163,7 @@ void app.whenReady().then(async () => {
       'window.electronAPI.workbenchMutePrs({...window.selectionCalls.mutes[0],muted:false}).then(()=>undefined)'
     );
     // The tree keeps its native selection, while modifier clicks leave the code's position alone.
-    await win.loadURL(url);
+    await loadWorkbenchPage(win, url);
     win.setSize(1280, 800);
     await wait("document.querySelectorAll('.queue-item').length===7");
     await js(

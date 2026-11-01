@@ -1,4 +1,4 @@
-import { waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -49,7 +49,7 @@ void app.whenReady().then(async () => {
   try {
     const fixtureUrl = process.env.GNOSIS_WORKBENCH_URL;
     assert.ok(fixtureUrl, 'GNOSIS_WORKBENCH_URL must point to the running fixture');
-    await win.loadURL(fixtureUrl + '?filters');
+    await loadWorkbenchPage(win, fixtureUrl + '?filters');
     win.webContents.setZoomFactor(1);
     win.focus();
     await waitForWorkbenchQueue(win.webContents);
@@ -157,7 +157,7 @@ void app.whenReady().then(async () => {
     await js(
       "window.electronAPI.workbenchQueue().then(q=>window.electronAPI.workbenchSetFilters({...q.filters,author:'contributor-no-longer-in-the-queue'}))"
     );
-    await win.loadURL(fixtureUrl + '?filters');
+    await loadWorkbenchPage(win, fixtureUrl + '?filters');
     await wait("!!document.querySelector('.queue-filter-toggle')");
     await js("document.documentElement.classList.add('dark')");
     await click('.queue-filter-toggle');

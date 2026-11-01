@@ -1,4 +1,4 @@
-import { waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 void app.whenReady().then(async () => {
@@ -24,7 +24,7 @@ void app.whenReady().then(async () => {
     if (process.platform === 'darwin') app.show();
     window.show();
     window.focus();
-    await window.loadURL(`${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary`);
+    await loadWorkbenchPage(window, `${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary`);
     window.webContents.debugger.attach('1.3');
     await window.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', {width:1280,height:800,deviceScaleFactor:1,mobile:false});
     await window.webContents.debugger.sendCommand('Emulation.setCPUThrottlingRate', {rate:6});

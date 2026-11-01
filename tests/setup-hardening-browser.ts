@@ -1,4 +1,4 @@
-import { waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -44,7 +44,7 @@ void app.whenReady().then(async () => {
     if (process.platform === 'darwin') app.show();
     win.show();
     win.focus();
-    await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
     await waitForWorkbenchQueue(win.webContents);
     await js(`(async()=>{
       window.savedPrefs=structuredClone(await window.electronAPI.loadPreferences());

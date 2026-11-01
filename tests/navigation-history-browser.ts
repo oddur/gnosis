@@ -1,4 +1,4 @@
-import { waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import { attachWindowHistoryNavigation } from '../src/window-history-navigation';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -49,7 +49,7 @@ void app.whenReady().then(async () => {
   try {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     if (!url) throw Error('Missing fixture URL');
-    await win.loadURL(url + '?pr-summary&navigation-history&keep-progress');
+    await loadWorkbenchPage(win, url + '?pr-summary&navigation-history&keep-progress');
     win.webContents.debugger.attach('1.3');
     await waitForWorkbenchQueue(win.webContents);
     await mouse(3);

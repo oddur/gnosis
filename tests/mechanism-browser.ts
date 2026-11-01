@@ -1,4 +1,4 @@
-import { waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import { QUEUE_SCENE } from './fixtures/mechanism-examples';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
@@ -54,7 +54,7 @@ void app.whenReady().then(async () => {
   try {
     const url = process.env.GNOSIS_WORKBENCH_URL?.replace('workbench.html', 'mechanisms.html');
     assert.ok(url);
-    await win.loadURL(`${url}?fixtures`);
+    await loadWorkbenchPage(win, `${url}?fixtures`);
     await wait("!!document.querySelector('.mechanism-scene')");
     // Exercise animation independently of the desktop's accessibility preference.
     win.webContents.debugger.attach('1.3');
@@ -95,7 +95,7 @@ void app.whenReady().then(async () => {
     await js(
       "document.querySelector('[role=dialog]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
     );
-    await win.loadURL(`${url}?previous`);
+    await loadWorkbenchPage(win, `${url}?previous`);
     await wait("!!document.querySelector('.mechanism-scene')");
     for (const example of ['Ordered batching', 'Rejecting a stale write']) {
       await click(example);
@@ -146,7 +146,7 @@ void app.whenReady().then(async () => {
     await click('Next event');
     assert.deepEqual(await geometry(), []);
     win.webContents.debugger.detach();
-    await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
     await waitForWorkbenchQueue(win.webContents);
     await js(
       `(()=>{const load=window.electronAPI.loadReview;window.electronAPI.loadReview=async(...args)=>{const review=await load(...args);const scene=${JSON.stringify(QUEUE_SCENE)};const h=review.slides[0].diffHunks[0];for(const scenario of scene.scenarios)for(const event of scenario.events)event.evidence={filePath:h.filePath,startLine:parseInt(h.hunkHeader.split('+')[1])};return {...review,slides:[{...review.slides[0],title:'Keep queue order',mechanism:scene,d2Diagram:null,mermaidDiagram:null}]};};})()`

@@ -1,4 +1,4 @@
-import { waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import { contrastRatio } from '../lib/code-contrast';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
@@ -46,7 +46,7 @@ void app.whenReady().then(async () => {
     fs.writeFileSync(path.join(shots, name + '.png'), (await window.webContents.capturePage()).toPNG());
   };
   try {
-    await window.loadURL(fixtureUrl);
+    await loadWorkbenchPage(window, fixtureUrl);
     window.webContents.debugger.attach('1.3');
     await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
     await waitForWorkbenchQueue(window.webContents);
@@ -282,7 +282,7 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.review-tool-slot iframe') && !document.querySelector('.activity-drawer')");
     // Critique regressions: use realistic unavailable states and long cross-PR code.
     window.setSize(1280, 800);
-    await window.loadURL(fixtureUrl + '?polish');
+    await loadWorkbenchPage(window, fixtureUrl + '?polish');
     await wait("document.querySelectorAll('.queue-item').length === 7");
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
@@ -412,7 +412,7 @@ void app.whenReady().then(async () => {
     );
     // First use: optional setup, terminology, recovery, and a real review entry point.
     window.setSize(1280, 800);
-    await window.loadURL(fixtureUrl + '?onboarding');
+    await loadWorkbenchPage(window, fixtureUrl + '?onboarding');
     await wait("!!document.querySelector('.workbench-connect')");
     if (await js("!!document.querySelector('.github-auth-dialog')")) {
       await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
@@ -439,7 +439,7 @@ void app.whenReady().then(async () => {
     await js('document.querySelector(\'[aria-label="Dismiss getting started"]\').click()');
     await wait("!document.querySelector('.getting-started')");
     assert.equal(await js('window.electronAPI.loadPreferences().then(p=>p.firstRunSeen)'), true);
-    await window.loadURL(fixtureUrl + '?onboarding');
+    await loadWorkbenchPage(window, fixtureUrl + '?onboarding');
     await wait("!!document.querySelector('.workbench-connect')");
     if (await js("!!document.querySelector('.github-auth-dialog')")) {
       await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
@@ -591,7 +591,7 @@ void app.whenReady().then(async () => {
     await capture('github-backoff-dark');
     await js("document.documentElement.classList.remove('dark')");
     await capture('github-backoff-light');
-    await window.loadURL(fixtureUrl + '?filters');
+    await loadWorkbenchPage(window, fixtureUrl + '?filters');
     window.setSize(1280, 800);
     await wait("document.querySelectorAll('.queue-item').length === 7");
     await js("document.querySelector('.queue-filter-toggle').click()");
@@ -650,7 +650,7 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('.queue-disclosure').click()");
     assert.equal(await js("document.querySelectorAll('.queue-member').length"), 3);
     await capture('queue-filters-stack');
-    await window.loadURL(fixtureUrl + '?mine');
+    await loadWorkbenchPage(window, fixtureUrl + '?mine');
     window.setSize(1280, 800);
     await wait("document.querySelectorAll('.queue-item').length === 7");
     await js("document.querySelector('.queue-filter-toggle').click()");
@@ -685,7 +685,7 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('.queue-filter-toggle').click()");
     await selectFilter('Show', 'all');
     await wait("document.querySelectorAll('.queue-item').length === 7");
-    await window.loadURL(fixtureUrl + '?labels');
+    await loadWorkbenchPage(window, fixtureUrl + '?labels');
     window.setSize(1280, 800);
     await wait("document.querySelectorAll('.queue-item').length === 7");
     await js("document.querySelector('.queue-disclosure:not(:disabled)').click()");
@@ -732,7 +732,7 @@ void app.whenReady().then(async () => {
     window.setSize(800, 700);
     await capture('pr-labels-dark-narrow');
     assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
-    await window.loadURL(fixtureUrl + '?views');
+    await loadWorkbenchPage(window, fixtureUrl + '?views');
     window.setSize(1280, 800);
     await wait("document.querySelectorAll('.queue-item').length === 7");
     const enterViewName = async (name: string) => {
@@ -825,7 +825,7 @@ void app.whenReady().then(async () => {
     await wait(
       "document.querySelectorAll('.saved-view-row').length === 2 && document.querySelectorAll('.queue-item').length === 7"
     );
-    await window.loadURL(fixtureUrl + '?stacks');
+    await loadWorkbenchPage(window, fixtureUrl + '?stacks');
     await wait("document.querySelectorAll('.queue-item').length === 7");
     const navigate = async (name: string) => {
       await js(
@@ -857,7 +857,7 @@ void app.whenReady().then(async () => {
     // Background generation never replaces the current review. Completion toasts
     // remain actionable after navigation and open the exact saved topic.
     window.setSize(1280, 800);
-    await window.loadURL(fixtureUrl + '?notifications');
+    await loadWorkbenchPage(window, fixtureUrl + '?notifications');
     await wait("document.querySelectorAll('.queue-item').length === 7");
     await wait("document.querySelector('.activity-summary')?.textContent.includes('2 running')");
     assert.equal(await js("document.querySelectorAll('[data-slot=toast]').length"), 0, 'No historical ready toasts');

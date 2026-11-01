@@ -1,4 +1,4 @@
-import { waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow, ipcMain } from 'electron';
 import fs from 'node:fs';
@@ -53,7 +53,7 @@ void app.whenReady().then(async () => {
   const mode = (name: string) =>
     within(`[...root.querySelectorAll('.markdown-view-switch button')].find(b=>b.textContent==='${name}').click()`);
   try {
-    await win.loadURL((process.env.GNOSIS_WORKBENCH_URL ?? '') + '?markdown-review&keep-progress');
+    await loadWorkbenchPage(win, (process.env.GNOSIS_WORKBENCH_URL ?? '') + '?markdown-review&keep-progress');
     await waitForWorkbenchQueue(win.webContents);
     await js(
       `window.fileReads=[];const read=window.electronAPI.getPrChangeFile;window.electronAPI.getPrChangeFile=r=>{window.fileReads.push(r);return read(r)};window.electronAPI.getReviewThreads=async()=>({headSha:'head-0',baseSha:'base-0',threads:[{id:'md-thread',path:'docs/retry.md',line:3,startLine:null,diffSide:'RIGHT',isResolved:false,isOutdated:false,viewerCanResolve:true,viewerCanUnresolve:false,comments:[{id:'md-comment',body:'Should cancellation also stop a pending retry?',createdAt:new Date().toISOString(),url:'https://github.com/klang/engine/pull/150#discussion_r1',author:{login:'maya',avatarUrl:''}}]}]});void 0`
@@ -195,7 +195,7 @@ void app.whenReady().then(async () => {
       false,
       'Clean document choice survives reload'
     );
-    await win.loadURL((process.env.GNOSIS_WORKBENCH_URL ?? '') + '?markdown-explanation');
+    await loadWorkbenchPage(win, (process.env.GNOSIS_WORKBENCH_URL ?? '') + '?markdown-explanation');
     win.setSize(1280, 900);
     await wait("document.querySelectorAll('.queue-item').length===7");
     await js(

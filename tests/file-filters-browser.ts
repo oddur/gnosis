@@ -1,4 +1,4 @@
-import { waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -70,7 +70,7 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.changes-file-header, .file-filter-hidden')");
   };
   try {
-    await window.loadURL(`${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary&file-filters`);
+    await loadWorkbenchPage(window, `${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary&file-filters`);
     await openPr();
     // Tree internals are library-owned; assert its visible file labels as well as diff rows.
     await wait('window.deepAll(\'[data-item-path="tests/__snapshots__/worker.snap"]\').length>0');
@@ -168,7 +168,7 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('[role=alert]')");
     await wait('!window.deepAll(\'[data-item-path="tests/worker.test.ts"]\').length>0');
     // Reload is a fresh renderer/store instance, preserving only durable mock storage.
-    await window.loadURL(`${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary&file-filters`);
+    await loadWorkbenchPage(window, `${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary&file-filters`);
     await openPr();
     await pop();
     assert.equal(await js("document.querySelectorAll('.raw-file-filter-popover input')[1].checked"), true);
@@ -199,7 +199,7 @@ void app.whenReady().then(async () => {
     await js(
       'window.electronAPI.updateFileFilters({filters:{hideGenerated:false,hideTests:false,hiddenExtensions:[]}})'
     );
-    await window.loadURL(`${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary&file-filters&extension-files`);
+    await loadWorkbenchPage(window, `${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary&file-filters&extension-files`);
     await openPr();
     await pop();
     await click('File extensions');
@@ -238,7 +238,7 @@ void app.whenReady().then(async () => {
     await click('Done');
     await close();
     // Choices persist across a new renderer; search and keyboard selection still work.
-    await window.loadURL(`${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary&file-filters&extension-files`);
+    await loadWorkbenchPage(window, `${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary&file-filters&extension-files`);
     await openPr();
     await pop();
     await click('File extensions');

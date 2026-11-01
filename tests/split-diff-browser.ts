@@ -1,3 +1,4 @@
+import { loadWorkbenchPage } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -27,7 +28,7 @@ void app.whenReady().then(async () => {
   try {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     if (!url) throw new Error('Missing fixture URL');
-    await window.loadURL(url);
+    await loadWorkbenchPage(window, url);
     await js(
       `void (window.diffRoot = name => document.querySelector('[data-case=' + name + '] diffs-container')?.shadowRoot)`
     );

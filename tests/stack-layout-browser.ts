@@ -1,3 +1,4 @@
+import { loadWorkbenchPage } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -19,7 +20,7 @@ void app.whenReady().then(async () => {
   win.webContents.on('render-process-gone', (_event, details) => console.error('Renderer exited:', details.reason));
   try {
     // Cold Vite startup on CI is separate from the layout assertions below.
-    await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&checks`);
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&checks`);
     win.webContents.debugger.attach('1.3');await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled',{enabled:true});
     await viewport(1280,800);
     await wait("document.querySelectorAll('.queue-item').length===7", 1000);

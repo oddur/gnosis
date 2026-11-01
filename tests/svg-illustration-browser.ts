@@ -1,4 +1,4 @@
-import { waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import { buildSvgIllustrationDocument } from '../lib/svg-illustration-document';
 import { SVG_MOTION_FIXTURE } from './fixtures/svg-motion';
 import assert from 'node:assert/strict';
@@ -43,7 +43,7 @@ void app.whenReady().then(async () => {
     return frame;
   };
   try {
-    await win.loadURL(
+    await loadWorkbenchPage(win,
       'data:text/html,' + encodeURIComponent(buildSvgIllustrationDocument(SVG_MOTION_FIXTURE, 'capture-test'))
     );
     await wait("!!document.querySelector('[data-motion-id]')");
@@ -86,7 +86,7 @@ void app.whenReady().then(async () => {
     const width = Number(viewBox.split(/[\s,]+/)[2]);
     clipped.scenarios[0].frames[0].svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}"><text x="${width - 10}" y="30" font-size="18">This does not fit</text></svg>`;
     await assert.rejects(() => validateSvgIllustrationInBrowser(clipped), /outside canvas/);
-    await win.loadURL((process.env.GNOSIS_WORKBENCH_URL ?? '').replace('workbench.html', 'mechanisms.html'));
+    await loadWorkbenchPage(win, (process.env.GNOSIS_WORKBENCH_URL ?? '').replace('workbench.html', 'mechanisms.html'));
     await wait("!!document.querySelector('.svg-illustration iframe')");
     for (const result of generated) {
       await click(result.title);
@@ -134,7 +134,7 @@ void app.whenReady().then(async () => {
         await wait("!!document.querySelector('.svg-illustration iframe')");
       }
     }
-    await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
     await waitForWorkbenchQueue(win.webContents);
     await js(
       `(()=>{const load=window.electronAPI.loadReview;window.electronAPI.loadReview=async(...args)=>{const review=await load(...args);const illustration=${JSON.stringify(generated[0].slide.svgIllustration)};const h=review.slides[0].diffHunks[0];for(const s of illustration.scenarios)for(const f of s.frames)f.evidence={filePath:h.filePath,startLine:parseInt(h.hunkHeader.split('+')[1])};return {...review,slides:[{...review.slides[0],title:'SVG integration fixture',narrative:'Check the illustration beside the code.',svgIllustration:illustration,d2Diagram:null,mermaidDiagram:null,mechanism:null}]};};})()`
@@ -151,7 +151,7 @@ void app.whenReady().then(async () => {
     await wait(
       "[...document.querySelectorAll('diffs-container')].some(el=>!!el.shadowRoot?.querySelector('.check-highlight'))"
     );
-    await win.loadURL(
+    await loadWorkbenchPage(win,
       (process.env.GNOSIS_WORKBENCH_URL ?? '').replace('workbench.html', 'mechanisms.html') + '?motion-fixture'
     );
     await wait('!!document.querySelector(\'[aria-label="Next illustration step"]:not(:disabled)\')');

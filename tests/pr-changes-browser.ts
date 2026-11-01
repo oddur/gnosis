@@ -1,4 +1,4 @@
-import { waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -45,7 +45,7 @@ void app.whenReady().then(async () => {
     fs.writeFileSync(path.join(shots, `${name}.png`), (await window.webContents.capturePage()).toPNG());
   };
   try {
-    await window.loadURL(`${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary`);
+    await loadWorkbenchPage(window, `${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary`);
     window.webContents.debugger.attach('1.3');
     await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
     await viewport(1280, 800);
@@ -453,7 +453,7 @@ void app.whenReady().then(async () => {
     await js("window.fill('.changes-comment-composer textarea','Persist this draft across restarts.')");
     await click('Add to review');
     await wait("!!document.querySelector('.changes-pending-comment')");
-    await window.loadURL(`${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary&keep-progress`);
+    await loadWorkbenchPage(window, `${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary&keep-progress`);
     await wait("document.querySelectorAll('.queue-item').length===7");
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"

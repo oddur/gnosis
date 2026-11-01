@@ -1,4 +1,4 @@
-import { waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 
@@ -16,7 +16,7 @@ void app.whenReady().then(async () => {
   try {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     if (!url) throw Error('Missing fixture URL');
-    await win.loadURL(url);
+    await loadWorkbenchPage(win, url);
     await waitForWorkbenchQueue(win.webContents);
     await js(`(async()=>{
       const cache=(await import('/lib/inspection-cache.ts')).inspectionData;

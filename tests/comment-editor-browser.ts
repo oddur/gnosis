@@ -1,3 +1,4 @@
+import { loadWorkbenchPage } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -36,7 +37,7 @@ void app.whenReady().then(async () => {
     fs.writeFileSync(path.join(dir, name + '.png'), (await win.webContents.capturePage()).toPNG());
   };
   try {
-    await win.loadURL(new URL('/tests/fixtures/comment-editor.html', process.env.GNOSIS_WORKBENCH_URL).href);
+    await loadWorkbenchPage(win, new URL('/tests/fixtures/comment-editor.html', process.env.GNOSIS_WORKBENCH_URL).href);
     win.webContents.debugger.attach('1.3');
     await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
     await wait("!!document.querySelector('markdown-toolbar')");

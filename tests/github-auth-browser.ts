@@ -1,3 +1,4 @@
+import { loadWorkbenchPage } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -36,10 +37,10 @@ void app.whenReady().then(async () => {
   try {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     if (!url) throw new Error('Missing fixture URL');
-    await win.loadURL(url + '?onboarding');
+    await loadWorkbenchPage(win, url + '?onboarding');
     // Returning users must reconnect; first-run setup owns the initial prompt.
     await js("sessionStorage.setItem('fixture-first-run-seen', 'true')");
-    await win.loadURL(url + '?onboarding');
+    await loadWorkbenchPage(win, url + '?onboarding');
     win.webContents.setZoomFactor(1);
     await wait("!!document.querySelector('.github-auth-dialog')");
     await capture('welcome');
@@ -140,7 +141,7 @@ void app.whenReady().then(async () => {
     await click('Continue with local reviews');
     await wait("!document.querySelector('.github-auth-dialog')");
     assert.equal(await js('window.electronAPI.loadPreferences().then(p=>p.guestMode)'), true);
-    await win.loadURL(url + '?onboarding');
+    await loadWorkbenchPage(win, url + '?onboarding');
     await wait("!!document.querySelector('.workbench-connect')");
     assert.equal(
       await js("!!document.querySelector('.github-auth-dialog')"),

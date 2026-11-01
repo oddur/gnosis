@@ -1,3 +1,4 @@
+import { loadWorkbenchPage } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -47,7 +48,7 @@ void app.whenReady().then(async () => {
   try {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     assert.ok(url);
-    await win.loadURL(url);
+    await loadWorkbenchPage(win, url);
     await openSettings();
     assert.equal(await active(), 'shiki-js');
     assert.equal(await js("document.querySelector('#settings-diff-highlighter').value"), 'shiki-js');
@@ -71,7 +72,7 @@ void app.whenReady().then(async () => {
       ),
       false
     );
-    await win.loadURL(url);
+    await loadWorkbenchPage(win, url);
     await openSettings();
     assert.equal(await active(), 'highlights');
     assert.equal(await js("document.querySelector('#settings-diff-highlighter').value"), 'highlights');
@@ -94,7 +95,7 @@ void app.whenReady().then(async () => {
       "window.electronAPI.savePreferences=window.realSave; [...document.querySelectorAll('button')].find(b=>b.textContent.includes('Retry saving')).click()"
     );
     await wait("window.electronAPI.loadPreferences().then(p=>p.diffHighlighter==='shiki-js')");
-    await win.loadURL(url);
+    await loadWorkbenchPage(win, url);
     await openSettings();
     assert.equal(await active(), 'shiki-js');
     console.log(

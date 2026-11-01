@@ -1,3 +1,4 @@
+import { loadWorkbenchPage } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -30,7 +31,7 @@ void app.whenReady().then(async () => {
   try {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     if (!url) throw new Error('Missing fixture URL');
-    await win.loadURL(url + '?onboarding');
+    await loadWorkbenchPage(win, url + '?onboarding');
     await wait("!!document.querySelector('.workbench-connect')");
     await wait("!!document.querySelector('.setup-dialog')");
     await click('Finish later');
@@ -112,7 +113,7 @@ void app.whenReady().then(async () => {
     await capture('connected');
     await click('I’ll explore on my own');
     await wait("!document.querySelector('.getting-started')");
-    await win.loadURL(url + '?onboarding');
+    await loadWorkbenchPage(win, url + '?onboarding');
     await wait("!!document.querySelector('.workbench-connect')");
     if (await js("!!document.querySelector('.github-auth-dialog')")) {
       await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');

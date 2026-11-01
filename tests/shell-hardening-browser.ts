@@ -1,4 +1,4 @@
-import { waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -47,7 +47,7 @@ void app.whenReady().then(async () => {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     if (!url) throw Error('Missing fixture URL');
     // Startup failure and optional storage denial cannot strand the queue.
-    await win.loadURL(url + '?shell-startup-failure');
+    await loadWorkbenchPage(win, url + '?shell-startup-failure');
     await wait("document.querySelector('.workbench-notice')?.textContent.includes('Retry loading Gnosis')");
     await capture('startup-recovery');
     await js("sessionStorage.setItem('fixture-startup-recovered','true')");
@@ -73,7 +73,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.app-toasts')?.textContent.includes('Could not open saved review')");
     await capture('notification-error');
     // Isolated shell: overlapping activity actions and an older polling response.
-    await win.loadURL(new URL('shell-hardening.html', url).href);
+    await loadWorkbenchPage(win, new URL('shell-hardening.html', url).href);
     await wait("document.querySelectorAll('.activity-task').length===2");
     await js(
       `(async()=>{window.oldTasks=await window.electronAPI.listActivity();window.currentTasks=structuredClone(window.oldTasks);window.reads=0;window.actions=[];window.pendingActions={};window.electronAPI.listActivity=()=>{window.reads++;return window.reads===1?new Promise(resolve=>window.finishOldPoll=resolve):Promise.resolve(structuredClone(window.currentTasks))};window.electronAPI.activityAction=(id,action)=>{window.actions.push({id,action});return new Promise(resolve=>window.pendingActions[id]=resolve)};})()`

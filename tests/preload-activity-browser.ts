@@ -1,3 +1,4 @@
+import { loadWorkbenchPage } from './workbench-ready';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -17,7 +18,7 @@ void app.whenReady().then(async () => {
   try {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     if (!url) throw Error('Missing fixture URL');
-    await win.loadURL(url);
+    await loadWorkbenchPage(win, url);
     await wait("!!document.querySelector('.queue-item')");
     await js(`(async()=>{
       const {createPrInspectionCache} = await import('/lib/pr-inspection-cache.ts');

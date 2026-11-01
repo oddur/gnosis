@@ -1,4 +1,4 @@
-import { waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -50,7 +50,7 @@ void app.whenReady().then(async () => {
     fs.writeFileSync(path.join(shots, name + '.png'), (await window.webContents.capturePage()).toPNG());
   };
   try {
-    await window.loadURL(`${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary`);
+    await loadWorkbenchPage(window, `${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary`);
     await js("document.title='Gnosis — automated commit-view checks'");
     window.webContents.setZoomFactor(1);
     await waitForWorkbenchQueue(window.webContents);

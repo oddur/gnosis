@@ -1,4 +1,4 @@
-import { waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -36,7 +36,7 @@ void app.whenReady().then(async () => {
   try {
     const origin = process.env.GNOSIS_WORKBENCH_URL;
     assert.ok(origin);
-    await win.loadURL(new URL('/tests/fixtures/inspection-hardening.html', origin).href);
+    await loadWorkbenchPage(win, new URL('/tests/fixtures/inspection-hardening.html', origin).href);
     if (process.platform === 'darwin') app.show();
     win.show();
     win.focus();
@@ -185,7 +185,7 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('[data-slot=dialog-close]').click()");
     // Full app: commit refresh must preserve navigation that happens while it is pending.
     win.setSize(1280, 850);
-    await win.loadURL(origin + '?pr-summary');
+    await loadWorkbenchPage(win, origin + '?pr-summary');
     await waitForWorkbenchQueue(win.webContents);
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()"

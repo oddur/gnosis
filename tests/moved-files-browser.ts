@@ -1,3 +1,4 @@
+import { loadWorkbenchPage } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -29,7 +30,7 @@ void app.whenReady().then(async () => {
     fs.writeFileSync(path.join(shots, `${name}.png`), (await window.webContents.capturePage()).toPNG());
   };
   try {
-    await window.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
+    await loadWorkbenchPage(window, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
     await wait("!!window.electronAPI && document.querySelectorAll('.queue-item').length>0");
     await js(`(async()=>{
       const cache=await import('/lib/inspection-cache.ts');cache.inspectionData.stop();cache.inspectionFiles.clear();

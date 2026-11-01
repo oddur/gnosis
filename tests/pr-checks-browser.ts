@@ -1,4 +1,4 @@
-import { waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -45,7 +45,7 @@ void app.whenReady().then(async () => {
   try {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     if (!url) throw Error('Missing fixture URL');
-    await win.loadURL(url + '?pr-summary&checks');
+    await loadWorkbenchPage(win, url + '?pr-summary&checks');
     await wait("document.querySelectorAll('.queue-item').length===7", 60_000);
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()"
@@ -130,7 +130,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.check-detail').textContent.includes('Requirement unknown')");
     assert.ok(!(await js("!!document.querySelector('.check-logs')")));
     // Queue checks shortcut preserves the stack and its source groups.
-    await win.loadURL(url + '?checks');
+    await loadWorkbenchPage(win, url + '?checks');
     await js("void Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })");
     await waitForWorkbenchQueue(win.webContents);
     await js(
@@ -210,7 +210,7 @@ void app.whenReady().then(async () => {
     await capture('finished-narrow');
     // Native subscriptions preserve the pause reason/time and scope a retry to one PR.
     win.setContentSize(1280, 800);
-    await win.loadURL(url + '?checks&github-sync');
+    await loadWorkbenchPage(win, url + '?checks&github-sync');
     await wait("document.querySelectorAll('.queue-item').length===7");
     await js(
       "document.querySelector('.queue-stack-icon').closest('.queue-item').querySelector('.queue-checks').click()"

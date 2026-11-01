@@ -1,3 +1,4 @@
+import { loadWorkbenchPage } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -28,7 +29,7 @@ void app.whenReady().then(async () => {
   try {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     if (!url) throw Error('Missing fixture URL');
-    await win.loadURL(url + '?polish');
+    await loadWorkbenchPage(win, url + '?polish');
     win.webContents.setZoomFactor(1);
     await wait("!!document.querySelector('.queue-checks.is-success')");
     assert.match(await js<string>("document.querySelector('.queue-meta').textContent"), /#\d+ opened .* by /);

@@ -1,4 +1,4 @@
-import { waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -38,7 +38,7 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('[role=menu]')");
   };
   try {
-    await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
     await waitForWorkbenchQueue(win.webContents);
     await js(
       'window.__refreshed=[];const original=window.electronAPI.getPrStatus;window.electronAPI.getPrStatus=async(url,force)=>{if(force)window.__refreshed.push(url);return original(url,force)};void 0'
@@ -122,7 +122,7 @@ void app.whenReady().then(async () => {
     await menuAction(js, 'Actions for PR #152', 'Refresh GitHub status');
     await wait("document.body.textContent.includes('Could not refresh github status')");
     assert.equal(await js("document.querySelectorAll('.queue-item').length"), 7);
-    await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?views`);
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?views`);
     await wait("document.querySelectorAll('.queue-item').length===7");
     await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Save view…').click()");
     await wait("!!document.querySelector('.view-name-form input')");

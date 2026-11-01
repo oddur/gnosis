@@ -1,4 +1,4 @@
-import { waitForWorkbenchQueue } from './workbench-ready';
+import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -40,7 +40,7 @@ void app.whenReady().then(async () => {
   };
   const dialog = 'document.querySelector(".d2-dialog")';
   try {
-    await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
     await waitForWorkbenchQueue(win.webContents);
     await js(
       `(()=>{const load=window.electronAPI.loadReview;window.electronAPI.loadReview=async(...args)=>{const review=await load(...args);const diagram=${JSON.stringify(D2_EXAMPLES[0].diagram)};const h=review.slides[0].diffHunks[0];diagram.steps[0].evidence={filePath:h.filePath,startLine:parseInt(h.hunkHeader.split('+')[1])};return {...review,slides:[{...review.slides[0],title:'Architecture with annotations',d2Diagram:diagram,mermaidDiagram:null}]};};})()`
@@ -64,7 +64,7 @@ void app.whenReady().then(async () => {
     assert.deepEqual(duplicateIDs, []);
     await click('Show supporting code', dialog);
     await wait("!document.querySelector('.d2-dialog')");
-    await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
     await wait("document.querySelectorAll('.queue-item').length===7");
     await js(
       `(()=>{const load=window.electronAPI.loadReview;window.electronAPI.loadReview=async(...args)=>{const review=await load(...args);return {...review,slides:[{...review.slides[0],d2Diagram:undefined,mermaidDiagram:'flowchart LR\\n A[Saved Mermaid] --> B[Still readable]'}]};};})()`
@@ -80,7 +80,7 @@ void app.whenReady().then(async () => {
     await capture('legacy-mermaid');
     await click('Close');
     const galleryURL = (process.env.GNOSIS_WORKBENCH_URL ?? '').replace('workbench.html', 'd2.html');
-    await win.loadURL(galleryURL);
+    await loadWorkbenchPage(win, galleryURL);
     await wait("!!document.querySelector('.d2-preview svg')");
     for (const dark of [false, true]) {
       await js(`document.documentElement.classList.toggle('dark',${dark})`);
@@ -243,7 +243,7 @@ void app.whenReady().then(async () => {
       ),
       true
     );
-    await win.loadURL(`${galleryURL}?generated`);
+    await loadWorkbenchPage(win, `${galleryURL}?generated`);
     await wait("!!document.querySelector('.d2-preview svg')");
     for (const name of ['Architecture', 'Sequence', 'Algorithm']) {
       await click(name);
@@ -256,7 +256,7 @@ void app.whenReady().then(async () => {
       await capture(`generated-${name}-expanded`);
       await click('Close');
     }
-    await win.loadURL(`${galleryURL}?variant=algorithm`);
+    await loadWorkbenchPage(win, `${galleryURL}?variant=algorithm`);
     await wait("!!document.querySelector('.d2-preview svg')");
     await click('Next diagram step');
     await wait("document.querySelector('.d2-step-count')?.textContent.includes('2 of 3')");
