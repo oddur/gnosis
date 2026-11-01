@@ -99,7 +99,14 @@ Cold data, new revisions, expired or evicted downloads, and unsupported previews
 
 ## Local clones
 
-**Settings → Integrations → Local clones** registers a clone on this computer. Its GitHub remotes decide which repositories it serves. Shallow clones are rejected because they cannot compute a merge base. A clone that later becomes shallow falls back to GitHub until its history is complete.
+Open a repository under **Settings → Repositories**. Then select **Local clone → Choose folder…**.
+The folder must have a GitHub remote that matches the selected repository. Gnosis connects it only to that repository, even if other remotes exist.
+
+**Change folder…** replaces that repository's clone. **Disconnect** removes its connection and keeps the folder.
+Clone changes apply immediately, without **Save settings**, and affect only this computer. Bulk repository settings do not include clone controls.
+Existing connections remain in `local-clones.json`.
+
+Gnosis rejects shallow clones because they cannot compute a merge base. A clone that later becomes shallow falls back to GitHub until its history is complete.
 A blobless clone (`git clone --filter=blob:none --no-checkout <url>`) also works. It is small, and Git downloads file contents as needed.
 
 With a clone registered, these reads come from Git instead of the API:

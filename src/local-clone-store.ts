@@ -20,12 +20,19 @@ export function createLocalCloneStore(file: () => string) {
   };
   return {
     load,
-    async add(directory: string) {
-      const added = await inspectLocalClone(directory);
-      return save(normalizeLocalClones([...load(), ...added]));
+    async connect(repo: string, directory: string) {
+      if (typeof repo !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(repo))
+        throw new Error('Choose a GitHub repository first.');
+      const inspected = await inspectLocalClone(directory);
+      const match = inspected.find((entry) => entry.repo.toLowerCase() === repo.toLowerCase());
+      if (!match)
+        throw new Error(
+          `This clone has no GitHub remote for ${repo}. Choose its clone or add a matching remote in Git.`
+        );
+      return save(normalizeLocalClones([...load(), match]));
     },
-    remove(directory: string) {
-      return save(load().filter((entry) => entry.path !== directory));
+    disconnect(repo: string) {
+      return save(load().filter((entry) => entry.repo.toLowerCase() !== repo.toLowerCase()));
     },
   };
 }

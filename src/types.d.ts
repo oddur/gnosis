@@ -181,8 +181,8 @@ declare global {
       getPrFiles: (prUrl: string) => Promise<ChangedFile[]>;
       pickRepoDir: () => Promise<string | null>;
       getLocalClones: () => Promise<import('../lib/local-clone').LocalCloneStatus[]>;
-      addLocalClone: (directory: string) => Promise<import('../lib/local-clone').LocalCloneStatus[]>;
-      removeLocalClone: (directory: string) => Promise<import('../lib/local-clone').LocalCloneStatus[]>;
+      connectLocalClone: (repo: string, directory: string) => Promise<import('../lib/local-clone').LocalCloneStatus[]>;
+      disconnectLocalClone: (repo: string) => Promise<import('../lib/local-clone').LocalCloneStatus[]>;
       listRepoRefs: (
         repoPath: string,
       ) => Promise<{

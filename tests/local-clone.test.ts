@@ -336,17 +336,48 @@ void test('inspectLocalClone reads remotes and rejects unusable folders', async 
   await assert.rejects(inspectLocalClone(shallow), /shallow/);
 });
 
-void test('the store persists registrations and removes every remote of a folder', async () => {
+void test('the store persists repository connections and disconnects them case-insensitively', async () => {
   const f = fixture();
   git(f.clone, 'remote', 'set-url', 'origin', 'git@github.com:o/r.git');
   const file = path.join(f.root, 'data', 'local-clones.json');
   const store = createLocalCloneStore(() => file);
-  const added = await store.add(f.clone);
+  const added = await store.connect('O/R', f.clone);
   assert.equal(added[0].repo, 'o/r');
   assert.deepEqual(createLocalCloneStore(() => file).load(), added);
-  assert.deepEqual(store.remove(added[0].path), []);
+  assert.deepEqual(store.disconnect('O/R'), []);
   fs.writeFileSync(file, 'not json');
   assert.deepEqual(store.load(), []);
+});
+
+void test('connecting validates the repository and preserves other mappings and failed replacements', async () => {
+  const f = fixture();
+  git(f.clone, 'remote', 'set-url', 'origin', 'git@github.com:o/r.git');
+  git(f.clone, 'remote', 'add', 'upstream', 'https://github.com/team/project.git');
+  const file = path.join(f.root, 'local-clones.json');
+  const store = createLocalCloneStore(() => file);
+  const initial = await store.connect('o/r', f.clone);
+  assert.equal(initial.length, 1, 'Other remotes are not automatically connected');
+  await store.connect('team/project', f.clone);
+  const shared = store.load();
+  await assert.rejects(store.connect('other/repo', f.clone), /no GitHub remote for other\/repo/);
+  await assert.rejects(store.connect('o/r', f.root), /not a Git repository/);
+  assert.deepEqual(store.load(), shared, 'Failed validation leaves existing mappings untouched');
+  git(f.work, 'remote', 'set-url', 'origin', 'https://github.com/O/R.git');
+  const replaced = await store.connect('o/r', f.work);
+  assert.equal(replaced.length, 2);
+  const replacement = replaced.find((e) => e.repo.toLowerCase() === 'o/r');
+  assert.ok(replacement);
+  assert.equal(fs.realpathSync(replacement.path), fs.realpathSync(f.work));
+  assert.deepEqual(
+    replaced.find((e) => e.repo === 'team/project'),
+    shared.find((e) => e.repo === 'team/project')
+  );
+  assert.deepEqual(store.disconnect('O/R'), [shared.find((e) => e.repo === 'team/project')]);
+  // The existing file format also accepts registrations created by the old global UI.
+  fs.writeFileSync(file, JSON.stringify(shared));
+  assert.deepEqual(store.load(), shared);
+  assert.deepEqual(store.disconnect('o/r'), [shared.find((e) => e.repo === 'team/project')]);
+  assert.ok(fs.existsSync(f.clone), 'Disconnect never deletes the clone');
 });
 
 void test('PR changes and contents come from the clone; GitHub is asked only for PR details', async () => {

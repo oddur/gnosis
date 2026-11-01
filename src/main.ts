@@ -1592,12 +1592,12 @@ handleInteractive('get-pr-files', async (_event, prUrl: string): Promise<Changed
 
 const localCloneStore = createLocalCloneStore(() => path.join(app.getPath('userData'), 'local-clones.json'));
 ipcMain.handle('local-clones', () => localClones.status());
-ipcMain.handle('add-local-clone', async (_event, directory: string) => {
-  localClones.configure(await localCloneStore.add(directory));
+ipcMain.handle('connect-local-clone', async (_event, repo: string, directory: string) => {
+  localClones.configure(await localCloneStore.connect(repo, directory));
   return localClones.status();
 });
-ipcMain.handle('remove-local-clone', (_event, directory: string) => {
-  localClones.configure(localCloneStore.remove(directory));
+ipcMain.handle('disconnect-local-clone', (_event, repo: string) => {
+  localClones.configure(localCloneStore.disconnect(repo));
   return localClones.status();
 });
 

@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from 'react';
+import { LocalCloneSettings } from './LocalCloneSettings';
 import { Button } from './ui/button';
 import { RepositoryIconPicker } from './RepositoryIconPicker';
 import { PrInactivitySetting } from './PrInactivitySetting';
@@ -190,6 +191,7 @@ export function RepositorySettingsEditor({
               )}
             </div>
           </div>
+          {!bulk && <LocalCloneSettings key={repo.toLowerCase()} repo={repo} />}
           <div className="repository-appearance">
             <div className="repository-editor-heading">
               <h4>Repository appearance</h4>

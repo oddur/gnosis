@@ -586,8 +586,8 @@ const mocks = {
   onPreferencesChanged: () => () => {},
   onWorkbenchChanged: () => () => {},
   getLocalClones: async () => [],
-  addLocalClone: async () => [],
-  removeLocalClone: async () => [],
+  connectLocalClone: () => Promise.resolve([]),
+  disconnectLocalClone: () => Promise.resolve([]),
   loadPreferences: () => Promise.resolve(prefs),
   savePreferences: (next: Preferences) => {
     prefs = next;

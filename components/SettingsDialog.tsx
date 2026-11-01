@@ -13,7 +13,6 @@ import { Button } from './ui/button';
 import { PrInactivitySetting } from './PrInactivitySetting';
 import { normalizePrInactivityDays, DEFAULT_PR_INACTIVITY_DAYS } from '../lib/pr-inactivity';
 import { useState, useEffect, useRef } from 'react';
-import { LocalCloneSettings } from './LocalCloneSettings';
 import { Tabs } from 'radix-ui';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { CODE_THEMES, CODE_FONTS } from '@/lib/constants';
@@ -858,7 +857,6 @@ export function SettingsDialog({
               </div>
             </Tabs.Content>
             <Tabs.Content value="integrations" className="settings-panel">
-              <LocalCloneSettings />
               <section className="flex flex-col items-start gap-3" aria-labelledby="github-cache-title">
                 <h3 id="github-cache-title" className="text-sm font-medium">GitHub cache</h3>
                 <div className="settings-field">
