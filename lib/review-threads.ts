@@ -24,6 +24,7 @@ export interface GitHubReviewThread {
   comments: GitHubReviewComment[];
 }
 export interface GitHubReviewThreads {
+  checkedAt?: number;
   headSha: string;
   baseSha: string;
   threads: GitHubReviewThread[];

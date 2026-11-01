@@ -3808,3 +3808,32 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
   .settings-panel { flex: 1; }
   .repository-settings-summary { display: none; }
 }
+
+/* Evidence is an observation with a source, separate from merge eligibility and AI prose. */
+.review-evidence { margin-block:16px; padding-block:12px; border-block:1px solid var(--border); min-width:0; }
+.review-evidence > header { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:8px 16px; }
+.review-evidence h2 { font-size:var(--type-body); font-weight:650; }
+.review-evidence-summary { display:flex; flex-wrap:wrap; gap:4px 16px; margin-top:4px; font-size:var(--type-control); color:var(--muted-foreground); }
+.review-evidence [data-tone=danger] { color:var(--color-danger); }
+.review-evidence [data-tone=warning] { color:var(--color-warning); }
+.review-evidence [data-tone=success] { color:var(--color-success); }
+.review-evidence [data-tone=muted] { color:var(--muted-foreground); }
+.review-evidence .is-expanded { transform:rotate(180deg); }
+.review-evidence-details { margin-top:12px; }
+.review-evidence-details h3 { font-size:var(--type-control); font-weight:600; padding-block:16px 8px; overflow-wrap:anywhere; }
+.review-evidence-details h3 a { color:var(--primary); text-decoration:underline; text-underline-offset:3px; }
+.review-evidence-row { display:grid; grid-template-columns:140px minmax(0,1fr) auto; gap:8px 16px; align-items:start; padding-block:12px; border-top:1px solid var(--border); font-size:var(--type-control); }
+.review-evidence-category { display:flex; gap:8px; align-items:center; color:var(--muted-foreground); }
+.review-evidence-category svg { flex-shrink:0; }
+.review-evidence-observation { min-width:0; overflow-wrap:anywhere; }
+.review-evidence-observation strong { font-weight:600; }
+.review-evidence-observation p { max-width:70ch; margin-top:4px; }
+.review-evidence-observation small { display:block; color:var(--muted-foreground); font-size:var(--type-caption); margin-top:4px; }
+.review-evidence-observation code { font-family:var(--font-mono); }
+.review-evidence-row > a { display:flex; gap:4px; align-items:center; color:var(--primary); text-decoration:underline; text-underline-offset:3px; padding-block:6px; }
+.review-evidence-gap { display:flex; gap:8px; align-items:baseline; color:var(--muted-foreground); font-size:var(--type-caption); margin-top:12px; }
+.review-evidence-gap svg { flex-shrink:0; }
+@media (max-width:850px) {
+  .review-evidence-row { grid-template-columns:minmax(0,1fr); gap:4px; }
+  .review-evidence-row > :is(a,button) { justify-self:start; }
+}

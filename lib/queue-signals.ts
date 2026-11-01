@@ -10,6 +10,8 @@ export interface QueueSignalOptions {
 export interface QueueSignals extends QueueSignalRequest {
   checkedAt: number;
   comments: number;
+  /** Undefined for older cache entries; null means GitHub returned no submitted review. */
+  latestReview?: { url: string; author: string; state: string; submittedAt: string; headSha: string | null } | null;
   activity?: {
     comment?: { id: string; at: string; author: string };
     review?: { id: string; at: string; author: string; state?: string };

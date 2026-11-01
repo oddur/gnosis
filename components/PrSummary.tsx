@@ -1,4 +1,5 @@
 import { stackMergePlan } from '../lib/stack-merge-plan';
+import { ReviewEvidence } from './ReviewEvidence';
 import { StackChecksFreshness } from './StackMergePlan';
 import { StackChangesView } from './StackChangesView';
 import { StackBriefing } from './StackBriefing';
@@ -453,6 +454,9 @@ function PrSummaryContent({
                 {warning}
               </p>
             ))}
+            <ReviewEvidence key={`${account}:${item.subject.id}`} subject={item.subject} account={account} now={statusNow}
+              signals={[...signals, ...item.subject.members.flatMap(member => statuses[member.url]?.signals ?? [])]}
+              checks={checks.values} checkErrors={checks.errors} onChecks={openChecks} />
             {!stacked && item.briefing?.status === 'ready' && (
               <details className="pr-briefing" open>
                 <summary>AI briefing</summary>
