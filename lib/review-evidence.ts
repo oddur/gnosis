@@ -1,37 +1,47 @@
 import { checkCounts, orderedChecks, type PrChecks } from './pr-checks';
-import { QUEUE_SIGNALS_TTL, type QueueSignals } from './queue-signals';
+import type { QueueSignals } from './queue-signals';
+import { GITHUB_SYNC_FRESHNESS_MS } from './github-sync';
 import type { GitHubReviewThreads } from './review-threads';
 import type { ReviewMember } from './workbench';
 
+export interface EvidenceUpdateIssue {
+  message: string;
+  retryAt?: number;
+}
 export interface EvidenceRow {
   kind: 'checks' | 'review' | 'discussion';
   /** Availability is separate from observation time and freshness. */
   hasEvidence: boolean;
   label: string;
+  labelParts?: { text: string; tone: EvidenceRow['tone'] }[];
   detail: string;
   tone: 'success' | 'warning' | 'danger' | 'muted';
+  freshness: 'current' | 'saved' | 'delayed' | 'unknown';
   checkedAt?: number;
   headSha?: string;
+  submittedAt?: string;
   action: string;
   checkId?: string;
   href?: string;
+  allHref?: string;
+  issue?: EvidenceUpdateIssue;
 }
 export interface MemberEvidence {
   member: ReviewMember;
   rows: EvidenceRow[];
 }
-const fresh = (checkedAt: number | undefined, now: number) =>
+const fresh = (kind: EvidenceRow['kind'], checkedAt: number | undefined, now: number) =>
   checkedAt !== undefined &&
   Number.isFinite(checkedAt) &&
   checkedAt - now <= 30_000 &&
-  now - checkedAt < QUEUE_SIGNALS_TTL;
+  now - checkedAt < GITHUB_SYNC_FRESHNESS_MS[kind === 'review' ? 'signals' : kind];
 const plural = (n: number, singular: string, multiple = `${singular}s`) => `${n} ${n === 1 ? singular : multiple}`;
 const reviewLabel = (state: string) =>
   ({ APPROVED: 'Approved', CHANGES_REQUESTED: 'Changes requested', COMMENTED: 'Commented', DISMISSED: 'Dismissed' })[
     state
   ] ?? 'Review submitted';
 
-/** Evidence describes observations, never infers merge eligibility, test coverage, or a successful reproduction. */
+/** Describe observations; never infer merge eligibility, test coverage, or successful bug reproduction. */
 export function reviewEvidence(
   member: ReviewMember,
   input: {
@@ -39,7 +49,7 @@ export function reviewEvidence(
     checks?: PrChecks;
     checkError?: string;
     discussion?: GitHubReviewThreads;
-    discussionError?: string;
+    discussionError?: EvidenceUpdateIssue;
     now: number;
   }
 ): MemberEvidence {
@@ -47,7 +57,7 @@ export function reviewEvidence(
   const signal =
     input.signals?.url === member.url && input.signals.headSha === member.headSha ? input.signals : undefined;
   const checks = input.checks?.url === member.url && input.checks.headSha === member.headSha ? input.checks : undefined;
-  // A rollup may already reflect a rerun while the named check list still contains the previous attempt.
+  // A rollup may already reflect a rerun while the named list still contains the previous attempt.
   const useChecks = checks && (!signal || checks.checkedAt >= signal.checkedAt);
   const counts = useChecks
     ? checkCounts(checks.checks)
@@ -59,102 +69,111 @@ export function reviewEvidence(
           skipped: signal.checks.skipped,
         }
       : undefined;
-  const checkTime = useChecks ? checks.checkedAt : signal?.checkedAt;
   const complete = useChecks
     ? !checks.warning
     : counts?.attention !== undefined && counts.running !== undefined && counts.skipped !== undefined;
-  const total = useChecks ? checks.checks.length : signal?.checks.total;
-  const currentChecks = fresh(checkTime, now) && !input.checkError;
   const checkRow: EvidenceRow = {
     kind: 'checks',
-    hasEvidence: false,
+    hasEvidence: !!counts && complete,
     label: 'Checks not available',
-    detail: 'No check results are available for this commit.',
+    detail: 'No check results are available for the displayed commit.',
     tone: 'muted',
+    freshness: 'unknown',
     action: 'Open checks',
     headSha: member.headSha,
+    checkedAt: useChecks ? checks.checkedAt : signal?.checkedAt,
+    issue: input.checkError ? { message: input.checkError } : undefined,
   };
   if (counts) {
-    checkRow.hasEvidence = complete;
-    const parts = [
-      counts.attention ? `${plural(counts.attention, 'check')} need${counts.attention === 1 ? 's' : ''} attention` : '',
-      counts.running ? `${counts.running} running` : '',
-      counts.passed ? `${counts.passed} passed` : '',
+    const attention = counts.attention
+      ? `${plural(counts.attention, 'check')} need${counts.attention === 1 ? 's' : ''} attention`
+      : '';
+    const running = counts.running ? `${counts.running} running` : '';
+    const total = useChecks ? checks.checks.length : signal?.checks.total;
+    checkRow.label =
+      total === 0
+        ? 'No checks reported'
+        : [attention, running].filter(Boolean).join(' · ') ||
+          (counts.passed
+            ? `${counts.passed} passed`
+            : counts.skipped
+              ? `${counts.skipped} skipped or neutral`
+              : 'Check results incomplete');
+    const supporting = [
+      counts.passed && (attention || running) ? `${counts.passed} passed` : '',
       counts.skipped ? `${counts.skipped} skipped or neutral` : '',
-    ].filter(Boolean);
-    checkRow.label = total === 0 ? 'No checks reported' : parts.join(' · ') || 'Check results incomplete';
+    ]
+      .filter(Boolean)
+      .join(' · ');
     checkRow.detail = !complete
-      ? 'Some check results are missing. Open Checks for details.'
+      ? 'Some results are missing. Open Checks for details.'
       : total === 0
-        ? 'GitHub reports no checks for this commit. This is not a test pass.'
-        : 'Results for the displayed commit.';
-    checkRow.tone =
-      currentChecks && complete
-        ? counts.attention
-          ? 'danger'
-          : counts.running
-            ? 'warning'
-            : counts.passed
-              ? 'success'
-              : 'muted'
-        : 'muted';
-    checkRow.checkedAt = checkTime;
-    if (!currentChecks) checkRow.label = `Saved: ${checkRow.label}`;
-    if (!currentChecks)
-      checkRow.detail = `${input.checkError ? 'Updates delayed. ' : 'Saved results; refresh before relying on them. '}${checkRow.detail}`;
+        ? 'GitHub reports no checks for this commit.'
+        : supporting && supporting !== checkRow.label
+          ? supporting
+          : '';
+    if (attention && running)
+      checkRow.labelParts = [
+        { text: attention, tone: 'danger' },
+        { text: running, tone: 'warning' },
+      ];
+    checkRow.tone = counts.attention
+      ? 'danger'
+      : counts.running
+        ? 'warning'
+        : counts.passed && complete
+          ? 'success'
+          : 'muted';
     if (counts.attention) {
-      checkRow.action = 'Inspect checks';
-      if (useChecks) checkRow.checkId = orderedChecks(checks.checks, 'attention')[0]?.id;
+      const first = useChecks ? orderedChecks(checks.checks, 'attention')[0] : undefined;
+      checkRow.action = first ? `Inspect ${first.name}` : 'Inspect checks';
+      checkRow.checkId = first?.id;
     }
-  } else if (input.checkError)
-    checkRow.detail = 'Check results could not be loaded. Open Checks to see the error and retry.';
-  else if (input.checks)
-    checkRow.detail = 'Saved checks belong to another commit. They do not verify the displayed code.';
+  } else if (input.checks)
+    checkRow.detail = 'Saved checks belong to a different commit. Open Checks to inspect the latest results.';
 
   const latest = signal?.latestReview;
   const decision = signal?.readiness?.reviewDecision;
   const decisionText = decision
-    ? `GitHub’s review decision: ${decision === 'REVIEW_REQUIRED' ? 'Review required' : reviewLabel(decision)}. `
+    ? `GitHub review decision: ${decision === 'REVIEW_REQUIRED' ? 'Review required' : reviewLabel(decision)}.`
     : '';
   const reviewRow: EvidenceRow = {
     kind: 'review',
     hasEvidence: false,
     label: 'Reviewed commit unknown',
-    detail: `${decisionText}No revision-linked review evidence is available.`,
+    detail: 'Refresh GitHub information or open the PR to inspect its reviews.',
     tone: 'muted',
-    action: 'View reviews on GitHub',
-    href: `${member.url}#pullrequestreview`,
+    freshness: 'unknown',
+    action: 'Open PR reviews',
+    href: member.url,
     checkedAt: signal?.checkedAt,
   };
   if (latest === null) {
     reviewRow.hasEvidence = true;
     reviewRow.label = 'No submitted reviews';
-    reviewRow.detail = `${decisionText}GitHub returned no submitted review for this PR.`;
+    reviewRow.detail = decisionText;
   } else if (latest) {
-    reviewRow.hasEvidence = !!latest.headSha;
     const same = !!latest.headSha && latest.headSha === member.headSha;
-    reviewRow.label = latest.headSha
-      ? same
-        ? `Latest review: ${reviewLabel(latest.state).toLowerCase()}`
-        : 'Latest review on another commit'
-      : 'Latest review’s commit unknown';
-    reviewRow.detail =
-      `${reviewLabel(latest.state)} by ${latest.author}. ${same ? 'This review covers the displayed commit.' : latest.headSha ? 'Reviewed a different commit. This does not automatically dismiss the review.' : 'GitHub did not provide the reviewed commit.'} ${decisionText}`.trim();
+    reviewRow.hasEvidence = !!latest.headSha;
+    const by = `${reviewLabel(latest.state)} by ${latest.author}`;
+    reviewRow.label = `${by}${latest.headSha ? (same ? ' · displayed commit' : ' · different commit') : ' · commit unknown'}`;
+    reviewRow.detail = same
+      ? ''
+      : latest.headSha
+        ? `Compare the reviewed commit with the code shown here. ${decisionText}`.trim()
+        : 'GitHub did not provide the reviewed commit.';
     reviewRow.headSha = latest.headSha ?? undefined;
+    reviewRow.submittedAt = Number.isFinite(Date.parse(latest.submittedAt)) ? latest.submittedAt : undefined;
     reviewRow.href = latest.url;
-    reviewRow.tone = fresh(signal.checkedAt, now)
-      ? !same
-        ? 'warning'
-        : latest.state === 'CHANGES_REQUESTED'
-          ? 'danger'
+    reviewRow.action = `Open ${latest.author}’s review`;
+    reviewRow.tone =
+      latest.state === 'CHANGES_REQUESTED'
+        ? 'danger'
+        : !same
+          ? 'warning'
           : latest.state === 'APPROVED'
             ? 'success'
-            : 'muted'
-      : 'muted';
-  }
-  if (signal && !fresh(signal.checkedAt, now)) {
-    reviewRow.label = `Saved: ${reviewRow.label}`;
-    reviewRow.detail = `Saved review status; updates are pending. ${reviewRow.detail}`;
+            : 'muted';
   }
 
   const discussion = input.discussion;
@@ -162,28 +181,47 @@ export function reviewEvidence(
     kind: 'discussion',
     hasEvidence: false,
     label: 'Discussions not loaded',
-    detail: 'Waiting for code discussions from GitHub.',
+    detail: 'Loading code discussions from GitHub…',
     tone: 'muted',
-    action: 'View discussions on GitHub',
+    freshness: 'unknown',
+    action: 'Open PR discussions',
     href: `${member.url}/files`,
+    issue: input.discussionError,
   };
   if (discussion) {
-    discussionRow.hasEvidence = discussion.headSha === member.headSha && Number.isFinite(discussion.checkedAt);
     const unresolved = discussion.threads.filter((thread) => !thread.isResolved);
     const outdated = unresolved.filter((thread) => thread.isOutdated).length;
-    const current = discussion.headSha === member.headSha && fresh(discussion.checkedAt, now) && !input.discussionError;
+    discussionRow.hasEvidence = discussion.headSha === member.headSha && Number.isFinite(discussion.checkedAt);
     discussionRow.label = unresolved.length
       ? plural(unresolved.length, 'unresolved discussion')
       : discussion.threads.length
-        ? 'All loaded discussions resolved'
+        ? 'All code discussions resolved'
         : 'No code discussions';
-    discussionRow.detail = `${outdated ? `${plural(outdated, 'unresolved discussion')} ${outdated === 1 ? 'is' : 'are'} attached to older code. ` : ''}${current ? 'GitHub code discussions; general PR comments are not included.' : 'Saved discussions may have changed. Their resolution status is not confirmed for the displayed commit.'}`;
-    if (!current) discussionRow.label = `Saved: ${discussionRow.label}`;
+    discussionRow.detail = outdated ? `${outdated} ${outdated === 1 ? 'is' : 'are'} attached to older code.` : '';
+    if (discussion.headSha !== member.headSha)
+      discussionRow.detail =
+        'These discussions were fetched for a different commit. Their current status is not confirmed.';
     discussionRow.checkedAt = discussion.checkedAt;
     discussionRow.headSha = discussion.headSha;
-    discussionRow.tone = current && unresolved.length ? 'warning' : 'muted';
-    discussionRow.href = unresolved[0]?.comments[0]?.url || `${member.url}/files`;
+    discussionRow.tone = unresolved.length ? 'warning' : 'muted';
+    const first = unresolved.find((thread) => thread.comments[0]?.url)?.comments[0]?.url;
+    if (first) {
+      discussionRow.href = first;
+      discussionRow.action = unresolved.length > 1 ? 'Open first unresolved discussion' : 'Open unresolved discussion';
+      if (unresolved.length > 1) discussionRow.allHref = `${member.url}/files`;
+    }
   }
-  if (input.discussionError) discussionRow.detail = `Updates delayed. ${input.discussionError}`;
-  return { member, rows: [checkRow, reviewRow, discussionRow] };
+  const rows = [checkRow, reviewRow, discussionRow];
+  for (const row of rows) {
+    row.freshness = row.issue
+      ? 'delayed'
+      : row.checkedAt === undefined
+        ? 'unknown'
+        : fresh(row.kind, row.checkedAt, now) && (row.kind !== 'discussion' || row.headSha === member.headSha)
+          ? 'current'
+          : 'saved';
+    // Old failures remain visible, but an old pass must never look current.
+    if (row.freshness !== 'current' && row.tone === 'success') row.tone = 'muted';
+  }
+  return { member, rows };
 }

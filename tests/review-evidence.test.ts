@@ -39,7 +39,13 @@ void test('current checks distinguish failure, running, skipped, and no checks',
       check('completed', 'skipped'),
     ]),
   }).rows[0];
-  assert.equal(row.label, '1 check needs attention · 1 running · 1 passed · 1 skipped or neutral');
+  assert.equal(row.label, '1 check needs attention · 1 running');
+  assert.equal(row.detail, '1 passed · 1 skipped or neutral');
+  assert.deepEqual(
+    row.labelParts?.map((part) => part.tone),
+    ['danger', 'warning']
+  );
+  assert.equal(row.action, 'Inspect check:2');
   assert.equal(row.checkId, 'check:2');
   assert.equal(row.tone, 'danger');
   assert.equal(reviewEvidence(member, { now, checks: checks([]) }).rows[0].tone, 'muted');
@@ -55,7 +61,7 @@ void test('revision mismatch and stale, partial, or delayed results never look c
   ]) {
     assert.equal(reviewEvidence(member, { now, ...input }).rows[0].tone, 'muted');
   }
-  assert.match(reviewEvidence(member, { now, checks: { ...success, checkedAt: 1 } }).rows[0].label, /^Saved:/);
+  assert.equal(reviewEvidence(member, { now, checks: { ...success, checkedAt: 1 } }).rows[0].freshness, 'saved');
 });
 void test('a newer rollup wins over a passing check list from the previous attempt', () => {
   const signals = signal();
@@ -80,9 +86,11 @@ void test('latest approval is attributed to its actual revision without claiming
     },
   };
   let row = reviewEvidence(member, { now, signals }).rows[1];
-  assert.equal(row.label, 'Latest review on another commit');
+  assert.equal(row.label, 'Approved by maya · different commit');
   assert.equal(row.tone, 'warning');
-  assert.match(row.detail, /does not automatically dismiss/);
+  assert.match(row.detail, /Compare the reviewed commit/);
+  assert.equal(row.submittedAt, signals.latestReview.submittedAt);
+  assert.equal(row.action, 'Open maya’s review');
   assert.equal(row.href, signals.latestReview.url);
   signals.latestReview.headSha = member.headSha;
   row = reviewEvidence(member, { now, signals }).rows[1];
@@ -110,8 +118,11 @@ void test('discussion resolution changes update evidence; old-code unresolved th
   assert.equal(row.href, thread.comments[0].url);
   row = reviewEvidence(member, { now, discussion: { ...discussion, threads: [{ ...thread, isResolved: true }] } })
     .rows[2];
-  assert.equal(row.label, 'All loaded discussions resolved');
-  assert.match(reviewEvidence(member, { now, discussion: { ...discussion, headSha: 'old' } }).rows[2].label, /^Saved:/);
+  assert.equal(row.label, 'All code discussions resolved');
+  assert.equal(
+    reviewEvidence(member, { now, discussion: { ...discussion, headSha: 'old' } }).rows[2].freshness,
+    'saved'
+  );
 });
 
 void test('new sync events are fresh between display clock ticks', () => {
@@ -151,4 +162,25 @@ void test('evidence completeness is independent of the snapshot timestamp', () =
       .rows[0].hasEvidence,
     false
   );
+});
+
+void test('discussion freshness permits the scheduler cadence; stale failures stay visible', () => {
+  const discussion = { headSha: member.headSha, baseSha: 'base', checkedAt: now, threads: [] };
+  assert.equal(reviewEvidence(member, { now: now + 240_000, discussion }).rows[2].freshness, 'current');
+  assert.equal(reviewEvidence(member, { now: now + 270_000, discussion }).rows[2].freshness, 'saved');
+  const row = reviewEvidence(member, { now: now + 270_000, checks: checks([check('completed', 'failure')]) }).rows[0];
+  assert.equal(row.freshness, 'saved');
+  assert.equal(row.tone, 'danger');
+  assert.equal(row.label, '1 check needs attention');
+});
+void test('delayed discussion retains its result, source, and retry time without exposing diagnostics in prose', () => {
+  const row = reviewEvidence(member, {
+    now,
+    discussion: { headSha: member.headSha, baseSha: 'base', checkedAt: now, threads: [] },
+    discussionError: { message: 'HTTP 429 internal diagnostic', retryAt: now + 60_000 },
+  }).rows[2];
+  assert.equal(row.label, 'No code discussions');
+  assert.equal(row.freshness, 'delayed');
+  assert.equal(row.issue?.retryAt, now + 60_000);
+  assert.doesNotMatch(row.detail, /HTTP/);
 });

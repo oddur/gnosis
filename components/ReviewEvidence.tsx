@@ -7,6 +7,7 @@ import {
   GitPullRequest,
   MessageSquare,
   CircleHelp,
+  RefreshCw,
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { reviewEvidence, type EvidenceRow } from '../lib/review-evidence';
@@ -24,6 +25,9 @@ export function ReviewEvidence({
   account,
   now,
   onChecks,
+  onRefresh,
+  refreshBusy,
+  refreshError,
 }: {
   subject: ReviewSubject;
   signals: QueueSignals[];
@@ -32,6 +36,9 @@ export function ReviewEvidence({
   account: string | null;
   now: number;
   onChecks: (url: string, id?: string) => void;
+  onRefresh: () => void;
+  refreshBusy: boolean;
+  refreshError?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const id = useId();
@@ -50,63 +57,127 @@ export function ReviewEvidence({
   );
   const icons = { checks: CheckCircle2, review: GitPullRequest, discussion: MessageSquare };
   const names = { checks: 'Checks', review: 'Latest review', discussion: 'Code discussions' };
+  const busy = refreshBusy || discussions.busy;
+  const issues = evidence.flatMap((entry) =>
+    entry.rows.flatMap((row) => (row.issue && (expanded || row.kind !== 'discussion') ? [row.issue] : []))
+  );
+  const retryAt = Math.max(0, ...issues.map((issue) => issue.retryAt ?? 0));
+  const status = !account
+    ? 'Connect GitHub to load this information.'
+    : busy
+      ? 'Refreshing GitHub information…'
+      : issues.length || refreshError
+        ? retryAt > now
+          ? `Updates delayed. Automatic retry at ${new Date(retryAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`
+          : 'Some updates are delayed. Automatic retries continue; you can also refresh.'
+        : expanded
+          ? 'From GitHub · Updates automatically while open'
+          : 'From GitHub · Checks and reviews update automatically';
   const summaries =
     subject.kind === 'pr'
-      ? evidence[0].rows
-          .filter((row) => row.kind !== 'discussion' || row.checkedAt !== undefined)
-          .map((row) => ({ label: row.label, tone: row.tone }))
+      ? evidence[0].rows.map((row) => ({
+          label:
+            row.kind === 'discussion' && row.checkedAt === undefined && !row.issue
+              ? 'Discussions: show details to load'
+              : row.label,
+          tone: row.tone,
+          parts: row.labelParts,
+        }))
       : [
-          { label: `${subject.members.length} PRs`, tone: 'muted' },
+          { label: `${subject.members.length} PRs`, tone: 'muted', parts: undefined },
           {
-            label: `${evidence.filter((entry) => entry.rows.some((row) => row.tone === 'danger' || row.tone === 'warning')).length} PRs with concerns`,
+            label: `${evidence.filter((entry) => entry.rows.some((row) => row.tone === 'danger' || row.tone === 'warning')).length} with items to inspect`,
             tone: 'muted',
+            parts: undefined,
           },
           {
-            label: `${evidence.filter((entry) => entry.rows.some((row) => !row.hasEvidence)).length} PRs with missing evidence`,
+            label: `${evidence.filter((entry) => entry.rows.some((row) => !row.hasEvidence)).length} with details unavailable`,
             tone: 'muted',
+            parts: undefined,
           },
         ];
+  function labelContent(label: string, parts?: EvidenceRow['labelParts']) {
+    return parts
+      ? parts.map((part, index) => (
+          <span key={index}>
+            {index > 0 && <span data-tone="muted"> · </span>}
+            <span data-tone={part.tone}>{part.text}</span>
+          </span>
+        ))
+      : label;
+  }
   function rowContent(row: EvidenceRow, url: string) {
     const Icon =
-      row.tone === 'danger' || row.tone === 'warning'
-        ? AlertCircle
-        : row.checkedAt === undefined
-          ? CircleHelp
-          : icons[row.kind];
+      row.tone === 'danger' || row.tone === 'warning' ? AlertCircle : !row.hasEvidence ? CircleHelp : icons[row.kind];
+    const checkedDate =
+      row.checkedAt !== undefined && Number.isFinite(row.checkedAt) ? new Date(row.checkedAt) : undefined;
     return (
-      <div className="review-evidence-row" key={row.kind}>
+      <div className="review-evidence-row" key={row.kind} data-freshness={row.freshness}>
         <div className="review-evidence-category">
           <Icon size={16} aria-hidden="true" />
           <span>{names[row.kind]}</span>
         </div>
         <div className="review-evidence-observation">
-          <strong data-tone={row.tone}>{row.label}</strong>
-          <p>{row.detail}</p>
-          <small>
+          <strong data-tone={row.tone}>{labelContent(row.label, row.labelParts)}</strong>
+          {row.detail && (
+            <p>{!account && row.kind === 'discussion' ? 'Connect GitHub to load code discussions.' : row.detail}</p>
+          )}
+          <div className="review-evidence-meta">
+            {row.submittedAt && (
+              <small>
+                Review submitted{' '}
+                <time dateTime={row.submittedAt} title={new Date(row.submittedAt).toLocaleString()}>
+                  {timeAgo(row.submittedAt)}
+                </time>
+              </small>
+            )}
             {row.headSha && (
-              <>
-                Commit <code>{row.headSha.slice(0, 7)}</code> ·{' '}
-              </>
+              <small>
+                {row.kind === 'review'
+                  ? 'Reviewed commit'
+                  : row.kind === 'checks'
+                    ? 'Checks for commit'
+                    : 'Discussions fetched for commit'}{' '}
+                <code>{row.headSha.slice(0, 7)}</code>
+              </small>
             )}
-            {row.checkedAt !== undefined ? (
-              <time dateTime={new Date(row.checkedAt).toISOString()} title={new Date(row.checkedAt).toLocaleString()}>
-                Checked {timeAgo(new Date(row.checkedAt).toISOString())}
-              </time>
-            ) : (
-              'Check time unknown'
-            )}
-          </small>
+            <small className="review-evidence-freshness">
+              {row.freshness === 'saved' && 'Last known result · '}
+              {row.freshness === 'delayed' && 'Updates delayed · '}
+              {checkedDate ? (
+                <time dateTime={checkedDate.toISOString()} title={checkedDate.toLocaleString()}>
+                  GitHub refreshed {timeAgo(checkedDate.toISOString())}
+                </time>
+              ) : (
+                'Not yet checked with GitHub'
+              )}
+            </small>
+          </div>
+          {row.issue && (
+            <details className="review-evidence-error">
+              <summary>Update details</summary>
+              <p>{row.issue.message}</p>
+            </details>
+          )}
         </div>
-        {row.kind === 'checks' ? (
-          <Button variant="ghost" size="sm" onClick={() => onChecks(url, row.checkId)}>
-            {row.action}
-          </Button>
-        ) : (
-          <a href={row.href} target="_blank" rel="noopener noreferrer">
-            {row.action}
-            <ExternalLink size={12} aria-hidden="true" />
-          </a>
-        )}
+        <div className="review-evidence-actions">
+          {row.kind === 'checks' ? (
+            <Button variant="ghost" size="sm" onClick={() => onChecks(url, row.checkId)}>
+              {row.action}
+            </Button>
+          ) : (
+            <a href={row.href} target="_blank" rel="noopener noreferrer">
+              {row.action}
+              <ExternalLink size={12} aria-hidden="true" />
+            </a>
+          )}
+          {row.allHref && (
+            <a href={row.allHref} target="_blank" rel="noopener noreferrer">
+              View all discussions
+              <ExternalLink size={12} aria-hidden="true" />
+            </a>
+          )}
+        </div>
       </div>
     );
   }
@@ -114,46 +185,82 @@ export function ReviewEvidence({
     <section className="review-evidence" aria-labelledby={`${id}-title`}>
       <header>
         <div>
-          <h2 id={`${id}-title`}>Review evidence</h2>
-          <div className="review-evidence-summary">
-            {summaries.map((item, index) => (
-              <span key={index} data-tone={item.tone}>
-                {item.label}
-              </span>
-            ))}
-          </div>
+          <h2 id={`${id}-title`}>Checks, reviews &amp; discussions</h2>
+          <p className="review-evidence-intro">Check what needs attention before you submit your review.</p>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          aria-expanded={expanded}
-          aria-controls={`${id}-details`}
-          onClick={() => setExpanded((value) => !value)}
-        >
-          {expanded ? 'Hide evidence' : 'View evidence'}
-          <ChevronDown size={14} className={expanded ? 'is-expanded' : undefined} />
-        </Button>
+        <div className="review-evidence-controls">
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={!account || busy}
+            aria-label="Refresh GitHub information"
+            onClick={() => {
+              onRefresh();
+              if (expanded) void discussions.refresh();
+            }}
+          >
+            <RefreshCw size={14} aria-hidden="true" className={busy ? 'animate-spin' : undefined} />
+            Refresh
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-expanded={expanded}
+            aria-controls={`${id}-details`}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? 'Hide details' : 'Show details'}
+            <ChevronDown size={14} aria-hidden="true" className={expanded ? 'is-expanded' : undefined} />
+          </Button>
+        </div>
       </header>
+      <p className="review-evidence-sync" role="status">
+        {status}
+      </p>
+      <span className="sr-only" aria-live="polite" aria-atomic="true">
+        {expanded
+          ? evidence
+              .map(({ member, rows }) => `PR ${member.number}. ${rows.map((row) => row.label).join('. ')}`)
+              .join('. ')
+          : ''}
+      </span>
+      {!expanded && (
+        <div className="review-evidence-summary">
+          {summaries.map((item, index) => (
+            <span key={index} data-tone={item.tone}>
+              {labelContent(item.label, item.parts)}
+            </span>
+          ))}
+        </div>
+      )}
       {expanded && (
         <div id={`${id}-details`} className="review-evidence-details">
-          {!account && <p className="review-evidence-gap">Connect GitHub to load review evidence.</p>}
           {evidence.map(({ member, rows }) => (
-            <section key={member.url} aria-label={`Evidence for PR #${member.number}`}>
-              {subject.kind === 'stack' && (
-                <h3>
-                  <a href={member.url} target="_blank" rel="noopener noreferrer">
-                    #{member.number}
-                  </a>{' '}
-                  {member.title}
-                </h3>
-              )}
+            <section key={member.url} aria-label={`GitHub information for PR #${member.number}`}>
+              <div className="review-evidence-scope">
+                {subject.kind === 'stack' && (
+                  <h3>
+                    <a href={member.url} target="_blank" rel="noopener noreferrer">
+                      #{member.number}
+                    </a>{' '}
+                    {member.title}
+                  </h3>
+                )}
+                <small>
+                  Displayed commit <code>{member.headSha.slice(0, 7)}</code>
+                </small>
+              </div>
               {rows.map((row) => rowContent(row, member.url))}
             </section>
           ))}
-          <p className="review-evidence-gap">
-            <CircleHelp size={15} aria-hidden="true" />
-            No bug reproduction runs are recorded here. Check results and reviews alone do not verify a reported fix.
-          </p>
+          <details className="review-evidence-help">
+            <summary>About these results</summary>
+            <p>
+              These are GitHub check results, submitted reviews, and code discussions. General PR comments are not
+              included. Passing checks do not establish test coverage or prove that a reported bug is fixed. No AI
+              generation is needed to update this information.
+            </p>
+          </details>
         </div>
       )}
     </section>

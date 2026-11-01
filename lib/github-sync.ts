@@ -3,6 +3,13 @@ import type { QueueSignals } from './queue-signals';
 import type { PrChecks } from './pr-checks';
 import type { GitHubReviewThreads } from './review-threads';
 export type GitHubSyncKind = 'metadata' | 'signals' | 'checks' | 'discussion';
+/** Normal polling ceilings, including visible-only cadence and one scheduler grace period. */
+export const GITHUB_SYNC_FRESHNESS_MS: Record<GitHubSyncKind, number> = {
+  metadata: 150_000,
+  signals: 150_000,
+  checks: 150_000,
+  discussion: 270_000,
+};
 export interface GitHubSyncTarget {
   url: string;
   headSha?: string;

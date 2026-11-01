@@ -456,7 +456,8 @@ function PrSummaryContent({
             ))}
             <ReviewEvidence key={`${account}:${item.subject.id}`} subject={item.subject} account={account} now={statusNow}
               signals={[...signals, ...item.subject.members.flatMap(member => statuses[member.url]?.signals ?? [])]}
-              checks={checks.values} checkErrors={checks.errors} onChecks={openChecks} />
+              checks={checks.values} checkErrors={checks.errors} onChecks={openChecks}
+              onRefresh={onRetryStatus} refreshBusy={statusRefreshing} refreshError={Object.values(statusErrors)[0]} />
             {!stacked && item.briefing?.status === 'ready' && (
               <details className="pr-briefing" open>
                 <summary>AI briefing</summary>

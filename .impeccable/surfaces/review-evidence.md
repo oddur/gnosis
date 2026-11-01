@@ -1,4 +1,4 @@
-# Review evidence
+# Checks, reviews & discussions
 
 Mode: Operate. Extends the existing PR/stack Summary; no new visual identity.
 
@@ -10,8 +10,8 @@ OWN-WORLD: Preserve Gnosis typography, neutral surfaces, semantic status colors 
 
 STORY: Scan checks and review freshness, expand to inspect provenance and discussions, then open the relevant check or GitHub review. Never imply a reproduction was run from CI success alone.
 
-FIRST VIEWPORT: One compact Review evidence section above the description or stack list. Up to three concise signals remain visible. Expansion reveals PR-scoped rows with revision and freshness. Missing data is unknown, never green.
+FIRST VIEWPORT: One compact Checks, reviews & discussions section above the description or stack list. Up to three concise signals remain visible while collapsed. Expansion replaces that rollup with PR-scoped rows, explicit displayed/reviewed commits, review submission time, and GitHub refresh time. The introduction names the task; named source actions make the next step clear. Missing data is unknown, never green.
 
-FORM: Local extension of Summary, code-led; no concept seed needed. Checks and review metadata reuse existing subscriptions. Discussions load through the shared scheduler on expansion. No AI jobs or new polling loop in native builds.
+FORM: Local extension of Summary, code-led; no concept seed needed. Checks and review metadata reuse existing subscriptions. Discussions load through the shared scheduler on expansion. No AI jobs or new polling loop in native builds. Refresh reuses existing PR status and discussion readers. Paused requests retain results and expose known retry timing; unchanged discussion observations publish their updated timestamp without increasing the polling rate.
 
 FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance

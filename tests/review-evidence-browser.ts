@@ -53,14 +53,20 @@ void app.whenReady().then(async () => {
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()"
     );
     await click('Open PR overview');
-    await wait("document.querySelector('.review-evidence-summary')?.textContent.includes('another commit')");
+    await wait("document.querySelector('.review-evidence-summary')?.textContent.includes('different commit')");
     assert.equal(
       await js("[...window.evidenceSubscriptions.values()].some(v=>v.kind==='discussion')"),
       false,
       'Collapsed evidence must not load discussions'
     );
+    assert.equal(
+      await js(
+        "[...document.querySelectorAll('.review-evidence-summary [data-tone=warning]')].some(e=>e.textContent==='1 running')"
+      ),
+      true
+    );
     await capture('collapsed-light');
-    await click('View evidence');
+    await click('Show details');
     await wait("[...window.evidenceSubscriptions.values()].some(v=>v.kind==='discussion')");
     await js(
       `(()=>{const target=[...window.evidenceSubscriptions.values()].find(v=>v.kind==='discussion').targets[0];window.evidenceTarget=target;window.pushEvidence('discussion',{...target,baseSha:'base',checkedAt:Date.now(),threads:[{id:'t1',path:'src/worker.ts',isResolved:false,isOutdated:true,comments:[{url:target.url+'#discussion_r1'}]}]})})()`
@@ -71,6 +77,29 @@ void app.whenReady().then(async () => {
       /attached to older code/
     );
     assert.equal(await js("document.querySelectorAll('.review-evidence-row').length"), 3);
+    assert.equal(
+      await js("document.querySelector('.review-evidence-summary')===null"),
+      true,
+      'Expanded details replace the repeated rollup'
+    );
+    assert.match(
+      await js<string>("document.querySelector('.review-evidence').textContent"),
+      /Checks, reviews & discussions/
+    );
+    assert.match(await js<string>("document.querySelector('.review-evidence').textContent"), /Displayed commit/);
+    assert.match(await js<string>("document.querySelector('.review-evidence').textContent"), /Reviewed commit/);
+    assert.equal(
+      await js(
+        "[...document.querySelectorAll('.review-evidence a')].find(a=>a.textContent.includes('Open maya'))?.getAttribute('href').endsWith('#pullrequestreview-1')"
+      ),
+      true
+    );
+    assert.equal(
+      await js(
+        "[...document.querySelectorAll('.review-evidence-observation strong [data-tone=warning]')].some(e=>e.textContent==='1 running')"
+      ),
+      true
+    );
     await capture('expanded-light');
     await js("document.documentElement.classList.add('dark')");
     await capture('expanded-dark');
@@ -83,7 +112,7 @@ void app.whenReady().then(async () => {
     await js(
       `(()=>{const target=window.evidenceTarget;window.pushEvidence('checks',{...target,checkedAt:Date.now(),checks:[{id:'check:99',name:'Tests',status:'completed',conclusion:'success',required:true,kind:'check',provider:'GitHub Actions'}]});window.pushEvidence('discussion',{...target,baseSha:'base',checkedAt:Date.now(),threads:[]})})()`
     );
-    await wait("document.querySelector('.review-evidence-summary')?.textContent.includes('1 passed')");
+    await wait("document.querySelector('.review-evidence-details')?.textContent.includes('1 passed')");
     await wait("document.querySelector('.review-evidence-details')?.textContent.includes('No code discussions')");
     await capture('updated');
     assert.equal(await js("document.querySelector('.review-evidence-details').textContent.includes('Saved:')"), false);
@@ -100,15 +129,29 @@ void app.whenReady().then(async () => {
     win.webContents.setZoomFactor(1);
     win.setSize(1280, 800);
     await js("document.querySelector('.pr-summary-content[data-state=active]').scrollTop=0");
-    await click('Hide evidence');
+    await js(
+      `window.refreshReads=0;window.electronAPI.getReviewThreads=async(url,force)=>{window.refreshReads++;window.refreshForce=force;await new Promise(resolve=>window.releaseRefresh=resolve);return {...window.evidenceTarget,baseSha:'base',checkedAt:Date.now(),threads:[]}};void 0`
+    );
+    await click('Refresh');
+    await wait('window.refreshReads===1');
+    assert.equal(await js('document.querySelector(\'[aria-label="Refresh GitHub information"]\').disabled'), true);
+    assert.equal(await js('window.refreshForce'), true);
+    await capture('refreshing');
+    await js('window.releaseRefresh();void 0');
+    await wait('!document.querySelector(\'[aria-label="Refresh GitHub information"]\').disabled');
+    await click('Hide details');
     await wait("![...window.evidenceSubscriptions.values()].some(v=>v.kind==='discussion')");
-    await click('View evidence');
+    await click('Show details');
     await wait("[...window.evidenceSubscriptions.values()].some(v=>v.kind==='discussion')");
     await js(
       `(()=>{for(const [id,interest] of window.evidenceSubscriptions){if(interest.kind==='discussion'){for(const fn of window.evidenceListeners)fn({subscriptionId:id,updates:[],failures:[{kind:'discussion',url:window.evidenceTarget.url,message:'GitHub API allowance is paused; updates will resume automatically.',retryAt:Date.now()+60000}]})}}})()`
     );
     await wait("document.querySelector('.review-evidence-details').textContent.includes('Updates delayed')");
+    assert.match(await js<string>("document.querySelector('.review-evidence-sync').textContent"), /Automatic retry at/);
     await capture('delayed');
+    await click('Refresh');
+    await wait('!document.querySelector(\'[aria-label="Refresh GitHub information"]\').disabled');
+    assert.equal(await js('window.refreshReads'), 1, 'Manual refresh respects the discussion retry deadline');
     await js("document.querySelector('.review-evidence-row button').click()");
     await wait("document.querySelector('[role=tab][aria-selected=true]')?.textContent.startsWith('Checks')");
     await wait("![...window.evidenceSubscriptions.values()].some(v=>v.kind==='discussion')");
@@ -122,18 +165,19 @@ void app.whenReady().then(async () => {
     await js(
       `window.electronAPI.getReviewThreads=async url=>{const queue=await window.electronAPI.workbenchQueue();const member=queue.items.flatMap(i=>i.subject.members).find(m=>m.url===url);return{headSha:member.headSha,baseSha:'base',checkedAt:Date.now(),threads:[]}};void 0`
     );
-    await click('View evidence');
+    await click('Show details');
     await wait("document.querySelectorAll('.review-evidence-details > section').length===3");
     assert.equal(await js("document.querySelectorAll('.review-evidence-row').length"), 9);
     await wait(
       "[...document.querySelectorAll('.review-evidence-row')].filter(row=>row.textContent.includes('No code discussions')&&!row.textContent.includes('Saved:')).length===3"
     );
+    await capture('stack-expanded');
+    await click('Hide details');
     assert.match(
       await js<string>("document.querySelector('.review-evidence-summary').textContent"),
-      /3 PRs with missing evidence/,
-      'Timestamped reviews without commit provenance remain missing evidence'
+      /3 with details unavailable/,
+      'Timestamped reviews without commit provenance remain unavailable'
     );
-    await capture('stack-expanded');
     assert.equal(errors.length, 0, errors.join('\n'));
     console.log(
       'Review evidence browser checks passed: live updates, lazy discussion sync, revision links, errors, light/dark, narrow layout, navigation.'
