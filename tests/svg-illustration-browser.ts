@@ -1,3 +1,4 @@
+import { waitForWorkbenchQueue } from './workbench-ready';
 import { buildSvgIllustrationDocument } from '../lib/svg-illustration-document';
 import { SVG_MOTION_FIXTURE } from './fixtures/svg-motion';
 import assert from 'node:assert/strict';
@@ -134,7 +135,7 @@ void app.whenReady().then(async () => {
       }
     }
     await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    await waitForWorkbenchQueue(win.webContents);
     await js(
       `(()=>{const load=window.electronAPI.loadReview;window.electronAPI.loadReview=async(...args)=>{const review=await load(...args);const illustration=${JSON.stringify(generated[0].slide.svgIllustration)};const h=review.slides[0].diffHunks[0];for(const s of illustration.scenarios)for(const f of s.frames)f.evidence={filePath:h.filePath,startLine:parseInt(h.hunkHeader.split('+')[1])};return {...review,slides:[{...review.slides[0],title:'SVG integration fixture',narrative:'Check the illustration beside the code.',svgIllustration:illustration,d2Diagram:null,mermaidDiagram:null,mechanism:null}]};};})()`
     );

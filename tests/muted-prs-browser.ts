@@ -1,3 +1,4 @@
+import { waitForWorkbenchQueue } from './workbench-ready';
 import { menuAction } from './entry-menu-helpers';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
@@ -49,7 +50,7 @@ void app.whenReady().then(async () => {
   };
   try {
     await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    await waitForWorkbenchQueue(win.webContents);
     await click('Star PR #152');
     await menu('Actions for PR #152', 'Mute PR');
     await wait("document.querySelectorAll('.queue-item').length===6");

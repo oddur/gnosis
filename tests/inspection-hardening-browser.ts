@@ -1,3 +1,4 @@
+import { waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -185,7 +186,7 @@ void app.whenReady().then(async () => {
     // Full app: commit refresh must preserve navigation that happens while it is pending.
     win.setSize(1280, 850);
     await win.loadURL(origin + '?pr-summary');
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    await waitForWorkbenchQueue(win.webContents);
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()"
     );

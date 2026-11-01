@@ -1,3 +1,4 @@
+import { waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -46,7 +47,7 @@ void app.whenReady().then(async () => {
     const fixtureUrl = process.env.GNOSIS_WORKBENCH_URL;
     if (!fixtureUrl) throw new Error('Missing workbench fixture URL');
     await window.loadURL(fixtureUrl + '?pr-summary');
-    await wait("document.querySelectorAll('.queue-item').length === 7");
+    await waitForWorkbenchQueue(window.webContents);
     await js(`(() => {
       window.metadataReads = 0; window.generationCalls = [];
       const getStatus = window.electronAPI.getPrStatus;

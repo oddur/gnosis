@@ -1,3 +1,4 @@
+import { waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -31,7 +32,7 @@ void app.whenReady().then(async () => {
     if (!url) throw Error('Missing fixture URL');
     await win.loadURL(url + '?target-branch');
     win.focus();
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    await waitForWorkbenchQueue(win.webContents);
     await click('.queue-filter-toggle');
     await wait(`!!document.querySelector('${input}')`);
     await capture('before');

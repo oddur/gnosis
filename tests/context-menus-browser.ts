@@ -1,3 +1,4 @@
+import { waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -38,7 +39,7 @@ void app.whenReady().then(async () => {
   };
   try {
     await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    await waitForWorkbenchQueue(win.webContents);
     await js(
       'window.__refreshed=[];const original=window.electronAPI.getPrStatus;window.electronAPI.getPrStatus=async(url,force)=>{if(force)window.__refreshed.push(url);return original(url,force)};void 0'
     );

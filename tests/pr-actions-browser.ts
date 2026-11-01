@@ -1,3 +1,4 @@
+import { waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -34,7 +35,7 @@ void app.whenReady().then(async () => {
   };
   try {
     await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    await waitForWorkbenchQueue(win.webContents);
     // All writes are mocks; this suite cannot change a real GitHub PR.
     await js(`(async()=>{
       window.writes=[];window.actionTasks=[];window.nativeStack=false;window.failAction=false;window.denyWrite=false;window.changedHead=false;window.conflicts=false;

@@ -1,3 +1,4 @@
+import { waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -50,7 +51,7 @@ void app.whenReady().then(async () => {
     await viewport(1280, 800);
     window.webContents.setZoomFactor(1);
     await js("document.title='Gnosis — automated Changes checks'");
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    await waitForWorkbenchQueue(window.webContents);
     await js("(async()=>{await (await import('/lib/inspection-cache.ts')).inspectionData.flush()})()");
     assert.deepEqual(
       await js(`(async()=>{

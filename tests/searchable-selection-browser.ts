@@ -1,3 +1,4 @@
+import { waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -51,7 +52,7 @@ void app.whenReady().then(async () => {
     await win.loadURL(fixtureUrl + '?filters');
     win.webContents.setZoomFactor(1);
     win.focus();
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    await waitForWorkbenchQueue(win.webContents);
     await js('document.querySelector(\'[aria-label="Filter repository"]\').focus()');
     await key('e');
     await wait("document.activeElement?.getAttribute('data-slot')==='combobox-input'");

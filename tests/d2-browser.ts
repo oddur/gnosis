@@ -1,3 +1,4 @@
+import { waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -40,7 +41,7 @@ void app.whenReady().then(async () => {
   const dialog = 'document.querySelector(".d2-dialog")';
   try {
     await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    await waitForWorkbenchQueue(win.webContents);
     await js(
       `(()=>{const load=window.electronAPI.loadReview;window.electronAPI.loadReview=async(...args)=>{const review=await load(...args);const diagram=${JSON.stringify(D2_EXAMPLES[0].diagram)};const h=review.slides[0].diffHunks[0];diagram.steps[0].evidence={filePath:h.filePath,startLine:parseInt(h.hunkHeader.split('+')[1])};return {...review,slides:[{...review.slides[0],title:'Architecture with annotations',d2Diagram:diagram,mermaidDiagram:null}]};};})()`
     );

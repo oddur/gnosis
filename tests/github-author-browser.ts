@@ -1,3 +1,4 @@
+import { waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -33,7 +34,7 @@ void app.whenReady().then(async () => {
     win.webContents.debugger.attach('1.3');
     await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
     win.webContents.setZoomFactor(1);
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    await waitForWorkbenchQueue(win.webContents);
     await js(
       `(()=>{window.profileCalls=0;window.openedProfiles=[];window.copiedValues=[];Object.defineProperty(navigator.clipboard,'writeText',{configurable:true,value:async text=>{window.copiedValues.push(text)}});const load=window.electronAPI.getGitHubProfile;window.electronAPI.getGitHubProfile=(login)=>{window.profileCalls++;return new Promise(resolve=>{window.resolveProfile=()=>resolve(load(login))})};window.electronAPI.openExternal=(url)=>{window.openedProfiles.push(url);return Promise.resolve()}})()`
     );

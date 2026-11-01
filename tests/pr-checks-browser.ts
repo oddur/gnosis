@@ -1,3 +1,4 @@
+import { waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -131,7 +132,7 @@ void app.whenReady().then(async () => {
     // Queue checks shortcut preserves the stack and its source groups.
     await win.loadURL(url + '?checks');
     await js("void Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })");
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    await waitForWorkbenchQueue(win.webContents);
     await js(
       "document.querySelector('.queue-stack-icon').closest('.queue-item').querySelector('.queue-checks').click()"
     );

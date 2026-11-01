@@ -1,3 +1,4 @@
+import { waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -15,7 +16,7 @@ void app.whenReady().then(async () => {
     await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&unread&checks`);
     win.webContents.debugger.attach('1.3');
     await win.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    await waitForWorkbenchQueue(win.webContents);
     await js(`window.starts=[];window.reads=[];const original=window.electronAPI.workbenchMarkPrRead;window.electronAPI.workbenchMarkPrRead=r=>{window.reads.push(r);return original(r)};window.electronAPI.startReview=async r=>{window.starts.push(r);return {reviewId:'single-pr'}};void 0`);
     await js(`(()=>{const checks=window.electronAPI.getPrChecks;window.electronAPI.getPrChecks=async(r,o)=>{if(r.url.endsWith('/122'))throw Error('Checks temporarily unavailable');const result=await checks(r,o);return r.url.endsWith('/120')?{...result,checks:[]}:result;};})()`);
     const stack = await js<string>("(async()=>(await window.electronAPI.workbenchQueue()).items.find(i=>i.subject.kind==='stack').subject.id)()");

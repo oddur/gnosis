@@ -1,3 +1,4 @@
+import { waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -51,7 +52,7 @@ void app.whenReady().then(async () => {
     await capture('startup-recovery');
     await js("sessionStorage.setItem('fixture-startup-recovered','true')");
     await click('Retry loading Gnosis');
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    await waitForWorkbenchQueue(win.webContents);
     await js("document.querySelector('.queue-row-main').click()");
     assert.equal(await js("!!document.querySelector('.workbench-header')"), true);
     // A newer notification wins even if its older load finishes last.

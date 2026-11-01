@@ -1,3 +1,4 @@
+import { waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 void app.whenReady().then(async () => {
@@ -27,7 +28,7 @@ void app.whenReady().then(async () => {
     window.webContents.debugger.attach('1.3');
     await window.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', {width:1280,height:800,deviceScaleFactor:1,mobile:false});
     await window.webContents.debugger.sendCommand('Emulation.setCPUThrottlingRate', {rate:6});
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    await waitForWorkbenchQueue(window.webContents);
     // Exercise the cache-hit path: background preparation may finish before spies attach.
     await js(`(async()=>{
       window.inspection=await import('/lib/inspection-cache.ts');

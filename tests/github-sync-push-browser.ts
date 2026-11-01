@@ -1,3 +1,4 @@
+import { waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 void app.whenReady().then(async () => {
@@ -26,7 +27,7 @@ void app.whenReady().then(async () => {
   };
   try {
     await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary&file-filters&checks&github-sync`);
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    await waitForWorkbenchQueue(win.webContents);
     await wait('window.syncFixture.subscriptions.size>0');
     const before = await js<{ queue: number; activity: number }>('({...window.syncFixture.counts})');
     await new Promise((resolve) => setTimeout(resolve, 4500));

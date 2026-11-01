@@ -1,3 +1,4 @@
+import { waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -44,7 +45,7 @@ void app.whenReady().then(async () => {
     win.show();
     win.focus();
     await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    await waitForWorkbenchQueue(win.webContents);
     await js(`(async()=>{
       window.savedPrefs=structuredClone(await window.electronAPI.loadPreferences());
       window.saveFails=false;window.saves=0;

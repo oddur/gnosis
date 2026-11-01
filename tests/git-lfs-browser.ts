@@ -1,3 +1,4 @@
+import { waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -40,7 +41,7 @@ void app.whenReady().then(async () => {
     assert.ok(url);
     await win.loadURL(url + '?pr-summary');
     win.webContents.setZoomFactor(1);
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    await waitForWorkbenchQueue(win.webContents);
     await js(`(async()=>{
       const cache=await import('/lib/inspection-cache.ts'); await cache.inspectionData.flush();
       window.lfsCalls=[];window.lfsFailures=0;

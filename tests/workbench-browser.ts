@@ -1,3 +1,4 @@
+import { waitForWorkbenchQueue } from './workbench-ready';
 import { contrastRatio } from '../lib/code-contrast';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
@@ -48,7 +49,7 @@ void app.whenReady().then(async () => {
     await window.loadURL(fixtureUrl);
     window.webContents.debugger.attach('1.3');
     await window.webContents.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true });
-    await wait("document.querySelectorAll('.queue-item').length === 7");
+    await waitForWorkbenchQueue(window.webContents);
     assert.equal(await js(`document.fonts.load('650 22px "Plus Jakarta Sans"').then(f=>f.length)`), 1);
     assert.equal(await js(`document.fonts.load('400 13px "JetBrains Mono"').then(f=>f.length)`), 1);
     assert.equal(

@@ -1,3 +1,4 @@
+import { waitForWorkbenchQueue } from './workbench-ready';
 import { QUEUE_SCENE } from './fixtures/mechanism-examples';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
@@ -146,7 +147,7 @@ void app.whenReady().then(async () => {
     assert.deepEqual(await geometry(), []);
     win.webContents.debugger.detach();
     await win.loadURL(`${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    await waitForWorkbenchQueue(win.webContents);
     await js(
       `(()=>{const load=window.electronAPI.loadReview;window.electronAPI.loadReview=async(...args)=>{const review=await load(...args);const scene=${JSON.stringify(QUEUE_SCENE)};const h=review.slides[0].diffHunks[0];for(const scenario of scene.scenarios)for(const event of scenario.events)event.evidence={filePath:h.filePath,startLine:parseInt(h.hunkHeader.split('+')[1])};return {...review,slides:[{...review.slides[0],title:'Keep queue order',mechanism:scene,d2Diagram:null,mermaidDiagram:null}]};};})()`
     );

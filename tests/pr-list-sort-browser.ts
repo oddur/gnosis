@@ -1,3 +1,4 @@
+import { waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
@@ -27,7 +28,7 @@ void app.whenReady().then(async () => {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     if (!url) throw Error('Missing fixture URL');
     await win.loadURL(url);
-    await wait("document.querySelectorAll('.queue-item').length===7");
+    await waitForWorkbenchQueue(win.webContents);
     assert.ok(await js("!!document.querySelector('[aria-label=\"Sort: Priority\"]')"));
     await js("document.querySelector('[aria-label=\"Sort: Priority\"]').click()");
     await js(`(()=>{const b=document.querySelector('#pr-sort-key');b.focus();
