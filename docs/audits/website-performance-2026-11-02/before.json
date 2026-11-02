@@ -1,0 +1,404 @@
+{
+  "environment": {
+    "browser": "146.0.7680.188",
+    "platform": "darwin",
+    "device": "Desktop Electron, mobile viewport simulation",
+    "network": "Mobile: 1.6 Mbps down, 750 Kbps up, 150ms latency; gzip HTML/CSS/JS/SVG/TTF; cold cache; analytics blocked",
+    "cpu": "Mobile 4x CPU slowdown",
+    "note": "Lab observations, not field Core Web Vitals. Event Timing values below 16ms are not reported."
+  },
+  "runs": [
+    {
+      "profile": "desktop",
+      "attempt": 1,
+      "initial": {
+        "lcp": 60,
+        "cls": 0,
+        "longTasks": [],
+        "events": [],
+        "fcp": 60,
+        "resources": [
+          {
+            "url": "/_astro/changelog.BbTDFX89.css",
+            "bytes": 6716,
+            "type": "link",
+            "duration": 8.099999964237213
+          },
+          {
+            "url": "/fonts/onest-variable.ttf",
+            "bytes": 108245,
+            "type": "link",
+            "duration": 8.399999976158142
+          },
+          {
+            "url": "/api/v0/event",
+            "bytes": 0,
+            "type": "fetch",
+            "duration": 0.19999998807907104
+          },
+          {
+            "url": "/screenshots/review-queue.webp",
+            "bytes": 112680,
+            "type": "img",
+            "duration": 2.699999988079071
+          }
+        ],
+        "documentBytes": 10669,
+        "bytes": 238310
+      },
+      "tour": {
+        "images": [
+          {
+            "url": "/screenshots/review-queue.webp",
+            "bytes": 112680
+          },
+          {
+            "url": "/screenshots/guided-review.webp",
+            "bytes": 115444
+          },
+          {
+            "url": "/screenshots/stack-overview.webp",
+            "bytes": 83596
+          }
+        ],
+        "events": [
+          32,
+          32,
+          32,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24
+        ],
+        "longTasks": []
+      }
+    },
+    {
+      "profile": "desktop",
+      "attempt": 2,
+      "initial": {
+        "lcp": 44,
+        "cls": 0,
+        "longTasks": [],
+        "events": [],
+        "fcp": 44,
+        "resources": [
+          {
+            "url": "/fonts/onest-variable.ttf",
+            "bytes": 108245,
+            "type": "link",
+            "duration": 9.099999964237213
+          },
+          {
+            "url": "/_astro/changelog.BbTDFX89.css",
+            "bytes": 6716,
+            "type": "link",
+            "duration": 3.600000023841858
+          },
+          {
+            "url": "/api/v0/event",
+            "bytes": 0,
+            "type": "fetch",
+            "duration": 0.09999996423721313
+          },
+          {
+            "url": "/screenshots/review-queue.webp",
+            "bytes": 112680,
+            "type": "img",
+            "duration": 2.400000035762787
+          }
+        ],
+        "documentBytes": 10669,
+        "bytes": 238310
+      },
+      "tour": {
+        "images": [
+          {
+            "url": "/screenshots/review-queue.webp",
+            "bytes": 112680
+          },
+          {
+            "url": "/screenshots/guided-review.webp",
+            "bytes": 115444
+          },
+          {
+            "url": "/screenshots/stack-overview.webp",
+            "bytes": 83596
+          }
+        ],
+        "events": [
+          40,
+          40,
+          40,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24
+        ],
+        "longTasks": []
+      }
+    },
+    {
+      "profile": "desktop",
+      "attempt": 3,
+      "initial": {
+        "lcp": 56,
+        "cls": 0,
+        "longTasks": [],
+        "events": [],
+        "fcp": 56,
+        "resources": [
+          {
+            "url": "/fonts/onest-variable.ttf",
+            "bytes": 108245,
+            "type": "link",
+            "duration": 10.199999988079071
+          },
+          {
+            "url": "/_astro/changelog.BbTDFX89.css",
+            "bytes": 6716,
+            "type": "link",
+            "duration": 4.800000011920929
+          },
+          {
+            "url": "/api/v0/event",
+            "bytes": 0,
+            "type": "fetch",
+            "duration": 0.19999998807907104
+          },
+          {
+            "url": "/screenshots/review-queue.webp",
+            "bytes": 112680,
+            "type": "img",
+            "duration": 2.100000023841858
+          }
+        ],
+        "documentBytes": 10669,
+        "bytes": 238310
+      },
+      "tour": {
+        "images": [
+          {
+            "url": "/screenshots/review-queue.webp",
+            "bytes": 112680
+          },
+          {
+            "url": "/screenshots/guided-review.webp",
+            "bytes": 115444
+          },
+          {
+            "url": "/screenshots/stack-overview.webp",
+            "bytes": 83596
+          }
+        ],
+        "events": [
+          40,
+          40,
+          40,
+          32,
+          32,
+          24,
+          24,
+          24,
+          24
+        ],
+        "longTasks": []
+      }
+    },
+    {
+      "profile": "mobile-slow",
+      "attempt": 1,
+      "initial": {
+        "lcp": 580,
+        "cls": 0.037632116779808315,
+        "longTasks": [
+          60
+        ],
+        "events": [],
+        "fcp": 580,
+        "resources": [
+          {
+            "url": "/fonts/onest-variable.ttf",
+            "bytes": 108245,
+            "type": "link",
+            "duration": 736.5
+          },
+          {
+            "url": "/_astro/changelog.BbTDFX89.css",
+            "bytes": 6716,
+            "type": "link",
+            "duration": 225.4000000357628
+          },
+          {
+            "url": "/api/v0/event",
+            "bytes": 0,
+            "type": "fetch",
+            "duration": 0.19999998807907104
+          }
+        ],
+        "documentBytes": 10669,
+        "bytes": 125630
+      },
+      "tour": {
+        "images": [
+          {
+            "url": "/screenshots/review-queue-small.webp",
+            "bytes": 54294
+          },
+          {
+            "url": "/screenshots/stack-overview-small.webp",
+            "bytes": 38790
+          },
+          {
+            "url": "/screenshots/guided-review-small.webp",
+            "bytes": 54692
+          }
+        ],
+        "events": [
+          24,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24
+        ],
+        "longTasks": [
+          60
+        ]
+      }
+    },
+    {
+      "profile": "mobile-slow",
+      "attempt": 2,
+      "initial": {
+        "lcp": 544,
+        "cls": 0.037632116779808315,
+        "longTasks": [],
+        "events": [],
+        "fcp": 544,
+        "resources": [
+          {
+            "url": "/fonts/onest-variable.ttf",
+            "bytes": 108245,
+            "type": "link",
+            "duration": 737.0999999642372
+          },
+          {
+            "url": "/_astro/changelog.BbTDFX89.css",
+            "bytes": 6716,
+            "type": "link",
+            "duration": 225.60000002384186
+          },
+          {
+            "url": "/api/v0/event",
+            "bytes": 0,
+            "type": "fetch",
+            "duration": 0.19999998807907104
+          }
+        ],
+        "documentBytes": 10669,
+        "bytes": 125630
+      },
+      "tour": {
+        "images": [
+          {
+            "url": "/screenshots/review-queue-small.webp",
+            "bytes": 54294
+          },
+          {
+            "url": "/screenshots/stack-overview-small.webp",
+            "bytes": 38790
+          },
+          {
+            "url": "/screenshots/guided-review-small.webp",
+            "bytes": 54692
+          }
+        ],
+        "events": [
+          24,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24
+        ],
+        "longTasks": []
+      }
+    },
+    {
+      "profile": "mobile-slow",
+      "attempt": 3,
+      "initial": {
+        "lcp": 532,
+        "cls": 0.037632116779808315,
+        "longTasks": [],
+        "events": [],
+        "fcp": 532,
+        "resources": [
+          {
+            "url": "/fonts/onest-variable.ttf",
+            "bytes": 108245,
+            "type": "link",
+            "duration": 733.8999999761581
+          },
+          {
+            "url": "/_astro/changelog.BbTDFX89.css",
+            "bytes": 6716,
+            "type": "link",
+            "duration": 223.5999999642372
+          },
+          {
+            "url": "/api/v0/event",
+            "bytes": 0,
+            "type": "fetch",
+            "duration": 0.10000002384185791
+          }
+        ],
+        "documentBytes": 10669,
+        "bytes": 125630
+      },
+      "tour": {
+        "images": [
+          {
+            "url": "/screenshots/review-queue-small.webp",
+            "bytes": 54294
+          },
+          {
+            "url": "/screenshots/guided-review-small.webp",
+            "bytes": 54692
+          },
+          {
+            "url": "/screenshots/stack-overview-small.webp",
+            "bytes": 38790
+          }
+        ],
+        "events": [
+          32,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24,
+          24
+        ],
+        "longTasks": []
+      }
+    }
+  ]
+}

@@ -38,3 +38,7 @@ The user explicitly rejected a corporate/SaaS sales tone. Keep the existing lave
 ## Interactive example refinement
 
 User approved replacing the simple queue example with a subtle review issue: `return worker.run()` inside try/finally releases a semaphore slot before the returned promise settles. The fix is `return await worker.run()`. Preserve the three-PR hierarchy with static foundation and regression-test context around the interactive fix. Show Before/After together, retain command identity A/B, and use five synchronized stages with explicit slot ownership, active-worker count, and peak count. Put playback before the illustration so controls are visible on laptops. Show a real red/green code diff with execution markers. Browser tests must reproduce the JavaScript semantics independently of the frame data.
+
+## Performance refinement
+
+Measured optimization preserves the visual design and interaction model. Serve Onest as a preloaded Latin/common-symbol WOFF2 subset with extended glyphs on demand. Preserve all original glyph mappings, metrics, and variable weights; keep source and regeneration instructions. Record repeatable cold-cache measurements in docs/audits/website-performance-2026-11-02.md. Do not add speculative rendering or image optimizations when the measurements show existing behavior is adequate.

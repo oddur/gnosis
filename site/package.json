@@ -8,7 +8,8 @@
     "build": "astro check && astro build",
     "preview": "astro preview",
     "test:browser": "node scripts/test-browser.mjs",
-    "format": "prettier --plugin prettier-plugin-astro --write \"src/**/*.{astro,css,ts}\" \"scripts/*.mjs\""
+    "format": "prettier --plugin prettier-plugin-astro --write \"src/**/*.{astro,css,ts}\" \"scripts/*.mjs\"",
+    "test:performance": "node scripts/test-browser.mjs --performance"
   },
   "dependencies": {
     "@aptabase/web": "^0.5.0",

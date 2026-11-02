@@ -213,7 +213,7 @@ The sidecar includes derived OKLCH ramps for color inspection. These ramps are p
 
 ## Typography
 
-**Display and body font:** Onest, with UI sans-serif and system fallbacks. The website serves the variable font locally with weights from 100 to 900.
+**Display and body font:** Onest, with UI sans-serif and system fallbacks. The website serves the variable font locally with weights from 100 to 900. A preloaded WOFF2 subset contains Latin and common UI symbols; a second subset loads only for extended characters. Both preserve the original font metrics and glyph coverage.
 
 **Source font:** SFMono-Regular, Consolas, Liberation Mono, then monospace. File labels use the generic monospace family.
 

@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import electron from 'electron';
 import { fileURLToPath, URL } from 'node:url';
 import process from 'node:process';
+import { gzipSync } from 'node:zlib';
 import { setTimeout, clearTimeout } from 'node:timers';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dist = path.join(root, 'dist');
@@ -16,6 +17,7 @@ const mime = {
   '.webp': 'image/webp',
   '.svg': 'image/svg+xml',
   '.ttf': 'font/ttf',
+  '.woff2': 'font/woff2',
 };
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
@@ -32,13 +34,29 @@ const server = http.createServer((req, res) => {
     return;
   }
   res.setHeader('Content-Type', mime[path.extname(file)] ?? 'application/octet-stream');
-  fs.createReadStream(file).pipe(res);
+  if (
+    process.argv.includes('--performance') &&
+    /\.(html|css|js|svg|ttf)$/.test(file) &&
+    req.headers['accept-encoding']?.includes('gzip')
+  ) {
+    res.setHeader('Content-Encoding', 'gzip');
+    res.end(gzipSync(fs.readFileSync(file)));
+  } else fs.createReadStream(file).pipe(res);
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 const env = { ...process.env, GNOSIS_SITE_URL: `http://127.0.0.1:${server.address().port}`, GNOSIS_SITE_ROOT: root };
 delete env.ELECTRON_RUN_AS_NODE;
 try {
-  const child = spawn(electron, [path.join(root, 'scripts/browser-check.mjs')], { env, stdio: 'inherit' });
+  const child = spawn(
+    electron,
+    [
+      path.join(
+        root,
+        process.argv.includes('--performance') ? 'scripts/measure-performance.mjs' : 'scripts/browser-check.mjs'
+      ),
+    ],
+    { env, stdio: 'inherit' }
+  );
   const timeout = setTimeout(() => child.kill(), 180_000);
   const code = await new Promise((resolve, reject) => {
     child.on('error', reject);

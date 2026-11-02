@@ -69,6 +69,21 @@ app
     };
     try {
       await load();
+      assert.equal(
+        await js("performance.getEntriesByType('resource').some(e=>e.name.endsWith('/onest-latin.woff2'))"),
+        true
+      );
+      assert.equal(
+        await js("performance.getEntriesByType('resource').some(e=>e.name.endsWith('/onest-extended.woff2'))"),
+        false,
+        'English page must not fetch the extended font'
+      );
+      await js("document.fonts.load('400 20px Onest', 'Český Привет')");
+      assert.equal(
+        await js("performance.getEntriesByType('resource').some(e=>e.name.endsWith('/onest-extended.woff2'))"),
+        true,
+        'Extended characters load their subset when requested'
+      );
       assert.equal(await js("document.querySelectorAll('[data-pr][open]').length"), 1);
       assert.equal(await js("document.querySelector('[data-pr][open]').dataset.pr"), '1');
       assert.equal(await current(), '1 / 5');
