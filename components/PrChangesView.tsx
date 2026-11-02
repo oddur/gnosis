@@ -22,6 +22,7 @@ import {
 } from '../lib/inspection-cache';
 import { ChevronDown, ChevronRight, PanelLeft, RefreshCw } from 'lucide-react';
 import { ChangesFileTree } from './ChangesFileTree';
+import { inTreeOrder } from '../lib/tree-file-order';
 import { ChangesFileResize } from './ChangesFileResize';
 import { DiffAppearanceMenu } from './DiffAppearanceMenu';
 import { useChangesComments } from './useChangesComments';
@@ -239,16 +240,17 @@ export function PrChangesView({
   }, [revision]);
   const entries = useMemo<Entry[]>(
     () =>
-      snapshots.flatMap((snapshot) => {
-        const index = subject.members.findIndex(member => member.url === snapshot.url);
-        const prefix =
-          subject.kind === 'stack' && !commit && !combined
-            ? `${String(index + 1).padStart(2, '0')} · ${snapshot.metadata.baseRepo?.replace('/', ' · ') ?? 'PR'} #${snapshot.url.split('/').pop()}/`
-            : '';
-        return [...snapshot.files]
-          .sort((a, b) => a.path.localeCompare(b.path))
-          .map((file) => ({ key: prefix + file.path, snapshot, file }));
-      }),
+      inTreeOrder(
+        snapshots.flatMap((snapshot) => {
+          const index = subject.members.findIndex(member => member.url === snapshot.url);
+          const prefix =
+            subject.kind === 'stack' && !commit && !combined
+              ? `${String(index + 1).padStart(2, '0')} · ${snapshot.metadata.baseRepo?.replace('/', ' · ') ?? 'PR'} #${snapshot.url.split('/').pop()}/`
+              : '';
+          return snapshot.files.map((file) => ({ key: prefix + file.path, snapshot, file }));
+        }),
+        (entry) => entry.key
+      ),
     [snapshots, subject.kind, !!commit, !!combined]
   );
   const incomplete = snapshots.some(s => s.filesTruncated) || loadErrors.length > 0 ||
