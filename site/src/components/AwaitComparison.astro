@@ -1,0 +1,62 @@
+---
+import { awaitFrames } from '../lib/demo';
+const first = awaitFrames[0];
+---
+
+<div class="await-comparison">
+  <p class="comparison-limit">
+    Concurrency limit: <strong>1 active command</strong>
+  </p>
+  {(['before', 'after'] as const).map((side) => (
+    <div class="comparison-lane" data-lane={side}>
+      <div class="lane-heading">
+        <h4>{side === 'before' ? 'Before · without await' : 'After · with await'}</h4>
+        <span class="active-count" data-active-count>
+          {first[side].active} active
+        </span>
+      </div>
+      <svg
+        class="await-figure"
+        viewBox="0 0 560 98"
+        role="img"
+        aria-labelledby={`await-title-${side} await-desc-${side}`}
+      >
+        <title
+          id={`await-title-${side}`}
+        >{side === 'before' ? 'Before the fix' : 'After the fix'}: {first.title}</title>
+        <desc id={`await-desc-${side}`}>A is running. B is waiting. The only slot is held by A.</desc>
+        <rect class="running-region" x="200" y="32" width="150" height="60" rx="6" />
+        <text class="diagram-label" x="70" y="20" text-anchor="middle">
+          Waiting
+        </text>
+        <text class="diagram-label" x="275" y="20" text-anchor="middle">
+          Running
+        </text>
+        <text class="diagram-label" x="475" y="20" text-anchor="middle">
+          Done
+        </text>
+        <path class="diagram-arrow" d="M145 62h35m-6-5 6 5-6 5M370 62h35m-6-5 6 5-6 5" />
+        {['A', 'B'].map((letter, index) => (
+          <g
+            class={`command command-${index}`}
+            data-command
+            style={`transform:translate(${first[side].positions[index]}px,62px)`}
+          >
+            <rect x="-20" y="-20" width="40" height="40" rx="6" />
+            <text y="6" text-anchor="middle">
+              {letter}
+            </text>
+          </g>
+        ))}
+      </svg>
+      <div class="lane-facts">
+        <span>
+          Slot: <span data-slot>{first[side].slot}</span>
+        </span>
+        <span>
+          Peak: <strong data-peak>1</strong> active
+        </span>
+      </div>
+    </div>
+  ))}
+</div>
