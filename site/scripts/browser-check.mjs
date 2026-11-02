@@ -133,6 +133,51 @@ app
       await click('#copy-brew');
       assert.match(await js("document.querySelector('#copy-status').textContent"), /copy it manually/);
       await load();
+      const featureIds = ['stacks', 'changes', 'markdown', 'chat', 'checks', 'conflicts'];
+      const captureTour = async (name) => {
+        await js("document.querySelector('#features').scrollIntoView()");
+        await pause(100);
+        const clip = await js(
+          "(()=>{const r=document.querySelector('#features').getBoundingClientRect();return {x:0,y:r.top+scrollY,width:innerWidth,height:r.height,scale:1}})()"
+        );
+        const shot = await win.webContents.debugger.sendCommand('Page.captureScreenshot', {
+          format: 'png',
+          captureBeyondViewport: true,
+          clip,
+        });
+        fs.writeFileSync(path.join(shots, name + '.png'), Buffer.from(shot.data, 'base64'));
+      };
+      let firstPanelHeight;
+      for (const id of featureIds) {
+        await click(`[data-feature-tab="${id}"]`);
+        assert.equal(
+          await js(`document.querySelector('[data-feature-tab="${id}"]').getAttribute('aria-selected')`),
+          'true'
+        );
+        assert.equal(await js("document.querySelectorAll('[data-feature-panel]:not([hidden])').length"), 1);
+        assert.equal(await js(`document.querySelector('#feature-${id} img').naturalWidth > 0`), true);
+        const panelHeight = await js("document.querySelector('#features').getBoundingClientRect().height");
+        if (firstPanelHeight === undefined) firstPanelHeight = panelHeight;
+        assert.ok(
+          Math.abs(panelHeight - firstPanelHeight) < 2,
+          'Desktop feature panels must not shift following sections'
+        );
+        await noOverflow();
+        await audit('feature-' + id);
+        await captureTour('feature-' + id);
+      }
+      await js("document.querySelector('[data-feature-tab=conflicts]').focus()");
+      for (const [key, expected] of [
+        ['ArrowRight', 'stacks'],
+        ['End', 'conflicts'],
+        ['Home', 'stacks'],
+        ['ArrowLeft', 'conflicts'],
+      ]) {
+        await win.webContents.debugger.sendCommand('Input.dispatchKeyEvent', { type: 'keyDown', key, code: key });
+        assert.equal(await js('document.activeElement.dataset.featureTab'), expected);
+        assert.equal(await js('document.activeElement.getAttribute("aria-selected")'), 'true');
+      }
+      await click('[data-feature-tab="stacks"]');
       await noOverflow();
       await audit('desktop');
       await capture('desktop');
@@ -156,6 +201,12 @@ app
       await noOverflow();
       await audit('mobile');
       await capture('mobile');
+      for (const id of featureIds) {
+        await click(`[data-feature-tab="${id}"]`);
+        await noOverflow();
+        await captureTour('feature-mobile-' + id);
+      }
+      await click('[data-feature-tab="stacks"]');
       await click('[data-pr="2"] summary');
       await click('[data-pr="2"] [data-next]');
       await noOverflow();
@@ -183,6 +234,18 @@ app
       assert.equal(await js('document.querySelector(\'[data-pr="1"] [data-controls]\').hidden'), true);
       assert.ok(
         await js("document.querySelector('[data-pr=\"1\"] .source-line').textContent.includes('queue.take(2)')")
+      );
+      assert.equal(
+        await js("document.querySelectorAll('[data-feature-panel]:not([hidden])').length"),
+        6,
+        'All features remain available without scripts'
+      );
+      await load('/changelog/');
+      await load('/#feature-checks');
+      assert.equal(
+        await js("document.querySelector('[data-feature-tab=checks]').getAttribute('aria-selected')"),
+        'true',
+        'Deep links select their feature'
       );
       assert.deepEqual(errors, [], 'No browser errors');
       console.log(

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-02T21:06:11.043218+00:00",
+  "generatedAt": "2026-11-02T21:17:27.048259+00:00",
   "title": "Design System: Gnosis website",
   "extensions": {
     "colorMeta": {
@@ -253,6 +253,14 @@
       "source": {
         "displayName": "Source",
         "purpose": "Code in the demonstration."
+      },
+      "feature-title": {
+        "displayName": "Feature title",
+        "purpose": "Heading within a feature tour panel."
+      },
+      "daily-title": {
+        "displayName": "Daily feature term",
+        "purpose": "Term in the compact capability definition list."
       }
     },
     "shadows": [],
@@ -379,6 +387,14 @@
       "description": "Selectable monospace text and a copy control share one bordered container.",
       "html": "<div class=\"ds-command\"><code>brew tap oddur/gnosis &amp;&amp; brew install --cask gnosis</code><button class=\"ds-icon\" type=\"button\" aria-label=\"Copy Homebrew install command\"><svg width=\"19\" height=\"19\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M9 9h12v12H9z\"/><path d=\"M15 9V3H3v12h6\"/></svg></button></div>",
       "css": ".ds-icon{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:36px;min-height:36px;border:0;background:transparent;border-radius:6px;color:var(--blue,#213b8e);font:400 13px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;cursor:pointer;}.ds-icon:hover:not(:disabled){background:#dce7ff;}.ds-icon:focus-visible{outline:3px solid #3865df;outline-offset:5px;}.ds-icon:disabled{opacity:.4;cursor:default;}.ds-command{background:var(--paper,#fff);color:var(--ink,#1e2537);border:1px solid #b7c5df;border-radius:8px;padding:14px 14px 14px 18px;display:flex;align-items:center;gap:14px;}.ds-command code{font:400 12px/1.55 'SFMono-Regular',Consolas,'Liberation Mono',monospace;font-variant-ligatures:none;overflow-wrap:anywhere;user-select:all;flex:1;}@media(max-width:760px){.ds-command{padding:12px;}}"
+    },
+    {
+      "name": "Feature navigation",
+      "kind": "nav",
+      "refersTo": "feature-tab",
+      "description": "Six feature links with selected underline and weight. This snippet shows the enhanced visual state; the source script supplies keyboard selection and panel switching.",
+      "html": "<nav class=\"ds-feature-tabs\" aria-label=\"Explore features\" role=\"tablist\"><a href=\"#feature-stacks\" role=\"tab\" aria-selected=\"true\" tabindex=\"0\">Stacks</a><a href=\"#feature-changes\" role=\"tab\" aria-selected=\"false\" tabindex=\"-1\">Diffs &amp; commits</a><a href=\"#feature-markdown\" role=\"tab\" aria-selected=\"false\" tabindex=\"-1\">Markdown</a><a href=\"#feature-chat\" role=\"tab\" aria-selected=\"false\" tabindex=\"-1\">Ask questions</a><a href=\"#feature-checks\" role=\"tab\" aria-selected=\"false\" tabindex=\"-1\">Checks</a><a href=\"#feature-conflicts\" role=\"tab\" aria-selected=\"false\" tabindex=\"-1\">Resolve conflicts</a></nav>",
+      "css": ".ds-feature-tabs{display:flex;flex-wrap:wrap;gap:4px 20px;border-bottom:1px solid var(--line,#bdc9e1);font:400 16px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;}.ds-feature-tabs a{padding:14px 6px;font-size:15px;color:var(--muted,#52617e);border-bottom:2px solid transparent;text-decoration:none;}.ds-feature-tabs a:hover{color:var(--blue,#213b8e);background:var(--canvas,#e8edf9);}.ds-feature-tabs a[aria-selected=\"true\"]{color:var(--blue,#213b8e);border-bottom-color:var(--blue,#213b8e);font-weight:600;}.ds-feature-tabs a:focus-visible{outline:3px solid #3865df;outline-offset:5px;}@media(max-width:760px){.ds-feature-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;}.ds-feature-tabs a{font-size:12px;text-align:center;padding:12px 2px;min-height:44px;}}"
     }
   ],
   "narrative": {
@@ -397,7 +413,9 @@
       "**Do** connect explanations to visible source evidence.",
       "**Do** keep screenshot captions and sample context explicit.",
       "**Do** preserve keyboard focus, meaningful text labels, and manual playback controls.",
-      "**Do** keep installation and release fallbacks actionable."
+      "**Do** keep installation and release fallbacks actionable.",
+      "**Do** keep feature content accessible without JavaScript.",
+      "**Do** preserve full screenshots inside the stable feature frame."
     ],
     "donts": [
       "**Don't** import desktop application styling into website controls.",

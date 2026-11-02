@@ -19,6 +19,7 @@ The browser check also requires the root repository's dependencies (`npm ci` at 
 ## Content and design
 
 - `src/components/StackDemo.astro` and `src/lib/demo.ts` define the sample stack. `src/scripts/stack-demo.ts` handles playback. Preserve command identity and queue order across frames.
+- `src/components/FeatureTour.astro` contains the six-workflow product tour. `src/scripts/feature-tour.ts` adds keyboard-accessible tabs; without scripts, each feature is a linked section. Keep the selected panel at a stable desktop height and show full screenshots without cropping.
 - `src/lib/releases.ts` fetches releases once during the build. The changelog and download links use the same result. Set `GITHUB_TOKEN` for authenticated builds. If GitHub is unavailable, the site links to releases instead.
 - Fonts are served locally. Onest's license is in `public/fonts/`.
 - `DESIGN.md` and `.impeccable/design.json` describe the website system. The root design documents describe the desktop app.
@@ -27,3 +28,5 @@ The browser check also requires the root repository's dependencies (`npm ci` at 
 ## Deployment
 
 `.github/workflows/site.yml` builds and deploys to GitHub Pages when `site/**` changes on `main`, when a release is published, or on manual dispatch. `public/CNAME` preserves `gnosis.to`. The build fetches release notes; visitors do not call the GitHub API.
+
+The feature tour adds captures from `--stack-hierarchy`, `--changes`, `--markdown-review`, and `--checks`, and `--conflict-resolution` runs of `scripts/test-workbench.mjs`. Chat uses `chat-reading-light` from the default run. Each asset sidecar identifies its exact source capture. Browser checks cover every feature panel, keyboard selection, deep links, no-JavaScript fallbacks, responsive layout, and accessibility.

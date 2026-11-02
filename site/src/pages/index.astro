@@ -1,6 +1,7 @@
 ---
 import Base from '../layouts/Base.astro';
 import StackDemo from '../components/StackDemo.astro';
+import FeatureTour from '../components/FeatureTour.astro';
 import ProductShot from '../components/ProductShot.astro';
 import Icon from '../components/Icon.astro';
 import { getReleases, releasesUrl } from '../lib/releases';
@@ -84,6 +85,65 @@ const brewCommand = 'brew tap oddur/gnosis && brew install --cask gnosis';
           Try the explanation above <Icon name="arrow" size={18} />
         </a>
       </div>
+    </section>
+
+    <FeatureTour />
+
+    <section class="daily-section frame" aria-labelledby="daily-title">
+      <div class="section-intro">
+        <h2 id="daily-title">
+          The small things.
+          <br />
+          Every review, every day.
+        </h2>
+        <div>
+          <p>Keep the queue relevant, the noise out of your diff, and your place when you come back.</p>
+        </div>
+      </div>
+      <dl class="daily-features">
+        <div>
+          <dt>A queue that fits your work</dt>
+          <dd>
+            Save views by repository, author, labels, read status, or target branch—including patterns such as{' '}
+            <code>release/*</code>.
+          </dd>
+        </div>
+        <div>
+          <dt>Less noise to sift through</dt>
+          <dd>
+            Mute PRs, star the ones to revisit, and set repository rules for Dependabot, inactivity, and automatic
+            briefings.
+          </dd>
+        </div>
+        <div>
+          <dt>Jump there with ⌘K</dt>
+          <dd>
+            Search locally available PRs, files, and saved explanations. Use recent destinations to get back to a
+            review.
+          </dd>
+        </div>
+        <div>
+          <dt>Feedback where it belongs</dt>
+          <dd>
+            Read GitHub threads inline. Draft comments with a Markdown preview, then submit them with your review
+            decision.
+          </dd>
+        </div>
+        <div>
+          <dt>More than text files</dt>
+          <dd>
+            Compare images and SVGs, recognize moved files, and download Git LFS resources when you need to inspect
+            them.
+          </dd>
+        </div>
+        <div>
+          <dt>Your place, remembered</dt>
+          <dd>
+            Keep viewed-file progress and saved explanations. Background preloading puts GitHub content in the local
+            cache ahead of your next visit.
+          </dd>
+        </div>
+      </dl>
     </section>
 
     <section class="setup-section" aria-labelledby="setup-title">

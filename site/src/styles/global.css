@@ -1225,3 +1225,131 @@ code {
     margin-bottom: 0;
   }
 }
+
+.feature-tour {
+  padding-block: 72px;
+  background: var(--surface);
+}
+.feature-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.feature-tabs a {
+  padding: 14px 6px;
+  font-size: 15px;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+  text-decoration: none;
+}
+.feature-tabs a:hover {
+  color: var(--blue);
+  background: var(--canvas);
+}
+.feature-tabs a[aria-selected='true'] {
+  color: var(--blue);
+  border-bottom-color: var(--blue);
+  font-weight: 600;
+}
+.feature-panel {
+  padding-top: 32px;
+  scroll-margin-top: 24px;
+}
+.feature-panel[hidden] {
+  display: none;
+}
+.feature-description {
+  display: grid;
+  grid-template-columns: 1fr 0.6fr;
+  gap: 48px;
+  align-items: center;
+  min-height: 156px;
+  padding-bottom: 28px;
+}
+.feature-description h3 {
+  font-size: 26px;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  margin-bottom: 12px;
+}
+.feature-description p {
+  color: var(--muted);
+  max-width: 66ch;
+  line-height: 1.65;
+}
+.feature-description ul {
+  list-style: disc;
+  padding-left: 20px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.feature-description li + li {
+  margin-top: 8px;
+}
+.feature-tour[data-enhanced] .product-shot > a {
+  aspect-ratio: 8 / 5;
+}
+.feature-tour[data-enhanced] .product-shot img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.daily-section {
+  padding-block: 76px;
+}
+.daily-features {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 72px;
+}
+.daily-features > div {
+  padding-block: 24px;
+  border-top: 1px solid var(--line);
+}
+.daily-features dt {
+  font-size: 20px;
+  font-weight: 550;
+  letter-spacing: -0.02em;
+  margin-bottom: 10px;
+}
+.daily-features dd {
+  font-size: 15px;
+  color: var(--muted);
+  line-height: 1.65;
+  max-width: 58ch;
+}
+.daily-features code {
+  font-size: 0.9em;
+}
+@media (max-width: 760px) {
+  .feature-tour,
+  .daily-section {
+    padding-block: 48px;
+  }
+  .feature-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+  }
+  .feature-tabs a {
+    font-size: 12px;
+    text-align: center;
+    padding: 12px 2px;
+    min-height: 44px;
+  }
+  .feature-description {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+    min-height: 0;
+  }
+  .feature-description h3 {
+    font-size: 23px;
+  }
+  .feature-description p {
+    font-size: 15px;
+  }
+  .daily-features {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

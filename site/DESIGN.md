@@ -52,6 +52,18 @@ typography:
     fontSize: "12px"
     fontWeight: 400
     lineHeight: 2
+  feature-title:
+    fontFamily: "Onest, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "26px"
+    fontWeight: 550
+    lineHeight: 1.25
+    letterSpacing: "-0.02em"
+  daily-title:
+    fontFamily: "Onest, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "20px"
+    fontWeight: 550
+    lineHeight: 1.55
+    letterSpacing: "-0.02em"
 rounded:
   inline-code: "3px"
   tag: "4px"
@@ -113,6 +125,16 @@ components:
     backgroundColor: "{colors.paper}"
     rounded: "{rounded.default}"
     padding: "14px 14px 14px 18px"
+  feature-tab:
+    textColor: "{colors.muted}"
+    padding: "14px 6px"
+  feature-tab-hover:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.blue}"
+  feature-tab-selected:
+    textColor: "{colors.blue}"
+  daily-feature:
+    padding: "24px 0"
 ---
 
 # Design System: Gnosis website
@@ -125,7 +147,7 @@ Gnosis makes connected code changes understandable through clear layers, concise
 
 The website uses generous space around compact demonstrations and real application screenshots. Fine lines explain relationships. Motion shows a mechanism, while text and manual controls preserve its meaning without movement.
 
-This system covers the website in `site/`. The repository root design files describe the desktop application. The source of visual values is `src/styles/global.css`, with behavior in `src/components/` and `src/scripts/stack-demo.ts`.
+This system covers the website in `site/`. The repository root design files describe the desktop application. The source of visual values is `src/styles/global.css`, with behavior in `src/components/` and `src/scripts/`.
 
 **Key Characteristics:**
 
@@ -141,7 +163,7 @@ The palette combines pale lavender neutrals with a deep cobalt accent. Frontmatt
 
 ### Primary
 
-- **Cobalt** (`blue`) marks primary actions, links, open PR layers, and the setup section.
+- **Cobalt** (`blue`) marks primary actions, links, open PR layers, selected feature tabs, and the setup section.
 - **Deep cobalt** (`blue-hover`) gives primary buttons a darker hover state.
 - **Focus blue** (`focus`) identifies keyboard focus independently of hover.
 - **Pale selection blue** (`selected`) gives screenshot enlargement controls their hover fill.
@@ -178,6 +200,8 @@ Headings use balanced wrapping, moderate weight, and negative tracking. The hier
 
 Release text uses 16px with line height 1.7 and a maximum width of 75ch. Explanation text uses 14px and a maximum width of 54ch.
 
+Feature titles use the `feature-title` role and become 23px on mobile. Feature descriptions use line height 1.65 and a maximum width of 66ch. Daily feature terms use `daily-title`. Their descriptions use 15px with line height 1.65 and a maximum width of 58ch.
+
 **The Source Type Rule.** Reserve monospace for code, commands, and file labels.
 
 ## Layout
@@ -186,7 +210,11 @@ The shared frame has a maximum width of 1440px and horizontal padding of 56px. T
 
 Wide layouts pair explanatory text with evidence. Section introductions use columns of `1fr 0.8fr` with a 70px gap. Open PR content uses `1.12fr 1fr` with a 34px column gap. The setup section uses equal columns with a 96px gap.
 
-Release entries separate metadata from prose with a 220px first column and a 55px gap. Horizontal rules define the entries. Screenshots span the content frame and retain their original aspect ratio.
+Release entries separate metadata from prose with a 220px first column and a 55px gap. Horizontal rules define the entries. Screenshots span the content frame. Standalone screenshots retain their original aspect ratio.
+
+The feature tour uses a pale surface with 72px vertical padding. Descriptions pair columns of `1fr 0.6fr` with a 48px gap and a minimum height of 156px. Enhanced screenshot frames retain an 8:5 aspect ratio across viewport sizes. Images use `object-fit: contain`, which preserves the full capture without cropping.
+
+Daily features form a two-column definition list with a 72px column gap. Each entry has a top rule and 24px vertical padding. This section uses 76px vertical padding.
 
 | Viewport | Implemented response |
 | --- | --- |
@@ -196,6 +224,8 @@ Release entries separate metadata from prose with a 220px first column and a 55p
 | Up to 390px | Frame padding becomes 18px. The GitHub header link disappears. The headline uses its compact size. |
 
 Mobile keeps PR dependency order, explanation text, playback controls, and source. Long code scrolls within its pane. Release tables also scroll within their own region.
+
+At widths up to 760px, feature tabs form three equal columns. Feature descriptions and daily features become single columns. Both showcase sections use 48px vertical padding. Feature descriptions remove their minimum height and reduce their gap to 16px.
 
 ## Elevation & Depth
 
@@ -237,6 +267,22 @@ Command transforms take 650ms with `cubic-bezier(0.16, 1, 0.3, 1)`. Playback wai
 
 Real application captures provide the product evidence. Each image has descriptive alternative text, a caption, and an explicit sample-repository label. The enlargement link opens the full image in a new tab and names that behavior. Image borders, rounded clipping, and a small enlargement control frame the capture.
 
+### Feature tour
+
+Six labeled tabs cover stacks, diffs and commits, Markdown, questions, checks, and conflict resolution. Each panel pairs a short explanation and a detail list with a real application screenshot. The description precedes the image, so the reader knows what to inspect.
+
+Tabs use muted text (15px), a transparent bottom border (2px), and the padding in frontmatter. Hover uses cobalt text on the canvas fill. Selection adds a cobalt underline and weight 600. The shared keyboard focus outline remains visible independently of selection.
+
+Mobile tabs use centered text (12px), padding (12px 2px), and a minimum height (44px). All six labels remain visible in the grid.
+
+Without JavaScript, the labels link to stacked sections and every screenshot remains available. Enhancement adds tab and panel semantics, selects one panel, and gives only the selected tab a place in the Tab order. Left and Right wrap through tabs. Home and End select the first and last tabs. Space selects the focused tab. Panels accept keyboard focus.
+
+Feature fragments select the matching panel on initial load and hash changes. Modified clicks retain normal link behavior. Ordinary tab activation changes the panel without adding a history entry.
+
+### Daily features
+
+The definition list presents compact capabilities as text, without card backgrounds or shadows. Each term has a clear description beneath it. Fine horizontal rules define the rows. Code examples retain monospace styling at 0.9em.
+
 ### Commands and release metadata
 
 The Homebrew command appears in a white bordered container with selectable source text. Its copy control uses the icon-button treatment. A polite status region reports success or gives a manual-copy fallback.
@@ -254,6 +300,8 @@ No website input fields or dialogs exist in this system. The sidecar demonstrate
 - **Do** keep screenshot captions and sample context explicit.
 - **Do** preserve keyboard focus, meaningful text labels, and manual playback controls.
 - **Do** keep installation and release fallbacks actionable.
+- **Do** keep feature content accessible without JavaScript.
+- **Do** preserve full screenshots inside the stable feature frame.
 
 ### Don't:
 

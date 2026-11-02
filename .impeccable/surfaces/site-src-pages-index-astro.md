@@ -15,7 +15,7 @@ THESIS: Show how separate PRs assemble into one understandable change. The openi
 
 OWN-WORLD: Cool lavender ground, cobalt active layers, graphite text and pale technical surfaces. Onest headings and body, monospace only for source. Fine connecting lines carry dependency context. Light comes from an engineer opening a shared link during the workday.
 
-STORY: Understand one mechanism, see it in the real review queue and diff workflow, connect existing Claude or Codex tools, download. Explain provider data flow accurately. No invented usage or performance claims.
+STORY: Understand one mechanism, see it in the real review queue and diff workflow, explore stacks, diffs, Markdown, chat, checks and conflict resolution through real screenshots, discover daily-use tools, connect existing Claude or Codex tools, download. Explain provider data flow accurately. No invented usage or performance claims.
 
 FIRST VIEWPORT: Match the approved sketch: navigation and download above a left-aligned two-line headline with short supporting copy at right; a broad three-layer PR assembly below. The middle PR begins selected. Its explanation, animated queue and source sit inside the layer, with sibling PRs still visible. Signature interaction: selecting a PR reveals its contribution; Play moves the same commands through a fixed queue into a worker, with source lines tracking the step. Manual steps and reduced motion preserve the lesson.
 
@@ -26,3 +26,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
 ## Behavior and boundaries
 
 The sample is curated demonstration data, not a live GitHub connection or a browser AI service. It must have usable initial content without JavaScript. No autoplay; pause on leaving the page and respect reduced motion. A small diagram renderer is sufficient for the demonstration; do not bundle Electron or the full application. Download offers verified release assets with an all-downloads fallback. Screenshot enlargement is optional and must preserve focus. Changelog retains release-source attribution and an actionable failure state. Mobile keeps dependency order with single-column explanations and code. Website tokens live in site/DESIGN.md and site/.impeccable/design.json; the app's root DESIGN.md stays unchanged.
+
+## Feature coverage expansion
+
+User requested broader feature coverage after inspecting the first build. Preserve the opening and visual direction. Add a six-workflow feature tour with actual test-fixture screenshots and concise outcome-led descriptions. Tabs keep the page browsable; all sections remain available without JavaScript. Show daily-use capabilities as a compact typographic list: saved filters, mute/star/repository rules, local search, GitHub review comments, image/SVG/LFS previews, and persistent progress/background preloading. Do not present unmerged review-evidence work as a released feature.
