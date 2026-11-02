@@ -11,78 +11,74 @@ const macDownload = latest?.assets.find((asset) => asset.name === 'Gnosis.dmg')?
 const brewCommand = 'brew tap oddur/gnosis && brew install --cask gnosis';
 ---
 
-<Base title="Gnosis — Keep up with PRs. Keep understanding.">
+<Base title="Gnosis — A desktop app for code review">
   <main id="main">
     <section class="opening frame" aria-labelledby="headline">
       <div class="hero-intro">
         <h1 id="headline">
-          Keep up with PRs.
+          Understand the code
           <br />
-          Keep understanding.
+          you’re reviewing.
         </h1>
         <p>
-          Review the whole change.
-          <br />
-          Understand how each PR fits.
+          An open-source desktop app for GitHub pull requests. Review stacks, read diffs, and generate explanations with
+          your local coding agent.
         </p>
       </div>
       <StackDemo />
-      <p class="product-definition">A desktop app for reviewing code with GitHub, Claude, and Codex.</p>
+      <nav class="project-links" aria-label="Project resources">
+        <a href="https://github.com/oddur/gnosis">
+          Source on GitHub <Icon name="arrow" size={16} />
+        </a>
+        <a href="https://github.com/oddur/gnosis#readme">Setup guide</a>
+        <a href="https://github.com/oddur/gnosis/issues">Bugs &amp; ideas</a>
+        <span>Free · MIT license</span>
+      </nav>
     </section>
 
     <section class="inside-section" id="inside" aria-labelledby="queue-title">
       <div class="frame">
         <div class="section-intro">
-          <h2 id="queue-title">
-            A full queue.
-            <br />A clear place to start.
-          </h2>
+          <h2 id="queue-title">A queue for your PRs</h2>
           <div>
-            <p>See what changed, what needs your review, and what belongs together.</p>
-            <p>
-              Short briefings give you the context before you open the diff. Save a view for the work that matters to
-              you.
-            </p>
+            <p>Track review requests, unread changes, and stacked PRs across repositories.</p>
+            <p>Get a short AI briefing before opening a diff. Save filters for the PRs you want to follow.</p>
           </div>
         </div>
         <ProductShot
           name="review-queue"
           alt="Gnosis Review queue with review requests, a grouped PR stack, check results, and its briefing beside the list."
-          caption="Your queue and its context, together."
+          caption="A briefing for the selected stack, beside the review queue."
         />
         <div class="feature-line">
           <span>Saved filters</span>
           <span>Unread updates</span>
           <span>Automatic briefings</span>
-          <span>First-class stacks</span>
+          <span>Grouped stacks</span>
         </div>
       </div>
     </section>
 
     <section class="review-section frame" aria-labelledby="review-title">
       <div class="section-intro">
-        <h2 id="review-title">
-          Understand the change.
-          <br />
-          Stay close to the code.
-        </h2>
+        <h2 id="review-title">Explanations beside the diff</h2>
         <div>
-          <p>Follow a guided explanation with diagrams and inline insights. Or go straight to Changes and Commits.</p>
           <p>
-            Ask a question, mark files viewed, and submit your review to GitHub. A stack or a single PR gets the same
-            focused workspace.
+            Generate an explanation for a PR or a whole stack. It breaks the change into topics, with diagrams and notes
+            attached to the code.
           </p>
+          <p>You can also open Changes or Commits and review the code without generating anything.</p>
         </div>
       </div>
       <ProductShot
         name="guided-review"
         alt="A Gnosis guided explanation beside the source diff, with an inline explanation of an await expression and a Review PR action."
-        caption="The explanation and its evidence, side by side."
+        caption="An inline explanation of why the worker call is awaited."
       />
       <div class="review-footnote">
-        <p>You make the review decision. Gnosis helps you understand it.</p>
+        <p>Explanations use Claude Code or Codex. You review the code and decide what to submit.</p>
         <a href="#example">
-          Try the explanation above <Icon name="arrow" size={18} />
+          Play the sample diagram <Icon name="arrow" size={18} />
         </a>
       </div>
     </section>
@@ -91,53 +87,46 @@ const brewCommand = 'brew tap oddur/gnosis && brew install --cask gnosis';
 
     <section class="daily-section frame" aria-labelledby="daily-title">
       <div class="section-intro">
-        <h2 id="daily-title">
-          The small things.
-          <br />
-          Every review, every day.
-        </h2>
-        <div>
-          <p>Keep the queue relevant, the noise out of your diff, and your place when you come back.</p>
-        </div>
+        <h2 id="daily-title">Also included</h2>
       </div>
       <dl class="daily-features">
         <div>
-          <dt>A queue that fits your work</dt>
+          <dt>Saved filters</dt>
           <dd>
             Save views by repository, author, labels, read status, or target branch—including patterns such as{' '}
             <code>release/*</code>.
           </dd>
         </div>
         <div>
-          <dt>Less noise to sift through</dt>
+          <dt>Mute, star, and repository settings</dt>
           <dd>
             Mute PRs, star the ones to revisit, and set repository rules for Dependabot, inactivity, and automatic
             briefings.
           </dd>
         </div>
         <div>
-          <dt>Jump there with ⌘K</dt>
+          <dt>Local search with ⌘K</dt>
           <dd>
             Search locally available PRs, files, and saved explanations. Use recent destinations to get back to a
             review.
           </dd>
         </div>
         <div>
-          <dt>Feedback where it belongs</dt>
+          <dt>GitHub comments and reviews</dt>
           <dd>
             Read GitHub threads inline. Draft comments with a Markdown preview, then submit them with your review
             decision.
           </dd>
         </div>
         <div>
-          <dt>More than text files</dt>
+          <dt>Images, SVGs, and Git LFS</dt>
           <dd>
             Compare images and SVGs, recognize moved files, and download Git LFS resources when you need to inspect
             them.
           </dd>
         </div>
         <div>
-          <dt>Your place, remembered</dt>
+          <dt>Local cache and review progress</dt>
           <dd>
             Keep viewed-file progress and saved explanations. Background preloading puts GitHub content in the local
             cache ahead of your next visit.
@@ -149,14 +138,10 @@ const brewCommand = 'brew tap oddur/gnosis && brew install --cask gnosis';
     <section class="setup-section" aria-labelledby="setup-title">
       <div class="frame setup-layout">
         <div>
-          <h2 id="setup-title">
-            Your coding agents.
-            <br />
-            Your subscription.
-          </h2>
+          <h2 id="setup-title">Uses your local coding agent</h2>
           <p class="setup-lead">
-            Gnosis uses your locally installed Claude Code or Codex CLI, with its existing login and subscription or API
-            billing. No separate Gnosis AI subscription.
+            Gnosis runs Claude Code or Codex CLI on your machine, using the login you already have. AI usage goes
+            through your existing subscription or API billing. There’s no Gnosis subscription.
           </p>
           <a href="https://github.com/oddur/gnosis#readme" class="text-link">
             Read the setup guide <Icon name="arrow" size={18} />
@@ -165,15 +150,15 @@ const brewCommand = 'brew tap oddur/gnosis && brew install --cask gnosis';
         <div class="setup-steps">
           <div>
             <h3>Connect GitHub</h3>
-            <p>Choose repositories to watch and shape your review queue.</p>
+            <p>Choose which repositories to watch. Set filters and briefing preferences per repository.</p>
           </div>
           <div>
             <h3>Choose your models</h3>
             <p>Use Claude, Codex, or both. Pick separate models and effort levels for explanations and briefings.</p>
           </div>
           <div>
-            <h3>Keep your place</h3>
-            <p>Saved explanations, cached changes, and review progress stay available when you return.</p>
+            <h3>Use a local clone if you have one</h3>
+            <p>Link a repository to its local clone in Settings. Gnosis can read Git data from it.</p>
           </div>
         </div>
         <p class="data-note">
@@ -184,16 +169,8 @@ const brewCommand = 'brew tap oddur/gnosis && brew install --cask gnosis';
 
     <section class="download-section frame" id="download" aria-labelledby="download-title">
       <div class="download-heading">
-        <h2 id="download-title">
-          Bring understanding
-          <br />
-          to your next review.
-        </h2>
-        <p>
-          Free and open source.
-          <br />
-          Built for the way engineers review.
-        </p>
+        <h2 id="download-title">Install Gnosis</h2>
+        <p>Download the app or use Homebrew.</p>
       </div>
       <div class="install-options">
         <div class="direct-download">
@@ -222,7 +199,7 @@ const brewCommand = 'brew tap oddur/gnosis && brew install --cask gnosis';
             </button>
           </div>
           <p id="copy-status" class="copy-status" role="status" aria-live="polite">
-            Requires GitHub and a configured Claude Code or Codex CLI.
+            Connect GitHub for PRs. Install Claude Code or Codex for AI features.
           </p>
         </div>
       </div>

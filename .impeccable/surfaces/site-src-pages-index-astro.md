@@ -30,3 +30,7 @@ The sample is curated demonstration data, not a live GitHub connection or a brow
 ## Feature coverage expansion
 
 User requested broader feature coverage after inspecting the first build. Preserve the opening and visual direction. Add a six-workflow feature tour with actual test-fixture screenshots and concise outcome-led descriptions. Tabs keep the page browsable; all sections remain available without JavaScript. Show daily-use capabilities as a compact typographic list: saved filters, mute/star/repository rules, local search, GitHub review comments, image/SVG/LFS previews, and persistent progress/background preloading. Do not present unmerged review-evidence work as a released feature.
+
+## Voice refinement
+
+The user explicitly rejected a corporate/SaaS sales tone. Keep the existing lavender/cobalt palette, typeface, interactive code example, and real product evidence. Use direct feature names, factual captions, and plain setup/install instructions. Remove paired slogans, generic benefit claims, and the large promotional setup band. Reduce section heading sizes and spacing. Put source, setup, and issue links near the opening. Explain use of the local agent and existing subscription/API billing, and retain the provider-data disclosure. The website should read like a developer explaining an open-source tool to another developer.

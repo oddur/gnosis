@@ -47,14 +47,14 @@ h3 {
   text-wrap: balance;
 }
 h1 {
-  font-size: clamp(2.7rem, 4.85vw, 4.5rem);
+  font-size: clamp(2.5rem, 4.4vw, 4rem);
   line-height: 1.06;
   letter-spacing: -0.035em;
   font-weight: 600;
 }
 h2 {
-  font-size: clamp(2rem, 3.4vw, 3.3rem);
-  line-height: 1.13;
+  font-size: clamp(1.75rem, 2.7vw, 2.3rem);
+  line-height: 1.18;
   letter-spacing: -0.03em;
   font-weight: 550;
 }
@@ -141,7 +141,7 @@ code {
 .wordmark {
   font-size: 27px;
   font-weight: 700;
-  letter-spacing: -0.05em;
+  letter-spacing: -0.04em;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -205,10 +205,11 @@ code {
   padding-bottom: 30px;
 }
 .hero-intro > p {
-  font-size: 19px;
+  font-size: 17px;
   line-height: 1.65;
   padding-bottom: 5px;
-  flex-shrink: 0;
+  max-width: 40ch;
+  flex: 0 1 360px;
 }
 .assembly {
   background: var(--surface);
@@ -496,14 +497,29 @@ code {
   font-size: 14px;
   padding-block: 16px;
 }
-.product-definition {
-  text-align: center;
+.project-links {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 28px;
   font-size: 14px;
+  padding: 22px 0 32px;
+}
+.project-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--blue);
+}
+.project-links a:hover {
+  text-decoration: underline;
+}
+.project-links span {
+  margin-left: auto;
   color: var(--muted);
-  padding: 23px 0 55px;
 }
 .inside-section {
-  padding: 76px 0 56px;
+  padding: 48px 0;
   background: white;
 }
 .section-intro {
@@ -589,8 +605,7 @@ code {
   top: 10px;
 }
 .review-section {
-  padding-top: 84px;
-  padding-bottom: 72px;
+  padding-block: 56px;
 }
 .review-footnote {
   display: flex;
@@ -601,9 +616,9 @@ code {
   font-size: 15px;
 }
 .setup-section {
-  background: var(--blue);
-  color: #fff;
-  padding-block: 72px;
+  background: var(--surface);
+  padding-block: 48px;
+  border-top: 1px solid var(--line);
 }
 .setup-layout {
   display: grid;
@@ -611,18 +626,17 @@ code {
   gap: 28px 96px;
 }
 .setup-lead {
-  font-size: 18px;
-  margin: 24px 0 22px;
-  max-width: 32ch;
-  color: #e0e8ff;
+  font-size: 16px;
+  margin: 20px 0;
+  max-width: 50ch;
+  color: var(--muted);
 }
 .setup-section .text-link {
-  color: white;
   text-decoration: underline;
 }
 .setup-steps > div {
   padding: 22px 0;
-  border-bottom: 1px solid #6175b0;
+  border-bottom: 1px solid var(--line);
 }
 .setup-steps > div:first-child {
   padding-top: 0;
@@ -633,20 +647,19 @@ code {
 }
 .setup-steps p {
   font-size: 15px;
-  color: #e0e8ff;
+  color: var(--muted);
   max-width: 48ch;
 }
 .data-note {
   grid-column: 1/-1;
   font-size: 13px;
   line-height: 1.7;
-  color: #dce5ff;
+  color: var(--muted);
   max-width: 85ch;
   margin-top: 8px;
 }
 .download-section {
-  padding-top: 80px;
-  padding-bottom: 80px;
+  padding-block: 48px;
 }
 .download-heading {
   display: flex;
@@ -1030,9 +1043,14 @@ code {
     font-size: 14px;
     margin-bottom: 8px;
   }
-  .product-definition {
-    padding: 24px 6px 40px;
+  .project-links {
+    padding: 20px 0 28px;
+    gap: 14px 24px;
     font-size: 13px;
+  }
+  .project-links span {
+    width: 100%;
+    margin-left: 0;
   }
   .inside-section {
     padding: 48px 0 35px;
@@ -1227,7 +1245,7 @@ code {
 }
 
 .feature-tour {
-  padding-block: 72px;
+  padding-block: 48px;
   background: var(--surface);
 }
 .feature-tabs {
@@ -1296,7 +1314,7 @@ code {
   object-fit: contain;
 }
 .daily-section {
-  padding-block: 76px;
+  padding-block: 48px;
 }
 .daily-features {
   display: grid;

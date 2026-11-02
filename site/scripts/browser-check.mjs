@@ -42,7 +42,7 @@ app
       await pause(100);
     };
     const capture = async (name, full = true) => {
-      await js('scrollTo(0,0)');
+      await js('document.activeElement?.blur(); scrollTo({top:0,left:0,behavior:"instant"})');
       await pause(70);
       const dimensions = await js('({w:innerWidth,h:document.documentElement.scrollHeight})');
       const data = await win.webContents.debugger.sendCommand('Page.captureScreenshot', {
@@ -135,7 +135,7 @@ app
       await load();
       const featureIds = ['stacks', 'changes', 'markdown', 'chat', 'checks', 'conflicts'];
       const captureTour = async (name) => {
-        await js("document.querySelector('#features').scrollIntoView()");
+        await js("document.querySelector('#features').scrollIntoView({behavior: 'instant'})");
         await pause(100);
         const clip = await js(
           "(()=>{const r=document.querySelector('#features').getBoundingClientRect();return {x:0,y:r.top+scrollY,width:innerWidth,height:r.height,scale:1}})()"

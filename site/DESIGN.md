@@ -1,6 +1,6 @@
 ---
 name: Gnosis website
-description: Clear explanations of connected changes, on a cool technical canvas.
+description: Website for the open-source Gnosis code review app.
 colors:
   canvas: "#e8edf9"
   surface: "#f7f9ff"
@@ -21,15 +21,15 @@ colors:
 typography:
   display:
     fontFamily: "Onest, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "clamp(2.7rem, 4.85vw, 4.5rem)"
+    fontSize: "clamp(2.5rem, 4.4vw, 4rem)"
     fontWeight: 600
     lineHeight: 1.06
     letterSpacing: "-0.035em"
   headline:
     fontFamily: "Onest, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "clamp(2rem, 3.4vw, 3.3rem)"
+    fontSize: "clamp(1.75rem, 2.7vw, 2.3rem)"
     fontWeight: 550
-    lineHeight: 1.13
+    lineHeight: 1.18
     letterSpacing: "-0.03em"
   title:
     fontFamily: "Onest, ui-sans-serif, system-ui, sans-serif"
@@ -83,7 +83,6 @@ spacing:
   48: "48px"
   56: "56px"
   72: "72px"
-  80: "80px"
 components:
   button-primary:
     backgroundColor: "{colors.blue}"
@@ -108,6 +107,13 @@ components:
     rounded: "{rounded.control}"
   navigation:
     textColor: "{colors.ink}"
+  project-resources:
+    textColor: "{colors.blue}"
+    padding: "22px 0 32px"
+  setup-section:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.ink}"
+    padding: "48px 0"
   tag-preview:
     rounded: "{rounded.tag}"
     padding: "2px 7px"
@@ -143,19 +149,20 @@ components:
 
 **Creative North Star: "Change, unpacked"**
 
-Gnosis makes connected code changes understandable through clear layers, concise explanations, and visible source evidence. Cool lavender surfaces and cobalt actions give the website a calm, technical character. Onest keeps both large headings and small controls direct and approachable.
+The website presents Gnosis as an open-source tool, with a developer explaining its behavior to another developer. Feature names, factual captions, and plain installation instructions carry the content. Cool lavender surfaces, cobalt actions, and Onest type keep the presentation calm and technical.
 
-The website uses generous space around compact demonstrations and real application screenshots. Fine lines explain relationships. Motion shows a mechanism, while text and manual controls preserve its meaning without movement.
+Compact sections give real screenshots and an interactive code example most of the space. Fine lines explain relationships. Motion shows a mechanism, while text and manual controls preserve its meaning without movement. Source, setup, and issue links make the project directly accessible.
 
 This system covers the website in `site/`. The repository root design files describe the desktop application. The source of visual values is `src/styles/global.css`, with behavior in `src/components/` and `src/scripts/`.
 
 **Key Characteristics:**
 
 - Cool lavender canvas, cobalt emphasis, and graphite text.
-- Large, close-set headings above precise technical content.
+- Moderate, close-set headings that name features and actions.
 - Connected layers that preserve context around the selected contribution.
 - Real screenshots with captions and explicit sample context.
 - Flat surfaces, fine borders, and purposeful motion.
+- Factual descriptions, visible project links, and plain installation instructions.
 
 ## Colors
 
@@ -163,7 +170,7 @@ The palette combines pale lavender neutrals with a deep cobalt accent. Frontmatt
 
 ### Primary
 
-- **Cobalt** (`blue`) marks primary actions, links, open PR layers, selected feature tabs, and the setup section.
+- **Cobalt** (`blue`) marks primary actions, links, open PR layers, and selected feature tabs.
 - **Deep cobalt** (`blue-hover`) gives primary buttons a darker hover state.
 - **Focus blue** (`focus`) identifies keyboard focus independently of hover.
 - **Pale selection blue** (`selected`) gives screenshot enlargement controls their hover fill.
@@ -171,7 +178,7 @@ The palette combines pale lavender neutrals with a deep cobalt accent. Frontmatt
 ### Neutral
 
 - **Lavender canvas** (`canvas`) fills the page and source panes.
-- **Technical surface** (`surface`) separates the assembly and release fallback from the canvas.
+- **Technical surface** (`surface`) separates the assembly, feature tour, setup section, and release fallback from the canvas.
 - **White paper** (`paper`) fills closed PR layers, controls, screenshot surrounds, and the queue section.
 - **Graphite** (`ink`) carries primary text. **Slate** (`muted`) carries supporting text and metadata.
 - **Lavender rule** (`line`) separates footer content and outlines small controls.
@@ -189,7 +196,7 @@ The sidecar includes derived OKLCH ramps for color inspection. These ramps are p
 
 **Source font:** SFMono-Regular, Consolas, Liberation Mono, then monospace. File labels use the generic monospace family.
 
-Headings use balanced wrapping, moderate weight, and negative tracking. The hierarchy in frontmatter maps the implemented roles, without a fixed scale ratio.
+Headings use balanced wrapping, moderate weight, and negative tracking. Section headings stay compact enough to read as feature labels. The hierarchy in frontmatter maps the implemented roles, without a fixed scale ratio.
 
 - **Display:** page headlines. At widths up to 390px, the size becomes 2.5rem.
 - **Headline:** section headings. Assembly titles use a smaller size (24px), line height (1.3), and tracking (-0.025em).
@@ -204,6 +211,8 @@ Feature titles use the `feature-title` role and become 23px on mobile. Feature d
 
 **The Source Type Rule.** Reserve monospace for code, commands, and file labels.
 
+**The Plain Feature Names Rule.** Name the feature or action directly. Use captions to describe what the screenshot shows.
+
 ## Layout
 
 The shared frame has a maximum width of 1440px and horizontal padding of 56px. The stylesheet uses contextual spacing, not a universal spacing multiplier. Frontmatter records the recurring steps.
@@ -212,9 +221,11 @@ Wide layouts pair explanatory text with evidence. Section introductions use colu
 
 Release entries separate metadata from prose with a 220px first column and a 55px gap. Horizontal rules define the entries. Screenshots span the content frame. Standalone screenshots retain their original aspect ratio.
 
-The feature tour uses a pale surface with 72px vertical padding. Descriptions pair columns of `1fr 0.6fr` with a 48px gap and a minimum height of 156px. Enhanced screenshot frames retain an 8:5 aspect ratio across viewport sizes. Images use `object-fit: contain`, which preserves the full capture without cropping.
+The feature tour uses a pale surface with 48px vertical padding. Descriptions pair columns of `1fr 0.6fr` with a 48px gap and a minimum height of 156px. Enhanced screenshot frames retain an 8:5 aspect ratio across viewport sizes. Images use `object-fit: contain`, which preserves the full capture without cropping.
 
-Daily features form a two-column definition list with a 72px column gap. Each entry has a top rule and 24px vertical padding. This section uses 76px vertical padding.
+Daily features form a two-column definition list with a 72px column gap. Each entry has a top rule and 24px vertical padding. This section uses 48px vertical padding.
+
+Queue, setup, and install sections also use 48px vertical padding on desktop. The guided review section uses 56px. The introduction pairs its heading with a factual description (17px), limited to 40ch.
 
 | Viewport | Implemented response |
 | --- | --- |
@@ -249,9 +260,11 @@ Primary hover uses deep cobalt over 150ms. Text links use cobalt and gain an und
 
 ### Navigation
 
-The header pairs a bold wordmark with compact links and the download action. Current-page links remain underlined. Mobile removes the exploration link and secondary GitHub text, then removes the GitHub icon at the narrowest breakpoint.
+The header pairs a bold wordmark with Features, Changelog, GitHub, and the download action. Current-page links remain underlined. Mobile removes the Features link and secondary GitHub text, then removes the GitHub icon at the narrowest breakpoint.
 
-The footer uses the same wordmark, a fine top border, and small text links. Links wrap onto a separate row on mobile. A keyboard-visible skip link precedes the header.
+Project resource links sit beside license information near the opening. Source, setup, and issue links use cobalt text with hover underlines. The row wraps with gaps of 12px by 28px. Mobile uses 13px text and places license information on its own row.
+
+The footer uses the same wordmark, a factual product description, a fine top border, and small text links. Links wrap onto a separate row on mobile. A keyboard-visible skip link precedes the header.
 
 ### Connected PR layers
 
@@ -287,6 +300,8 @@ The definition list presents compact capabilities as text, without card backgrou
 
 The Homebrew command appears in a white bordered container with selectable source text. Its copy control uses the icon-button treatment. A polite status region reports success or gives a manual-copy fallback.
 
+Setup instructions use the pale technical surface, normal graphite headings, muted body text, and a fine top rule. They explain the local coding agent, existing subscription or API billing, and provider data flow. Setup links remain cobalt and underlined. Installation headings name the action directly.
+
 Preview release tags use small text, a fine border, and modest corners. These tags communicate status and are not interactive filters. Release failures retain a visible route to GitHub notes and downloads.
 
 No website input fields or dialogs exist in this system. The sidecar demonstrates existing components without introducing new field patterns.
@@ -302,6 +317,8 @@ No website input fields or dialogs exist in this system. The sidecar demonstrate
 - **Do** keep installation and release fallbacks actionable.
 - **Do** keep feature content accessible without JavaScript.
 - **Do** preserve full screenshots inside the stable feature frame.
+- **Do** use factual feature names, screenshot captions, and setup instructions.
+- **Do** keep source, setup, and issue links easy to find.
 
 ### Don't:
 
@@ -310,3 +327,5 @@ No website input fields or dialogs exist in this system. The sidecar demonstrate
 - **Don't** start explanatory animation automatically.
 - **Don't** communicate state through color alone.
 - **Don't** add shadows to the flat surface hierarchy.
+- **Don't** use paired slogans, generic benefit claims, or corporate sales language.
+- **Don't** turn setup instructions into a large promotional color band.
