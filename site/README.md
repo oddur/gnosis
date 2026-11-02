@@ -1,30 +1,29 @@
 # gnosis.to
 
-Marketing site for Gnosis. Astro + Tailwind v4. Deploys to GitHub Pages on push
-to `main` whenever anything under `site/` changes (see `.github/workflows/site.yml`).
+Gnosis's marketing site uses Astro and Tailwind. Its opening demonstrates how three PRs contribute to one change. The example is curated sample data; it makes no GitHub or AI requests.
 
-## Local dev
+## Develop and verify
 
-```bash
+```sh
 cd site
-npm install
-npm run dev          # http://localhost:4321
-npm run build        # outputs site/dist
-npm run preview      # preview the production build
+npm ci
+npm run dev
+npm run build
+npm run test:browser
 ```
 
-## Style
+The browser check also requires the root repository's dependencies (`npm ci` at the repository root) for Electron. It serves the production build on a temporary loopback port, uses an isolated browser profile, and closes afterward. It checks PR selection, playback, keyboard input, clipboard success/failure, reduced motion, no-JavaScript content, narrow layouts, and axe WCAG A/AA rules. Captures go to `../.impeccable/review/site/`.
 
-Editorial tokens (warm OKLCH palette, Fraunces / Plus Jakarta / JetBrains Mono,
-claret accent) are mirrored from `src/globals.css` of the app. Self-contained —
-this folder doesn't import anything from the Electron source.
+`npm run preview` serves the production build. `npm run format` formats the site source and browser checks.
 
-## Domain
+## Content and design
 
-`gnosis.to`. The `public/CNAME` file ships with each build so GitHub Pages keeps
-the custom domain mapped.
+- `src/components/StackDemo.astro` and `src/lib/demo.ts` define the sample stack. `src/scripts/stack-demo.ts` handles playback. Preserve command identity and queue order across frames.
+- `src/lib/releases.ts` fetches releases once during the build. The changelog and download links use the same result. Set `GITHUB_TOKEN` for authenticated builds. If GitHub is unavailable, the site links to releases instead.
+- Fonts are served locally. Onest's license is in `public/fonts/`.
+- `DESIGN.md` and `.impeccable/design.json` describe the website system. The root design documents describe the desktop app.
+- App screenshots use synthetic test fixtures, not private repositories. Their `.webp.json` sidecars record source and conversion details. The screenshots were captured at commit `7d81c79` with `tests/workbench-browser.ts` (`queue-light` and `review-light`), then resized to 1600 and 960 pixels with WebP quality 86. Regenerate with `GNOSIS_SCREENSHOT_DIR=<directory> node scripts/test-workbench.mjs` at the repository root.
 
-DNS:
-- `A` records on apex (`gnosis.to`) → `185.199.108.153`, `185.199.109.153`,
-  `185.199.110.153`, `185.199.111.153`
-- `CNAME` on `www.gnosis.to` → `oddur.github.io`
+## Deployment
+
+`.github/workflows/site.yml` builds and deploys to GitHub Pages when `site/**` changes on `main`, when a release is published, or on manual dispatch. `public/CNAME` preserves `gnosis.to`. The build fetches release notes; visitors do not call the GitHub API.

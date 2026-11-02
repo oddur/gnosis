@@ -1,0 +1,27 @@
+---
+import Icon from './Icon.astro';
+const onChangelog = Astro.url.pathname.startsWith('/changelog');
+---
+
+<header class="site-header frame">
+  <a class="wordmark" href="/" aria-label="Gnosis home">
+    Gnosis<span class="wordmark-dot" aria-hidden="true"></span>
+  </a>
+  <nav aria-label="Main navigation">
+    <a href="/#inside" class="nav-explore">
+      Explore Gnosis
+    </a>
+    <a href="/changelog/" aria-current={onChangelog ? 'page' : undefined}>
+      Changelog
+    </a>
+    <a class="nav-github" href="https://github.com/oddur/gnosis">
+      <Icon name="github" /> <span>GitHub</span>
+    </a>
+    <a href="/#download" class="button button-primary nav-download">
+      <Icon name="download" />
+      <span>
+        Download<span class="desktop-only"> for macOS</span>
+      </span>
+    </a>
+  </nav>
+</header>

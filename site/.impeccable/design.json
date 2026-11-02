@@ -1,0 +1,410 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-02T21:06:11.043218+00:00",
+  "title": "Design System: Gnosis website",
+  "extensions": {
+    "colorMeta": {
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Lavender canvas",
+        "tonalRamp": [
+          "oklch(15.00% 0.01703 267.79)",
+          "oklch(26.43% 0.01703 267.79)",
+          "oklch(37.86% 0.01703 267.79)",
+          "oklch(49.29% 0.01703 267.79)",
+          "oklch(60.71% 0.01703 267.79)",
+          "oklch(72.14% 0.01703 267.79)",
+          "oklch(83.57% 0.01703 267.79)",
+          "oklch(95.00% 0.01703 267.79)"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Technical surface",
+        "tonalRamp": [
+          "oklch(15.00% 0.00825 271.33)",
+          "oklch(26.43% 0.00825 271.33)",
+          "oklch(37.86% 0.00825 271.33)",
+          "oklch(49.29% 0.00825 271.33)",
+          "oklch(60.71% 0.00825 271.33)",
+          "oklch(72.14% 0.00825 271.33)",
+          "oklch(83.57% 0.00825 271.33)",
+          "oklch(95.00% 0.00825 271.33)"
+        ]
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "White paper",
+        "tonalRamp": [
+          "oklch(15.00% 0.00000 0.00)",
+          "oklch(26.43% 0.00000 0.00)",
+          "oklch(37.86% 0.00000 0.00)",
+          "oklch(49.29% 0.00000 0.00)",
+          "oklch(60.71% 0.00000 0.00)",
+          "oklch(72.14% 0.00000 0.00)",
+          "oklch(83.57% 0.00000 0.00)",
+          "oklch(95.00% 0.00000 0.00)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Graphite",
+        "tonalRamp": [
+          "oklch(15.00% 0.03530 267.65)",
+          "oklch(26.43% 0.03530 267.65)",
+          "oklch(37.86% 0.03530 267.65)",
+          "oklch(49.29% 0.03530 267.65)",
+          "oklch(60.71% 0.03530 267.65)",
+          "oklch(72.14% 0.03530 267.65)",
+          "oklch(83.57% 0.03530 267.65)",
+          "oklch(95.00% 0.03530 267.65)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Slate",
+        "tonalRamp": [
+          "oklch(15.00% 0.05030 263.34)",
+          "oklch(26.43% 0.05030 263.34)",
+          "oklch(37.86% 0.05030 263.34)",
+          "oklch(49.29% 0.05030 263.34)",
+          "oklch(60.71% 0.05030 263.34)",
+          "oklch(72.14% 0.05030 263.34)",
+          "oklch(83.57% 0.05030 263.34)",
+          "oklch(95.00% 0.05030 263.34)"
+        ]
+      },
+      "blue": {
+        "role": "primary",
+        "displayName": "Cobalt",
+        "tonalRamp": [
+          "oklch(15.00% 0.14128 266.46)",
+          "oklch(26.43% 0.14128 266.46)",
+          "oklch(37.86% 0.14128 266.46)",
+          "oklch(49.29% 0.14128 266.46)",
+          "oklch(60.71% 0.14128 266.46)",
+          "oklch(72.14% 0.14128 266.46)",
+          "oklch(83.57% 0.14128 266.46)",
+          "oklch(95.00% 0.14128 266.46)"
+        ]
+      },
+      "blue-hover": {
+        "role": "primary",
+        "displayName": "Deep cobalt",
+        "tonalRamp": [
+          "oklch(15.00% 0.12533 265.98)",
+          "oklch(26.43% 0.12533 265.98)",
+          "oklch(37.86% 0.12533 265.98)",
+          "oklch(49.29% 0.12533 265.98)",
+          "oklch(60.71% 0.12533 265.98)",
+          "oklch(72.14% 0.12533 265.98)",
+          "oklch(83.57% 0.12533 265.98)",
+          "oklch(95.00% 0.12533 265.98)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Lavender rule",
+        "tonalRamp": [
+          "oklch(15.00% 0.03611 264.36)",
+          "oklch(26.43% 0.03611 264.36)",
+          "oklch(37.86% 0.03611 264.36)",
+          "oklch(49.29% 0.03611 264.36)",
+          "oklch(60.71% 0.03611 264.36)",
+          "oklch(72.14% 0.03611 264.36)",
+          "oklch(83.57% 0.03611 264.36)",
+          "oklch(95.00% 0.03611 264.36)"
+        ]
+      },
+      "selected": {
+        "role": "primary",
+        "displayName": "Pale selection blue",
+        "tonalRamp": [
+          "oklch(15.00% 0.04005 268.53)",
+          "oklch(26.43% 0.04005 268.53)",
+          "oklch(37.86% 0.04005 268.53)",
+          "oklch(49.29% 0.04005 268.53)",
+          "oklch(60.71% 0.04005 268.53)",
+          "oklch(72.14% 0.04005 268.53)",
+          "oklch(83.57% 0.04005 268.53)",
+          "oklch(95.00% 0.04005 268.53)"
+        ]
+      },
+      "focus": {
+        "role": "primary",
+        "displayName": "Focus blue",
+        "tonalRamp": [
+          "oklch(15.00% 0.19290 265.18)",
+          "oklch(26.43% 0.19290 265.18)",
+          "oklch(37.86% 0.19290 265.18)",
+          "oklch(49.29% 0.19290 265.18)",
+          "oklch(60.71% 0.19290 265.18)",
+          "oklch(72.14% 0.19290 265.18)",
+          "oklch(83.57% 0.19290 265.18)",
+          "oklch(95.00% 0.19290 265.18)"
+        ]
+      },
+      "layer-border": {
+        "role": "neutral",
+        "displayName": "Layer border",
+        "tonalRamp": [
+          "oklch(15.00% 0.04967 267.10)",
+          "oklch(26.43% 0.04967 267.10)",
+          "oklch(37.86% 0.04967 267.10)",
+          "oklch(49.29% 0.04967 267.10)",
+          "oklch(60.71% 0.04967 267.10)",
+          "oklch(72.14% 0.04967 267.10)",
+          "oklch(83.57% 0.04967 267.10)",
+          "oklch(95.00% 0.04967 267.10)"
+        ]
+      },
+      "layer-hover": {
+        "role": "neutral",
+        "displayName": "Layer hover",
+        "tonalRamp": [
+          "oklch(15.00% 0.01824 269.09)",
+          "oklch(26.43% 0.01824 269.09)",
+          "oklch(37.86% 0.01824 269.09)",
+          "oklch(49.29% 0.01824 269.09)",
+          "oklch(60.71% 0.01824 269.09)",
+          "oklch(72.14% 0.01824 269.09)",
+          "oklch(83.57% 0.01824 269.09)",
+          "oklch(95.00% 0.01824 269.09)"
+        ]
+      },
+      "source-divider": {
+        "role": "neutral",
+        "displayName": "Source divider",
+        "tonalRamp": [
+          "oklch(15.00% 0.02529 263.32)",
+          "oklch(26.43% 0.02529 263.32)",
+          "oklch(37.86% 0.02529 263.32)",
+          "oklch(49.29% 0.02529 263.32)",
+          "oklch(60.71% 0.02529 263.32)",
+          "oklch(72.14% 0.02529 263.32)",
+          "oklch(83.57% 0.02529 263.32)",
+          "oklch(95.00% 0.02529 263.32)"
+        ]
+      },
+      "source-current": {
+        "role": "neutral",
+        "displayName": "Source current",
+        "tonalRamp": [
+          "oklch(15.00% 0.03364 265.23)",
+          "oklch(26.43% 0.03364 265.23)",
+          "oklch(37.86% 0.03364 265.23)",
+          "oklch(49.29% 0.03364 265.23)",
+          "oklch(60.71% 0.03364 265.23)",
+          "oklch(72.14% 0.03364 265.23)",
+          "oklch(83.57% 0.03364 265.23)",
+          "oklch(95.00% 0.03364 265.23)"
+        ]
+      },
+      "control-border": {
+        "role": "neutral",
+        "displayName": "Control border",
+        "tonalRamp": [
+          "oklch(15.00% 0.04708 264.86)",
+          "oklch(26.43% 0.04708 264.86)",
+          "oklch(37.86% 0.04708 264.86)",
+          "oklch(49.29% 0.04708 264.86)",
+          "oklch(60.71% 0.04708 264.86)",
+          "oklch(72.14% 0.04708 264.86)",
+          "oklch(83.57% 0.04708 264.86)",
+          "oklch(95.00% 0.04708 264.86)"
+        ]
+      },
+      "control-hover": {
+        "role": "neutral",
+        "displayName": "Control hover",
+        "tonalRamp": [
+          "oklch(15.00% 0.03474 265.99)",
+          "oklch(26.43% 0.03474 265.99)",
+          "oklch(37.86% 0.03474 265.99)",
+          "oklch(49.29% 0.03474 265.99)",
+          "oklch(60.71% 0.03474 265.99)",
+          "oklch(72.14% 0.03474 265.99)",
+          "oklch(83.57% 0.03474 265.99)",
+          "oklch(95.00% 0.03474 265.99)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Page headlines."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Section headings."
+      },
+      "title": {
+        "displayName": "Explanation title",
+        "purpose": "Heading within an open PR layer."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Default document text."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Supporting metadata."
+      },
+      "source": {
+        "displayName": "Source",
+        "purpose": "Code in the demonstration."
+      }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "button-hover",
+        "value": "background 150ms ease",
+        "purpose": "Primary button hover."
+      },
+      {
+        "name": "layer-state",
+        "value": "background 160ms ease, color 160ms ease",
+        "purpose": "PR disclosure state."
+      },
+      {
+        "name": "command-movement",
+        "value": "transform 650ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Move the same command between mechanism states."
+      },
+      {
+        "name": "playback-first-step",
+        "value": "1600ms",
+        "purpose": "Initial pause after user activation."
+      },
+      {
+        "name": "playback-step",
+        "value": "2200ms",
+        "purpose": "Pause between subsequent explanation steps."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "transition: none; animation: none; scroll-behavior: auto",
+        "purpose": "Remove movement while preserving user-initiated playback and manual steps."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "wide-min",
+        "value": "1600px"
+      },
+      {
+        "name": "compact-max",
+        "value": "1100px"
+      },
+      {
+        "name": "mobile-max",
+        "value": "760px"
+      },
+      {
+        "name": "narrow-max",
+        "value": "390px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary download",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The standard cobalt action links to installation.",
+      "html": "<a class=\"ds-button\" href=\"#download\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 3v12\"/><path d=\"m7 10 5 5 5-5\"/><path d=\"M5 17v4h14v-4\"/></svg><span>Download for macOS</span></a>",
+      "css": ".ds-button{display:inline-flex;align-items:center;justify-content:center;gap:9px;padding:13px 20px;min-height:46px;border-radius:var(--radius,8px);font:550 15px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;text-decoration:none;background:var(--blue,#213b8e);color:var(--paper,#fff);transition:background .15s;}.ds-button:hover{background:var(--blue-hover,#172e75);}.ds-button:focus-visible{outline:3px solid #3865df;outline-offset:5px;}.ds-button svg{flex-shrink:0;}@media(prefers-reduced-motion:reduce){.ds-button{transition:none;}}"
+    },
+    {
+      "name": "Large download",
+      "kind": "button",
+      "refersTo": "button-large",
+      "description": "The main installation action uses larger text and padding.",
+      "html": "<a class=\"ds-button ds-large\" href=\"#download\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 3v12\"/><path d=\"m7 10 5 5 5-5\"/><path d=\"M5 17v4h14v-4\"/></svg><span>Download for macOS</span></a>",
+      "css": ".ds-button{display:inline-flex;align-items:center;justify-content:center;gap:9px;padding:13px 20px;min-height:46px;border-radius:var(--radius,8px);font:550 15px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;text-decoration:none;background:var(--blue,#213b8e);color:var(--paper,#fff);transition:background .15s;}.ds-button:hover{background:var(--blue-hover,#172e75);}.ds-button:focus-visible{outline:3px solid #3865df;outline-offset:5px;}.ds-button svg{flex-shrink:0;}@media(prefers-reduced-motion:reduce){.ds-button{transition:none;}}.ds-large{font-size:18px;padding:17px 24px;}"
+    },
+    {
+      "name": "Playback button",
+      "kind": "button",
+      "refersTo": "button-play",
+      "description": "The bordered playback control sits beside manual step controls.",
+      "html": "<button class=\"ds-icon ds-play\" type=\"button\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m8 5 11 7-11 7V5Z\"/></svg><span>Play</span></button>",
+      "css": ".ds-icon{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:36px;min-height:36px;border:0;background:transparent;border-radius:6px;color:var(--blue,#213b8e);font:400 13px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;cursor:pointer;}.ds-icon:hover:not(:disabled){background:#dce7ff;}.ds-icon:focus-visible{outline:3px solid #3865df;outline-offset:5px;}.ds-icon:disabled{opacity:.4;cursor:default;}.ds-play{border:1px solid #aebddc;padding:7px 12px;min-width:81px;background:var(--paper,#fff);}.ds-play:hover{background:#dce7ff;}"
+    },
+    {
+      "name": "Icon control",
+      "kind": "button",
+      "refersTo": "button-icon",
+      "description": "Small source and playback actions require an accessible name.",
+      "html": "<button class=\"ds-icon\" type=\"button\" aria-label=\"Copy Homebrew install command\" title=\"Copy install command\"><svg width=\"19\" height=\"19\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M9 9h12v12H9z\"/><path d=\"M15 9V3H3v12h6\"/></svg></button>",
+      "css": ".ds-icon{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:36px;min-height:36px;border:0;background:transparent;border-radius:6px;color:var(--blue,#213b8e);font:400 13px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;cursor:pointer;}.ds-icon:hover:not(:disabled){background:#dce7ff;}.ds-icon:focus-visible{outline:3px solid #3865df;outline-offset:5px;}.ds-icon:disabled{opacity:.4;cursor:default;}"
+    },
+    {
+      "name": "Main navigation",
+      "kind": "nav",
+      "refersTo": "navigation",
+      "description": "A compact link row keeps the download action visible.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Main navigation\"><a class=\"ds-explore\" href=\"#inside\">Explore Gnosis</a><a href=\"/changelog/\" aria-current=\"page\">Changelog</a><a class=\"ds-button ds-nav-download\" href=\"#download\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 3v12\"/><path d=\"m7 10 5 5 5-5\"/><path d=\"M5 17v4h14v-4\"/></svg><span>Download<span class=\"ds-desktop\"> for macOS</span></span></a></nav>",
+      "css": ".ds-button{display:inline-flex;align-items:center;justify-content:center;gap:9px;padding:13px 20px;min-height:46px;border-radius:var(--radius,8px);font:550 15px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;text-decoration:none;background:var(--blue,#213b8e);color:var(--paper,#fff);transition:background .15s;}.ds-button:hover{background:var(--blue-hover,#172e75);}.ds-button:focus-visible{outline:3px solid #3865df;outline-offset:5px;}.ds-button svg{flex-shrink:0;}@media(prefers-reduced-motion:reduce){.ds-button{transition:none;}}.ds-nav{display:flex;align-items:center;gap:27px;color:var(--ink,#1e2537);font:400 14px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;}.ds-nav>a:not(.ds-button){color:inherit;text-decoration:none;}.ds-nav>a:not(.ds-button):hover{text-decoration:underline;}.ds-nav>a[aria-current=\"page\"]{text-decoration:underline;text-underline-offset:7px;}.ds-nav>a:focus-visible{outline:3px solid #3865df;outline-offset:5px;}@media(max-width:1100px){.ds-nav{gap:18px;}}@media(max-width:760px){.ds-nav{gap:14px;font-size:12px;}.ds-explore,.ds-desktop{display:none;}.ds-nav-download{font-size:13px;padding:10px 13px;min-height:40px;}.ds-nav-download svg{width:16px;}}@media(max-width:390px){.ds-nav{gap:10px;}}"
+    },
+    {
+      "name": "Preview release tag",
+      "kind": "chip",
+      "refersTo": "tag-preview",
+      "description": "A noninteractive status label for a prerelease.",
+      "html": "<span class=\"ds-preview\">Preview release</span>",
+      "css": ".ds-preview{display:inline-block;font:400 12px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;color:var(--ink,#1e2537);padding:2px 7px;border:1px solid #99aad0;border-radius:4px;}"
+    },
+    {
+      "name": "Connected PR disclosures",
+      "kind": "custom",
+      "refersTo": "layer",
+      "description": "Native expandable layers retain neighboring contributions and their dependency connector.",
+      "html": "<div class=\"ds-stack\"><details class=\"ds-layer\"><summary><span class=\"ds-number\">#120</span><span class=\"ds-title\">Introduce a bounded queue</span><span class=\"ds-role\">Foundation</span><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m9 5 7 7-7 7\"/></svg></summary><p class=\"ds-explanation\">Hold up to three commands. New arrivals wait when the queue is full.</p></details><details class=\"ds-layer\" open><summary><span class=\"ds-number\">#121</span><span class=\"ds-title\">Route worker commands</span><span class=\"ds-role\">Behavior</span><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m9 5 7 7-7 7\"/></svg></summary><p class=\"ds-explanation\">Follow each command from the queue to the worker.</p></details></div>",
+      "css": ".ds-stack{color:var(--ink,#1e2537);font:400 16px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;}.ds-layer{position:relative;}.ds-layer+.ds-layer{margin-top:15px;}.ds-layer+.ds-layer:before{content:\"\";position:absolute;width:1px;height:15px;background:var(--blue,#213b8e);left:34px;top:-15px;}.ds-layer summary{list-style:none;display:flex;align-items:center;gap:22px;min-height:52px;padding:10px 22px;border:1px solid #a9b7d8;border-radius:7px;background:var(--paper,#fff);cursor:pointer;transition:background .16s,color .16s;}.ds-layer summary::-webkit-details-marker{display:none;}.ds-layer summary:hover{background:#edf2ff;}.ds-layer[open] summary{background:var(--blue,#213b8e);color:var(--paper,#fff);border-color:var(--blue,#213b8e);}.ds-layer[open] summary>svg{transform:rotate(90deg);}.ds-layer summary:focus-visible{outline:3px solid #3865df;outline-offset:5px;}.ds-number{font-size:16px;font-variant-numeric:tabular-nums;}.ds-title{font-size:18px;font-weight:550;}.ds-role{margin-left:auto;font-size:13px;white-space:nowrap;}.ds-explanation{margin:0;padding:18px 0 4px;font-size:14px;line-height:1.6;color:var(--muted,#52617e);max-width:54ch;}@media(max-width:760px){.ds-layer summary{gap:10px;padding:13px 12px;min-height:58px;}.ds-title{font-size:14px;line-height:1.4;}.ds-number{font-size:13px;}.ds-role{display:none;}.ds-layer summary>svg{margin-left:auto;flex-shrink:0;}}@media(prefers-reduced-motion:reduce){.ds-layer summary{transition:none;}}"
+    },
+    {
+      "name": "Source evidence pane",
+      "kind": "card",
+      "refersTo": "source-pane",
+      "description": "A code surface pairs the highlighted source line with a link to the real workspace.",
+      "html": "<section class=\"ds-source\" aria-label=\"Example source\"><div class=\"ds-source-heading\"><span>queue.ts</span><span>Example source</span></div><pre><code><span class=\"ds-line ds-current\"><span class=\"ds-line-number\" aria-hidden=\"true\">1</span>const queue = new Queue({ capacity: 3 });</span><span class=\"ds-line\"><span class=\"ds-line-number\" aria-hidden=\"true\">2</span>queue.tryPush(commandA);</span></code></pre><a class=\"ds-source-link\" href=\"#inside\">See the real review workspace <svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M4 12h16\"/><path d=\"m13 5 7 7-7 7\"/></svg></a></section>",
+      "css": ".ds-source{min-width:0;background:var(--canvas,#e8edf9);color:var(--ink,#1e2537);border-radius:8px;overflow:hidden;font:400 16px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;}.ds-source-heading{display:flex;justify-content:space-between;gap:14px;padding:13px 16px;border-bottom:1px solid #d3dced;font-size:12px;color:var(--muted,#52617e);}.ds-source-heading span:first-child{color:var(--ink,#1e2537);font-family:monospace;}.ds-source pre{margin:0;padding:13px 0;overflow-x:auto;font:400 12px/2 'SFMono-Regular',Consolas,'Liberation Mono',monospace;scrollbar-width:thin;scrollbar-color:#9caed1 #e8edf9;}.ds-source code{font-family:'SFMono-Regular',Consolas,'Liberation Mono',monospace;font-variant-ligatures:none;}.ds-line{display:block;min-width:max-content;padding:0 15px 0 0;border-left:2px solid transparent;}.ds-current{background:#d6e1f8;border-left-color:var(--blue,#213b8e);}.ds-line-number{display:inline-block;user-select:none;width:30px;text-align:center;color:#5c6c8c;}.ds-source-link{padding:10px 16px;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;border-top:1px solid #d3dced;color:var(--blue,#213b8e);text-decoration:none;text-underline-offset:.22em;}.ds-source-link:hover{text-decoration:underline;}.ds-source-link:focus-visible{outline:3px solid #3865df;outline-offset:5px;}"
+    },
+    {
+      "name": "Install command",
+      "kind": "card",
+      "refersTo": "command-copy",
+      "description": "Selectable monospace text and a copy control share one bordered container.",
+      "html": "<div class=\"ds-command\"><code>brew tap oddur/gnosis &amp;&amp; brew install --cask gnosis</code><button class=\"ds-icon\" type=\"button\" aria-label=\"Copy Homebrew install command\"><svg width=\"19\" height=\"19\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M9 9h12v12H9z\"/><path d=\"M15 9V3H3v12h6\"/></svg></button></div>",
+      "css": ".ds-icon{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:36px;min-height:36px;border:0;background:transparent;border-radius:6px;color:var(--blue,#213b8e);font:400 13px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;cursor:pointer;}.ds-icon:hover:not(:disabled){background:#dce7ff;}.ds-icon:focus-visible{outline:3px solid #3865df;outline-offset:5px;}.ds-icon:disabled{opacity:.4;cursor:default;}.ds-command{background:var(--paper,#fff);color:var(--ink,#1e2537);border:1px solid #b7c5df;border-radius:8px;padding:14px 14px 14px 18px;display:flex;align-items:center;gap:14px;}.ds-command code{font:400 12px/1.55 'SFMono-Regular',Consolas,'Liberation Mono',monospace;font-variant-ligatures:none;overflow-wrap:anywhere;user-select:all;flex:1;}@media(max-width:760px){.ds-command{padding:12px;}}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Change, unpacked",
+    "overview": "Gnosis makes connected code changes understandable through clear layers, concise explanations, and visible source evidence. Cool lavender surfaces and cobalt actions give the website a calm, technical character. Onest keeps both large headings and small controls direct and approachable.\n\nThe website uses generous space around compact demonstrations and real application screenshots. Fine lines explain relationships. Motion shows a mechanism, while text and manual controls preserve its meaning without movement.",
+    "keyCharacteristics": [
+      "Cool lavender canvas, cobalt emphasis, and graphite text.",
+      "Large, close-set headings above precise technical content.",
+      "Connected layers that preserve context around the selected contribution.",
+      "Real screenshots with captions and explicit sample context.",
+      "Flat surfaces, fine borders, and purposeful motion."
+    ],
+    "rules": [],
+    "dos": [
+      "**Do** use the website tokens for new website surfaces.",
+      "**Do** connect explanations to visible source evidence.",
+      "**Do** keep screenshot captions and sample context explicit.",
+      "**Do** preserve keyboard focus, meaningful text labels, and manual playback controls.",
+      "**Do** keep installation and release fallbacks actionable."
+    ],
+    "donts": [
+      "**Don't** import desktop application styling into website controls.",
+      "**Don't** replace real product evidence with fabricated application screenshots.",
+      "**Don't** start explanatory animation automatically.",
+      "**Don't** communicate state through color alone.",
+      "**Don't** add shadows to the flat surface hierarchy."
+    ]
+  }
+}

@@ -1,0 +1,122 @@
+---
+import { examplePrs } from '../lib/demo';
+import Icon from './Icon.astro';
+---
+
+<section class="assembly" id="example" aria-labelledby="example-title">
+  <div class="assembly-title">
+    <h2 id="example-title">One change. Three connected PRs.</h2>
+    <p>
+      Illustrative example <span aria-hidden="true">·</span> Select a PR to explore
+    </p>
+  </div>
+  <div class="stack-layers">
+    {examplePrs.map((pr, index) => (
+      <details name="example-stack" class="stack-layer" open={index === 1} data-pr={index}>
+        <summary>
+          <span class="pr-number">#{pr.number}</span>
+          <span class="pr-title">{pr.title}</span>
+          <span class="pr-role">{pr.role}</span>
+          <Icon name="chevron" size={18} />
+        </summary>
+        <div class="layer-content">
+          <div class="layer-explanation">
+            <h3>{pr.heading}</h3>
+            <p class="layer-description">{pr.description}</p>
+            <svg
+              class="queue-figure"
+              viewBox="0 0 560 144"
+              role="img"
+              aria-labelledby={`diagram-title-${index} diagram-desc-${index}`}
+            >
+              <title id={`diagram-title-${index}`}>{pr.frames[0].title}</title>
+              <desc id={`diagram-desc-${index}`}>{pr.frames[0].caption}</desc>
+              <text x="16" y="24" class="diagram-label">
+                Incoming
+              </text>
+              <text x="200" y="24" class="diagram-label">
+                Queue
+              </text>
+              <text x="410" y="24" class="diagram-label">
+                Worker
+              </text>
+              <path d="M16 112H165 M200 112H366 M400 112H550" class="diagram-track" />
+              <path d="m176 74 8 5-8 5m200-10 8 5-8 5" class="diagram-arrow" />
+              {['A', 'B', 'C'].map((letter, i) => (
+                <g
+                  class={`command command-${i}`}
+                  data-command
+                  style={`transform:translate(${pr.frames[0].places[i][0]}px,${pr.frames[0].places[i][1]}px)`}
+                >
+                  <rect x="-18" y="-19" width="38" height="38" rx="6" />
+                  <text y="6" text-anchor="middle">
+                    {letter}
+                  </text>
+                </g>
+              ))}
+            </svg>
+            <p class="diagram-state" data-limit>
+              {pr.frames[0].limit}
+            </p>
+          </div>
+          <div class="source-pane">
+            <div class="source-heading">
+              <span>{pr.file}</span>
+              <span>Example source</span>
+            </div>
+            <pre><code>{pr.code.map((line,i) => <span class:list={['source-line',{'is-current': i === 0}]} data-source-line><span class="line-number" aria-hidden="true">{i+1}</span>{line}</span>)}</code></pre>
+            <a href="#inside" class="source-link">
+              See the real review workspace <Icon name="arrow" size={16} />
+            </a>
+          </div>
+          <div class="playback" data-controls hidden>
+            <div class="playback-buttons">
+              <button type="button" class="play-button" data-play>
+                <span data-play-icon>
+                  <Icon name="play" size={16} />
+                </span>
+                <span data-pause-icon>
+                  <Icon name="pause" size={16} />
+                </span>
+                <span data-play-label>Play</span>
+              </button>
+              <button type="button" class="icon-button" data-next aria-label="Next step" title="Next step">
+                <Icon name="step" size={18} />
+              </button>
+              <button
+                type="button"
+                class="icon-button"
+                data-reset
+                aria-label="Restart explanation"
+                title="Restart explanation"
+              >
+                <Icon name="reset" size={17} />
+              </button>
+            </div>
+            <div class="step-copy" aria-live="polite" aria-atomic="true">
+              <span class="step-count" data-count>
+                1 / 3
+              </span>
+              <p>
+                <strong data-step-title>{pr.frames[0].title}</strong>
+                <span data-caption>{pr.frames[0].caption}</span>
+              </p>
+            </div>
+          </div>
+        </div>
+      </details>
+    ))}
+  </div>
+  <noscript>
+    <p class="demo-noscript">Open each PR to explore its contribution. Enable JavaScript to play the diagram steps.</p>
+  </noscript>
+  <div class="assembly-footer">
+    <p>Zoom into a PR. Keep the stack in sight.</p>
+    <a href="#inside">
+      Explore the app <Icon name="arrow" size={18} />
+    </a>
+  </div>
+</section>
+<script>
+  import '../scripts/stack-demo';
+</script>
