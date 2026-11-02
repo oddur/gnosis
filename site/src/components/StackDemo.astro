@@ -1,13 +1,14 @@
 ---
-import { examplePrs } from '../lib/demo';
+import { examplePrs, awaitFrames } from '../lib/demo';
+import AwaitComparison from './AwaitComparison.astro';
 import Icon from './Icon.astro';
 ---
 
 <section class="assembly" id="example" aria-labelledby="example-title">
   <div class="assembly-title">
-    <h2 id="example-title">Example: a command queue across three PRs</h2>
+    <h2 id="example-title">Example: a missing await breaks the concurrency limit</h2>
     <p>
-      Illustrative example <span aria-hidden="true">·</span> Select a PR to explore
+      Illustrative stack <span aria-hidden="true">·</span> Select a PR
     </p>
   </div>
   <div class="stack-layers">
@@ -19,99 +20,89 @@ import Icon from './Icon.astro';
           <span class="pr-role">{pr.role}</span>
           <Icon name="chevron" size={18} />
         </summary>
-        <div class="layer-content">
+        <div class:list={['layer-content', { 'has-comparison': index === 1 }]}>
+          {index === 1 && (
+            <div class="playback" data-controls hidden>
+              <div class="playback-buttons">
+                <button type="button" class="play-button" data-play>
+                  <span data-play-icon>
+                    <Icon name="play" size={16} />
+                  </span>
+                  <span data-pause-icon>
+                    <Icon name="pause" size={16} />
+                  </span>
+                  <span data-play-label>Play</span>
+                </button>
+                <button
+                  type="button"
+                  class="icon-button"
+                  data-prev
+                  aria-label="Previous step"
+                  title="Previous step"
+                  disabled
+                >
+                  <Icon name="chevron" size={18} />
+                </button>
+                <button type="button" class="icon-button" data-next aria-label="Next step" title="Next step">
+                  <Icon name="step" size={18} />
+                </button>
+                <button
+                  type="button"
+                  class="icon-button"
+                  data-reset
+                  aria-label="Restart explanation"
+                  title="Restart explanation"
+                >
+                  <Icon name="reset" size={17} />
+                </button>
+              </div>
+              <div class="step-copy" aria-live="polite" aria-atomic="true">
+                <span class="step-count" data-count>
+                  1 / {awaitFrames.length}
+                </span>
+                <p>
+                  <strong data-step-title>{awaitFrames[0].title}</strong>
+                  <span data-caption>{awaitFrames[0].caption}</span>
+                </p>
+              </div>
+            </div>
+          )}
           <div class="layer-explanation">
             <h3>{pr.heading}</h3>
             <p class="layer-description">{pr.description}</p>
-            <svg
-              class="queue-figure"
-              viewBox="0 0 560 144"
-              role="img"
-              aria-labelledby={`diagram-title-${index} diagram-desc-${index}`}
-            >
-              <title id={`diagram-title-${index}`}>{pr.frames[0].title}</title>
-              <desc id={`diagram-desc-${index}`}>{pr.frames[0].caption}</desc>
-              <text x="16" y="24" class="diagram-label">
-                Incoming
-              </text>
-              <text x="200" y="24" class="diagram-label">
-                Queue
-              </text>
-              <text x="410" y="24" class="diagram-label">
-                Worker
-              </text>
-              <path d="M16 112H165 M200 112H366 M400 112H550" class="diagram-track" />
-              <path d="m176 74 8 5-8 5m200-10 8 5-8 5" class="diagram-arrow" />
-              {['A', 'B', 'C'].map((letter, i) => (
-                <g
-                  class={`command command-${i}`}
-                  data-command
-                  style={`transform:translate(${pr.frames[0].places[i][0]}px,${pr.frames[0].places[i][1]}px)`}
-                >
-                  <rect x="-18" y="-19" width="38" height="38" rx="6" />
-                  <text y="6" text-anchor="middle">
-                    {letter}
-                  </text>
-                </g>
-              ))}
-            </svg>
-            <p class="diagram-state" data-limit>
-              {pr.frames[0].limit}
-            </p>
+            {index === 1 && <AwaitComparison />}
           </div>
           <div class="source-pane">
             <div class="source-heading">
               <span>{pr.file}</span>
-              <span>Example source</span>
+              <span>{index === 1 ? '− removed / + added' : 'Example source'}</span>
             </div>
-            <pre><code>{pr.code.map((line,i) => <span class:list={['source-line',{'is-current': i === 0}]} data-source-line><span class="line-number" aria-hidden="true">{i+1}</span>{line}</span>)}</code></pre>
-            <a href="#inside" class="source-link">
-              See the real review workspace <Icon name="arrow" size={16} />
-            </a>
-          </div>
-          <div class="playback" data-controls hidden>
-            <div class="playback-buttons">
-              <button type="button" class="play-button" data-play>
-                <span data-play-icon>
-                  <Icon name="play" size={16} />
-                </span>
-                <span data-pause-icon>
-                  <Icon name="pause" size={16} />
-                </span>
-                <span data-play-label>Play</span>
-              </button>
-              <button type="button" class="icon-button" data-next aria-label="Next step" title="Next step">
-                <Icon name="step" size={18} />
-              </button>
-              <button
-                type="button"
-                class="icon-button"
-                data-reset
-                aria-label="Restart explanation"
-                title="Restart explanation"
-              >
-                <Icon name="reset" size={17} />
-              </button>
-            </div>
-            <div class="step-copy" aria-live="polite" aria-atomic="true">
-              <span class="step-count" data-count>
-                1 / 3
-              </span>
-              <p>
-                <strong data-step-title>{pr.frames[0].title}</strong>
-                <span data-caption>{pr.frames[0].caption}</span>
+            <pre
+              tabindex="0"
+              aria-label={`${pr.file} example ${index === 1 ? 'diff' : 'source'}`}
+            ><code>{pr.code.map((line,i) => <span class:list={['source-line', {'is-removed':index===1&&i===3,'is-added':index===1&&i===4,'is-before-current':index===1&&i===3,'is-after-current':index===1&&i===4}]} data-source-line><span class="line-number" aria-hidden="true">{index===1?(i===3?'−':i===4?'+':''):i+1}</span>{index === 1 && (i === 3 || i === 4) && <span class="sr-only">{i === 3 ? 'Removed: ' : 'Added: '}</span>}{line}<span class="source-execution" aria-hidden="true"></span></span>)}</code></pre>
+            {index === 1 && (
+              <p class="source-explanation">
+                Without <code>await</code>, the returned promise stays pending, but <code>finally</code> runs
+                immediately.
               </p>
-            </div>
+            )}
+            <a href="#inside" class="source-link">
+              See the app’s review workspace <Icon name="arrow" size={16} />
+            </a>
           </div>
         </div>
       </details>
     ))}
   </div>
   <noscript>
-    <p class="demo-noscript">Open each PR to explore its contribution. Enable JavaScript to play the diagram steps.</p>
+    <p class="demo-noscript">
+      The diagram shows the initial state. Without await, A releases the slot while it still runs, so B starts too
+      early. With await, B waits until A finishes. Enable JavaScript to step through the comparison.
+    </p>
   </noscript>
   <div class="assembly-footer">
-    <p>Select a PR, then play or step through the diagram.</p>
+    <p>Two commands. One slot. Step through both versions.</p>
     <a href="#inside">
       See the app <Icon name="arrow" size={18} />
     </a>

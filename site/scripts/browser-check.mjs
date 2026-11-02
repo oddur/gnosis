@@ -71,37 +71,103 @@ app
       await load();
       assert.equal(await js("document.querySelectorAll('[data-pr][open]').length"), 1);
       assert.equal(await js("document.querySelector('[data-pr][open]').dataset.pr"), '1');
-      assert.equal(await current(), '1 / 3');
+      assert.equal(await current(), '1 / 5');
+      assert.equal(await js("document.querySelector('.source-line.is-removed .sr-only').textContent"), 'Removed: ');
+      assert.equal(await js("document.querySelector('.source-line.is-added .sr-only').textContent"), 'Added: ');
+      // Reproduce the actual JS semantics independently of the illustration state table.
+      const executions = await js(`(async()=>{
+        async function runCase(withAwait) {
+          let occupied=false,active=0,peak=0;
+          const waiting=[],finish={},released=[];
+          const flush=async()=>{for(let i=0;i<20;i++)await Promise.resolve()};
+          const acquire=()=>new Promise(resolve=>{
+            const grant=()=>{occupied=true;resolve({release(){occupied=false;waiting.shift()?.()}})};
+            if(occupied)waiting.push(grant);else grant();
+          });
+          const run=command=>new Promise(resolve=>{
+            active++;peak=Math.max(peak,active);
+            finish[command]=()=>{active--;resolve(command)};
+          });
+          async function dispatch(command) {
+            const slot=await acquire();
+            try { if(withAwait)return await run(command);return run(command); }
+            finally { released.push(command);slot.release(); }
+          }
+          const a=dispatch('A'),b=dispatch('B');
+          await flush();
+          const pending={active,peak,released:[...released]};
+          finish.A();await flush();
+          const afterA={active,peak,released:[...released]};
+          finish.B();const result=await Promise.all([a,b]);
+          return {pending,afterA,result,active};
+        }
+        return {before:await runCase(false),after:await runCase(true)};
+      })()`);
+      assert.deepEqual(executions.before.pending, { active: 2, peak: 2, released: ['A', 'B'] });
+      assert.deepEqual(executions.after.pending, { active: 1, peak: 1, released: [] });
+      assert.deepEqual(executions.after.afterA, { active: 1, peak: 1, released: ['A'] });
+      assert.deepEqual(executions.before.result, ['A', 'B']);
+      assert.deepEqual(executions.after.result, ['A', 'B']);
+      assert.equal(executions.before.active, 0);
+      assert.equal(executions.after.active, 0);
       for (const index of [0, 2, 1]) {
         await click(`[data-pr="${index}"] summary`);
         await pause(70);
         assert.equal(await js("document.querySelectorAll('[data-pr][open]').length"), 1);
-        await click(`[data-pr="${index}"] [data-next]`);
-        assert.equal(await current(), '2 / 3');
-        await click(`[data-pr="${index}"] [data-next]`);
-        assert.equal(await current(), '3 / 3');
-        assert.equal(await js(`document.querySelector('[data-pr="${index}"] [data-next]').disabled`), true);
-        assert.equal(
-          await js(`document.querySelector('[data-pr="${index}"] [data-play-label]').textContent`),
-          'Replay'
-        );
-        await click(`[data-pr="${index}"] [data-reset]`);
-        assert.equal(await current(), '1 / 3');
+        assert.ok(await js(`document.querySelector('[data-pr="${index}"] pre').textContent.length > 40`));
       }
-      await click('[data-pr="1"] [data-play]');
-      await pause(1750);
-      assert.equal(await current(), '2 / 3');
-      await click('[data-pr="1"] [data-play]');
-      await pause(2400);
-      assert.equal(await current(), '2 / 3');
-      await click('[data-pr="1"] [data-reset]');
-      // Switching PRs must cancel playback in the previous PR.
-      await click('[data-pr="1"] [data-play]');
+      const captureExample = async (name) => {
+        await js("document.querySelector('#example').scrollIntoView({behavior:'instant'})");
+        await pause(750);
+        const clip = await js(
+          "(()=>{const r=document.querySelector('#example').getBoundingClientRect();return {x:r.left,y:r.top+scrollY,width:r.width,height:r.height,scale:1}})()"
+        );
+        const shot = await win.webContents.debugger.sendCommand('Page.captureScreenshot', {
+          format: 'png',
+          captureBeyondViewport: true,
+          clip,
+        });
+        fs.writeFileSync(path.join(shots, name + '.png'), Buffer.from(shot.data, 'base64'));
+      };
+      const activeCounts = () => js("[...document.querySelectorAll('[data-active-count]')].map(n=>n.textContent)");
+      const peaks = () => js("[...document.querySelectorAll('[data-peak]')].map(n=>n.textContent)");
+      await click('[data-next]');
+      assert.equal(await current(), '2 / 5');
+      assert.equal(
+        await js("document.querySelector('[data-lane=before] [data-slot]').textContent"),
+        'Free while A runs'
+      );
+      await captureExample('await-early-release');
+      await click('[data-next]');
+      assert.deepEqual(await activeCounts(), ['2 active · limit exceeded', '1 active']);
+      assert.deepEqual(await peaks(), ['2', '1']);
+      await captureExample('await-overlap');
+      await click('[data-prev]');
+      assert.equal(await current(), '2 / 5');
+      assert.deepEqual(await peaks(), ['1', '1']);
+      await click('[data-next]');
+      await click('[data-next]');
+      await click('[data-next]');
+      assert.equal(await current(), '5 / 5');
+      assert.deepEqual(await activeCounts(), ['0 active', '0 active']);
+      assert.deepEqual(await peaks(), ['2', '1']);
+      assert.equal(await js("document.querySelector('[data-next]').disabled"), true);
+      assert.equal(await js("document.querySelector('[data-play-label]').textContent"), 'Replay');
+      await captureExample('await-complete');
+      await click('[data-play]');
+      assert.equal(await current(), '1 / 5');
+      await pause(2550);
+      assert.equal(await current(), '2 / 5');
+      await click('[data-play]');
+      await pause(4400);
+      assert.equal(await current(), '2 / 5');
+      await click('[data-reset]');
+      assert.equal(await js("document.querySelector('[data-prev]').disabled"), true);
+      await click('[data-play]');
       await click('[data-pr="0"] summary');
-      await pause(1800);
-      assert.equal(await js('document.querySelector(\'[data-pr="1"] [data-count]\').textContent'), '1 / 3');
+      await pause(2550);
+      assert.equal(await js("document.querySelector('[data-count]').textContent"), '1 / 5');
       await click('[data-pr="1"] summary');
-      // Native Enter includes a character event, unlike React keydown handlers.
       win.show();
       win.focus();
       win.webContents.focus();
@@ -122,7 +188,7 @@ app
       await pause(100);
       assert.equal(await js('document.querySelector(\'[data-pr="2"]\').open'), true);
       await click('[data-pr="1"] summary');
-      await click('[data-pr="1"] [data-reset]');
+      await click('[data-reset]');
       await js(
         "Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.copied=text}}});void 0"
       );
@@ -207,10 +273,11 @@ app
         await captureTour('feature-mobile-' + id);
       }
       await click('[data-feature-tab="stacks"]');
-      await click('[data-pr="2"] summary');
-      await click('[data-pr="2"] [data-next]');
+      await click('[data-next]');
+      await click('[data-next]');
       await noOverflow();
       await capture('mobile-step');
+      await captureExample('await-mobile-overlap');
       win.setContentSize(320, 740);
       await load();
       await noOverflow();
@@ -233,7 +300,9 @@ app
       assert.equal(await js('document.querySelector(\'[data-pr="1"]\').open'), true);
       assert.equal(await js('document.querySelector(\'[data-pr="1"] [data-controls]\').hidden'), true);
       assert.ok(
-        await js("document.querySelector('[data-pr=\"1\"] .source-line').textContent.includes('queue.take(2)')")
+        await js(
+          "document.querySelector('[data-pr=\"1\"] pre').textContent.includes('return await worker.run(command)')"
+        )
       );
       assert.equal(
         await js("document.querySelectorAll('[data-feature-panel]:not([hidden])').length"),

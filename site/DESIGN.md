@@ -15,7 +15,12 @@ colors:
   layer-border: "#a9b7d8"
   layer-hover: "#edf2ff"
   source-divider: "#d3dced"
-  source-current: "#d6e1f8"
+  removed-bg: "#f9e4e6"
+  removed-ink: "#852e36"
+  added-bg: "#e0f0e7"
+  added-ink: "#225c3b"
+  before-current: "#9b3038"
+  after-current: "#297048"
   control-border: "#aebddc"
   control-hover: "#dce7ff"
 typography:
@@ -127,6 +132,12 @@ components:
   source-pane:
     backgroundColor: "{colors.canvas}"
     rounded: "{rounded.default}"
+  source-removed:
+    backgroundColor: "{colors.removed-bg}"
+    textColor: "{colors.removed-ink}"
+  source-added:
+    backgroundColor: "{colors.added-bg}"
+    textColor: "{colors.added-ink}"
   command-copy:
     backgroundColor: "{colors.paper}"
     rounded: "{rounded.default}"
@@ -160,6 +171,7 @@ This system covers the website in `site/`. The repository root design files desc
 - Cool lavender canvas, cobalt emphasis, and graphite text.
 - Moderate, close-set headings that name features and actions.
 - Connected layers that preserve context around the selected contribution.
+- Synchronized before/after mechanisms with visible counts and corresponding source changes.
 - Real screenshots with captions and explicit sample context.
 - Flat surfaces, fine borders, and purposeful motion.
 - Factual descriptions, visible project links, and plain installation instructions.
@@ -175,6 +187,15 @@ The palette combines pale lavender neutrals with a deep cobalt accent. Frontmatt
 - **Focus blue** (`focus`) identifies keyboard focus independently of hover.
 - **Pale selection blue** (`selected`) gives screenshot enlargement controls their hover fill.
 
+### Secondary
+
+- **Removed source** (`removed-bg`, `removed-ink`) pairs a pale red fill with dark red text and a minus marker.
+- **Added source** (`added-bg`, `added-ink`) pairs a pale green fill with dark green text and a plus marker.
+- **Before execution** (`before-current`) outlines the current Before line and marks an exceeded concurrency limit.
+- **After execution** (`after-current`) outlines the current After line. Text markers distinguish both execution paths.
+
+These colors explain code changes and execution state. They do not replace cobalt for navigation or primary actions.
+
 ### Neutral
 
 - **Lavender canvas** (`canvas`) fills the page and source panes.
@@ -183,7 +204,7 @@ The palette combines pale lavender neutrals with a deep cobalt accent. Frontmatt
 - **Graphite** (`ink`) carries primary text. **Slate** (`muted`) carries supporting text and metadata.
 - **Lavender rule** (`line`) separates footer content and outlines small controls.
 - **Layer border** and **layer hover** distinguish closed disclosures without suggesting selection.
-- **Source divider** and **source current** separate code regions and identify the current source line.
+- **Source divider** separates code from its filename and workspace link.
 - **Control border** and **control hover** keep playback controls visible against pale surfaces.
 
 **The State Evidence Rule.** Pair selected colors with structural changes, text, or symbols that explain the state.
@@ -219,6 +240,8 @@ The shared frame has a maximum width of 1440px and horizontal padding of 56px. T
 
 Wide layouts pair explanatory text with evidence. Section introductions use columns of `1fr 0.8fr` with a 70px gap. Open PR content uses `1.12fr 1fr` with a 34px column gap. The setup section uses equal columns with a 96px gap.
 
+Comparison playback spans both columns before the illustration and diff. Its minimum height is 90px on desktop and 150px on mobile. Reserved caption space keeps the diagram stable between steps. Before and After lanes remain vertically stacked at every width.
+
 Release entries separate metadata from prose with a 220px first column and a 55px gap. Horizontal rules define the entries. Screenshots span the content frame. Standalone screenshots retain their original aspect ratio.
 
 The feature tour uses a pale surface with 48px vertical padding. Descriptions pair columns of `1fr 0.6fr` with a 48px gap and a minimum height of 156px. Enhanced screenshot frames retain an 8:5 aspect ratio across viewport sizes. Images use `object-fit: contain`, which preserves the full capture without cropping.
@@ -231,7 +254,7 @@ Queue, setup, and install sections also use 48px vertical padding on desktop. Th
 | --- | --- |
 | At least 1600px | Hero vertical padding increases to 42px above and 52px below. |
 | Up to 1100px | Frame padding becomes 32px. Column gaps and demonstration type become more compact. Release metadata uses 160px. |
-| Up to 760px | Frame padding becomes 20px. Main grids become single columns. Playback precedes source code. Navigation retains essential actions. |
+| Up to 760px | Frame padding becomes 20px. Main grids become single columns. Playback precedes the illustration and source. Navigation retains essential actions. |
 | Up to 390px | Frame padding becomes 18px. The GitHub header link disappears. The headline uses its compact size. |
 
 Mobile keeps PR dependency order, explanation text, playback controls, and source. Long code scrolls within its pane. Release tables also scroll within their own region.
@@ -270,11 +293,21 @@ The footer uses the same wordmark, a factual product description, a fine top bor
 
 Native disclosures keep each contribution inspectable without JavaScript. Fine vertical connectors join adjacent rows. An open row reverses to cobalt and rotates its chevron. A hover changes only the closed row fill.
 
-The open layer pairs explanatory text and an SVG mechanism with source code. The current line combines a pale fill with a cobalt left border. The illustration uses labeled commands, a fixed queue, and a worker. Its accessible title and description change with each step.
+The example has three contributions: a concurrency slot, a missing-await fix, and a regression test. The foundation and test show static explanations and source. The fix starts open and pairs synchronized Before/After lanes with the actual removed and added lines.
 
-Playback starts only after activation. Play, Pause, Replay, Next step, and Restart preserve control over the explanation. Playback stops when its panel closes, the document becomes hidden, or the demonstration leaves the viewport.
+Each lane keeps Waiting, Running, and Done at fixed positions. Commands A and B retain their identities across both versions. Text reports the slot owner, active count, and peak count. The Before lane marks an exceeded limit in red and explicitly names the failure.
 
-Command transforms take 650ms with `cubic-bezier(0.16, 1, 0.3, 1)`. Playback waits 1600ms before its first step, then 2200ms between steps. Reduced motion removes transitions and smooth scrolling. Manual steps remain available, and timed playback remains user-initiated.
+Five frames show A starting, early cleanup, overlapping commands, A completing, and both commands completing. Both versions finish with the same results. Their peaks remain visible: two active commands before the fix and one after it.
+
+The diff preserves red removed and green added lines throughout playback. Thin colored outlines track each execution path independently, with Before and After text markers. A focusable source region supports horizontal keyboard scrolling and uses the shared focus outline. The source explanation states why the missing await lets `finally` run early.
+
+Playback starts only after activation. Play, Pause, Replay, Previous step, Next step, and Restart precede the illustration. Previous and Next disable at their respective boundaries. Manual navigation stops playback. Playback also stops when the panel closes, becomes hidden, or leaves the viewport.
+
+Command transforms take 650ms with `cubic-bezier(0.16, 1, 0.3, 1)`. Playback waits 2400ms before its first step, then 4200ms between steps. Reduced motion removes transitions and smooth scrolling. Manual steps remain available, and timed playback remains user-initiated.
+
+Each SVG has a changing title and description that report command locations, the slot state, and counts. Step text uses a polite live region. Without JavaScript, the initial comparison, source diff, static disclosures, and a textual explanation remain available.
+
+**The Stable Comparison Rule.** Preserve object identity and lane positions across steps. Show the cause, intermediate state, and measured result together.
 
 ### Screenshots
 
@@ -319,6 +352,7 @@ No website input fields or dialogs exist in this system. The sidecar demonstrate
 - **Do** preserve full screenshots inside the stable feature frame.
 - **Do** use factual feature names, screenshot captions, and setup instructions.
 - **Do** keep source, setup, and issue links easy to find.
+- **Do** pair before/after diagrams with source changes, explicit counts, and stable object identities.
 
 ### Don't:
 

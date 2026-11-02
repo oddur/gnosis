@@ -1,150 +1,96 @@
-/** Curated sample, not a live PR. Each frame records the same commands at new positions. */
+/** Curated example, not a live PR. Coordinates keep command identity stable across steps. */
 export const examplePrs = [
   {
     number: 120,
-    title: 'Introduce a bounded queue',
+    title: 'Add a concurrency limit',
     role: 'Foundation',
     file: 'queue.ts',
-    heading: 'Keep the queue bounded.',
-    description: 'Hold up to three commands. New arrivals wait when the queue is full.',
+    heading: 'One slot means one active command',
+    description: 'acquire() waits until the slot is free. Holding that slot must cover the entire worker operation.',
     code: [
-      'const queue = new Queue({ capacity: 3 });',
-      'queue.tryPush(commandA); // accepted',
-      'queue.tryPush(commandB); // accepted',
-      'queue.tryPush(commandC); // accepted',
-      '// Further commands wait for room.',
-    ],
-    frames: [
-      {
-        title: 'Three commands arrive',
-        caption: 'A, B, and C are ready. The queue has room for three.',
-        places: [
-          [36, 78],
-          [88, 78],
-          [140, 78],
-        ],
-        line: 0,
-        limit: 'Queue · capacity 3',
-      },
-      {
-        title: 'A and B enter',
-        caption: 'The first two commands occupy two of the three slots.',
-        places: [
-          [248, 78],
-          [300, 78],
-          [140, 78],
-        ],
-        line: 2,
-        limit: 'Queue · capacity 3',
-      },
-      {
-        title: 'The queue is full',
-        caption: 'C takes the last slot. Any further command must wait.',
-        places: [
-          [220, 78],
-          [272, 78],
-          [324, 78],
-        ],
-        line: 4,
-        limit: 'Queue · full',
-      },
+      'const queue = new Semaphore(1);',
+      '',
+      'const slot = await queue.acquire();',
+      '// Hold the slot while work runs.',
+      'slot.release();',
     ],
   },
   {
     number: 121,
-    title: 'Route worker commands',
+    title: 'Hold the slot until the worker finishes',
     role: 'Builds on #120',
-    file: 'worker.ts',
-    heading: 'Commands keep their order.',
-    description: 'The worker takes A and B together. C stays at the front of the queue.',
+    file: 'dispatch.ts',
+    heading: 'Why return await matters here',
+    description:
+      'Both versions return a promise. Only return await keeps finally from releasing the slot before the worker finishes.',
     code: [
-      'const batch = queue.take(2);',
-      'await worker.dispatch(batch);',
-      '// A and B run in order.',
-      '// C waits for the next batch.',
-    ],
-    frames: [
-      {
-        title: 'Commands wait in order',
-        caption: 'A arrived first, followed by B and then C.',
-        places: [
-          [220, 78],
-          [272, 78],
-          [324, 78],
-        ],
-        line: 0,
-        limit: 'Queue · batch limit 2',
-      },
-      {
-        title: 'Take the next two',
-        caption: 'The worker receives A and B. C stays queued.',
-        places: [
-          [430, 78],
-          [482, 78],
-          [220, 78],
-        ],
-        line: 1,
-        limit: 'Queue · C remains',
-      },
-      {
-        title: 'Keep the same order',
-        caption: 'Run A before B. The next batch will start with C.',
-        places: [
-          [430, 78],
-          [482, 78],
-          [220, 78],
-        ],
-        line: 3,
-        limit: 'Queue · next is C',
-      },
+      'async function dispatch(command) {',
+      '  const slot = await queue.acquire();',
+      '  try {',
+      '    return worker.run(command);',
+      '    return await worker.run(command);',
+      '  } finally {',
+      '    slot.release();',
+      '  }',
+      '}',
     ],
   },
   {
     number: 122,
-    title: 'Adapt the batch size',
+    title: 'Test that a second command waits',
     role: 'Builds on #121',
-    file: 'batch.ts',
-    heading: 'Let a busy queue take a larger batch.',
-    description: 'In this example, three waiting commands increase the batch limit from two to three.',
+    file: 'dispatch.test.ts',
+    heading: 'Test the overlap, not just the result',
+    description:
+      'Let A stay pending, then submit B. B must not start until A settles. Also test rejection: finally must still release the slot.',
     code: [
-      'const limit = queue.size >= 3 ? 3 : 2;',
-      'const batch = queue.take(limit);',
-      'await worker.dispatch(batch);',
+      'const a = dispatch(commandA);',
+      'const b = dispatch(commandB);',
+      'await worker.waitForStart("A");',
+      'await flushMicrotasks();',
+      'expect(worker.started).toEqual(["A"]);',
+      '',
+      'worker.finish("A");',
+      'await worker.waitForStart("B");',
+      'expect(worker.started).toEqual(["A", "B"]);',
+      'worker.finish("B");',
+      'await Promise.all([a, b]);',
     ],
-    frames: [
-      {
-        title: 'A busy queue',
-        caption: 'Three commands are waiting. The normal batch limit is two.',
-        places: [
-          [220, 78],
-          [272, 78],
-          [324, 78],
-        ],
-        line: 0,
-        limit: 'Queue · 3 waiting',
-      },
-      {
-        title: 'Raise the batch limit',
-        caption: 'The rule selects three, so all waiting commands fit.',
-        places: [
-          [220, 78],
-          [272, 78],
-          [324, 78],
-        ],
-        line: 1,
-        limit: 'Queue · batch limit 3',
-      },
-      {
-        title: 'Dispatch all three',
-        caption: 'A, B, and C reach the worker together, still in order.',
-        places: [
-          [406, 78],
-          [458, 78],
-          [510, 78],
-        ],
-        line: 2,
-        limit: 'Queue · empty',
-      },
-    ],
+  },
+];
+
+export const awaitFrames = [
+  {
+    title: 'A starts; B is waiting',
+    caption: 'A owns the only slot. Its worker operation is still pending.',
+    before: { positions: [270, 70], active: 1, peak: 1, slot: 'Held by A', line: 3 },
+    after: { positions: [270, 70], active: 1, peak: 1, slot: 'Held by A', line: 4 },
+  },
+  {
+    title: 'The cleanup runs too early',
+    caption:
+      'Before: return exits try, so finally releases the slot. A is still running. After: await keeps the slot held.',
+    before: { positions: [270, 70], active: 1, peak: 1, slot: 'Free while A runs', line: 6 },
+    after: { positions: [270, 70], active: 1, peak: 1, slot: 'Held by A', line: 4 },
+  },
+  {
+    title: 'B starts while A is still running',
+    caption:
+      'Before: B takes the freed slot and starts; its cleanup also runs early. Two commands now run despite the limit of one.',
+    before: { positions: [245, 305], active: 2, peak: 2, slot: 'Free while A and B run', line: 6 },
+    after: { positions: [270, 70], active: 1, peak: 1, slot: 'Held by A; B waits', line: 4 },
+  },
+  {
+    title: 'A finishes; the fixed version can start B',
+    caption: 'After: A settles, finally releases its slot, and B starts. Before: B was already running.',
+    before: { positions: [470, 270], active: 1, peak: 2, slot: 'Free while B runs', line: -1 },
+    after: { positions: [470, 270], active: 1, peak: 1, slot: 'Held by B', line: 4 },
+  },
+  {
+    title: 'Same results. Different concurrency.',
+    caption:
+      'Both commands finish in both versions. The fix keeps the peak at one active command. The original reached two.',
+    before: { positions: [445, 505], active: 0, peak: 2, slot: 'Free', line: -1 },
+    after: { positions: [445, 505], active: 0, peak: 1, slot: 'Free', line: 6 },
   },
 ];

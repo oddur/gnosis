@@ -17,7 +17,7 @@ OWN-WORLD: Cool lavender ground, cobalt active layers, graphite text and pale te
 
 STORY: Understand one mechanism, see it in the real review queue and diff workflow, explore stacks, diffs, Markdown, chat, checks and conflict resolution through real screenshots, discover daily-use tools, connect existing Claude or Codex tools, download. Explain provider data flow accurately. No invented usage or performance claims.
 
-FIRST VIEWPORT: Match the approved sketch: navigation and download above a left-aligned two-line headline with short supporting copy at right; a broad three-layer PR assembly below. The middle PR begins selected. Its explanation, animated queue and source sit inside the layer, with sibling PRs still visible. Signature interaction: selecting a PR reveals its contribution; Play moves the same commands through a fixed queue into a worker, with source lines tracking the step. Manual steps and reduced motion preserve the lesson.
+FIRST VIEWPORT: Match the approved sketch: navigation and download above a left-aligned two-line headline with short supporting copy at right; a broad three-layer PR assembly below. The middle PR begins selected. Its explanation, animated queue and source sit inside the layer, with sibling PRs still visible. Signature interaction: selecting a PR reveals its contribution; Play compares the same two commands with and without await. A one-slot limit is exceeded only in the original version; source lines track execution and peak counts preserve the consequence after both runs finish. Manual steps and reduced motion preserve the lesson.
 
 FORM: Exploded assembly drawings, grounded direction 3. seed:6a4008afdf8c0f3f. Code-led. Approved first-viewport sketch: the “Change, unpacked” option selected during Shape. Keep its arrangement, palette and typography while completing responsive behavior and page content.
 
@@ -34,3 +34,7 @@ User requested broader feature coverage after inspecting the first build. Preser
 ## Voice refinement
 
 The user explicitly rejected a corporate/SaaS sales tone. Keep the existing lavender/cobalt palette, typeface, interactive code example, and real product evidence. Use direct feature names, factual captions, and plain setup/install instructions. Remove paired slogans, generic benefit claims, and the large promotional setup band. Reduce section heading sizes and spacing. Put source, setup, and issue links near the opening. Explain use of the local agent and existing subscription/API billing, and retain the provider-data disclosure. The website should read like a developer explaining an open-source tool to another developer.
+
+## Interactive example refinement
+
+User approved replacing the simple queue example with a subtle review issue: `return worker.run()` inside try/finally releases a semaphore slot before the returned promise settles. The fix is `return await worker.run()`. Preserve the three-PR hierarchy with static foundation and regression-test context around the interactive fix. Show Before/After together, retain command identity A/B, and use five synchronized stages with explicit slot ownership, active-worker count, and peak count. Put playback before the illustration so controls are visible on laptops. Show a real red/green code diff with execution markers. Browser tests must reproduce the JavaScript semantics independently of the frame data.
