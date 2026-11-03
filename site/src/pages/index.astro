@@ -11,63 +11,67 @@ const macDownload = latest?.assets.find((asset) => asset.name === 'Gnosis.dmg')?
 const brewCommand = 'brew tap oddur/gnosis && brew install --cask gnosis';
 ---
 
-<Base title="Gnosis — A desktop app for code review">
+<Base title="Gnosis — Keep up with PRs. Understand what ships.">
   <main id="main">
     <section class="opening frame" aria-labelledby="headline">
-      <div class="hero-intro">
-        <h1 id="headline">
-          Understand the code
-          <br />
-          you’re reviewing.
-        </h1>
-        <p>
-          An open-source desktop app for GitHub pull requests. Review stacks, read diffs, and generate explanations with
-          your local coding agent.
-        </p>
+      <div class="product-intro">
+        <div class="product-intro-copy">
+          <h1 id="headline">
+            Keep up with PRs.
+            <br />
+            Understand what ships.
+          </h1>
+          <p>
+            Find the PRs that need attention, understand how the changes fit together, and dig into the code where it
+            matters.
+          </p>
+          <p>Gnosis brings your review queue, diffs, checks, and AI explanations into one place.</p>
+          <div class="intro-actions">
+            <a class="button button-primary" href={macDownload ?? `${releasesUrl}/latest`}>
+              <Icon name="download" />
+              {macDownload ? 'Download for macOS' : 'View latest downloads'}
+            </a>
+            <a class="text-link" href="#features">
+              See the features <Icon name="arrow" size={16} />
+            </a>
+          </div>
+          <p class="intro-note">
+            Free and open source. Uses your local Claude Code or Codex, with your existing subscription or API billing.
+          </p>
+        </div>
+        <ProductShot
+          name="review-queue"
+          alt="Gnosis desktop app showing a Review queue with PRs, a grouped stack, check statuses, and a briefing for the selected stack."
+          caption="The Review Queue, with a briefing for the selected stack."
+          loading="eager"
+          fetchpriority="high"
+          sizes="(max-width: 760px) calc(100vw - 40px), (max-width: 900px) calc(100vw - 64px), (max-width: 1100px) calc((100vw - 112px) * 0.64), (max-width: 1440px) calc((100vw - 160px) * 0.64), 820px"
+        />
       </div>
-      <StackDemo />
       <nav class="project-links" aria-label="Project resources">
         <a href="https://github.com/oddur/gnosis">
           Source on GitHub <Icon name="arrow" size={16} />
         </a>
         <a href="https://github.com/oddur/gnosis#readme">Setup guide</a>
         <a href="https://github.com/oddur/gnosis/issues">Bugs &amp; ideas</a>
-        <span>Free · MIT license</span>
+        <a href="https://github.com/oddur/gnosis/blob/main/LICENSE">MIT license</a>
       </nav>
     </section>
 
-    <section class="inside-section" id="inside" aria-labelledby="queue-title">
-      <div class="frame">
-        <div class="section-intro">
-          <h2 id="queue-title">A queue for your PRs</h2>
-          <div>
-            <p>Track review requests, unread changes, and stacked PRs across repositories.</p>
-            <p>Get a short AI briefing before opening a diff. Save filters for the PRs you want to follow.</p>
-          </div>
-        </div>
-        <ProductShot
-          name="review-queue"
-          alt="Gnosis Review queue with review requests, a grouped PR stack, check results, and its briefing beside the list."
-          caption="A briefing for the selected stack, beside the review queue."
-        />
-        <div class="feature-line">
-          <span>Saved filters</span>
-          <span>Unread updates</span>
-          <span>Automatic briefings</span>
-          <span>Grouped stacks</span>
-        </div>
-      </div>
-    </section>
+    <FeatureTour />
 
-    <section class="review-section frame" aria-labelledby="review-title">
+    <section class="review-section frame" id="illustrated-explanations" aria-labelledby="review-title">
       <div class="section-intro">
-        <h2 id="review-title">Explanations beside the diff</h2>
+        <h2 id="review-title">Illustrated explanations</h2>
         <div>
           <p>
-            Generate an explanation for a PR or a whole stack. It breaks the change into topics, with diagrams and notes
-            attached to the code.
+            When a diff needs more context, generate an explanation for the PR or stack. Gnosis groups the change into
+            topics, with diagrams and notes beside the code.
           </p>
-          <p>You can also open Changes or Commits and review the code without generating anything.</p>
+          <p>
+            Step through how a change works, then return to the lines it explains. Generation starts when you ask for
+            it.
+          </p>
         </div>
       </div>
       <ProductShot
@@ -78,12 +82,17 @@ const brewCommand = 'brew tap oddur/gnosis && brew install --cask gnosis';
       <div class="review-footnote">
         <p>Explanations use Claude Code or Codex. You review the code and decide what to submit.</p>
         <a href="#example">
-          Play the sample diagram <Icon name="arrow" size={18} />
+          Try the illustrated example <Icon name="arrow" size={18} />
         </a>
       </div>
+      <div class="illustrated-example">
+        <p class="example-introduction">
+          This sample shows how a diagram can explain a subtle change: adding <code>await</code> keeps a concurrency
+          slot occupied until the work finishes.
+        </p>
+        <StackDemo />
+      </div>
     </section>
-
-    <FeatureTour />
 
     <section class="daily-section frame" aria-labelledby="daily-title">
       <div class="section-intro">

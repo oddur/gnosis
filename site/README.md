@@ -1,6 +1,6 @@
 # gnosis.to
 
-Gnosis's marketing site uses Astro and Tailwind. Its opening uses a three-PR sample to explain why a missing `await` releases a concurrency slot too early. The example is curated sample data; it makes no GitHub or AI requests.
+Gnosis's marketing site uses Astro and Tailwind. Its opening introduces the tool beside an actual Review Queue capture. A feature tour follows. The separate Illustrated explanations section uses a three-PR sample to explain why a missing `await` releases a concurrency slot too early. The example is curated sample data; it makes no GitHub or AI requests. The opening image loads eagerly at high priority; other screenshots load lazily.
 
 ## Develop and verify
 

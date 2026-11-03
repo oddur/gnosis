@@ -30,6 +30,12 @@ typography:
     fontWeight: 600
     lineHeight: 1.06
     letterSpacing: "-0.035em"
+  product-display:
+    fontFamily: "Onest, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "clamp(2.25rem, 3.5vw, 3.15rem)"
+    fontWeight: 600
+    lineHeight: 1.06
+    letterSpacing: "-0.035em"
   headline:
     fontFamily: "Onest, ui-sans-serif, system-ui, sans-serif"
     fontSize: "clamp(1.75rem, 2.7vw, 2.3rem)"
@@ -112,6 +118,10 @@ components:
     rounded: "{rounded.control}"
   navigation:
     textColor: "{colors.ink}"
+  product-intro:
+    padding: "48px 0 24px"
+  intro-note:
+    textColor: "{colors.muted}"
   project-resources:
     textColor: "{colors.blue}"
     padding: "22px 0 32px"
@@ -162,7 +172,7 @@ components:
 
 The website presents Gnosis as an open-source tool, with a developer explaining its behavior to another developer. Feature names, factual captions, and plain installation instructions carry the content. Cool lavender surfaces, cobalt actions, and Onest type keep the presentation calm and technical.
 
-Compact sections give real screenshots and an interactive code example most of the space. Fine lines explain relationships. Motion shows a mechanism, while text and manual controls preserve its meaning without movement. Source, setup, and issue links make the project directly accessible.
+The product summary and real Review Queue screenshot introduce the application. The feature tour establishes its breadth before the illustrated explanations demonstrate one mechanism. Fine lines explain relationships. Motion shows a mechanism, while text and manual controls preserve its meaning without movement. Source, setup, and issue links make the project directly accessible.
 
 This system covers the website in `site/`. The repository root design files describe the desktop application. The source of visual values is `src/styles/global.css`, with behavior in `src/components/` and `src/scripts/`.
 
@@ -170,6 +180,7 @@ This system covers the website in `site/`. The repository root design files desc
 
 - Cool lavender canvas, cobalt emphasis, and graphite text.
 - Moderate, close-set headings that name features and actions.
+- A product summary and real application screenshot before interactive examples.
 - Connected layers that preserve context around the selected contribution.
 - Synchronized before/after mechanisms with visible counts and corresponding source changes.
 - Real screenshots with captions and explicit sample context.
@@ -200,7 +211,7 @@ These colors explain code changes and execution state. They do not replace cobal
 
 - **Lavender canvas** (`canvas`) fills the page and source panes.
 - **Technical surface** (`surface`) separates the assembly, feature tour, setup section, and release fallback from the canvas.
-- **White paper** (`paper`) fills closed PR layers, controls, screenshot surrounds, and the queue section.
+- **White paper** (`paper`) fills closed PR layers, controls, and screenshot surrounds.
 - **Graphite** (`ink`) carries primary text. **Slate** (`muted`) carries supporting text and metadata.
 - **Lavender rule** (`line`) separates footer content and outlines small controls.
 - **Layer border** and **layer hover** distinguish closed disclosures without suggesting selection.
@@ -219,7 +230,8 @@ The sidecar includes derived OKLCH ramps for color inspection. These ramps are p
 
 Headings use balanced wrapping, moderate weight, and negative tracking. Section headings stay compact enough to read as feature labels. The hierarchy in frontmatter maps the implemented roles, without a fixed scale ratio.
 
-- **Display:** page headlines. At widths up to 390px, the size becomes 2.5rem.
+- **Display:** general page headlines. At widths up to 390px, the size becomes 2.5rem.
+- **Product display:** the homepage introduction. At widths up to 900px, its size becomes `clamp(2.1rem, 5.6vw, 3rem)`.
 - **Headline:** section headings. Assembly titles use a smaller size (24px), line height (1.3), and tracking (-0.025em).
 - **Title:** the explanation within an open PR layer. PR summary titles use 18px and weight 550.
 - **Body:** the default document text. Section introductions use 17px with line height 1.65.
@@ -238,22 +250,28 @@ Feature titles use the `feature-title` role and become 23px on mobile. Feature d
 
 The shared frame has a maximum width of 1440px and horizontal padding of 56px. The stylesheet uses contextual spacing, not a universal spacing multiplier. Frontmatter records the recurring steps.
 
+The homepage opens with product copy and the Review Queue screenshot. The feature tour follows. Illustrated explanations then pair the guided review screenshot with the interactive example. Daily features, setup, and installation follow those sections.
+
+The product introduction uses columns of `minmax(0, 0.36fr) minmax(0, 0.64fr)` with a 48px gap and centered vertical alignment. Copy occupies the narrower column. The introduction has 48px top padding and 24px bottom padding. Its body text uses 17px, line height 1.6, and a maximum width of 40ch.
+
+The introduction actions wrap with gaps of 16px by 24px. A primary download sits beside the feature link. A muted note (13px) states the open-source and agent-billing context. Screenshot captions wrap within the image column.
+
 Wide layouts pair explanatory text with evidence. Section introductions use columns of `1fr 0.8fr` with a 70px gap. Open PR content uses `1.12fr 1fr` with a 34px column gap. The setup section uses equal columns with a 96px gap.
 
 Comparison playback spans both columns before the illustration and diff. Its minimum height is 90px on desktop and 150px on mobile. Reserved caption space keeps the diagram stable between steps. Before and After lanes remain vertically stacked at every width.
 
-Release entries separate metadata from prose with a 220px first column and a 55px gap. Horizontal rules define the entries. Screenshots span the content frame. Standalone screenshots retain their original aspect ratio.
+Release entries separate metadata from prose with a 220px first column and a 55px gap. Horizontal rules define the entries. Screenshots fill their containing column or section. Standalone screenshots retain their original aspect ratio.
 
 The feature tour uses a pale surface with 48px vertical padding. Descriptions pair columns of `1fr 0.6fr` with a 48px gap and a minimum height of 156px. Enhanced screenshot frames retain an 8:5 aspect ratio across viewport sizes. Images use `object-fit: contain`, which preserves the full capture without cropping.
 
 Daily features form a two-column definition list with a 72px column gap. Each entry has a top rule and 24px vertical padding. This section uses 48px vertical padding.
 
-Queue, setup, and install sections also use 48px vertical padding on desktop. The guided review section uses 56px. The introduction pairs its heading with a factual description (17px), limited to 40ch.
+Setup and install sections use 48px vertical padding on desktop. Illustrated explanations use 56px. A top rule separates the interactive example from its screenshot, with 40px margin and 32px padding. The example introduction has a maximum width of 70ch and a 24px bottom margin.
 
 | Viewport | Implemented response |
 | --- | --- |
-| At least 1600px | Hero vertical padding increases to 42px above and 52px below. |
 | Up to 1100px | Frame padding becomes 32px. Column gaps and demonstration type become more compact. Release metadata uses 160px. |
+| Up to 900px | Product copy precedes the screenshot in one column, with a 28px gap and 24px top padding. Paragraph width increases to 60ch. |
 | Up to 760px | Frame padding becomes 20px. Main grids become single columns. Playback precedes the illustration and source. Navigation retains essential actions. |
 | Up to 390px | Frame padding becomes 18px. The GitHub header link disappears. The headline uses its compact size. |
 
@@ -271,7 +289,7 @@ The website has no box shadows. Pale fills, one-pixel borders, and connected row
 
 Corners stay gently rounded. Primary buttons, source panes, and command containers use the default radius. Assembly and screenshot containers use the larger container radius. PR rows use the layer radius, while playback and enlargement controls use the control radius.
 
-Mobile assembly corners use the mobile radius. Mobile screenshots use the layer radius. The only recurring circles are the wordmark dot and small feature separators. Inline SVG icons use rounded strokes with width 1.7 and a default size of 20px.
+Mobile assembly corners use the mobile radius. Mobile screenshots use the layer radius. The wordmark dot is circular. Inline SVG icons use rounded strokes with width 1.7 and a default size of 20px.
 
 ## Components
 
@@ -283,9 +301,9 @@ Primary hover uses deep cobalt over 150ms. Text links use cobalt and gain an und
 
 ### Navigation
 
-The header pairs a bold wordmark with Features, Changelog, GitHub, and the download action. Current-page links remain underlined. Mobile removes the Features link and secondary GitHub text, then removes the GitHub icon at the narrowest breakpoint.
+The header pairs a bold wordmark with Features, Illustrated explanations, Changelog, GitHub, and the download action. Current-page links remain underlined. At widths up to 900px, the header removes both section links. Mobile also removes secondary GitHub text, then removes the GitHub icon at the narrowest breakpoint.
 
-Project resource links sit beside license information near the opening. Source, setup, and issue links use cobalt text with hover underlines. The row wraps with gaps of 12px by 28px. Mobile uses 13px text and places license information on its own row.
+Source, setup, issue, and MIT license links sit below the product introduction. All four links use cobalt text with hover underlines. The row wraps with gaps of 12px by 28px. Mobile uses 13px text and gaps of 14px by 24px.
 
 The footer uses the same wordmark, a factual product description, a fine top border, and small text links. Links wrap onto a separate row on mobile. A keyboard-visible skip link precedes the header.
 
@@ -301,6 +319,8 @@ Five frames show A starting, early cleanup, overlapping commands, A completing, 
 
 The diff preserves red removed and green added lines throughout playback. Thin colored outlines track each execution path independently, with Before and After text markers. A focusable source region supports horizontal keyboard scrolling and uses the shared focus outline. The source explanation states why the missing await lets `finally` run early.
 
+Screen-reader-only prefixes identify the changed lines as Removed or Added. The visible minus and plus markers remain hidden from assistive technology. The source link returns to the guided review screenshot, and the assembly footer links to the feature tour.
+
 Playback starts only after activation. Play, Pause, Replay, Previous step, Next step, and Restart precede the illustration. Previous and Next disable at their respective boundaries. Manual navigation stops playback. Playback also stops when the panel closes, becomes hidden, or leaves the viewport.
 
 Command transforms take 650ms with `cubic-bezier(0.16, 1, 0.3, 1)`. Playback waits 2400ms before its first step, then 4200ms between steps. Reduced motion removes transitions and smooth scrolling. Manual steps remain available, and timed playback remains user-initiated.
@@ -312,6 +332,8 @@ Each SVG has a changing title and description that report command locations, the
 ### Screenshots
 
 Real application captures provide the product evidence. Each image has descriptive alternative text, a caption, and an explicit sample-repository label. The enlargement link opens the full image in a new tab and names that behavior. Image borders, rounded clipping, and a small enlargement control frame the capture.
+
+The opening Review Queue image loads eagerly with high fetch priority. Its responsive sizes follow the introduction grid, including the single-column breakpoint at 900px. Other screenshots default to lazy loading and automatic priority. Images retain explicit dimensions, asynchronous decoding, and 960px/1600px source variants.
 
 ### Feature tour
 
