@@ -11,18 +11,21 @@ const macDownload = latest?.assets.find((asset) => asset.name === 'Gnosis.dmg')?
 const brewCommand = 'brew tap oddur/gnosis && brew install --cask gnosis';
 ---
 
-<Base title="Gnosis — A desktop app for code review">
+<Base title="Gnosis — Keep up with PRs. Understand what ships.">
   <main id="main">
     <section class="opening frame" aria-labelledby="headline">
       <div class="product-intro">
         <div class="product-intro-copy">
           <h1 id="headline">
-            A desktop app
+            Keep up with PRs.
             <br />
-            for code review.
+            Understand what ships.
           </h1>
-          <p>Gnosis brings GitHub PRs, stacks, diffs, and checks into one workspace.</p>
-          <p>Use your local Claude Code or Codex to summarize a change, explain the code, or ask a question.</p>
+          <p>
+            Find the PRs that need attention, understand how the changes fit together, and dig into the code where it
+            matters.
+          </p>
+          <p>Gnosis brings your review queue, diffs, checks, and AI explanations into one place.</p>
           <div class="intro-actions">
             <a class="button button-primary" href={macDownload ?? `${releasesUrl}/latest`}>
               <Icon name="download" />
@@ -33,7 +36,7 @@ const brewCommand = 'brew tap oddur/gnosis && brew install --cask gnosis';
             </a>
           </div>
           <p class="intro-note">
-            Free and open source. AI features use your existing agent subscription or API billing.
+            Free and open source. Uses your local Claude Code or Codex, with your existing subscription or API billing.
           </p>
         </div>
         <ProductShot

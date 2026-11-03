@@ -82,7 +82,7 @@ app
           demoInIllustrated:!!illustrated.querySelector('#example')
         };
       })()`);
-      assert.match(intro.heading, /desktop app\s+for code review/);
+      assert.match(intro.heading, /Keep up with PRs\.\s+Understand what ships\./);
       assert.equal(intro.demoInOpening, false);
       assert.equal(intro.imagePriority, 'high');
       assert.equal(intro.featureFirst, true);
