@@ -234,6 +234,8 @@ Checks follow new attempts on the displayed commit automatically. A new commit r
 
 A compact “To merge this stack” list groups required actions and links to the affected PR overviews, ordered base first within each group. Drafts have a one-click “Mark all ready” action with inline progress and partial-failure recovery. It changes only draft status, and retains the existing permission and revision guards. Show each blocker and its remedy in the PR row without expansion. Name required check failures; separate running checks as waiting. Keep optional check results outside the required-action list. Expand a row for supporting check details. Show separate timestamps for merge requirements and check results, including missing or delayed results. Permission reads start on action, with the existing confirmation and revision checks. Ready rows omit redundant details. Below 760px of content width, status columns move under the PR and retain visible labels.
 
+Standalone PR summaries place the Checks, reviews & discussions disclosure before the description. Stack summaries lead with the dependency list, which already shows review, check, and branch status for each PR. Detailed GitHub evidence follows that list, before the stack briefing. Use the existing 24px stack section gap without additional evidence margins. Expanding the disclosure must not shift the dependency rows above it.
+
 ### Source identity and Activity
 
 A sticky header identifies the source PR and file in each code group. It uses a panel surface and 9px by 12px padding.

@@ -171,6 +171,10 @@ void app.whenReady().then(async () => {
     await wait(
       "[...document.querySelectorAll('.review-evidence-row')].filter(row=>row.textContent.includes('No code discussions')&&!row.textContent.includes('Saved:')).length===3"
     );
+    await js(`(()=>{
+      const scroller=document.querySelector('.pr-summary-content[data-state=active]');
+      scroller.scrollTop += document.querySelector('.review-evidence').getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+    })()`);
     await capture('stack-expanded');
     await click('Hide details');
     assert.match(
@@ -178,6 +182,10 @@ void app.whenReady().then(async () => {
       /3 with details unavailable/,
       'Timestamped reviews without commit provenance remain unavailable'
     );
+    await click('Show details');
+    await wait("document.querySelectorAll('.review-evidence-details > section').length===3");
+    await js("document.querySelector('.review-evidence-row button').click()");
+    await wait("document.querySelector('[role=tab][aria-selected=true]')?.textContent.startsWith('Checks')");
     assert.equal(errors.length, 0, errors.join('\n'));
     console.log(
       'Review evidence browser checks passed: live updates, lazy discussion sync, revision links, errors, light/dark, narrow layout, navigation.'

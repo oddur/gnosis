@@ -3490,9 +3490,10 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .changes-comment-destination input { accent-color:var(--primary); }
 .changes-comment-shortcut { align-self:center; margin-inline-end:auto; color:var(--muted-foreground); font-size:var(--type-caption); }
 
-/* Dependency order is the main task; merge evidence supports it in a bounded rail. */
+/* Dependency order leads; detailed GitHub evidence and the stack briefing follow. */
 .stack-summary-layout { display:grid;grid-template-columns:minmax(0,1fr);gap:24px;padding-top:8px;align-items:start; }
 .stack-summary-main { min-width:0;display:flex;flex-direction:column;gap:24px; }
+.stack-summary-main > .review-evidence { margin-block:0; }
 .stack-summary-main .stack-briefing-state { margin-bottom:0; }
 .stack-summary-main .stack-briefing-ready { margin-bottom:0;border-bottom:0;padding-bottom:0; }
 /* Conflict resolution extends the file inspection workspace. */

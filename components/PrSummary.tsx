@@ -301,6 +301,21 @@ function PrSummaryContent({
   }, [navigation, onBack, shortcutsEnabled, activeUrl, position, tab]);
   useReviewBreadcrumbs('summary', []);
   const changeScope = (id: string) => { remember(); onScopeChange?.(id); };
+  const evidence = (
+    <ReviewEvidence
+      key={`${account}:${item.subject.id}`}
+      subject={item.subject}
+      account={account}
+      now={statusNow}
+      signals={[...signals, ...item.subject.members.flatMap(member => statuses[member.url]?.signals ?? [])]}
+      checks={checks.values}
+      checkErrors={checks.errors}
+      onChecks={openChecks}
+      onRefresh={onRetryStatus}
+      refreshBusy={statusRefreshing}
+      refreshError={Object.values(statusErrors)[0]}
+    />
+  );
   const tabs = [{ value: 'summary', label: 'Summary' }, { value: 'changes', label: 'Changes' },
     { value: 'commits', label: 'Commits' }, { value: 'checks', label: 'Checks' }, { value: 'explanation', label: 'Explanation' }, { value: 'brief', label: 'Local notes' }];
   return (
@@ -479,10 +494,7 @@ function PrSummaryContent({
                 {warning}
               </p>
             ))}
-            <ReviewEvidence key={`${account}:${item.subject.id}`} subject={item.subject} account={account} now={statusNow}
-              signals={[...signals, ...item.subject.members.flatMap(member => statuses[member.url]?.signals ?? [])]}
-              checks={checks.values} checkErrors={checks.errors} onChecks={openChecks}
-              onRefresh={onRetryStatus} refreshBusy={statusRefreshing} refreshError={Object.values(statusErrors)[0]} />
+            {!stacked && evidence}
             {!stacked && item.briefing?.status === 'ready' && (
               <details className="pr-briefing" open>
                 <summary>AI briefing</summary>
@@ -494,6 +506,7 @@ function PrSummaryContent({
               <div className="stack-summary-main">
                 <StackOverview account={account} now={statusNow} checking={!signalsLoaded && !!account} onRefresh={onRetryStatus} refreshBusy={statusRefreshing || !account} item={item} signals={signals} checks={checks.values} checkErrors={checks.errors} checksBusy={checks.busy} matchingUrls={matchingUrls}
                   onOpen={member => changeScope(member.url)} onChecks={(member, id) => { setCheckFocus({ url: member.url, id, nonce: Date.now() }); changeScope(member.url); onTabChange('checks'); }} />
+                {evidence}
                 <StackBriefing briefing={item.briefing} actions={generationActions?.(item.subject.members)} onActivity={onShowActivity} onSetup={onGitHubAuth} connected={!!account} />
               </div>
             </div> : <PrSubjectDetails
