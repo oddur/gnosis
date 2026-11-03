@@ -114,8 +114,10 @@ void app.whenReady().then(async () => {
     await close();
     await wait('window.deepAll(\'[data-item-path="package-lock.json"]\').length>0');
     // Per-path false override keeps a known lockfile visible, with automatic reset.
+    // The lockfile sorts last, so reveal its header rather than relying on the window being tall enough.
+    await wait("!!document.querySelector('.commit-stream-row[data-file=\"package-lock.json\"]')");
     await js(
-      "document.querySelector('.commit-diff-stream').scrollTop=0; document.querySelector('.commit-diff-stream').dispatchEvent(new WheelEvent('wheel',{bubbles:true}))"
+      "document.querySelector('.commit-stream-row[data-file=\"package-lock.json\"]').scrollIntoView({block:'nearest'}); document.querySelector('.commit-diff-stream').dispatchEvent(new WheelEvent('wheel',{bubbles:true}))"
     );
     await click('File classification for package-lock.json');
     await wait("!!document.querySelector('[role=menu]')");
