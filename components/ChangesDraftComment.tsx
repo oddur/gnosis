@@ -1,5 +1,5 @@
 import { MarkdownCommentEditor } from './MarkdownCommentEditor';
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { CommentMarkdown } from './CommentMarkdown';
 import { useSessionDraft } from '../lib/session-drafts';
 import { Button } from './ui/button';
@@ -10,8 +10,12 @@ export function ChangesDraftComment({
   onRemove,
   disabled = false,
   onBusyChange,
+  noun = 'draft',
+  contextLabel,
 }: {
-  comment: PendingReviewComment;
+  comment: Pick<PendingReviewComment, 'id' | 'body'>;
+  noun?: 'draft' | 'comment' | 'note';
+  contextLabel?: string;
   onEdit: (id: string, body: string) => void | Promise<void>;
   onRemove: (id: string) => void | Promise<void>;
   disabled?: boolean;
@@ -19,10 +23,23 @@ export function ChangesDraftComment({
 }) {
   const [editing, setEditing] = useSessionDraft(`changes-draft-editing:${comment.id}`, false);
   const [error, setError] = useState('');
-  const [saving,setSaving] = useState(false);
+  const [saving, setSaving] = useState(false);
   disabled = disabled || saving;
   const [body, setBody] = useSessionDraft(`changes-draft-edit:${comment.id}`, comment.body);
   const id = useId();
+  const editButton = useRef<HTMLButtonElement>(null);
+  const pending = useRef(false);
+  const returnFocus = useRef(false);
+  const finishEditing = () => {
+    returnFocus.current = true;
+    setEditing(false);
+  };
+  useEffect(() => {
+    if (!editing && !disabled && returnFocus.current) {
+      returnFocus.current = false;
+      editButton.current?.focus();
+    }
+  }, [editing, disabled]);
   useEffect(() => {
     onBusyChange?.(comment.id, editing || saving);
     return () => onBusyChange?.(comment.id, false);
@@ -33,18 +50,22 @@ export function ChangesDraftComment({
         <form
           onSubmit={async (e) => {
             e.preventDefault();
-            if (disabled || !body.trim()) return;
+            if (disabled || pending.current || !body.trim()) return;
+            pending.current = true;
             setSaving(true);
             try {
               await onEdit(comment.id, body.trim());
-              setEditing(false);
+              finishEditing();
               setError('');
             } catch {
               setError('Could not save this edit. Your text is still here.');
-            } finally {setSaving(false);}
+            } finally {
+              pending.current = false;
+              setSaving(false);
+            }
           }}
         >
-          <label htmlFor={id}>Edit draft comment</label>
+          <label htmlFor={id}>{noun === 'draft' ? 'Edit draft comment' : `Edit ${noun}`}</label>
           <MarkdownCommentEditor
             id={id}
             rows={3}
@@ -56,11 +77,11 @@ export function ChangesDraftComment({
           />
           {error && <p role="alert">{error}</p>}
           <div className="changes-comment-buttons">
-            <Button variant="ghost" size="sm" type="button" disabled={disabled} onClick={() => setEditing(false)}>
+            <Button variant="ghost" size="sm" type="button" disabled={disabled} onClick={finishEditing}>
               Cancel
             </Button>
             <Button size="sm" disabled={disabled || !body.trim()}>
-              Save draft
+              {saving ? 'Saving…' : `Save ${noun}`}
             </Button>
           </div>
         </form>
@@ -69,6 +90,8 @@ export function ChangesDraftComment({
           <CommentMarkdown>{comment.body}</CommentMarkdown>
           <div className="changes-comment-buttons">
             <Button
+              ref={editButton}
+              aria-label={contextLabel ? `Edit ${noun} · ${contextLabel}` : undefined}
               variant="ghost"
               size="sm"
               disabled={disabled}
@@ -77,23 +100,29 @@ export function ChangesDraftComment({
                 setEditing(true);
               }}
             >
-              Edit draft
+              Edit {noun}
             </Button>
             <Button
               variant="ghost"
               size="sm"
               disabled={disabled}
+              aria-label={contextLabel ? `Remove ${noun} · ${contextLabel}` : undefined}
               onClick={async () => {
+                if (pending.current) return;
+                pending.current = true;
                 setSaving(true);
                 try {
                   await onRemove(comment.id);
                   setError('');
                 } catch {
-                  setError('Could not remove this draft. Try again.');
-                } finally {setSaving(false);}
+                  setError(`Could not remove this ${noun}. Try again.`);
+                } finally {
+                  pending.current = false;
+                  setSaving(false);
+                }
               }}
             >
-              Remove draft
+              Remove {noun}
             </Button>
           </div>
           {error && <p role="alert">{error}</p>}

@@ -2447,7 +2447,8 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .pr-summary-body .pr-stack-nav { top:0; max-height:100cqh; }
 
 /* Review comments stay beside the code; pending feedback is explicitly private. */
-.changes-comment-composer { margin:8px 12px;padding:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);color:var(--foreground);font:var(--type-control)/1.5 var(--font-sans);white-space:normal; }
+.changes-comment-composer { color-scheme:light; margin:8px 12px;padding:12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);color:var(--foreground);font:var(--type-control)/1.5 var(--font-sans);white-space:normal; }
+.dark .changes-comment-composer { color-scheme:dark; }
 .changes-comment-composer label { display:block;font-weight:600;margin-bottom:8px;overflow-wrap:anywhere; }
 .changes-comment-composer textarea { display:block;width:100%;min-height:96px;resize:vertical;padding:10px;background:var(--background);border:1px solid var(--input);border-radius:var(--radius);font:var(--type-body)/1.6 var(--font-sans); }
 .changes-comment-help { color:var(--muted-foreground);margin-block:8px;font-size:var(--type-caption); }
@@ -3246,7 +3247,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 /* Stack and PR scopes share one compact workspace frame. */
 .pr-workspace-navigation { display:flex; align-items:center; flex-shrink:0; gap:20px; border-bottom:1px solid var(--border); }
 .pr-workspace-navigation .pr-overview-tabs { flex:1; min-width:0; width:auto; border:0; gap:20px; padding-right:0; }
-.stack-scope-bar { order:-1; display:flex; align-items:center; gap:8px; padding-left:var(--pr-frame-inset); min-width:0; }
+.stack-scope-bar { display:flex; align-items:center; gap:8px; padding-left:var(--pr-frame-inset); min-width:0; }
 .pr-workspace-navigation:has(.stack-scope-bar) .pr-overview-tabs { padding-left:0; }
 .stack-scope-bar .selection-trigger { width:auto; max-width:240px; font-size:var(--type-control); }
 .stack-scope-bar .stack-back { font-size:var(--type-control); color:var(--primary); text-decoration:underline; text-underline-offset:3px; }
@@ -3440,6 +3441,54 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .combined-thread { margin-block: 8px; }
 .stack-changes-view > .changes-notice { flex-shrink: 0; }
 .combined-thread { background: var(--color-card); color: var(--color-foreground); font-family: var(--font-sans); }
+.brief-tab-count { margin-left:6px; color:var(--muted-foreground); font-size:12px; font-variant-numeric:tabular-nums; }
+.changes-pending-comment > span:has(.changes-brief-link) { display:inline-block; margin-left:12px; padding:2px 8px; border-radius:var(--radius); background:var(--card); }
+.changes-brief-link { margin-left:8px; color:var(--primary); text-decoration:underline; }
+/* Local notes give the authored handoff priority over general PR chrome. */
+.pr-summary-page.showing-local-notes .pr-overview-heading { padding-block:8px; }
+.pr-summary-page.showing-local-notes .pr-title-with-star h1 { font-size:var(--type-body); line-height:1.5; }
+.pr-summary-page.showing-local-notes :is(.pr-merge-status, .pr-summary-context)[hidden] { display:none; }
+.pr-workspace-navigation .pr-overview-tabs { overflow-x:auto; }
+.pr-overview-tabs button { flex-shrink:0; }
+.agent-brief { flex:1; min-width:0; min-height:0; overflow:auto; padding:16px var(--pr-frame-inset) 32px; font-size:var(--type-control); }
+.agent-brief-header { display:flex; flex-wrap:wrap; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px; }
+.agent-brief-header > div { min-width:0; }
+.agent-brief-header h2 { font-size:var(--type-title-compact, 18px); font-weight:600; }
+.agent-brief-header h2 span { color:var(--muted-foreground); font-size:var(--type-control); font-weight:400; margin-inline-start:4px; }
+.agent-brief-header p { color:var(--muted-foreground); max-width:65ch; overflow-wrap:anywhere; }
+.agent-brief-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.agent-brief-empty { text-align:left; }
+.agent-brief-group { margin-block:24px; }
+.agent-brief-group-heading { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 12px; }
+.agent-brief-group h3 { font-weight:600; overflow-wrap:anywhere; }
+.agent-brief-group h3 span { font-weight:400; margin-inline-start:4px; }
+.agent-brief-revision { color:var(--muted-foreground); font:var(--type-caption)/1.5 var(--font-mono); overflow-wrap:anywhere; }
+.agent-brief-stale { color:var(--color-warning); margin-top:4px; }
+.agent-brief-comment { margin-top:16px; padding-top:12px; border-top:1px solid var(--border); min-width:0; }
+.agent-brief-location { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 8px; color:var(--primary); text-align:left; overflow-wrap:anywhere; }
+.agent-brief-location:hover { text-decoration:underline; }
+.agent-brief-location span { font-family:var(--font-mono); }
+.agent-brief-comment > pre, .agent-brief-code pre { margin-top:8px; overflow-x:auto; padding:8px 12px; border-radius:var(--radius); background:var(--secondary); font:var(--type-caption)/1.5 var(--font-mono); max-width:100%; }
+.agent-brief-comment .changes-draft-comment { margin:8px 0 0; padding:0; border:0; background:transparent; }
+.agent-brief-comment .changes-draft-comment > :not(.changes-comment-buttons) { max-width:var(--measure-prose); }
+.agent-brief-comment .changes-comment-buttons { justify-content:flex-start; gap:4px; margin-top:4px; }
+.agent-brief-code { margin-top:8px; }
+.agent-brief-code summary { color:var(--muted-foreground); cursor:pointer; }
+.agent-brief-preview { margin-block:16px 24px; }
+.agent-brief-preview h3 { font-weight:600; }
+.agent-brief-preview p { color:var(--muted-foreground); }
+.agent-brief-preview pre { margin-top:8px; padding:12px; max-height:40vh; overflow:auto; border:1px solid var(--border); border-radius:var(--radius); background:var(--card); font:var(--type-caption)/1.6 var(--font-mono); white-space:pre-wrap; overflow-wrap:anywhere; }
+.agent-brief-scope-link { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; color:var(--muted-foreground); margin-block:8px; }
+.agent-brief-related { display:flex; flex-wrap:wrap; gap:4px 16px; }
+.agent-brief-scope-link button { color:var(--primary); text-decoration:underline; text-underline-offset:3px; }
+.agent-brief-notice:empty { display:none; }
+.agent-brief-notice, .agent-brief-edit-notice { margin-block:8px; }
+.agent-brief-undo { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-block:12px; padding:8px 12px; background:var(--secondary); border-radius:var(--radius); }
+.changes-comment-destination { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; margin-bottom:12px; }
+.changes-comment-destination legend { color:var(--muted-foreground); font-size:var(--type-caption); margin-bottom:4px; }
+.changes-comment-destination label { display:flex; align-items:center; gap:6px; margin:0; font-weight:400; min-height:28px; cursor:pointer; }
+.changes-comment-destination input { accent-color:var(--primary); }
+.changes-comment-shortcut { align-self:center; margin-inline-end:auto; color:var(--muted-foreground); font-size:var(--type-caption); }
 
 /* Dependency order is the main task; merge evidence supports it in a bounded rail. */
 .stack-summary-layout { display:grid;grid-template-columns:minmax(0,1fr);gap:24px;padding-top:8px;align-items:start; }

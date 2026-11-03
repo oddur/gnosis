@@ -54,6 +54,7 @@ void app.whenReady().then(async () => {
       'Commits',
       'Checks',
       'Explanation',
+      'Local notes',
     ]);
     await capture('empty');
     await js(`(async()=>{

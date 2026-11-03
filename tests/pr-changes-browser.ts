@@ -292,14 +292,14 @@ void app.whenReady().then(async () => {
     await js('window.commentLine()');
     await wait("!!document.querySelector('.changes-comment-composer textarea')");
     await js("window.failPost=true;window.fill('.changes-comment-composer textarea','An immediate comment.')");
-    await click('Comment now');
+    await click('Post to GitHub now');
     await wait("document.querySelector('.changes-comment-composer')?.textContent.includes('Posting failed')");
     assert.equal(
       await js("document.querySelector('.changes-comment-composer textarea').value"),
       'An immediate comment.'
     );
     await js('window.failPost=false');
-    await click('Comment now');
+    await click('Post to GitHub now');
     await wait("!document.querySelector('.changes-comment-composer')");
     await wait(
       "document.querySelector('.commit-stream-row[data-active=true] .changes-code')?.textContent.includes('An immediate comment.')"
@@ -538,7 +538,7 @@ void app.whenReady().then(async () => {
       `(()=>{const el=document.querySelector('#large-stream-test textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(el,'Keep this pending comment.');el.dispatchEvent(new Event('input',{bubbles:true}))})()`
     );
     await js(
-      "[...document.querySelectorAll('#large-stream-test button')].find(b=>b.textContent==='Comment now').click()"
+      "[...document.querySelectorAll('#large-stream-test button')].find(b=>b.textContent==='Post to GitHub now').click()"
     );
     await wait('!!window.rejectComment');
     await js(
