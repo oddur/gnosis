@@ -3,6 +3,7 @@ import { githubCacheFor } from '../lib/github-client';
 import { readChecksGraphQL } from './pr-checks-graphql';
 import {
   checkKey,
+  checkVersion,
   type CheckTarget,
   type PrChecks,
   type CheckSelection,
@@ -109,7 +110,99 @@ function actionJob(url: string | null, owner: string, repo: string) {
     /* No Actions job for this provider. */
   }
 }
-export async function readCheckDetails(client: Octokit, input: CheckSelection): Promise<CheckDetails> {
+interface SavedCheckDetails {
+  value: CheckDetails;
+  version?: string;
+  checkedAt: number;
+}
+const detailWork = new WeakMap<Octokit, Map<string, GitHubWork<CheckDetails>>>();
+const detailCacheKey = (input: CheckSelection) => `check-details:v1:${checkKey(input)}:${input.id}`;
+function currentCheck(client: Octokit, input: CheckSelection) {
+  return githubCacheFor(client)
+    ?.get(
+      `pr-checks:v1:${checkKey(input)}`,
+      (value): value is PrChecks =>
+        !!value && typeof value === 'object' && 'checks' in value && Array.isArray(value.checks)
+    )
+    ?.value.checks.find((check) => check.id === input.id);
+}
+export function cachedCheckDetails(
+  client: Octokit,
+  input: CheckSelection,
+  check = currentCheck(client, input),
+  freshOnly = false
+) {
+  const saved = githubCacheFor(client)?.get(
+    detailCacheKey(input),
+    (value): value is SavedCheckDetails =>
+      !!value &&
+      typeof value === 'object' &&
+      'checkedAt' in value &&
+      typeof value.checkedAt === 'number' &&
+      'value' in value &&
+      !!value.value &&
+      typeof value.value === 'object' &&
+      'annotations' in value.value &&
+      Array.isArray(value.value.annotations)
+  );
+  if (!saved || (check && saved.value.version !== checkVersion(check))) return;
+  const { value, checkedAt } = saved.value;
+  if (value.url !== input.url || value.headSha !== input.headSha || value.id !== input.id) return;
+  const complete = check?.status === 'completed' && value.state?.status === 'completed' && !value.warning;
+  const ttl = check?.status === 'completed' && value.warning ? 60_000 : 15_000;
+  if (freshOnly && !complete && (saved.revalidate || Date.now() - checkedAt >= ttl)) return;
+  return value;
+}
+/** Hydrate from local memory/SQLite only; never fetch on the renderer thread. */
+export function withCachedCheckDetails(client: Octokit, snapshot: PrChecks): PrChecks {
+  const details: Partial<Record<string, CheckDetails>> = {};
+  let bytes = 0;
+  for (const check of snapshot.checks) {
+    const value = cachedCheckDetails(client, { ...snapshot, id: check.id }, check);
+    if (!value) continue;
+    bytes += Buffer.byteLength(JSON.stringify(value));
+    if (bytes > 4_000_000) break;
+    details[check.id] = value;
+  }
+  return { ...snapshot, details };
+}
+export function readCheckDetails(
+  client: Octokit,
+  input: CheckSelection,
+  options: { force?: boolean } = {}
+): Promise<CheckDetails> {
+  target(input);
+  const check = currentCheck(client, input);
+  const saved = !options.force && cachedCheckDetails(client, input, check, true);
+  if (saved) return Promise.resolve(saved);
+  let work = detailWork.get(client);
+  if (!work) {
+    work = new Map();
+    detailWork.set(client, work);
+  }
+  const version = check && checkVersion(check);
+  const key = `${detailCacheKey(input)}:${version ?? ''}`;
+  const existing = work.get(key);
+  if (existing) return joinGitHubWork(existing);
+  const cache = githubCacheFor(client),
+    generation = cache?.version();
+  const job = createGitHubWork(async () => {
+    const value = await fetchCheckDetails(client, input);
+    value.checkedAt = Date.now();
+    const latest = currentCheck(client, input);
+    if (generation === cache?.version() && (!latest || checkVersion(latest) === version))
+      cache?.set(detailCacheKey(input), { value, version, checkedAt: value.checkedAt });
+    return value;
+  });
+  work.set(key, job);
+  void job.promise
+    .finally(() => {
+      if (work.get(key) === job) work.delete(key);
+    })
+    .catch(() => {});
+  return job.promise;
+}
+async function fetchCheckDetails(client: Octokit, input: CheckSelection): Promise<CheckDetails> {
   const { owner, repo, run } = await checkedRun(client, input);
   const result: CheckDetails = {
     ...input,
@@ -245,4 +338,5 @@ export async function rerunChecks(client: Octokit, input: CheckSelection & { mod
   if (input.mode === 'failed') await client.actions.reRunWorkflowFailedJobs({ owner, repo, run_id: job.runId });
   else await client.actions.reRunWorkflow({ owner, repo, run_id: job.runId });
   githubCacheFor(client)?.delete(`pr-checks:v1:${checkKey(input)}`);
+  githubCacheFor(client)?.delete(detailCacheKey(input));
 }

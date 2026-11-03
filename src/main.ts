@@ -1,3 +1,4 @@
+import { createCheckDetailsPreloader } from './check-details-preloader';
 import { normalizeRepositorySettings, normalizeBriefingLimit } from '../lib/repository-settings';
 import { normalizeEffort } from '../lib/effort';
 import { openReviewCheckpoint, reviewFingerprint, collectReviewTopics } from './review-checkpoint';
@@ -19,7 +20,7 @@ import { createHarnessEnvironmentStore } from './harness-environment-store';
 import { setHarnessEnvironmentLoader } from '../lib/providers/environment';
 import type { EnvironmentVariable } from '../lib/harness-environment';
 import { createChatRuns, waitForChatContext } from './chat-runs';
-import { readPrChecks, readPrChecksBatch, readCheckDetails, readCheckLog, rerunChecks } from './pr-checks-service';
+import { readPrChecks, readPrChecksBatch, readCheckDetails, cachedCheckDetails, withCachedCheckDetails, readCheckLog, rerunChecks } from './pr-checks-service';
 import { checkCounts } from '../lib/pr-checks';
 import type { CheckTarget, CheckSelection, ChecksOptions } from '../lib/pr-checks';
 import { createMarkdownReviewService } from './markdown-review-service';
@@ -1504,7 +1505,7 @@ async function fetchPrStatus(prUrl: string, force = false): Promise<PrStatus | n
     labels: prData.labels,
     mergeable: prData.mergeable,
     isDraft: prData.isDraft,
-    checkSnapshot, ciError,
+    checkSnapshot: checkSnapshot && withCachedCheckDetails(octokit, checkSnapshot), ciError,
     ciChecks: checkSnapshot?.checks ?? [],
     ciConclusion: signals?.checks.state ?? (checkSnapshot ? checkCounts(checkSnapshot.checks).attention ? 'failure' : checkCounts(checkSnapshot.checks).running ? 'pending' : checkSnapshot.checks.length ? 'success' : 'neutral' : 'neutral'),
     reviewSummary,
@@ -2792,10 +2793,29 @@ function sendSyncUpdates(updates: GitHubSyncUpdate[], failures: GitHubSyncFailur
 let syncCredential: string | null = null;
 let suspended = false;
 const syncEnabled = () => !suspended && net.isOnline() && BrowserWindow.getAllWindows().some(win => win.isVisible() && !win.isMinimized());
+const checkDetailsPreload = createCheckDetailsPreloader({
+  canRun: () => !!cachedToken && syncEnabled() && !githubClients.backoff(cachedToken, true, ['core']),
+  fresh: (snapshot, check) => !!cachedCheckDetails(getGitHubClient(cachedToken), { url: snapshot.url, headSha: snapshot.headSha, id: check.id }, check, true),
+  read: async (snapshot, check) => {
+    const token = cachedToken;
+    const result = await withGitHubPriority('background', () => readCheckDetails(getGitHubClient(token), { url: snapshot.url, headSha: snapshot.headSha, id: check.id }));
+    if (token !== cachedToken) throw Error('Account changed during check preparation');
+    return result;
+  },
+  publish: snapshot => sendSyncUpdates([{ kind: 'checks', url: snapshot.url, value: withCachedCheckDetails(getGitHubClient(cachedToken), snapshot) }]),
+});
+function updateCheckDetailTargets() {
+  checkDetailsPreload.setTargets([...syncSubscriptions.values()]
+    .filter(subscription => subscription.token === cachedToken && subscription.interest.kind === 'checks')
+    .flatMap(subscription => subscription.interest.targets.flatMap(target => target.headSha ? [{ url: target.url, headSha: target.headSha }] : [])));
+}
 function publishGitHubUpdates(updates: GitHubSyncUpdate[]) {
   if (!cachedLogin) return;
   for (const update of updates) {
-    if (update.kind === 'metadata') {
+    if (update.kind === 'checks') {
+      checkDetailsPreload.observe(update.value);
+      update.value = withCachedCheckDetails(getGitHubClient(cachedToken), update.value);
+    } else if (update.kind === 'metadata') {
       const previous = syncMetadata.get(update.url);
       if (previous && (previous.headSha !== update.value.headSha || previous.baseSha !== update.value.baseSha)) {
         githubSync.invalidate([update.url], ['signals', 'checks', 'discussion']);
@@ -2885,12 +2905,21 @@ ipcMain.on('github-sync-watch', (event, id: unknown, raw: unknown) => {
     event.sender.once('destroyed', () => {
       githubSync.removeOwner(String(owner)); syncOwners.delete(owner);
       for (const key of syncSubscriptions.keys()) if (key.startsWith(`${owner}:`)) syncSubscriptions.delete(key);
+      updateCheckDetailTargets();
     });
   }
   const key = `${owner}:${id}`;
   if (interest) syncSubscriptions.set(key, { owner: event.sender, id, token: cachedToken, interest });
   else syncSubscriptions.delete(key);
   githubSync.observe(key, interest);
+  updateCheckDetailTargets();
+  if (interest?.kind === 'checks' && cachedToken) {
+    const token = cachedToken;
+    const targets = interest.targets.flatMap(target => target.headSha ? [{ url: target.url, headSha: target.headSha }] : []);
+    void readPrChecksBatch(getGitHubClient(token), targets, { cachedOnly: true }).then(values => {
+      if (token === cachedToken) publishGitHubUpdates(values.map(value => ({ kind: 'checks', url: value.url, value })));
+    }).catch(() => {});
+  }
   if (syncCredential === cachedToken && interest?.kind === 'metadata') sendSyncUpdates(interest.targets.flatMap(target => {
     const value = syncMetadata.get(target.url);
     return value ? [{ kind: 'metadata' as const, url: target.url, value }] : [];
@@ -2902,6 +2931,8 @@ let syncWasAvailable = false;
 async function tickGitHubSync() {
   const token = cachedToken;
   if (token !== syncCredential) {
+    checkDetailsPreload.clear();
+    updateCheckDetailTargets();
     syncCredential = token; syncMetadata.clear(); syncSignals.clear(); discoveryDue = 0;
     for (const subscription of syncSubscriptions.values()) if (!subscription.owner.isDestroyed())
       subscription.owner.send('github-sync', { account: cachedLogin, subscriptionId: subscription.id, reset: true, updates: [] });
@@ -2911,6 +2942,7 @@ async function tickGitHubSync() {
   if (!syncWasAvailable) { githubSync.wake(); discoveryDue = Math.min(discoveryDue, Date.now() + 10_000); }
   syncWasAvailable = true;
   void githubSync.tick();
+  void checkDetailsPreload.tick();
   prMergeMonitor.tick();
   if (discoveryPending || Date.now() < discoveryDue) return;
   discoveryPending = true;
@@ -2965,12 +2997,16 @@ async function checkAccount<T>(read: (client: ReturnType<typeof changesClient>) 
 }
 ipcMain.handle('pr-checks', (_event, input: CheckTarget, options: ChecksOptions = {}) =>
   withGitHubPriority(options.background ? 'foreground' : 'interactive', () => checkAccount(async client => {
-    if (options.cachedOnly) return readPrChecks(client, input, options);
+    if (options.cachedOnly) {
+      const value = await readPrChecks(client, input, options);
+      return value && withCachedCheckDetails(client, value);
+    }
     const { owner, repo, pullNumber } = parsePrUrl(input.url);
     const metadata = await getPrMetadata(client, owner, repo, pullNumber, !!options.force);
-    return readPrChecks(client, { url: input.url, headSha: metadata.headSha }, options);
+    const value = await readPrChecks(client, { url: input.url, headSha: metadata.headSha }, options);
+    return value && withCachedCheckDetails(client, value);
   })));
-handleInteractive('check-details', (_event, input: CheckSelection) => checkAccount(client => readCheckDetails(client, input)));
+handleInteractive('check-details', (_event, input: CheckSelection, options?: { force?: boolean }) => checkAccount(client => readCheckDetails(client, input, { force: options?.force === true })));
 handleInteractive('check-log', (_event, input: CheckSelection) => checkAccount(client => readCheckLog(client, input)));
 handleInteractive('rerun-checks', async (_event, input: CheckSelection & { mode: 'failed' | 'all' }) => {
   await checkAccount(client => rerunChecks(client, input));

@@ -1,8 +1,19 @@
+import { githubCacheFor } from '../lib/github-client';
+import { createCheckDetailsPreloader } from '../src/check-details-preloader';
+import { withGitHubPriority, githubPriority } from '../lib/github-scheduler';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createGitHubClientPool } from './cache-test-pool';
 import { readCommitChecks } from '../lib/github-checks';
-import { readPrChecks, readPrChecksBatch, readCheckDetails, readCheckLog, rerunChecks } from '../src/pr-checks-service';
+import {
+  readPrChecks,
+  readPrChecksBatch,
+  readCheckDetails,
+  cachedCheckDetails,
+  withCachedCheckDetails,
+  readCheckLog,
+  rerunChecks,
+} from '../src/pr-checks-service';
 import { checkSummary, checkCounts, orderedChecks, checkDuration, type PrCheck } from '../lib/pr-checks';
 const sha = 'a'.repeat(40),
   url = 'https://github.com/o/r/pull/1';
@@ -64,14 +75,14 @@ function graphResponse(body: string) {
   );
 }
 function harness(overrides: (path: string, init: RequestInit) => Response | undefined = () => undefined) {
-  const calls: { path: string; method: string }[] = [];
+  const calls: { path: string; method: string; priority: string }[] = [];
   const json = (value: unknown, headers?: Record<string, string>) =>
     new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json', ...headers } });
   const pool = createGitHubClientPool({
     minSpacingMs: 0,
     fetch: ((address: string, init: RequestInit) => {
       const p = new URL(address).pathname + new URL(address).search;
-      calls.push({ path: p, method: init.method ?? 'GET' });
+      calls.push({ path: p, method: init.method ?? 'GET', priority: githubPriority() });
       const respond = (response: Response) => {
         Object.defineProperty(response, 'url', { value: address });
         return Promise.resolve(response);
@@ -95,7 +106,16 @@ function harness(overrides: (path: string, init: RequestInit) => Response | unde
         ];
       else if (p === '/repos/o/r/check-runs/1') data = run;
       else if (p === '/repos/o/r/actions/jobs/10')
-        data = { id: 10, run_id: 9, run_attempt: 1, status: 'completed', steps: [] };
+        data = {
+          id: 10,
+          run_id: 9,
+          run_attempt: 1,
+          status: 'completed',
+          conclusion: run.conclusion,
+          started_at: run.started_at,
+          completed_at: run.completed_at,
+          steps: [],
+        };
       else if (p === '/repos/o/r') data = { permissions: { push: true } };
       else if (p === '/repos/o/r/pulls/1') data = { head: { sha } };
       else if (p === '/repos/o/r/actions/runs/9') data = { head_sha: sha, status: 'completed' };
@@ -450,4 +470,215 @@ void test('head changes and page failures never overwrite a complete cached snap
   scenario = 'pagination';
   await assert.rejects(readPrChecks(h.client, input, { force: true }), /Offline/);
   assert.deepEqual(await readPrChecks(h.client, input, { cachedOnly: true }), original);
+});
+
+void test('completed detail cache is revision/account scoped, coalesces reads, and invalidates reruns', async () => {
+  const h = harness();
+  const snapshot = (await readPrChecks(h.client, input))!;
+  const before = h.calls.length;
+  const [a, b] = await Promise.all([readCheckDetails(h.client, input), readCheckDetails(h.client, input)]);
+  assert.deepEqual(a, b);
+  assert.equal(h.calls.filter((c) => c.path === '/repos/o/r/check-runs/1').length, 1);
+  assert.ok(h.calls.length > before);
+  const count = h.calls.length;
+  assert.deepEqual(await readCheckDetails(h.client, input), a);
+  assert.equal(h.calls.length, count, 'A completed cached job needs no request');
+  assert.deepEqual(withCachedCheckDetails(h.client, snapshot).details?.[input.id], a);
+  assert.equal(cachedCheckDetails(h.pool.client('another-account'), input), undefined);
+  assert.equal(cachedCheckDetails(h.client, { ...input, headSha: 'b'.repeat(40) }), undefined);
+  const changed = {
+    ...snapshot,
+    checks: snapshot.checks.map((check) => ({
+      ...check,
+      status: 'queued' as const,
+      conclusion: null,
+      startedAt: null,
+      completedAt: null,
+    })),
+  };
+  githubCacheFor(h.client)!.set(`pr-checks:v1:${url}@${sha}`, changed);
+  assert.equal(cachedCheckDetails(h.client, input), undefined, 'Same-ID rerun must not reuse a previous attempt');
+  await readCheckDetails(h.client, input);
+  assert.equal(h.calls.filter((c) => c.path === '/repos/o/r/check-runs/1').length, 2);
+  await rerunChecks(h.client, { ...input, mode: 'failed' });
+  assert.equal(cachedCheckDetails(h.client, input), undefined);
+});
+
+void test('running details keep a stale copy but refresh; force bypasses completed entries', async () => {
+  const h = harness();
+  const snapshot = (await readPrChecks(h.client, input))!;
+  const value = await readCheckDetails(h.client, input);
+  const count = h.calls.length;
+  await readCheckDetails(h.client, input, { force: true });
+  assert.ok(h.calls.length > count);
+  const running = { ...snapshot.checks[0], status: 'in_progress' as const, conclusion: null, completedAt: null };
+  githubCacheFor(h.client)!.set(`pr-checks:v1:${url}@${sha}`, { ...snapshot, checks: [running] });
+  githubCacheFor(h.client)!.set(`check-details:v1:${url}@${sha}:check:1`, {
+    value: { ...value, state: running },
+    version: JSON.stringify([running.status, running.conclusion, running.startedAt, running.completedAt]),
+    checkedAt: Date.now() - 30_000,
+  });
+  assert.ok(cachedCheckDetails(h.client, input), 'Keep stale data for immediate display');
+  assert.equal(cachedCheckDetails(h.client, input, running, true), undefined);
+  assert.ok(!h.calls.some((c) => c.path.includes('/logs')));
+});
+
+void test('interactive check detail reads promote a background preload and share its requests', async () => {
+  const h = harness();
+  const snapshot = (await readPrChecks(h.client, input))!;
+  const low = withGitHubPriority('background', () => readCheckDetails(h.client, input));
+  const high = withGitHubPriority('interactive', () => readCheckDetails(h.client, input));
+  assert.deepEqual(await low, await high);
+  assert.equal(h.calls.filter((c) => c.path === '/repos/o/r/check-runs/1').length, 1);
+  assert.ok(withCachedCheckDetails(h.client, snapshot).details?.[input.id]);
+  assert.equal(
+    h.calls.find((c) => c.path.includes('/annotations'))?.priority,
+    'interactive',
+    'Joining user request promotes the remaining API calls'
+  );
+});
+
+void test('preloader prioritizes failed and cancelled jobs and stops obsolete work on navigation or backoff', async () => {
+  const h = harness();
+  const snapshot = (await readPrChecks(h.client, input))!;
+  const check = snapshot.checks[0];
+  const data = {
+    ...snapshot,
+    checks: [
+      { ...check, id: 'check:10', conclusion: 'success' },
+      { ...check, id: 'check:11', conclusion: 'failure' },
+      { ...check, id: 'check:12', conclusion: 'cancelled' },
+      { ...check, id: 'check:13', status: 'in_progress' as const, conclusion: null },
+    ],
+  };
+  let enabled = true,
+    release!: () => void;
+  const done = new Set<string>(),
+    order: string[] = [],
+    published: string[] = [];
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const loader = createCheckDetailsPreloader({
+    canRun: () => enabled,
+    fresh: (_s, c) => done.has(c.id),
+    read: async (_s, c) => {
+      order.push(c.id);
+      if (order.length === 1) await gate;
+      done.add(c.id);
+      return undefined;
+    },
+    publish: (s) => {
+      published.push(s.url);
+    },
+  });
+  loader.setTargets([input]);
+  loader.observe(data);
+  const first = loader.tick();
+  assert.deepEqual(order, ['check:11']);
+  enabled = false;
+  release();
+  await first;
+  assert.deepEqual(order, ['check:11'], 'Background allowance pause prevents the next job');
+  enabled = true;
+  await loader.tick();
+  assert.deepEqual(order, ['check:11', 'check:12', 'check:13', 'check:10']);
+  assert.equal(published.length, 4);
+  done.clear();
+  order.length = 0;
+  loader.setTargets([]);
+  await loader.tick();
+  assert.deepEqual(order, [], 'Leaving the subject discards queued preloads');
+});
+
+void test('completed check details survive SQLite restart without network reads', async () => {
+  const fs = await import('node:fs/promises'),
+    os = await import('node:os'),
+    path = await import('node:path');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-check-cache-'));
+  const first = harness(),
+    second = harness();
+  try {
+    await first.pool.setStorage(path.join(dir, 'budget.json'));
+    await readPrChecks(first.client, input);
+    const detail = await readCheckDetails(first.client, input);
+    await first.pool.closeStorage();
+    await second.pool.setStorage(path.join(dir, 'budget.json'));
+    const snapshot = await readPrChecks(second.client, input, { cachedOnly: true });
+    assert.ok(snapshot);
+    assert.deepEqual(withCachedCheckDetails(second.client, snapshot).details?.[input.id], detail);
+    assert.deepEqual(await readCheckDetails(second.client, input), detail);
+    assert.equal(second.calls.length, 0);
+  } finally {
+    await first.pool.closeStorage();
+    await second.pool.closeStorage();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+void test('clearing cache during a check read cannot restore the cleared entry', async () => {
+  const h = harness();
+  await readPrChecks(h.client, input);
+  const reading = readCheckDetails(h.client, input);
+  githubCacheFor(h.client)!.clear();
+  await reading;
+  assert.equal(cachedCheckDetails(h.client, input), undefined);
+});
+
+void test('leaving a PR while a preload is running prevents further jobs and stale publication', async () => {
+  const h = harness(),
+    snapshot = (await readPrChecks(h.client, input))!;
+  let release!: () => void,
+    reads = 0,
+    publishes = 0;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const loader = createCheckDetailsPreloader({
+    canRun: () => true,
+    fresh: () => false,
+    read: async () => {
+      reads++;
+      await gate;
+      return undefined;
+    },
+    publish: () => {
+      publishes++;
+    },
+  });
+  loader.setTargets([input]);
+  loader.observe({ ...snapshot, checks: [...snapshot.checks, { ...snapshot.checks[0], id: 'check:2' }] });
+  const work = loader.tick();
+  loader.clear();
+  release();
+  await work;
+  assert.equal(reads, 1);
+  assert.equal(publishes, 0);
+});
+
+void test('completed preloads do not redownload endlessly when a large stack evicts cache entries', async () => {
+  const h = harness(),
+    snapshot = (await readPrChecks(h.client, input))!;
+  let reads = 0;
+  const loader = createCheckDetailsPreloader({
+    canRun: () => true,
+    fresh: () => false,
+    read: async () => {
+      reads++;
+      return { ...input, state: snapshot.checks[0], title: '', summary: '', text: '', annotations: [] };
+    },
+    publish() {},
+  });
+  loader.setTargets([input]);
+  loader.observe(snapshot);
+  await loader.tick();
+  await loader.tick();
+  assert.equal(reads, 1);
+  loader.observe({
+    ...snapshot,
+    checkedAt: snapshot.checkedAt + 1,
+    checks: snapshot.checks.map((c) => ({ ...c, completedAt: '2026-11-04T00:00:00Z' })),
+  });
+  await loader.tick();
+  assert.equal(reads, 2, 'A changed attempt still loads');
 });

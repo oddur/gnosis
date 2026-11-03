@@ -4,6 +4,8 @@ import { CircleAlert, CircleCheck, CircleMinus, Clock3, ExternalLink, RefreshCw 
 import type { ReviewSubject } from '../lib/workbench';
 import {
   checkCounts,
+  checkVersion,
+  checkDetailsKey,
   checkDuration,
   checkGroup,
   checkLabel,
@@ -57,7 +59,8 @@ export function PrChecksView({
   const [requested, setRequested] = useState(false);
   const [filter, setFilter] = useState<CheckFilter>('all');
   const [selected, setSelected] = useState<Selection>();
-  const [details, setDetails] = useState<{ selection: Selection; value: CheckDetails; receivedAt: number }>();
+  const [detailCache, setDetailCache] = useState<Record<string, { value: CheckDetails; receivedAt: number }>>({});
+  const previousAttempt = useRef(0);
   const [error, setError] = useState('');
   const [detailsBusy, setDetailsBusy] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -134,6 +137,20 @@ export function PrChecksView({
   useEffect(() => {
     if (selectionChanged) setSelected({ snapshot: latest, check: latestCheck });
   }, [selectionChanged, latest, latestCheck]);
+  const detailKey = selected && checkDetailsKey({ ...selected.snapshot, id: selected.check.id }, selected.check);
+  const savedDetail = detailKey ? detailCache[detailKey] : undefined;
+  const preparedDetail =
+    selected &&
+    latest?.headSha === selected.snapshot.headSha &&
+    latestCheck &&
+    checkVersion(latestCheck) === checkVersion(selected.check)
+      ? latest.details?.[selected.check.id]
+      : undefined;
+  const details =
+    preparedDetail && (preparedDetail.checkedAt ?? 0) >= (savedDetail?.receivedAt ?? 0)
+      ? { value: preparedDetail, receivedAt: preparedDetail.checkedAt ?? 0 }
+      : savedDetail;
+  const detail = details?.value;
   // Reuse the existing checks subscription to update only the active job. No new polling loop.
   const detailRefreshAt =
     selected &&
@@ -148,11 +165,25 @@ export function PrChecksView({
       setDetailsBusy(false);
       return;
     }
+    const force = attempt !== previousAttempt.current;
+    previousAttempt.current = attempt;
+    if (!force && selected.check.status === 'completed' && detail?.state?.status === 'completed' && !detail.warning) {
+      setDetailsBusy(false);
+      return;
+    }
     setDetailsBusy(true);
     void window.electronAPI
-      .getCheckDetails({ url: selected.snapshot.url, headSha: selected.snapshot.headSha, id: selected.check.id })
+      .getCheckDetails(
+        { url: selected.snapshot.url, headSha: selected.snapshot.headSha, id: selected.check.id },
+        { force }
+      )
       .then((value) => {
-        if (live) setDetails({ selection: selected, value, receivedAt: Date.now() });
+        if (live && detailKey)
+          setDetailCache((current) => {
+            const next = { ...current, [detailKey]: { value, receivedAt: value.checkedAt ?? Date.now() } };
+            while (Object.keys(next).length > 64) Reflect.deleteProperty(next, Object.keys(next)[0]);
+            return next;
+          });
       })
       .catch((e: unknown) => {
         if (live) setError(e instanceof Error ? e.message : String(e));
@@ -164,7 +195,6 @@ export function PrChecksView({
       live = false;
     };
   }, [selected, attempt, detailRefreshAt, selectionChanged]);
-  const detail = details && details.selection === selected ? details.value : undefined;
   const displayedCheck = selected && { ...selected.check, ...detail?.state };
   const selectedMember = selected && subject.members.find((m) => m.url === selected.snapshot.url);
   const awaitingCheck = (snapshot: PrChecks, check: PrCheck) =>

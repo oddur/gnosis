@@ -83,12 +83,16 @@ export function usePrChecks(
       },
       (value) => {
         if (value.kind !== 'checks') return;
-        update((current) => ({
-          ...current,
-          busy: false,
-          values: { ...current.values, [value.url]: value.value },
-          errors: { ...current.errors, [value.url]: '' },
-        }));
+        update((current) =>
+          value.value.checkedAt < (current.values[value.url]?.checkedAt ?? -1)
+            ? current
+            : {
+                ...current,
+                busy: false,
+                values: { ...current.values, [value.url]: value.value },
+                errors: { ...current.errors, [value.url]: '' },
+              }
+        );
       },
       (failure) =>
         update((current) => ({

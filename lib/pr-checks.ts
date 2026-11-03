@@ -17,12 +17,14 @@ export interface CheckTarget {
 export interface PrChecks extends CheckTarget {
   checkedAt: number;
   checks: PrCheck[];
+  details?: Partial<Record<string, CheckDetails>>;
   warning?: string;
 }
 export interface CheckSelection extends CheckTarget {
   id: string;
 }
 export interface CheckDetails extends CheckSelection {
+  checkedAt?: number;
   state?: Pick<PrCheck, 'status' | 'conclusion' | 'startedAt' | 'completedAt'>;
   title: string;
   summary: string;
@@ -127,3 +129,9 @@ export interface ChecksOptions {
   force?: boolean;
   background?: boolean;
 }
+
+/** Includes attempt timestamps: a rerun can reuse a check ID on the same commit. */
+export const checkVersion = (check: Pick<PrCheck, 'status' | 'conclusion' | 'startedAt' | 'completedAt'>) =>
+  JSON.stringify([check.status, check.conclusion, check.startedAt, check.completedAt]);
+export const checkDetailsKey = (selection: CheckSelection, check: PrCheck) =>
+  `${checkKey(selection)}:${selection.id}:${checkVersion(check)}`;
