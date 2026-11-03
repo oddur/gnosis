@@ -233,7 +233,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   searchRepos: (query: string): Promise<RepoSearchResult[]> => ipcRenderer.invoke('search-repos', query),
   reRenderHunks: (review: ReviewGuide): Promise<ReviewGuide> => ipcRenderer.invoke('re-render-hunks', review),
   getPrChecks: (target: CheckTarget, options?: ChecksOptions): Promise<PrChecks | undefined> => ipcRenderer.invoke('pr-checks', target, options),
-  getCheckDetails: (target: CheckSelection): Promise<CheckDetails> => ipcRenderer.invoke('check-details', target),
+  getCheckDetails: (target: CheckSelection, options?: { force?: boolean }): Promise<CheckDetails> => ipcRenderer.invoke('check-details', target, options),
   getCheckLog: (target: CheckSelection): Promise<CheckLog> => ipcRenderer.invoke('check-log', target),
   rerunChecks: (target: CheckSelection & { mode: 'failed' | 'all' }): Promise<void> => ipcRenderer.invoke('rerun-checks', target),
   getPrStatus: (prUrl: string, force?: boolean): Promise<PrStatus> => ipcRenderer.invoke('get-pr-status', prUrl, force),

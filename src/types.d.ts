@@ -150,7 +150,7 @@ declare global {
       searchRepos: (query: string) => Promise<RepoSearchResult[]>;
       reRenderHunks: (review: ReviewGuide) => Promise<ReviewGuide>;
       getPrChecks: (target: CheckTarget, options?: ChecksOptions) => Promise<PrChecks | undefined>;
-      getCheckDetails: (target: CheckSelection) => Promise<CheckDetails>;
+      getCheckDetails: (target: CheckSelection, options?: { force?: boolean }) => Promise<CheckDetails>;
       getCheckLog: (target: CheckSelection) => Promise<CheckLog>;
       rerunChecks: (target: CheckSelection & { mode: 'failed' | 'all' }) => Promise<void>;
       getPrStatus: (prUrl: string, force?: boolean) => Promise<PrStatus>;

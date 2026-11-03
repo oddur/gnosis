@@ -53,6 +53,27 @@ void app.whenReady().then(async () => {
     await click('Open PR overview');
     await wait("document.querySelectorAll('.pr-check-summary li').length===3");
     await capture('summary-light');
+    // Simulate details delivered by the backend preload before opening Checks.
+    await js(`(async()=>{
+      const read=window.electronAPI.getCheckDetails;
+      for(const snapshot of window.checksFixture.snapshots.values()){
+        snapshot.details={};
+        for(const check of snapshot.checks.filter(c=>['check:1','check:2'].includes(c.id))){
+          const value=await read({url:snapshot.url,headSha:snapshot.headSha,id:check.id});
+          snapshot.details[check.id]={...value,checkedAt:Date.now(),state:{status:check.status,conclusion:check.conclusion,startedAt:check.startedAt,completedAt:check.completedAt}};
+        }
+      }
+      window.detailReads=[];
+      window.electronAPI.getCheckDetails=async(input,options)=>{
+        window.detailReads.push(input.id);
+        const value=await read(input,options);
+        const check=window.checksFixture.snapshots.get(input.url)?.checks.find(c=>c.id===input.id);
+        return {...value,checkedAt:Date.now(),state:check&&{status:check.status,conclusion:check.conclusion,startedAt:check.startedAt,completedAt:check.completedAt}};
+      };
+      window.detailLoadingFlashes=0;
+      window.detailObserver=new MutationObserver(()=>{if(document.querySelector('.check-detail')?.textContent.includes('Loading check details'))window.detailLoadingFlashes++});
+      window.detailObserver.observe(document.body,{subtree:true,childList:true});
+    })()`);
     await js("document.querySelector('.pr-check-summary li button').click()");
     await wait("!!document.querySelector('.check-steps')");
     assert.equal(
@@ -63,6 +84,29 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelectorAll('.check-row').length"), 6);
     assert.ok(await js("document.querySelector('.check-detail-header')?.textContent.includes('Required')"));
     await capture('desktop-light');
+    await js("[...document.querySelectorAll('.check-row')].find(b=>b.textContent.includes('TypeScript')).click()");
+    await wait("document.querySelector('.check-detail-header h2')?.textContent==='TypeScript'");
+    assert.equal(await js('window.detailReads.length'), 0, 'Preloaded jobs render without a detail request');
+    assert.equal(await js('window.detailLoadingFlashes'), 0, 'Switching preloaded jobs must not flash a loading state');
+    await js('window.detailObserver.disconnect()');
+    await js("[...document.querySelectorAll('.check-row')].find(b=>b.textContent.includes('Lint')).click()");
+    await wait(
+      "document.querySelector('.check-detail-header h2')?.textContent==='Lint' && !!document.querySelector('.check-steps')"
+    );
+    await js("[...document.querySelectorAll('.check-row')].find(b=>b.textContent.includes('Tests / macOS')).click()");
+    await wait("document.querySelector('.check-detail-header h2')?.textContent==='Tests / macOS'");
+    const visitedReads = await js<number>('window.detailReads.length');
+    await js("[...document.querySelectorAll('.check-row')].find(b=>b.textContent.includes('Lint')).click()");
+    await wait(
+      "document.querySelector('.check-detail-header h2')?.textContent==='Lint' && !!document.querySelector('.check-steps')"
+    );
+    assert.equal(
+      await js('window.detailReads.length'),
+      visitedReads,
+      'Returning to a completed job reuses its details'
+    );
+    await js("[...document.querySelectorAll('.check-row')].find(b=>b.textContent.includes('Tests / macOS')).click()");
+    await wait("document.querySelector('.check-detail-header h2')?.textContent==='Tests / macOS'");
     await click('Needs attention (3)');
     assert.equal(await js("document.querySelectorAll('.check-row').length"), 3);
     await click('Running (1)');
