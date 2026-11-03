@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "astro dev",
     "build": "astro check && astro build",
-    "preview": "astro preview"
+    "preview": "astro preview",
+    "test:browser": "node scripts/test-browser.mjs",
+    "format": "prettier --plugin prettier-plugin-astro --write \"src/**/*.{astro,css,ts}\" \"scripts/*.mjs\"",
+    "test:performance": "node scripts/test-browser.mjs --performance"
   },
   "dependencies": {
     "@aptabase/web": "^0.5.0",
@@ -18,6 +21,9 @@
     "typescript": "^5.7.2"
   },
   "devDependencies": {
-    "@types/node": "^25.6.0"
+    "@types/node": "^25.6.0",
+    "axe-core": "^4.14.0",
+    "prettier": "^3.9.10",
+    "prettier-plugin-astro": "^1.1.2"
   }
 }
