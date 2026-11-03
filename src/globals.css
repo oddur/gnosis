@@ -3490,9 +3490,10 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .changes-comment-destination input { accent-color:var(--primary); }
 .changes-comment-shortcut { align-self:center; margin-inline-end:auto; color:var(--muted-foreground); font-size:var(--type-caption); }
 
-/* Dependency order is the main task; merge evidence supports it in a bounded rail. */
+/* Dependency order leads; detailed GitHub evidence and the stack briefing follow. */
 .stack-summary-layout { display:grid;grid-template-columns:minmax(0,1fr);gap:24px;padding-top:8px;align-items:start; }
 .stack-summary-main { min-width:0;display:flex;flex-direction:column;gap:24px; }
+.stack-summary-main > .review-evidence { margin-block:0; }
 .stack-summary-main .stack-briefing-state { margin-bottom:0; }
 .stack-summary-main .stack-briefing-ready { margin-bottom:0;border-bottom:0;padding-bottom:0; }
 /* Conflict resolution extends the file inspection workspace. */
@@ -3856,4 +3857,44 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
   .settings-sections button { white-space: nowrap; }
   .settings-panel { flex: 1; }
   .repository-settings-summary { display: none; }
+}
+
+/* GitHub observations stay separate from merge eligibility and AI prose. */
+.review-evidence { margin-block:16px; padding-block:12px; border-block:1px solid var(--border); min-width:0; }
+.review-evidence > header { display:flex; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; gap:8px 16px; }
+.review-evidence h2 { font-size:var(--type-body); font-weight:650; }
+.review-evidence-intro { font-size:var(--type-control); margin-top:4px; }
+.review-evidence-controls { display:flex; flex-wrap:wrap; gap:4px; }
+.review-evidence-sync { font-size:var(--type-caption); color:var(--muted-foreground); margin-top:8px; }
+.review-evidence-summary { display:flex; flex-wrap:wrap; gap:4px 16px; margin-top:8px; font-size:var(--type-control); color:var(--muted-foreground); }
+.review-evidence [data-tone=danger] { color:var(--color-danger); }
+.review-evidence [data-tone=warning] { color:var(--color-warning); }
+.review-evidence [data-tone=success] { color:var(--color-success); }
+.review-evidence [data-tone=muted] { color:var(--muted-foreground); }
+.review-evidence .is-expanded { transform:rotate(180deg); }
+.review-evidence-details { margin-top:12px; }
+.review-evidence-scope { padding-block:8px; }
+.review-evidence-scope h3 { font-size:var(--type-control); font-weight:600; overflow-wrap:anywhere; margin-bottom:4px; }
+.review-evidence-scope small { font-size:var(--type-caption); color:var(--muted-foreground); }
+.review-evidence-scope h3 a { color:var(--primary); text-decoration:underline; text-underline-offset:3px; }
+.review-evidence-row { display:grid; grid-template-columns:140px minmax(0,1fr) minmax(120px,210px); gap:8px 16px; align-items:start; padding-block:12px; border-top:1px solid var(--border); font-size:var(--type-control); }
+.review-evidence-category { display:flex; gap:8px; align-items:center; color:var(--muted-foreground); }
+.review-evidence-category svg { flex-shrink:0; }
+.review-evidence-observation { min-width:0; overflow-wrap:anywhere; }
+.review-evidence-observation strong { font-weight:600; }
+.review-evidence-observation p { max-width:70ch; margin-top:4px; }
+.review-evidence-meta { display:flex; flex-wrap:wrap; gap:0 16px; }
+.review-evidence-observation small { display:block; color:var(--muted-foreground); font-size:var(--type-caption); margin-top:4px; }
+.review-evidence code { font-family:var(--font-mono); }
+.review-evidence-actions { display:flex; align-items:flex-end; flex-direction:column; gap:4px; min-width:0; }
+.review-evidence-actions a { display:inline-flex; gap:4px; align-items:center; color:var(--primary); text-decoration:underline; text-underline-offset:3px; padding-block:6px; overflow-wrap:anywhere; }
+.review-evidence-actions svg { flex-shrink:0; }
+.review-evidence-actions button { white-space:normal; height:auto; min-height:32px; text-align:left; overflow-wrap:anywhere; max-width:100%; }
+.review-evidence-help,.review-evidence-error { color:var(--muted-foreground); font-size:var(--type-caption); margin-top:8px; }
+.review-evidence :is(.review-evidence-help,.review-evidence-error) summary { cursor:pointer; width:fit-content; }
+.review-evidence :is(.review-evidence-help,.review-evidence-error) p { margin-top:8px; max-width:70ch; overflow-wrap:anywhere; }
+.review-evidence :is(a,summary):focus-visible { outline:2px solid var(--ring); outline-offset:3px; border-radius:2px; }
+@media (max-width:850px) {
+  .review-evidence-row { grid-template-columns:minmax(0,1fr); gap:4px; }
+  .review-evidence-actions { align-items:flex-start; }
 }

@@ -192,7 +192,8 @@ export function createGitHubSyncService(deps: Deps) {
                 followUp && followingUp(task) ? (kind === 'checks' ? 5_000 : intervals[kind]) : task.interval,
                 priority === 'visible' ? 120_000 : 0
               );
-            if (changed || recovered || kind === 'signals' || kind === 'checks') accepted.push(update);
+            // Discussion content may be unchanged, but its successful observation time is new.
+            if (changed || recovered || kind === 'signals' || kind === 'checks' || kind === 'discussion') accepted.push(update);
           }
           if (accepted.length) deps.publish(accepted);
         } catch (error) {

@@ -56,6 +56,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js("[...document.querySelectorAll('.stack-overview-member')].some(e=>e.textContent.includes('klang/engine'))"),false,'Common repository belongs in stack header');
     const completeRows=()=>js<number>("(()=>{const bottom=document.querySelector('.pr-summary-content').getBoundingClientRect().bottom;return [...document.querySelectorAll('.stack-overview-member')].filter(e=>e.getBoundingClientRect().bottom<=bottom).length})()");
     console.log('Layout viewport:',await js('({width:innerWidth,height:innerHeight})'));await capture('ten-pr-desktop-light');assert.ok(await completeRows()>=6,'Six complete PR rows at1280×800');
+    assert.ok(await js("document.querySelector('.review-evidence').getBoundingClientRect().top >= document.querySelector('.stack-overview').getBoundingClientRect().bottom"), 'Detailed evidence follows the dependency list instead of displacing its rows');
     await viewport(900,600);await js("document.documentElement.classList.add('dark')");
     await capture('ten-pr-laptop-dark');assert.ok(await completeRows()>=3,'Three complete PR rows at900×600');
     assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'),true);

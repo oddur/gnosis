@@ -23,6 +23,7 @@ function harness() {
         mergeQueue: null,
         mergeQueueEntry: null,
         comments: { totalCount: 4 },
+        reviews: { nodes: [{ id: 'R1', url: request.url+'#pullrequestreview-1', submittedAt: '2026-11-01T10:00:00Z', state: 'APPROVED', author: { login: 'reviewer' }, commit: { oid: 'previous-head' } }] },
         commits: {
           nodes: [
             {
@@ -80,6 +81,9 @@ void test('queue reads coalesce, cache across service instances, and count over 
   assert.deepEqual(a, b);
   assert.deepEqual(a[0].checks, { state: 'success', passed: 130, skipped: 0, total: 130, failed: 0, running: 0 });
   assert.equal(a[0].comments, 4);
+  assert.equal(a[0].latestReview?.headSha, 'previous-head');
+  assert.equal(a[0].latestReview.url, request.url+'#pullrequestreview-1');
+  assert.match(h.queries[0], /commit \{ oid \}/);
   assert.equal(a[0].readiness?.mergeState, 'BEHIND');
   assert.equal(a[0].readiness.behindBy, 3);
   assert.match(h.queries[0], /mergeStateStatus reviewDecision/);

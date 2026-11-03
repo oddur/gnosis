@@ -24,7 +24,7 @@ interface PullSignals {
   mergeQueue: { id: string } | null;
   mergeQueueEntry: { state: string } | null;
   comments: { totalCount: number; nodes?: { id: string; createdAt: string; author: { login: string } | null }[] };
-  reviews?: { nodes: { id: string; url?: string; submittedAt: string | null; state: string; author: { login: string } | null }[] };
+  reviews?: { nodes: { id: string; url?: string; submittedAt: string | null; state: string; author: { login: string } | null; commit?: { oid: string } | null }[] };
   commits: {
     nodes: {
       commit: {
@@ -41,6 +41,11 @@ interface PullSignals {
   };
 }
 function isSignals(value: unknown): value is QueueSignals {
+  if (isCacheRecord(value) && value.latestReview != null) {
+    const review = value.latestReview;
+    if (!isCacheRecord(review) || !['url', 'author', 'state', 'submittedAt'].every(key => typeof review[key] === 'string') ||
+      (review.headSha !== null && typeof review.headSha !== 'string')) return false;
+  }
   if (isCacheRecord(value) && value.readiness !== undefined) {
     const readiness = value.readiness;
     if (
@@ -129,7 +134,7 @@ export function createQueueSignalsService(now = Date.now, revisionChanged?: (cli
       baseRef { compare(headRef:${JSON.stringify(request.headSha)}) { behindBy } }
       mergeQueue { id } mergeQueueEntry { state }
       comments(last:1) { totalCount nodes { id createdAt author { login } } }
-      reviews(last:1,states:[APPROVED,CHANGES_REQUESTED,COMMENTED,DISMISSED]) { nodes { id url submittedAt state author { login } } }
+      reviews(last:1,states:[APPROVED,CHANGES_REQUESTED,COMMENTED,DISMISSED]) { nodes { id url submittedAt state author { login } commit { oid } } }
       commits(last:1) { nodes { commit { statusCheckRollup { state contexts {
         totalCount checkRunCountsByState { state count } statusContextCountsByState { state count }
       } } } } }
@@ -154,6 +159,13 @@ export function createQueueSignalsService(now = Date.now, revisionChanged?: (cli
             ...request,
             checkedAt: now(),
             comments: pr.comments.totalCount,
+            ...(pr.reviews ? { latestReview: pr.reviews.nodes[0]?.submittedAt ? {
+              url: pr.reviews.nodes[0].url ?? request.url,
+              author: pr.reviews.nodes[0].author?.login ?? 'Deleted user',
+              state: pr.reviews.nodes[0].state,
+              submittedAt: pr.reviews.nodes[0].submittedAt,
+              headSha: pr.reviews.nodes[0].commit?.oid ?? null,
+            } : null } : {}),
             activity: {
               comment: pr.comments.nodes?.[0] ? { id: pr.comments.nodes[0].id, at: pr.comments.nodes[0].createdAt, author: pr.comments.nodes[0].author?.login ?? '' } : undefined,
               review: pr.reviews?.nodes[0]?.submittedAt ? { id: pr.reviews.nodes[0].url ?? pr.reviews.nodes[0].id, state: pr.reviews.nodes[0].state, at: pr.reviews.nodes[0].submittedAt, author: pr.reviews.nodes[0].author?.login ?? '' } : undefined,

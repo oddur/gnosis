@@ -408,3 +408,27 @@ void test('checks batch five PRs and follow reruns quickly with a bounded allowa
   await sync.tick();
   assert.equal(batches.length, 6);
 });
+
+void test('unchanged discussions publish fresh observation times without increasing polling', async () => {
+  let now = 0;
+  const updates: GitHubSyncUpdate[] = [];
+  let calls = 0;
+  const sync = createGitHubSyncService({
+    now: () => now, account: () => 'alice', enabled: () => true, backoff: () => undefined,
+    read: () => {
+      calls++;
+      return Promise.resolve([{ kind: 'discussion', url: target().url, value: { headSha: target().headSha, baseSha: 'base', checkedAt: now, threads: [] } }]);
+    },
+    publish: batch => updates.push(...batch),
+  });
+  sync.observe('1:evidence', { kind: 'discussion', priority: 'visible', targets: [target()] });
+  await sync.tick();
+  now = 120_000; await sync.tick();
+  now = 240_000; await sync.tick();
+  now = 360_000; await sync.tick();
+  assert.equal(calls, 3, 'unchanged content keeps the adaptive four-minute interval');
+  now = 480_000; await sync.tick();
+  assert.equal(updates.length, 4);
+  const last = updates.at(-1);
+  assert.equal(last?.kind === 'discussion' && last.value.checkedAt, 480_000);
+});

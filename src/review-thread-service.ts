@@ -133,7 +133,7 @@ export function createReviewThreadService(now = Date.now) {
       }
       cursor = nextCursor(pr.reviewThreads, cursor);
     } while (cursor);
-    return { ...revision, threads };
+    return { ...revision, threads, checkedAt: now() };
   }
   const service = {
     invalidate(client: Octokit, prUrl: string) {
