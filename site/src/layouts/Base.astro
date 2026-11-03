@@ -1,12 +1,16 @@
 ---
 import '../styles/global.css';
-
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
 interface Props {
   title: string;
   description?: string;
 }
-
-const { title, description = 'AI-guided code review. Understand the story before you read the diff.' } = Astro.props;
+const {
+  title,
+  description = 'Gnosis is an open-source desktop app for GitHub code review. Read diffs, review stacks, and generate explanations using your local Claude Code or Codex.',
+} = Astro.props;
+const canonical = new URL(Astro.url.pathname, 'https://gnosis.to');
 ---
 
 <!doctype html>
@@ -15,25 +19,17 @@ const { title, description = 'AI-guided code review. Understand the story before
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content={description} />
+    <meta name="theme-color" content="#e8edf9" />
+    <link rel="canonical" href={canonical} />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://gnosis.to" />
-    <meta property="og:image" content="https://gnosis.to/screenshots/overview.webp" />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content="https://gnosis.to/screenshots/review-queue.webp" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:image" content="https://gnosis.to/screenshots/overview.webp" />
+    <meta name="twitter:image" content="https://gnosis.to/screenshots/review-queue.webp" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      rel="preload"
-      as="style"
-      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600&family=Fraunces:opsz,wght@9..144,400..600&family=JetBrains+Mono:wght@400;500&display=swap"
-    />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600&family=Fraunces:opsz,wght@9..144,400..600&family=JetBrains+Mono:wght@400;500&display=swap"
-      rel="stylesheet"
-    />
+    <link rel="preload" as="font" href="/fonts/onest-latin.woff2" type="font/woff2" crossorigin />
     <title>{title}</title>
     <script>
       import { init, trackEvent } from '@aptabase/web';
@@ -42,6 +38,11 @@ const { title, description = 'AI-guided code review. Understand the story before
     </script>
   </head>
   <body>
+    <a href="#main" class="skip-link">
+      Skip to content
+    </a>
+    <Header />
     <slot />
+    <Footer />
   </body>
 </html>

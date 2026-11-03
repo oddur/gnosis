@@ -2,6 +2,7 @@ import type { QueueFilters } from './queue-filters';
 import type { QueueItem } from './workbench';
 
 export type HistoryDirection = -1 | 1;
+export type WorkspaceTab = 'summary' | 'changes' | 'commits' | 'explanation' | 'checks' | 'brief';
 export interface HomeLocation {
   account: string;
   filters: QueueFilters;
@@ -11,7 +12,7 @@ export interface HomeLocation {
   viewName?: string;
   muted: boolean;
   item: QueueItem | null;
-  tab: 'summary' | 'changes' | 'commits' | 'explanation' | 'checks';
+  tab: WorkspaceTab;
   selected: string | null;
   scroll: number;
 }

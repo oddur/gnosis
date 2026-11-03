@@ -22,6 +22,16 @@ void app.whenReady().then(async () => {
     }
     throw Error(`Timed out: ${expression}`);
   };
+  // The stream is virtualized, so each rendered row is checked by its index in the tree's file order.
+  const assertStreamFollowsTree = async () => {
+    const order = await js<{ tree: string[]; rows: unknown[]; expected: unknown[] }>(`(()=>{
+      const tree=window.deepAll('[role=treeitem]').map(e=>e.getAttribute('data-item-path')).filter(path=>path&&!path.endsWith('/'));
+      const rows=[...document.querySelectorAll('.commit-stream-row')].map(row=>({index:Number(row.dataset.index),file:row.dataset.file}));
+      return {tree,rows,expected:rows.map(row=>({index:row.index,file:tree[row.index]}))};
+    })()`);
+    assert.ok(order.rows.length > 0, 'The diff stream renders files');
+    assert.deepEqual(order.rows, order.expected, `The diff stream follows the tree: ${order.tree.join(', ')}`);
+  };
   // Native window bounds include platform chrome and may be clamped by CI displays.
   const viewport = async (width: number, height: number) => {
     await window.webContents.debugger.sendCommand('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
@@ -111,6 +121,24 @@ void app.whenReady().then(async () => {
     await js(
       `window.deepAll=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(selector,e.shadowRoot))];window.openFile=name=>{const row=window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')===name);if(!row)throw Error('Missing tree row '+name);row.click()};void 0;`
     );
+    assert.deepEqual(
+      await js(`(async()=>{
+      const {inTreeOrder}=await import('/lib/tree-file-order.ts');
+      const same=path=>path;
+      return [
+        inTreeOrder(['README.md','a.ts','src/b.ts','src/nested/c.ts','lib/d.ts'],same),
+        inTreeOrder(['file10.ts','Z.ts','file2.ts','a.ts'],same),
+        inTreeOrder(['02 · r #2/a.ts','01 · r #1/root.ts','02 · r #2/src/b.ts','01 · r #1/src/c.ts'],same),
+      ];
+    })()`),
+      [
+        ['lib/d.ts', 'src/nested/c.ts', 'src/b.ts', 'a.ts', 'README.md'],
+        ['a.ts', 'file2.ts', 'file10.ts', 'Z.ts'],
+        ['01 · r #1/src/c.ts', '01 · r #1/root.ts', '02 · r #2/src/b.ts', '02 · r #2/a.ts'],
+      ],
+      'Folders sort before files at every depth, with natural names'
+    );
+    await assertStreamFollowsTree();
     await js("window.openFile('worker.ts')");
     await wait(
       "document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2')?.textContent==='src/worker.ts'"
@@ -264,14 +292,14 @@ void app.whenReady().then(async () => {
     await js('window.commentLine()');
     await wait("!!document.querySelector('.changes-comment-composer textarea')");
     await js("window.failPost=true;window.fill('.changes-comment-composer textarea','An immediate comment.')");
-    await click('Comment now');
+    await click('Post to GitHub now');
     await wait("document.querySelector('.changes-comment-composer')?.textContent.includes('Posting failed')");
     assert.equal(
       await js("document.querySelector('.changes-comment-composer textarea').value"),
       'An immediate comment.'
     );
     await js('window.failPost=false');
-    await click('Comment now');
+    await click('Post to GitHub now');
     await wait("!document.querySelector('.changes-comment-composer')");
     await wait(
       "document.querySelector('.commit-stream-row[data-active=true] .changes-code')?.textContent.includes('An immediate comment.')"
@@ -400,6 +428,7 @@ void app.whenReady().then(async () => {
     await click('Open stack overview');
     await click('Changes');
     await wait("document.querySelector('.changes-progress')?.textContent.includes('/ 15')");
+    await assertStreamFollowsTree();
     await js(
       "window.deepAll('[role=treeitem]').find(e=>e.getAttribute('data-item-path')?.includes('#121/src/worker.ts')).click()"
     );
@@ -509,7 +538,7 @@ void app.whenReady().then(async () => {
       `(()=>{const el=document.querySelector('#large-stream-test textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(el,'Keep this pending comment.');el.dispatchEvent(new Event('input',{bubbles:true}))})()`
     );
     await js(
-      "[...document.querySelectorAll('#large-stream-test button')].find(b=>b.textContent==='Comment now').click()"
+      "[...document.querySelectorAll('#large-stream-test button')].find(b=>b.textContent==='Post to GitHub now').click()"
     );
     await wait('!!window.rejectComment');
     await js(

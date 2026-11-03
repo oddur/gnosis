@@ -1,0 +1,125 @@
+---
+import ProductShot from './ProductShot.astro';
+const features = [
+  {
+    id: 'stacks',
+    label: 'Stacks',
+    title: 'Review a stack or an individual PR',
+    description:
+      'See PRs in dependency order. Review each contribution, or compare the final stack against its base. Move into a single PR without losing your place.',
+    details: ['Stack and PR overviews', 'Combined or per-PR changes', 'Separate explanations for each scope'],
+    image: 'stack-overview',
+    height: 1000,
+    alt: 'Gnosis stack overview with three connected PRs, their review status, and check results.',
+    caption: 'Stack overview with dependencies, review status, and merge blockers.',
+  },
+  {
+    id: 'changes',
+    label: 'Diffs & commits',
+    title: 'Browse changes and commits',
+    description:
+      'Read the code without generating an explanation. Scroll through changed files, inspect one commit, and keep GitHub discussions beside the lines they refer to.',
+    details: ['Split or unified diffs', 'Hide generated files, tests, and extensions', 'Mark files or folders viewed'],
+    image: 'changes',
+    height: 1000,
+    alt: 'Gnosis Changes tab with a file tree, Viewed control, and a Markdown comment composer anchored to a line in the diff.',
+    caption: 'Write feedback in the diff. Post now or collect comments for your review.',
+  },
+  {
+    id: 'markdown',
+    label: 'Markdown',
+    title: 'Rendered Markdown diffs',
+    description:
+      'Switch from Markdown source to a rendered preview. See additions and removals in the document, with unchanged sections folded away until you need them.',
+    details: ['Source and preview', 'Changes highlighted in context', 'Tables, links, and code blocks'],
+    image: 'markdown-review',
+    height: 1085,
+    alt: 'Rendered Markdown review in Gnosis with added and removed text highlighted and a GitHub conversation beside the text.',
+    caption: 'Added and removed text in a rendered Markdown document.',
+  },
+  {
+    id: 'chat',
+    label: 'Ask questions',
+    title: 'Chat about selected code',
+    description:
+      'Select lines in a diff or ask about an explanation. Chat uses that context, so you can follow a question through without copying code into another tool.',
+    details: ['Questions about files or topics', 'Your selected model and effort', 'Saved conversations'],
+    image: 'review-chat',
+    height: 960,
+    alt: 'Gnosis chat beside a code diff explaining why awaiting a worker keeps a queue slot occupied until the operation completes.',
+    caption: 'Asking why the worker call uses return await.',
+  },
+  {
+    id: 'checks',
+    label: 'Checks',
+    title: 'Inspect and re-run checks',
+    description:
+      'See which checks need attention, inspect job steps and logs, and jump from an annotation to the code. Re-run failed or cancelled jobs from Gnosis.',
+    details: ['Failing checks up front', 'Job steps, timings, and logs', 'PR and stack merge blockers'],
+    image: 'pr-checks',
+    height: 1000,
+    alt: 'Gnosis Checks tab with failed and running checks, a selected failing job, its step timings, and source annotations.',
+    caption: 'A failed test, its job steps, and the other checks on this PR.',
+  },
+  {
+    id: 'conflicts',
+    label: 'Resolve conflicts',
+    title: 'Resolve conflicts and restack',
+    description:
+      'Compare conflicting versions and review suggestions from Mergiraf or your AI tool. Inspect the result before publishing, then prepare dependent PRs for restacking.',
+    details: [
+      'Conflicted, resolved, and reviewed states',
+      'Review changes before pushing',
+      'Reuse matching resolutions when restacking',
+    ],
+    image: 'resolve-conflicts',
+    height: 1085,
+    alt: 'Gnosis conflict resolution workspace showing file states, conflicting code versions, and actions to choose or edit the resolution.',
+    caption: 'Compare conflicting versions, edit the result, and review before pushing.',
+  },
+];
+---
+
+<section class="feature-tour frame" id="features" aria-labelledby="features-title" data-feature-tour>
+  <div class="section-intro">
+    <h2 id="features-title">Reviewing in Gnosis</h2>
+    <div>
+      <p>
+        Inspect changes, follow discussions, and see what blocks a merge. These are screenshots of the app using a
+        sample repository.
+      </p>
+    </div>
+  </div>
+  <nav class="feature-tabs" aria-label="Explore features">
+    {features.map((feature) => (
+      <a href={`#feature-${feature.id}`} id={`feature-tab-${feature.id}`} data-feature-tab={feature.id}>
+        {feature.label}
+      </a>
+    ))}
+  </nav>
+  {features.map((feature) => (
+    <section
+      class="feature-panel"
+      id={`feature-${feature.id}`}
+      data-feature-panel={feature.id}
+      aria-labelledby={`feature-title-${feature.id}`}
+    >
+      <div class="feature-description">
+        <div>
+          <h3 id={`feature-title-${feature.id}`}>{feature.title}</h3>
+          <p>{feature.description}</p>
+        </div>
+        <ul>
+          {feature.details.map((detail) => (
+            <li>{detail}</li>
+          ))}
+        </ul>
+      </div>
+      <ProductShot name={feature.image} height={feature.height} alt={feature.alt} caption={feature.caption} />
+    </section>
+  ))}
+</section>
+
+<script>
+  import '../scripts/feature-tour';
+</script>

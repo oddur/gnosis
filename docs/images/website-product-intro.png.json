@@ -1,0 +1,12 @@
+{
+  "source": ".impeccable/review/site/laptop.png",
+  "capture_command": "npm run test:browser --prefix site",
+  "branch": "fix/website-product-intro",
+  "base_commit": "9ab8c3325fa2e1c1d50f4e13466662388899d1b6",
+  "viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "transformation": "Crop first 800 pixels of full-page screenshot; no retouching.",
+  "content": "Local production build. App image uses synthetic sample repository, with original provenance in site/public/screenshots/review-queue.webp.json."
+}

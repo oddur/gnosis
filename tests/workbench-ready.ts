@@ -14,7 +14,17 @@ export async function waitForWorkbenchQueue(contents: WebContents, expectedItems
 
 /** loadURL resolves before the fixture's top-level dynamic imports finish rendering. */
 export async function loadWorkbenchPage(window: BrowserWindow, url: string): Promise<void> {
-  await window.loadURL(url);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      window.loadURL(url),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Timed out loading ${url.slice(0, 200)}`)), 60_000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
   if (!new URL(url).pathname.startsWith('/tests/fixtures/')) return;
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {

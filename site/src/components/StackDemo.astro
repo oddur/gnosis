@@ -1,0 +1,113 @@
+---
+import { examplePrs, awaitFrames } from '../lib/demo';
+import AwaitComparison from './AwaitComparison.astro';
+import Icon from './Icon.astro';
+---
+
+<section class="assembly" id="example" aria-labelledby="example-title">
+  <div class="assembly-title">
+    <h2 id="example-title">Example: a missing await breaks the concurrency limit</h2>
+    <p>
+      Illustrative stack <span aria-hidden="true">·</span> Select a PR
+    </p>
+  </div>
+  <div class="stack-layers">
+    {examplePrs.map((pr, index) => (
+      <details name="example-stack" class="stack-layer" open={index === 1} data-pr={index}>
+        <summary>
+          <span class="pr-number">#{pr.number}</span>
+          <span class="pr-title">{pr.title}</span>
+          <span class="pr-role">{pr.role}</span>
+          <Icon name="chevron" size={18} />
+        </summary>
+        <div class:list={['layer-content', { 'has-comparison': index === 1 }]}>
+          {index === 1 && (
+            <div class="playback" data-controls hidden>
+              <div class="playback-buttons">
+                <button type="button" class="play-button" data-play>
+                  <span data-play-icon>
+                    <Icon name="play" size={16} />
+                  </span>
+                  <span data-pause-icon>
+                    <Icon name="pause" size={16} />
+                  </span>
+                  <span data-play-label>Play</span>
+                </button>
+                <button
+                  type="button"
+                  class="icon-button"
+                  data-prev
+                  aria-label="Previous step"
+                  title="Previous step"
+                  disabled
+                >
+                  <Icon name="chevron" size={18} />
+                </button>
+                <button type="button" class="icon-button" data-next aria-label="Next step" title="Next step">
+                  <Icon name="step" size={18} />
+                </button>
+                <button
+                  type="button"
+                  class="icon-button"
+                  data-reset
+                  aria-label="Restart explanation"
+                  title="Restart explanation"
+                >
+                  <Icon name="reset" size={17} />
+                </button>
+              </div>
+              <div class="step-copy" aria-live="polite" aria-atomic="true">
+                <span class="step-count" data-count>
+                  1 / {awaitFrames.length}
+                </span>
+                <p>
+                  <strong data-step-title>{awaitFrames[0].title}</strong>
+                  <span data-caption>{awaitFrames[0].caption}</span>
+                </p>
+              </div>
+            </div>
+          )}
+          <div class="layer-explanation">
+            <h3>{pr.heading}</h3>
+            <p class="layer-description">{pr.description}</p>
+            {index === 1 && <AwaitComparison />}
+          </div>
+          <div class="source-pane">
+            <div class="source-heading">
+              <span>{pr.file}</span>
+              <span>{index === 1 ? '− removed / + added' : 'Example source'}</span>
+            </div>
+            <pre
+              tabindex="0"
+              aria-label={`${pr.file} example ${index === 1 ? 'diff' : 'source'}`}
+            ><code>{pr.code.map((line,i) => <span class:list={['source-line', {'is-removed':index===1&&i===3,'is-added':index===1&&i===4,'is-before-current':index===1&&i===3,'is-after-current':index===1&&i===4}]} data-source-line><span class="line-number" aria-hidden="true">{index===1?(i===3?'−':i===4?'+':''):i+1}</span>{index === 1 && (i === 3 || i === 4) && <span class="sr-only">{i === 3 ? 'Removed: ' : 'Added: '}</span>}{line}<span class="source-execution" aria-hidden="true"></span></span>)}</code></pre>
+            {index === 1 && (
+              <p class="source-explanation">
+                Without <code>await</code>, the returned promise stays pending, but <code>finally</code> runs
+                immediately.
+              </p>
+            )}
+            <a href="#illustrated-explanations" class="source-link">
+              Back to the app screenshot <Icon name="arrow" size={16} />
+            </a>
+          </div>
+        </div>
+      </details>
+    ))}
+  </div>
+  <noscript>
+    <p class="demo-noscript">
+      The diagram shows the initial state. Without await, A releases the slot while it still runs, so B starts too
+      early. With await, B waits until A finishes. Enable JavaScript to step through the comparison.
+    </p>
+  </noscript>
+  <div class="assembly-footer">
+    <p>Two commands. One slot. Step through both versions.</p>
+    <a href="#features">
+      Other review tools <Icon name="arrow" size={18} />
+    </a>
+  </div>
+</section>
+<script>
+  import '../scripts/stack-demo';
+</script>

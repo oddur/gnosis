@@ -1,0 +1,510 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-03T10:17:16.798151+00:00",
+  "title": "Design System: Gnosis website",
+  "extensions": {
+    "colorMeta": {
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Lavender canvas",
+        "tonalRamp": [
+          "oklch(15.00% 0.01703 267.79)",
+          "oklch(26.43% 0.01703 267.79)",
+          "oklch(37.86% 0.01703 267.79)",
+          "oklch(49.29% 0.01703 267.79)",
+          "oklch(60.71% 0.01703 267.79)",
+          "oklch(72.14% 0.01703 267.79)",
+          "oklch(83.57% 0.01703 267.79)",
+          "oklch(95.00% 0.01703 267.79)"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Technical surface",
+        "tonalRamp": [
+          "oklch(15.00% 0.00825 271.33)",
+          "oklch(26.43% 0.00825 271.33)",
+          "oklch(37.86% 0.00825 271.33)",
+          "oklch(49.29% 0.00825 271.33)",
+          "oklch(60.71% 0.00825 271.33)",
+          "oklch(72.14% 0.00825 271.33)",
+          "oklch(83.57% 0.00825 271.33)",
+          "oklch(95.00% 0.00825 271.33)"
+        ]
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "White paper",
+        "tonalRamp": [
+          "oklch(15.00% 0.00000 0.00)",
+          "oklch(26.43% 0.00000 0.00)",
+          "oklch(37.86% 0.00000 0.00)",
+          "oklch(49.29% 0.00000 0.00)",
+          "oklch(60.71% 0.00000 0.00)",
+          "oklch(72.14% 0.00000 0.00)",
+          "oklch(83.57% 0.00000 0.00)",
+          "oklch(95.00% 0.00000 0.00)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Graphite",
+        "tonalRamp": [
+          "oklch(15.00% 0.03530 267.65)",
+          "oklch(26.43% 0.03530 267.65)",
+          "oklch(37.86% 0.03530 267.65)",
+          "oklch(49.29% 0.03530 267.65)",
+          "oklch(60.71% 0.03530 267.65)",
+          "oklch(72.14% 0.03530 267.65)",
+          "oklch(83.57% 0.03530 267.65)",
+          "oklch(95.00% 0.03530 267.65)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Slate",
+        "tonalRamp": [
+          "oklch(15.00% 0.05030 263.34)",
+          "oklch(26.43% 0.05030 263.34)",
+          "oklch(37.86% 0.05030 263.34)",
+          "oklch(49.29% 0.05030 263.34)",
+          "oklch(60.71% 0.05030 263.34)",
+          "oklch(72.14% 0.05030 263.34)",
+          "oklch(83.57% 0.05030 263.34)",
+          "oklch(95.00% 0.05030 263.34)"
+        ]
+      },
+      "blue": {
+        "role": "primary",
+        "displayName": "Cobalt",
+        "tonalRamp": [
+          "oklch(15.00% 0.14128 266.46)",
+          "oklch(26.43% 0.14128 266.46)",
+          "oklch(37.86% 0.14128 266.46)",
+          "oklch(49.29% 0.14128 266.46)",
+          "oklch(60.71% 0.14128 266.46)",
+          "oklch(72.14% 0.14128 266.46)",
+          "oklch(83.57% 0.14128 266.46)",
+          "oklch(95.00% 0.14128 266.46)"
+        ]
+      },
+      "blue-hover": {
+        "role": "primary",
+        "displayName": "Deep cobalt",
+        "tonalRamp": [
+          "oklch(15.00% 0.12533 265.98)",
+          "oklch(26.43% 0.12533 265.98)",
+          "oklch(37.86% 0.12533 265.98)",
+          "oklch(49.29% 0.12533 265.98)",
+          "oklch(60.71% 0.12533 265.98)",
+          "oklch(72.14% 0.12533 265.98)",
+          "oklch(83.57% 0.12533 265.98)",
+          "oklch(95.00% 0.12533 265.98)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Lavender rule",
+        "tonalRamp": [
+          "oklch(15.00% 0.03611 264.36)",
+          "oklch(26.43% 0.03611 264.36)",
+          "oklch(37.86% 0.03611 264.36)",
+          "oklch(49.29% 0.03611 264.36)",
+          "oklch(60.71% 0.03611 264.36)",
+          "oklch(72.14% 0.03611 264.36)",
+          "oklch(83.57% 0.03611 264.36)",
+          "oklch(95.00% 0.03611 264.36)"
+        ]
+      },
+      "selected": {
+        "role": "primary",
+        "displayName": "Pale selection blue",
+        "tonalRamp": [
+          "oklch(15.00% 0.04005 268.53)",
+          "oklch(26.43% 0.04005 268.53)",
+          "oklch(37.86% 0.04005 268.53)",
+          "oklch(49.29% 0.04005 268.53)",
+          "oklch(60.71% 0.04005 268.53)",
+          "oklch(72.14% 0.04005 268.53)",
+          "oklch(83.57% 0.04005 268.53)",
+          "oklch(95.00% 0.04005 268.53)"
+        ]
+      },
+      "focus": {
+        "role": "primary",
+        "displayName": "Focus blue",
+        "tonalRamp": [
+          "oklch(15.00% 0.19290 265.18)",
+          "oklch(26.43% 0.19290 265.18)",
+          "oklch(37.86% 0.19290 265.18)",
+          "oklch(49.29% 0.19290 265.18)",
+          "oklch(60.71% 0.19290 265.18)",
+          "oklch(72.14% 0.19290 265.18)",
+          "oklch(83.57% 0.19290 265.18)",
+          "oklch(95.00% 0.19290 265.18)"
+        ]
+      },
+      "layer-border": {
+        "role": "neutral",
+        "displayName": "Layer border",
+        "tonalRamp": [
+          "oklch(15.00% 0.04967 267.10)",
+          "oklch(26.43% 0.04967 267.10)",
+          "oklch(37.86% 0.04967 267.10)",
+          "oklch(49.29% 0.04967 267.10)",
+          "oklch(60.71% 0.04967 267.10)",
+          "oklch(72.14% 0.04967 267.10)",
+          "oklch(83.57% 0.04967 267.10)",
+          "oklch(95.00% 0.04967 267.10)"
+        ]
+      },
+      "layer-hover": {
+        "role": "neutral",
+        "displayName": "Layer hover",
+        "tonalRamp": [
+          "oklch(15.00% 0.01824 269.09)",
+          "oklch(26.43% 0.01824 269.09)",
+          "oklch(37.86% 0.01824 269.09)",
+          "oklch(49.29% 0.01824 269.09)",
+          "oklch(60.71% 0.01824 269.09)",
+          "oklch(72.14% 0.01824 269.09)",
+          "oklch(83.57% 0.01824 269.09)",
+          "oklch(95.00% 0.01824 269.09)"
+        ]
+      },
+      "source-divider": {
+        "role": "neutral",
+        "displayName": "Source divider",
+        "tonalRamp": [
+          "oklch(15.00% 0.02529 263.32)",
+          "oklch(26.43% 0.02529 263.32)",
+          "oklch(37.86% 0.02529 263.32)",
+          "oklch(49.29% 0.02529 263.32)",
+          "oklch(60.71% 0.02529 263.32)",
+          "oklch(72.14% 0.02529 263.32)",
+          "oklch(83.57% 0.02529 263.32)",
+          "oklch(95.00% 0.02529 263.32)"
+        ]
+      },
+      "control-border": {
+        "role": "neutral",
+        "displayName": "Control border",
+        "tonalRamp": [
+          "oklch(15.00% 0.04708 264.86)",
+          "oklch(26.43% 0.04708 264.86)",
+          "oklch(37.86% 0.04708 264.86)",
+          "oklch(49.29% 0.04708 264.86)",
+          "oklch(60.71% 0.04708 264.86)",
+          "oklch(72.14% 0.04708 264.86)",
+          "oklch(83.57% 0.04708 264.86)",
+          "oklch(95.00% 0.04708 264.86)"
+        ]
+      },
+      "control-hover": {
+        "role": "neutral",
+        "displayName": "Control hover",
+        "tonalRamp": [
+          "oklch(15.00% 0.03474 265.99)",
+          "oklch(26.43% 0.03474 265.99)",
+          "oklch(37.86% 0.03474 265.99)",
+          "oklch(49.29% 0.03474 265.99)",
+          "oklch(60.71% 0.03474 265.99)",
+          "oklch(72.14% 0.03474 265.99)",
+          "oklch(83.57% 0.03474 265.99)",
+          "oklch(95.00% 0.03474 265.99)"
+        ]
+      },
+      "removed-bg": {
+        "role": "secondary",
+        "displayName": "Removed source fill",
+        "tonalRamp": [
+          "oklch(15.00% 0.02314 10.97)",
+          "oklch(26.43% 0.02314 10.97)",
+          "oklch(37.86% 0.02314 10.97)",
+          "oklch(49.29% 0.02314 10.97)",
+          "oklch(60.71% 0.02314 10.97)",
+          "oklch(72.14% 0.02314 10.97)",
+          "oklch(83.57% 0.02314 10.97)",
+          "oklch(95.00% 0.02314 10.97)"
+        ]
+      },
+      "removed-ink": {
+        "role": "secondary",
+        "displayName": "Removed source text",
+        "tonalRamp": [
+          "oklch(15.00% 0.11922 18.29)",
+          "oklch(26.43% 0.11922 18.29)",
+          "oklch(37.86% 0.11922 18.29)",
+          "oklch(49.29% 0.11922 18.29)",
+          "oklch(60.71% 0.11922 18.29)",
+          "oklch(72.14% 0.11922 18.29)",
+          "oklch(83.57% 0.11922 18.29)",
+          "oklch(95.00% 0.11922 18.29)"
+        ]
+      },
+      "added-bg": {
+        "role": "secondary",
+        "displayName": "Added source fill",
+        "tonalRamp": [
+          "oklch(15.00% 0.02073 161.46)",
+          "oklch(26.43% 0.02073 161.46)",
+          "oklch(37.86% 0.02073 161.46)",
+          "oklch(49.29% 0.02073 161.46)",
+          "oklch(60.71% 0.02073 161.46)",
+          "oklch(72.14% 0.02073 161.46)",
+          "oklch(83.57% 0.02073 161.46)",
+          "oklch(95.00% 0.02073 161.46)"
+        ]
+      },
+      "added-ink": {
+        "role": "secondary",
+        "displayName": "Added source text",
+        "tonalRamp": [
+          "oklch(15.00% 0.08205 155.48)",
+          "oklch(26.43% 0.08205 155.48)",
+          "oklch(37.86% 0.08205 155.48)",
+          "oklch(49.29% 0.08205 155.48)",
+          "oklch(60.71% 0.08205 155.48)",
+          "oklch(72.14% 0.08205 155.48)",
+          "oklch(83.57% 0.08205 155.48)",
+          "oklch(95.00% 0.08205 155.48)"
+        ]
+      },
+      "before-current": {
+        "role": "secondary",
+        "displayName": "Before execution",
+        "tonalRamp": [
+          "oklch(15.00% 0.14171 20.30)",
+          "oklch(26.43% 0.14171 20.30)",
+          "oklch(37.86% 0.14171 20.30)",
+          "oklch(49.29% 0.14171 20.30)",
+          "oklch(60.71% 0.14171 20.30)",
+          "oklch(72.14% 0.14171 20.30)",
+          "oklch(83.57% 0.14171 20.30)",
+          "oklch(95.00% 0.14171 20.30)"
+        ]
+      },
+      "after-current": {
+        "role": "secondary",
+        "displayName": "After execution",
+        "tonalRamp": [
+          "oklch(15.00% 0.09608 155.47)",
+          "oklch(26.43% 0.09608 155.47)",
+          "oklch(37.86% 0.09608 155.47)",
+          "oklch(49.29% 0.09608 155.47)",
+          "oklch(60.71% 0.09608 155.47)",
+          "oklch(72.14% 0.09608 155.47)",
+          "oklch(83.57% 0.09608 155.47)",
+          "oklch(95.00% 0.09608 155.47)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Page headlines."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Section headings."
+      },
+      "title": {
+        "displayName": "Explanation title",
+        "purpose": "Heading within an open PR layer."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Default document text."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Supporting metadata."
+      },
+      "source": {
+        "displayName": "Source",
+        "purpose": "Code in the demonstration."
+      },
+      "feature-title": {
+        "displayName": "Feature title",
+        "purpose": "Heading within a feature tour panel."
+      },
+      "daily-title": {
+        "displayName": "Daily feature term",
+        "purpose": "Term in the compact capability definition list."
+      },
+      "product-display": {
+        "displayName": "Product introduction",
+        "purpose": "Homepage product heading beside the Review Queue screenshot; uses its own size at 900px and below."
+      }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "button-hover",
+        "value": "background 150ms ease",
+        "purpose": "Primary button hover."
+      },
+      {
+        "name": "layer-state",
+        "value": "background 160ms ease, color 160ms ease",
+        "purpose": "PR disclosure state."
+      },
+      {
+        "name": "command-movement",
+        "value": "transform 650ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Move stable A/B identities through the fixed Before and After lanes."
+      },
+      {
+        "name": "playback-first-step",
+        "value": "2400ms",
+        "purpose": "Initial pause after user activation."
+      },
+      {
+        "name": "playback-step",
+        "value": "4200ms",
+        "purpose": "Pause between the five synchronized comparison frames."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "transition: none; animation: none; scroll-behavior: auto",
+        "purpose": "Remove movement while preserving user-initiated playback and manual steps."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "compact-max",
+        "value": "1100px"
+      },
+      {
+        "name": "product-stack-max",
+        "value": "900px"
+      },
+      {
+        "name": "mobile-max",
+        "value": "760px"
+      },
+      {
+        "name": "narrow-max",
+        "value": "390px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Product introduction actions",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The standard download action and feature link sit below the product summary, followed by a factual open-source and billing note.",
+      "html": "<div class=\"ds-intro-actions\"><a class=\"ds-button\" href=\"#download\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 3v12\"/><path d=\"m7 10 5 5 5-5\"/><path d=\"M5 17v4h14v-4\"/></svg><span>Download for macOS</span></a><a class=\"ds-intro-link\" href=\"#features\">See the features <svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M4 12h16\"/><path d=\"m13 5 7 7-7 7\"/></svg></a></div><p class=\"ds-intro-note\">Free and open source. AI features use your existing agent subscription or API billing.</p>",
+      "css": ".ds-button{display:inline-flex;align-items:center;justify-content:center;gap:9px;padding:13px 20px;min-height:46px;border-radius:var(--radius,8px);font:550 15px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;text-decoration:none;background:var(--blue,#213b8e);color:var(--paper,#fff);transition:background .15s;}.ds-button:hover{background:var(--blue-hover,#172e75);}.ds-button:focus-visible{outline:3px solid #3865df;outline-offset:5px;}.ds-button svg{flex-shrink:0;}@media(prefers-reduced-motion:reduce){.ds-button{transition:none;}}.ds-intro-actions{display:flex;flex-wrap:wrap;align-items:center;gap:16px 24px;margin:26px 0 18px;}.ds-intro-link{display:inline-flex;align-items:center;gap:9px;color:var(--blue,#213b8e);font:400 14px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;text-decoration:none;text-underline-offset:.22em;}.ds-intro-link:hover{text-decoration:underline;}.ds-intro-link:focus-visible{outline:3px solid #3865df;outline-offset:5px;}.ds-intro-note{margin:0;max-width:40ch;color:var(--muted,#52617e);font:400 13px/1.6 Onest,ui-sans-serif,system-ui,sans-serif;}@media(max-width:900px){.ds-intro-note{max-width:60ch;}}"
+    },
+    {
+      "name": "Large download",
+      "kind": "button",
+      "refersTo": "button-large",
+      "description": "The main installation action uses larger text and padding.",
+      "html": "<a class=\"ds-button ds-large\" href=\"#download\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 3v12\"/><path d=\"m7 10 5 5 5-5\"/><path d=\"M5 17v4h14v-4\"/></svg><span>Download for macOS</span></a>",
+      "css": ".ds-button{display:inline-flex;align-items:center;justify-content:center;gap:9px;padding:13px 20px;min-height:46px;border-radius:var(--radius,8px);font:550 15px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;text-decoration:none;background:var(--blue,#213b8e);color:var(--paper,#fff);transition:background .15s;}.ds-button:hover{background:var(--blue-hover,#172e75);}.ds-button:focus-visible{outline:3px solid #3865df;outline-offset:5px;}.ds-button svg{flex-shrink:0;}@media(prefers-reduced-motion:reduce){.ds-button{transition:none;}}.ds-large{font-size:18px;padding:17px 24px;}"
+    },
+    {
+      "name": "Comparison playback controls",
+      "kind": "button",
+      "refersTo": "button-play",
+      "description": "Playback and manual controls precede the comparison. Previous starts disabled, and Next disables on the fifth frame; the source script supplies state changes.",
+      "html": "<div class=\"ds-playback\"><div class=\"ds-playback-buttons\"><button class=\"ds-icon ds-play\" type=\"button\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m8 5 11 7-11 7V5Z\"/></svg><span>Play</span></button><button class=\"ds-icon ds-previous\" type=\"button\" aria-label=\"Previous step\" title=\"Previous step\" disabled><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m9 5 7 7-7 7\"/></svg></button><button class=\"ds-icon\" type=\"button\" aria-label=\"Next step\" title=\"Next step\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m5 5 10 7-10 7V5Z\"/><path d=\"M19 5v14\"/></svg></button><button class=\"ds-icon\" type=\"button\" aria-label=\"Restart explanation\" title=\"Restart explanation\"><svg width=\"17\" height=\"17\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M3 10a9 9 0 1 1 2.7 8.4\"/><path d=\"M3 4v6h6\"/></svg></button></div><div class=\"ds-step-copy\"><span class=\"ds-step-count\">1 / 5</span><p><strong>A starts; B is waiting</strong><span>A owns the only slot. Its worker operation is still pending.</span></p></div></div>",
+      "css": ".ds-icon{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:36px;min-height:36px;border:0;background:transparent;border-radius:6px;color:var(--blue,#213b8e);font:400 13px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;cursor:pointer;}.ds-icon:hover:not(:disabled){background:#dce7ff;}.ds-icon:focus-visible{outline:3px solid #3865df;outline-offset:5px;}.ds-icon:disabled{opacity:.4;cursor:default;}.ds-play{border:1px solid #aebddc;padding:7px 12px;min-width:81px;background:var(--paper,#fff);}.ds-play:hover{background:#dce7ff;}.ds-playback{display:flex;align-items:center;gap:23px;min-height:90px;padding:12px 0;font:400 16px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;color:var(--ink,#1e2537);}.ds-playback-buttons{display:flex;align-items:center;gap:3px;flex-shrink:0;}.ds-previous svg{transform:rotate(180deg);}.ds-step-copy{display:flex;align-items:baseline;gap:13px;min-width:0;}.ds-step-count{font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--muted,#52617e);}.ds-step-copy p{margin:0;font-size:12px;line-height:1.5;}.ds-step-copy strong{display:block;font-weight:600;}.ds-step-copy p>span{color:var(--muted,#52617e);}@media(max-width:760px){.ds-playback{display:block;min-height:150px;}.ds-step-copy{margin-top:12px;min-height:92px;}.ds-step-copy p{font-size:13px;}}"
+    },
+    {
+      "name": "Icon control",
+      "kind": "button",
+      "refersTo": "button-icon",
+      "description": "Small source and playback actions require an accessible name.",
+      "html": "<button class=\"ds-icon\" type=\"button\" aria-label=\"Copy Homebrew install command\" title=\"Copy install command\"><svg width=\"19\" height=\"19\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M9 9h12v12H9z\"/><path d=\"M15 9V3H3v12h6\"/></svg></button>",
+      "css": ".ds-icon{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:36px;min-height:36px;border:0;background:transparent;border-radius:6px;color:var(--blue,#213b8e);font:400 13px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;cursor:pointer;}.ds-icon:hover:not(:disabled){background:#dce7ff;}.ds-icon:focus-visible{outline:3px solid #3865df;outline-offset:5px;}.ds-icon:disabled{opacity:.4;cursor:default;}"
+    },
+    {
+      "name": "Website navigation",
+      "kind": "nav",
+      "refersTo": "navigation",
+      "description": "Header links expose features, illustrated explanations, releases, and installation. The resource row below the product introduction links to source, setup, issues, and the license.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Main navigation\"><a class=\"ds-explore\" href=\"/#features\">Features</a><a class=\"ds-explore\" href=\"/#illustrated-explanations\">Illustrated explanations</a><a href=\"/changelog/\" aria-current=\"page\">Changelog</a><a class=\"ds-nav-github\" href=\"https://github.com/oddur/gnosis\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M9 19c-4.3 1.3-4.3-2.2-6-2.7\"/><path d=\"M15 22v-3.9a3.4 3.4 0 0 0-.9-2.6c3-.3 6.2-1.5 6.2-6.9A5.4 5.4 0 0 0 18.8 5a5 5 0 0 0-.1-3.6S17.5 1 15 2.8a13.4 13.4 0 0 0-7 0C5.5 1 4.3 1.4 4.3 1.4A5 5 0 0 0 4.2 5a5.4 5.4 0 0 0-1.5 3.7c0 5.4 3.2 6.6 6.2 6.9A3.4 3.4 0 0 0 8 18.1V22\"/></svg><span>GitHub</span></a><a class=\"ds-button ds-nav-download\" href=\"#download\"><svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12 3v12\"/><path d=\"m7 10 5 5 5-5\"/><path d=\"M5 17v4h14v-4\"/></svg><span>Download<span class=\"ds-desktop\"> for macOS</span></span></a></nav><nav class=\"ds-project\" aria-label=\"Project resources\"><a href=\"https://github.com/oddur/gnosis\">Source on GitHub <svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M4 12h16\"/><path d=\"m13 5 7 7-7 7\"/></svg></a><a href=\"https://github.com/oddur/gnosis#readme\">Setup guide</a><a href=\"https://github.com/oddur/gnosis/issues\">Bugs &amp; ideas</a><a href=\"https://github.com/oddur/gnosis/blob/main/LICENSE\">MIT license</a></nav>",
+      "css": ".ds-button{display:inline-flex;align-items:center;justify-content:center;gap:9px;padding:13px 20px;min-height:46px;border-radius:var(--radius,8px);font:550 15px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;text-decoration:none;background:var(--blue,#213b8e);color:var(--paper,#fff);transition:background .15s;}.ds-button:hover{background:var(--blue-hover,#172e75);}.ds-button:focus-visible{outline:3px solid #3865df;outline-offset:5px;}.ds-button svg{flex-shrink:0;}@media(prefers-reduced-motion:reduce){.ds-button{transition:none;}}.ds-nav{display:flex;align-items:center;gap:27px;color:var(--ink,#1e2537);font:400 14px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;}.ds-nav>a:not(.ds-button){color:inherit;text-decoration:none;}.ds-nav>a:not(.ds-button):hover{text-decoration:underline;}.ds-nav>a[aria-current=\"page\"]{text-decoration:underline;text-underline-offset:7px;}.ds-nav>a:focus-visible{outline:3px solid #3865df;outline-offset:5px;}@media(max-width:1100px){.ds-nav{gap:18px;}}@media(max-width:760px){.ds-nav{gap:14px;font-size:12px;}.ds-explore,.ds-desktop{display:none;}.ds-nav-download{font-size:13px;padding:10px 13px;min-height:40px;}.ds-nav-download svg{width:16px;}}@media(max-width:390px){.ds-nav{gap:10px;}}.ds-nav-github{display:flex;align-items:center;gap:7px;}.ds-project{display:flex;align-items:center;flex-wrap:wrap;gap:12px 28px;font:400 14px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;padding:22px 0 32px;}.ds-project a{display:inline-flex;align-items:center;gap:7px;color:var(--blue,#213b8e);text-decoration:none;text-underline-offset:.22em;}.ds-project a:hover{text-decoration:underline;}.ds-project a:focus-visible{outline:3px solid #3865df;outline-offset:5px;}@media(max-width:760px){.ds-nav-github span{display:none;}.ds-project{padding:20px 0 28px;gap:14px 24px;font-size:13px;}}@media(max-width:390px){.ds-nav-github{display:none;}}"
+    },
+    {
+      "name": "Preview release tag",
+      "kind": "chip",
+      "refersTo": "tag-preview",
+      "description": "A noninteractive status label for a prerelease.",
+      "html": "<span class=\"ds-preview\">Preview release</span>",
+      "css": ".ds-preview{display:inline-block;font:400 12px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;color:var(--ink,#1e2537);padding:2px 7px;border:1px solid #99aad0;border-radius:4px;}"
+    },
+    {
+      "name": "Connected PR comparison",
+      "kind": "custom",
+      "refersTo": "layer",
+      "description": "Three native disclosures frame the foundation, fix, and regression test. The open fix shows the third comparison frame; the source script supplies playback.",
+      "html": "<div class=\"ds-stack\"><details name=\"ds-example-stack\" class=\"ds-layer\" ><summary><span class=\"ds-number\">#120</span><span class=\"ds-title\">Add a concurrency limit</span><span class=\"ds-role\">Foundation</span><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m9 5 7 7-7 7\"/></svg></summary><p class=\"ds-explanation\">acquire() waits until the slot is free. Holding that slot must cover the entire worker operation.</p></details><details name=\"ds-example-stack\" class=\"ds-layer\" open><summary><span class=\"ds-number\">#121</span><span class=\"ds-title\">Hold the slot until the worker finishes</span><span class=\"ds-role\">Builds on #120</span><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m9 5 7 7-7 7\"/></svg></summary><p class=\"ds-explanation\">Both versions return a promise. Only return await keeps finally from releasing the slot before the worker finishes.</p><div class=\"ds-await\"><p class=\"ds-limit\">Concurrency limit: <strong>1 active command</strong></p><div class=\"ds-lane\" data-exceeded=\"true\"><div class=\"ds-lane-heading\"><h4>Before · without await</h4><span class=\"ds-active\">2 active · limit exceeded</span></div><svg class=\"ds-await-figure\" viewBox=\"0 0 560 98\" role=\"img\" aria-labelledby=\"ds-before-title ds-before-desc\"><title id=\"ds-before-title\">Before · without await: B starts while A is still running</title><desc id=\"ds-before-desc\">A running. B running. 2 active. Slot: Free while A and B run. Peak: 2.</desc><rect class=\"ds-running\" x=\"200\" y=\"32\" width=\"150\" height=\"60\" rx=\"6\"/><text class=\"ds-diagram-label\" x=\"70\" y=\"20\" text-anchor=\"middle\">Waiting</text><text class=\"ds-diagram-label\" x=\"275\" y=\"20\" text-anchor=\"middle\">Running</text><text class=\"ds-diagram-label\" x=\"475\" y=\"20\" text-anchor=\"middle\">Done</text><path class=\"ds-diagram-arrow\" d=\"M145 62h35m-6-5 6 5-6 5M370 62h35m-6-5 6 5-6 5\"/><g class=\"ds-command-token\" transform=\"translate(245,62)\"><rect x=\"-20\" y=\"-20\" width=\"40\" height=\"40\" rx=\"6\"/><text y=\"6\" text-anchor=\"middle\">A</text></g><g class=\"ds-command-token\" transform=\"translate(305,62)\"><rect x=\"-20\" y=\"-20\" width=\"40\" height=\"40\" rx=\"6\"/><text y=\"6\" text-anchor=\"middle\">B</text></g></svg><div class=\"ds-lane-facts\"><span>Slot: Free while A and B run</span><span>Peak: <strong class=\"ds-peak\">2</strong> active</span></div></div><div class=\"ds-lane\" data-exceeded=\"false\"><div class=\"ds-lane-heading\"><h4>After · with await</h4><span class=\"ds-active\">1 active</span></div><svg class=\"ds-await-figure\" viewBox=\"0 0 560 98\" role=\"img\" aria-labelledby=\"ds-after-title ds-after-desc\"><title id=\"ds-after-title\">After · with await: B starts while A is still running</title><desc id=\"ds-after-desc\">A running. B waiting. 1 active. Slot: Held by A; B waits. Peak: 1.</desc><rect class=\"ds-running\" x=\"200\" y=\"32\" width=\"150\" height=\"60\" rx=\"6\"/><text class=\"ds-diagram-label\" x=\"70\" y=\"20\" text-anchor=\"middle\">Waiting</text><text class=\"ds-diagram-label\" x=\"275\" y=\"20\" text-anchor=\"middle\">Running</text><text class=\"ds-diagram-label\" x=\"475\" y=\"20\" text-anchor=\"middle\">Done</text><path class=\"ds-diagram-arrow\" d=\"M145 62h35m-6-5 6 5-6 5M370 62h35m-6-5 6 5-6 5\"/><g class=\"ds-command-token\" transform=\"translate(270,62)\"><rect x=\"-20\" y=\"-20\" width=\"40\" height=\"40\" rx=\"6\"/><text y=\"6\" text-anchor=\"middle\">A</text></g><g class=\"ds-command-token\" transform=\"translate(70,62)\"><rect x=\"-20\" y=\"-20\" width=\"40\" height=\"40\" rx=\"6\"/><text y=\"6\" text-anchor=\"middle\">B</text></g></svg><div class=\"ds-lane-facts\"><span>Slot: Held by A; B waits</span><span>Peak: <strong class=\"ds-peak\">1</strong> active</span></div></div></div></details><details name=\"ds-example-stack\" class=\"ds-layer\" ><summary><span class=\"ds-number\">#122</span><span class=\"ds-title\">Test that a second command waits</span><span class=\"ds-role\">Builds on #121</span><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m9 5 7 7-7 7\"/></svg></summary><p class=\"ds-explanation\">Let A stay pending, then submit B. B must not start until A settles.</p></details></div>",
+      "css": ".ds-stack{color:var(--ink,#1e2537);font:400 16px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;}.ds-layer{position:relative;}.ds-layer+.ds-layer{margin-top:15px;}.ds-layer+.ds-layer:before{content:\"\";position:absolute;width:1px;height:15px;background:var(--blue,#213b8e);left:34px;top:-15px;}.ds-layer summary{list-style:none;display:flex;align-items:center;gap:22px;min-height:52px;padding:10px 22px;border:1px solid #a9b7d8;border-radius:7px;background:var(--paper,#fff);cursor:pointer;transition:background .16s,color .16s;}.ds-layer summary::-webkit-details-marker{display:none;}.ds-layer summary:hover{background:#edf2ff;}.ds-layer[open] summary{background:var(--blue,#213b8e);color:var(--paper,#fff);border-color:var(--blue,#213b8e);}.ds-layer[open] summary>svg{transform:rotate(90deg);}.ds-layer summary:focus-visible{outline:3px solid #3865df;outline-offset:5px;}.ds-number{font-size:16px;font-variant-numeric:tabular-nums;}.ds-title{font-size:18px;font-weight:550;}.ds-role{margin-left:auto;font-size:13px;white-space:nowrap;}.ds-explanation{margin:0;padding:18px 0 4px;font-size:14px;line-height:1.6;color:var(--muted,#52617e);max-width:54ch;}@media(max-width:760px){.ds-layer summary{gap:10px;padding:13px 12px;min-height:58px;}.ds-title{font-size:14px;line-height:1.4;}.ds-number{font-size:13px;}.ds-role{display:none;}.ds-layer summary>svg{margin-left:auto;flex-shrink:0;}}@media(prefers-reduced-motion:reduce){.ds-layer summary{transition:none;}}.ds-await{margin-top:18px;}.ds-limit{margin:0 0 14px;font-size:13px;color:var(--muted,#52617e);}.ds-lane+.ds-lane{border-top:1px solid var(--line,#bdc9e1);margin-top:14px;padding-top:14px;}.ds-lane-heading{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 14px;min-height:25px;}.ds-lane-heading h4{margin:0;font-size:14px;font-weight:600;}.ds-active{font-size:12px;font-variant-numeric:tabular-nums;}.ds-lane[data-exceeded=\"true\"] .ds-active,.ds-lane[data-exceeded=\"true\"] .ds-peak{color:#9b3038;font-weight:600;}.ds-await-figure{display:block;width:100%;height:auto;}.ds-running{fill:var(--canvas,#e8edf9);stroke:var(--line,#bdc9e1);}.ds-diagram-label{font:15px Onest,sans-serif;fill:var(--muted,#52617e);}.ds-diagram-arrow{fill:none;stroke:#9aaac8;stroke-width:1.2;}.ds-command-token rect{fill:var(--blue,#213b8e);}.ds-command-token text{fill:white;font:500 19px Onest,sans-serif;}.ds-lane-facts{display:flex;justify-content:space-between;gap:12px;min-height:20px;font-size:12px;color:var(--muted,#52617e);}.ds-lane-facts>span:last-child{flex-shrink:0;font-variant-numeric:tabular-nums;}@media(max-width:760px){.ds-await-figure .ds-diagram-label{font-size:22px;}.ds-await-figure .ds-command-token text{font-size:25px;}.ds-lane-heading{min-height:46px;}.ds-lane-facts{min-height:38px;}}"
+    },
+    {
+      "name": "Source comparison diff",
+      "kind": "card",
+      "refersTo": "source-pane",
+      "description": "Persistent removed/added lines include accessible text prefixes and independent Before/After execution outlines. This snippet shows the initial frame; source scrolling accepts keyboard focus.",
+      "html": "<section class=\"ds-source\" aria-label=\"Example source diff\"><div class=\"ds-source-heading\"><span>dispatch.ts</span><span>− removed / + added</span></div><pre tabindex=\"0\" aria-label=\"dispatch.ts example diff\"><code><span class=\"ds-line\"><span class=\"ds-line-number\" aria-hidden=\"true\"></span>async function dispatch(command) {<span class=\"ds-execution\" aria-hidden=\"true\"></span></span><span class=\"ds-line\"><span class=\"ds-line-number\" aria-hidden=\"true\"></span>  const slot = await queue.acquire();<span class=\"ds-execution\" aria-hidden=\"true\"></span></span><span class=\"ds-line\"><span class=\"ds-line-number\" aria-hidden=\"true\"></span>  try {<span class=\"ds-execution\" aria-hidden=\"true\"></span></span><span class=\"ds-line ds-removed ds-before-current\"><span class=\"ds-line-number\" aria-hidden=\"true\">−</span><span class=\"ds-sr-only\">Removed: </span>    return worker.run(command);<span class=\"ds-execution\" aria-hidden=\"true\"></span></span><span class=\"ds-line ds-added ds-after-current\"><span class=\"ds-line-number\" aria-hidden=\"true\">+</span><span class=\"ds-sr-only\">Added: </span>    return await worker.run(command);<span class=\"ds-execution\" aria-hidden=\"true\"></span></span><span class=\"ds-line\"><span class=\"ds-line-number\" aria-hidden=\"true\"></span>  } finally {<span class=\"ds-execution\" aria-hidden=\"true\"></span></span><span class=\"ds-line\"><span class=\"ds-line-number\" aria-hidden=\"true\"></span>    slot.release();<span class=\"ds-execution\" aria-hidden=\"true\"></span></span><span class=\"ds-line\"><span class=\"ds-line-number\" aria-hidden=\"true\"></span>  }<span class=\"ds-execution\" aria-hidden=\"true\"></span></span><span class=\"ds-line\"><span class=\"ds-line-number\" aria-hidden=\"true\"></span>}<span class=\"ds-execution\" aria-hidden=\"true\"></span></span></code></pre><p class=\"ds-source-explanation\">Without <code>await</code>, the returned promise stays pending, but <code>finally</code> runs immediately.</p><a class=\"ds-source-link\" href=\"#illustrated-explanations\">Back to the app screenshot <svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M4 12h16\"/><path d=\"m13 5 7 7-7 7\"/></svg></a></section>",
+      "css": ".ds-source{min-width:0;background:var(--canvas,#e8edf9);color:var(--ink,#1e2537);border-radius:8px;overflow:hidden;font:400 16px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;}.ds-source-heading{display:flex;justify-content:space-between;gap:14px;padding:13px 16px;border-bottom:1px solid #d3dced;font-size:12px;color:var(--muted,#52617e);}.ds-source-heading span:first-child{color:var(--ink,#1e2537);font-family:monospace;}.ds-source pre{margin:0;padding:13px 0;overflow-x:auto;font:400 12px/2 'SFMono-Regular',Consolas,'Liberation Mono',monospace;scrollbar-width:thin;scrollbar-color:#9caed1 #e8edf9;}.ds-source code{font-family:'SFMono-Regular',Consolas,'Liberation Mono',monospace;font-variant-ligatures:none;}.ds-line{display:block;min-width:max-content;padding:0 15px 0 0;border-left:2px solid transparent;}.ds-line-number{display:inline-block;user-select:none;width:30px;text-align:center;color:#5c6c8c;}.ds-source-link{padding:10px 16px;display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;border-top:1px solid #d3dced;color:var(--blue,#213b8e);text-decoration:none;text-underline-offset:.22em;}.ds-source-link:hover{text-decoration:underline;}.ds-source-link:focus-visible{outline:3px solid #3865df;outline-offset:5px;}.ds-removed{background:#f9e4e6;color:#852e36;}.ds-added{background:#e0f0e7;color:#225c3b;}.ds-before-current{outline:1px solid #9b3038;outline-offset:-1px;}.ds-after-current{outline:1px solid #297048;outline-offset:-1px;}.ds-execution{font:500 10px Onest,sans-serif;margin-left:12px;}.ds-before-current .ds-execution::before{content:\"← Before\";color:#852e36;}.ds-after-current .ds-execution::after{content:\"← After\";color:#225c3b;}.ds-source-explanation{margin:0;padding:12px 16px;border-top:1px solid var(--line,#bdc9e1);font-size:13px;color:var(--muted,#52617e);}.ds-source-explanation code{font-size:12px;color:var(--ink,#1e2537);}.ds-source pre:focus-visible{outline:3px solid #3865df;outline-offset:5px;}.ds-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border-width:0;}"
+    },
+    {
+      "name": "Install command",
+      "kind": "card",
+      "refersTo": "command-copy",
+      "description": "Selectable monospace text and a copy control share one bordered container.",
+      "html": "<div class=\"ds-command\"><code>brew tap oddur/gnosis &amp;&amp; brew install --cask gnosis</code><button class=\"ds-icon\" type=\"button\" aria-label=\"Copy Homebrew install command\"><svg width=\"19\" height=\"19\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.7\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M9 9h12v12H9z\"/><path d=\"M15 9V3H3v12h6\"/></svg></button></div>",
+      "css": ".ds-icon{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:36px;min-height:36px;border:0;background:transparent;border-radius:6px;color:var(--blue,#213b8e);font:400 13px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;cursor:pointer;}.ds-icon:hover:not(:disabled){background:#dce7ff;}.ds-icon:focus-visible{outline:3px solid #3865df;outline-offset:5px;}.ds-icon:disabled{opacity:.4;cursor:default;}.ds-command{background:var(--paper,#fff);color:var(--ink,#1e2537);border:1px solid #b7c5df;border-radius:8px;padding:14px 14px 14px 18px;display:flex;align-items:center;gap:14px;}.ds-command code{font:400 12px/1.55 'SFMono-Regular',Consolas,'Liberation Mono',monospace;font-variant-ligatures:none;overflow-wrap:anywhere;user-select:all;flex:1;}@media(max-width:760px){.ds-command{padding:12px;}}"
+    },
+    {
+      "name": "Feature navigation",
+      "kind": "nav",
+      "refersTo": "feature-tab",
+      "description": "Six feature links with selected underline and weight. This snippet shows the enhanced visual state; the source script supplies keyboard selection and panel switching.",
+      "html": "<nav class=\"ds-feature-tabs\" aria-label=\"Explore features\" role=\"tablist\"><a href=\"#feature-stacks\" role=\"tab\" aria-selected=\"true\" tabindex=\"0\">Stacks</a><a href=\"#feature-changes\" role=\"tab\" aria-selected=\"false\" tabindex=\"-1\">Diffs &amp; commits</a><a href=\"#feature-markdown\" role=\"tab\" aria-selected=\"false\" tabindex=\"-1\">Markdown</a><a href=\"#feature-chat\" role=\"tab\" aria-selected=\"false\" tabindex=\"-1\">Ask questions</a><a href=\"#feature-checks\" role=\"tab\" aria-selected=\"false\" tabindex=\"-1\">Checks</a><a href=\"#feature-conflicts\" role=\"tab\" aria-selected=\"false\" tabindex=\"-1\">Resolve conflicts</a></nav>",
+      "css": ".ds-feature-tabs{display:flex;flex-wrap:wrap;gap:4px 20px;border-bottom:1px solid var(--line,#bdc9e1);font:400 16px/1.55 Onest,ui-sans-serif,system-ui,sans-serif;}.ds-feature-tabs a{padding:14px 6px;font-size:15px;color:var(--muted,#52617e);border-bottom:2px solid transparent;text-decoration:none;}.ds-feature-tabs a:hover{color:var(--blue,#213b8e);background:var(--canvas,#e8edf9);}.ds-feature-tabs a[aria-selected=\"true\"]{color:var(--blue,#213b8e);border-bottom-color:var(--blue,#213b8e);font-weight:600;}.ds-feature-tabs a:focus-visible{outline:3px solid #3865df;outline-offset:5px;}@media(max-width:760px){.ds-feature-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;}.ds-feature-tabs a{font-size:12px;text-align:center;padding:12px 2px;min-height:44px;}}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Change, unpacked",
+    "overview": "The website presents Gnosis as an open-source tool, with a developer explaining its behavior to another developer. Feature names, factual captions, and plain installation instructions carry the content. Cool lavender surfaces, cobalt actions, and Onest type keep the presentation calm and technical.\n\nThe product summary and real Review Queue screenshot introduce the application. The feature tour establishes its breadth before the illustrated explanations demonstrate one mechanism. Fine lines explain relationships. Motion shows a mechanism, while text and manual controls preserve its meaning without movement. Source, setup, and issue links make the project directly accessible.",
+    "keyCharacteristics": [
+      "Cool lavender canvas, cobalt emphasis, and graphite text.",
+      "Moderate, close-set headings that name features and actions.",
+      "A product summary and real application screenshot before interactive examples.",
+      "Connected layers that preserve context around the selected contribution.",
+      "Synchronized before/after mechanisms with visible counts and corresponding source changes.",
+      "Real screenshots with captions and explicit sample context.",
+      "Flat surfaces, fine borders, and purposeful motion.",
+      "Factual descriptions, visible project links, and plain installation instructions."
+    ],
+    "rules": [],
+    "dos": [
+      "**Do** use the website tokens for new website surfaces.",
+      "**Do** connect explanations to visible source evidence.",
+      "**Do** keep screenshot captions and sample context explicit.",
+      "**Do** preserve keyboard focus, meaningful text labels, and manual playback controls.",
+      "**Do** keep installation and release fallbacks actionable.",
+      "**Do** keep feature content accessible without JavaScript.",
+      "**Do** preserve full screenshots inside the stable feature frame.",
+      "**Do** use factual feature names, screenshot captions, and setup instructions.",
+      "**Do** keep source, setup, and issue links easy to find.",
+      "**Do** pair before/after diagrams with source changes, explicit counts, and stable object identities."
+    ],
+    "donts": [
+      "**Don't** import desktop application styling into website controls.",
+      "**Don't** replace real product evidence with fabricated application screenshots.",
+      "**Don't** start explanatory animation automatically.",
+      "**Don't** communicate state through color alone.",
+      "**Don't** add shadows to the flat surface hierarchy.",
+      "**Don't** use paired slogans, generic benefit claims, or corporate sales language.",
+      "**Don't** turn setup instructions into a large promotional color band."
+    ]
+  }
+}

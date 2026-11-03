@@ -9,6 +9,7 @@ import { createPrInspectionCache } from './pr-inspection-cache';
 import type { PrCommits } from './pr-commits';
 import { createByteCache } from './byte-cache';
 import { INVENTORY_MEMORY_BYTES } from './inspection-limits';
+import { inTreeOrder } from './tree-file-order';
 
 async function inventory<T>(signal: AbortSignal | undefined, read: (requestId: string) => Promise<T>): Promise<T> {
   signal?.throwIfAborted();
@@ -118,7 +119,7 @@ function preferredFile(snapshot: PrChanges, subjectId: string) {
   }
   return (
     snapshot.files.find((f) => f.path === path) ??
-    [...snapshot.files].sort((a, b) => a.path.localeCompare(b.path)).at(0)
+    inTreeOrder(snapshot.files, (file) => file.path).at(0)
   );
 }
 export function comparisonIsReady(selection: CommitSelection, subjectId: string) {

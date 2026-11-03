@@ -24,7 +24,10 @@ import type { ExplanationDestination } from '../lib/explanation-workspace';
 import type { ReviewHistoryEntry } from '../lib/types';
 import { Tabs } from 'radix-ui';
 import { PrCommitsView } from './PrCommitsView';
-import { PrChangesView } from './PrChangesView';
+import { PrChangesView, type ChangesInitialFile } from './PrChangesView';
+import { AgentBriefView } from './AgentBriefView';
+import { useAgentBrief, type AgentBriefComment } from '../lib/agent-brief';
+import type { WorkspaceTab } from '../lib/navigation-history';
 import type { Preferences } from '../lib/types';
 import { GitHubAuthor } from './GitHubAuthor';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -98,8 +101,8 @@ function PrSummaryContent({
   onStarChange: (members: QueueItem['subject']['members'], starred: boolean) => void;
   account: string | null;
   statusRefreshing: boolean;
-  tab: 'summary' | 'changes' | 'commits' | 'explanation' | 'checks';
-  onTabChange: (tab: 'summary' | 'changes' | 'commits' | 'explanation' | 'checks') => void;
+  tab: WorkspaceTab;
+  onTabChange: (tab: WorkspaceTab) => void;
   preferences: Preferences | null;
   starting: boolean;
   error: string;
@@ -139,7 +142,23 @@ function PrSummaryContent({
   const [name, setName] = useState(item.subject.name ?? '');
   const [nameBusy, setNameBusy] = useState(false);
   const [nameError, setNameError] = useState('');
-  const [initialFile, setInitialFile] = useState<{ url: string; path: string; line?: number; headSha?: string }>();
+  const [initialFile, setInitialFile] = useState<ChangesInitialFile>();
+  // A jump happens once. Returning to Changes later restores where the reviewer left off.
+  useEffect(() => {
+    if (tab !== 'changes') setInitialFile(undefined);
+  }, [tab]);
+  const brief = useAgentBrief(item.subject.id);
+  const openBriefComment = (comment: AgentBriefComment) => {
+    setInitialFile({
+      url: comment.url,
+      path: comment.path,
+      line: comment.line,
+      headSha: comment.headSha,
+      side: comment.side === 'LEFT' ? 'before' : 'after',
+      view: comment.view,
+    });
+    onTabChange('changes');
+  };
   const checks = usePrChecks(item.subject, account, tab === 'summary' || tab === 'checks', statuses, tab === 'checks');
   const [checkFocus, setCheckFocus] = useState<CheckFocus>();
   const checkTotals = checkCounts(item.subject.members.flatMap(m => checks.values[m.url]?.checks ?? []));
@@ -283,17 +302,17 @@ function PrSummaryContent({
   useReviewBreadcrumbs('summary', []);
   const changeScope = (id: string) => { remember(); onScopeChange?.(id); };
   const tabs = [{ value: 'summary', label: 'Summary' }, { value: 'changes', label: 'Changes' },
-    { value: 'commits', label: 'Commits' }, { value: 'checks', label: 'Checks' }, { value: 'explanation', label: 'Explanation' }];
+    { value: 'commits', label: 'Commits' }, { value: 'checks', label: 'Checks' }, { value: 'explanation', label: 'Explanation' }, { value: 'brief', label: 'Local notes' }];
   return (
     <Tabs.Root
       value={tab}
       onValueChange={(value) => {
         if (tab === 'summary') remember();
-        onTabChange(value as 'summary' | 'changes' | 'commits' | 'explanation' | 'checks');
+        onTabChange(value as WorkspaceTab);
       }}
       asChild
     >
-      <main className={`pr-summary-page ${stacked ? 'is-stack' : ''} ${tab !== 'summary' ? 'showing-changes' : ''}`}>
+      <main className={`pr-summary-page ${stacked ? 'is-stack' : ''} ${tab !== 'summary' ? 'showing-changes' : ''} ${tab === 'brief' ? 'showing-local-notes' : ''}`}>
         <div className="pr-summary-toolbar">
           <div className="pr-summary-toolbar-inner">
             <ReviewBreadcrumbs scope={tab} base={[
@@ -340,7 +359,7 @@ function PrSummaryContent({
             <PrStarMarker members={item.subject.members} starredUrls={starredUrls} />
             {stacked && onRenameStack && !renaming && <button className="workbench-icon" aria-label="Rename stack" title="Rename stack on this computer" onClick={() => { setName(item.subject.name ?? item.subject.title); setNameError(''); setRenaming(true); }}><Pencil size={15} /></button>}
             {actions}
-            {stacked && <PrActions member={item.subject.members[item.subject.members.length - 1]} stackMembers={item.subject.members} mergeReady={readiness.ready} onChanged={onRetryStatus} />}
+            {stacked && tab !== 'brief' && <PrActions member={item.subject.members[item.subject.members.length - 1]} stackMembers={item.subject.members} mergeReady={readiness.ready} onChanged={onRetryStatus} />}
           </div>
           {renaming && <form className="stack-name-form" onSubmit={event => {
             event.preventDefault(); if (!onRenameStack || nameBusy) return;
@@ -356,7 +375,7 @@ function PrSummaryContent({
               {starError}
             </p>
           )}
-          <div className="pr-summary-context">
+          <div className="pr-summary-context" hidden={tab === 'brief'}>
             <span>
               {stacked ? (
                 <>
@@ -379,7 +398,7 @@ function PrSummaryContent({
             )}
           </div>
         </header>}</PrEntryActions>
-        <div ref={statusRef} className="pr-merge-status" data-tour="summary" aria-label={stacked ? 'Stack status' : 'PR status'}>
+        <div ref={statusRef} hidden={tab === 'brief'} className="pr-merge-status" data-tour="summary" aria-label={stacked ? 'Stack status' : 'PR status'}>
           {!stacked && <SubjectReviewStatus subject={item.subject} signals={signals} checking={!signalsLoaded && !!account} now={statusNow} />}
           <ReadinessBadge readiness={stackStatus?.blocked ? { ...readiness, label: 'Not ready to merge' } : readiness} reviewStatusShown staleLabel={stacked ? 'Status needs refresh' : undefined} />
           {stacked && readiness.checkedAt === undefined ? <span className="merge-readiness-checked">Merge requirements not confirmed for all PRs</span> : <ReadinessCheckedAt readiness={readiness} label={stacked ? 'Merge requirements checked' : undefined} />}
@@ -388,27 +407,33 @@ function PrSummaryContent({
           {!stacked && <div className="pr-summary-review-actions" inert={tab !== 'summary'} style={{ visibility: tab === 'summary' ? 'visible' : 'hidden' }}>{summaryReview.controls}</div>}
         </div>
         <div className="pr-workspace-navigation">
+        {scopeStack && onScopeChange && <nav className="stack-scope-bar" aria-label="Stack navigation">
+          <Layers size={15} aria-hidden="true" /><SearchableSelect label="Review scope" value={item.subject.id} triggerLabel={stacked ? 'Whole stack' : `#${first.number} · ${scopeStack.members.findIndex(m => m.url === first.url) + 1} of ${scopeStack.members.length}`} options={stackScopeChoices(scopeStack)} onValueChange={changeScope} popupBoundary="viewport" popupClassName="stack-scope-popup" />
+          {parentStack && <button className="stack-back" onClick={() => changeScope(parentStack.id)}>Back to stack</button>}
+        </nav>}
         <Tabs.List className="pr-overview-tabs" aria-label="PR overview">
           <Tabs.Trigger value="summary">Summary</Tabs.Trigger>
           <Tabs.Trigger value="changes" data-tour="changes">Changes</Tabs.Trigger>
           <Tabs.Trigger value="commits">Commits</Tabs.Trigger>
           <Tabs.Trigger value="checks">Checks{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>
           <Tabs.Trigger value="explanation" data-tour="explanation">Explanation</Tabs.Trigger>
+          <Tabs.Trigger value="brief">Local notes{brief.comments.length > 0 && <span className="brief-tab-count">{brief.comments.length}</span>}</Tabs.Trigger>
         </Tabs.List>
-        {scopeStack && onScopeChange && <nav className="stack-scope-bar" aria-label="Stack navigation">
-          <Layers size={15} aria-hidden="true" /><SearchableSelect label="Review scope" value={item.subject.id} triggerLabel={stacked ? 'Whole stack' : `#${first.number} · ${scopeStack.members.findIndex(m => m.url === first.url) + 1} of ${scopeStack.members.length}`} options={stackScopeChoices(scopeStack)} onValueChange={changeScope} popupBoundary="viewport" popupClassName="stack-scope-popup" />
-          {parentStack && <button className="stack-back" onClick={() => changeScope(parentStack.id)}>Back to stack</button>}
-        </nav>}
+
         </div>
         <Tabs.Content value="changes" className="pr-changes-tab">
-          {preferences && (stacked ? <StackChangesView key={`${account}:${item.subject.id}`} subject={item.subject} preferences={preferences} account={account ?? ''} initialFile={initialFile} onOpenPr={changeScope} /> :
+          {preferences && (stacked ? <StackChangesView key={`${account}:${item.subject.id}`} subject={item.subject} preferences={preferences} account={account ?? ''} initialFile={initialFile} onOpenPr={changeScope} onOpenBrief={() => onTabChange('brief')} /> :
             <PrChangesView
               key={item.subject.id}
               subject={item.subject}
               preferences={preferences}
               initialFile={initialFile}
+              onOpenBrief={() => onTabChange('brief')}
             />
           )}
+        </Tabs.Content>
+        <Tabs.Content value="brief" className="pr-changes-tab">
+          <AgentBriefView key={item.subject.id} subject={item.subject} parentStack={parentStack} onOpenScope={onScopeChange ? changeScope : undefined} onOpenComment={openBriefComment} onOpenChanges={() => onTabChange('changes')} />
         </Tabs.Content>
         <Tabs.Content value="checks" className="pr-changes-tab">
           <PrChecksView key={`${account}:${item.subject.id}`} subject={item.subject} {...checks} focus={checkFocus}

@@ -16,7 +16,22 @@ void app.whenReady().then(async () => {
     show: true,
     webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false },
   });
-  const js = async <T = unknown>(code: string): Promise<T> => win.webContents.executeJavaScript(code) as Promise<T>;
+  // Every Electron await is bounded so a stuck step fails with its name instead of the runner's global timeout.
+  const within = async <T>(label: string, promise: Promise<T>, ms = 15_000): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(Error(`Timed out after ${ms}ms: ${label}`)), ms);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  const js = async <T = unknown>(code: string): Promise<T> =>
+    within(`executeJavaScript ${code.slice(0, 120)}`, win.webContents.executeJavaScript(code) as Promise<T>);
   const wait = async (condition: string) => {
     for (let i = 0; i < 160; i++) {
       if (await js(condition)) return;
@@ -35,12 +50,22 @@ void app.whenReady().then(async () => {
     win.focus();
     await js('document.fonts.ready');
     await new Promise((r) => setTimeout(r, 300));
-    fs.writeFileSync(path.join(dir, `${name}.png`), (await win.webContents.capturePage()).toPNG());
+    const image = await within(`capturePage ${name}`, win.webContents.capturePage());
+    fs.writeFileSync(path.join(dir, `${name}.png`), image.toPNG());
   };
-  const inner = () => {
-    const frame = win.webContents.mainFrame.frames.find((f) => f.url === 'about:srcdoc');
-    assert.ok(frame);
-    return frame;
+  // Closing the expanded view replaces its iframe, but the old frame stays in the frame tree until it
+  // detaches, and executeJavaScript on it never settles. Wait for the single live, loaded illustration frame.
+  const inner = async () => {
+    for (let i = 0; i < 160; i++) {
+      const frames = win.webContents.mainFrame.frames.filter((f) => !f.detached);
+      if (frames.length === 1 && frames[0].url === 'about:srcdoc') return frames[0];
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    throw Error('Timed out waiting for a single live illustration frame');
+  };
+  const innerJs = async (code: string): Promise<unknown> => {
+    const frame = await inner();
+    return within(`frame executeJavaScript ${code.slice(0, 120)}`, frame.executeJavaScript(code));
   };
   try {
     await loadWorkbenchPage(win,
@@ -49,9 +74,12 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('[data-motion-id]')");
     // CI desktops may disable animations. Exercise motion independently of the host preference.
     win.webContents.debugger.attach('1.3');
-    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
-      features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }],
-    });
+    await within(
+      'Emulation.setEmulatedMedia no-preference',
+      win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }],
+      })
+    );
     await js('document.fonts.ready');
     await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
     const sample = async (transition: boolean) =>
@@ -72,7 +100,7 @@ void app.whenReady().then(async () => {
     for (const result of generated) {
       const scene = normalizeSvgIllustration(result.slide.svgIllustration);
       assert.ok(scene);
-      await validateSvgIllustrationInBrowser(scene);
+      await within(`validate ${result.id}`, validateSvgIllustrationInBrowser(scene), 70_000);
     }
     const scene = normalizeSvgIllustration(generated[0]?.slide.svgIllustration);
     assert.ok(scene);
@@ -109,20 +137,20 @@ void app.whenReady().then(async () => {
       await capture(`${result.id}-expanded`);
       await click('Close');
       await wait("!!document.querySelector('.svg-illustration iframe')");
-      assert.equal(await inner().executeJavaScript('typeof window.electronAPI'), 'undefined');
+      assert.equal(await innerJs('typeof window.electronAPI'), 'undefined');
       const count = await js<number>(
         'Number(document.querySelector(\'[aria-label="Illustration timeline"]\')?.max??0)'
       );
       if (count) {
         await wait('!document.querySelector(\'[aria-label="Next illustration step"]\').disabled');
-        const initial = await inner().executeJavaScript("document.querySelector('svg').outerHTML");
+        const initial = await innerJs("document.querySelector('svg').outerHTML");
         await click('Next illustration step');
         await new Promise((r) => setTimeout(r, 550));
         await capture(`${result.id}-next`);
-        assert.notEqual(await inner().executeJavaScript("document.querySelector('svg').outerHTML"), initial);
+        assert.notEqual(await innerJs("document.querySelector('svg').outerHTML"), initial);
         await click('Previous illustration step');
         await new Promise((r) => setTimeout(r, 550));
-        assert.equal(await inner().executeJavaScript("document.querySelector('svg').outerHTML"), initial);
+        assert.equal(await innerJs("document.querySelector('svg').outerHTML"), initial);
         await click('Play illustration');
         await wait("document.querySelector('.svg-illustration .mechanism-event-count').textContent.startsWith('2 /')");
         await click('Pause illustration');
@@ -155,12 +183,12 @@ void app.whenReady().then(async () => {
       (process.env.GNOSIS_WORKBENCH_URL ?? '').replace('workbench.html', 'mechanisms.html') + '?motion-fixture'
     );
     await wait('!!document.querySelector(\'[aria-label="Next illustration step"]:not(:disabled)\')');
-    const original = await inner().executeJavaScript("document.querySelector('svg').outerHTML");
+    const original = await innerJs("document.querySelector('svg').outerHTML");
     await click('Next illustration step');
     await new Promise((r) => setTimeout(r, 600));
     assert.equal(await js("document.querySelector('.mechanism-event-count').textContent"), '2 / 3');
     assert.match(
-      String(await inner().executeJavaScript("document.querySelector('[data-motion-id]').getAttribute('transform')")),
+      String(await innerJs("document.querySelector('[data-motion-id]').getAttribute('transform')")),
       /260/
     );
     await capture('motion-next');
@@ -170,7 +198,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelector('.mechanism-event-count').textContent"), '2 / 3');
     await click('Previous illustration step');
     await new Promise((r) => setTimeout(r, 600));
-    assert.equal(await inner().executeJavaScript("document.querySelector('svg').outerHTML"), original);
+    assert.equal(await innerJs("document.querySelector('svg').outerHTML"), original);
     await click('Play illustration');
     await wait("document.querySelector('.mechanism-event-count').textContent==='2 / 3'");
     await click('Pause illustration');
@@ -179,16 +207,19 @@ void app.whenReady().then(async () => {
     );
     assert.equal(await js("document.querySelector('.mechanism-event-count').textContent"), '1 / 3');
     assert.match(
-      String(await inner().executeJavaScript("document.querySelector('[data-motion-id]').getAttribute('transform')")),
+      String(await innerJs("document.querySelector('[data-motion-id]').getAttribute('transform')")),
       /460/
     );
 
-    await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
-      features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
-    });
+    await within(
+      'Emulation.setEmulatedMedia reduce',
+      win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
+      })
+    );
     await new Promise((r) => setTimeout(r, 200));
     await click('Next illustration step');
-    assert.equal(await inner().executeJavaScript('document.getAnimations().length'), 0);
+    assert.equal(await innerJs('document.getAnimations().length'), 0);
     win.webContents.debugger.detach();
     console.log('SVG illustration browser checks passed. Captures: ' + dir);
   } catch (error) {

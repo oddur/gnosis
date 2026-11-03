@@ -1,0 +1,51 @@
+---
+import Icon from './Icon.astro';
+interface Props {
+  name: string;
+  alt: string;
+  caption: string;
+  width?: number;
+  height?: number;
+  loading?: 'eager' | 'lazy';
+  fetchpriority?: 'high' | 'low' | 'auto';
+  sizes?: string;
+}
+const {
+  name,
+  alt,
+  caption,
+  width = 1600,
+  height = 960,
+  loading = 'lazy',
+  fetchpriority = 'auto',
+  sizes = '(max-width: 700px) calc(100vw - 36px), (max-width: 1440px) calc(100vw - 112px), 1328px',
+} = Astro.props;
+---
+
+<figure class="product-shot">
+  <a
+    href={`/screenshots/${name}.webp`}
+    target="_blank"
+    rel="noopener"
+    aria-label={`Enlarge screenshot: ${caption} (opens a new tab)`}
+  >
+    <img
+      src={`/screenshots/${name}.webp`}
+      srcset={`/screenshots/${name}-small.webp 960w, /screenshots/${name}.webp 1600w`}
+      sizes={sizes}
+      alt={alt}
+      width={width}
+      height={height}
+      loading={loading}
+      fetchpriority={fetchpriority}
+      decoding="async"
+    />
+    <span class="enlarge">
+      <Icon name="expand" size={17} /> Enlarge
+    </span>
+  </a>
+  <figcaption>
+    {caption}
+    <span>Actual app · sample repository</span>
+  </figcaption>
+</figure>
