@@ -546,3 +546,47 @@ void test('combined stack changes need no comparison requests, and a broken stac
     /does not include the current commits/
   );
 });
+
+/** Object names in packs written since `before`. */
+function packedSince(clone: string, before: Set<string>) {
+  const dir = path.join(clone, '.git', 'objects', 'pack');
+  return fs
+    .readdirSync(dir)
+    .filter((file) => file.endsWith('.idx') && !before.has(file))
+    .flatMap((file) =>
+      execFileSync('git', ['show-index'], { cwd: clone, env, input: fs.readFileSync(path.join(dir, file)), encoding: 'utf8' })
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => line.split(' ')[1])
+    );
+}
+
+void test('a partial clone fetches a missing commit by negotiation, not by lazily refetching its history', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-partial-'));
+  const upstream = path.join(root, 'upstream.git');
+  const work = path.join(root, 'work');
+  const clone = path.join(root, 'clone');
+  git(root, 'init', '-q', '--bare', '-b', 'main', upstream);
+  git(upstream, 'config', 'uploadpack.allowFilter', 'true');
+  git(upstream, 'config', 'uploadpack.allowAnySHA1InWant', 'true');
+  git(root, 'clone', '-q', upstream, work);
+  git(work, 'checkout', '-q', '-B', 'main');
+  write(work, 'a.ts', 'old\n');
+  const base = commit(work, 'Base');
+  git(work, 'push', '-q', 'origin', 'main');
+  git(root, 'clone', '-q', '--filter=blob:none', '--no-checkout', `file://${upstream}`, clone);
+  write(work, 'b.ts', 'new\n');
+  const head = commit(work, 'Head');
+  git(work, 'push', '-q', 'origin', 'HEAD:refs/heads/topic');
+  const packs = new Set(fs.readdirSync(path.join(clone, '.git', 'objects', 'pack')));
+  const clones = createLocalClones();
+  clones.configure([{ repo: 'o/r', path: clone, remote: 'origin' }]);
+
+  const commits = await clones.read('o/r', (local) => local.commits(base, head));
+  assert.deepEqual(commits?.map((item) => item.sha), [head]);
+  // A lazy fetch negotiates nothing, so the remote resends history the clone already has.
+  assert.equal(packedSince(clone, packs).includes(base), false);
+  // File contents still arrive on demand.
+  assert.equal((await clones.read('o/r', (local) => local.blob(head, 'b.ts')))?.toString('utf8'), 'new\n');
+  assert.equal(clones.status()[0].fallbacks, 0);
+});

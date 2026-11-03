@@ -48,8 +48,13 @@ export const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 const PATCH_ARGS = ['--no-color', '--inter-hunk-context=1', '-p'];
 const isSha = (value: string) => /^[a-f0-9]{40}$/i.test(value);
 
-/** Inherited GIT_DIR-style variables would point every command at another repository. */
-function gitEnvironment() {
+/**
+ * Inherited GIT_DIR-style variables would point every command at another repository.
+ * A partial clone fetches missing objects on demand, without negotiation: a lazily fetched
+ * commit brings its whole history. Only blob reads may do that; missing commits go through
+ * the batched fetch instead.
+ */
+function gitEnvironment(lazyFetch: boolean) {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     GIT_TERMINAL_PROMPT: '0',
@@ -60,12 +65,14 @@ function gitEnvironment() {
   delete env.GIT_DIR;
   delete env.GIT_WORK_TREE;
   delete env.GIT_INDEX_FILE;
+  if (lazyFetch) delete env.GIT_NO_LAZY_FETCH;
+  else env.GIT_NO_LAZY_FETCH = '1';
   return env;
 }
 function run(
   cwd: string,
   args: string[],
-  options: { maxBuffer?: number; timeout?: number; signal?: AbortSignal } = {}
+  options: { maxBuffer?: number; timeout?: number; signal?: AbortSignal; lazyFetch?: boolean } = {}
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     execFile(
@@ -74,7 +81,7 @@ function run(
       {
         cwd,
         encoding: 'buffer',
-        env: gitEnvironment(),
+        env: gitEnvironment(options.lazyFetch ?? false),
         maxBuffer: options.maxBuffer ?? GIT_MAX_BUFFER,
         timeout: options.timeout,
         signal: options.signal,
@@ -190,38 +197,48 @@ export class LocalClone {
     this.present.clear();
   }
 
-  private async git(args: string[], maxBuffer?: number) {
+  /** `lazyFetch` only for commands that read file contents, which a blob-less clone lacks. */
+  private async git(args: string[], options: { maxBuffer?: number; lazyFetch?: boolean } = {}) {
     if (this.active >= MAX_GIT_PROCESSES) await new Promise<void>((resolve) => this.slots.push(resolve));
     this.active++;
     try {
-      return await run(this.entry.path, args, { maxBuffer, signal: githubReadSignal() });
+      return await run(this.entry.path, args, { ...options, signal: githubReadSignal() });
     } finally {
       this.active--;
       this.slots.shift()?.();
     }
   }
-  private async text(args: string[]) {
-    return (await this.git(args)).toString('utf8');
+  private async text(args: string[], lazyFetch = false) {
+    return (await this.git(args, { lazyFetch })).toString('utf8');
   }
 
   private now() {
     return (this.options.now ?? Date.now)();
   }
   private async fetchBatch(shas: string[]) {
-    await run(
-      this.entry.path,
-      [
-        'fetch',
-        '--quiet',
-        '--no-tags',
-        '--no-write-fetch-head',
-        '--no-prune',
-        '--recurse-submodules=no',
-        this.entry.remote,
-        ...shas,
-      ],
-      { timeout: FETCH_TIMEOUT_MS }
-    );
+    const started = this.now();
+    const took = () => `${((this.now() - started) / 1000).toFixed(1)}s`;
+    const what = `${shas.length} commit${shas.length === 1 ? '' : 's'} from ${this.entry.remote}`;
+    try {
+      await run(
+        this.entry.path,
+        [
+          'fetch',
+          '--quiet',
+          '--no-tags',
+          '--no-write-fetch-head',
+          '--no-prune',
+          '--recurse-submodules=no',
+          this.entry.remote,
+          ...shas,
+        ],
+        { timeout: FETCH_TIMEOUT_MS }
+      );
+      console.log(`[local-clone] ${this.entry.repo}: fetched ${what} in ${took()}.`);
+    } catch (error) {
+      console.warn(`[local-clone] ${this.entry.repo}: fetching ${what} failed after ${took()}. ${String(error)}`);
+      throw error;
+    }
   }
   /** Readers arriving during a fetch join the next batch, so a stack costs a few fetches rather than one per PR. */
   private async pump() {
@@ -328,10 +345,11 @@ export class LocalClone {
 
   private async treeChanges(from: string, to: string): Promise<LocalCloneFile[]> {
     const shared = ['diff-tree', '-r', '-M', '--no-ext-diff', '--no-textconv'];
+    // Rename detection, numstat and patches all compare file contents.
     const [raw, numstat, diff] = await Promise.all([
-      this.text([...shared, '-z', '--no-abbrev', '--raw', from, to]),
-      this.text([...shared, '-z', '--numstat', from, to]),
-      this.text([...shared, ...PATCH_ARGS, from, to]),
+      this.text([...shared, '-z', '--no-abbrev', '--raw', from, to], true),
+      this.text([...shared, '-z', '--numstat', from, to], true),
+      this.text([...shared, ...PATCH_ARGS, from, to], true),
     ]);
     const entries = parseRawDiff(raw);
     const stats = parseNumstat(numstat);
@@ -386,7 +404,7 @@ export class LocalClone {
   }
   async diff(base: string, head: string) {
     const mergeBase = await this.mergeBase(base, head);
-    return this.text(['diff-tree', '-r', '-M', '--no-ext-diff', '--no-textconv', ...PATCH_ARGS, mergeBase, head]);
+    return this.text(['diff-tree', '-r', '-M', '--no-ext-diff', '--no-textconv', ...PATCH_ARGS, mergeBase, head], true);
   }
   async commits(base: string, head: string): Promise<PrCommit[]> {
     await this.ensure(base, head);
@@ -404,7 +422,7 @@ export class LocalClone {
   async blob(sha: string, filePath: string): Promise<Buffer | null> {
     await this.ensure(sha);
     try {
-      return await this.git(['cat-file', 'blob', `${sha}:${filePath}`], BLOB_MAX_BUFFER);
+      return await this.git(['cat-file', 'blob', `${sha}:${filePath}`], { maxBuffer: BLOB_MAX_BUFFER, lazyFetch: true });
     } catch (error) {
       if ((error as { code?: unknown }).code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') throw error;
       githubReadSignal()?.throwIfAborted();
