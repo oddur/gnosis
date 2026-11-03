@@ -63,7 +63,7 @@ const compile = (code: string) =>
   ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 
 type Event = { eventName: string; systemProps: { isDebug: boolean }; props?: unknown };
-async function launch(stored: string | undefined, packaged = true) {
+async function launch(stored: string | undefined, packaged = true, platform: NodeJS.Platform = 'linux') {
   let ready = false;
   let resolveReady!: () => void;
   const readiness = new Promise<void>((resolve) => {
@@ -109,10 +109,18 @@ async function launch(stored: string | undefined, packaged = true) {
   vm.runInNewContext(sdkSource, {
     module: sdkModule,
     exports: sdkModule.exports,
-    process,
+    process: { ...process, platform },
     console: { warn: (text: string) => warnings.push(text), error: (text: string) => warnings.push(text) },
     require(name: string) {
       if (name === 'electron') return electron;
+      if (name === 'fs')
+        return {
+          readFile(_file: string, _encoding: string, callback: (error: null, data: string) => void) {
+            void setImmediate()
+              .then(() => setImmediate())
+              .then(() => callback(null, 'NAME="Linux"\nVERSION_ID="24.04"'));
+          },
+        };
       if (name === 'child_process')
         return {
           exec(_command: string, callback: (error: null, stdout: string) => void) {
@@ -122,10 +130,15 @@ async function launch(stored: string | undefined, packaged = true) {
       return require(name) as unknown;
     },
   });
+  const initialization: Promise<void>[] = [];
   const context = vm.createContext({
     app: electron.app,
     path,
-    initAptabase: sdkModule.exports.initialize,
+    initAptabase(key: string) {
+      const pending = sdkModule.exports.initialize(key);
+      initialization.push(pending);
+      return pending;
+    },
     trackEvent: sdkModule.exports.trackEvent,
     fs: {
       readFileSync() {
@@ -149,29 +162,33 @@ async function launch(stored: string | undefined, packaged = true) {
   ready = true;
   resolveReady();
   vm.runInContext(compile(readyStatements.join('\n')), context);
-  await setImmediate();
+  // OS metadata may require asynchronous file I/O on Linux. Wait for the SDK,
+  // not an arbitrary event-loop turn, before asserting queued event delivery.
+  await Promise.all(initialization);
   assert.deepEqual(warnings, [], 'SDK must initialize before Electron is ready');
   return events;
 }
 
-for (const [name, stored] of [
-  ['first launch', undefined],
-  ['saved opt-in', '{"analytics":true}'],
-  ['invalid preferences', '{'],
-] as const) {
-  void test(`production analytics sends a launch event with ${name}`, async () => {
-    const events = await launch(stored);
+for (const platform of ['darwin', 'linux', 'win32'] as const) {
+  for (const [name, stored] of [
+    ['first launch', undefined],
+    ['saved opt-in', '{"analytics":true}'],
+    ['invalid preferences', '{'],
+  ] as const) {
+    void test(`production analytics sends a launch event with ${name} on ${platform}`, async () => {
+      const events = await launch(stored, true, platform);
+      assert.equal(events.length, 1);
+      assert.equal(events[0].eventName, 'app_started');
+      assert.equal(events[0].systemProps.isDebug, false);
+      assert.equal(events[0].props, undefined);
+    });
+  }
+  void test(`opt-out sends no launch event on ${platform}`, async () => {
+    assert.deepEqual(await launch('{"analytics":false}', true, platform), []);
+  });
+  void test(`development launches are marked as debug on ${platform}`, async () => {
+    const events = await launch(undefined, false, platform);
     assert.equal(events.length, 1);
-    assert.equal(events[0].eventName, 'app_started');
-    assert.equal(events[0].systemProps.isDebug, false);
-    assert.equal(events[0].props, undefined);
+    assert.equal(events[0].systemProps.isDebug, true);
   });
 }
-void test('opt-out sends no launch event', async () => {
-  assert.deepEqual(await launch('{"analytics":false}'), []);
-});
-void test('development launches are marked as debug', async () => {
-  const events = await launch(undefined, false);
-  assert.equal(events.length, 1);
-  assert.equal(events[0].systemProps.isDebug, true);
-});
