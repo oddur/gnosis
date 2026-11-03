@@ -69,6 +69,24 @@ app
     };
     try {
       await load();
+      const intro = await js(`(()=>{
+        const opening=document.querySelector('.opening');
+        const image=opening.querySelector('img');
+        const feature=document.querySelector('#features');
+        const illustrated=document.querySelector('#illustrated-explanations');
+        return {
+          heading:opening.querySelector('h1').textContent,
+          demoInOpening:!!opening.querySelector('#example'),
+          imagePriority:image.fetchPriority,
+          featureFirst:!!(feature.compareDocumentPosition(illustrated)&Node.DOCUMENT_POSITION_FOLLOWING),
+          demoInIllustrated:!!illustrated.querySelector('#example')
+        };
+      })()`);
+      assert.match(intro.heading, /Keep up with PRs\.\s+Understand what ships\./);
+      assert.equal(intro.demoInOpening, false);
+      assert.equal(intro.imagePriority, 'high');
+      assert.equal(intro.featureFirst, true);
+      assert.equal(intro.demoInIllustrated, true);
       assert.equal(
         await js("performance.getEntriesByType('resource').some(e=>e.name.endsWith('/onest-latin.woff2'))"),
         true
@@ -276,7 +294,19 @@ app
       win.setContentSize(1280, 800);
       await load();
       await noOverflow();
+      assert.ok(
+        await js(`(()=>{
+        const copy=document.querySelector('.product-intro-copy').getBoundingClientRect();
+        const shot=document.querySelector('.opening .product-shot').getBoundingClientRect();
+        return copy.right<shot.left && copy.bottom<innerHeight && shot.bottom<innerHeight;
+      })()`),
+        'Laptop opening shows product summary and app image side by side above the fold'
+      );
       await capture('laptop');
+      win.setContentSize(820, 900);
+      await load();
+      await noOverflow();
+      await capture('tablet');
       win.setContentSize(390, 844);
       await load();
       await noOverflow();

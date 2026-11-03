@@ -5,21 +5,21 @@ primary_target: "site/src/pages/index.astro"
 related_targets: ["site/src/pages/changelog.astro","site/src/layouts/Base.astro","site/src/styles/global.css"]
 ---
 
-# Gnosis website — Change, unpacked
+# Gnosis website — Product first
 
-Mode: Persuade. Scope: homepage, shared navigation/footer, changelog, current product captures. Audience: engineers handling many PRs on laptops. Primary action: download Gnosis for macOS. Proof: an explicitly illustrative, interactive three-PR stack plus real screenshots captured from current-main test fixtures. Preserve release links, Homebrew install, source links and build-time changelog fetching. No app UI changes or deployment in this task.
+Mode: Persuade. Scope: homepage, shared navigation/footer, changelog, current product captures. Audience: engineers handling many PRs on laptops. Primary action: download Gnosis for macOS. Proof: actual app screenshots followed by an explicitly illustrative, interactive three-PR example. Preserve release links, Homebrew install, source links and build-time changelog fetching. No app UI changes or deployment in this task.
 
 ## Direction contract
 
-THESIS: Show how separate PRs assemble into one understandable change. The opening is a connected, inspectable stack rather than a floating product screenshot or feature-card grid.
+THESIS: Explain what Gnosis does before asking the visitor to understand a code example. Lead with the actual desktop app and plain product copy.
 
 OWN-WORLD: Cool lavender ground, cobalt active layers, graphite text and pale technical surfaces. Onest headings and body, monospace only for source. Fine connecting lines carry dependency context. Light comes from an engineer opening a shared link during the workday.
 
-STORY: Understand one mechanism, see it in the real review queue and diff workflow, explore stacks, diffs, Markdown, chat, checks and conflict resolution through real screenshots, discover daily-use tools, connect existing Claude or Codex tools, download. Explain provider data flow accurately. No invented usage or performance claims.
+STORY: Understand the tool, inspect its review workflows, then explore illustrated explanations. Follow with daily-use tools, local agent setup, and installation. Keep provider data flow accurate; no invented claims.
 
-FIRST VIEWPORT: Match the approved sketch: navigation and download above a left-aligned two-line headline with short supporting copy at right; a broad three-layer PR assembly below. The middle PR begins selected. Its explanation, animated queue and source sit inside the layer, with sibling PRs still visible. Signature interaction: selecting a PR reveals its contribution; Play compares the same two commands with and without await. A one-slot limit is exceeded only in the original version; source lines track execution and peak counts preserve the consequence after both runs finish. Manual steps and reduced motion preserve the lesson.
+FIRST VIEWPORT: A short product summary beside an actual Review Queue screenshot: GitHub PRs, stacks, diffs, and checks, with optional explanations through the user’s local Claude Code or Codex. Include download and feature links, existing subscription/API billing, and open-source status. No algorithm example in the opening. Stack copy and image below 900px.
 
-FORM: Exploded assembly drawings, grounded direction 3. seed:6a4008afdf8c0f3f. Code-led. Approved first-viewport sketch: the “Change, unpacked” option selected during Shape. Keep its arrangement, palette and typography while completing responsive behavior and page content.
+FORM: Preserve lavender/cobalt surfaces, Onest typography, actual app captures, and flat borders. Use a compact two-column product introduction. Put the interactive three-PR example in the separate Illustrated explanations section after the feature tour.
 
 FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
 
@@ -29,7 +29,7 @@ The sample is curated demonstration data, not a live GitHub connection or a brow
 
 ## Feature coverage expansion
 
-User requested broader feature coverage after inspecting the first build. Preserve the opening and visual direction. Add a six-workflow feature tour with actual test-fixture screenshots and concise outcome-led descriptions. Tabs keep the page browsable; all sections remain available without JavaScript. Show daily-use capabilities as a compact typographic list: saved filters, mute/star/repository rules, local search, GitHub review comments, image/SVG/LFS previews, and persistent progress/background preloading. Do not present unmerged review-evidence work as a released feature.
+User requested broader feature coverage after inspecting the first build. Preserve the visual direction; the product-first opening supersedes the earlier example-led opening. Add a six-workflow feature tour with actual test-fixture screenshots and concise outcome-led descriptions. Tabs keep the page browsable; all sections remain available without JavaScript. Show daily-use capabilities as a compact typographic list: saved filters, mute/star/repository rules, local search, GitHub review comments, image/SVG/LFS previews, and persistent progress/background preloading. Do not present unmerged review-evidence work as a released feature.
 
 ## Voice refinement
 

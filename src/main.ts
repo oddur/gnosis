@@ -136,24 +136,10 @@ const GITHUB_CLIENT_ID = 'Ov23lifGr1yrXtcZD5Og';
 const GITHUB_CLIENT_SECRET: string = typeof __GH_CLIENT_SECRET__ !== 'undefined' ? __GH_CLIENT_SECRET__ : '';
 
 const APTABASE_APP_KEY = 'A-EU-7599830434';
-let aptabaseInitialized = false;
-
-// Aptabase's Electron SDK requires initialize() to run BEFORE app.whenReady().
-// loadPreferences() only touches app.getPath('userData'), which is safe pre-ready.
-try {
-  if (loadPreferences().analytics) {
-    void initAptabase(APTABASE_APP_KEY);
-    aptabaseInitialized = true;
-  }
-} catch {
-  /* prefs unreadable — skip analytics */
-}
-
-function enableAnalyticsIfAllowed(prefs: Preferences): void {
-  if (!prefs.analytics || aptabaseInitialized) return;
-  void initAptabase(APTABASE_APP_KEY);
-  aptabaseInitialized = true;
-}
+// The SDK must register with Electron before app readiness. Initialization sends
+// no events; each trackEvent call must remain gated by the analytics preference.
+// Do not read preferences here: DEFAULT_PREFERENCES is initialized below.
+void initAptabase(APTABASE_APP_KEY);
 
 // ── In-memory cache ─────────────────────────────────────────────
 
@@ -708,7 +694,6 @@ void app.whenReady().then(async () => {
   process.env.APP_IS_PACKAGED = app.isPackaged ? '1' : '0';
 
   const prefs = loadPreferences();
-  enableAnalyticsIfAllowed(prefs);
   if (prefs.analytics) void trackEvent('app_started');
 
   // Mark any stale "generating" entries from a previous crash as failed
@@ -1275,9 +1260,6 @@ ipcMain.handle('save-preferences', async (_event, prefs: Preferences) => {
   } else {
     destroyTray();
   }
-  // Pick up analytics opt-in turned on mid-session. Opt-out takes effect on
-  // next launch — the SDK has no deinit, so we just stop sending events.
-  enableAnalyticsIfAllowed(prefs);
 });
 
 ipcMain.handle('detect-binary-path', (_event, name: string) => {

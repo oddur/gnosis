@@ -192,20 +192,48 @@ code {
   font-size: 18px;
   padding: 17px 24px;
 }
-.hero-intro {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 44px;
-  padding-top: 22px;
-  padding-bottom: 30px;
+.product-intro {
+  display: grid;
+  grid-template-columns: minmax(0, 0.36fr) minmax(0, 0.64fr);
+  align-items: center;
+  gap: 48px;
+  padding-block: 48px 24px;
 }
-.hero-intro > p {
+.product-intro h1 {
+  font-size: clamp(2.25rem, 3.5vw, 3.15rem);
+  margin-bottom: 24px;
+}
+.product-intro-copy > p {
   font-size: 17px;
-  line-height: 1.65;
-  padding-bottom: 5px;
+  line-height: 1.6;
   max-width: 40ch;
-  flex: 0 1 360px;
+}
+.product-intro-copy > p + p {
+  margin-top: 14px;
+}
+.intro-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px 24px;
+  margin-block: 26px 18px;
+}
+.product-intro-copy > .intro-note {
+  font-size: 13px;
+  color: var(--muted);
+}
+.product-intro .product-shot figcaption {
+  flex-wrap: wrap;
+  gap: 4px 16px;
+}
+.illustrated-example {
+  margin-top: 40px;
+  padding-top: 32px;
+  border-top: 1px solid var(--line);
+}
+.example-introduction {
+  max-width: 70ch;
+  margin-bottom: 24px;
 }
 .assembly {
   background: var(--surface);
@@ -499,14 +527,7 @@ code {
 .project-links a:hover {
   text-decoration: underline;
 }
-.project-links span {
-  margin-left: auto;
-  color: var(--muted);
-}
-.inside-section {
-  padding: 48px 0;
-  background: white;
-}
+
 .section-intro {
   display: grid;
   grid-template-columns: 1fr 0.8fr;
@@ -568,27 +589,7 @@ code {
 .product-shot figcaption span {
   font-size: 12px;
 }
-.feature-line {
-  display: flex;
-  gap: 30px;
-  flex-wrap: wrap;
-  padding-top: 32px;
-  font-size: 14px;
-  color: var(--muted);
-}
-.feature-line span + span {
-  position: relative;
-}
-.feature-line span + span:before {
-  content: '';
-  position: absolute;
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: #8e9cbc;
-  left: -17px;
-  top: 10px;
-}
+
 .review-section {
   padding-block: 56px;
 }
@@ -849,12 +850,6 @@ code {
 .release-unavailable p {
   margin: 16px 0 24px;
 }
-@media (min-width: 1600px) {
-  .hero-intro {
-    padding-top: 42px;
-    padding-bottom: 52px;
-  }
-}
 @media (max-width: 1100px) {
   .frame {
     padding-inline: 32px;
@@ -862,12 +857,7 @@ code {
   .site-header nav {
     gap: 18px;
   }
-  .hero-intro {
-    gap: 25px;
-  }
-  .hero-intro > p {
-    font-size: 16px;
-  }
+
   .assembly {
     padding-inline: 24px;
   }
@@ -903,6 +893,22 @@ code {
     gap: 36px;
   }
 }
+@media (max-width: 900px) {
+  .nav-explore {
+    display: none;
+  }
+  .product-intro {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 28px;
+    padding-top: 24px;
+  }
+  .product-intro-copy > p {
+    max-width: 60ch;
+  }
+  .product-intro h1 {
+    font-size: clamp(2.1rem, 5.6vw, 3rem);
+  }
+}
 @media (max-width: 760px) {
   .frame {
     padding-inline: 20px;
@@ -933,14 +939,7 @@ code {
   .wordmark {
     font-size: 24px;
   }
-  .hero-intro {
-    display: block;
-    padding: 28px 0 30px;
-  }
-  .hero-intro > p {
-    margin-top: 22px;
-    font-size: 17px;
-  }
+
   .assembly {
     padding: 20px 16px 0;
     border-radius: 10px;
@@ -1030,13 +1029,7 @@ code {
     gap: 14px 24px;
     font-size: 13px;
   }
-  .project-links span {
-    width: 100%;
-    margin-left: 0;
-  }
-  .inside-section {
-    padding: 48px 0 35px;
-  }
+
   .section-intro {
     display: block;
     padding-bottom: 25px;
@@ -1064,14 +1057,7 @@ code {
     padding: 5px 7px;
     font-size: 11px;
   }
-  .feature-line {
-    gap: 12px 24px;
-    padding-top: 23px;
-    font-size: 12px;
-  }
-  .feature-line span + span:before {
-    display: none;
-  }
+
   .review-section {
     padding-block: 48px;
   }
