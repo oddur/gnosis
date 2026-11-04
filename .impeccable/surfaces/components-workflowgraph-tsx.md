@@ -55,7 +55,7 @@ Verification: 21 workflow tests pass, including topology preservation, unsafe-to
 
 The earlier fit-to-window behavior is superseded: graphs open at 1:1 scale. Each axis that fits is centered independently; overflowing overviews start at the top, and focused/selected jobs stay readable. Fit entire workflow is explicit. Readable size restores full text size. The minimap supports panning and zooming. Viewport controls share the visibility row; compact panes keep a 180px minimum canvas.
 
-Three or more nodes with identical predecessor/successor sets form an expandable parallel stage. Status summaries retain failure, active, and unreported context. Unknown members exempt a stage from status hiding. Job focus shows ancestors and descendants separately, so siblings do not enter through common prerequisites. Back to workflow leaves focus. Unrelated group-collapse controls are omitted inside focus.
+Parallel stages use the saved Adaptive, Compact, or Off choice described below; this supersedes the original three-node automatic grouping default. Job focus shows ancestors and descendants separately, so siblings do not enter through common prerequisites. Back to workflow leaves focus. Unrelated group-collapse controls are omitted inside focus.
 
 Skipped reusable workflows map to their exact caller names when unambiguous. Expanding a mixed matrix preserves skipped caller variants beside executed children. Replaying the user’s cached run changed 18 unmatched jobs plus 18 empty placeholders into 25 correctly matched jobs, presented as seven top-level cards (one stage contains 19 parallel jobs). That local replay is not checked in. Existing warnings about unavailable source definitions remain explicit.
 
@@ -75,3 +75,13 @@ The old 20-reference limit counted repeated files. Resolution now counts distinc
 ## Cold-load responsiveness
 
 The open Checks workspace warms its first PR’s default workflow. Preparation respects the API reserve and replaces queued targets when navigating. Cold graph requests take interactive priority; cached refreshes keep lower priority. Jobs and independent workflow sources overlap through a three-read HTTP limit. Request starts remain paced and rate-limit responses stop subsequent dispatch. Ordinary traffic and mutations remain serialized.
+
+## Adaptive parallel grouping
+
+Parallel jobs sits beside the visibility controls and reuses the searchable selector. Adaptive is the saved default. It leaves graphs of 16 or fewer nodes open. Above that count, it groups eligible sets of at least six nodes, largest first, until the planned count is 16 or fewer or no eligible sets remain. Compact groups eligible sets of at least three; Off disables inferred parallel stages. Eligibility requires identical original predecessor/successor sets, at least one dependency connection, and only finished successful, neutral, or skipped jobs. Active, failed, cancelled, unknown, and mixed groups stay separate. Matrix and reusable-workflow groups expand independently in all modes.
+
+Grouping depends on workflow complexity, not viewport size. Stage selection happens before manual expansion, so opening a stage cannot cause another stage to collapse. Mode changes project existing prepared workflow data without GitHub requests. The choice persists in local preferences; if saving fails, the session choice remains active with an inline explanation. The controls wrap at narrow widths while retaining their labels and the existing readable-size and fit actions.
+
+Scoped evidence: the documenter inspected `components/WorkflowGraph.tsx`, `src/workflow-stages.ts`, and current `desktop-light.png`, `grouping-menu-dark.png`, and `narrow-controls-dark.png` captures in `.impeccable/review/workflow-graph/`. They show the selector in the existing workbench control row, its three choices in dark theme, and wrapped controls at narrow width. The incumbent tokens and sidecar remain unchanged.
+
+Implementation-session verification supplied for this refinement: 39 workflow tests passed; the full unit suite passed 714 tests with no failures; TypeScript and lint passed. Graph browser coverage passed for grouping choice, persistence, no network requests on mode changes, and responsive sizes. The layout detector returned no findings. The documenter did not rerun these checks. Independent scoped finish review returned ship with no material fixes. These results cover the tested fixtures and changed surface, not every live workflow topology.

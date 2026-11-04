@@ -70,7 +70,12 @@ export interface WorkflowGraph {
   warnings: string[];
   definitionUrl?: string;
 }
+export type WorkflowGrouping = 'adaptive' | 'compact' | 'off';
+export function workflowGrouping(value: unknown): WorkflowGrouping {
+  return value === 'compact' || value === 'off' ? value : 'adaptive';
+}
 export interface WorkflowGraphInput extends CheckTarget {
+  grouping?: WorkflowGrouping;
   runId: number;
   focusNodeId?: string;
   showSkipped?: boolean;

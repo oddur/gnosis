@@ -1,11 +1,27 @@
 import { createHash } from 'node:crypto';
-import type { WorkflowGraph, WorkflowGraphNode } from '../lib/workflow-graph';
+import type { WorkflowGraph, WorkflowGraphNode, WorkflowGrouping } from '../lib/workflow-graph';
 
 /** Equal predecessor/successor sets are parallel work, not an inferred dependency. */
-export function stageWorkflow(nodes: WorkflowGraphNode[], edges: WorkflowGraph['edges'], expanded: string[]) {
+export function stageWorkflow(
+  nodes: WorkflowGraphNode[],
+  edges: WorkflowGraph['edges'],
+  expanded: string[],
+  grouping: WorkflowGrouping = 'adaptive'
+) {
+  if (grouping === 'off') return { nodes, edges, groups: [] };
   const candidates = new Map<string, WorkflowGraphNode[]>();
   for (const node of nodes) {
-    if (node.unmapped || node.groupId) continue;
+    // Explicit YAML groups are separate. Never hide work that needs attention
+    // inside an inferred parallel stage, including mixed or unreported groups.
+    if (
+      node.unmapped ||
+      node.groupId ||
+      !node.jobs.length ||
+      node.jobs.some(
+        (job) => job.status !== 'completed' || !['success', 'neutral', 'skipped'].includes(job.conclusion ?? '')
+      )
+    )
+      continue;
     const incoming = edges
       .filter((e) => e.target === node.id)
       .map((e) => e.source)
@@ -22,8 +38,14 @@ export function stageWorkflow(nodes: WorkflowGraphNode[], edges: WorkflowGraph['
   const replacements = new Map<string, string>();
   const summaries: WorkflowGraphNode[] = [];
   const groups: WorkflowGraph['groups'] = [];
-  for (const members of candidates.values()) {
-    if (members.length < 3) continue;
+  const minimum = grouping === 'compact' ? 3 : 6;
+  // Choose the largest reductions first. Plan before applying manual expansion,
+  // so expanding one stage never makes another stage unexpectedly collapse.
+  let visible = nodes.length;
+  const ordered = [...candidates.entries()].sort(([a, x], [b, y]) => y.length - x.length || a.localeCompare(b));
+  for (const [, members] of ordered) {
+    if (members.length < minimum || (grouping === 'adaptive' && visible <= 16)) continue;
+    visible -= members.length - 1;
     const id = `stage:${createHash('sha256')
       .update(JSON.stringify(members.map((n) => n.id).sort()))
       .digest('hex')}`;

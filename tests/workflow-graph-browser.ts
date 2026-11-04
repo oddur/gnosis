@@ -180,6 +180,7 @@ void app
       await capture('laptop-detail-dark');
       await js(`document.querySelector('[aria-label="Close job details"]').click()`);
       win.setContentSize(620, 760);
+      await capture('narrow-controls-dark');
       await js(`document.querySelector('.workflow-job-open[aria-label="TypeScript: Failed"]').click()`);
       await wait(
         '(()=>{const close=document.querySelector(\'[aria-label="Close job details"]\').getBoundingClientRect();return close.height>0&&close.top>0&&close.bottom<innerHeight-34})()'
@@ -356,21 +357,22 @@ void app
         const overview = stageWorkflow(baseNodes, baseEdges, []);
         const groupIds = overview.groups.map((g) => g.id);
         const projections: Record<string, unknown> = {};
-        for (const expand of [false, true])
-          for (const focus of [undefined, focusId]) {
-            const stage = stageWorkflow(baseNodes, baseEdges, expand ? groupIds : []);
-            const focused = focusWorkflow(stage.nodes, stage.edges, focus);
-            const layout = await layoutWorkflow(focused.nodes, focused.edges);
-            projections[`${expand}:${focus ?? ''}`] = {
-              ...focused,
-              groups: stage.groups,
-              totalJobs: baseNodes.flatMap((n) => n.jobs).length,
-              nodes: focused.nodes.map((n) => ({ ...n, ...layout.nodes.find((r) => r.id === n.id) })),
-              edges: focused.edges.map((e) => ({ ...e, points: layout.edges.find((r) => r.id === e.id)?.points })),
-            };
-          }
+        for (const grouping of ['adaptive', 'compact', 'off'] as const)
+          for (const expand of [false, true])
+            for (const focus of [undefined, focusId]) {
+              const stage = stageWorkflow(baseNodes, baseEdges, expand ? groupIds : [], grouping);
+              const focused = focusWorkflow(stage.nodes, stage.edges, focus);
+              const layout = await layoutWorkflow(focused.nodes, focused.edges);
+              projections[`${grouping}:${expand}:${focus ?? ''}`] = {
+                ...focused,
+                groups: stage.groups,
+                totalJobs: baseNodes.flatMap((n) => n.jobs).length,
+                nodes: focused.nodes.map((n) => ({ ...n, ...layout.nodes.find((r) => r.id === n.id) })),
+                edges: focused.edges.map((e) => ({ ...e, points: layout.edges.find((r) => r.id === e.id)?.points })),
+              };
+            }
         await js(
-          `(()=>{const projections=${JSON.stringify(projections)},groups=${JSON.stringify(groupIds)},read=window.electronAPI.getWorkflowGraph;window.electronAPI.getWorkflowGraph=async(input,options)=>{const original=await read(input,options),projected=projections[String(groups.some(id=>input.expanded?.includes(id)))+':'+(input.focusNodeId??'')];return {...original,focus:undefined,...projected};};document.querySelector('[aria-label="Refresh checks"]').click();})()`
+          `(()=>{const projections=${JSON.stringify(projections)},groups=${JSON.stringify(groupIds)},read=window.electronAPI.getWorkflowGraph;window.electronAPI.getWorkflowGraph=async(input,options)=>{const original=await read(input,options),projected=projections[(input.grouping??'adaptive')+':'+String(groups.some(id=>input.expanded?.includes(id)))+':'+(input.focusNodeId??'')];return {...original,focus:undefined,...projected};};document.querySelector('[aria-label="Refresh checks"]').click();})()`
         );
         return overview;
       };
@@ -386,6 +388,23 @@ void app
       );
       await capture('stages-dark');
       await js('window.graphNetworkCalls=0');
+      const chooseGrouping = async (value: string) => {
+        await js(`document.querySelector('[aria-label="Group parallel jobs"]').click()`);
+        await wait(`!!document.querySelector('[role="option"][data-value="${value}"]')`);
+        await js(`document.querySelector('[role="option"][data-value="${value}"]').click()`);
+        await wait(`window.electronAPI.loadPreferences().then(p=>p.workflowGrouping==='${value}')`);
+      };
+      await js(`document.querySelector('[aria-label="Group parallel jobs"]').click()`);
+      await wait(`document.querySelectorAll('[role="option"]').length===3`);
+      await capture('grouping-menu-dark');
+      await js(`document.querySelector('[role="option"][data-value="off"]').click()`);
+      await wait("document.querySelectorAll('.workflow-job').length===23");
+      await wait(`window.electronAPI.loadPreferences().then(p=>p.workflowGrouping==='off')`);
+      await chooseGrouping('compact');
+      await wait("document.querySelectorAll('.workflow-job').length===6");
+      await chooseGrouping('adaptive');
+      await wait("document.querySelectorAll('.workflow-job').length===6");
+      assert.equal(await js('window.graphNetworkCalls'), 0, 'Grouping choices must use cached data');
       await js("document.querySelector('.workflow-job[data-stage] .workflow-job-open').click()");
       await wait("document.querySelectorAll('.workflow-job').length===23");
       await wait("document.querySelector('.react-flow__viewport').style.transform.includes('scale(1)')");

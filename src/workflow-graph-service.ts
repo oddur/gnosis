@@ -1,3 +1,4 @@
+import { workflowGrouping } from '../lib/workflow-graph';
 import { stageWorkflow, focusWorkflow } from './workflow-stages';
 import { compactWorkflow } from './workflow-visibility';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -351,7 +352,7 @@ async function readGraph(
   const assembled = assembleWorkflow(data.definitions, data.jobs, expanded);
   if (assembled.nodes.length > 600 || assembled.edges.length > 3000)
     throw Error('This graph is too large. Collapse groups or use List view.');
-  const stages = stageWorkflow(assembled.nodes, assembled.edges, expanded);
+  const stages = stageWorkflow(assembled.nodes, assembled.edges, expanded, workflowGrouping(input.grouping));
   const focused = focusWorkflow(stages.nodes, stages.edges, input.focusNodeId);
   const compact = compactWorkflow(focused.nodes, focused.edges, input);
   // Status changes preserve layout unless a visibility group changes.

@@ -3969,3 +3969,6 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .workflow-job[data-stage] .workflow-job-context { white-space:normal; line-height:1.5; }
 
 .workflow-viewport-actions { display:flex; flex-wrap:wrap; gap:4px; margin-left:auto; }
+
+.workflow-grouping { display:flex; align-items:center; gap:6px; }
+.workflow-grouping > button { min-height:28px; width:110px; font-size:12px; }

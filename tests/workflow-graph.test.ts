@@ -469,7 +469,7 @@ void test('parallel stages retain status and edges, expand deterministically, an
     name: id,
     x: 0,
     y: 0,
-    jobs: [job(i, id, id === 'b' ? 'failure' : 'success')],
+    jobs: [job(i, id, 'success')],
   }));
   const edges = [
     ['start', 'a'],
@@ -480,21 +480,22 @@ void test('parallel stages retain status and edges, expand deterministically, an
     ['c', 'end'],
     ['different', 'end'],
   ].map(([source, target]) => ({ id: `${source}->${target}`, source, target }));
-  const stage = stageWorkflow(nodes, edges, []);
+  const stage = stageWorkflow(nodes, edges, [], 'compact');
   assert.equal(stage.nodes.length, 4);
   const group = stage.nodes.find((n) => n.stage)!;
   assert.equal(group.stage?.count, 3);
-  assert.equal(group.jobs.filter((j) => j.conclusion === 'failure').length, 1);
+  assert.equal(group.jobs.length, 3);
   assert.equal(stage.edges.length, 3);
   assert.ok(stage.nodes.some((n) => n.id === 'different'));
-  const expanded = stageWorkflow(nodes, edges, [group.id]);
+  const expanded = stageWorkflow(nodes, edges, [group.id], 'compact');
   assert.deepEqual(expanded.nodes, nodes);
   assert.deepEqual(expanded.edges, edges);
   assert.equal(
     stageWorkflow(
       nodes.map((n) => ({ ...n, jobs: n.jobs.map((j) => ({ ...j, conclusion: 'success' })) })),
       edges,
-      []
+      [],
+      'compact'
     ).groups[0].id,
     group.id
   );
@@ -569,7 +570,7 @@ void test('unreported stage members cannot disappear through status compaction',
   const edges = ['a', 'b', 'c'].map((source) => ({ id: source, source, target: 'end' }));
   const stage = stageWorkflow(nodes, edges, []);
   const compact = compactWorkflow(stage.nodes, stage.edges, { showCompleted: false, showSkipped: false });
-  assert.ok(compact.nodes.some((n) => n.stage?.unreported === 1 && !n.collapsed));
+  assert.ok(compact.nodes.some((n) => n.id === 'b' && !n.collapsed));
 });
 
 void test('focus keeps upstream jobs visible on axes that fit, even when another axis overflows', () => {
@@ -789,4 +790,82 @@ void test('graph warming replaces obsolete targets, stops on leaving Checks, and
   warm.setTarget(undefined);
   await warm.tick();
   assert.deepEqual(started, ['first', 'latest']);
+});
+
+void test('adaptive grouping reduces only large crowded fans and respects manual expansion', () => {
+  const names = [
+    'root',
+    'end-a',
+    'end-b',
+    ...Array.from({ length: 10 }, (_, i) => `a${i}`),
+    ...Array.from({ length: 6 }, (_, i) => `b${i}`),
+  ];
+  const nodes = names.map((id, i) => ({ id, name: id, x: 0, y: 0, jobs: [job(i, id)] }));
+  const edges = names
+    .filter((id) => /^[ab]\d/.test(id))
+    .flatMap((id) => [
+      { id: `root-${id}`, source: 'root', target: id },
+      { id: `${id}-end`, source: id, target: id.startsWith('a') ? 'end-a' : 'end-b' },
+    ]);
+  const result = stageWorkflow(nodes, edges, []);
+  assert.equal(result.nodes.length, 10);
+  assert.equal(result.groups.length, 1, 'Stop after reducing the crowded graph');
+  assert.equal(result.nodes.find((n) => n.stage)?.stage?.count, 10);
+  const expanded = stageWorkflow(nodes, edges, [result.groups[0].id]);
+  assert.equal(expanded.nodes.length, nodes.length, 'Expansion must not collapse another fan');
+  assert.deepEqual(expanded.groups, result.groups);
+  assert.equal(stageWorkflow(nodes, edges, [], 'compact').groups.length, 2);
+  assert.deepEqual(stageWorkflow(nodes, edges, [], 'off'), { nodes, edges, groups: [] });
+  const small = nodes.filter((n) => !n.id.startsWith('a'));
+  assert.equal(
+    stageWorkflow(
+      small,
+      edges.filter((e) => !e.target.startsWith('a') && !e.source.startsWith('a')),
+      []
+    ).groups.length,
+    0
+  );
+});
+
+void test('parallel grouping never hides active, failing, cancelled, mixed, or unknown jobs', () => {
+  const nodes = ['a', 'b', 'c', 'failed', 'cancelled', 'running', 'unknown', 'mixed', 'end'].map((id, i) => ({
+    id,
+    name: id,
+    x: 0,
+    y: 0,
+    jobs:
+      id === 'unknown'
+        ? []
+        : id === 'mixed'
+          ? [job(i, id), job(100, id, 'failure')]
+          : [
+              {
+                ...job(i, id, id === 'failed' ? 'failure' : id === 'cancelled' ? 'cancelled' : 'success'),
+                status: id === 'running' ? 'in_progress' : 'completed',
+              },
+            ],
+  }));
+  const edges = nodes.filter((n) => n.id !== 'end').map((n) => ({ id: n.id, source: n.id, target: 'end' }));
+  const result = stageWorkflow(nodes, edges, [], 'compact');
+  assert.equal(result.groups.length, 1);
+  assert.equal(result.nodes.find((n) => n.stage)?.stage?.count, 3);
+  for (const id of ['failed', 'cancelled', 'running', 'unknown', 'mixed'])
+    assert.ok(result.nodes.some((n) => n.id === id));
+});
+
+void test('grouping modes project cached workflow data without additional GitHub requests', async () => {
+  const h = harness();
+  h.source(
+    'jobs:\n  a:\n    name: Build\n  b:\n    name: Test Linux\n  c:\n    name: Test macOS\n  end:\n    name: Deploy\n    needs: [a,b,c]'
+  );
+  const initial = await readWorkflowGraph(h.client, input);
+  assert.equal(initial?.nodes.length, 4);
+  const requests = h.calls.length;
+  const compact = await readWorkflowGraph(h.client, { ...input, grouping: 'compact' }, { cachedOnly: true });
+  assert.equal(compact?.nodes.length, 2);
+  assert.equal(
+    (await readWorkflowGraph(h.client, { ...input, grouping: 'off' }, { cachedOnly: true }))?.nodes.length,
+    4
+  );
+  assert.equal(h.calls.length, requests);
 });

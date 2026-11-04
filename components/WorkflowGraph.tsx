@@ -33,6 +33,8 @@ import type { ReviewSubject } from '../lib/workbench';
 import { checkDuration, checkGroup, checkLabel, type PrChecks, type PrCheck, type CheckFilter } from '../lib/pr-checks';
 import {
   workflowJobCheck,
+  workflowGrouping,
+  type WorkflowGrouping,
   type WorkflowGraph as Graph,
   type WorkflowGraphNode,
   type WorkflowRuns,
@@ -41,6 +43,13 @@ import {
 import { SearchableSelect } from './SearchableSelect';
 import { Button } from './ui/button';
 import { timeAgo } from '../lib/utils';
+
+let rememberedGrouping: WorkflowGrouping | undefined;
+const groupingHelp: Record<WorkflowGrouping, string> = {
+  adaptive: 'Groups large sets of finished parallel jobs only in crowded graphs.',
+  compact: 'Groups three or more finished parallel jobs with the same dependencies.',
+  off: 'Shows parallel jobs separately. Matrix and reusable workflow groups still expand independently.',
+};
 
 function outcome(jobs: WorkflowJob[]) {
   if (!jobs.length) return { group: 'unknown', label: 'Not reported', Icon: Circle };
@@ -248,6 +257,44 @@ export function WorkflowGraphView({
   const runs = runsState?.scope === scope ? runsState.value : undefined;
   const run = runs?.runs.find((r) => r.id === runId) ?? runs?.runs[0];
   const [expanded, setExpanded] = useState<string[]>([]);
+  const [grouping, setGrouping] = useState<WorkflowGrouping>(rememberedGrouping ?? 'adaptive');
+  const [groupingReady, setGroupingReady] = useState(rememberedGrouping !== undefined);
+  const [preferenceError, setPreferenceError] = useState('');
+  const preferenceWrites = useRef(Promise.resolve());
+  const preferenceEdited = useRef(false);
+  useEffect(() => {
+    if (rememberedGrouping !== undefined) return;
+    let live = true;
+    void window.electronAPI
+      .loadPreferences()
+      .then((prefs) => {
+        if (!live || preferenceEdited.current) return;
+        rememberedGrouping = workflowGrouping(prefs.workflowGrouping);
+        setGrouping(rememberedGrouping);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (live) setGroupingReady(true);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+  function chooseGrouping(value: string) {
+    const next = workflowGrouping(value);
+    preferenceEdited.current = true;
+    rememberedGrouping = next;
+    setGrouping(next);
+    setFocusNodeId(undefined);
+    setPreferenceError('');
+    preferenceWrites.current = preferenceWrites.current
+      .catch(() => {})
+      .then(async () => {
+        const prefs = await window.electronAPI.loadPreferences();
+        await window.electronAPI.savePreferences({ ...prefs, workflowGrouping: next });
+      })
+      .catch(() => setPreferenceError('Could not save grouping. Your choice is kept for this session.'));
+  }
   const [showSkipped, setShowSkipped] = useState(true);
   const [showCompleted, setShowCompleted] = useState(true);
   const [focusNodeId, setFocusNodeId] = useState<string>();
@@ -295,7 +342,7 @@ export function WorkflowGraphView({
       live = false;
     };
   }, [scope, observedAt, refreshNonce, retry]);
-  const viewKey = JSON.stringify([expansions, showSkipped, showCompleted, focusNodeId]);
+  const viewKey = JSON.stringify([expansions, showSkipped, showCompleted, focusNodeId, grouping]);
   const requestedView = {
     graphKey,
     viewKey,
@@ -304,6 +351,7 @@ export function WorkflowGraphView({
       headSha: sha ?? '',
       runId: run?.id ?? 0,
       expanded,
+      grouping,
       showSkipped,
       showCompleted,
       focusNodeId,
@@ -336,7 +384,7 @@ export function WorkflowGraphView({
   };
   // Network refresh follows check freshness and explicit refresh, never canvas navigation.
   useEffect(() => {
-    if (!member || !sha || !run) return;
+    if (!member || !sha || !run || !groupingReady) return;
     const lifecycle = new AbortController();
     const isLive = () => !lifecycle.signal.aborted;
     const request = latestView.current;
@@ -367,7 +415,7 @@ export function WorkflowGraphView({
     return () => {
       lifecycle.abort();
     };
-  }, [graphKey, runs?.checkedAt, refreshNonce, retry]);
+  }, [graphKey, runs?.checkedAt, refreshNonce, retry, groupingReady]);
   const previousProjection = useRef(requestedView);
   useEffect(() => {
     const previous = previousProjection.current;
@@ -625,6 +673,23 @@ export function WorkflowGraphView({
             />
             Show completed
           </label>
+          <div className="workflow-grouping" title={groupingHelp[grouping]}>
+            <span id="workflow-grouping-label">Parallel jobs</span>
+            <SearchableSelect
+              label="Group parallel jobs"
+              value={grouping}
+              onValueChange={chooseGrouping}
+              options={[
+                { value: 'adaptive', label: 'Adaptive' },
+                { value: 'compact', label: 'Compact' },
+                { value: 'off', label: 'Off' },
+              ]}
+              describedBy="workflow-grouping-help"
+            />
+            <span id="workflow-grouping-help" className="sr-only">
+              {groupingHelp[grouping]} Failures and active jobs stay separate. This preference is saved.
+            </span>
+          </div>
           <div className="workflow-viewport-actions">
             {' '}
             <Button
@@ -649,6 +714,11 @@ export function WorkflowGraphView({
             </Button>
           </div>
           {(!showSkipped || !showCompleted) && <span>Hidden jobs are collapsed. Failures stay visible.</span>}
+        </div>
+      )}
+      {preferenceError && (
+        <div className="workflow-notice" role="status">
+          {preferenceError}
         </div>
       )}
       {graph?.focus && (

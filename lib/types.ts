@@ -347,6 +347,7 @@ export interface StartReviewResult {
 export type { ClaudeModel, CodexModel, ModelId, Provider } from './models';
 
 export interface Preferences {
+  workflowGrouping?: import('./workflow-graph').WorkflowGrouping;
   repositorySettings?: import('./repository-settings').RepositorySettingsMap;
   /** Default per-repository cap. briefingDailyLimit remains the overall cap. */
   repositoryBriefingDailyLimit?: number;
