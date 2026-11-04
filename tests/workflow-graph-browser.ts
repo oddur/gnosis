@@ -302,12 +302,15 @@ void app
       await click('List');
       await wait("document.querySelectorAll('.check-row').length===6");
       win.setContentSize(1280, 800);
+      await js(`sessionStorage.removeItem('fixture-checks-view')`);
       await loadWorkbenchPage(win, process.env.GNOSIS_WORKBENCH_URL + '?checks');
       await waitForWorkbenchQueue(win.webContents);
       await js(
         "document.querySelector('.queue-stack-icon').closest('.queue-item').querySelector('.queue-checks').click()"
       );
-      await wait("document.querySelectorAll('.checks-pr-group').length===3 && document.querySelectorAll('.check-row').length===18");
+      await wait(
+        "document.querySelectorAll('.checks-pr-group').length===3 && document.querySelectorAll('.check-row').length===18"
+      );
       await installRoutes();
       await click('Graph');
       await wait("document.querySelectorAll('.workflow-job').length===4");
@@ -548,6 +551,7 @@ void app
       await wait("document.querySelectorAll('.workflow-job').length===6");
       assert.equal(await js('window.graphNetworkCalls'), 0, 'Stage and dependency navigation must stay local');
       // Many workflows: readable full names, status/count evidence, and local search.
+      await js(`sessionStorage.removeItem('fixture-checks-view')`);
       await loadWorkbenchPage(win, process.env.GNOSIS_WORKBENCH_URL + '?pr-summary&checks');
       await waitForWorkbenchQueue(win.webContents);
       await js(
@@ -620,6 +624,7 @@ void app
         `document.querySelector('.workflow-sidebar').hidden && document.activeElement?.getAttribute('aria-label')==='Show workflows'`
       );
       win.setContentSize(1280, 800);
+      await js(`sessionStorage.removeItem('fixture-checks-view')`);
       await loadWorkbenchPage(win, process.env.GNOSIS_WORKBENCH_URL + '?pr-summary&checks');
       await waitForWorkbenchQueue(win.webContents);
       await js(
@@ -660,6 +665,25 @@ void app
       );
       win.setContentSize(900, 700);
       await capture('failure-annotation-compact-dark');
+      await wait(`sessionStorage.getItem('fixture-checks-view')==='graph'`);
+      for (const expected of ['graph', 'list']) {
+        await loadWorkbenchPage(win, process.env.GNOSIS_WORKBENCH_URL + '?pr-summary&checks');
+        await waitForWorkbenchQueue(win.webContents);
+        await js(
+          "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()"
+        );
+        await click('Open PR overview');
+        await wait(`document.querySelectorAll('.pr-check-summary li').length===3`);
+        await js(`(()=>{const tab=[...document.querySelectorAll('[role="tab"]')].find(b=>b.textContent.startsWith('Checks'));tab.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));tab.click()})()`);
+        await wait(
+          `document.querySelector('.checks-view-switch [aria-pressed="true"]')?.textContent.trim()===${JSON.stringify(expected === 'graph' ? 'Graph' : 'List')}`
+        );
+        if (expected === 'graph') {
+          await wait(`!!document.querySelector('.workflow-job')`);
+          await click('List');
+          await wait(`sessionStorage.getItem('fixture-checks-view')==='list'`);
+        }
+      }
       if (process.env.GNOSIS_WORKFLOW_REPLAY) {
         const saved = JSON.parse(fs.readFileSync(process.env.GNOSIS_WORKFLOW_REPLAY, 'utf8'));
         const actual = assembleWorkflow(saved.definitions, saved.jobs, []);

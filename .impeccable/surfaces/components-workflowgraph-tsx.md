@@ -127,3 +127,7 @@ Matrix and reusable-workflow groups automatically expand when a descendant needs
 ## Connection ordering
 
 Inputs remain on the left and outputs on the right, but ELK now chooses port order during crossing minimization. The renderer preserves the returned attachment positions and routes together. Coordinates use binary subpixels so routes stay orthogonal and survive JSON/SQLite round trips. The layout-cache version changes so existing workflows get new geometry from cached data. The converging pipeline-result regression has no edge crossings in either declaration order.
+
+## Preferred Checks view
+
+Explicit List/Graph selections are saved in user preferences and restored before mounting the application. New PR and stack visits use this choice. Targeted check/provider navigation can temporarily use List without changing it. Preference writes are ordered across component unmounts; a failed save keeps the current session choice and shows a notice.

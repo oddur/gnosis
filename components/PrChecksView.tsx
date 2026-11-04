@@ -1,3 +1,4 @@
+import { preferredChecksView, rememberChecksView, type ChecksView } from '../lib/checks-view';
 import { lazy, Suspense } from 'react';
 const WorkflowGraphView = lazy(() => import('./WorkflowGraph').then((m) => ({ default: m.WorkflowGraphView })));
 import { BulkCheckRerun } from './BulkCheckRerun';
@@ -70,9 +71,20 @@ export function PrChecksView({
   focus?: CheckFocus;
   onSource: (url: string, path: string, line: number, headSha: string) => void;
 }) {
-  const [view, setView] = useState<'list' | 'graph'>('list');
+  const [view, setView] = useState<ChecksView>(preferredChecksView);
   const [graphDetails, setGraphDetails] = useState(false);
-  const [graphVisited, setGraphVisited] = useState(false);
+  const [graphVisited, setGraphVisited] = useState(() => preferredChecksView() === 'graph');
+  const [viewPreferenceError, setViewPreferenceError] = useState('');
+  const viewChoice = useRef(0);
+  function chooseView(next: ChecksView) {
+    const choice = ++viewChoice.current;
+    setView(next);
+    setViewPreferenceError('');
+    void rememberChecksView(next).catch(() => {
+      if (choice === viewChoice.current)
+        setViewPreferenceError('Could not save the Checks view. Your choice is kept for this session.');
+    });
+  }
   const graphButton = useRef<HTMLButtonElement>(null);
   const graphSelection = useRef<Selection | undefined>(undefined);
   const detailOrigin = useRef<HTMLElement | null>(null);
@@ -150,7 +162,7 @@ export function PrChecksView({
       if (snapshot && check) {
         setSelected({ snapshot, check });
         setFilter('all');
-        setView('list');
+        if (focus.id) setView('list');
         setHandledFocus(focus.nonce);
       }
     } else if (!selected) {
@@ -325,9 +337,14 @@ export function PrChecksView({
   }
   return (
     <section className="pr-checks-workspace" aria-label="PR checks">
+      {viewPreferenceError && (
+        <p className="checks-notice" role="status">
+          {viewPreferenceError}
+        </p>
+      )}
       <div className="checks-toolbar">
         <div className="checks-view-switch" role="group" aria-label="Checks view">
-          <Button size="sm" variant="ghost" aria-pressed={view === 'list'} onClick={() => setView('list')}>
+          <Button size="sm" variant="ghost" aria-pressed={view === 'list'} onClick={() => chooseView('list')}>
             <List size={15} aria-hidden="true" /> List
           </Button>
           <Button
@@ -337,7 +354,7 @@ export function PrChecksView({
             aria-pressed={view === 'graph'}
             onClick={() => {
               setGraphVisited(true);
-              setView('graph');
+              chooseView('graph');
               if (graphSelection.current) setSelected(graphSelection.current);
             }}
           >

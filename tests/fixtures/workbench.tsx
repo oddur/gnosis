@@ -1,3 +1,4 @@
+import { initializeChecksView } from '../../lib/checks-view';
 import { automaticBriefingBlock } from '../../lib/repository-settings';
 import { setupViews, setupPreferences, type OnboardingState, type SetupDraft } from '../../lib/onboarding';
 import { checksMocks } from './pr-checks';
@@ -343,6 +344,7 @@ if (new URLSearchParams(location.search).has('inactivity')) {
   for (const item of items.slice(2)) for (const member of item.subject.members) member.updatedAt = daysAgo(2);
 }
 let prefs: Preferences = {
+  checksView: sessionStorage.getItem('fixture-checks-view') === 'graph' ? 'graph' : 'list',
   prInactivityDays: JSON.parse(sessionStorage.getItem('fixture-inactivity-days') ?? '30'),
   instructions: '',
   provider: 'claude',
@@ -591,6 +593,7 @@ const mocks = {
   loadPreferences: () => Promise.resolve(prefs),
   savePreferences: (next: Preferences) => {
     prefs = next;
+    sessionStorage.setItem('fixture-checks-view', next.checksView ?? 'list');
     if (next.diffHighlighter) sessionStorage.setItem('fixture-diff-highlighter', next.diffHighlighter);
     sessionStorage.setItem('fixture-inactivity-days', JSON.stringify(next.prInactivityDays ?? 30));
     if (onboardingScenario) {
@@ -767,6 +770,7 @@ for (const topic of review.slides)
     );
 const { initializeDiffHighlighter } = await import('../../lib/diff-highlighter');
 initializeDiffHighlighter(prefs);
+initializeChecksView(prefs);
 const { App } = await import('../../src/App');
 const root = document.getElementById('root');
 if (root) {
