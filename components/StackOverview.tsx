@@ -1,3 +1,4 @@
+import { stackDependencyOrder } from '../lib/stack-overview';
 import { BulkCheckRerun } from './BulkCheckRerun';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { ArrowRight } from 'lucide-react';
@@ -46,6 +47,7 @@ export function StackOverview({
   onChecks: (member: ReviewMember, id?: string) => void;
 }) {
   const { subject } = item;
+  const linear = stackDependencyOrder(subject).linear;
   const plan = stackMergePlan(subject, signals, checks, now);
   const progress = useFileProgress();
   useSyncExternalStore(inspectionData.subscribe, inspectionData.getVersion);
@@ -96,7 +98,8 @@ export function StackOverview({
       <StackMergePlan key={subject.id} plan={plan} onOpen={onOpen} account={account} onChanged={onRefresh} />
       <div className="stack-overview-heading">
         <div>
-          <h2>Stack dependencies</h2>
+          <h2>Pull requests <span className="stack-member-count">{subject.members.length}</span></h2>
+          {linear && <span className="stack-chain-direction">Dependent PRs first · base branch below</span>}
           {filtered && (
             <span className="stack-filter-context">
               {matchingUrls.length} of {subject.members.length} match filters; dependencies included.
@@ -104,6 +107,7 @@ export function StackOverview({
           )}
           {!openMembers.length && <span className="stack-filter-context">All PRs complete.</span>}
         </div>
+        <div className="stack-overview-actions">
         <BulkCheckRerun key={subject.id} members={subject.members} values={checks} onChanged={onRefresh} />
         {next && (
           <Button size="sm" variant="outline" onClick={() => onOpen(next)}>
@@ -111,6 +115,7 @@ export function StackOverview({
             <ArrowRight size={14} />
           </Button>
         )}
+        </div>
       </div>
       <StackDependencyChain
         subject={subject}
@@ -137,7 +142,7 @@ export function StackOverview({
           return (
             <>
               <div className="stack-status-cell" role="group" aria-label="Review status">
-                <span className="stack-cell-label">Review status</span>
+                <span className="stack-cell-label">Review</span>
                 <MemberReviewStatus
                   member={member}
                   signals={signals.find((s) => s.url === member.url && s.headSha === member.headSha)}

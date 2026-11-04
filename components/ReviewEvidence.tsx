@@ -242,7 +242,7 @@ export function ReviewEvidence({
           <h2 id={`${id}-title`} ref={heading} tabIndex={-1}>
             Checks, reviews &amp; discussions
           </h2>
-          {!compact && (
+          {!compact && subject.kind !== 'stack' && (
             <p className="review-evidence-intro">Check what needs attention before you submit your review.</p>
           )}
         </div>
@@ -274,7 +274,7 @@ export function ReviewEvidence({
         </div>
       </header>
       <p
-        className={`review-evidence-sync ${compact && !expanded && account && !busy && !issues.length && !refreshError ? 'sr-only' : ''}`}
+        className={`review-evidence-sync ${(compact || subject.kind === 'stack') && !expanded && account && !busy && !issues.length && !refreshError ? 'sr-only' : ''}`}
         role="status"
       >
         {status}

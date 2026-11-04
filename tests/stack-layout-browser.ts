@@ -37,6 +37,26 @@ void app.whenReady().then(async () => {
     await capture('expired-status');
     await js('Date.now=window.realNow;window.dispatchEvent(new Event("fixture-pr-read-change"));void 0');
     await capture('consistent-status');
+    // Match the small-stack case: a draft blocks merging, an optional failure does not.
+    await js(`(async()=>{
+      const q=await window.electronAPI.workbenchQueue();const item=q.items.find(i=>i.subject.kind==='stack');
+      window.originalMembers=item.subject.members;window.originalEdges=item.subject.edges;
+      window.originalSignals=window.electronAPI.getQueueSignals;window.originalChecks=window.electronAPI.getPrChecks;
+      item.subject.members=item.subject.members.slice(0,2).map((m,i)=>({...m,isDraft:i===1,headSha:String(i+7).repeat(40)}));
+      item.subject.edges=item.subject.edges.filter(e=>item.subject.members.some(m=>m.url===e.parent)&&item.subject.members.some(m=>m.url===e.child));
+      window.electronAPI.getQueueSignals=async requests=>(await window.originalSignals(requests)).map(s=>({...s,checkedAt:Date.now(),checks:{state:s.url.endsWith('/121')?'failure':'success',total:1,passed:s.url.endsWith('/121')?0:1},readiness:{...s.readiness,isDraft:s.url.endsWith('/121'),mergeState:s.url.endsWith('/121')?'BLOCKED':'CLEAN',reviewDecision:null,behindBy:4}}));
+      window.electronAPI.getPrChecks=async(r,o)=>{const snapshot=await window.originalChecks(r,o);const failing=r.url.endsWith('/121');return {...snapshot,headSha:r.headSha,checkedAt:Date.now(),checks:[{...snapshot.checks[0],status:'completed',conclusion:failing?'failure':'success',required:false}]};};
+      const {publishQueueSignals}=await import('/lib/use-queue-signals.ts');publishQueueSignals('oddur',await window.electronAPI.getQueueSignals(item.subject.members.map(({url,headSha})=>({url,headSha}))));
+      window.dispatchEvent(new Event('fixture-pr-read-change'));
+    })()`);
+    await wait("document.querySelectorAll('.stack-overview-member').length===2 && document.querySelector('.stack-overview').textContent.includes('Optional · Not a merge blocker')");
+    assert.ok(await js("!!document.querySelector('.stack-merge-plan [data-step=draft]')"));
+    assert.equal(await js("!!document.querySelector('.stack-merge-plan [data-step=checks]')"),false,'Optional check failures must not join the merge checklist');
+    await js("document.documentElement.classList.add('dark')");await capture('two-pr-draft-optional-dark');
+    await viewport(980,800);await capture('two-pr-laptop-dark');
+    await js(`(async()=>{const q=await window.electronAPI.workbenchQueue();const item=q.items.find(i=>i.subject.kind==='stack');item.subject.members=window.originalMembers;item.subject.edges=window.originalEdges;window.electronAPI.getQueueSignals=window.originalSignals;window.electronAPI.getPrChecks=window.originalChecks;document.documentElement.classList.remove('dark');window.dispatchEvent(new Event('fixture-pr-read-change'));})()`);
+    await viewport(1280,800);
+
     await js(`(async()=>{
       const q=await window.electronAPI.workbenchQueue();window.stackItem=q.items.find(i=>i.subject.kind==='stack');
       const item=window.stackItem;item.briefing=undefined;const base=item.subject.members[0];
@@ -55,10 +75,12 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.briefingCalls'),0,'Opening the overview must not start briefing generation');
     assert.equal(await js("[...document.querySelectorAll('.stack-overview-member')].some(e=>e.textContent.includes('klang/engine'))"),false,'Common repository belongs in stack header');
     const completeRows=()=>js<number>("(()=>{const bottom=document.querySelector('.pr-summary-content').getBoundingClientRect().bottom;return [...document.querySelectorAll('.stack-overview-member')].filter(e=>e.getBoundingClientRect().bottom<=bottom).length})()");
-    console.log('Layout viewport:',await js('({width:innerWidth,height:innerHeight})'));await capture('ten-pr-desktop-light');assert.ok(await completeRows()>=6,'Six complete PR rows at1280×800');
+    console.log('Layout viewport:',await js('({width:innerWidth,height:innerHeight})'));await capture('ten-pr-desktop-light');assert.ok(await completeRows()>=5,'Five complete PR groups with inline status labels at1280×800');
+    assert.ok(await js("[...document.querySelectorAll('.stack-overview-member')].every(row=>{const main=row.querySelector('.stack-member-main').getBoundingClientRect();const status=row.querySelector('.stack-member-signals').getBoundingClientRect();return status.top>=main.bottom && Math.abs(status.left-main.left)<2})"), 'Each PR keeps its status directly below its own identity');
+    assert.ok(await js("[...document.querySelectorAll('.stack-cell-label')].every(label=>label.checkVisibility({visibilityProperty:true}))"), 'Status labels remain visible on desktop');
     assert.ok(await js("document.querySelector('.review-evidence').getBoundingClientRect().top >= document.querySelector('.stack-overview').getBoundingClientRect().bottom"), 'Detailed evidence follows the dependency list instead of displacing its rows');
     await viewport(900,600);await js("document.documentElement.classList.add('dark')");
-    await capture('ten-pr-laptop-dark');assert.ok(await completeRows()>=3,'Three complete PR rows at900×600');
+    await capture('ten-pr-laptop-dark');assert.ok(await completeRows()>=2,'Two complete labeled PR groups at900×600');
     assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'),true);
     await click('Generate stack briefing');await wait("document.querySelector('.stack-briefing-state')?.textContent.includes('Generating stack briefing')");assert.equal(await js('window.briefingCalls'),1);await capture('generating');
     await js("window.stackItem.briefing={key:'test',status:'failed',error:'Provider unavailable',updatedAt:new Date().toISOString()};window.failBriefing=true;window.dispatchEvent(new Event('fixture-pr-read-change'))");

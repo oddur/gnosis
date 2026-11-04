@@ -1,5 +1,5 @@
 import { StackMarkReady } from './StackMarkReady';
-import { Clock3 } from 'lucide-react';
+import { Clock3, CircleAlert } from 'lucide-react';
 import type { stackMergePlan } from '../lib/stack-merge-plan';
 import type { ReviewMember } from '../lib/workbench';
 import { QUEUE_SIGNALS_TTL } from '../lib/queue-signals';
@@ -21,11 +21,11 @@ export function StackMergePlan({
   if (!plan.entries.length || plan.ready) return null;
   return (
     <section className="stack-merge-plan" aria-label="Merge steps">
-      <h2>To merge this stack</h2>
+      <h2><CircleAlert size={16} aria-hidden="true" />To merge this stack</h2>
       <ul>
         {plan.groups.map((group) => (
           <li key={group.key} data-step={group.key}>
-            <span>
+            <span className="stack-plan-task">
               {['waiting', 'queue'].includes(group.key) && <Clock3 size={14} aria-hidden="true" />}
               {group.label}
             </span>
