@@ -327,7 +327,7 @@ function PrSummaryContent({
       }}
       asChild
     >
-      <main className={`pr-summary-page ${stacked ? 'is-stack' : ''} ${tab !== 'summary' ? 'showing-changes' : ''} ${tab === 'brief' ? 'showing-local-notes' : ''}`}>
+      <main className={`pr-summary-page ${stacked ? 'is-stack' : ''} ${tab !== 'summary' ? 'showing-changes' : ''}`}>
         <div className="pr-summary-toolbar">
           <div className="pr-summary-toolbar-inner">
             <ReviewBreadcrumbs scope={tab} base={[
@@ -374,7 +374,7 @@ function PrSummaryContent({
             <PrStarMarker members={item.subject.members} starredUrls={starredUrls} />
             {stacked && onRenameStack && !renaming && <button className="workbench-icon" aria-label="Rename stack" title="Rename stack on this computer" onClick={() => { setName(item.subject.name ?? item.subject.title); setNameError(''); setRenaming(true); }}><Pencil size={15} /></button>}
             {actions}
-            {stacked && tab !== 'brief' && <PrActions member={item.subject.members[item.subject.members.length - 1]} stackMembers={item.subject.members} mergeReady={readiness.ready} onChanged={onRetryStatus} />}
+            {stacked && <PrActions member={item.subject.members[item.subject.members.length - 1]} stackMembers={item.subject.members} mergeReady={readiness.ready} onChanged={onRetryStatus} />}
           </div>
           {renaming && <form className="stack-name-form" onSubmit={event => {
             event.preventDefault(); if (!onRenameStack || nameBusy) return;
@@ -390,7 +390,7 @@ function PrSummaryContent({
               {starError}
             </p>
           )}
-          <div className="pr-summary-context" hidden={tab === 'brief'}>
+          <div className="pr-summary-context">
             <span>
               {stacked ? (
                 <>
@@ -413,7 +413,7 @@ function PrSummaryContent({
             )}
           </div>
         </header>}</PrEntryActions>
-        <div ref={statusRef} hidden={tab === 'brief'} className="pr-merge-status" data-tour="summary" aria-label={stacked ? 'Stack status' : 'PR status'}>
+        <div ref={statusRef} className="pr-merge-status" data-tour="summary" aria-label={stacked ? 'Stack status' : 'PR status'}>
           {!stacked && <SubjectReviewStatus subject={item.subject} signals={signals} checking={!signalsLoaded && !!account} now={statusNow} />}
           {(stacked || tab !== 'summary') && <ReadinessBadge readiness={stackStatus?.blocked ? { ...readiness, label: 'Not ready to merge' } : readiness} reviewStatusShown staleLabel={stacked ? 'Status needs refresh' : undefined} />}
           {(stacked || tab !== 'summary') && (stacked && readiness.checkedAt === undefined ? <span className="merge-readiness-checked">Merge requirements not confirmed for all PRs</span> : <ReadinessCheckedAt readiness={readiness} label={stacked ? 'Merge requirements checked' : undefined} />)}

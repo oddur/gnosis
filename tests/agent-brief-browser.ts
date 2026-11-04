@@ -74,9 +74,11 @@ void app.whenReady().then(async () => {
     await setup();
     await openStack();
 
+    const navigationTop = await js<number>("document.querySelector('.pr-workspace-navigation').getBoundingClientRect().top");
     // The empty brief says how to start.
     await js(`(()=>{const t=[...document.querySelectorAll('[role=tab]')].find(e=>e.textContent.startsWith('Local notes'));t.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));t.click()})()`);
     await wait("document.querySelector('.agent-brief-empty')?.textContent.includes('Add local note')");
+    assert.equal(await js("document.querySelector('.pr-workspace-navigation').getBoundingClientRect().top"), navigationTop, 'Local notes must not move the workspace tabs');
     assert.equal(await tabCount(), null);
     await click('Open Changes');
 
@@ -243,6 +245,17 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.agent-brief-empty')?.textContent.includes('Add local note')");
     assert.equal(await tabCount(), null);
     assert.match(await js<string>("document.querySelector('.agent-brief-scope-link').textContent"), /View 3 notes saved for the stack/);
+    for (const width of [1280, 980]) {
+      win.setContentSize(width, 800);
+      await click('Explanation');
+      await wait("document.querySelector('[role=tab][aria-selected=true]')?.textContent==='Explanation'");
+      const top = await js<number>("document.querySelector('.pr-workspace-navigation').getBoundingClientRect().top");
+      await js(`(()=>{const t=[...document.querySelectorAll('[role=tab]')].find(e=>e.textContent.startsWith('Local notes'));t.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));t.click()})()`);
+      await wait("!!document.querySelector('.agent-brief-empty')");
+      assert.equal(await js("document.querySelector('.pr-workspace-navigation').getBoundingClientRect().top"), top, 'A PR keeps the same navigation position between Explanation and Local notes');
+      await capture('stable-notes-header-'+width);
+    }
+    win.setContentSize(1280, 800);
     await click('Open Changes');
     await wait("!!document.querySelector('.commit-stream-row[data-active=true]')");
     await js('window.openFile("worker.ts")');

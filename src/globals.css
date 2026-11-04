@@ -3437,9 +3437,6 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .changes-pending-comment > span:has(.changes-brief-link) { display:inline-block; margin-left:12px; padding:2px 8px; border-radius:var(--radius); background:var(--card); }
 .changes-brief-link { margin-left:8px; color:var(--primary); text-decoration:underline; }
 /* Local notes give the authored handoff priority over general PR chrome. */
-.pr-summary-page.showing-local-notes .pr-overview-heading { padding-block:8px; }
-.pr-summary-page.showing-local-notes .pr-title-with-star h1 { font-size:var(--type-body); line-height:1.5; }
-.pr-summary-page.showing-local-notes :is(.pr-merge-status, .pr-summary-context)[hidden] { display:none; }
 .pr-workspace-navigation .pr-overview-tabs { overflow-x:auto; }
 .pr-overview-tabs button { flex-shrink:0; }
 .agent-brief { flex:1; min-width:0; min-height:0; overflow:auto; padding:16px var(--pr-frame-inset) 32px; font-size:var(--type-control); }
