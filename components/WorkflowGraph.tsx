@@ -281,8 +281,9 @@ export function WorkflowGraphView({
       if (live && value) setRuns({ scope, value });
     };
     void (async () => {
-      apply(await window.electronAPI.getWorkflowRuns(target, { cachedOnly: true }));
-      apply(await window.electronAPI.getWorkflowRuns(target, { force, background: !force }));
+      const saved = await window.electronAPI.getWorkflowRuns(target, { cachedOnly: true });
+      apply(saved);
+      apply(await window.electronAPI.getWorkflowRuns(target, { force, background: !force && !!saved }));
     })()
       .catch((e: unknown) => {
         if (live) setRunError(e instanceof Error ? e.message : String(e));
@@ -347,7 +348,7 @@ export function WorkflowGraphView({
     void (async () => {
       const saved = await window.electronAPI.getWorkflowGraph(request.input, { cachedOnly: true });
       if (isLive()) applyGraph(saved, request);
-      const fresh = await window.electronAPI.getWorkflowGraph(request.input, { force, background: !force });
+      const fresh = await window.electronAPI.getWorkflowGraph(request.input, { force, background: !force && !!saved });
       if (!isLive()) return;
       const current = latestView.current;
       if (request.viewKey === current.viewKey) applyGraph(fresh, request);

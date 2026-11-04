@@ -1,3 +1,5 @@
+import { withGitHubPriority } from '../lib/github-scheduler';
+import { createWorkflowGraphPreloader } from '../src/workflow-graph-preloader';
 import { stageWorkflow, focusWorkflow } from '../src/workflow-stages';
 import { readableWorkflowViewport } from '../lib/workflow-viewport';
 import { compactWorkflow } from '../src/workflow-visibility';
@@ -125,7 +127,7 @@ void test('large matrix products are bounded', () => {
 const sha = 'a'.repeat(40),
   target = { url: 'https://github.com/o/r/pull/1', headSha: sha },
   input = { ...target, runId: 9 };
-function harness() {
+function harness(onRequest?: (url: URL) => Promise<void>) {
   const calls: string[] = [];
   const run = {
     id: 9,
@@ -152,6 +154,7 @@ function harness() {
       calls.push(address);
       if (pause) await pause;
       const url = new URL(address);
+      await onRequest?.(url);
       let data: unknown;
       let status = 200;
       if (url.pathname.endsWith('/actions/runs')) data = { total_count: 1, workflow_runs: [run] };
@@ -695,4 +698,95 @@ void test('resolved definitions honor changed reusable-workflow pins at the same
       (n) => n.name === 'Second'
     )
   );
+});
+
+void test('interactive graph loads jobs and independent reusable sources concurrently', { timeout: 5000 }, async () => {
+  let releaseJobs!: () => void, releaseLeft!: () => void;
+  const jobsGate = new Promise<void>((r) => {
+    releaseJobs = r;
+  });
+  const leftGate = new Promise<void>((r) => {
+    releaseLeft = r;
+  });
+  let jobsStarted = false,
+    leftStarted = false,
+    jobsFinished = false,
+    leftFinished = false;
+  let jobsOverlap = false,
+    sourcesOverlap = false;
+  const timeout = setTimeout(() => {
+    releaseJobs();
+    releaseLeft();
+  }, 500);
+  const h = harness(async (url) => {
+    const path = decodeURIComponent(url.pathname);
+    if (path.endsWith('/jobs')) {
+      jobsStarted = true;
+      await jobsGate;
+      jobsFinished = true;
+    }
+    if (path.endsWith('/ci.yml')) {
+      jobsOverlap = jobsStarted && !jobsFinished;
+      releaseJobs();
+    }
+    if (path.endsWith('/left.yml')) {
+      leftStarted = true;
+      await leftGate;
+      leftFinished = true;
+    }
+    if (path.endsWith('/right.yml')) {
+      sourcesOverlap = leftStarted && !leftFinished;
+      releaseLeft();
+    }
+  });
+  h.source('jobs:\n  left:\n    uses: ./.github/workflows/left.yml\n  right:\n    uses: ./.github/workflows/right.yml');
+  h.files({
+    '.github/workflows/left.yml': 'jobs:\n  build:\n    name: Build',
+    '.github/workflows/right.yml': 'jobs:\n  deploy:\n    name: Deploy',
+  });
+  const graph = await withGitHubPriority('interactive', () => readWorkflowGraph(h.client, input)).finally(() =>
+    clearTimeout(timeout)
+  );
+  assert.ok(graph);
+  assert.ok(!graph.warnings.some((warning) => warning.includes('unavailable')));
+  assert.ok(jobsOverlap, 'Jobs and root definition must overlap at the HTTP layer');
+  assert.ok(sourcesOverlap, 'Independent reusable sources must overlap at the HTTP layer');
+});
+
+void test('graph warming replaces obsolete targets, stops on leaving Checks, and respects backoff', async () => {
+  let allowed = false,
+    release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  const started: string[] = [],
+    prepared: string[] = [];
+  const warm = createWorkflowGraphPreloader({
+    canRun: () => allowed,
+    prepare: async (target, stillWanted) => {
+      started.push(target.url);
+      if (target.url === 'first') await gate;
+      if (!stillWanted()) return false;
+      prepared.push(target.url);
+      return true;
+    },
+  });
+  warm.setTarget({ url: 'first', headSha: sha });
+  await warm.tick();
+  assert.deepEqual(started, []);
+  allowed = true;
+  const first = warm.tick();
+  warm.setTarget({ url: 'obsolete', headSha: sha });
+  warm.setTarget({ url: 'latest', headSha: sha });
+  await warm.tick();
+  release();
+  await first;
+  await warm.tick();
+  await warm.tick();
+  assert.deepEqual(started, ['first', 'latest']);
+  assert.deepEqual(prepared, ['latest']);
+  warm.setTarget({ url: 'cancelled', headSha: sha });
+  warm.setTarget(undefined);
+  await warm.tick();
+  assert.deepEqual(started, ['first', 'latest']);
 });

@@ -36,7 +36,7 @@ void app
         if (await js(code)) return;
         await new Promise((r) => setTimeout(r, 80));
       }
-      await capture('failure');
+      await capture('failure').catch(() => {});
       console.log(
         await js(
           "[...document.querySelectorAll('.workflow-canvas,.react-flow,.react-flow__viewport,.react-flow__node')].map(n=>({class:n.className,bounds:n.getBoundingClientRect().toJSON(),style:n.getAttribute('style')}))"
@@ -75,12 +75,32 @@ void app
       );
       await click('Open PR overview');
       await wait("document.querySelectorAll('.pr-check-summary li').length===3");
+      await js(
+        `window.graphWarmCalls=[];window.electronAPI.prepareWorkflowGraph=async(target)=>{window.graphWarmCalls.push(target)};undefined`
+      );
       await js("document.querySelector('.pr-check-summary li button').click()");
       await wait("document.querySelectorAll('.check-row').length===6");
+      assert.equal(await js('window.graphWarmCalls.filter(Boolean).length'), 1, 'Opening Checks warms one workflow');
       await installRoutes();
+      await js(`(()=>{
+        window.graphColdCalls=[];
+        for(const method of ['getWorkflowRuns','getWorkflowGraph']) {
+          const read=window.electronAPI[method];let cold=true;
+          window.electronAPI[method]=async(input,options)=>{
+            window.graphColdCalls.push({method,options});
+            if(options?.cachedOnly && cold){cold=false;return undefined;}
+            return read(input,options);
+          };
+        }
+      })()`);
       await click('Graph');
       await wait("document.querySelectorAll('.workflow-job').length===4");
       await wait("!!document.querySelector('.react-flow__edge')");
+      assert.equal(
+        await js(`window.graphColdCalls.filter(c=>!c.options?.cachedOnly).every(c=>c.options?.background===false)`),
+        true,
+        'Cold graph requests must have interactive priority'
+      );
       assert.equal(
         await js(
           'document.querySelector(\'.workflow-job-open[aria-label="TypeScript: Failed"] .workflow-job-context\') === null'

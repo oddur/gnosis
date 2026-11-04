@@ -233,6 +233,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   searchPullRequests: (): Promise<PrSearchResult[]> => ipcRenderer.invoke('search-pull-requests'),
   searchRepos: (query: string): Promise<RepoSearchResult[]> => ipcRenderer.invoke('search-repos', query),
   reRenderHunks: (review: ReviewGuide): Promise<ReviewGuide> => ipcRenderer.invoke('re-render-hunks', review),
+  prepareWorkflowGraph: (target?: CheckTarget): Promise<void> => ipcRenderer.invoke('prepare-workflow-graph', target),
   getWorkflowRuns: (target: CheckTarget, options?: ChecksOptions): Promise<WorkflowRuns | undefined> => ipcRenderer.invoke('workflow-runs', target, options),
   getWorkflowGraph: (input: WorkflowGraphInput, options?: ChecksOptions): Promise<WorkflowGraph | undefined> => ipcRenderer.invoke('workflow-graph', input, options),
   getPrChecks: (target: CheckTarget, options?: ChecksOptions): Promise<PrChecks | undefined> => ipcRenderer.invoke('pr-checks', target, options),

@@ -59,6 +59,16 @@ export function PrChecksView({
 }) {
   const [view, setView] = useState<'list' | 'graph'>('list');
   const [graphDetails, setGraphDetails] = useState(false);
+  const firstMember = subject.members.at(0);
+  const warmUrl = firstMember?.url;
+  const warmSha = (warmUrl && values[warmUrl]?.headSha) || firstMember?.headSha;
+  useEffect(() => {
+    if (!warmUrl || !warmSha) return;
+    void window.electronAPI.prepareWorkflowGraph?.({ url: warmUrl, headSha: warmSha }).catch(() => {});
+    return () => {
+      void window.electronAPI.prepareWorkflowGraph?.().catch(() => {});
+    };
+  }, [warmUrl, warmSha]);
   const [graphRefresh, setGraphRefresh] = useState(0);
   const detailPane = useRef<HTMLDivElement>(null);
   const operation = useRef(0);

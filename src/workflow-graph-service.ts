@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import type { Octokit } from '@octokit/rest';
 import { layoutWorkflow } from './workflow-layout';
 import { githubCacheFor } from '../lib/github-client';
-import { createGitHubWork, joinGitHubWork, type GitHubWork } from '../lib/github-scheduler';
+import { createGitHubWork, joinGitHubWork, withParallelGitHubReads, type GitHubWork } from '../lib/github-scheduler';
 import { prActionTarget } from './pr-actions-service';
 import type { CheckTarget } from '../lib/pr-checks';
 import type {
@@ -179,41 +179,44 @@ async function definitions(
   });
   // Recursive resolution must never mutate the cached parse (inputs and callers differ).
   const jobs = structuredClone(parsed);
-  for (const job of jobs)
-    if (job.uses) {
-      try {
-        let childOwner = owner,
-          childRepo = repo,
-          childPath: string,
-          childSha = sha;
-        if (job.uses.startsWith('./')) childPath = job.uses.slice(2);
-        else {
-          const match = /^([\w.-]+)\/([\w.-]+)\/(\.github\/workflows\/[^/]+\.ya?ml)@(.+)$/.exec(job.uses);
-          if (!match) throw new DefinitionError('Reusable workflow reference is not supported.');
-          [, childOwner, childRepo, childPath] = match;
-          const reference = references.filter(
-            (ref) => ref.path === job.uses || ref.path.startsWith(`${childOwner}/${childRepo}/${childPath}@`)
+  await Promise.all(
+    jobs.map(async (job) => {
+      if (job.uses) {
+        try {
+          let childOwner = owner,
+            childRepo = repo,
+            childPath: string,
+            childSha = sha;
+          if (job.uses.startsWith('./')) childPath = job.uses.slice(2);
+          else {
+            const match = /^([\w.-]+)\/([\w.-]+)\/(\.github\/workflows\/[^/]+\.ya?ml)@(.+)$/.exec(job.uses);
+            if (!match) throw new DefinitionError('Reusable workflow reference is not supported.');
+            [, childOwner, childRepo, childPath] = match;
+            const reference = references.filter(
+              (ref) => ref.path === job.uses || ref.path.startsWith(`${childOwner}/${childRepo}/${childPath}@`)
+            );
+            childSha = /^[a-f\d]{40}$/i.test(match[4]) ? match[4] : reference.length === 1 ? reference[0].sha : '';
+            if (!childSha) throw new DefinitionError('The run did not report an exact reusable-workflow revision.');
+          }
+          job.children = await definitions(
+            client,
+            childOwner,
+            childRepo,
+            childPath,
+            childSha,
+            references,
+            warnings,
+            job.inputs,
+            [...chain, identity],
+            budget
           );
-          childSha = /^[a-f\d]{40}$/i.test(match[4]) ? match[4] : reference.length === 1 ? reference[0].sha : '';
-          if (!childSha) throw new DefinitionError('The run did not report an exact reusable-workflow revision.');
+        } catch (error) {
+          if (!(error instanceof DefinitionError)) budget.retryable = true;
+          warnings.push(`${job.name}: ${error instanceof Error ? error.message : 'Reusable workflow unavailable'}`);
         }
-        job.children = await definitions(
-          client,
-          childOwner,
-          childRepo,
-          childPath,
-          childSha,
-          references,
-          warnings,
-          job.inputs,
-          [...chain, identity],
-          budget
-        );
-      } catch (error) {
-        if (!(error instanceof DefinitionError)) budget.retryable = true;
-        warnings.push(`${job.name}: ${error instanceof Error ? error.message : 'Reusable workflow unavailable'}`);
       }
-    }
+    })
+  );
   return jobs;
 }
 async function resolvedDefinitions(
@@ -295,37 +298,42 @@ async function readGraph(
         });
         if (run.head_sha !== input.headSha)
           throw Error('This workflow belongs to another commit. Open its current results.');
+        const runInfo = info(run);
         const jobs: WorkflowJob[] = [],
           warnings: string[] = [];
-        for (let page = 1; page <= 5; page++) {
-          const { data: batch } = await client.actions.listJobsForWorkflowRunAttempt({
-            owner,
-            repo,
-            run_id: run.id,
-            attempt_number: run.run_attempt ?? 1,
-            per_page: 100,
-            page,
-            headers: { 'cache-control': 'no-cache' },
-          });
-          for (const job of batch.jobs) {
-            const checkId = /\/check-runs\/(\d+)$/.exec(job.check_run_url)?.[1];
-            jobs.push({
-              id: job.id,
-              ...(checkId ? { checkId: `check:${checkId}` } : {}),
-              name: job.name,
-              status: job.status,
-              conclusion: job.conclusion,
-              startedAt: job.started_at,
-              completedAt: job.completed_at,
-              url: job.html_url ?? '',
-              steps: job.steps ?? [],
+        const loadJobs = async () => {
+          for (let page = 1; page <= 5; page++) {
+            const { data: batch } = await client.actions.listJobsForWorkflowRunAttempt({
+              owner,
+              repo,
+              run_id: run.id,
+              attempt_number: run.run_attempt ?? 1,
+              per_page: 100,
+              page,
+              headers: { 'cache-control': 'no-cache' },
             });
+            for (const job of batch.jobs) {
+              const checkId = /\/check-runs\/(\d+)$/.exec(job.check_run_url)?.[1];
+              jobs.push({
+                id: job.id,
+                ...(checkId ? { checkId: `check:${checkId}` } : {}),
+                name: job.name,
+                status: job.status,
+                conclusion: job.conclusion,
+                startedAt: job.started_at,
+                completedAt: job.completed_at,
+                url: job.html_url ?? '',
+                steps: job.steps ?? [],
+              });
+            }
+            if (page * 100 >= batch.total_count) break;
+            if (page === 5) warnings.push('Showing the first 500 jobs. Open GitHub for the full run.');
           }
-          if (page * 100 >= batch.total_count) break;
-          if (page === 5) warnings.push('Showing the first 500 jobs. Open GitHub for the full run.');
-        }
-        const runInfo = info(run);
-        const resolved = await resolvedDefinitions(client, owner, repo, runInfo, run.referenced_workflows ?? []);
+        };
+        const [, resolved] = await Promise.all([
+          loadJobs(),
+          resolvedDefinitions(client, owner, repo, runInfo, run.referenced_workflows ?? []),
+        ]);
         return {
           run: runInfo,
           jobs,
@@ -387,7 +395,7 @@ export function readWorkflowGraph(
   input: WorkflowGraphInput,
   options: { cachedOnly?: boolean; force?: boolean } = {}
 ) {
-  return cacheScope.run({ client, generation: githubCacheFor(client)?.version() }, () =>
-    readGraph(client, input, options)
+  return withParallelGitHubReads(() =>
+    cacheScope.run({ client, generation: githubCacheFor(client)?.version() }, () => readGraph(client, input, options))
   );
 }

@@ -70,3 +70,8 @@ Expanding groups, focusing dependencies, and changing visibility now project sav
 Parsed files are cached by immutable source revision and caller inputs. Resolved definition trees also include the run’s pinned reusable-workflow revisions in their cache identity. Resolution copies cached parses so callers cannot mutate one another. Permanent definition warnings do not refetch completed jobs; transient fetch failures remain retryable. Workflow sources, parses, resolved trees, run data, and layouts use the configurable SQLite content-cache budget, including entries larger than the metadata memory limit.
 
 The old 20-reference limit counted repeated files. Resolution now counts distinct immutable sources (50 maximum), with independent limits of ten nesting levels and 500 calls plus cycle detection. The reported run resolves 21 distinct files without warnings. Browser regression tests assert no network-capable graph requests during navigation and retain the chosen expansion when a pending refresh finishes. Validation: 34 workflow tests and 46 combined workflow/cache tests pass, along with graph browser checks, TypeScript, and focused lint.
+
+
+## Cold-load responsiveness
+
+The open Checks workspace warms its first PR’s default workflow. Preparation respects the API reserve and replaces queued targets when navigating. Cold graph requests take interactive priority; cached refreshes keep lower priority. Jobs and independent workflow sources overlap through a three-read HTTP limit. Request starts remain paced and rate-limit responses stop subsequent dispatch. Ordinary traffic and mutations remain serialized.
