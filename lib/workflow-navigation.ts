@@ -47,9 +47,13 @@ export function attentionJobs(nodes: WorkflowGraphNode[]) {
       .map((job) => ({ node, job }))
   );
 }
-export function nextAttentionJob(items: { node: WorkflowGraphNode; job: WorkflowJob }[], selectedId?: string) {
+export function nextAttentionJob(
+  items: { node: WorkflowGraphNode; job: WorkflowJob }[],
+  selectedId?: string,
+  direction: 1 | -1 = 1
+) {
   const current = items.findIndex((item) => item.job.checkId === selectedId);
-  return items.at((current + 1) % items.length);
+  return items.at(current < 0 ? (direction === 1 ? 0 : -1) : (current + direction + items.length) % items.length);
 }
 export interface WorkflowViewState {
   memberUrl?: string;

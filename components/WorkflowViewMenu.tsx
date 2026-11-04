@@ -37,6 +37,14 @@ export function WorkflowViewMenu({
           collisionPadding={12}
           aria-label="Graph view options"
         >
+          <details>
+            <summary>Keyboard and graph help</summary>
+            <p>
+              Tab to a job, then press Enter to open it. Escape in details returns to the job. Groups expand with Enter.
+              Show dependencies keeps this job, its prerequisites, and its dependants.
+            </p>
+            <p>Arrows follow workflow prerequisites. Pan to explore, or use Fit entire workflow to see its shape.</p>
+          </details>
           <fieldset className="workflow-visibility">
             <legend>Visible jobs</legend>
             <label>
@@ -79,14 +87,7 @@ export function WorkflowViewMenu({
                 : 'No finished parallel jobs grouped in this view.'}
             </p>
           </fieldset>
-          <details>
-            <summary>Keyboard and graph help</summary>
-            <p>
-              Tab to a job, then press Enter to open it. Escape in details returns to the job. Groups expand with Enter.
-              Show related jobs keeps its prerequisites and dependants.
-            </p>
-            <p>Arrows follow workflow prerequisites. Pan to explore, or use Fit entire workflow to see its shape.</p>
-          </details>
+
           <div className="workflow-view-metadata">{children}</div>
         </Popover.Content>
       </Popover.Portal>

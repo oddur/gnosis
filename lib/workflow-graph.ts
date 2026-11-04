@@ -43,6 +43,8 @@ export interface WorkflowPort {
   y: number;
 }
 export interface WorkflowGraphNode {
+  /** Direct prerequisites omitted by dependency focus; retain their reported state. */
+  outsidePrerequisites?: Pick<WorkflowGraphNode, 'id' | 'name' | 'jobs'>[];
   stage?: { count: number; names: string[]; unreported: number };
   height?: number;
   collapsed?: 'skipped' | 'completed';

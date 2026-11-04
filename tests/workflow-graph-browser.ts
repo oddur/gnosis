@@ -194,12 +194,37 @@ void app
       );
       await capture('laptop-detail-dark');
       assert.equal(await js(`document.activeElement?.getAttribute('aria-label')`), 'Selected check details');
+      assert.ok(
+        await js(
+          `(()=>{const next=document.querySelector('.workflow-issue-navigation [aria-label="Next issue"]');const r=next.getBoundingClientRect();return next.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))})()`
+        ),
+        'Next issue must be reachable above the laptop detail overlay'
+      );
+      assert.ok(
+        await js(`document.querySelector('.workflow-detail-relations').textContent.includes('Lint')`),
+        'Details retain prerequisite context'
+      );
+      await js(`document.querySelector('.workflow-issue-navigation [aria-label="Next issue"]').click()`);
+      await wait(`document.querySelector('.workflow-issue-navigation [role="status"]')?.textContent==='Issue 2 of 2'`);
+      await js(`document.querySelector('.workflow-issue-navigation [aria-label="Previous issue"]').click()`);
+      await wait(
+        `document.querySelector('.check-detail h2')?.textContent.includes('TypeScript') && document.activeElement?.getAttribute('aria-label')==='Selected check details'`
+      );
+      await js(`document.querySelector('.check-detail').scrollTop=300`);
+      assert.ok(
+        await js(
+          `(()=>{const next=document.querySelector('.workflow-issue-navigation [aria-label="Next issue"]');const r=next.getBoundingClientRect();return next.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))})()`
+        ),
+        'Issue navigation stays visible while output scrolls'
+      );
       await js(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
       await wait(`!!document.querySelector('.check-detail[hidden]')`);
-      assert.equal(await js(`document.activeElement?.getAttribute('aria-label')`), 'TypeScript: Failed');
+      await wait(`document.activeElement?.getAttribute('aria-label')==='TypeScript: Failed'`);
       await js(`document.activeElement.click()`);
       await wait(`!!document.querySelector('.check-detail:not([hidden])')`);
       await js(`document.querySelector('[aria-label="Close job details"]').click()`);
+      await js(`document.querySelector('.workflow-expanded-groups button')?.click()`);
+      await wait(`document.querySelectorAll('.workflow-job').length===4`);
       win.setContentSize(620, 760);
       await capture('narrow-controls-dark');
       await js(`document.querySelector('.workflow-job-open[aria-label="TypeScript: Failed"]').click()`);
@@ -208,7 +233,12 @@ void app
       );
       await capture('narrow-dark');
       assert.ok(await js('document.documentElement.scrollWidth <= innerWidth+1'));
-      await js('document.querySelector(\'[aria-label="Close job details"]\').click()');
+      await js(`document.querySelector('.workflow-issue-navigation [aria-label="Next issue"]').focus()`);
+      win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+      win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+      await wait(
+        `!!document.querySelector('.check-detail[hidden]') && document.activeElement?.getAttribute('aria-label')==='TypeScript: Failed'`
+      );
       // Saved graph stays visible during API failure; Retry restores fresh data.
       await js(
         "window.graphRead=window.electronAPI.getWorkflowGraph;window.electronAPI.getWorkflowGraph=async(i,o)=>{if(o?.cachedOnly)return window.graphRead(i,o);throw Error('GitHub API limit reached. Retry after 12:30.');};document.querySelector('[aria-label=\"Refresh checks\"]').click()"
@@ -462,7 +492,23 @@ void app
         'Focus excludes sibling branches'
       );
       await capture('dependencies-focus-dark');
-      await click('Back to workflow');
+      assert.ok(
+        await js(
+          `document.querySelector('.workflow-scope-status').textContent.includes('Failed prerequisites outside this view')`
+        )
+      );
+      assert.ok(
+        await js(
+          `!!document.querySelector('[aria-label="Reveal failed prerequisite outside this view: build-windows"]')`
+        )
+      );
+      assert.ok(
+        await js(`[...document.querySelectorAll('.workflow-job')].every(n=>getComputedStyle(n).opacity==='1')`),
+        'All job text remains readable during focus/highlight'
+      );
+      await js(
+        `document.querySelector('[aria-label="Reveal failed prerequisite outside this view: build-windows"]').click()`
+      );
       await wait("document.querySelectorAll('.workflow-job').length===23");
       await js("document.querySelector('.workflow-expanded-groups button').click()");
       await wait("document.querySelectorAll('.workflow-job').length===6");

@@ -1,4 +1,6 @@
 import { WorkflowViewMenu } from './WorkflowViewMenu';
+import { WorkflowDetailNavigation } from './WorkflowDetailNavigation';
+import { createPortal } from 'react-dom';
 import {
   attentionJobs,
   nextAttentionJob,
@@ -94,9 +96,12 @@ type JobNode = Node<
   {
     item: WorkflowGraphNode;
     dim: boolean;
+    emphasized: boolean;
     selected: boolean;
     now: number;
     prerequisite?: string;
+    outsidePrerequisite?: string;
+    onRevealPrerequisite: () => void;
     onOpen: () => void;
     onExpand: () => void;
     onFocusDependencies: () => void;
@@ -150,6 +155,7 @@ function JobCard({ id, data }: NodeProps<JobNode>) {
       data-stage={!!item.stage || undefined}
       data-collapsed={item.collapsed || undefined}
       data-dim={data.dim || undefined}
+      data-emphasized={data.emphasized || undefined}
       data-selected={data.selected || undefined}
       data-outcome={group}
       onMouseEnter={() => data.onHighlight(true, 'pointer')}
@@ -195,12 +201,22 @@ function JobCard({ id, data }: NodeProps<JobNode>) {
             </span>
           </span>
         )}
-        {!item.collapsed && secondary && (
+        {!item.collapsed && secondary && !data.outsidePrerequisite && (
           <span className="workflow-job-context" title={secondary}>
             {secondary}
           </span>
         )}
       </button>
+      {data.outsidePrerequisite && (
+        <button
+          className="workflow-outside-prerequisite nodrag"
+          onClick={data.onRevealPrerequisite}
+          title={`Failed prerequisite outside this view: ${data.outsidePrerequisite}. Reveal in workflow.`}
+          aria-label={`Reveal failed prerequisite outside this view: ${data.outsidePrerequisite}`}
+        >
+          Failed outside view: {data.outsidePrerequisite}
+        </button>
+      )}
       {!item.collapsed && (
         <button
           className="workflow-focus nodrag"
@@ -245,10 +261,14 @@ export function WorkflowGraphView({
   onFilterChange,
   active = true,
   stateKey,
+  detailHost,
+  onRevealContext,
 }: {
   subject: ReviewSubject;
   active?: boolean;
   stateKey: string;
+  detailHost?: HTMLElement | null;
+  onRevealContext: () => void;
   onExternalChecks: (url: string) => void;
   onFilterChange: (value: CheckFilter) => void;
   values: Partial<Record<string, PrChecks>>;
@@ -555,6 +575,26 @@ export function WorkflowGraphView({
     [graph, snapshot]
   );
   const byId = new Map(displayed.map((n) => [n.id, n]));
+  const outsideJobs = (item: Pick<WorkflowGraphNode, 'jobs'>) =>
+    item.jobs.map((job) => {
+      const check = snapshot?.checks.find((c) => c.id === job.checkId);
+      return check && snapshot && graph && snapshot.checkedAt > graph.checkedAt
+        ? { ...job, status: check.status, conclusion: check.conclusion }
+        : job;
+    });
+  const outsideFailures = new Map(
+    displayed.map((node) => [
+      node.id,
+      node.outsidePrerequisites?.filter((n) => outcome(outsideJobs(n)).group === 'attention') ?? [],
+    ])
+  );
+  const revealPrerequisite = (id: string) => {
+    setFocusNodeId(undefined);
+    setNavigationNodeId(id);
+    setHovered(undefined);
+    setFocused(undefined);
+    if (detailHost) onRevealContext();
+  };
   const failureSources = new Map<string, string>();
   // Explain the prerequisite fact, not a guessed cause for skips (if/always may override it).
   for (const edge of graph?.edges ?? []) {
@@ -585,7 +625,19 @@ export function WorkflowGraphView({
       item,
       now,
       prerequisite: failureSources.get(item.id),
+      outsidePrerequisite: outsideFailures
+        .get(item.id)
+        ?.map((n) => n.name)
+        .join(', '),
+      onRevealPrerequisite: () => {
+        const first = outsideFailures.get(item.id)?.at(0);
+        if (first) revealPrerequisite(first.id);
+      },
       selected: !!selectedId && item.jobs.some((j) => j.checkId === selectedId),
+      emphasized:
+        (!!highlight && related.has(item.id)) ||
+        (filter === 'attention' && !!attentionJobs([item]).length) ||
+        (filter === 'running' && item.jobs.some((job) => job.status !== 'completed')),
       dim:
         (filter === 'attention' && !attentionJobs([item]).length) ||
         (filter === 'running' && !item.jobs.some((job) => job.status !== 'completed')) ||
@@ -621,8 +673,8 @@ export function WorkflowGraphView({
   const issues = attentionJobs(displayed);
   const activeCount = new Set(displayed.flatMap((n) => n.jobs.filter((j) => j.status !== 'completed').map((j) => j.id)))
     .size;
-  const navigateIssue = (open: boolean) => {
-    const target = open ? nextAttentionJob(issues, selectedId) : issues.at(0);
+  const navigateIssue = (open: boolean, direction: 1 | -1 = 1) => {
+    const target = open ? nextAttentionJob(issues, selectedId, direction) : issues.at(0);
     if (!target || !graph || !snapshot) return;
     setNavigationNodeId(target.node.id);
     if (open) {
@@ -634,6 +686,7 @@ export function WorkflowGraphView({
   };
   const edges = (graph?.edges ?? []).map((edge) => ({
     ...edge,
+    ariaLabel: `${byId.get(edge.target)?.name ?? edge.target} requires ${byId.get(edge.source)?.name ?? edge.source}`,
     type: 'routed',
     sourceHandle: `source:${edge.id}`,
     targetHandle: `target:${edge.id}`,
@@ -651,6 +704,31 @@ export function WorkflowGraphView({
   }));
   return (
     <section className="workflow-graph-view" aria-label="Workflow dependency graph">
+      {detailHost &&
+        createPortal(
+          <WorkflowDetailNavigation
+            count={issues.length}
+            position={issues.findIndex((i) => i.job.checkId === selectedId)}
+            onMove={(direction) => navigateIssue(true, direction)}
+            onReveal={revealPrerequisite}
+            onClose={onRevealContext}
+            prerequisites={[
+              ...(
+                graph?.edges.filter((e) => e.target === selectedNode?.id).flatMap((e) => byId.get(e.source) ?? []) ?? []
+              ).map((n) => ({ id: n.id, name: n.name, label: outcome(n.jobs).label })),
+              ...(selectedNode?.outsidePrerequisites ?? []).map((n) => ({
+                id: n.id,
+                name: n.name,
+                label: outcome(outsideJobs(n)).label,
+                outside: true,
+              })),
+            ]}
+            dependants={(
+              graph?.edges.filter((e) => e.source === selectedNode?.id).flatMap((e) => byId.get(e.target) ?? []) ?? []
+            ).map((n) => ({ id: n.id, name: n.name, label: outcome(n.jobs).label }))}
+          />,
+          detailHost
+        )}
       <div className="workflow-selectors">
         {subject.members.length > 1 && (
           <SearchableSelect
@@ -780,9 +858,11 @@ export function WorkflowGraphView({
           <span className="workflow-scope-status" role="status">
             {filter === 'running' && !activeCount
               ? 'No active jobs in this view'
-              : issues.length
-                ? `${issues.length} ${issues.length === 1 ? 'job needs' : 'jobs need'} attention in this view`
-                : 'No jobs need attention in this view'}
+              : [...outsideFailures.values()].some((items) => items.length)
+                ? 'Failed prerequisites outside this view'
+                : issues.length
+                  ? ''
+                  : 'No jobs need attention in this view'}
           </span>
           <Button
             size="sm"
@@ -880,7 +960,14 @@ export function WorkflowGraphView({
               pannable
               zoomable
               ariaLabel="Workflow map. Drag to navigate."
-              nodeColor="var(--muted-foreground)"
+              nodeColor={(node) => {
+                const group = outcome(byId.get(node.id)?.jobs ?? []).group;
+                return group === 'attention'
+                  ? 'var(--color-danger)'
+                  : group === 'running'
+                    ? 'var(--color-warning)'
+                    : 'var(--muted-foreground)';
+              }}
               maskColor="color-mix(in srgb, var(--background) 75%, transparent)"
               style={{ width: 120, height: 72, background: 'var(--card)', border: '1px solid var(--border)' }}
             />

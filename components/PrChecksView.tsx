@@ -65,22 +65,32 @@ export function PrChecksView({
   const graphButton = useRef<HTMLButtonElement>(null);
   const graphSelection = useRef<Selection | undefined>(undefined);
   const detailOrigin = useRef<HTMLElement | null>(null);
+  const restoreGraphFocus = useRef(false);
   const panes = useRef<HTMLDivElement>(null);
   const [narrow, setNarrow] = useState(false);
+  const [detailNavigation, setDetailNavigation] = useState<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!panes.current) return;
-    const observer = new ResizeObserver(([entry]) => setNarrow(entry.contentRect.width <= 700));
+    const observer = new ResizeObserver(([entry]) => setNarrow(entry.contentRect.width <= 1050));
     observer.observe(panes.current);
     return () => observer.disconnect();
   }, []);
   const closeGraphDetails = () => {
+    restoreGraphFocus.current = true;
     setGraphDetails(false);
-    requestAnimationFrame(() => {
-      const origin = detailOrigin.current;
+  };
+  useEffect(() => {
+    if (graphDetails || view !== 'graph' || !restoreGraphFocus.current) return;
+    const frame = requestAnimationFrame(() => {
+      restoreGraphFocus.current = false;
+      const origin =
+        panes.current?.querySelector<HTMLElement>('.workflow-job[data-selected] .workflow-job-open') ??
+        detailOrigin.current;
       if (origin?.isConnected && origin.getClientRects().length) origin.focus({ preventScroll: true });
       else graphButton.current?.focus({ preventScroll: true });
     });
-  };
+    return () => cancelAnimationFrame(frame);
+  }, [graphDetails, view]);
   const firstMember =
     subject.members.find((m) => values[m.url]?.checks.some((c) => checkGroup(c) === 'attention')) ??
     subject.members.at(0);
@@ -101,7 +111,10 @@ export function PrChecksView({
   const [selected, setSelected] = useState<Selection>();
   useEffect(() => {
     if (view !== 'graph' || !graphDetails) return;
-    const frame = requestAnimationFrame(() => detailPane.current?.focus({ preventScroll: true }));
+    const frame = requestAnimationFrame(() => {
+      if (detailPane.current) detailPane.current.scrollTop = 0;
+      detailPane.current?.focus({ preventScroll: true });
+    });
     return () => cancelAnimationFrame(frame);
   }, [view, graphDetails, selected?.check.id]);
   const [detailCache, setDetailCache] = useState<Record<string, { value: CheckDetails; receivedAt: number }>>({});
@@ -366,6 +379,8 @@ export function PrChecksView({
                 key={`${stateKey ?? subject.id}:${subject.members.map((m) => values[m.url]?.headSha ?? m.headSha).join(':')}`}
                 stateKey={`${stateKey ?? subject.id}:${subject.members.map((m) => values[m.url]?.headSha ?? m.headSha).join(':')}`}
                 active={view === 'graph'}
+                detailHost={view === 'graph' && graphDetails ? detailNavigation : null}
+                onRevealContext={closeGraphDetails}
                 onFilterChange={setFilter}
                 onExternalChecks={(url) => {
                   setFilter('all');
@@ -385,7 +400,9 @@ export function PrChecksView({
                 selectedId={graphSelection.current?.check.id}
                 onSelect={(snapshot, check) => {
                   graphSelection.current = { snapshot, check };
-                  detailOrigin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                  if (!detailPane.current?.contains(document.activeElement))
+                    detailOrigin.current =
+                      document.activeElement instanceof HTMLElement ? document.activeElement : null;
                   setSelected({ snapshot, check });
                   setGraphDetails(true);
                 }}
@@ -506,15 +523,18 @@ export function PrChecksView({
           }}
         >
           {view === 'graph' && (
-            <Button
-              className="workflow-close-detail"
-              size="sm"
-              variant="ghost"
-              aria-label="Close job details"
-              onClick={closeGraphDetails}
-            >
-              <X size={16} /> Close
-            </Button>
+            <div className="workflow-detail-toolbar">
+              <Button
+                className="workflow-close-detail"
+                size="sm"
+                variant="ghost"
+                aria-label="Close job details"
+                onClick={closeGraphDetails}
+              >
+                <X size={16} /> Close
+              </Button>
+              <div className="workflow-detail-navigation" ref={setDetailNavigation} />
+            </div>
           )}
           {!selected || !displayedCheck ? (
             <div className="checks-empty">

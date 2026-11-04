@@ -22,6 +22,7 @@ export function compactWorkflow(
           : undefined;
     if (
       node.id === options.focusNodeId ||
+      !!node.outsidePrerequisites?.length ||
       !!node.stage?.unreported ||
       !kind ||
       (kind === 'skipped' ? options.showSkipped !== false : options.showCompleted !== false)

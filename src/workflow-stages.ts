@@ -106,7 +106,17 @@ export function focusWorkflow(nodes: WorkflowGraphNode[], edges: WorkflowGraph['
       }
   }
   return {
-    nodes: nodes.filter((n) => visible.has(n.id)),
+    nodes: nodes
+      .filter((n) => visible.has(n.id))
+      .map((node) => {
+        const outsideIds = new Set(
+          edges.filter((e) => e.target === node.id && !visible.has(e.source)).map((e) => e.source)
+        );
+        const outsidePrerequisites = nodes
+          .filter((n) => outsideIds.has(n.id))
+          .map(({ id, name, jobs }) => ({ id, name, jobs }));
+        return outsidePrerequisites.length ? { ...node, outsidePrerequisites } : node;
+      }),
     edges: edges.filter((e) => visible.has(e.source) && visible.has(e.target)),
     focus: { id: focus.id, name: focus.name },
   };

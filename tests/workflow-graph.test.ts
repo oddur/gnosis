@@ -523,8 +523,14 @@ void test('dependency focus includes ancestors and descendants without siblings,
   );
   assert.equal(focused.edges.length, 2);
   assert.equal(focused.focus?.name, 'a');
+  assert.equal(focused.nodes.find((n) => n.id === 'end')?.outsidePrerequisites?.[0].name, 'b');
+  assert.equal('outsidePrerequisites' in nodes[3], false, 'Focus must not mutate cached source nodes');
   const compact = compactWorkflow(focused.nodes, focused.edges, { showCompleted: false, focusNodeId: 'a' });
   assert.ok(compact.nodes.some((n) => n.id === 'a' && !n.collapsed));
+  assert.ok(
+    compact.nodes.some((n) => n.id === 'end' && n.outsidePrerequisites?.length && !n.collapsed),
+    'A compact view retains external prerequisite context'
+  );
   assert.deepEqual(focusWorkflow(nodes, edges, 'missing'), { nodes, edges });
 });
 void test('readable viewport never scales text down and anchors a large graph at its connected entry', () => {
@@ -892,6 +898,9 @@ void test('attention navigation includes failures inside groups, deduplicates jo
   assert.equal(nextAttentionJob(issues)?.job.id, 1);
   assert.equal(nextAttentionJob(issues, 'check:1')?.job.id, 2);
   assert.equal(nextAttentionJob(issues, 'check:2')?.job.id, 1);
+  assert.equal(nextAttentionJob(issues, 'check:1', -1)?.job.id, 2);
+  assert.equal(nextAttentionJob(issues, 'missing', -1)?.job.id, 2);
+  assert.equal(nextAttentionJob([], undefined, -1), undefined);
   assert.equal(nextAttentionJob([]), undefined);
 });
 void test('workflow selection prioritizes reported failure, then running, without inventing job counts', () => {
