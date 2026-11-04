@@ -58,7 +58,8 @@ void app.whenReady().then(async () => {
     assert.ok(await js(`${row(120)}.querySelector('[data-blocker-key="conflicts"] button').checkVisibility()`), 'Conflict action is visible without expanding details');
     assert.ok(await js(`${row(120)}.querySelector('.stack-required-check-names').checkVisibility()`), 'Required failing checks are named in the row');
     assert.ok(await js(`!document.querySelector('.stack-merge-plan').textContent.includes('cancelled')`), 'Optional cancellation is not an action required to merge');
-    await js("document.querySelector('[aria-label=\"Open PR #122: Mark drafts ready for review\"]').click()");
+    assert.match(await js<string>("document.querySelector('.stack-merge-plan [data-step=draft] a[href$=\"/122\"]').textContent"), /#122.*Enable adaptive/);
+    await js("document.querySelector('.stack-merge-plan [data-step=draft] a[href$=\"/122\"]').click()");
     await wait("!!document.querySelector('.stack-context') && !document.querySelector('.stack-overview')");
     assert.ok(await js("document.querySelector('.pr-overview-heading').textContent.includes('Enable adaptive')"));
     await js("document.querySelector('.stack-context').open=true;document.querySelector('.stack-context-heading button').click()");
