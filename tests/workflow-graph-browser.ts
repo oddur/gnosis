@@ -84,6 +84,11 @@ void app
     };
     try {
       await loadWorkbenchPage(win, process.env.GNOSIS_WORKBENCH_URL + '?pr-summary&checks');
+      // CI desktops can prefer reduced motion; test each preference explicitly.
+      win.webContents.debugger.attach('1.3');
+      await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }],
+      });
       await wait("document.querySelectorAll('.queue-item').length===7");
       await js(
         "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()"
@@ -131,7 +136,6 @@ void app
       win.setContentSize(760, 640);
       await wait(`!!document.querySelector('.workflow-loading-elapsed')`);
       await capture('loading-compact-dark');
-      win.webContents.debugger.attach('1.3');
       await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
         features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
       });

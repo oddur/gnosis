@@ -107,6 +107,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y rpm fakeroot
       - run: npm ci
       - name: Build unsigned app and installers
+        env:
+          # Vite bundling exceeds the default 2 GB heap on macOS arm64.
+          NODE_OPTIONS: --max-old-space-size=4096
         run: npm run make
       - name: Upload unsigned preview
         uses: actions/upload-artifact@v4
