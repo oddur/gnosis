@@ -307,7 +307,7 @@ void app
       await js(
         "document.querySelector('.queue-stack-icon').closest('.queue-item').querySelector('.queue-checks').click()"
       );
-      await wait("document.querySelectorAll('.checks-pr-group').length===3");
+      await wait("document.querySelectorAll('.checks-pr-group').length===3 && document.querySelectorAll('.check-row').length===18");
       await installRoutes();
       await click('Graph');
       await wait("document.querySelectorAll('.workflow-job').length===4");

@@ -1,22 +1,22 @@
 import ELK, { type ElkNode } from 'elkjs/lib/elk.bundled.js';
 import type { WorkflowPort } from '../lib/workflow-graph';
 const elk = new ELK();
+// Binary subpixels preserve orthogonal alignment and round-trip through JSON (including -0).
+const coordinate = (value = 0) => Math.round(value * 64) / 64 || 0;
 /** Position cards and route their edges together; the renderer must preserve both. */
 export async function layoutWorkflow(
   nodes: { id: string; height?: number }[],
   edges: { id: string; source: string; target: string }[]
 ) {
-  const ports = new Map<string, WorkflowPort[]>();
+  const ports = new Map<string, Pick<WorkflowPort, 'id' | 'type'>[]>();
   for (const node of nodes) {
-    const result: WorkflowPort[] = [];
+    const result: Pick<WorkflowPort, 'id' | 'type'>[] = [];
     for (const side of ['source', 'target'] as const) {
       const connections = edges.filter((e) => e[side] === node.id);
-      connections.forEach((edge, i) =>
+      connections.forEach((edge) =>
         result.push({
           id: `${side}:${edge.id}`,
           type: side,
-          x: side === 'source' ? 244 : 0,
-          y: 16 + ((i + 1) * ((node.height ?? 112) - 32)) / (connections.length + 1),
         })
       );
     }
@@ -41,11 +41,11 @@ export async function layoutWorkflow(
       id: node.id,
       width: 244,
       height: node.height ?? 112,
-      layoutOptions: { 'elk.portConstraints': 'FIXED_POS' },
+      // Keep inputs on the left and outputs on the right, but let crossing minimization
+      // order the ports instead of pinning them to the YAML edge enumeration.
+      layoutOptions: { 'elk.portConstraints': 'FIXED_SIDE' },
       ports: (ports.get(node.id) ?? []).map((port) => ({
         id: port.id,
-        x: port.x,
-        y: port.y,
         width: 0,
         height: 0,
         layoutOptions: { 'elk.port.side': port.type === 'source' ? 'EAST' : 'WEST' },
@@ -56,14 +56,27 @@ export async function layoutWorkflow(
   return {
     nodes: (result.children ?? []).map((node) => ({
       id: node.id,
-      x: node.x ?? 0,
-      y: node.y ?? 0,
-      ports: ports.get(node.id) ?? [],
+      x: coordinate(node.x),
+      y: coordinate(node.y),
+      ports: (node.ports ?? []).map(
+        (port): WorkflowPort => ({
+          id: port.id,
+          type: port.id.startsWith('source:') ? 'source' : 'target',
+          x: coordinate((node.x ?? 0) + (port.x ?? 0)) - coordinate(node.x),
+          y: coordinate((node.y ?? 0) + (port.y ?? 0)) - coordinate(node.y),
+        })
+      ),
     })),
     edges: (result.edges ?? []).map((edge) => {
       const section = edge.sections?.[0];
       if (!section) throw Error('A workflow connection could not be routed. Use List view or retry.');
-      return { id: edge.id, points: [section.startPoint, ...(section.bendPoints ?? []), section.endPoint] };
+      return {
+        id: edge.id,
+        points: [section.startPoint, ...(section.bendPoints ?? []), section.endPoint].map((point) => ({
+          x: coordinate(point.x),
+          y: coordinate(point.y),
+        })),
+      };
     }),
   };
 }

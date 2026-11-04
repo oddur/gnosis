@@ -401,7 +401,7 @@ async function readGraph(
   const topology = createHash('sha256')
     .update(JSON.stringify([compact.nodes.map((n) => [n.id, n.height]), compact.edges.map((e) => e.id)]))
     .digest('hex');
-  const routed = await cached(client, `workflow-layout:v3:${topology}`, Infinity, () =>
+  const routed = await cached(client, `workflow-layout:v4:${topology}`, Infinity, () =>
     layoutWorkflow(compact.nodes, compact.edges)
   );
   const byId = new Map(routed.nodes.map((n) => [n.id, n]));

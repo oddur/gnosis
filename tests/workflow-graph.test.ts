@@ -1112,3 +1112,46 @@ void test('expanding inline annotations reroutes cached graph without GitHub req
   assert.equal(collapsed?.nodes.find((n) => n.id === id)?.height, 232);
   assert.equal(h.calls.length, count);
 });
+
+void test('fan-in port ordering avoids crossed final dependencies regardless of edge declaration order', async () => {
+  const nodes = ['check', 'detect', 'parallel', 'stage', 'trim', 'publish', 'result'].map((id) => ({
+    id,
+    height: id === 'result' ? 232 : 112,
+  }));
+  const edges = [
+    ['check', 'detect'],
+    ['detect', 'parallel'],
+    ['detect', 'stage'],
+    ['stage', 'trim'],
+    ['trim', 'publish'],
+    ['parallel', 'result'],
+    ['publish', 'result'],
+    ['check', 'result'],
+    ['detect', 'result'],
+  ].map(([source, target]) => ({ id: `${source}->${target}`, source, target }));
+  type Point = { x: number; y: number };
+  const crosses = (a: Point, b: Point, c: Point, d: Point) =>
+    a.x === b.x &&
+    c.y === d.y &&
+    a.x > Math.min(c.x, d.x) &&
+    a.x < Math.max(c.x, d.x) &&
+    c.y > Math.min(a.y, b.y) &&
+    c.y < Math.max(a.y, b.y);
+  for (const input of [edges, [...edges].reverse()]) {
+    const result = await layoutWorkflow(nodes, input);
+    for (let i = 0; i < result.edges.length; i++)
+      for (let j = i + 1; j < result.edges.length; j++) {
+        const left = result.edges[i],
+          right = result.edges[j];
+        for (let a = 1; a < left.points.length; a++)
+          for (let b = 1; b < right.points.length; b++)
+            assert.ok(
+              !crosses(left.points[a - 1], left.points[a], right.points[b - 1], right.points[b]) &&
+                !crosses(right.points[b - 1], right.points[b], left.points[a - 1], left.points[a]),
+              `${left.id} crosses ${right.id}`
+            );
+      }
+    assert.deepEqual(JSON.parse(JSON.stringify(result)), result, 'Coordinates survive persisted cache without drift');
+    assert.deepEqual(await layoutWorkflow(nodes, input), result, 'Ordering remains deterministic');
+  }
+});

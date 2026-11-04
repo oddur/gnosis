@@ -123,3 +123,7 @@ Implementation-session verification supplied for this refinement: 39 workflow te
 ## Failure visibility
 
 Matrix and reusable-workflow groups automatically expand when a descendant needs attention, including nested calls. These groups offer no collapse action while the failure remains. Failed, cancelled, timed-out, and action-required jobs retain individual cards and dependency edges in every grouping mode, including with completed/skipped jobs hidden.
+
+## Connection ordering
+
+Inputs remain on the left and outputs on the right, but ELK now chooses port order during crossing minimization. The renderer preserves the returned attachment positions and routes together. Coordinates use binary subpixels so routes stay orthogonal and survive JSON/SQLite round trips. The layout-cache version changes so existing workflows get new geometry from cached data. The converging pipeline-result regression has no edge crossings in either declaration order.
