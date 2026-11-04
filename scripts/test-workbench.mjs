@@ -1,4 +1,5 @@
 import { build } from 'esbuild';
+import { electronTestShim } from './electron-test-build.mjs';
 import { createHash } from 'node:crypto';
 import { createServer } from 'vite';
 import { spawn } from 'node:child_process';
@@ -8,6 +9,9 @@ import path from 'node:path';
 import process from 'node:process';
 import electron from 'electron';
 import { setTimeout, clearTimeout } from 'node:timers';
+import { requireBrowserTestEnvironment } from './browser-test-host.mjs';
+
+requireBrowserTestEnvironment();
 const prBadgePreviews = process.argv.includes('--pr-badge-previews');
 const fileFilters = process.argv.includes('--file-filters');
 const navigationHistory = process.argv.includes('--navigation-history') || process.argv.includes('--navigation-swipe');
@@ -86,6 +90,7 @@ try {
     platform: 'node',
     format: 'cjs',
     external: ['electron'],
+    plugins: [electronTestShim],
   });
   if (markdownReview) await build({ entryPoints: ['src/markdown-review-worker.ts'], outfile: path.join(dir, 'markdown-review-worker.cjs'), bundle: true, platform: 'node', format: 'cjs' });
   const env = {

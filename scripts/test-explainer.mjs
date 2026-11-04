@@ -1,4 +1,5 @@
 import { build } from 'esbuild';
+import { electronTestShim } from './electron-test-build.mjs';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -6,6 +7,9 @@ import path from 'node:path';
 import process from 'node:process';
 import electron from 'electron';
 import { setTimeout, clearTimeout } from 'node:timers';
+import { requireBrowserTestEnvironment } from './browser-test-host.mjs';
+
+requireBrowserTestEnvironment();
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-browser-test-'));
 try {
@@ -29,6 +33,7 @@ try {
     platform: 'node',
     format: 'cjs',
     external: ['electron'],
+    plugins: [electronTestShim],
   });
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
