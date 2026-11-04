@@ -3940,3 +3940,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .selection-option .subject-name { align-items:baseline; }
 .selection-option .subject-name > span { white-space:normal; overflow-wrap:anywhere; }
 .subject-name > .file-type-icon { margin-right:0.375em; align-self:center; }
+
+.workspace-icon { display:inline-block; width:14px; height:14px; flex-shrink:0; vertical-align:-0.125em; color:currentColor; }
+.pr-overview-tabs .workspace-icon, .subject-name > .workspace-icon, .agent-brief h2 > .workspace-icon { margin-right:6px; }
+.review-breadcrumbs [data-slot=breadcrumb-page] > .workspace-icon { margin-right:6px; }

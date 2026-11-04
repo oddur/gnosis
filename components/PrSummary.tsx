@@ -1,3 +1,4 @@
+import { WorkspaceIcon, workspaceTabs } from './WorkspaceIcon';
 import { SubjectIcon } from './SubjectIcon';
 import { stackMergePlan } from '../lib/stack-merge-plan';
 import { ReviewEvidence } from './ReviewEvidence';
@@ -317,8 +318,7 @@ function PrSummaryContent({
       refreshError={Object.values(statusErrors)[0]}
     />
   );
-  const tabs = [{ value: 'summary', label: 'Summary' }, { value: 'changes', label: 'Changes' },
-    { value: 'commits', label: 'Commits' }, { value: 'checks', label: 'Checks' }, { value: 'explanation', label: 'Explanation' }, { value: 'brief', label: 'Local notes' }];
+  const tabs = workspaceTabs;
   return (
     <Tabs.Root
       value={tab}
@@ -338,7 +338,7 @@ function PrSummaryContent({
                 title: item.subject.title, navigate: () => { remember(); onTabChange('summary'); },
                 pickerLabel: parentStack ? 'PR in stack' : 'PR or stack', value: item.subject.id, options: parentStack ? stackScopeChoices(parentStack).slice(1) : navigation.choices,
                 select: id => { remember(); if (parentStack) changeScope(id); else navigation.select(id); } },
-              { id: 'tab', label: tabs.find(t => t.value === tab)?.label ?? 'Summary',
+              { id: 'tab', workspaceTab: tab, label: tabs.find(t => t.value === tab)?.label ?? 'Summary',
                 pickerLabel: 'Review tab', value: tab, options: tabs,
                 select: value => { remember(); onTabChange(value as typeof tab); } },
             ]} />
@@ -428,12 +428,12 @@ function PrSummaryContent({
           <SearchableSelect label="Review scope" value={item.subject.id} triggerLabel={stacked ? 'Whole stack' : `#${first.number} · ${scopeStack.members.findIndex(m => m.url === first.url) + 1} of ${scopeStack.members.length}`} options={stackScopeChoices(scopeStack)} onValueChange={changeScope} popupBoundary="viewport" popupClassName="stack-scope-popup" />
         </nav>}
         <Tabs.List className="pr-overview-tabs" aria-label="PR overview">
-          <Tabs.Trigger value="summary">Summary</Tabs.Trigger>
-          <Tabs.Trigger value="changes" data-tour="changes">Changes</Tabs.Trigger>
-          <Tabs.Trigger value="commits">Commits</Tabs.Trigger>
-          <Tabs.Trigger value="checks">Checks{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>
-          <Tabs.Trigger value="explanation" data-tour="explanation">Explanation</Tabs.Trigger>
-          <Tabs.Trigger value="brief">Local notes{brief.comments.length > 0 && <span className="brief-tab-count">{brief.comments.length}</span>}</Tabs.Trigger>
+          <Tabs.Trigger value="summary"><WorkspaceIcon tab="summary" />Summary</Tabs.Trigger>
+          <Tabs.Trigger value="changes" data-tour="changes"><WorkspaceIcon tab="changes" />Changes</Tabs.Trigger>
+          <Tabs.Trigger value="commits"><WorkspaceIcon tab="commits" />Commits</Tabs.Trigger>
+          <Tabs.Trigger value="checks"><WorkspaceIcon tab="checks" />Checks{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>
+          <Tabs.Trigger value="explanation" data-tour="explanation"><WorkspaceIcon tab="explanation" />Explanation</Tabs.Trigger>
+          <Tabs.Trigger value="brief"><WorkspaceIcon tab="brief" />Local notes{brief.comments.length > 0 && <span className="brief-tab-count">{brief.comments.length}</span>}</Tabs.Trigger>
         </Tabs.List>
 
         </div>

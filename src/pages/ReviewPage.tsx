@@ -876,7 +876,7 @@ function ReviewPageContent({
           ...(isLocal ? [{ id: 'repository', kind: 'repository' as const, label: review.prUrl.slice(6).split('#')[0].split('/').filter(Boolean).pop() ?? 'Local repository', title: review.prUrl }] : []),
           { id: 'review', kind: isLocal ? undefined : review.snapshot?.subject.kind === 'stack' ? 'stack' : 'pr', label: review.prTitle, navigate: () => handleJumpTo(0),
             pickerLabel: 'Saved review', value: review.reviewId, options: origin?.reviews.map(r => ({ value: r.id, label: r.title })), select: onSelectReview },
-          { id: 'tab', label: 'Explanation' },
+          { id: 'tab', workspaceTab: 'explanation', label: 'Explanation' },
         ]} />
       </div></div>}
       {!embedded && <PRSummaryBanner review={review} onOpenSettings={() => setSettingsOpen(true)} />}

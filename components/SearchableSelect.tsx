@@ -1,3 +1,5 @@
+import { WorkspaceIcon } from './WorkspaceIcon';
+import type { WorkspaceTab } from '../lib/navigation-history';
 import { FileTypeIcon } from './FileTypeIcon';
 import { SubjectIcon } from './SubjectIcon';
 import { RepositoryMark } from './RepositoryAppearance';
@@ -20,6 +22,7 @@ export interface SelectionOption {
   label: string;
   kind?: 'stack' | 'pr' | 'repository' | 'commit';
   filePath?: string;
+  workspaceTab?: WorkspaceTab;
 }
 
 /** A compact selector with local search. Typing never changes the committed value. */
@@ -59,7 +62,7 @@ export function SearchableSelect({
   const identities = new Map(options.map(option => [option.value, option]));
   const identityLabel = (value: string, label: ReactNode) => {
     const option = identities.get(value);
-    const icon = option?.filePath ? <FileTypeIcon filePath={option.filePath} /> : option?.kind ? <SubjectIcon kind={option.kind} /> : null;
+    const icon = option?.workspaceTab ? <WorkspaceIcon tab={option.workspaceTab} /> : option?.filePath ? <FileTypeIcon filePath={option.filePath} /> : option?.kind ? <SubjectIcon kind={option.kind} /> : null;
     return icon && label ? <span className="subject-name">{icon}<span>{label}</span></span> : label;
   };
   const optionLabel = (value: string, label: string | undefined) => repositoryOptions && validRepository(value) ? <RepositoryMark repo={label ?? value} settings={settings[repositoryKey(value)]} /> : identityLabel(value, label);
