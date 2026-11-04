@@ -131,3 +131,10 @@ Inputs remain on the left and outputs on the right, but ELK now chooses port ord
 ## Preferred Checks view
 
 Explicit List/Graph selections are saved in user preferences and restored before mounting the application. New PR and stack visits use this choice. Targeted check/provider navigation can temporarily use List without changing it. Preference writes are ordered across component unmounts; a failed save keeps the current session choice and shows a notice.
+
+
+### Stable workflow switching
+
+Selecting a workflow keeps the existing graph visible until its cached or newly prepared projection is ready. Only the pending sidebar row shows progress. The graph and viewport switch together before paint; a bounded memory cache makes repeat visits immediate. Each visited workflow retains pan and zoom for the same topology. Superseded requests cannot replace a later selection, and older attempts cannot overwrite a newly reported attempt.
+
+Viewport fitting uses actual canvas bounds rather than delayed ResizeObserver state, preventing a second fit when toolbar wrapping changes the available height. Browser regression coverage verifies no loading flash or later transform change, saved viewport restoration, and slow-selection cancellation. The workflow browser suite, 49 workflow unit tests, TypeScript, and focused component lint pass.

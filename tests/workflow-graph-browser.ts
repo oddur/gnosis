@@ -603,12 +603,79 @@ void app
       );
       await wait(`document.querySelectorAll('.workflow-run-option').length===1`);
       assert.equal(await js(`window.workflowSidebarRequests`), sidebarRequests, 'Workflow search stays local');
-      await js(`document.querySelector('.workflow-run-option').click()`);
+      await js(`(()=>{
+        window.workflowSwitchFrames=[];window.workflowSwitchFlashes=0;window.samplingWorkflowSwitch=true;
+        window.workflowSwitchObserver=new MutationObserver(()=>{if(document.querySelector('.workflow-canvas .checks-empty'))window.workflowSwitchFlashes++});
+        window.workflowSwitchObserver.observe(document.querySelector('.workflow-canvas'),{childList:true,subtree:true});
+        const sample=()=>{if(!window.samplingWorkflowSwitch)return; if(document.querySelector('.workflow-active-run')?.textContent==='Publish Gameplay gRPC Client Packages')window.workflowSwitchFrames.push(document.querySelector('.react-flow__viewport')?.style.transform??'missing');requestAnimationFrame(sample)};requestAnimationFrame(sample);
+        document.querySelector('.workflow-run-option').click();
+      })()`);
       await wait(
         `document.querySelector('.workflow-active-run').textContent==='Publish Gameplay gRPC Client Packages'`
       );
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await js(`window.samplingWorkflowSwitch=false;window.workflowSwitchObserver.disconnect()`);
+      assert.equal(
+        await js(`window.workflowSwitchFlashes`),
+        0,
+        'Cached workflow switching must not replace the graph with a loading screen'
+      );
+      assert.equal(
+        await js(`new Set(window.workflowSwitchFrames).size`),
+        1,
+        'The new graph must appear at its final viewport, without a later recenter'
+      );
+      assert.ok(await js(`window.workflowSwitchFrames.length>0 && !window.workflowSwitchFrames.includes('missing')`));
       await js(
         `document.querySelector('[aria-label="Clear workflow search"]').click();document.documentElement.classList.add('dark')`
+      );
+      // A visited workflow restores the user's framing instead of fitting again.
+      await click('Fit entire workflow');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const savedWorkflowViewport = await js(`document.querySelector('.react-flow__viewport').style.transform`);
+      await js(
+        `[...document.querySelectorAll('.workflow-run-option')].find(n=>n.querySelector('strong').textContent==='Build and test').click()`
+      );
+      await wait(`document.querySelector('.workflow-active-run').textContent==='Build and test'`);
+      await js(
+        `[...document.querySelectorAll('.workflow-run-option')].find(n=>n.querySelector('strong').textContent==='Publish Gameplay gRPC Client Packages').click()`
+      );
+      await wait(
+        `document.querySelector('.workflow-active-run').textContent==='Publish Gameplay gRPC Client Packages'`
+      );
+      await js(`new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
+      assert.equal(await js(`document.querySelector('.react-flow__viewport').style.transform`), savedWorkflowViewport);
+      // A slow selection keeps the current graph visible; a later selection wins.
+      await js(`(()=>{
+        const read=window.electronAPI.getWorkflowGraph;
+        window.electronAPI.getWorkflowGraph=async(...args)=>{
+          if(args[0].runId===11)await new Promise(resolve=>{window.releaseWorkflowSwitch=resolve});
+          return read(...args);
+        };
+        [...document.querySelectorAll('.workflow-run-option')].find(n=>n.querySelector('strong').textContent==='Check LFS Issues').click();
+      })()`);
+      await wait(`typeof window.releaseWorkflowSwitch==='function'`);
+      assert.equal(
+        await js(`document.querySelector('.workflow-active-run').textContent`),
+        'Publish Gameplay gRPC Client Packages'
+      );
+      assert.ok(
+        await js(
+          `!!document.querySelector('.workflow-job') && !document.querySelector('.workflow-canvas .checks-empty')`
+        )
+      );
+      await js(
+        `[...document.querySelectorAll('.workflow-run-option')].find(n=>n.querySelector('strong').textContent==='Seed Test Pipeline').click()`
+      );
+      await wait(`document.querySelector('.workflow-active-run').textContent==='Seed Test Pipeline'`);
+      await js(`window.releaseWorkflowSwitch()`);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      assert.equal(await js(`document.querySelector('.workflow-active-run').textContent`), 'Seed Test Pipeline');
+      await js(
+        `[...document.querySelectorAll('.workflow-run-option')].find(n=>n.querySelector('strong').textContent==='Publish Gameplay gRPC Client Packages').click()`
+      );
+      await wait(
+        `document.querySelector('.workflow-active-run').textContent==='Publish Gameplay gRPC Client Packages'`
       );
       await capture('workflow-sidebar-dark');
       win.setContentSize(900, 700);
@@ -674,7 +741,9 @@ void app
         );
         await click('Open PR overview');
         await wait(`document.querySelectorAll('.pr-check-summary li').length===3`);
-        await js(`(()=>{const tab=[...document.querySelectorAll('[role="tab"]')].find(b=>b.textContent.startsWith('Checks'));tab.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));tab.click()})()`);
+        await js(
+          `(()=>{const tab=[...document.querySelectorAll('[role="tab"]')].find(b=>b.textContent.startsWith('Checks'));tab.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));tab.click()})()`
+        );
         await wait(
           `document.querySelector('.checks-view-switch [aria-pressed="true"]')?.textContent.trim()===${JSON.stringify(expected === 'graph' ? 'Graph' : 'List')}`
         );

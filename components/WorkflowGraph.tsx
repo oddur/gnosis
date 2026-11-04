@@ -18,7 +18,7 @@ import {
 } from '../lib/workflow-navigation';
 import { readableWorkflowViewport } from '../lib/workflow-viewport';
 import { workflowEdgePath } from '../lib/workflow-edge-path';
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   useUpdateNodeInternals,
@@ -454,16 +454,90 @@ export function WorkflowGraphView({
   const [runsState, setRuns] = useState<{ scope: string; value: WorkflowRuns }>();
   const [runId, setRunId] = useState<number | undefined>(session.runId);
   const runs = runsState?.scope === scope ? runsState.value : undefined;
+  const latestRuns = useRef(runs);
+  latestRuns.current = runs;
   const run = runs?.runs.find((r) => r.id === runId) ?? runs?.runs[0];
   const sidebarOpen = workflowsOpen ?? (!!runs && runs.runs.length > 1 && !compactSidebar);
+  const switchGeneration = useRef(0);
+  const currentScope = useRef(scope);
+  currentScope.current = scope;
+  const [pendingWorkflow, setPendingWorkflow] = useState<number>();
+  const preparedGraphs = useRef(new Map<string, Graph>());
+  const preparedKey = (id: number, attempt: number) =>
+    JSON.stringify([scope, id, attempt, grouping, showSkipped, showCompleted]);
   const chooseWorkflow = (id: number) => {
-    if (id !== run?.id) {
+    const generation = ++switchGeneration.current;
+    setPendingWorkflow(undefined);
+    if (id === run?.id) {
+      if (compactSidebar) closeWorkflows();
+      return;
+    }
+    const next = runs?.runs.find((value) => value.id === id);
+    if (!next || !member || !sha) return;
+    const input = {
+      url: member.url,
+      headSha: sha,
+      runId: id,
+      expanded: [],
+      expandedAnnotations: [],
+      grouping,
+      showSkipped,
+      showCompleted,
+    };
+    const commit = (value: Graph) => {
+      if (switchGeneration.current !== generation || currentScope.current !== scope) return;
+      if (value.run.attempt < (latestRuns.current?.runs.find((r) => r.id === id)?.attempt ?? 0)) {
+        setPendingWorkflow(undefined);
+        setGraphError('This workflow has a newer attempt. Select it again to open the latest results.');
+        return;
+      }
+      const key = `${scope}:${value.run.id}:${value.run.attempt}`;
+      // Reject an old workflow's response even before React commits the selection change.
+      latestView.current = {
+        graphKey: key,
+        viewKey: JSON.stringify([[], '', showSkipped, showCompleted, undefined, grouping]),
+        input: { ...input, focusNodeId: undefined },
+      };
+      // React Flow debounces move-end events; capture the outgoing viewport now.
+      if (flow && graph) rememberViewport(viewportKey, flow.getViewport());
       onContextChange();
+      setRuns((current) =>
+        current?.scope === scope
+          ? {
+              ...current,
+              value: { ...current.value, runs: current.value.runs.map((r) => (r.id === id ? value.run : r)) },
+            }
+          : current
+      );
       setRunId(id);
       setExpanded([]);
+      setExpandedAnnotations([]);
       setFocusNodeId(undefined);
+      setNavigationNodeId(undefined);
+      setGraph({ key, value });
+      setGraphError('');
+      setPendingWorkflow(undefined);
+      if (compactSidebar) closeWorkflows();
+    };
+    const memory = preparedGraphs.current.get(preparedKey(id, next.attempt));
+    if (memory) {
+      commit(memory);
+      return;
     }
-    if (compactSidebar) closeWorkflows();
+    setPendingWorkflow(id);
+    void (async () => {
+      const saved = await window.electronAPI.getWorkflowGraph(input, { cachedOnly: true });
+      if (switchGeneration.current !== generation || currentScope.current !== scope) return;
+      const value =
+        saved && saved.run.attempt >= next.attempt ? saved : await window.electronAPI.getWorkflowGraph(input);
+      if (!value) throw Error('Workflow data is unavailable. Try selecting it again.');
+      commit(value);
+    })().catch((error: unknown) => {
+      if (switchGeneration.current === generation && currentScope.current === scope) {
+        setPendingWorkflow(undefined);
+        setGraphError(`Could not open ${next.name}. ${error instanceof Error ? error.message : String(error)}`);
+      }
+    });
   };
   const [expanded, setExpanded] = useState<string[]>(session.expanded);
   const [expandedAnnotations, setExpandedAnnotations] = useState<string[]>(session.expandedAnnotations ?? []);
@@ -507,6 +581,14 @@ export function WorkflowGraphView({
   }
   const [showSkipped, setShowSkipped] = useState(session.showSkipped);
   const [showCompleted, setShowCompleted] = useState(session.showCompleted);
+  useEffect(() => {
+    switchGeneration.current++;
+    setPendingWorkflow(undefined);
+    return () => {
+      switchGeneration.current++;
+    };
+  }, [scope, active, grouping, showSkipped, showCompleted]);
+
   const [focusNodeId, setFocusNodeId] = useState<string | undefined>(session.focusNodeId);
   const [navigationNodeId, setNavigationNodeId] = useState<string>();
   useEffect(() => {
@@ -625,6 +707,13 @@ export function WorkflowGraphView({
       const count = value.run.jobCount;
       setJobCounts((current) => (current[key] === count ? current : { ...current, [key]: count }));
     }
+    if (!request.input.expanded.length && !request.input.expandedAnnotations.length && !request.input.focusNodeId) {
+      const cacheKey = preparedKey(value.run.id, value.run.attempt);
+      preparedGraphs.current.delete(cacheKey);
+      preparedGraphs.current.set(cacheKey, value);
+      while (preparedGraphs.current.size > 12)
+        preparedGraphs.current.delete(preparedGraphs.current.keys().next().value as string);
+    }
     setGraph((current) =>
       current?.key === key && current.value.checkedAt > value.checkedAt ? current : { key, value }
     );
@@ -724,7 +813,21 @@ export function WorkflowGraphView({
     graph && !graph.focus && anchor ? { ...graph, focus: { id: anchor.id, name: anchor.name } } : graph;
   const topology = graph?.nodes.map((n) => `${n.id}:${n.x}:${n.y}`).join('|');
   const viewportKey = `${graphKey}:${topology}:${graph?.focus?.id ?? ''}`;
+  const currentViewport = useRef({ session, key: viewportKey });
+  currentViewport.current = { session, key: viewportKey };
+  const rememberViewport = (key: string, viewport: { x: number; y: number; zoom: number }) => {
+    const target = currentViewport.current.session;
+    target.viewport = viewport;
+    target.viewportKey = key;
+    target.viewports = Object.fromEntries(
+      [
+        ...Object.entries(target.viewports ?? {}).filter(([savedKey]) => savedKey !== key),
+        [key, viewport] as const,
+      ].slice(-16)
+    );
+  };
   const fitted = useRef('');
+  const fittedGraph = useRef('');
   const canvasBounds = () => {
     const bounds = canvas.current?.getBoundingClientRect();
     const detail = canvas.current?.closest('.checks-panes')?.querySelector<HTMLElement>('.check-detail:not([hidden])');
@@ -736,18 +839,20 @@ export function WorkflowGraphView({
         : bounds.width;
     return { width, height: bounds.height };
   };
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!active || !flow || !graph || !topology) return;
-    const key = `${viewportKey}:${canvasSize}:${anchorId ?? ''}`;
+    const bounds = canvasBounds();
+    if (!bounds?.width || !bounds.height) return;
+    // ResizeObserver state can still describe the previous workflow's toolbar.
+    // Use the measured bounds so its later notification cannot fit a second time.
+    const key = `${viewportKey}:${bounds.width}x${bounds.height}:${anchorId ?? ''}`;
     if (fitted.current === key) return;
-    const timer = setTimeout(() => {
-      const bounds = canvasBounds();
-      if (!bounds?.width || !bounds.height) return;
-      const restore = !fitted.current && session.viewportKey === viewportKey && session.viewport;
-      void flow.setViewport(restore || readableWorkflowViewport(viewportGraph ?? graph, bounds.width, bounds.height));
-      fitted.current = key;
-    }, 100);
-    return () => clearTimeout(timer);
+    const restore =
+      fittedGraph.current !== graphKey &&
+      (session.viewports?.[viewportKey] ?? (session.viewportKey === viewportKey ? session.viewport : undefined));
+    fitted.current = key;
+    fittedGraph.current = graphKey;
+    void flow.setViewport(restore || readableWorkflowViewport(viewportGraph ?? graph, bounds.width, bounds.height));
   }, [flow, topology, graphKey, canvasSize, anchorId, graph?.focus?.id, active]);
   const displayed = useMemo(
     () =>
@@ -1135,6 +1240,7 @@ export function WorkflowGraphView({
           id={sidebarId}
           runs={runs?.runs ?? []}
           selected={run?.id}
+          pending={pendingWorkflow}
           snapshot={snapshot}
           counts={Object.fromEntries(
             Object.entries(jobCounts)
@@ -1247,15 +1353,20 @@ export function WorkflowGraphView({
 
             {graph?.nodes.length ? (
               <ReactFlow<JobNode>
-                key={graphKey}
+                defaultViewport={(() => {
+                  const bounds = canvasBounds();
+                  return (
+                    session.viewports?.[viewportKey] ??
+                    (bounds ? readableWorkflowViewport(viewportGraph ?? graph, bounds.width, bounds.height) : undefined)
+                  );
+                })()}
                 nodes={nodes}
                 edges={edges}
                 nodeTypes={nodeTypes}
                 edgeTypes={edgeTypes}
                 onInit={setFlow}
                 onMoveEnd={(_event, viewport) => {
-                  session.viewport = viewport;
-                  session.viewportKey = viewportKey;
+                  rememberViewport(currentViewport.current.key, viewport);
                 }}
                 nodesDraggable={false}
                 nodesConnectable={false}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { CircleAlert, CircleCheck, CircleMinus, Clock3, PanelLeftClose, Search, X } from 'lucide-react';
+import { CircleAlert, CircleCheck, CircleMinus, Clock3, LoaderCircle, PanelLeftClose, Search, X } from 'lucide-react';
 import type { WorkflowRunInfo } from '../lib/workflow-graph';
 import type { PrChecks } from '../lib/pr-checks';
 import type { CiCheck } from '../lib/types';
@@ -11,6 +11,7 @@ export function WorkflowSidebar({
   id,
   runs,
   selected,
+  pending,
   snapshot,
   counts,
   open,
@@ -21,6 +22,7 @@ export function WorkflowSidebar({
   id: string;
   runs: WorkflowRunInfo[];
   selected?: number;
+  pending?: number;
   snapshot?: PrChecks;
   counts: Record<string, number>;
   open: boolean;
@@ -123,11 +125,16 @@ export function WorkflowSidebar({
               type="button"
               key={run.id}
               className="workflow-run-option"
+              aria-busy={run.id === pending || undefined}
               aria-current={run.id === selected ? 'true' : undefined}
               onClick={() => onSelect(run.id)}
               title={`${run.name}\n${run.path}${run.event ? ` · ${run.event}` : ''}\nAttempt ${run.attempt}`}
             >
-              <Icon size={16} className={`check-${group}`} aria-hidden="true" />
+              {run.id === pending ? (
+                <LoaderCircle size={16} className="animate-spin" aria-label="Opening workflow" />
+              ) : (
+                <Icon size={16} className={`check-${group}`} aria-hidden="true" />
+              )}
               <span className="workflow-run-text">
                 <strong>{run.name}</strong>
                 {duplicate && (
