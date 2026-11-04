@@ -34,6 +34,11 @@ void app.whenReady().then(async () => {
     await js(`${row(name)}.dispatchEvent(new MouseEvent('click',{bubbles:true,...${JSON.stringify(modifiers)}}))`);
   };
   const context = async (expression: string) => {
+    // The tree closes its menu while it scrolls, and focusing a clipped row scrolls it into view.
+    // CI displays can be smaller than the window, so reveal the row and let scrolling settle first.
+    await js(`${expression}.scrollIntoView({block:'nearest'})`);
+    await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    await wait("!window.deepAll?.('[data-is-scrolling]').length");
     await js(
       `(()=>{const b=${expression};b.focus();const r=b.getBoundingClientRect();b.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,composed:true,button:2,clientX:r.x+25,clientY:r.y+10}))})()`
     );
