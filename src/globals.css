@@ -3916,6 +3916,21 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .workflow-notice p { margin-top:8px; }
 .workflow-expanded-groups { display:flex; flex-wrap:wrap; gap:4px; padding:0 12px 8px; }
 .workflow-canvas { flex:1; min-height:180px; position:relative; background:var(--background); }
+.workflow-graph-state { position:absolute; inset:0; display:grid; place-items:center; overflow:auto; padding:32px 24px; }
+.workflow-graph-state-content { width:min(100%, 380px); display:flex; flex-direction:column; align-items:center; text-align:center; color:var(--muted-foreground); gap:20px; margin:auto; }
+.workflow-graph-state-copy { display:grid; gap:8px; }
+.workflow-graph-state h2 { margin:0; color:var(--foreground); font-size:var(--type-panel-title); font-weight:600; line-height:1.4; text-wrap:balance; }
+.workflow-graph-state p { margin:0; font-size:var(--type-control); line-height:1.6; text-wrap:pretty; }
+.workflow-graph-state .workflow-graph-state-hint { font-size:var(--type-caption); }
+.workflow-loading-elapsed { font-variant-numeric:tabular-nums; }
+.workflow-loading-motif { width:160px; height:64px; flex:none; }
+.workflow-loading-track { stroke:var(--border); stroke-width:2; }
+.workflow-loading-signal { stroke:var(--primary); stroke-width:2; stroke-linecap:round; stroke-dasharray:16 84; animation:workflow-loading-flow 1.8s linear infinite; }
+.workflow-loading-motif rect { fill:var(--card); stroke:var(--border); stroke-width:1.5; }
+.workflow-loading-motif circle { fill:var(--primary); }
+@keyframes workflow-loading-flow { from { stroke-dashoffset:100; } to { stroke-dashoffset:0; } }
+@media (prefers-reduced-motion:reduce) { .workflow-loading-signal { animation:none; stroke-dasharray:none; opacity:.5; } }
+
 .workflow-canvas .react-flow { --xy-edge-stroke-default:var(--muted-foreground); --xy-edge-stroke-width-default:1.2; --xy-background-color-default:var(--background); --xy-controls-button-background-color-default:var(--card); --xy-controls-button-background-color-hover-default:var(--accent); --xy-controls-button-color-default:var(--foreground); --xy-controls-button-border-color-default:var(--border); }
 .workflow-canvas .react-flow__controls { border:1px solid var(--border); box-shadow:none; }
 .workflow-canvas .react-flow__controls-button { width:30px; height:30px; }

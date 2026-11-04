@@ -7,6 +7,7 @@ import {
 } from './ui/context-menu';
 import { WorkflowViewMenu } from './WorkflowViewMenu';
 import { WorkflowSidebar } from './WorkflowSidebar';
+import { WorkflowGraphState } from './WorkflowGraphState';
 import { WorkflowDetailNavigation } from './WorkflowDetailNavigation';
 import { createPortal } from 'react-dom';
 import {
@@ -1320,7 +1321,7 @@ export function WorkflowGraphView({
             </div>
           )}
           <div className="workflow-canvas" ref={canvas}>
-            {graph && (
+            {!!graph?.nodes.length && (
               <div className="workflow-viewport-actions" role="group" aria-label="Graph zoom">
                 <Button
                   variant="outline"
@@ -1396,15 +1397,11 @@ export function WorkflowGraphView({
                 />
               </ReactFlow>
             ) : (
-              <div className="checks-empty">
-                <Expand size={24} />
-                <h2>{loadingRuns || loadingGraph ? 'Loading workflow graph…' : 'No workflow jobs reported'}</h2>
-                <p>
-                  {loadingRuns || loadingGraph
-                    ? 'Reading jobs and their workflow definitions.'
-                    : 'GitHub Actions workflows appear here. External checks remain available in List view.'}
-                </p>
-              </div>
+              <WorkflowGraphState
+                loading={loadingRuns || loadingGraph}
+                readingRuns={!runs && loadingRuns}
+                failed={!!error}
+              />
             )}
           </div>
         </div>

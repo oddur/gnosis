@@ -110,11 +110,38 @@ void app
           window.electronAPI[method]=async(input,options)=>{
             window.graphColdCalls.push({method,options});
             if(options?.cachedOnly && cold){cold=false;return undefined;}
+            if(method==='getWorkflowGraph' && !window.releaseGraphLoading)await new Promise(resolve=>{window.releaseGraphLoading=resolve});
             return read(input,options);
           };
         }
       })()`);
       await click('Graph');
+      await wait(
+        `typeof window.releaseGraphLoading==='function' && !!document.querySelector('.workflow-loading-motif')`
+      );
+      assert.ok(
+        await js(
+          `(()=>{const state=document.querySelector('.workflow-graph-state'),copy=document.querySelector('.workflow-graph-state-content'),a=state.getBoundingClientRect(),b=copy.getBoundingClientRect();return b.left-a.left>=24 && a.right-b.right>=24 && !document.querySelector('.workflow-viewport-actions')})()`
+        )
+      );
+      assert.ok(await js(`document.querySelector('.workflow-loading-signal').getAnimations().length===1`));
+      await capture('loading-light');
+      await js(`document.documentElement.classList.add('dark')`);
+      await capture('loading-dark');
+      win.setContentSize(760, 640);
+      await wait(`!!document.querySelector('.workflow-loading-elapsed')`);
+      await capture('loading-compact-dark');
+      win.webContents.debugger.attach('1.3');
+      await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
+      });
+      assert.ok(
+        await js(`getComputedStyle(document.querySelector('.workflow-loading-signal')).animationName==='none'`)
+      );
+      await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
+      win.webContents.debugger.detach();
+      win.setContentSize(1280, 800);
+      await js(`document.documentElement.classList.remove('dark');window.releaseGraphLoading()`);
       await wait("document.querySelectorAll('.workflow-job').length===4");
       await wait("!!document.querySelector('.react-flow__edge')");
       assert.equal(

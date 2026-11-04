@@ -138,3 +138,10 @@ Explicit List/Graph selections are saved in user preferences and restored before
 Selecting a workflow keeps the existing graph visible until its cached or newly prepared projection is ready. Only the pending sidebar row shows progress. The graph and viewport switch together before paint; a bounded memory cache makes repeat visits immediate. Each visited workflow retains pan and zoom for the same topology. Superseded requests cannot replace a later selection, and older attempts cannot overwrite a newly reported attempt.
 
 Viewport fitting uses actual canvas bounds rather than delayed ResizeObserver state, preventing a second fit when toolbar wrapping changes the available height. Browser regression coverage verifies no loading flash or later transform change, saved viewport restoration, and slow-selection cancellation. The workflow browser suite, 49 workflow unit tests, TypeScript, and focused component lint pass.
+
+
+### Cold-loading presentation
+
+The empty canvas now centers a compact state with 24px minimum horizontal padding. A three-node SVG motif carries one subtle moving connection; reduced-motion mode uses a static connection. The status distinguishes finding workflow runs from loading jobs/definitions. After five seconds, a non-live elapsed timer appears beside “You can keep browsing.” Error and empty states are distinct, and zoom controls appear only when there are graph nodes.
+
+Rendered review covered light and dark 1280×800 and dark 760×640 captures (`loading-light.png`, `loading-dark.png`, `loading-compact-dark.png`). The workflow browser suite verifies spacing, animation, elapsed feedback, reduced motion, successful completion, and existing graph navigation. TypeScript and focused source lint pass.
