@@ -1,4 +1,4 @@
-import type { CheckTarget, CheckStep, PrCheck } from './pr-checks';
+import type { CheckTarget, CheckStep, PrCheck, CheckDetails } from './pr-checks';
 
 export interface WorkflowRunInfo {
   jobCount?: number;
@@ -103,4 +103,33 @@ export function workflowJobCheck(job: WorkflowJob, checks: PrCheck[]): PrCheck |
       url: job.url,
     }
   );
+}
+
+/** Match the exact Actions attempt; never put old failure output on a rerun. */
+export function workflowJobDetails(job: WorkflowJob, run: WorkflowRunInfo, detail?: CheckDetails) {
+  if (!detail || detail.headSha !== run.sha || detail.id !== job.checkId) return;
+  if (!detail.job || detail.job.id !== job.id || detail.job.runId !== run.id || detail.job.attempt !== run.attempt)
+    return;
+  return detail;
+}
+export function workflowFailureInsight(job: WorkflowJob, detail?: CheckDetails) {
+  if (job.status !== 'completed' || ['success', 'neutral', 'skipped'].includes(job.conclusion ?? '')) return;
+  const seen = new Set<string>();
+  const failures = (detail?.annotations ?? []).filter((annotation) => {
+    if (annotation.level !== 'failure') return false;
+    const key = JSON.stringify([
+      annotation.path,
+      annotation.startLine,
+      annotation.endLine,
+      annotation.title,
+      annotation.message,
+    ]);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  const step = (detail?.job?.steps ?? job.steps).find(
+    (step) => step.status === 'completed' && step.conclusion === 'failure'
+  );
+  return { annotation: failures.at(0), count: failures.length, step: step?.name };
 }

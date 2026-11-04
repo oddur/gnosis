@@ -1,3 +1,10 @@
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+} from './ui/context-menu';
 import { WorkflowViewMenu } from './WorkflowViewMenu';
 import { WorkflowSidebar } from './WorkflowSidebar';
 import { WorkflowDetailNavigation } from './WorkflowDetailNavigation';
@@ -42,11 +49,24 @@ import {
   Minus,
   Plus,
   PanelLeft,
+  RefreshCw,
+  FileText,
 } from 'lucide-react';
 import type { ReviewSubject } from '../lib/workbench';
-import { checkDuration, checkGroup, checkLabel, type PrChecks, type PrCheck, type CheckFilter } from '../lib/pr-checks';
+import {
+  checkDuration,
+  checkGroup,
+  checkLabel,
+  type PrChecks,
+  type PrCheck,
+  type CheckFilter,
+  type CheckDetails,
+  checkDetailsKey,
+} from '../lib/pr-checks';
 import {
   workflowJobCheck,
+  workflowJobDetails,
+  workflowFailureInsight,
   workflowGrouping,
   type WorkflowGrouping,
   type WorkflowGraph as Graph,
@@ -100,6 +120,10 @@ type JobNode = Node<
     emphasized: boolean;
     selected: boolean;
     now: number;
+    detail?: CheckDetails;
+    canRerun: boolean;
+    onRerun: (mode: 'all' | 'failed') => void;
+    url?: string;
     prerequisite?: string;
     outsidePrerequisite?: string;
     onRevealPrerequisite: () => void;
@@ -118,6 +142,7 @@ function JobCard({ id, data }: NodeProps<JobNode>) {
     updateNodeInternals(id);
   }, [id, portSignature, updateNodeInternals]);
   const { group, label, Icon } = outcome(item.jobs);
+  const insight = item.jobs.length === 1 ? workflowFailureInsight(item.jobs[0], data.detail) : undefined;
   const active = item.jobs.flatMap((job) => job.steps).find((step) => step.status === 'in_progress');
   const stageCounts = item.stage
     ? [
@@ -150,15 +175,27 @@ function JobCard({ id, data }: NodeProps<JobNode>) {
             : item.group !== item.name
               ? item.group
               : undefined;
-  return (
+  const card = (
     <div
       className="workflow-job"
+      style={{ height: item.height }}
+      data-failure-context={!!insight || undefined}
       data-stage={!!item.stage || undefined}
       data-collapsed={item.collapsed || undefined}
       data-dim={data.dim || undefined}
       data-emphasized={data.emphasized || undefined}
       data-selected={data.selected || undefined}
       data-outcome={group}
+      onKeyDown={(event) => {
+        if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+          event.preventDefault();
+          event.stopPropagation();
+          const bounds = event.currentTarget.getBoundingClientRect();
+          event.currentTarget.dispatchEvent(
+            new MouseEvent('contextmenu', { bubbles: true, clientX: bounds.left + 20, clientY: bounds.top + 20 })
+          );
+        }
+      }}
       onMouseEnter={() => data.onHighlight(true, 'pointer')}
       onMouseLeave={() => data.onHighlight(false, 'pointer')}
       onFocus={() => data.onHighlight(true, 'focus')}
@@ -202,6 +239,33 @@ function JobCard({ id, data }: NodeProps<JobNode>) {
             </span>
           </span>
         )}
+        {insight && (
+          <span className="workflow-failure-context">
+            {insight.step && (
+              <strong className="workflow-failed-step" title={insight.step}>
+                Step: {insight.step}
+              </strong>
+            )}
+            {insight.annotation ? (
+              <>
+                <span
+                  className="workflow-failure-message"
+                  title={[insight.annotation.title, insight.annotation.message].filter(Boolean).join('\n')}
+                >
+                  {insight.annotation.message || insight.annotation.title}
+                </span>
+                <span className="workflow-failure-link">
+                  {insight.count > 1 ? `View ${insight.count} failure annotations` : 'View failure annotation'}{' '}
+                  <ArrowRight size={12} />
+                </span>
+              </>
+            ) : (
+              <span className="workflow-failure-link">
+                View job details <ArrowRight size={12} />
+              </span>
+            )}
+          </span>
+        )}
         {!item.collapsed && secondary && !data.outsidePrerequisite && (
           <span className="workflow-job-context" title={secondary}>
             {secondary}
@@ -240,6 +304,53 @@ function JobCard({ id, data }: NodeProps<JobNode>) {
       )}
     </div>
   );
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger render={card} />
+      <ContextMenuContent onKeyDown={(event) => event.stopPropagation()} aria-label={`Actions for ${item.name}`}>
+        <ContextMenuItem
+          className="entry-menu-item"
+          onClick={data.onOpen}
+          disabled={!item.jobs.length && !item.expandable && !item.collapsed}
+        >
+          <FileText size={15} />
+          {item.expandable ? 'Expand jobs' : item.collapsed ? 'Show jobs' : 'View job details'}
+        </ContextMenuItem>
+        {!item.collapsed && (
+          <ContextMenuItem className="entry-menu-item" onClick={data.onFocusDependencies}>
+            <Network size={15} />
+            Show dependencies
+          </ContextMenuItem>
+        )}
+        {data.url && (
+          <ContextMenuItem
+            className="entry-menu-item"
+            render={<a href={data.url} target="_blank" rel="noopener noreferrer" />}
+          >
+            <ExternalLink size={15} />
+            Open on GitHub
+          </ContextMenuItem>
+        )}
+        {item.jobs.length === 1 && (
+          <>
+            <ContextMenuSeparator className="entry-menu-separator" />
+            <ContextMenuItem
+              className="entry-menu-item"
+              disabled={!data.canRerun}
+              onClick={() => data.onRerun('failed')}
+            >
+              <RefreshCw size={15} />
+              Re-run failed jobs in workflow
+            </ContextMenuItem>
+            <ContextMenuItem className="entry-menu-item" disabled={!data.canRerun} onClick={() => data.onRerun('all')}>
+              <RefreshCw size={15} />
+              Re-run entire workflow
+            </ContextMenuItem>
+          </>
+        )}
+      </ContextMenuContent>
+    </ContextMenu>
+  );
 }
 const nodeTypes = { job: JobCard };
 function RoutedEdge({ id, data, markerEnd, style }: EdgeProps) {
@@ -253,6 +364,7 @@ const edgeTypes = { routed: RoutedEdge };
 export function WorkflowGraphView({
   subject,
   values,
+  detailCache = {},
   filter,
   refreshNonce,
   selectedId,
@@ -267,6 +379,7 @@ export function WorkflowGraphView({
   onRevealContext,
 }: {
   subject: ReviewSubject;
+  detailCache?: Partial<Record<string, { value: CheckDetails; receivedAt: number }>>;
   active?: boolean;
   stateKey: string;
   detailHost?: HTMLElement | null;
@@ -646,63 +759,104 @@ export function WorkflowGraphView({
       related.add(edge.source);
       related.add(edge.target);
     }
-  const nodes: JobNode[] = displayed.map((item) => ({
-    id: item.id,
-    type: 'job',
-    position: { x: item.x, y: item.y },
-    draggable: false,
-    width: 244,
-    height: item.height ?? 112,
-    measured: { width: 244, height: item.height ?? 112 },
-    data: {
-      item,
-      now,
-      prerequisite: failureSources.get(item.id),
-      outsidePrerequisite: outsideFailures
-        .get(item.id)
-        ?.map((n) => n.name)
-        .join(', '),
-      onRevealPrerequisite: () => {
-        const first = outsideFailures.get(item.id)?.at(0);
-        if (first) revealPrerequisite(first.id);
+  const [rerunState, setRerunState] = useState<{ key: string; message: string; requested?: boolean }>();
+  const rerunPending = useRef(false);
+  const rerunScope = `${scope}:${run?.id}:${run?.attempt}`;
+  const requestRerun = async (job: WorkflowJob, mode: 'all' | 'failed') => {
+    if (!snapshot || !job.checkId || rerunPending.current || (rerunState?.key === rerunScope && rerunState.requested))
+      return;
+    const key = rerunScope;
+    rerunPending.current = true;
+    setRerunState({ key, message: 'Requesting workflow rerun…', requested: true });
+    try {
+      await window.electronAPI.rerunChecks({ url: snapshot.url, headSha: snapshot.headSha, id: job.checkId, mode });
+      setRerunState({
+        key,
+        message: 'Workflow rerun requested. Waiting for GitHub to report the new attempt.',
+        requested: true,
+      });
+    } catch (error) {
+      setRerunState({ key, message: error instanceof Error ? error.message : String(error) });
+    } finally {
+      rerunPending.current = false;
+    }
+  };
+  const nodes: JobNode[] = displayed.map((item) => {
+    const job = item.jobs.length === 1 ? item.jobs[0] : undefined;
+    const check = job && snapshot && workflowJobCheck(job, snapshot.checks);
+    const saved = check ? detailCache[checkDetailsKey({ ...snapshot, id: check.id }, check)] : undefined;
+    const prepared = check && snapshot.details?.[check.id];
+    const value = prepared && (prepared.checkedAt ?? 0) >= (saved?.receivedAt ?? 0) ? prepared : saved?.value;
+    const detail = job && run ? workflowJobDetails(job, run, value) : undefined;
+    return {
+      id: item.id,
+      type: 'job',
+      position: { x: item.x, y: item.y },
+      draggable: false,
+      width: 244,
+      height: item.height ?? 112,
+      measured: { width: 244, height: item.height ?? 112 },
+      data: {
+        item,
+        detail,
+        canRerun:
+          !!job?.checkId &&
+          job.status === 'completed' &&
+          run?.status === 'completed' &&
+          detail?.job?.canRerun !== false &&
+          !(rerunState?.key === rerunScope && rerunState.requested),
+        onRerun: (mode) => {
+          if (job) void requestRerun(job, mode);
+        },
+        url: job?.url,
+        now,
+        prerequisite: failureSources.get(item.id),
+        outsidePrerequisite: outsideFailures
+          .get(item.id)
+          ?.map((n) => n.name)
+          .join(', '),
+        onRevealPrerequisite: () => {
+          const first = outsideFailures.get(item.id)?.at(0);
+          if (first) revealPrerequisite(first.id);
+        },
+        selected: !!selectedId && item.jobs.some((j) => j.checkId === selectedId),
+        emphasized:
+          (!!highlight && related.has(item.id)) ||
+          (filter === 'attention' && !!attentionJobs([item]).length) ||
+          (filter === 'running' && item.jobs.some((job) => job.status !== 'completed')),
+        dim:
+          (filter === 'attention' && !attentionJobs([item]).length) ||
+          (filter === 'running' && !item.jobs.some((job) => job.status !== 'completed')) ||
+          (!!highlight && !related.has(item.id)),
+        onHighlight: (active, input) =>
+          (input === 'pointer' ? setHovered : setFocused)((current) =>
+            active ? item.id : current === item.id ? undefined : current
+          ),
+        onExpand: () => toggle(item.id),
+        onFocusDependencies: () => {
+          setFocusNodeId(item.id);
+          setHovered(undefined);
+          setFocused(undefined);
+        },
+        onOpen: () => {
+          setNavigationNodeId(undefined);
+          if (item.collapsed) {
+            if (item.collapsed === 'skipped') setShowSkipped(true);
+            else setShowCompleted(true);
+            return;
+          }
+          if (item.expandable) {
+            toggle(item.id);
+            return;
+          }
+          const job = item.jobs.at(0);
+          if (!job || !snapshot || !graph) return;
+          const check = workflowJobCheck(job, snapshot.checks);
+          if (check) onSelect(snapshot, check);
+        },
       },
-      selected: !!selectedId && item.jobs.some((j) => j.checkId === selectedId),
-      emphasized:
-        (!!highlight && related.has(item.id)) ||
-        (filter === 'attention' && !!attentionJobs([item]).length) ||
-        (filter === 'running' && item.jobs.some((job) => job.status !== 'completed')),
-      dim:
-        (filter === 'attention' && !attentionJobs([item]).length) ||
-        (filter === 'running' && !item.jobs.some((job) => job.status !== 'completed')) ||
-        (!!highlight && !related.has(item.id)),
-      onHighlight: (active, input) =>
-        (input === 'pointer' ? setHovered : setFocused)((current) =>
-          active ? item.id : current === item.id ? undefined : current
-        ),
-      onExpand: () => toggle(item.id),
-      onFocusDependencies: () => {
-        setFocusNodeId(item.id);
-        setHovered(undefined);
-        setFocused(undefined);
-      },
-      onOpen: () => {
-        setNavigationNodeId(undefined);
-        if (item.collapsed) {
-          if (item.collapsed === 'skipped') setShowSkipped(true);
-          else setShowCompleted(true);
-          return;
-        }
-        if (item.expandable) {
-          toggle(item.id);
-          return;
-        }
-        const job = item.jobs.at(0);
-        if (!job || !snapshot || !graph) return;
-        const check = workflowJobCheck(job, snapshot.checks);
-        if (check) onSelect(snapshot, check);
-      },
-    },
-  }));
+    };
+  });
   const issues = attentionJobs(displayed);
   const activeCount = new Set(displayed.flatMap((n) => n.jobs.filter((j) => j.status !== 'completed').map((j) => j.id)))
     .size;
@@ -918,6 +1072,11 @@ export function WorkflowGraphView({
           detailHost
         )}
       {toolbarHost ? createPortal(toolbarControls, toolbarHost) : toolbarControls}
+      {rerunState?.key === rerunScope && (
+        <p className="workflow-notice" role="status">
+          {rerunState.message}
+        </p>
+      )}
       <div className="workflow-browser">
         <WorkflowSidebar
           key={scope}

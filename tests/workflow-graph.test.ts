@@ -1,3 +1,4 @@
+import { workflowFailureInsight, workflowJobDetails } from '../lib/workflow-graph';
 import {
   attentionJobs,
   nextAttentionJob,
@@ -1035,4 +1036,52 @@ void test('workflow counts distinguish reported jobs, exact totals, and unknown 
     },
   };
   assert.deepEqual(workflowJobCount({ ...run, attempt: 2 }, snapshot), { count: 1, exact: false });
+});
+
+void test('graph failure insights use failure annotations only and reject other attempts', () => {
+  const run = {
+    id: 9,
+    attempt: 2,
+    sha: 'a'.repeat(40),
+    name: 'CI',
+    path: 'ci.yml',
+    status: 'completed',
+    conclusion: 'failure',
+    url: '',
+  };
+  const failed = job(1, 'Native Bundle / trim-ios', 'cancelled');
+  const annotation = {
+    path: '.github',
+    startLine: 1,
+    endLine: 1,
+    level: 'failure',
+    title: 'failure',
+    message: 'The job was not acquired by a runner after multiple attempts.',
+  };
+  const detail = {
+    url: 'https://github.com/o/r/pull/1',
+    headSha: run.sha,
+    id: 'check:1',
+    title: '',
+    summary: '',
+    text: '',
+    annotations: [{ ...annotation, level: 'notice' }, annotation, annotation],
+    job: { id: 1, runId: 9, attempt: 2, status: 'completed', canRerun: true, steps: [] },
+  };
+  assert.equal(workflowJobDetails(failed, run, detail), detail);
+  assert.equal(workflowJobDetails(failed, { ...run, attempt: 3 }, detail), undefined);
+  assert.equal(workflowJobDetails(failed, { ...run, sha: 'b'.repeat(40) }, detail), undefined);
+  assert.equal(workflowJobDetails({ ...failed, id: 2 }, run, detail), undefined);
+  assert.deepEqual(workflowFailureInsight(failed, detail), { annotation, count: 1, step: undefined });
+  assert.equal(workflowFailureInsight(job(1, 'Passed'), detail), undefined);
+  assert.equal(
+    workflowFailureInsight(failed, {
+      ...detail,
+      job: {
+        ...detail.job,
+        steps: [{ name: 'Build native bundle', number: 1, status: 'completed', conclusion: 'failure' }],
+      },
+    })?.step,
+    'Build native bundle'
+  );
 });

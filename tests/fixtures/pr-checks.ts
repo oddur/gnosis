@@ -54,6 +54,7 @@ export function checksMocks() {
   return {
     ...workflowMocks(snapshots),
     getPrChecks,
+    getCachedCheckDetails: (input: CheckSelection) => Promise.resolve(snapshots.get(input.url)?.details?.[input.id]),
     getCheckDetails: (input: CheckSelection): Promise<CheckDetails> =>
       Promise.resolve({
         ...input,
@@ -72,7 +73,7 @@ export function checksMocks() {
           },
         ],
         job: {
-          id: 1,
+          id: Number(input.id.replace('check:', '')),
           runId: 9,
           attempt: 1,
           status: 'completed',

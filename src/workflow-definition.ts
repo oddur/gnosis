@@ -198,5 +198,13 @@ export function assembleWorkflow(definitions: WorkflowDefinitionJob[], jobs: Wor
   for (const job of jobs)
     if (!claimed.has(job.id))
       nodes.push({ id: `unmapped:${job.id}`, name: job.name, jobs: [job], unmapped: true, x: 0, y: 0 });
+  // Reserve failure context space before annotations arrive so preloading never moves the graph.
+  for (const node of nodes)
+    if (
+      node.jobs.length === 1 &&
+      node.jobs[0].status === 'completed' &&
+      !['success', 'neutral', 'skipped'].includes(node.jobs[0].conclusion ?? '')
+    )
+      node.height = 232;
   return { nodes, edges, groups, unmatched: jobs.length - claimed.size };
 }

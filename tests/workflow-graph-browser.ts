@@ -97,6 +97,12 @@ void app
       await wait("document.querySelectorAll('.check-row').length===6");
       assert.equal(await js('window.graphWarmCalls.filter(Boolean).length'), 1, 'Opening Checks warms one workflow');
       await installRoutes();
+      await js(`(async()=>{
+        for(const snapshot of window.checksFixture.snapshots.values()){
+          const value=await window.electronAPI.getCheckDetails({...snapshot,id:'check:2'});
+          snapshot.details={'check:2':{...value,checkedAt:Date.now()}};
+        }
+      })()`);
       await js(`(()=>{
         window.graphColdCalls=[];
         for(const method of ['getWorkflowRuns','getWorkflowGraph']) {
@@ -127,6 +133,22 @@ void app
         await js(`document.querySelector('.workflow-canvas').getBoundingClientRect().height > 400`),
         'Checks should give the graph at least half the laptop height'
       );
+      await wait(`document.querySelector('.workflow-failure-message')?.textContent.includes('reconnect callback')`);
+      await capture('failure-annotation-light');
+      await js(
+        `(()=>{const card=document.querySelector('[data-id="types"] .workflow-job');const r=card.getBoundingClientRect();card.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,button:2,clientX:r.left+30,clientY:r.top+30}));})()`
+      );
+      await wait(`!!document.querySelector('[role="menu"]')`);
+      assert.ok(
+        await js(
+          `[...document.querySelectorAll('[role="menuitem"]')].some(n=>n.textContent.includes('Re-run failed jobs in workflow') && n.getAttribute('aria-disabled')==='true')`
+        )
+      );
+      await capture('job-context-menu-light');
+      await js(
+        `document.querySelector('[role="menu"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`
+      );
+      await wait(`!document.querySelector('[role="menu"]')`);
       await capture('desktop-light');
       win.setContentSize(1920, 900);
       await wait(`document.querySelector('.checks-toolbar').getBoundingClientRect().height<=56`);
@@ -310,7 +332,7 @@ void app
         jobs: [
           {
             id: 100 + i,
-            checkId: 100 + i,
+            checkId: `check:${100 + i}`,
             name: id,
             status: 'completed',
             conclusion: i === 4 ? 'skipped' : 'success',
@@ -594,6 +616,42 @@ void app
       await wait(
         `document.querySelector('.workflow-sidebar').hidden && document.activeElement?.getAttribute('aria-label')==='Show workflows'`
       );
+      win.setContentSize(1280, 800);
+      await loadWorkbenchPage(win, process.env.GNOSIS_WORKBENCH_URL + '?pr-summary&checks');
+      await waitForWorkbenchQueue(win.webContents);
+      await js(
+        "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()"
+      );
+      await click('Open PR overview');
+      await wait(`document.querySelectorAll('.pr-check-summary li').length===3`);
+      await js(`document.querySelector('.pr-check-summary li button').click()`);
+      await wait(`document.querySelectorAll('.check-row').length===6`);
+      await installRoutes();
+      await js(`(async()=>{
+        const readRuns=window.electronAPI.getWorkflowRuns,readGraph=window.electronAPI.getWorkflowGraph;
+        window.electronAPI.getWorkflowRuns=async(...args)=>{const value=await readRuns(...args);return {...value,runs:value.runs.map(r=>({...r,status:'completed',conclusion:'failure'}))}};
+        window.electronAPI.getWorkflowGraph=async(...args)=>{const value=await readGraph(...args);return {...value,run:{...value.run,status:'completed',conclusion:'failure'}}};
+        for(const snapshot of window.checksFixture.snapshots.values()){
+          const detail=await window.electronAPI.getCheckDetails({...snapshot,id:'check:2'});
+          snapshot.details={'check:2':{...detail,checkedAt:Date.now(),job:{...detail.job,canRerun:true}}};
+        }
+        document.documentElement.classList.add('dark');
+      })()`);
+      await click('Graph');
+      await wait(`document.querySelector('.workflow-failure-message')?.textContent.includes('reconnect callback')`);
+      await capture('failure-annotation-dark');
+      await js(
+        `(()=>{const card=document.querySelector('[data-id="types"] .workflow-job');const r=card.getBoundingClientRect();card.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,button:2,clientX:r.left+30,clientY:r.top+30}));})()`
+      );
+      await wait(`!!document.querySelector('[role="menu"]')`);
+      await js(
+        `[...document.querySelectorAll('[role="menuitem"]')].find(n=>n.textContent.includes('Re-run failed jobs in workflow')).click()`
+      );
+      await wait(
+        `document.body.dataset.rerunCalls==='1' && document.body.textContent.includes('Workflow rerun requested')`
+      );
+      win.setContentSize(900, 700);
+      await capture('failure-annotation-compact-dark');
       if (process.env.GNOSIS_WORKFLOW_REPLAY) {
         const saved = JSON.parse(fs.readFileSync(process.env.GNOSIS_WORKFLOW_REPLAY, 'utf8'));
         const actual = assembleWorkflow(saved.definitions, saved.jobs, []);

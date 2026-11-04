@@ -2829,6 +2829,7 @@ function publishGitHubUpdates(updates: GitHubSyncUpdate[]) {
   for (const update of updates) {
     if (update.kind === 'checks') {
       checkDetailsPreload.observe(update.value);
+      void checkDetailsPreload.tick();
       update.value = withCachedCheckDetails(getGitHubClient(cachedToken), update.value);
     } else if (update.kind === 'metadata') {
       const previous = syncMetadata.get(update.url);
@@ -3030,6 +3031,7 @@ ipcMain.handle('prepare-workflow-graph', (_event, target?: CheckTarget) => {
 });
 ipcMain.handle('workflow-runs', (_event, input: CheckTarget, options?: ChecksOptions) => withGitHubPriority(options?.background ? 'foreground' : 'interactive', () => checkAccount(client => readWorkflowRuns(client, input, options))));
 ipcMain.handle('workflow-graph', (_event, input: WorkflowGraphInput, options?: ChecksOptions) => withGitHubPriority(options?.background ? 'foreground' : 'interactive', () => checkAccount(client => readWorkflowGraph(client, input, options))));
+ipcMain.handle('cached-check-details', (_event, input: CheckSelection) => checkAccount(client => Promise.resolve(cachedCheckDetails(client, input))));
 handleInteractive('check-details', (_event, input: CheckSelection, options?: { force?: boolean }) => checkAccount(client => readCheckDetails(client, input, { force: options?.force === true })));
 handleInteractive('check-log', (_event, input: CheckSelection) => checkAccount(client => readCheckLog(client, input)));
 handleInteractive('rerun-checks', async (_event, input: CheckSelection & { mode: 'failed' | 'all' }) => {

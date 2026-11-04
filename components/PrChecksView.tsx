@@ -10,6 +10,7 @@ import {
   ExternalLink,
   List,
   RefreshCw,
+  LoaderCircle,
   Workflow,
   X,
 } from 'lucide-react';
@@ -128,7 +129,9 @@ export function PrChecksView({
     });
     return () => cancelAnimationFrame(frame);
   }, [view, graphDetails, selected?.check.id]);
-  const [detailCache, setDetailCache] = useState<Record<string, { value: CheckDetails; receivedAt: number }>>({});
+  const [detailCache, setDetailCache] = useState<Partial<Record<string, { value: CheckDetails; receivedAt: number }>>>(
+    {}
+  );
   const previousAttempt = useRef(0);
   const [error, setError] = useState('');
   const [detailsBusy, setDetailsBusy] = useState(false);
@@ -242,19 +245,22 @@ export function PrChecksView({
       return;
     }
     setDetailsBusy(true);
-    void window.electronAPI
-      .getCheckDetails(
-        { url: selected.snapshot.url, headSha: selected.snapshot.headSha, id: selected.check.id },
-        { force }
-      )
-      .then((value) => {
-        if (live && detailKey)
-          setDetailCache((current) => {
-            const next = { ...current, [detailKey]: { value, receivedAt: value.checkedAt ?? Date.now() } };
-            while (Object.keys(next).length > 64) Reflect.deleteProperty(next, Object.keys(next)[0]);
-            return next;
-          });
-      })
+    const target = { url: selected.snapshot.url, headSha: selected.snapshot.headSha, id: selected.check.id };
+    const accept = (value: CheckDetails | undefined) => {
+      if (live && detailKey && value)
+        setDetailCache((current) => {
+          if ((current[detailKey]?.receivedAt ?? 0) > (value.checkedAt ?? Date.now())) return current;
+          const next = { ...current, [detailKey]: { value, receivedAt: value.checkedAt ?? Date.now() } };
+          while (Object.keys(next).length > 64) Reflect.deleteProperty(next, Object.keys(next)[0]);
+          return next;
+        });
+    };
+    void (async () => {
+      if (!detail) accept(await window.electronAPI.getCachedCheckDetails(target));
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Cleanup can run while the cached IPC read is pending.
+      if (!live) return;
+      accept(await window.electronAPI.getCheckDetails(target, { force }));
+    })()
       .catch((e: unknown) => {
         if (live) setError(e instanceof Error ? e.message : String(e));
       })
@@ -399,6 +405,7 @@ export function PrChecksView({
                 }}
                 subject={subject}
                 values={values}
+                detailCache={detailCache}
                 filter={filter}
                 refreshNonce={graphRefresh}
                 onContextChange={() => {
@@ -583,6 +590,12 @@ export function PrChecksView({
                       check={requested ? { ...displayedCheck, status: 'queued', conclusion: null } : displayedCheck}
                     />
                     {selected.check.name}
+                    {detailsBusy && detail && (
+                      <span className="check-detail-refresh" role="status" title="Refreshing check details">
+                        <LoaderCircle size={15} className="animate-spin" aria-hidden="true" />
+                        <span className="sr-only">Refreshing check details</span>
+                      </span>
+                    )}
                   </h2>
                   <p>
                     {selected.check.provider} ·{' '}

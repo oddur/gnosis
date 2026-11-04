@@ -4100,3 +4100,12 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
   .workflow-sidebar { position:absolute; inset:0 auto 0 0; z-index:8; width:min(300px,90%); }
   .workflow-active-run { max-width:220px; }
 }
+
+/* Failure context stays within reserved card space while cached annotations arrive. */
+.workflow-job[data-failure-context] { height:232px; }
+.workflow-failure-context { display:flex; flex-direction:column; gap:6px; min-height:0; padding-top:8px; border-top:1px solid var(--border); font-size:12px; line-height:1.5; }
+.workflow-failed-step { font-weight:600; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.workflow-failure-message { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere; }
+.workflow-failure-link { display:flex; align-items:center; gap:4px; color:var(--foreground); text-decoration:underline; text-underline-offset:3px; }
+.workflow-job[data-failure-context] .workflow-job-context { margin-top:auto; }
+.check-detail-refresh { display:inline-flex; flex-shrink:0; margin-left:6px; color:var(--muted-foreground); }

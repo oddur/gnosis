@@ -237,6 +237,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getWorkflowRuns: (target: CheckTarget, options?: ChecksOptions): Promise<WorkflowRuns | undefined> => ipcRenderer.invoke('workflow-runs', target, options),
   getWorkflowGraph: (input: WorkflowGraphInput, options?: ChecksOptions): Promise<WorkflowGraph | undefined> => ipcRenderer.invoke('workflow-graph', input, options),
   getPrChecks: (target: CheckTarget, options?: ChecksOptions): Promise<PrChecks | undefined> => ipcRenderer.invoke('pr-checks', target, options),
+  getCachedCheckDetails: (target: CheckSelection): Promise<CheckDetails | undefined> => ipcRenderer.invoke('cached-check-details', target),
   getCheckDetails: (target: CheckSelection, options?: { force?: boolean }): Promise<CheckDetails> => ipcRenderer.invoke('check-details', target, options),
   getCheckLog: (target: CheckSelection): Promise<CheckLog> => ipcRenderer.invoke('check-log', target),
   rerunChecks: (target: CheckSelection & { mode: 'failed' | 'all' }): Promise<void> => ipcRenderer.invoke('rerun-checks', target),

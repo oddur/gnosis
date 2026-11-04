@@ -154,6 +154,7 @@ declare global {
       getWorkflowRuns: (target: CheckTarget, options?: ChecksOptions) => Promise<WorkflowRuns | undefined>;
       getWorkflowGraph: (input: WorkflowGraphInput, options?: ChecksOptions) => Promise<WorkflowGraph | undefined>;
       getPrChecks: (target: CheckTarget, options?: ChecksOptions) => Promise<PrChecks | undefined>;
+      getCachedCheckDetails: (target: CheckSelection) => Promise<CheckDetails | undefined>;
       getCheckDetails: (target: CheckSelection, options?: { force?: boolean }) => Promise<CheckDetails>;
       getCheckLog: (target: CheckSelection) => Promise<CheckLog>;
       rerunChecks: (target: CheckSelection & { mode: 'failed' | 'all' }) => Promise<void>;
