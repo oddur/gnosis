@@ -1,3 +1,4 @@
+import { RepositoryMark } from './RepositoryAppearance';
 import { RepositorySettingsList } from './RepositorySettingsList';
 import { RepositorySettingsEditor } from './RepositorySettingsEditor';
 import { preferencesUpdated } from '../lib/use-repository-settings';
@@ -553,7 +554,7 @@ export function SettingsDialog({
                             onMouseDown={(e) => e.preventDefault()}
                             onClick={() => addWatchedRepo(repo.fullName)}
                           >
-                            <span className="max-w-full break-words font-mono text-xs text-foreground">{repo.fullName}</span>
+                            <span className="max-w-full break-words font-mono text-xs text-foreground"><RepositoryMark repo={repo.fullName} settings={repositorySettings[repositoryKey(repo.fullName)]} /></span>
                             {repo.description && (
                               <span className="max-w-full text-xs text-muted-foreground truncate">{repo.description}</span>
                             )}

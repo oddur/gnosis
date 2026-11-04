@@ -17,7 +17,7 @@ import {
 export interface SelectionOption {
   value: string;
   label: string;
-  kind?: 'stack' | 'pr';
+  kind?: 'stack' | 'pr' | 'repository';
 }
 
 /** A compact selector with local search. Typing never changes the committed value. */

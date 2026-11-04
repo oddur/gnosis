@@ -13,7 +13,7 @@ export interface ReviewCrumb {
   id: string;
   label: string;
   title?: string;
-  kind?: 'stack' | 'pr';
+  kind?: 'stack' | 'pr' | 'repository';
   navigate?: () => void;
   pickerLabel?: string;
   value?: string;

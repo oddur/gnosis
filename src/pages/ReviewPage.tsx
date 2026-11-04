@@ -873,7 +873,7 @@ function ReviewPageContent({
         <RecentlyViewed />
         <ReviewBreadcrumbs scope="explanation" base={[
           { id: 'origin', label: origin?.name ?? 'Review queue', navigate: onBack },
-          ...(isLocal ? [{ id: 'repository', label: review.prUrl.slice(6).split('#')[0].split('/').filter(Boolean).pop() ?? 'Local repository', title: review.prUrl }] : []),
+          ...(isLocal ? [{ id: 'repository', kind: 'repository' as const, label: review.prUrl.slice(6).split('#')[0].split('/').filter(Boolean).pop() ?? 'Local repository', title: review.prUrl }] : []),
           { id: 'review', kind: isLocal ? undefined : review.snapshot?.subject.kind === 'stack' ? 'stack' : 'pr', label: review.prTitle, navigate: () => handleJumpTo(0),
             pickerLabel: 'Saved review', value: review.reviewId, options: origin?.reviews.map(r => ({ value: r.id, label: r.title })), select: onSelectReview },
           { id: 'tab', label: 'Explanation' },
