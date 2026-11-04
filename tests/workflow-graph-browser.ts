@@ -107,8 +107,34 @@ void app
         'Filters preserve dependency context'
       );
       await click('All checks');
+      await js(
+        `(()=>{const read=window.electronAPI.getWorkflowGraph;window.graphNetworkCalls=0;window.electronAPI.getWorkflowGraph=(input,options)=>{if(!options?.cachedOnly)window.graphNetworkCalls++;return read(input,options);};})()`
+      );
       await js('document.querySelector(\'[aria-label="Expand Platform tests"]\').click()');
       await wait("document.querySelectorAll('.workflow-job').length===5");
+      assert.equal(await js('window.graphNetworkCalls'), 0, 'Expanding must not revalidate GitHub data');
+      await js(
+        `(()=>{window.beforeRefreshRace=window.electronAPI.getWorkflowGraph;window.releaseGraphRefresh=[];window.freshGraphDelivered=false;window.electronAPI.getWorkflowGraph=async(input,options)=>{if(!options?.cachedOnly){await new Promise(resolve=>window.releaseGraphRefresh.push(resolve));window.freshGraphDelivered=true;}const graph=await window.beforeRefreshRace(input,options);return window.freshGraphDelivered?{...graph,nodes:graph.nodes.map((node,i)=>i===0?{...node,name:'Refreshed lint'}:node)}:graph;};document.querySelector('[aria-label="Refresh checks"]').click();})()`
+      );
+      await wait('window.releaseGraphRefresh.length > 0');
+      await click('Collapse Platform tests');
+      await wait("document.querySelectorAll('.workflow-job').length===4");
+      await js('window.releaseGraphRefresh.splice(0).forEach(release=>release())');
+      await wait("document.querySelector('.workflow-job-name')?.textContent==='Refreshed lint'");
+      assert.equal(
+        await js("document.querySelectorAll('.workflow-job').length"),
+        4,
+        'Refresh must retain the current expansion state'
+      );
+      await js(
+        'window.electronAPI.getWorkflowGraph=window.beforeRefreshRace;document.querySelector(\'[aria-label="Refresh checks"]\').click()'
+      );
+      await wait(
+        "document.querySelector('.workflow-job-name')?.textContent!=='Refreshed lint' && !document.querySelector('.workflow-updating').textContent.includes('Updating')"
+      );
+      await js('document.querySelector(\'[aria-label="Expand Platform tests"]\').click()');
+      await wait("document.querySelectorAll('.workflow-job').length===5");
+
       await js('document.querySelector(\'.workflow-job-open[aria-label="Tests / macOS: Failed"]\').click()');
       await wait("document.querySelector('.check-detail:not([hidden]) h2')?.textContent.includes('Tests / macOS')");
       await wait("!!document.querySelector('.check-steps')");
@@ -339,6 +365,7 @@ void app
         'Job text stays at readable size'
       );
       await capture('stages-dark');
+      await js('window.graphNetworkCalls=0');
       await js("document.querySelector('.workflow-job[data-stage] .workflow-job-open').click()");
       await wait("document.querySelectorAll('.workflow-job').length===23");
       await wait("document.querySelector('.react-flow__viewport').style.transform.includes('scale(1)')");
@@ -359,6 +386,7 @@ void app
       await wait("document.querySelectorAll('.workflow-job').length===23");
       await js("document.querySelector('.workflow-expanded-groups button').click()");
       await wait("document.querySelectorAll('.workflow-job').length===6");
+      assert.equal(await js('window.graphNetworkCalls'), 0, 'Stage and dependency navigation must stay local');
       if (process.env.GNOSIS_WORKFLOW_REPLAY) {
         const saved = JSON.parse(fs.readFileSync(process.env.GNOSIS_WORKFLOW_REPLAY, 'utf8'));
         const actual = assembleWorkflow(saved.definitions, saved.jobs, []);

@@ -141,6 +141,8 @@ function harness() {
     pull_requests: [{ number: 1 }],
     referenced_workflows: [] as { path: string; sha: string }[],
   };
+  let files: Record<string, string> = {};
+  let stepText = '';
   let workflow = source,
     failSource = false,
     pause: Promise<void> | undefined;
@@ -163,18 +165,20 @@ function harness() {
             started_at: j.startedAt,
             completed_at: j.completedAt,
             html_url: '',
+            steps: stepText ? [{ number: 1, name: stepText, status: 'completed', conclusion: 'success' }] : [],
           })),
         };
       else if (url.pathname.includes('/contents/')) {
+        const body = files[decodeURIComponent(url.pathname.split('/contents/')[1])] ?? workflow;
         if (failSource) {
           status = 404;
           data = { message: 'Not found' };
         } else
           data = {
             type: 'file',
-            size: workflow.length,
+            size: body.length,
             encoding: 'base64',
-            content: Buffer.from(workflow).toString('base64'),
+            content: Buffer.from(body).toString('base64'),
           };
       } else throw Error(address);
       const response = new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
@@ -188,6 +192,15 @@ function harness() {
     calls,
     run,
     pool,
+    files: (value: Record<string, string>) => {
+      files = value;
+    },
+    stepText: (value: string) => {
+      stepText = value;
+    },
+    recover: () => {
+      failSource = false;
+    },
     source: (s: string) => {
       workflow = s;
     },
@@ -570,4 +583,116 @@ void test('focus keeps upstream jobs visible on axes that fit, even when another
   assert.ok(view.x + graph.nodes[0].x >= 0);
   assert.ok(view.x + graph.nodes[2].x + 244 <= 1280);
   assert.equal(view.zoom, 1);
+});
+
+void test('repeated reusable calls count distinct files, reuse parses, and isolate caller inputs', async () => {
+  const h = harness();
+  h.files({
+    '.github/workflows/ci.yml':
+      'jobs:\n' +
+      Array.from(
+        { length: 30 },
+        (_, i) => `  call${i}:\n    uses: ./.github/workflows/child.yml\n    with:\n      label: Job${i}\n`
+      ).join(''),
+    '.github/workflows/child.yml': 'jobs:\n  work:\n    name: ${{ inputs.label }}\n',
+  });
+  const graph = await readWorkflowGraph(h.client, input);
+  assert.ok(graph);
+  assert.ok(!graph.warnings.some((w) => /limit|nesting|distinct/.test(w)), graph.warnings.join('\n'));
+  assert.equal(h.calls.filter((c) => c.includes('/contents/')).length, 2);
+  const expanded = await readWorkflowGraph(h.client, { ...input, expanded: ['call0', 'call29'] }, { cachedOnly: true });
+  assert.ok(expanded?.nodes.some((n) => n.name === 'Job0'));
+  assert.ok(expanded?.nodes.some((n) => n.name === 'Job29'));
+  const parsed = githubCacheFor(h.client)!.values(
+    (v): v is { value: unknown[] } => !!v && typeof v === 'object' && 'value' in v && Array.isArray(v.value)
+  );
+  assert.ok(parsed.length >= 2);
+  assert.ok(
+    parsed.every((p) => p.value.every((n) => !n || typeof n !== 'object' || !('children' in n))),
+    'Resolution must not mutate cached parses'
+  );
+  const before = h.calls.length;
+  await readWorkflowGraph(h.client, input, { force: true });
+  assert.equal(h.calls.slice(before).filter((c) => c.includes('/contents/')).length, 0);
+});
+void test('permanent definition warnings do not refetch completed jobs while transient failures recover', async () => {
+  const h = harness();
+  h.files({ '.github/workflows/ci.yml': 'jobs:\n  call:\n    uses: ./.github/workflows/ci.yml\n' });
+  const first = await readWorkflowGraph(h.client, input);
+  assert.ok(first?.warnings.some((w) => w.includes('cycle')));
+  const now = Date.now;
+  try {
+    Date.now = () => now() + 30_000;
+    await readWorkflowGraph(h.client, input);
+    assert.equal(h.calls.filter((c) => c.includes('/jobs')).length, 1);
+  } finally {
+    Date.now = now;
+  }
+  const transient = harness();
+  transient.fail();
+  assert.ok((await readWorkflowGraph(transient.client, input))?.warnings.length);
+  transient.recover();
+  try {
+    Date.now = () => now() + 30_000;
+    assert.equal((await readWorkflowGraph(transient.client, input))?.warnings.length, 0);
+  } finally {
+    Date.now = now;
+  }
+});
+void test('oversized workflow data survives restart in the configurable disk cache', async () => {
+  const fs = await import('node:fs/promises'),
+    os = await import('node:os'),
+    path = await import('node:path');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-workflow-large-'));
+  const first = harness(),
+    second = harness();
+  first.stepText('step'.repeat(90_000));
+  try {
+    await first.pool.setStorage(path.join(dir, 'budget.json'));
+    const before = await readWorkflowGraph(first.client, input);
+    await first.pool.closeStorage();
+    await second.pool.setStorage(path.join(dir, 'budget.json'));
+    assert.deepEqual(await readWorkflowGraph(second.client, input, { cachedOnly: true }), before);
+    assert.equal(second.calls.length, 0);
+  } finally {
+    await first.pool.closeStorage();
+    await second.pool.closeStorage();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+void test('distinct-file limit does not block reuse of an already resolved source', async () => {
+  const h = harness();
+  const files: Record<string, string> = {
+    '.github/workflows/ci.yml':
+      'jobs:\n' +
+      Array.from({ length: 50 }, (_, i) => `  call${i}:\n    uses: ./.github/workflows/child${i}.yml\n`).join('') +
+      '  again:\n    uses: ./.github/workflows/child0.yml\n',
+  };
+  for (let i = 0; i < 50; i++) files[`.github/workflows/child${i}.yml`] = 'jobs:\n  leaf: {}\n';
+  h.files(files);
+  const graph = await readWorkflowGraph(h.client, input);
+  assert.equal(graph?.warnings.filter((w) => w.includes('distinct source files')).length, 1);
+  assert.ok(!graph?.warnings.some((w) => w.startsWith('again:')));
+  assert.equal(h.calls.filter((c) => c.includes('/contents/')).length, 50);
+});
+void test('resolved definitions honor changed reusable-workflow pins at the same caller revision', async () => {
+  const h = harness(),
+    reference = 'external/shared/.github/workflows/reuse.yml@main';
+  const files = {
+    '.github/workflows/ci.yml': `jobs:\n  call:\n    uses: ${reference}\n`,
+    '.github/workflows/reuse.yml': 'jobs:\n  leaf:\n    name: First\n',
+  };
+  h.files(files);
+  h.run.referenced_workflows = [{ path: reference, sha: 'b'.repeat(40) }];
+  assert.ok(
+    (await readWorkflowGraph(h.client, { ...input, expanded: ['call'] }))?.nodes.some((n) => n.name === 'First')
+  );
+  h.run.referenced_workflows = [{ path: reference, sha: 'c'.repeat(40) }];
+  h.files({ ...files, '.github/workflows/reuse.yml': 'jobs:\n  leaf:\n    name: Second\n' });
+  assert.ok(
+    (await readWorkflowGraph(h.client, { ...input, expanded: ['call'] }, { force: true }))?.nodes.some(
+      (n) => n.name === 'Second'
+    )
+  );
 });

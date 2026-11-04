@@ -24,12 +24,20 @@ interface Saved<T> {
   value: T;
   at: number;
 }
-async function cached<T>(client: Octokit, key: string, ttl: number, read: () => Promise<T>, force = false): Promise<T> {
+async function cached<T>(
+  client: Octokit,
+  key: string,
+  ttl: number,
+  read: () => Promise<T>,
+  force = false,
+  storeValue: (value: T) => boolean = () => true
+): Promise<T> {
   const cache = githubCacheFor(client);
-  const saved = cache?.get(
-    key,
-    (v): v is Saved<T> => !!v && typeof v === 'object' && 'value' in v && 'at' in v && typeof v.at === 'number'
-  );
+  const validate = (v: unknown): v is Saved<T> =>
+    !!v && typeof v === 'object' && 'value' in v && 'at' in v && typeof v.at === 'number';
+  const memory = cache?.get(key, validate);
+  const disk = memory ? undefined : await cache?.getPrepared(key, validate);
+  const saved = memory ?? (disk ? { value: disk, revalidate: false } : undefined);
   if (!force && saved && !saved.revalidate && Date.now() - saved.value.at < ttl) return saved.value.value;
   let work = pending.get(client);
   if (!work) {
@@ -42,7 +50,7 @@ async function cached<T>(client: Octokit, key: string, ttl: number, read: () => 
   const generation = scope?.client === client ? scope.generation : cache?.version();
   const job = createGitHubWork(async () => {
     const value = await read();
-    if (cache?.version() === generation) cache?.set(key, { value, at: Date.now() });
+    if (cache?.version() === generation && storeValue(value)) cache?.set(key, { value, at: Date.now() });
     return value;
   });
   work.set(key, job);
@@ -119,6 +127,12 @@ interface Reference {
   sha: string;
   ref?: string;
 }
+class DefinitionError extends Error {}
+interface DefinitionBudget {
+  files: Set<string>;
+  calls: number;
+  retryable: boolean;
+}
 async function definitions(
   client: Octokit,
   owner: string,
@@ -129,26 +143,42 @@ async function definitions(
   warnings: string[],
   inputs: Record<string, string | number | boolean> = {},
   chain: string[] = [],
-  budget = { files: 0 }
+  budget: DefinitionBudget = { files: new Set(), calls: 0, retryable: false }
 ): Promise<WorkflowDefinitionJob[]> {
   if (!/^[a-f\d]{40}$/i.test(sha) || !/^\.github\/workflows\/[^/]+\.ya?ml$/.test(path))
-    throw Error('Workflow source path or revision is unavailable.');
+    throw new DefinitionError('Workflow source path or revision is unavailable.');
   const identity = `${owner}/${repo}/${path}@${sha}`;
-  if (chain.includes(identity) || chain.length >= 5 || budget.files++ >= 20)
-    throw Error('Nested workflow limit reached.');
-  const source = await cached(client, `workflow-source:v1:${identity}`, Infinity, async () => {
-    const { data } = await client.repos.getContent({ owner, repo, path, ref: sha });
-    if (
-      Array.isArray(data) ||
-      data.type !== 'file' ||
-      !('content' in data) ||
-      data.encoding !== 'base64' ||
-      data.size > 512_000
-    )
-      throw Error('Workflow source is unavailable or too large.');
-    return Buffer.from(data.content, 'base64').toString('utf8');
+  if (chain.includes(identity)) throw new DefinitionError('Reusable workflow cycle detected.');
+  if (chain.length >= 10) throw new DefinitionError('Reusable workflows exceed ten nesting levels.');
+  if (++budget.calls > 500) throw new DefinitionError('Workflow expands to more than 500 reusable calls.');
+  if (!budget.files.has(identity)) {
+    if (budget.files.size >= 50) throw new DefinitionError('Workflow uses more than 50 distinct source files.');
+    budget.files.add(identity);
+  }
+  const inputKey = createHash('sha256')
+    .update(JSON.stringify(Object.entries(inputs).sort(([a], [b]) => a.localeCompare(b))))
+    .digest('hex');
+  const parsed = await cached(client, `workflow-parsed:v1:${identity}:${inputKey}`, Infinity, async () => {
+    const source = await cached(client, `workflow-source:v1:${identity}`, Infinity, async () => {
+      const { data } = await client.repos.getContent({ owner, repo, path, ref: sha });
+      if (
+        Array.isArray(data) ||
+        data.type !== 'file' ||
+        !('content' in data) ||
+        data.encoding !== 'base64' ||
+        data.size > 512_000
+      )
+        throw new DefinitionError('Workflow source is unavailable or too large.');
+      return Buffer.from(data.content, 'base64').toString('utf8');
+    });
+    try {
+      return parseWorkflow(source, inputs);
+    } catch (error) {
+      throw new DefinitionError(error instanceof Error ? error.message : 'Workflow YAML could not be parsed.');
+    }
   });
-  const jobs = parseWorkflow(source, inputs);
+  // Recursive resolution must never mutate the cached parse (inputs and callers differ).
+  const jobs = structuredClone(parsed);
   for (const job of jobs)
     if (job.uses) {
       try {
@@ -159,13 +189,13 @@ async function definitions(
         if (job.uses.startsWith('./')) childPath = job.uses.slice(2);
         else {
           const match = /^([\w.-]+)\/([\w.-]+)\/(\.github\/workflows\/[^/]+\.ya?ml)@(.+)$/.exec(job.uses);
-          if (!match) throw Error('Reusable workflow reference is not supported.');
+          if (!match) throw new DefinitionError('Reusable workflow reference is not supported.');
           [, childOwner, childRepo, childPath] = match;
           const reference = references.filter(
             (ref) => ref.path === job.uses || ref.path.startsWith(`${childOwner}/${childRepo}/${childPath}@`)
           );
           childSha = /^[a-f\d]{40}$/i.test(match[4]) ? match[4] : reference.length === 1 ? reference[0].sha : '';
-          if (!childSha) throw Error('The run did not report an exact reusable-workflow revision.');
+          if (!childSha) throw new DefinitionError('The run did not report an exact reusable-workflow revision.');
         }
         job.children = await definitions(
           client,
@@ -180,15 +210,48 @@ async function definitions(
           budget
         );
       } catch (error) {
+        if (!(error instanceof DefinitionError)) budget.retryable = true;
         warnings.push(`${job.name}: ${error instanceof Error ? error.message : 'Reusable workflow unavailable'}`);
       }
     }
   return jobs;
 }
+async function resolvedDefinitions(
+  client: Octokit,
+  owner: string,
+  repo: string,
+  run: WorkflowRunInfo,
+  references: Reference[]
+) {
+  const refs = references.map((r) => [r.path, r.sha]).sort(([a], [b]) => a.localeCompare(b));
+  const fingerprint = createHash('sha256').update(JSON.stringify(refs)).digest('hex');
+  return cached(
+    client,
+    `workflow-definitions:v2:${owner}/${repo}/${run.path}@${run.sha}:${fingerprint}`,
+    Infinity,
+    async () => {
+      const warnings: string[] = [];
+      const budget: DefinitionBudget = { files: new Set(), calls: 0, retryable: false };
+      let jobs: WorkflowDefinitionJob[] = [];
+      try {
+        jobs = await definitions(client, owner, repo, run.path, run.sha, references, warnings, {}, [], budget);
+      } catch (error) {
+        budget.retryable = !(error instanceof DefinitionError);
+        warnings.push(
+          `Dependencies unavailable: ${error instanceof Error ? error.message : 'Could not read workflow source'}`
+        );
+      }
+      return { jobs, warnings, retryable: budget.retryable };
+    },
+    false,
+    (result) => !result.retryable
+  );
+}
 interface RunData {
   run: WorkflowRunInfo;
   jobs: WorkflowJob[];
   definitions: WorkflowDefinitionJob[];
+  definitionRetryable?: boolean;
   warnings: string[];
   checkedAt: number;
   definitionUrl?: string;
@@ -203,12 +266,13 @@ async function readGraph(
   const expanded = [...new Set((input.expanded ?? []).filter((v) => typeof v === 'string' && v.length < 500))]
     .slice(0, 100)
     .sort();
-  const dataKey = `workflow-data:v1:${input.url}@${input.headSha}:${input.runId}`;
+  const dataKey = `workflow-data:v2:${input.url}@${input.headSha}:${input.runId}`;
   let data: RunData | undefined;
-  const saved = githubCacheFor(client)?.get(
-    dataKey,
-    (v): v is Saved<RunData> => !!v && typeof v === 'object' && 'value' in v
-  );
+  const runCache = githubCacheFor(client);
+  const validate = (v: unknown): v is Saved<RunData> => !!v && typeof v === 'object' && 'value' in v;
+  const memory = runCache?.get(dataKey, validate);
+  const disk = memory ? undefined : await runCache?.getPrepared(dataKey, validate);
+  const saved = memory ?? (disk ? { value: disk } : undefined);
   if (options.cachedOnly) data = saved?.value.value;
   else {
     const runs = await readWorkflowRuns(client, input);
@@ -217,7 +281,7 @@ async function readGraph(
       current?.status === 'completed' &&
       saved?.value.value.run.status === 'completed' &&
       current.attempt === saved.value.value.run.attempt &&
-      !saved.value.value.warnings.length;
+      !saved.value.value.definitionRetryable;
     data = await cached(
       client,
       dataKey,
@@ -261,27 +325,13 @@ async function readGraph(
           if (page === 5) warnings.push('Showing the first 500 jobs. Open GitHub for the full run.');
         }
         const runInfo = info(run);
-        let defs: WorkflowDefinitionJob[] = [];
-        try {
-          defs = await definitions(
-            client,
-            owner,
-            repo,
-            runInfo.path,
-            run.head_sha,
-            run.referenced_workflows ?? [],
-            warnings
-          );
-        } catch (error) {
-          warnings.push(
-            `Dependencies unavailable: ${error instanceof Error ? error.message : 'Could not read workflow source'}`
-          );
-        }
+        const resolved = await resolvedDefinitions(client, owner, repo, runInfo, run.referenced_workflows ?? []);
         return {
           run: runInfo,
           jobs,
-          definitions: defs,
-          warnings,
+          definitions: resolved.jobs,
+          definitionRetryable: resolved.retryable,
+          warnings: [...warnings, ...resolved.warnings],
           checkedAt: Date.now(),
           definitionUrl: `https://github.com/${owner}/${repo}/blob/${run.head_sha}/${runInfo.path}`,
         };

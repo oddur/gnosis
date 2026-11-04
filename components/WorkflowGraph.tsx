@@ -294,45 +294,101 @@ export function WorkflowGraphView({
       live = false;
     };
   }, [scope, observedAt, refreshNonce, retry]);
+  const viewKey = JSON.stringify([expansions, showSkipped, showCompleted, focusNodeId]);
+  const requestedView = {
+    graphKey,
+    viewKey,
+    input: {
+      url: member?.url ?? '',
+      headSha: sha ?? '',
+      runId: run?.id ?? 0,
+      expanded,
+      showSkipped,
+      showCompleted,
+      focusNodeId,
+    },
+  };
+  const latestView = useRef(requestedView);
+  latestView.current = requestedView;
+  const applyGraph = (value: Graph | undefined, request: typeof requestedView) => {
+    if (
+      !value ||
+      !run ||
+      value.run.attempt < run.attempt ||
+      request.graphKey !== latestView.current.graphKey ||
+      request.viewKey !== latestView.current.viewKey
+    )
+      return;
+    if (value.run.attempt > run.attempt)
+      setRuns((current) =>
+        current?.scope === scope
+          ? {
+              ...current,
+              value: { ...current.value, runs: current.value.runs.map((r) => (r.id === value.run.id ? value.run : r)) },
+            }
+          : current
+      );
+    const key = `${scope}:${value.run.id}:${value.run.attempt}`;
+    setGraph((current) =>
+      current?.key === key && current.value.checkedAt > value.checkedAt ? current : { key, value }
+    );
+  };
+  // Network refresh follows check freshness and explicit refresh, never canvas navigation.
   useEffect(() => {
     if (!member || !sha || !run) return;
-    let live = true;
-    const input = { url: member.url, headSha: sha, runId: run.id, expanded, showSkipped, showCompleted, focusNodeId };
+    const lifecycle = new AbortController();
+    const isLive = () => !lifecycle.signal.aborted;
+    const request = latestView.current;
     const force = requests.current.graph !== refreshNonce || requests.current.graphRetry !== retry;
     requests.current.graphRetry = retry;
     requests.current.graph = refreshNonce;
     setLoadingGraph(true);
     setGraphError('');
-    const apply = (value?: Graph) => {
-      if (!live || !value || value.run.attempt < run.attempt) return;
-      if (value.run.attempt > run.attempt)
-        setRuns((current) =>
-          current?.scope === scope
-            ? {
-                ...current,
-                value: {
-                  ...current.value,
-                  runs: current.value.runs.map((r) => (r.id === value.run.id ? value.run : r)),
-                },
-              }
-            : current
-        );
-      setGraph({ key: `${scope}:${value.run.id}:${value.run.attempt}`, value });
-    };
     void (async () => {
-      apply(await window.electronAPI.getWorkflowGraph(input, { cachedOnly: true }));
-      apply(await window.electronAPI.getWorkflowGraph(input, { force, background: !force }));
+      const saved = await window.electronAPI.getWorkflowGraph(request.input, { cachedOnly: true });
+      if (isLive()) applyGraph(saved, request);
+      const fresh = await window.electronAPI.getWorkflowGraph(request.input, { force, background: !force });
+      if (!isLive()) return;
+      const current = latestView.current;
+      if (request.viewKey === current.viewKey) applyGraph(fresh, request);
+      else {
+        // Navigation during refresh must get the fresh results in the currently requested view.
+        const projected = await window.electronAPI.getWorkflowGraph(current.input, { cachedOnly: true });
+        if (isLive()) applyGraph(projected, current);
+      }
     })()
       .catch((e: unknown) => {
-        if (live) setGraphError(e instanceof Error ? e.message : String(e));
+        if (isLive()) setGraphError(e instanceof Error ? e.message : String(e));
       })
       .finally(() => {
-        if (live) setLoadingGraph(false);
+        if (isLive()) setLoadingGraph(false);
+      });
+    return () => {
+      lifecycle.abort();
+    };
+  }, [graphKey, runs?.checkedAt, refreshNonce, retry]);
+  const previousProjection = useRef(requestedView);
+  useEffect(() => {
+    const previous = previousProjection.current;
+    const request = latestView.current;
+    previousProjection.current = request;
+    if (previous.graphKey !== request.graphKey || previous.viewKey === request.viewKey || !run) return;
+    let live = true;
+    setGraphError('');
+    void window.electronAPI
+      .getWorkflowGraph(request.input, { cachedOnly: true })
+      .then((value) => {
+        if (!live) return;
+        if (value) applyGraph(value, request);
+        else setGraphError('Saved workflow data is unavailable. Retry workflow to load it again.');
+      })
+      .catch((e: unknown) => {
+        if (live) setGraphError(e instanceof Error ? e.message : String(e));
       });
     return () => {
       live = false;
     };
-  }, [graphKey, expansions, showSkipped, showCompleted, focusNodeId, runs?.checkedAt, refreshNonce, retry]);
+  }, [graphKey, viewKey]);
   const [now, setNow] = useState(Date.now);
   const running = graph?.nodes.some((n) => n.jobs.some((j) => j.status === 'in_progress'));
   useEffect(() => {
