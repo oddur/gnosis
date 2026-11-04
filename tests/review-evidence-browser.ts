@@ -66,7 +66,7 @@ void app.whenReady().then(async () => {
       true
     );
     await capture('collapsed-light');
-    await js(`(()=>{const button=document.querySelectorAll('.review-evidence-summary button')[2];button.focus();button.click()})()`);
+    await js(`(()=>{const button=document.querySelectorAll('.review-evidence-summary button')[1];button.focus();button.click()})()`);
     await wait(`document.activeElement===document.querySelector('.review-evidence h2')`);
     await wait("[...window.evidenceSubscriptions.values()].some(v=>v.kind==='discussion')");
     await js(

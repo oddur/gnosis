@@ -68,3 +68,9 @@ export function receiveDiscussion(url: string, data: GitHubReviewThreads) {
   pending.delete(url);
   publish(url, data);
 }
+
+/** Disk hydration is older evidence: display it immediately, but let an in-flight refresh win. */
+export function hydrateDiscussion(url: string, data: GitHubReviewThreads) {
+  const current = values.get(url);
+  if (!current || (data.checkedAt ?? 0) > (current.checkedAt ?? 0)) publish(url, data);
+}

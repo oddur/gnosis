@@ -3,13 +3,26 @@ import { githubCacheFor } from '../lib/github-client';
 import { isCacheRecord } from '../lib/github-cache';
 import type {
   GitHubReviewComment,
+  PrFeedback,
+  FeedbackReview,
+  FeedbackAction,
   GitHubReviewThread,
   GitHubReviewThreads,
   ReviewThreadAction,
   ReviewCommentAction,
 } from '../lib/review-threads';
 
-const commentFields = 'id body createdAt url viewerCanUpdate viewerCanDelete author { login avatarUrl }';
+const bodyFields = 'id body createdAt updatedAt url author { login avatarUrl }';
+const commentFields = `${bodyFields} viewerCanUpdate viewerCanDelete diffHunk pullRequestReview { id }`;
+const reviewFields = `${bodyFields} state submittedAt`;
+type ReviewRequest = { requestedReviewer: { login?: string } | null };
+interface FeedbackPage {
+  comments?: Page<GitHubReviewComment>;
+  reviews?: Page<FeedbackReview>;
+  reviewRequests?: Page<ReviewRequest>;
+  viewerCanUpdate?: boolean;
+  state?: string;
+}
 const pageFields = 'pageInfo { hasNextPage endCursor }';
 const threadFields = `id path line startLine diffSide isResolved isOutdated viewerCanResolve viewerCanUnresolve comments(first:20) { nodes { ${commentFields} } ${pageFields} }`;
 interface Page<T> {
@@ -17,7 +30,7 @@ interface Page<T> {
   pageInfo: { hasNextPage: boolean; endCursor: string | null };
 }
 type ThreadNode = Omit<GitHubReviewThread, 'comments'> & { comments: Page<GitHubReviewComment> };
-interface Pull {
+interface Pull extends FeedbackPage {
   headRefOid: string;
   baseRefOid: string;
   reviewThreads: Page<ThreadNode>;
@@ -102,15 +115,46 @@ export function createReviewThreadService(now = Date.now) {
     const variables = parseUrl(prUrl);
     let cursor: string | null = null;
     const threads: GitHubReviewThread[] = [];
+    let feedback: PrFeedback | undefined;
     let revision: Pick<GitHubReviewThreads, 'headSha' | 'baseSha'> | undefined;
     do {
       const data: { repository: { pullRequest: Pull | null } | null } = await graphql(
         client,
-        `query ReviewThreads($owner:String!,$repo:String!,$number:Int!,$cursor:String) { repository(owner:$owner,name:$repo) { pullRequest(number:$number) { headRefOid baseRefOid reviewThreads(first:50,after:$cursor) { nodes { ${threadFields} } ${pageFields} } } } }`,
-        { ...variables, cursor }
+        `query ReviewThreads($owner:String!,$repo:String!,$number:Int!,$cursor:String,$summary:Boolean!) { repository(owner:$owner,name:$repo) { pullRequest(number:$number) { headRefOid baseRefOid viewerCanUpdate state comments(first:50) @include(if:$summary) { nodes { ${bodyFields} } ${pageFields} } reviews(first:50) @include(if:$summary) { nodes { ${reviewFields} } ${pageFields} } reviewRequests(first:100) @include(if:$summary) { nodes { requestedReviewer { ... on User { login } } } ${pageFields} } reviewThreads(first:50,after:$cursor) { nodes { ${threadFields} } ${pageFields} } } } }`,
+        { ...variables, cursor, summary: cursor === null }
       );
       const pr = data.repository?.pullRequest;
       if (!pr) throw new Error('This PR is unavailable or your account cannot read it.');
+      if (cursor === null && pr.comments && pr.reviews && pr.reviewRequests) {
+        async function collect<T>(first: Page<T>, field: string, fields: string): Promise<T[]> {
+          const all = [...first.nodes];
+          let after = nextCursor(first, null);
+          const visited = new Set<string>();
+          while (after) {
+            if (visited.has(after)) throw new Error('GitHub repeated a feedback page. Refresh to try again.');
+            visited.add(after);
+            const more = await graphql<{ repository: { pullRequest: Record<string, Page<T>> | null } | null }>(
+              client,
+              `query FeedbackPage($owner:String!,$repo:String!,$number:Int!,$after:String!) { repository(owner:$owner,name:$repo) { pullRequest(number:$number) { ${field}(first:100,after:$after) { nodes { ${fields} } ${pageFields} } } } }`,
+              { ...variables, after }
+            );
+            const page = more.repository?.pullRequest?.[field];
+            if (!page) throw new Error('Some feedback is unavailable. Refresh to try again.');
+            all.push(...page.nodes);
+            after = nextCursor(page, after);
+          }
+          return all;
+        }
+        feedback = {
+          comments: await collect(pr.comments, 'comments', bodyFields),
+          reviews: await collect(pr.reviews, 'reviews', reviewFields),
+          requestedReviewers: (
+            await collect(pr.reviewRequests, 'reviewRequests', 'requestedReviewer { ... on User { login } }')
+          ).flatMap((r) => (r.requestedReviewer?.login ? [r.requestedReviewer.login] : [])),
+          viewerCanUpdate: pr.viewerCanUpdate === true,
+          state: pr.state ?? 'OPEN',
+        };
+      }
       if (revision && (revision.headSha !== pr.headRefOid || revision.baseSha !== pr.baseRefOid))
         throw new Error('The PR changed while loading discussions. Refresh comments to try again.');
       revision = { headSha: pr.headRefOid, baseSha: pr.baseRefOid };
@@ -133,7 +177,7 @@ export function createReviewThreadService(now = Date.now) {
       }
       cursor = nextCursor(pr.reviewThreads, cursor);
     } while (cursor);
-    return { ...revision, threads, checkedAt: now() };
+    return { ...revision, threads, checkedAt: now(), ...(feedback ? { feedback } : {}) };
   }
   const service = {
     invalidate(client: Octokit, prUrl: string) {
@@ -220,6 +264,43 @@ export function createReviewThreadService(now = Date.now) {
         current.pending = undefined;
         if (!current.value && cache.get(prUrl) === current) cache.delete(prUrl);
       }
+    },
+    async feedbackAction(client: Octokit, req: FeedbackAction): Promise<void> {
+      const { owner, repo, number: pull_number } = parseUrl(req.prUrl);
+      // IPC payloads are runtime inputs even when the preload types are narrow.
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+      if (req.action !== 'reply' && req.action !== 'request-review') throw new Error('Unknown feedback action.');
+      // Refresh mutable permissions/review state before a write; never replay the write.
+      const snapshot = await service.list(client, req.prUrl, true);
+      const feedback = snapshot.feedback;
+      if (!feedback) throw new Error('Feedback is incomplete. Refresh and try again.');
+      if (req.action === 'reply') {
+        const source = [...feedback.comments, ...feedback.reviews].find((c) => c.id === req.sourceId);
+        if (!source) throw new Error('This feedback does not belong to the selected PR. Refresh feedback.');
+        const body = typeof req.body === 'string' ? req.body.trim() : '';
+        if (!body || body.length > 65000) throw new Error('Enter a reply of at most 65,000 characters.');
+        const url = new URL(source.url);
+        if (`${url.origin}${url.pathname}` !== req.prUrl.replace(/\/$/, ''))
+          throw new Error('The feedback source URL is invalid.');
+        await client.issues.createComment({
+          owner,
+          repo,
+          issue_number: pull_number,
+          body: `In reply to [this feedback](${source.url}):\n\n${body}`,
+        });
+      } else {
+        if (!feedback.viewerCanUpdate || feedback.state !== 'OPEN')
+          throw new Error('Your account cannot request a review on this PR.');
+        const latest = feedback.reviews
+          .filter((r) => r.author?.login.toLowerCase() === req.reviewer.toLowerCase() && r.state !== 'PENDING')
+          .sort((a, b) => (b.submittedAt ?? b.createdAt).localeCompare(a.submittedAt ?? a.createdAt))
+          .at(0);
+        if (latest?.state !== 'CHANGES_REQUESTED')
+          throw new Error('This reviewer no longer has a changes-requested review. Refresh feedback.');
+        if (feedback.requestedReviewers.some((login) => login.toLowerCase() === req.reviewer.toLowerCase())) return;
+        await client.pulls.requestReviewers({ owner, repo, pull_number, reviewers: [req.reviewer] });
+      }
+      service.invalidate(client, req.prUrl);
     },
     async act(client: Octokit, req: ReviewThreadAction): Promise<GitHubReviewThread> {
       parseUrl(req.prUrl);

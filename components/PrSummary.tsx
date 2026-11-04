@@ -1,3 +1,4 @@
+import { PrFeedbackView } from './PrFeedbackView';
 import { WorkspaceIcon, workspaceTabs } from './WorkspaceIcon';
 import { SubjectIcon } from './SubjectIcon';
 import { stackMergePlan } from '../lib/stack-merge-plan';
@@ -143,6 +144,7 @@ function PrSummaryContent({
   const [name, setName] = useState(item.subject.name ?? '');
   const [nameBusy, setNameBusy] = useState(false);
   const [nameError, setNameError] = useState('');
+  const [feedbackPr, setFeedbackPr] = useState<string>();
   const [initialFile, setInitialFile] = useState<ChangesInitialFile>();
   // A jump happens once. Returning to Changes later restores where the reviewer left off.
   useEffect(() => {
@@ -303,7 +305,7 @@ function PrSummaryContent({
   useReviewBreadcrumbs('summary', []);
   const changeScope = (id: string) => { remember(); onScopeChange?.(id); };
   const evidence = (
-    <ReviewEvidence
+    <ReviewEvidence onFeedback={url => { setFeedbackPr(url); onTabChange('feedback'); }}
       compact={!stacked}
       key={`${account}:${item.subject.id}`}
       subject={item.subject}
@@ -432,6 +434,7 @@ function PrSummaryContent({
           <Tabs.Trigger value="changes" data-tour="changes"><WorkspaceIcon tab="changes" />Changes</Tabs.Trigger>
           <Tabs.Trigger value="commits"><WorkspaceIcon tab="commits" />Commits</Tabs.Trigger>
           <Tabs.Trigger value="checks"><WorkspaceIcon tab="checks" />Checks{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>
+          <Tabs.Trigger value="feedback"><WorkspaceIcon tab="feedback" />Feedback</Tabs.Trigger>
           <Tabs.Trigger value="explanation" data-tour="explanation"><WorkspaceIcon tab="explanation" />Explanation</Tabs.Trigger>
           <Tabs.Trigger value="brief"><WorkspaceIcon tab="brief" />Local notes{brief.comments.length > 0 && <span className="brief-tab-count">{brief.comments.length}</span>}</Tabs.Trigger>
         </Tabs.List>
@@ -447,6 +450,12 @@ function PrSummaryContent({
               onOpenBrief={() => onTabChange('brief')}
             />
           )}
+        </Tabs.Content>
+        <Tabs.Content value="feedback" className="pr-changes-tab">
+          <PrFeedbackView key={`${account}:${item.subject.id}:${feedbackPr ?? ''}`} subject={item.subject} account={account} initialPrUrl={feedbackPr} onSource={item => {
+            if (!item.thread) return;
+            setInitialFile({ url: item.member.url, headSha: item.headSha, path: item.thread.path, line: item.thread.line ?? undefined, side: item.thread.diffSide === 'LEFT' ? 'before' : 'after' }); onTabChange('changes');
+          }} />
         </Tabs.Content>
         <Tabs.Content value="brief" className="pr-changes-tab">
           <AgentBriefView key={item.subject.id} subject={item.subject} parentStack={parentStack} onOpenScope={onScopeChange ? changeScope : undefined} onOpenComment={openBriefComment} onOpenChanges={() => onTabChange('changes')} />

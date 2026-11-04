@@ -27,6 +27,7 @@ export function ReviewEvidence({
   account,
   now,
   onChecks,
+  onFeedback,
   onRefresh,
   refreshBusy,
   refreshError,
@@ -38,6 +39,7 @@ export function ReviewEvidence({
   checkErrors: Partial<Record<string, string>>;
   account: string | null;
   now: number;
+  onFeedback?: (url: string) => void;
   onChecks: (url: string, id?: string) => void;
   onRefresh: () => void;
   refreshBusy: boolean;
@@ -179,6 +181,8 @@ export function ReviewEvidence({
             <Button variant="ghost" size="sm" onClick={() => onChecks(url, row.checkId)}>
               {row.action}
             </Button>
+          ) : row.kind === 'discussion' && onFeedback ? (
+            <Button variant="ghost" size="sm" onClick={() => onFeedback(url)}>Open feedback</Button>
           ) : (
             <a href={row.href} target="_blank" rel="noopener noreferrer">
               {row.action}
@@ -204,6 +208,7 @@ export function ReviewEvidence({
             data-tone={item.tone}
             onClick={() => {
               if (index === 0) onChecks(subject.members[0].url);
+              else if (index === 2 && onFeedback) onFeedback(subject.members[0].url);
               else {
                 focusDetails.current = true;
                 setExpanded(true);

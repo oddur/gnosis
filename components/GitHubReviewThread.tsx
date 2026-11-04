@@ -1,7 +1,7 @@
 import { MarkdownCommentEditor } from './MarkdownCommentEditor';
 import { GitHubAuthor } from './GitHubAuthor';
 import { useSessionDraft } from '../lib/session-drafts';
-import { useId, useState, useRef } from 'react';
+import { useId, useState, useRef, useEffect } from 'react';
 import { MessageSquare, Check, ChevronRight } from 'lucide-react';
 import { CommentMarkdown } from './CommentMarkdown';
 import { timeAgo } from '../lib/utils';
@@ -9,16 +9,25 @@ import type { GitHubReviewThread as Thread, ReviewThreadAction, ReviewCommentAct
 
 interface Props {
   thread: Thread;
+  expanded?: boolean;
   reason?: string;
   onCommentAction?: (commentId: string, action: ReviewCommentAction['action'], body?: string) => Promise<void>;
   onAction?: (action: ReviewThreadAction['action'], body?: string) => Promise<void>;
 }
 
-export function GitHubReviewThread({ thread, reason, onAction, onCommentAction }: Props) {
+export function GitHubReviewThread({ thread, reason, onAction, onCommentAction, expanded }: Props) {
   const [replying, setReplying] = useSessionDraft(`thread-replying:${thread.id}`, false);
   const [draft, setDraft] = useSessionDraft(`thread-reply:${thread.id}`, '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [failedAction, setFailedAction] = useState<string>();
+  const errorElement = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (error) {
+      errorElement.current?.scrollIntoView({ block: 'nearest' });
+      errorElement.current?.focus({ preventScroll: true });
+    }
+  }, [error]);
   const inputId = useId();
   const pending = useRef(false);
   const [editing, setEditing] = useState<string>();
@@ -35,6 +44,7 @@ export function GitHubReviewThread({ thread, reason, onAction, onCommentAction }
       setDeleting(undefined);
       setEditBody('');
     } catch (e) {
+      setFailedAction(action);
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       pending.current = false;
@@ -53,6 +63,7 @@ export function GitHubReviewThread({ thread, reason, onAction, onCommentAction }
         setReplying(false);
       }
     } catch (e) {
+      setFailedAction(action);
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       pending.current = false;
@@ -61,7 +72,7 @@ export function GitHubReviewThread({ thread, reason, onAction, onCommentAction }
   }
   const first = thread.comments.length ? thread.comments[0] : undefined;
   return (
-    <details className="github-thread" data-thread-id={thread.id} open={!thread.isResolved}>
+    <details className="github-thread" data-thread-id={thread.id} open={expanded ?? !thread.isResolved}>
       <summary>
         <ChevronRight className="github-thread-chevron" size={12} aria-hidden="true" />
         {thread.isResolved ? <Check size={14} aria-hidden="true" /> : <MessageSquare size={14} aria-hidden="true" />}
@@ -190,9 +201,25 @@ export function GitHubReviewThread({ thread, reason, onAction, onCommentAction }
         </form>
       )}
       {error && (
-        <p role="alert" className="github-thread-error">
-          {error}
-        </p>
+        <div ref={errorElement} role="alert" tabIndex={-1} className="github-thread-error">
+          <p>
+            {failedAction === 'reply'
+              ? 'Reply wasn’t posted. Your draft is saved. Try again.'
+              : failedAction === 'resolve'
+                ? 'Thread wasn’t resolved. Try again.'
+                : failedAction === 'unresolve'
+                  ? 'Thread wasn’t reopened. Try again.'
+                  : failedAction === 'edit'
+                    ? 'Changes weren’t saved. Your draft is saved. Try again.'
+                    : failedAction === 'delete'
+                      ? 'Comment wasn’t deleted. Try again.'
+                      : 'Could not save the change. Try again.'}
+          </p>
+          <details>
+            <summary>Details</summary>
+            <p>{error}</p>
+          </details>
+        </div>
       )}
     </details>
   );

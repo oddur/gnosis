@@ -153,6 +153,7 @@ The shared header has a minimum height of 56px with 10px vertical and 20px horiz
 | Review panes | Resizable 40/60 split, minimums 25/30 | Explicit pane tabs at ≤1000px |
 | Overview | Maximum 1100px; 1.4fr/1fr columns; 32px gap | One column at ≤850px |
 | Settings | Maximum 672px wide and 80dvh high; internal scrolling | Tabs form two columns at ≤620px |
+| Address Feedback | Independently scrolling conversation list (32%, minimum 260px) and detail pane | At ≤760px of available content width, show list or detail with a Conversations return action |
 | Checks graph | Canvas with a 260px workflow sidebar; selected job opens the existing detail pane beside it | At ≤1000px viewport width, workflows use an overlay drawer; at ≤1050px workspace width, details overlay the right side, covering the canvas at ≤700px |
 
 Review prose has 20px vertical and 22px horizontal padding; code panes use 16px.
@@ -284,6 +285,18 @@ Reduced motion removes these transitions while preserving progress and status in
 
 Pair concise errors with recovery actions. Put detailed diagnostics behind disclosure controls.
 Show saved-summary freshness and fallback status explicitly. Preserve useful content while a background task runs.
+
+### Address Feedback
+
+[PrFeedbackView](components/PrFeedbackView.tsx) extends the existing PR and stack workspace. Keep the compact All / Unread / Unresolved toolbar above divided list and detail panes. In stacks, a searchable PR picker scopes the list, counts, and review-request actions together. Order conversations across the stack by latest activity, including edits. Rows retain the original excerpt and show the latest reply preview and comment count when replies exist. Pair unread emphasis with the existing dot and accessible label; distinguish unresolved code threads, resolved threads, PR comments, and review decisions with explicit text.
+
+Keep Review requests in a bounded, scrolling popover (maximum 640px, with 16px viewport clearance). Each reviewer row identifies its source PR, remaining unresolved threads, and explicit Re-request review action. Show pending and sent states in place. Re-requesting never closes threads or implies approval. Use existing popover surfaces, buttons, semantic colors, and typography; this extension adds no design tokens or shipping raster assets.
+
+Selecting a conversation focuses its heading and marks only that displayed conversation read. Mark unread returns to the list. In the narrow layout, hide list filters while detail is open and use Conversations to return focus to the originating row, with the list as fallback if the row no longer matches. Keep the selected conversation visible while reading changes its filter membership. Read state is independent of resolution.
+
+Show original code context in a labelled disclosure, with saved or outdated context explicit. Start with the last eight hunk lines and offer the full context. Collapse the disclosure at viewport widths ≤760px or heights ≤700px to preserve conversation space. Offer Open in Changes only for a non-outdated thread whose saved revision matches the current PR. General comments and review summaries use an explicit reply hint: posting creates a PR comment linked to the source feedback. Only code threads expose resolve or reopen actions.
+
+Preserve saved conversations during refresh. Use one compact saved-feedback error with Details and Retry; distinguish partial loading and unavailable feedback from a true empty result. Write errors identify the failed action, preserve reply/edit drafts, move focus to the error, and keep diagnostics disclosed. A successful write followed by a refresh failure must say the write was sent. Reuse the shared discussion cache and sync service so feedback, evidence, and thread views reflect the same updates; account-scoped read markers persist in the existing SQLite review-state store.
 
 ### Explanation diagrams
 

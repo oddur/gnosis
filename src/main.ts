@@ -2611,6 +2611,13 @@ function discussionClient() {
   if (!token) throw new Error('Sign in to GitHub to load review comments.');
   return getGitHubClient(token);
 }
+ipcMain.handle('cached-review-threads', (_event, prUrl: string) => reviewThreads.cached(discussionClient(), prUrl));
+handleInteractive('feedback-action', async (_event, req: import('../lib/review-threads').FeedbackAction) => {
+  const account = cachedLogin;
+  await reviewThreads.feedbackAction(discussionClient(), req);
+  if (account && req.action === 'reply') workbench.noteOwnReview(account, req.prUrl, 1);
+  refreshAfterGitHubWrite([req.prUrl], ['discussion', 'signals']);
+});
 handleInteractive('get-review-threads', (_event, prUrl: string, refresh: boolean) =>
   reviewThreads.list(discussionClient(), prUrl, refresh));
 handleInteractive('review-thread-action', async (_event, req: ReviewThreadAction) => {
