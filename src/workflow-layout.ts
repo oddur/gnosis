@@ -2,7 +2,10 @@ import ELK, { type ElkNode } from 'elkjs/lib/elk.bundled.js';
 import type { WorkflowPort } from '../lib/workflow-graph';
 const elk = new ELK();
 /** Position cards and route their edges together; the renderer must preserve both. */
-export async function layoutWorkflow(nodes: { id: string }[], edges: { id: string; source: string; target: string }[]) {
+export async function layoutWorkflow(
+  nodes: { id: string; height?: number }[],
+  edges: { id: string; source: string; target: string }[]
+) {
   const ports = new Map<string, WorkflowPort[]>();
   for (const node of nodes) {
     const result: WorkflowPort[] = [];
@@ -13,7 +16,7 @@ export async function layoutWorkflow(nodes: { id: string }[], edges: { id: strin
           id: `${side}:${edge.id}`,
           type: side,
           x: side === 'source' ? 244 : 0,
-          y: 16 + ((i + 1) * 80) / (connections.length + 1),
+          y: 16 + ((i + 1) * ((node.height ?? 112) - 32)) / (connections.length + 1),
         })
       );
     }
@@ -37,7 +40,7 @@ export async function layoutWorkflow(nodes: { id: string }[], edges: { id: strin
     children: nodes.map((node) => ({
       id: node.id,
       width: 244,
-      height: 112,
+      height: node.height ?? 112,
       layoutOptions: { 'elk.portConstraints': 'FIXED_POS' },
       ports: (ports.get(node.id) ?? []).map((port) => ({
         id: port.id,

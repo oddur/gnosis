@@ -245,6 +245,8 @@ The backend reads workflow YAML at the run's immutable revision. Jobs flow left 
 
 Job nodes use panel surfaces, thin borders, compact 13px names, and 12px status, duration, and context text. Selection uses the existing accent surface; failed jobs and their outgoing dependency paths use the danger color. Filters dim other jobs while retaining the dependency structure. Hover or keyboard focus traces the job’s immediate incoming and outgoing connections and dims unrelated paths. Preserve the backend’s orthogonal routes and separate attachment points so edges avoid unrelated cards. Show secondary text only for useful context, such as active steps, grouped jobs, and failed prerequisites; do not repeat job names. Reuse the workbench focus treatment and flat canvas controls; introduce no new palette or type tokens.
 
+Show skipped and Show completed controls sit above the canvas. Completed means successful or neutral jobs; failures, cancellations, running jobs, and unknown statuses remain visible. When a toggle is off, equivalent jobs collapse into short count summaries while retaining dependency arrows. Only jobs with identical prerequisites and dependants can share a summary. Clicking a summary restores that category. Both categories start visible.
+
 Selecting a job opens the existing output, steps, annotations, logs, and rerun tools. Reframe the graph when the canvas resizes or its topology changes, including opening and closing details. Status-only updates preserve pan and zoom. At narrow widths, selection scrolls to and focuses the detail region below the graph; Close returns the viewport to the graph. Preserve a saved graph after refresh failure, explain its freshness, and offer Retry workflow.
 
 ### Source identity and Activity

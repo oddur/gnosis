@@ -1,3 +1,4 @@
+import { compactWorkflow } from './workflow-visibility';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import type { Octokit } from '@octokit/rest';
@@ -291,25 +292,26 @@ async function readGraph(
   const assembled = assembleWorkflow(data.definitions, data.jobs, expanded);
   if (assembled.nodes.length > 600 || assembled.edges.length > 3000)
     throw Error('This graph is too large. Collapse groups or use List view.');
-  // Layout is cached separately from statuses, so live updates never move nodes.
+  const compact = compactWorkflow(assembled.nodes, assembled.edges, input);
+  // Status changes preserve layout unless a visibility group changes.
   const topology = createHash('sha256')
-    .update(JSON.stringify([assembled.nodes.map((n) => n.id), assembled.edges.map((e) => e.id)]))
+    .update(JSON.stringify([compact.nodes.map((n) => [n.id, n.height]), compact.edges.map((e) => e.id)]))
     .digest('hex');
-  const routed = await cached(client, `workflow-layout:v2:${topology}`, Infinity, () =>
-    layoutWorkflow(assembled.nodes, assembled.edges)
+  const routed = await cached(client, `workflow-layout:v3:${topology}`, Infinity, () =>
+    layoutWorkflow(compact.nodes, compact.edges)
   );
   const byId = new Map(routed.nodes.map((n) => [n.id, n]));
   const edgesById = new Map(routed.edges.map((e) => [e.id, e.points]));
   return {
     target: { url: input.url, headSha: input.headSha },
     run: data.run,
-    nodes: assembled.nodes.map((n) => ({
+    nodes: compact.nodes.map((n) => ({
       ...n,
       x: byId.get(n.id)?.x ?? 0,
       y: byId.get(n.id)?.y ?? 0,
       ports: byId.get(n.id)?.ports,
     })),
-    edges: assembled.edges.map((e) => ({ ...e, points: edgesById.get(e.id) })),
+    edges: compact.edges.map((e) => ({ ...e, points: edgesById.get(e.id) })),
     groups: assembled.groups,
     checkedAt: data.checkedAt,
     warnings: [

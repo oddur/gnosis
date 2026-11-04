@@ -3949,3 +3949,12 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
   .workflow-selectors [role=combobox] { flex:1; }
   .workflow-context { padding:8px; }
 }
+
+.workflow-visibility { display:flex; flex-wrap:wrap; align-items:center; gap:8px 20px; padding:4px 16px 10px; font-size:12px; }
+.workflow-visibility label { display:inline-flex; align-items:center; gap:6px; min-height:28px; cursor:pointer; }
+.workflow-visibility input { accent-color:var(--ring); width:14px; height:14px; }
+.workflow-visibility > span { color:var(--muted-foreground); }
+.workflow-job[data-collapsed] { height:48px; background:var(--secondary); }
+.workflow-job[data-collapsed] .workflow-job-open { flex-direction:row; align-items:center; gap:8px; }
+.workflow-job[data-collapsed] .workflow-job-name { font-weight:500; padding-right:0; }
+.workflow-job[data-collapsed] .workflow-job-open > svg { flex-shrink:0; }

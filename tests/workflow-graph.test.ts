@@ -1,3 +1,4 @@
+import { compactWorkflow } from '../src/workflow-visibility';
 import { layoutWorkflow } from '../src/workflow-layout';
 import { workflowEdgePath } from '../lib/workflow-edge-path';
 import test from 'node:test';
@@ -345,4 +346,83 @@ void test('routed fan-in, fan-out and skip-layer dependencies avoid every unrela
       'Each dependency has its own endpoint'
     );
   assert.deepEqual(await layoutWorkflow(nodes, edges), routed, 'Layout is stable');
+});
+
+void test('visibility groups equivalent jobs without losing dependencies or hiding failures', async () => {
+  const nodes = ['start', 'a', 'b', 'failed', 'cancelled', 'unknown', 'end'].map((id, i) => ({
+    id,
+    name: id,
+    x: 0,
+    y: 0,
+    jobs:
+      id === 'unknown'
+        ? []
+        : [
+            job(
+              i,
+              id,
+              id === 'failed'
+                ? 'failure'
+                : id === 'cancelled'
+                  ? 'cancelled'
+                  : id === 'a' || id === 'b'
+                    ? 'skipped'
+                    : 'success'
+            ),
+          ],
+  }));
+  const edges = [
+    ['start', 'a'],
+    ['start', 'b'],
+    ['a', 'end'],
+    ['b', 'end'],
+    ['failed', 'end'],
+  ].map(([source, target]) => ({ id: `${source}->${target}`, source, target }));
+  const result = compactWorkflow(nodes, edges, { showSkipped: false, showCompleted: false });
+  const skipped = result.nodes.find((n) => n.collapsed === 'skipped')!;
+  assert.equal(skipped.jobs.length, 2);
+  assert.equal(skipped.height, 48);
+  assert.ok(result.nodes.find((n) => n.id === 'failed' && !n.collapsed));
+  assert.ok(result.nodes.find((n) => n.id === 'cancelled' && !n.collapsed));
+  assert.ok(result.nodes.find((n) => n.id === 'unknown' && !n.collapsed));
+  assert.equal(result.edges.filter((e) => e.target === skipped.id).length, 1);
+  assert.equal(result.edges.filter((e) => e.source === skipped.id).length, 1);
+  assert.equal(result.nodes.flatMap((n) => n.jobs).length, nodes.flatMap((n) => n.jobs).length);
+  const layout = await layoutWorkflow(result.nodes, result.edges);
+  for (const node of layout.nodes)
+    for (const port of node.ports)
+      assert.ok(port.y > 0 && port.y < (result.nodes.find((n) => n.id === node.id)?.height ?? 112));
+  assert.deepEqual(compactWorkflow(nodes, edges, {}), { nodes, edges });
+});
+void test('visibility does not merge different dependency paths or collapse mixed active groups', () => {
+  const nodes = ['a', 'b', 'c', 'd', 'mixed', 'neutral'].map((id, i) => ({
+    id,
+    name: id,
+    x: 0,
+    y: 0,
+    jobs: [job(i, id, id === 'neutral' ? 'neutral' : 'skipped')],
+  }));
+  nodes.find((n) => n.id === 'mixed')!.jobs.push({ ...job(10, 'running'), status: 'in_progress', conclusion: null });
+  const edges = [
+    ['a', 'b'],
+    ['c', 'd'],
+  ].map(([source, target]) => ({ id: `${source}->${target}`, source, target }));
+  const result = compactWorkflow(nodes, edges, { showSkipped: false });
+  assert.equal(result.nodes.filter((n) => n.collapsed).length, 4);
+  assert.ok(result.nodes.find((n) => n.id === 'mixed' && !n.collapsed));
+  assert.ok(result.nodes.find((n) => n.id === 'neutral' && !n.collapsed));
+  assert.equal(
+    compactWorkflow(nodes, edges, { showCompleted: false }).nodes.find((n) => n.collapsed)?.jobs[0].name,
+    'neutral'
+  );
+});
+void test('visibility toggles reuse saved run data and cached routing without GitHub requests', async () => {
+  const h = harness();
+  const full = await readWorkflowGraph(h.client, input);
+  const count = h.calls.length;
+  const collapsed = await readWorkflowGraph(h.client, { ...input, showCompleted: false }, { cachedOnly: true });
+  assert.ok(collapsed?.nodes.some((n) => n.collapsed));
+  assert.equal(h.calls.length, count);
+  const restored = await readWorkflowGraph(h.client, input, { cachedOnly: true });
+  assert.deepEqual(restored, full);
 });

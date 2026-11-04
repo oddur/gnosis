@@ -2,6 +2,7 @@ import { workflowEdgePath } from '../lib/workflow-edge-path';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
+  useUpdateNodeInternals,
   BaseEdge,
   type EdgeProps,
   Handle,
@@ -84,8 +85,13 @@ type JobNode = Node<
   },
   'job'
 >;
-function JobCard({ data }: NodeProps<JobNode>) {
+function JobCard({ id, data }: NodeProps<JobNode>) {
   const { item } = data;
+  const updateNodeInternals = useUpdateNodeInternals();
+  const portSignature = item.ports?.map((port) => `${port.id}:${port.y}`).join('|');
+  useEffect(() => {
+    updateNodeInternals(id);
+  }, [id, portSignature, updateNodeInternals]);
   const { group, label, Icon } = outcome(item.jobs);
   const active = item.jobs.flatMap((job) => job.steps).find((step) => step.status === 'in_progress');
   const secondary = item.unmapped
@@ -102,6 +108,7 @@ function JobCard({ data }: NodeProps<JobNode>) {
   return (
     <div
       className="workflow-job"
+      data-collapsed={item.collapsed || undefined}
       data-dim={data.dim || undefined}
       data-selected={data.selected || undefined}
       data-outcome={group}
@@ -125,19 +132,28 @@ function JobCard({ data }: NodeProps<JobNode>) {
       <button
         className="workflow-job-open nodrag"
         onClick={data.onOpen}
-        disabled={!item.jobs.length && !item.expandable}
-        aria-label={`${item.name}: ${label}`}
-        title={item.name}
+        disabled={!item.jobs.length && !item.expandable && !item.collapsed}
+        aria-label={item.collapsed ? `${item.name}: Show ${item.collapsed} jobs` : `${item.name}: ${label}`}
+        title={
+          item.collapsed
+            ? `${item.unmapped ? 'Dependency mapping unavailable\n' : ''}${item.jobs.map((job) => job.name).join('\n')}\nClick to show ${item.collapsed} jobs`
+            : item.name
+        }
       >
-        <span className="workflow-job-name">{item.name}</span>
-        <span className={`workflow-job-state check-${group}`}>
-          <Icon size={15} className={label === 'Running' ? 'animate-spin' : undefined} />
-          <span>{label}</span>
-          <span className="workflow-job-duration">
-            {item.jobs.length === 1 ? checkDuration(item.jobs[0], data.now) : ''}
-          </span>
+        <span className="workflow-job-name">
+          {item.collapsed && (group === 'attention' || group === 'running') ? `${label} · Show jobs` : item.name}
         </span>
-        {secondary && (
+        {item.collapsed && <Plus size={14} aria-hidden="true" />}
+        {!item.collapsed && (
+          <span className={`workflow-job-state check-${group}`}>
+            <Icon size={15} className={label === 'Running' ? 'animate-spin' : undefined} />
+            <span>{label}</span>
+            <span className="workflow-job-duration">
+              {item.jobs.length === 1 ? checkDuration(item.jobs[0], data.now) : ''}
+            </span>
+          </span>
+        )}
+        {!item.collapsed && secondary && (
           <span className="workflow-job-context" title={secondary}>
             {secondary}
           </span>
@@ -195,6 +211,8 @@ export function WorkflowGraphView({
   const runs = runsState?.scope === scope ? runsState.value : undefined;
   const run = runs?.runs.find((r) => r.id === runId) ?? runs?.runs[0];
   const [expanded, setExpanded] = useState<string[]>([]);
+  const [showSkipped, setShowSkipped] = useState(true);
+  const [showCompleted, setShowCompleted] = useState(true);
   const [graphState, setGraph] = useState<{ key: string; value: Graph }>();
   const [runError, setRunError] = useState('');
   const [graphError, setGraphError] = useState('');
@@ -208,7 +226,7 @@ export function WorkflowGraphView({
   useEffect(() => {
     setHovered(undefined);
     setFocused(undefined);
-  }, [graphKey]);
+  }, [graphKey, showSkipped, showCompleted]);
   const expansions = expanded.join('|');
   const observedAt = snapshot?.checkedAt;
   useEffect(() => {
@@ -240,7 +258,7 @@ export function WorkflowGraphView({
   useEffect(() => {
     if (!member || !sha || !run) return;
     let live = true;
-    const input = { url: member.url, headSha: sha, runId: run.id, expanded };
+    const input = { url: member.url, headSha: sha, runId: run.id, expanded, showSkipped, showCompleted };
     const force = requests.current.graph !== refreshNonce || requests.current.graphRetry !== retry;
     requests.current.graphRetry = retry;
     requests.current.graph = refreshNonce;
@@ -275,7 +293,7 @@ export function WorkflowGraphView({
     return () => {
       live = false;
     };
-  }, [graphKey, expansions, runs?.checkedAt, refreshNonce, retry]);
+  }, [graphKey, expansions, showSkipped, showCompleted, runs?.checkedAt, refreshNonce, retry]);
   const [now, setNow] = useState(Date.now);
   const running = graph?.nodes.some((n) => n.jobs.some((j) => j.status === 'in_progress'));
   useEffect(() => {
@@ -352,13 +370,13 @@ export function WorkflowGraphView({
     position: { x: item.x, y: item.y },
     draggable: false,
     width: 244,
-    height: 112,
-    measured: { width: 244, height: 112 },
+    height: item.height ?? 112,
+    measured: { width: 244, height: item.height ?? 112 },
     data: {
       item,
       now,
       prerequisite: failureSources.get(item.id),
-      selected: item.jobs.some((j) => j.checkId === selectedId),
+      selected: !!selectedId && item.jobs.some((j) => j.checkId === selectedId),
       dim: (filter !== 'all' && outcome(item.jobs).group !== filter) || (!!highlight && !related.has(item.id)),
       onHighlight: (active, input) =>
         (input === 'pointer' ? setHovered : setFocused)((current) =>
@@ -366,6 +384,11 @@ export function WorkflowGraphView({
         ),
       onExpand: () => toggle(item.id),
       onOpen: () => {
+        if (item.collapsed) {
+          if (item.collapsed === 'skipped') setShowSkipped(true);
+          else setShowCompleted(true);
+          return;
+        }
         if (item.expandable) {
           toggle(item.id);
           return;
@@ -475,6 +498,23 @@ export function WorkflowGraphView({
               Workflow source <ExternalLink size={12} />
             </a>
           )}
+        </div>
+      )}
+      {graph && (
+        <div className="workflow-visibility" role="group" aria-label="Job visibility">
+          <label>
+            <input type="checkbox" checked={showSkipped} onChange={(event) => setShowSkipped(event.target.checked)} />
+            Show skipped
+          </label>
+          <label title="Successful and neutral jobs. Failed and cancelled jobs stay visible.">
+            <input
+              type="checkbox"
+              checked={showCompleted}
+              onChange={(event) => setShowCompleted(event.target.checked)}
+            />
+            Show completed
+          </label>
+          {(!showSkipped || !showCompleted) && <span>Hidden jobs are collapsed. Failures stay visible.</span>}
         </div>
       )}
       {graph && expanded.length > 0 && (

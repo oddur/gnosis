@@ -1,3 +1,4 @@
+import { compactWorkflow } from '../src/workflow-visibility';
 import { layoutWorkflow } from '../src/workflow-layout';
 import type { WorkflowGraph } from '../lib/workflow-graph';
 import { app, BrowserWindow } from 'electron';
@@ -222,6 +223,78 @@ void app
         'Keyboard focus preserves tracing after the pointer leaves'
       );
       await capture('routing-focus-dark');
+      // A wide fan-out with many skipped jobs must compact, while failed/running jobs remain full size.
+      const busyNodes: WorkflowGraph['nodes'] = exampleNodes.map((n) => ({
+        ...n,
+        jobs: n.jobs.map((j) => ({
+          ...j,
+          checkId: `check:${j.id}`,
+          status: n.id === 'build-macos' ? 'in_progress' : j.status,
+          conclusion: n.id === 'build-macos' ? null : n.id === 'build-windows' ? 'failure' : j.conclusion,
+        })),
+      }));
+      const busyEdges = [...exampleEdges];
+      for (let i = 0; i < 18; i++) {
+        const id = `skipped-${i}`;
+        busyNodes.push({
+          id,
+          name: `Optional build ${i}`,
+          x: 0,
+          y: 0,
+          jobs: [
+            {
+              ...busyNodes[0].jobs[0],
+              id: 200 + i,
+              checkId: `check:${200 + i}`,
+              name: `Optional build ${i}`,
+              conclusion: 'skipped',
+            },
+          ],
+        });
+        busyEdges.push(
+          { id: `semantic-version->${id}`, source: 'semantic-version', target: id },
+          { id: `${id}->publish`, source: id, target: 'publish' }
+        );
+      }
+      const variants: Record<string, Pick<WorkflowGraph, 'nodes' | 'edges'>> = {};
+      for (const showSkipped of [true, false])
+        for (const showCompleted of [true, false]) {
+          const compact = compactWorkflow(busyNodes, busyEdges, { showSkipped, showCompleted });
+          const layout = await layoutWorkflow(compact.nodes, compact.edges);
+          variants[`${showSkipped}:${showCompleted}`] = {
+            nodes: compact.nodes.map((n) => ({ ...n, ...layout.nodes.find((r) => r.id === n.id) })),
+            edges: compact.edges.map((e) => ({ ...e, points: layout.edges.find((r) => r.id === e.id)?.points })),
+          };
+        }
+      await js(
+        `(()=>{const variants=${JSON.stringify(variants)},read=window.electronAPI.getWorkflowGraph;window.electronAPI.getWorkflowGraph=async(input,options)=>({...await read(input,options),...variants[\`\${input.showSkipped!==false}:\${input.showCompleted!==false}\`]});document.querySelector('[aria-label="Refresh checks"]').click();})()`
+      );
+      await wait("document.querySelectorAll('.workflow-job').length===23");
+      await js(
+        "[...document.querySelectorAll('.workflow-visibility label')].find(l=>l.textContent==='Show skipped').querySelector('input').click()"
+      );
+      await wait("document.querySelectorAll('.workflow-job').length===6");
+      await js(
+        "[...document.querySelectorAll('.workflow-visibility label')].find(l=>l.textContent==='Show completed').querySelector('input').click()"
+      );
+      await wait("document.querySelectorAll('.workflow-job[data-collapsed]').length===4");
+      assert.equal(
+        await js("document.querySelectorAll('.workflow-job[data-outcome=attention]:not([data-collapsed])').length"),
+        1
+      );
+      assert.equal(
+        await js("document.querySelectorAll('.workflow-job[data-outcome=running]:not([data-collapsed])').length"),
+        1
+      );
+      await wait("document.querySelectorAll('.react-flow__edge').length===8");
+      await capture('visibility-collapsed-dark');
+      await js('document.querySelector(\'[aria-label$="Show skipped jobs"]\').click()');
+      await wait("document.querySelectorAll('.workflow-job').length===23");
+      assert.ok(
+        await js(
+          "[...document.querySelectorAll('.workflow-visibility label')].find(l=>l.textContent==='Show skipped').querySelector('input').checked"
+        )
+      );
       assert.equal(errors.length, 0, errors.join('\n'));
       console.log(
         'Workflow graph browser checks passed: graph/list, matrix expansion, details, keyboard, stable updates, filters, cached errors, laptop and narrow themes.'

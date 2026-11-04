@@ -43,6 +43,8 @@ export interface WorkflowPort {
   y: number;
 }
 export interface WorkflowGraphNode {
+  height?: number;
+  collapsed?: 'skipped' | 'completed';
   ports?: WorkflowPort[];
   id: string;
   name: string;
@@ -67,6 +69,8 @@ export interface WorkflowGraph {
 }
 export interface WorkflowGraphInput extends CheckTarget {
   runId: number;
+  showSkipped?: boolean;
+  showCompleted?: boolean;
   expanded?: string[];
 }
 export function workflowJobCheck(job: WorkflowJob, checks: PrCheck[]): PrCheck | undefined {
