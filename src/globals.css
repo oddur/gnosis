@@ -3239,10 +3239,11 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 /* Stack and PR scopes share one compact workspace frame. */
 .pr-workspace-navigation { display:flex; align-items:center; flex-shrink:0; gap:20px; border-bottom:1px solid var(--border); }
 .pr-workspace-navigation .pr-overview-tabs { flex:1; min-width:0; width:auto; border:0; gap:20px; padding-right:0; }
-.stack-scope-bar { display:flex; align-items:center; gap:8px; padding-left:var(--pr-frame-inset); min-width:0; }
+.stack-scope-bar { display:flex; align-items:center; gap:8px; padding-inline:var(--pr-frame-inset) 20px; border-right:1px solid var(--border); min-width:0; flex-shrink:0; }
 .pr-workspace-navigation:has(.stack-scope-bar) .pr-overview-tabs { padding-left:0; }
 .stack-scope-bar .selection-trigger { width:auto; max-width:240px; font-size:var(--type-control); }
-.stack-scope-bar .stack-back { font-size:var(--type-control); color:var(--primary); text-decoration:underline; text-underline-offset:3px; }
+.stack-scope-bar .stack-back { height:32px; gap:4px; padding-inline:8px; font-size:var(--type-control); color:var(--muted-foreground); }
+.stack-scope-bar .stack-back:hover { color:var(--foreground); }
 .stack-scope-popup { width:480px; max-width:calc(100vw - 24px); }
 .stack-scope-popup .selection-option { padding:10px 12px; border-bottom:1px solid var(--border); }
 .stack-name-form { max-width:680px; padding:12px 0; }
@@ -3288,7 +3289,6 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .merge-readiness-blocked { color:var(--color-warning); font-size:var(--type-caption); }
 .queue-stack-matches { font-size:var(--type-caption); color:var(--muted-foreground); }
 @media(max-width:1000px) {
-  .stack-scope-bar .stack-back { display:none; }
   .pr-workspace-navigation { gap:16px; }
   .pr-workspace-navigation .pr-overview-tabs { gap:16px; }
 }
@@ -3298,7 +3298,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
   .stack-overview-heading { flex-wrap:wrap; }
   .stack-overview-member { gap:8px; }
   .pr-workspace-navigation { flex-wrap:wrap; gap:0; }
-  .stack-scope-bar { padding:4px 16px; width:100%; }
+  .stack-scope-bar { padding:4px 16px; width:100%; border-right:0; }
   .pr-workspace-navigation .pr-overview-tabs { width:100%; flex-basis:100%; padding-inline:16px; }
 }
 
