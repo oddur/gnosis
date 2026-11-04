@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createGitHubScheduler, withGitHubPriority, githubPriority } from '../lib/github-scheduler';
+import { createGitHubScheduler, withGitHubPriority, withParallelGitHubReads, githubPriority } from '../lib/github-scheduler';
 import { createGitHubClientPool, GitHubBackoffError } from '../lib/github-client';
 import { createPrChangesService } from '../src/pr-changes-service';
 import { createSnapshotFileLoader } from '../src/snapshot-file-loader';
@@ -323,4 +323,107 @@ void test('pacing between file sides completes the preload without restarting do
   assert.equal(result.before.kind, 'text');
   assert.equal(result.after.kind, 'text');
   assert.equal(calls.length, 2, 'Exactly one download per side, even across a rate-limit retry');
+});
+
+void test('opted-in interactive reads overlap up to three; writes and background work stay exclusive', async () => {
+  const gate = deferred(),
+    starts: string[] = [];
+  let active = 0,
+    maximum = 0;
+  const pool = createGitHubClientPool({
+    minSpacingMs: 0,
+    fetch: (async (url: string, init: RequestInit) => {
+      const name = new URL(url).pathname;
+      starts.push(name);
+      active++;
+      maximum = Math.max(maximum, active);
+      if (init.method === 'POST' || name === '/background') assert.equal(active, 1);
+      if (starts.length <= 3) await gate.promise;
+      active--;
+      return json({});
+    }) as typeof fetch,
+  });
+  const client = pool.client('parallel');
+  const reads = withGitHubPriority('interactive', () =>
+    withParallelGitHubReads(() => Array.from({ length: 5 }, (_, i) => client.request(`GET /read-${i}`)))
+  );
+  await turn();
+  assert.equal(starts.length, 3, 'Three HTTP reads start before any response');
+  const write = withGitHubPriority('interactive', () => withParallelGitHubReads(() => client.request('POST /write')));
+  const background = withGitHubPriority('background', () =>
+    withParallelGitHubReads(() => client.request('GET /background'))
+  );
+  gate.resolve();
+  await Promise.all([...reads, write, background]);
+  assert.equal(maximum, 3);
+  assert.deepEqual(starts.slice(-2), ['/write', '/background']);
+});
+
+void test('parallel reads reserve distinct request start times and keep the lowest observed budget', async () => {
+  const gate = deferred(),
+    times: number[] = [];
+  let clock = 1_000_000;
+  const pool = createGitHubClientPool({
+    now: () => clock,
+    minSpacingMs: 100,
+    sleep: (ms) => {
+      clock += ms;
+      return Promise.resolve();
+    },
+    fetch: (async (url: string) => {
+      times.push(clock);
+      const old = url.endsWith('/old');
+      if (old) await gate.promise;
+      return json(
+        {},
+        {
+          'x-ratelimit-limit': '5000',
+          'x-ratelimit-remaining': old ? '1000' : '50',
+          'x-ratelimit-reset': '1100',
+        }
+      );
+    }) as typeof fetch,
+  });
+  const client = pool.client('budget');
+  const [old, fresh] = withGitHubPriority('interactive', () =>
+    withParallelGitHubReads(() => [client.request('GET /old'), client.request('GET /fresh')])
+  );
+  await fresh;
+  gate.resolve();
+  await old;
+  assert.equal(times.length, 2);
+  assert.ok(times[1] - times[0] >= 100);
+  assert.ok(pool.backoff('budget', true, ['core']), 'Late response must not restore the background reserve');
+});
+
+void test('parallel dispatch rechecks Retry-After before a spaced request starts', async () => {
+  const wait = deferred();
+  let clock = 1_000_000,
+    calls = 0;
+  const pool = createGitHubClientPool({
+    now: () => clock,
+    minSpacingMs: 100,
+    sleep: async (ms) => {
+      await wait.promise;
+      clock += ms;
+    },
+    fetch: (() => {
+      calls++;
+      return Promise.resolve(
+        new Response(JSON.stringify({ message: 'secondary rate limit' }), {
+          status: 429,
+          headers: { 'content-type': 'application/json', 'retry-after': '60' },
+        })
+      );
+    }) as typeof fetch,
+  });
+  const client = pool.client('limited');
+  const reads = withGitHubPriority('interactive', () =>
+    withParallelGitHubReads(() => [client.request('GET /first'), client.request('GET /second')])
+  );
+  const results = Promise.allSettled(reads);
+  await turn();
+  wait.resolve();
+  assert.ok((await results).every((result) => result.status === 'rejected'));
+  assert.equal(calls, 1, 'The waiting request stops after the first response establishes backoff');
 });

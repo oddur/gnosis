@@ -1,3 +1,6 @@
+import { createWorkflowGraphPreloader } from './workflow-graph-preloader';
+import { readWorkflowRuns, readWorkflowGraph } from './workflow-graph-service';
+import type { WorkflowGraphInput } from '../lib/workflow-graph';
 import { createCheckDetailsPreloader } from './check-details-preloader';
 import { normalizeRepositorySettings, normalizeBriefingLimit } from '../lib/repository-settings';
 import { normalizeEffort } from '../lib/effort';
@@ -2793,6 +2796,18 @@ function sendSyncUpdates(updates: GitHubSyncUpdate[], failures: GitHubSyncFailur
 let syncCredential: string | null = null;
 let suspended = false;
 const syncEnabled = () => !suspended && net.isOnline() && BrowserWindow.getAllWindows().some(win => win.isVisible() && !win.isMinimized());
+let workflowWarmAccount: string | null = null;
+const workflowGraphPreload = createWorkflowGraphPreloader({
+  canRun: () => !!cachedToken && workflowWarmAccount === cachedToken && syncEnabled() && !githubClients.backoff(cachedToken, true, ['core']),
+  prepare: (target, stillWanted) => withGitHubPriority('background', async () => {
+    const client = getGitHubClient(cachedToken);
+    const runs = await readWorkflowRuns(client, target);
+    if (!stillWanted()) return false;
+    const run = runs?.runs.at(0);
+    if (run) await readWorkflowGraph(client, { ...target, runId: run.id });
+    return true;
+  }),
+});
 const checkDetailsPreload = createCheckDetailsPreloader({
   canRun: () => !!cachedToken && syncEnabled() && !githubClients.backoff(cachedToken, true, ['core']),
   fresh: (snapshot, check) => !!cachedCheckDetails(getGitHubClient(cachedToken), { url: snapshot.url, headSha: snapshot.headSha, id: check.id }, check, true),
@@ -2814,6 +2829,7 @@ function publishGitHubUpdates(updates: GitHubSyncUpdate[]) {
   for (const update of updates) {
     if (update.kind === 'checks') {
       checkDetailsPreload.observe(update.value);
+      void checkDetailsPreload.tick();
       update.value = withCachedCheckDetails(getGitHubClient(cachedToken), update.value);
     } else if (update.kind === 'metadata') {
       const previous = syncMetadata.get(update.url);
@@ -2931,6 +2947,7 @@ let syncWasAvailable = false;
 async function tickGitHubSync() {
   const token = cachedToken;
   if (token !== syncCredential) {
+    workflowGraphPreload.setTarget(undefined);
     checkDetailsPreload.clear();
     updateCheckDetailTargets();
     syncCredential = token; syncMetadata.clear(); syncSignals.clear(); discoveryDue = 0;
@@ -2942,6 +2959,7 @@ async function tickGitHubSync() {
   if (!syncWasAvailable) { githubSync.wake(); discoveryDue = Math.min(discoveryDue, Date.now() + 10_000); }
   syncWasAvailable = true;
   void githubSync.tick();
+  void workflowGraphPreload.tick();
   void checkDetailsPreload.tick();
   prMergeMonitor.tick();
   if (discoveryPending || Date.now() < discoveryDue) return;
@@ -3006,6 +3024,14 @@ ipcMain.handle('pr-checks', (_event, input: CheckTarget, options: ChecksOptions 
     const value = await readPrChecks(client, { url: input.url, headSha: metadata.headSha }, options);
     return value && withCachedCheckDetails(client, value);
   })));
+ipcMain.handle('prepare-workflow-graph', (_event, target?: CheckTarget) => {
+  workflowWarmAccount = cachedToken;
+  workflowGraphPreload.setTarget(target);
+  void workflowGraphPreload.tick();
+});
+ipcMain.handle('workflow-runs', (_event, input: CheckTarget, options?: ChecksOptions) => withGitHubPriority(options?.background ? 'foreground' : 'interactive', () => checkAccount(client => readWorkflowRuns(client, input, options))));
+ipcMain.handle('workflow-graph', (_event, input: WorkflowGraphInput, options?: ChecksOptions) => withGitHubPriority(options?.background ? 'foreground' : 'interactive', () => checkAccount(client => readWorkflowGraph(client, input, options))));
+ipcMain.handle('cached-check-details', (_event, input: CheckSelection) => checkAccount(client => Promise.resolve(cachedCheckDetails(client, input))));
 handleInteractive('check-details', (_event, input: CheckSelection, options?: { force?: boolean }) => checkAccount(client => readCheckDetails(client, input, { force: options?.force === true })));
 handleInteractive('check-log', (_event, input: CheckSelection) => checkAccount(client => readCheckLog(client, input)));
 handleInteractive('rerun-checks', async (_event, input: CheckSelection & { mode: 'failed' | 'all' }) => {

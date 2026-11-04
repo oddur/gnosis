@@ -8,6 +8,7 @@ import {
   createGitHubScheduler,
   githubPriority,
   githubPriorityScope,
+  githubParallelReads,
   createGitHubWork,
   joinGitHubWork,
   githubReadSignal,
@@ -218,6 +219,7 @@ export function createGitHubClientPool(options: Options = {}) {
       const schedule = createGitHubScheduler();
       const backgroundDue = new Map<string, number>();
       let lastRequest = 0;
+      let dispatch: Promise<void> = Promise.resolve();
       const cache = snapshots.scope(key);
       clientCaches.set(client, cache);
       const inflight = new Map<string, GitHubWork<OctokitResponse<unknown>>>();
@@ -230,7 +232,15 @@ export function createGitHubClientPool(options: Options = {}) {
         const limit = Number(headers['x-ratelimit-limit']);
         const reset = Number(headers['x-ratelimit-reset']) * 1000 + 1000;
         if ([remaining, limit, reset].every(Number.isFinite)) {
-          state.budgets[resource] = { remaining, limit, reset };
+          const previous = state.budgets[resource];
+          // Parallel responses can arrive out of order. Never restore spent quota
+          // within one window, or replace a newer window with an older response.
+          if (previous && previous.reset > reset) return;
+          state.budgets[resource] = {
+            remaining: previous?.reset === reset ? Math.min(previous.remaining, remaining) : remaining,
+            limit,
+            reset,
+          };
           persist();
         }
       };
@@ -316,10 +326,15 @@ export function createGitHubClientPool(options: Options = {}) {
           // Pacing is not a failed operation. Release the network scheduler while
           // waiting, and resume this request so multi-request reads keep their progress.
           if (githubPriority() === 'background' && (backgroundDue.get(resource) ?? 0) > now()) return paced;
-          const spacing = (options.minSpacingMs ?? 100) - (now() - lastRequest);
-          if (spacing > 0) await sleep(spacing);
-          gate();
-          lastRequest = now();
+          // Reserve start times serially even when the network reads overlap.
+          const start = dispatch.then(async () => {
+            const spacing = (options.minSpacingMs ?? 100) - (now() - lastRequest);
+            if (spacing > 0) await sleep(spacing);
+            gate();
+            lastRequest = now();
+          });
+          dispatch = start.catch(() => {});
+          await start;
           // A failed write may still have reached GitHub. Invalidate without replaying it.
           const invalidateWrite = () => {
             const lfsDownload =
@@ -492,7 +507,7 @@ export function createGitHubClientPool(options: Options = {}) {
         };
         const work = createGitHubWork(async () => {
           for (;;) {
-            const result = await schedule(githubPriorityScope(), run);
+            const result = await schedule(githubPriorityScope(), run, { parallel: readOnly && githubParallelReads() });
             if (result !== paced) return result;
             // A coalesced click can promote this work. Recheck often without
             // occupying a network slot or delaying unrelated interactive requests.

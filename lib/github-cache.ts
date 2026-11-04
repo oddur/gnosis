@@ -7,7 +7,7 @@ const MAX_BYTES = 32_000_000;
 const MAX_ENTRY_BYTES = 1_000_000;
 const MAX_PREPARED_ENTRY_BYTES = 24_000_000;
 const PREPARED_RETENTION_MS = 30 * 24 * 60 * 60_000;
-const isPreparedKey = (key: string) => /^(?:pr-file:v2:|commit-comparison:v1:|pr-review-diff:v1:|pr-changes:v2:|pr-commits:v1:)/.test(key) && !key.endsWith(':latest');
+const isPreparedKey = (key: string) => /^(?:workflow-(?:source|parsed|definitions|data|layout):v\d+:|pr-file:v2:|commit-comparison:v1:|pr-review-diff:v1:|pr-changes:v2:|pr-commits:v1:)/.test(key) && !key.endsWith(':latest');
 const MAX_ENTRIES = 2000;
 const RETENTION_MS = 7 * 24 * 60 * 60_000;
 export function isCacheRecord(value: unknown): value is Record<string, unknown> {

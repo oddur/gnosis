@@ -1,6 +1,20 @@
+import { preferredChecksView, rememberChecksView, type ChecksView } from '../lib/checks-view';
+import { lazy, Suspense } from 'react';
+const WorkflowGraphView = lazy(() => import('./WorkflowGraph').then((m) => ({ default: m.WorkflowGraphView })));
 import { BulkCheckRerun } from './BulkCheckRerun';
 import { useEffect, useRef, useState } from 'react';
-import { CircleAlert, CircleCheck, CircleMinus, Clock3, ExternalLink, RefreshCw } from 'lucide-react';
+import {
+  CircleAlert,
+  CircleCheck,
+  CircleMinus,
+  Clock3,
+  ExternalLink,
+  List,
+  RefreshCw,
+  LoaderCircle,
+  Workflow,
+  X,
+} from 'lucide-react';
 import type { ReviewSubject } from '../lib/workbench';
 import {
   checkCounts,
@@ -46,8 +60,10 @@ export function PrChecksView({
   refresh,
   focus,
   onSource,
+  stateKey,
 }: {
   subject: ReviewSubject;
+  stateKey?: string;
   values: Partial<Record<string, PrChecks>>;
   errors: Partial<Record<string, string>>;
   busy: boolean;
@@ -55,11 +71,79 @@ export function PrChecksView({
   focus?: CheckFocus;
   onSource: (url: string, path: string, line: number, headSha: string) => void;
 }) {
+  const [view, setView] = useState<ChecksView>(preferredChecksView);
+  const [graphDetails, setGraphDetails] = useState(false);
+  const [graphVisited, setGraphVisited] = useState(() => preferredChecksView() === 'graph');
+  const [viewPreferenceError, setViewPreferenceError] = useState('');
+  const viewChoice = useRef(0);
+  function chooseView(next: ChecksView) {
+    const choice = ++viewChoice.current;
+    setView(next);
+    setViewPreferenceError('');
+    void rememberChecksView(next).catch(() => {
+      if (choice === viewChoice.current)
+        setViewPreferenceError('Could not save the Checks view. Your choice is kept for this session.');
+    });
+  }
+  const graphButton = useRef<HTMLButtonElement>(null);
+  const graphSelection = useRef<Selection | undefined>(undefined);
+  const detailOrigin = useRef<HTMLElement | null>(null);
+  const restoreGraphFocus = useRef(false);
+  const panes = useRef<HTMLDivElement>(null);
+  const [narrow, setNarrow] = useState(false);
+  const [detailNavigation, setDetailNavigation] = useState<HTMLDivElement | null>(null);
+  const [graphToolbar, setGraphToolbar] = useState<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!panes.current) return;
+    const observer = new ResizeObserver(([entry]) => setNarrow(entry.contentRect.width <= 1050));
+    observer.observe(panes.current);
+    return () => observer.disconnect();
+  }, []);
+  const closeGraphDetails = () => {
+    restoreGraphFocus.current = true;
+    setGraphDetails(false);
+  };
+  useEffect(() => {
+    if (graphDetails || view !== 'graph' || !restoreGraphFocus.current) return;
+    const frame = requestAnimationFrame(() => {
+      restoreGraphFocus.current = false;
+      const origin =
+        panes.current?.querySelector<HTMLElement>('.workflow-job[data-selected] .workflow-job-open') ??
+        detailOrigin.current;
+      if (origin?.isConnected && origin.getClientRects().length) origin.focus({ preventScroll: true });
+      else graphButton.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [graphDetails, view]);
+  const firstMember =
+    subject.members.find((m) => values[m.url]?.checks.some((c) => checkGroup(c) === 'attention')) ??
+    subject.members.at(0);
+  const warmUrl = firstMember?.url;
+  const warmSha = (warmUrl && values[warmUrl]?.headSha) || firstMember?.headSha;
+  useEffect(() => {
+    if (!warmUrl || !warmSha) return;
+    void window.electronAPI.prepareWorkflowGraph?.({ url: warmUrl, headSha: warmSha }).catch(() => {});
+    return () => {
+      void window.electronAPI.prepareWorkflowGraph?.().catch(() => {});
+    };
+  }, [warmUrl, warmSha]);
+  const [graphRefresh, setGraphRefresh] = useState(0);
+  const detailPane = useRef<HTMLDivElement>(null);
   const operation = useRef(0);
   const [requested, setRequested] = useState(false);
   const [filter, setFilter] = useState<CheckFilter>('all');
   const [selected, setSelected] = useState<Selection>();
-  const [detailCache, setDetailCache] = useState<Record<string, { value: CheckDetails; receivedAt: number }>>({});
+  useEffect(() => {
+    if (view !== 'graph' || !graphDetails) return;
+    const frame = requestAnimationFrame(() => {
+      if (detailPane.current) detailPane.current.scrollTop = 0;
+      detailPane.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [view, graphDetails, selected?.check.id]);
+  const [detailCache, setDetailCache] = useState<Partial<Record<string, { value: CheckDetails; receivedAt: number }>>>(
+    {}
+  );
   const previousAttempt = useRef(0);
   const [error, setError] = useState('');
   const [detailsBusy, setDetailsBusy] = useState(false);
@@ -78,6 +162,7 @@ export function PrChecksView({
       if (snapshot && check) {
         setSelected({ snapshot, check });
         setFilter('all');
+        if (focus.id) setView('list');
         setHandledFocus(focus.nonce);
       }
     } else if (!selected) {
@@ -172,19 +257,22 @@ export function PrChecksView({
       return;
     }
     setDetailsBusy(true);
-    void window.electronAPI
-      .getCheckDetails(
-        { url: selected.snapshot.url, headSha: selected.snapshot.headSha, id: selected.check.id },
-        { force }
-      )
-      .then((value) => {
-        if (live && detailKey)
-          setDetailCache((current) => {
-            const next = { ...current, [detailKey]: { value, receivedAt: value.checkedAt ?? Date.now() } };
-            while (Object.keys(next).length > 64) Reflect.deleteProperty(next, Object.keys(next)[0]);
-            return next;
-          });
-      })
+    const target = { url: selected.snapshot.url, headSha: selected.snapshot.headSha, id: selected.check.id };
+    const accept = (value: CheckDetails | undefined) => {
+      if (live && detailKey && value)
+        setDetailCache((current) => {
+          if ((current[detailKey]?.receivedAt ?? 0) > (value.checkedAt ?? Date.now())) return current;
+          const next = { ...current, [detailKey]: { value, receivedAt: value.checkedAt ?? Date.now() } };
+          while (Object.keys(next).length > 64) Reflect.deleteProperty(next, Object.keys(next)[0]);
+          return next;
+        });
+    };
+    void (async () => {
+      if (!detail) accept(await window.electronAPI.getCachedCheckDetails(target));
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Cleanup can run while the cached IPC read is pending.
+      if (!live) return;
+      accept(await window.electronAPI.getCheckDetails(target, { force }));
+    })()
       .catch((e: unknown) => {
         if (live) setError(e instanceof Error ? e.message : String(e));
       })
@@ -249,9 +337,33 @@ export function PrChecksView({
   }
   return (
     <section className="pr-checks-workspace" aria-label="PR checks">
+      {viewPreferenceError && (
+        <p className="checks-notice" role="status">
+          {viewPreferenceError}
+        </p>
+      )}
       <div className="checks-toolbar">
+        <div className="checks-view-switch" role="group" aria-label="Checks view">
+          <Button size="sm" variant="ghost" aria-pressed={view === 'list'} onClick={() => chooseView('list')}>
+            <List size={15} aria-hidden="true" /> List
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            ref={graphButton}
+            aria-pressed={view === 'graph'}
+            onClick={() => {
+              setGraphVisited(true);
+              chooseView('graph');
+              if (graphSelection.current) setSelected(graphSelection.current);
+            }}
+          >
+            <Workflow size={15} aria-hidden="true" /> Graph
+          </Button>
+        </div>
+        <div className="checks-graph-controls" ref={setGraphToolbar} hidden={view !== 'graph'} />
         <BulkCheckRerun key={subject.id} members={subject.members} values={values} onChanged={() => refresh()} />
-        <div role="group" aria-label="Filter checks">
+        <div role="group" aria-label="Filter checks" hidden={view === 'graph'}>
           {(['all', 'attention', 'running'] as const).map((value) => (
             <Button
               key={value}
@@ -263,15 +375,22 @@ export function PrChecksView({
               {value === 'all'
                 ? 'All checks'
                 : value === 'attention'
-                  ? `Needs attention (${counts.attention})`
-                  : `Running (${counts.running})`}
+                  ? view === 'graph'
+                    ? 'Needs attention'
+                    : `Needs attention (${counts.attention})`
+                  : view === 'graph'
+                    ? 'Running'
+                    : `Running (${counts.running})`}
             </Button>
           ))}
         </div>
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => refresh()}
+          onClick={() => {
+            refresh();
+            setGraphRefresh((n) => n + 1);
+          }}
           disabled={busy}
           aria-label="Refresh checks"
           title="Refresh checks"
@@ -279,103 +398,176 @@ export function PrChecksView({
           <RefreshCw size={15} className={busy ? 'animate-spin' : undefined} />
         </Button>
       </div>
-      <div className="checks-panes">
-        <nav className="checks-list" aria-label="Checks by PR">
-          {subject.members.map((member) => {
-            const snapshot = values[member.url];
-            const checks = snapshot
-              ? orderedChecks(
-                  snapshot.checks.map((check) =>
-                    detail?.state &&
-                    details &&
-                    selected?.snapshot.url === snapshot.url &&
-                    selected.snapshot.headSha === snapshot.headSha &&
-                    selected.check.id === check.id &&
-                    snapshot.checkedAt <= details.receivedAt
-                      ? { ...check, ...detail.state }
-                      : check
-                  ),
-                  filter
-                )
-              : [];
-            return (
-              <section key={member.url} className="checks-pr-group">
-                <h2>
-                  #{member.number} <span>{member.title}</span>
-                </h2>
-                <p className="checks-revision">
-                  {snapshot ? (
-                    <>
-                      {snapshot.headSha.slice(0, 7)} · Checked {timeAgo(new Date(snapshot.checkedAt).toISOString())}
-                    </>
-                  ) : busy ? (
-                    'Loading checks…'
-                  ) : (
-                    'Checks not loaded'
-                  )}
-                </p>
-                {errors[member.url] && (
-                  <p className="checks-notice checks-sync-status" role="status">
-                    {snapshot ? 'Showing saved results. ' : ''}
-                    {errors[member.url]}{' '}
-                    <button
-                      className="underline underline-offset-4"
-                      disabled={busy}
-                      onClick={() => refresh(member.url)}
-                    >
-                      Refresh this PR
-                    </button>
-                  </p>
-                )}
-                {snapshot?.warning && <p className="checks-notice">{snapshot.warning}</p>}
-                {checks.map((check) => (
-                  <button
-                    className="check-row"
-                    key={check.id}
-                    aria-current={
-                      selected?.snapshot.url === member.url &&
+      <div
+        ref={panes}
+        className={`checks-panes${view === 'graph' ? ` checks-graph-panes${graphDetails ? ' with-detail' : ''}` : ''}`}
+      >
+        {graphVisited && (
+          <div className="workflow-host" hidden={view !== 'graph'} inert={view !== 'graph' || (graphDetails && narrow)}>
+            <Suspense fallback={<div className="checks-empty">Loading graph view…</div>}>
+              <WorkflowGraphView
+                key={`${stateKey ?? subject.id}:${subject.members.map((m) => values[m.url]?.headSha ?? m.headSha).join(':')}`}
+                stateKey={`${stateKey ?? subject.id}:${subject.members.map((m) => values[m.url]?.headSha ?? m.headSha).join(':')}`}
+                active={view === 'graph'}
+                toolbarHost={view === 'graph' ? graphToolbar : null}
+                detailHost={view === 'graph' && graphDetails ? detailNavigation : null}
+                onRevealContext={closeGraphDetails}
+                onFilterChange={setFilter}
+                onExternalChecks={(url) => {
+                  setFilter('all');
+                  setView('list');
+                  const source = values[url];
+                  const check = source?.checks.find((c) => c.kind === 'status');
+                  if (source && check) setSelected({ snapshot: source, check });
+                }}
+                subject={subject}
+                values={values}
+                detailCache={detailCache}
+                filter={filter}
+                refreshNonce={graphRefresh}
+                onContextChange={() => {
+                  setGraphDetails(false);
+                  graphSelection.current = undefined;
+                }}
+                selectedId={graphSelection.current?.check.id}
+                onSelect={(snapshot, check) => {
+                  graphSelection.current = { snapshot, check };
+                  if (!detailPane.current?.contains(document.activeElement))
+                    detailOrigin.current =
+                      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                  setSelected({ snapshot, check });
+                  setGraphDetails(true);
+                }}
+              />
+            </Suspense>
+          </div>
+        )}
+        {view === 'list' && (
+          <nav className="checks-list" aria-label="Checks by PR">
+            {subject.members.map((member) => {
+              const snapshot = values[member.url];
+              const checks = snapshot
+                ? orderedChecks(
+                    snapshot.checks.map((check) =>
+                      detail?.state &&
+                      details &&
+                      selected?.snapshot.url === snapshot.url &&
+                      selected.snapshot.headSha === snapshot.headSha &&
                       selected.check.id === check.id &&
-                      selected.snapshot.headSha === snapshot?.headSha
-                        ? 'true'
-                        : undefined
-                    }
-                    onClick={() => {
-                      if (snapshot) setSelected({ snapshot, check });
-                    }}
-                  >
-                    <CheckIcon
-                      check={
-                        snapshot && awaitingCheck(snapshot, check)
-                          ? { ...check, status: 'queued', conclusion: null }
-                          : check
-                      }
-                    />
-                    <span className="check-row-content">
-                      <strong>{check.name}</strong>
-                      <small>
-                        {check.provider} ·{' '}
-                        <span
-                          className={`check-${snapshot && awaitingCheck(snapshot, check) ? 'running' : checkGroup(check)}`}
-                        >
-                          {snapshot && awaitingCheck(snapshot, check) ? 'Rerun requested' : checkLabel(check)}
-                        </span>
-                      </small>
-                    </span>
-                    <span className="check-duration">
-                      {snapshot && awaitingCheck(snapshot, check) ? '' : checkDuration(check)}
-                    </span>
-                  </button>
-                ))}
-                {snapshot && !checks.length && (
-                  <p className="checks-notice">
-                    {snapshot.checks.length ? 'No checks match this filter.' : 'No checks reported for this commit.'}
+                      snapshot.checkedAt <= details.receivedAt
+                        ? { ...check, ...detail.state }
+                        : check
+                    ),
+                    filter
+                  )
+                : [];
+              return (
+                <section key={member.url} className="checks-pr-group">
+                  <h2>
+                    #{member.number} <span>{member.title}</span>
+                  </h2>
+                  <p className="checks-revision">
+                    {snapshot ? (
+                      <>
+                        {snapshot.headSha.slice(0, 7)} · Checked {timeAgo(new Date(snapshot.checkedAt).toISOString())}
+                      </>
+                    ) : busy ? (
+                      'Loading checks…'
+                    ) : (
+                      'Checks not loaded'
+                    )}
                   </p>
-                )}
-              </section>
-            );
-          })}
-        </nav>
-        <div className="check-detail" aria-label="Selected check details">
+                  {errors[member.url] && (
+                    <p className="checks-notice checks-sync-status" role="status">
+                      {snapshot ? 'Showing saved results. ' : ''}
+                      {errors[member.url]}{' '}
+                      <button
+                        className="underline underline-offset-4"
+                        disabled={busy}
+                        onClick={() => refresh(member.url)}
+                      >
+                        Refresh this PR
+                      </button>
+                    </p>
+                  )}
+                  {snapshot?.warning && <p className="checks-notice">{snapshot.warning}</p>}
+                  {checks.map((check) => (
+                    <button
+                      className="check-row"
+                      key={check.id}
+                      aria-current={
+                        selected?.snapshot.url === member.url &&
+                        selected.check.id === check.id &&
+                        selected.snapshot.headSha === snapshot?.headSha
+                          ? 'true'
+                          : undefined
+                      }
+                      onClick={() => {
+                        if (snapshot) setSelected({ snapshot, check });
+                      }}
+                    >
+                      <CheckIcon
+                        check={
+                          snapshot && awaitingCheck(snapshot, check)
+                            ? { ...check, status: 'queued', conclusion: null }
+                            : check
+                        }
+                      />
+                      <span className="check-row-content">
+                        <strong>{check.name}</strong>
+                        <small>
+                          {check.provider} ·{' '}
+                          <span
+                            className={`check-${snapshot && awaitingCheck(snapshot, check) ? 'running' : checkGroup(check)}`}
+                          >
+                            {snapshot && awaitingCheck(snapshot, check) ? 'Rerun requested' : checkLabel(check)}
+                          </span>
+                        </small>
+                      </span>
+                      <span className="check-duration">
+                        {snapshot && awaitingCheck(snapshot, check) ? '' : checkDuration(check)}
+                      </span>
+                    </button>
+                  ))}
+                  {snapshot && !checks.length && (
+                    <p className="checks-notice">
+                      {snapshot.checks.length ? 'No checks match this filter.' : 'No checks reported for this commit.'}
+                    </p>
+                  )}
+                </section>
+              );
+            })}
+          </nav>
+        )}
+        <div
+          ref={detailPane}
+          tabIndex={-1}
+          role="region"
+          hidden={view === 'graph' && !graphDetails}
+          className="check-detail"
+          aria-label="Selected check details"
+          onKeyDown={(event) => {
+            if (view === 'graph' && event.key === 'Escape' && !event.defaultPrevented) {
+              event.preventDefault();
+              event.stopPropagation();
+              closeGraphDetails();
+            }
+          }}
+        >
+          {view === 'graph' && (
+            <div className="workflow-detail-toolbar">
+              <Button
+                className="workflow-close-detail"
+                size="sm"
+                variant="ghost"
+                aria-label="Close job details"
+                onClick={closeGraphDetails}
+              >
+                <X size={16} /> Close
+              </Button>
+              <div className="workflow-detail-navigation" ref={setDetailNavigation} />
+            </div>
+          )}
           {!selected || !displayedCheck ? (
             <div className="checks-empty">
               <CircleCheck size={24} />
@@ -415,6 +607,12 @@ export function PrChecksView({
                       check={requested ? { ...displayedCheck, status: 'queued', conclusion: null } : displayedCheck}
                     />
                     {selected.check.name}
+                    {detailsBusy && detail && (
+                      <span className="check-detail-refresh" role="status" title="Refreshing check details">
+                        <LoaderCircle size={15} className="animate-spin" aria-hidden="true" />
+                        <span className="sr-only">Refreshing check details</span>
+                      </span>
+                    )}
                   </h2>
                   <p>
                     {selected.check.provider} ·{' '}
