@@ -1,3 +1,5 @@
+import { layoutWorkflow } from '../src/workflow-layout';
+import type { WorkflowGraph } from '../lib/workflow-graph';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,7 +20,13 @@ void app
     win.webContents.on('console-message', ({ level, message }) => {
       if (level === 'error') errors.push(message);
     });
-    const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
+    const js = async <T = unknown>(code: string): Promise<T> => {
+      try {
+        return (await win.webContents.executeJavaScript(code)) as T;
+      } catch (error) {
+        throw Error(`${String(error)}\nScript: ${code.slice(0, 600)}\n${errors.join('\n')}`);
+      }
+    };
     const wait = async (code: string) => {
       const end = Date.now() + 60000;
       while (Date.now() < end) {
@@ -43,6 +51,19 @@ void app
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, name + '.png'), (await win.webContents.capturePage()).toPNG());
     };
+    const installRoutes = async () => {
+      await wait('window.checksFixture.snapshots.size > 0');
+      const routes: Record<string, Awaited<ReturnType<typeof layoutWorkflow>>> = {};
+      for (const mode of ['collapsed', 'expanded']) {
+        const graph = await js<WorkflowGraph>(
+          `(async()=>{const snapshot=[...window.checksFixture.snapshots.values()][0];return window.electronAPI.getWorkflowGraph({...snapshot,runId:9,expanded:${mode === 'expanded' ? "['test']" : '[]'}})})()`
+        );
+        routes[mode] = await layoutWorkflow(graph.nodes, graph.edges);
+      }
+      await js(
+        `(()=>{const routes=${JSON.stringify(routes)},read=window.electronAPI.getWorkflowGraph;window.electronAPI.getWorkflowGraph=async(input,options)=>{const graph=await read(input,options),route=routes[input.expanded?.includes('test')?'expanded':'collapsed'];return {...graph,nodes:graph.nodes.map(n=>({...n,...route.nodes.find(r=>r.id===n.id)})),edges:graph.edges.map(e=>({...e,points:route.edges.find(r=>r.id===e.id)?.points}))};};})()`
+      );
+    };
     try {
       await loadWorkbenchPage(win, process.env.GNOSIS_WORKBENCH_URL + '?pr-summary&checks');
       await wait("document.querySelectorAll('.queue-item').length===7");
@@ -53,9 +74,17 @@ void app
       await wait("document.querySelectorAll('.pr-check-summary li').length===3");
       await js("document.querySelector('.pr-check-summary li button').click()");
       await wait("document.querySelectorAll('.check-row').length===6");
+      await installRoutes();
       await click('Graph');
       await wait("document.querySelectorAll('.workflow-job').length===4");
       await wait("!!document.querySelector('.react-flow__edge')");
+      assert.equal(
+        await js(
+          'document.querySelector(\'.workflow-job-open[aria-label="TypeScript: Failed"] .workflow-job-context\') === null'
+        ),
+        true,
+        'Do not repeat the definition ID'
+      );
       await capture('desktop-light');
       const positions = await js("[...document.querySelectorAll('.react-flow__node')].map(n=>n.style.transform)");
       const viewport = await js("document.querySelector('.react-flow__viewport').style.transform");
@@ -128,6 +157,7 @@ void app
         "document.querySelector('.queue-stack-icon').closest('.queue-item').querySelector('.queue-checks').click()"
       );
       await wait("document.querySelectorAll('.checks-pr-group').length===3");
+      await installRoutes();
       await click('Graph');
       await wait("document.querySelectorAll('.workflow-job').length===4");
       await js('document.querySelector(\'.workflow-job-open[aria-label="TypeScript: Failed"]\').click()');
@@ -139,6 +169,59 @@ void app
         "!!document.querySelector('.check-detail[hidden]') && document.querySelectorAll('.workflow-job').length===4"
       );
       await capture('stack-light');
+      const exampleNodes = [
+        'semantic-version',
+        'define-release-channel',
+        'build-macos',
+        'build-windows',
+        'publish',
+      ].map((id, i) => ({
+        id,
+        name: id,
+        definition: id,
+        x: 0,
+        y: 0,
+        jobs: [
+          {
+            id: 100 + i,
+            checkId: 100 + i,
+            name: id,
+            status: 'completed',
+            conclusion: i === 4 ? 'skipped' : 'success',
+            startedAt: '2026-11-04T08:00:00Z',
+            completedAt: '2026-11-04T08:00:29Z',
+            url: '',
+            steps: [],
+          },
+        ],
+      }));
+      const exampleEdges = [
+        ['semantic-version', 'build-macos'],
+        ['semantic-version', 'build-windows'],
+        ['define-release-channel', 'build-macos'],
+        ['define-release-channel', 'build-windows'],
+        ['build-macos', 'publish'],
+        ['build-windows', 'publish'],
+      ].map(([source, target]) => ({ id: source + '->' + target, source, target }));
+      const exampleLayout = await layoutWorkflow(exampleNodes, exampleEdges);
+      await js(
+        `(()=>{const nodes=${JSON.stringify(exampleNodes.map((n) => ({ ...n, ...exampleLayout.nodes.find((p) => p.id === n.id) })))},edges=${JSON.stringify(exampleEdges.map((e) => ({ ...e, points: exampleLayout.edges.find((r) => r.id === e.id)?.points })))},read=window.electronAPI.getWorkflowGraph;window.electronAPI.getWorkflowGraph=async(...args)=>({...await read(...args),nodes,edges,groups:[]});document.documentElement.classList.add('dark');document.querySelector('[aria-label="Refresh checks"]').click();})()`
+      );
+      await wait(
+        "document.querySelectorAll('.workflow-job').length===5 && document.querySelectorAll('.react-flow__edge').length===6"
+      );
+      await capture('routing-fanin-dark');
+      await js(`document.querySelector('.workflow-job-open[aria-label="build-macos: Passed"]').focus()`);
+      await wait("[...document.querySelectorAll('.react-flow__edge-path')].some(e=>e.style.opacity==='0.18')");
+      await js(
+        `(()=>{const card=document.querySelector('.workflow-job-open[aria-label="build-macos: Passed"]').closest('.workflow-job');card.dispatchEvent(new MouseEvent('mouseover',{bubbles:true,relatedTarget:document.body}));card.dispatchEvent(new MouseEvent('mouseout',{bubbles:true,relatedTarget:document.body}));})()`
+      );
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.ok(
+        await js("[...document.querySelectorAll('.react-flow__edge-path')].some(e=>e.style.opacity==='0.18')"),
+        'Keyboard focus preserves tracing after the pointer leaves'
+      );
+      await capture('routing-focus-dark');
       assert.equal(errors.length, 0, errors.join('\n'));
       console.log(
         'Workflow graph browser checks passed: graph/list, matrix expansion, details, keyboard, stable updates, filters, cached errors, laptop and narrow themes.'

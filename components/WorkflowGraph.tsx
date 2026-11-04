@@ -1,6 +1,9 @@
+import { workflowEdgePath } from '../lib/workflow-edge-path';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
+  BaseEdge,
+  type EdgeProps,
   Handle,
   Position,
   Controls,
@@ -77,6 +80,7 @@ type JobNode = Node<
     prerequisite?: string;
     onOpen: () => void;
     onExpand: () => void;
+    onHighlight: (active: boolean, input: 'pointer' | 'focus') => void;
   },
   'job'
 >;
@@ -92,15 +96,32 @@ function JobCard({ data }: NodeProps<JobNode>) {
         ? `${item.jobs.length} jobs${item.jobs.some((j) => j.status !== 'completed') ? ` · ${item.jobs.filter((j) => j.status !== 'completed').length} running or queued` : ''}`
         : active
           ? active.name
-          : (item.group ?? item.definition ?? 'GitHub Actions');
+          : item.group !== item.name
+            ? item.group
+            : undefined;
   return (
     <div
       className="workflow-job"
       data-dim={data.dim || undefined}
       data-selected={data.selected || undefined}
       data-outcome={group}
+      onMouseEnter={() => data.onHighlight(true, 'pointer')}
+      onMouseLeave={() => data.onHighlight(false, 'pointer')}
+      onFocus={() => data.onHighlight(true, 'focus')}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) data.onHighlight(false, 'focus');
+      }}
     >
-      <Handle type="target" position={Position.Left} isConnectable={false} />
+      {item.ports?.map((port) => (
+        <Handle
+          key={port.id}
+          id={port.id}
+          type={port.type}
+          position={port.type === 'source' ? Position.Right : Position.Left}
+          style={{ top: port.y }}
+          isConnectable={false}
+        />
+      ))}
       <button
         className="workflow-job-open nodrag"
         onClick={data.onOpen}
@@ -116,9 +137,11 @@ function JobCard({ data }: NodeProps<JobNode>) {
             {item.jobs.length === 1 ? checkDuration(item.jobs[0], data.now) : ''}
           </span>
         </span>
-        <span className="workflow-job-context" title={secondary}>
-          {secondary}
-        </span>
+        {secondary && (
+          <span className="workflow-job-context" title={secondary}>
+            {secondary}
+          </span>
+        )}
       </button>
       {item.expandable && (
         <button
@@ -130,11 +153,17 @@ function JobCard({ data }: NodeProps<JobNode>) {
           <Plus size={14} />
         </button>
       )}
-      <Handle type="source" position={Position.Right} isConnectable={false} />
     </div>
   );
 }
 const nodeTypes = { job: JobCard };
+function RoutedEdge({ id, data, markerEnd, style }: EdgeProps) {
+  const points = data?.points as { x: number; y: number }[] | undefined;
+  return points?.length ? (
+    <BaseEdge id={id} path={workflowEdgePath(points)} markerEnd={markerEnd} style={style} />
+  ) : null;
+}
+const edgeTypes = { routed: RoutedEdge };
 
 export function WorkflowGraphView({
   subject,
@@ -153,6 +182,9 @@ export function WorkflowGraphView({
   onSelect: (snapshot: PrChecks, check: PrCheck) => void;
   onContextChange: () => void;
 }) {
+  const [hovered, setHovered] = useState<string>();
+  const [focused, setFocused] = useState<string>();
+  const highlight = hovered ?? focused;
   const [memberUrl, setMemberUrl] = useState(subject.members.at(0)?.url ?? '');
   const member = subject.members.find((m) => m.url === memberUrl) ?? subject.members.at(0);
   const snapshot = member && values[member.url];
@@ -173,6 +205,10 @@ export function WorkflowGraphView({
   const requests = useRef({ runs: refreshNonce, graph: refreshNonce, retry: 0, graphRetry: 0 });
   const graphKey = `${scope}:${run?.id}:${run?.attempt}`;
   const graph = graphState?.key === graphKey ? graphState.value : undefined;
+  useEffect(() => {
+    setHovered(undefined);
+    setFocused(undefined);
+  }, [graphKey]);
   const expansions = expanded.join('|');
   const observedAt = snapshot?.checkedAt;
   useEffect(() => {
@@ -299,8 +335,17 @@ export function WorkflowGraphView({
     const source = byId.get(edge.source);
     if (source && outcome(source.jobs).group === 'attention') failureSources.set(edge.target, source.name);
   }
-  const toggle = (id: string) =>
+  const toggle = (id: string) => {
+    setHovered(undefined);
+    setFocused(undefined);
     setExpanded((current) => (current.includes(id) ? current.filter((v) => v !== id) : [...current, id]));
+  };
+  const related = new Set(highlight ? [highlight] : []);
+  for (const edge of graph?.edges ?? [])
+    if (edge.source === highlight || edge.target === highlight) {
+      related.add(edge.source);
+      related.add(edge.target);
+    }
   const nodes: JobNode[] = displayed.map((item) => ({
     id: item.id,
     type: 'job',
@@ -314,7 +359,11 @@ export function WorkflowGraphView({
       now,
       prerequisite: failureSources.get(item.id),
       selected: item.jobs.some((j) => j.checkId === selectedId),
-      dim: filter !== 'all' && outcome(item.jobs).group !== filter,
+      dim: (filter !== 'all' && outcome(item.jobs).group !== filter) || (!!highlight && !related.has(item.id)),
+      onHighlight: (active, input) =>
+        (input === 'pointer' ? setHovered : setFocused)((current) =>
+          active ? item.id : current === item.id ? undefined : current
+        ),
       onExpand: () => toggle(item.id),
       onOpen: () => {
         if (item.expandable) {
@@ -330,7 +379,15 @@ export function WorkflowGraphView({
   }));
   const edges = (graph?.edges ?? []).map((edge) => ({
     ...edge,
-    type: 'smoothstep',
+    type: 'routed',
+    sourceHandle: `source:${edge.id}`,
+    targetHandle: `target:${edge.id}`,
+    data: { points: edge.points },
+    style: highlight
+      ? edge.source === highlight || edge.target === highlight
+        ? { stroke: 'var(--ring)', strokeWidth: 2, opacity: 1 }
+        : { opacity: 0.18 }
+      : undefined,
     markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
     className:
       failureSources.has(edge.target) && outcome(byId.get(edge.source)?.jobs ?? []).group === 'attention'
@@ -438,6 +495,7 @@ export function WorkflowGraphView({
             nodes={nodes}
             edges={edges}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             onInit={setFlow}
             nodesDraggable={false}
             nodesConnectable={false}

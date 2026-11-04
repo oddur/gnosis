@@ -36,3 +36,11 @@ Implementation-session QA reported: full suite 687 passed / 2 skipped; 17 workfl
 Screenshots establish the captured fixture states and sizes, not live GitHub data correctness or every workflow topology. At laptop detail widths the fitted graph becomes smaller; zoom controls remain available. Unsupported or ambiguous definitions must retain their explicit mapping notices rather than invent edges.
 
 This scoped documentation adds graph behavior only. The existing DESIGN.md baseline commit reference and the older sidecar generation date remain unchanged; the pre-existing bulk-rerun paragraph remains after the Do/Don't list. These are existing documentation drift, not new graph token changes.
+
+## Readability follow-up
+
+The user’s live workflow exposed edges passing behind unrelated job cards. Layout now preserves ELK’s orthogonal route points with distinct incoming and outgoing attachment points. The renderer rounds the routed corners without changing the path. Hover and keyboard focus highlight immediate dependencies and dim unrelated cards and edges. Duplicate job/definition names are omitted; active steps, group counts, and prerequisite failures remain.
+
+Rendered evidence: `routing-fanin-dark.png` recreates the reported five-job shape; `routing-focus-dark.png` shows dependency tracing. Updated laptop-detail, desktop, narrow, and stack captures retain the existing responsive layout. The focused suite passes 18 tests, including orthogonal routes, unrelated-card clearance, distinct ports, and deterministic geometry. The graph browser suite, TypeScript, and focused lint pass. The final layout detector reports no findings on the changed targets. A fitted graph is still smaller when details take half a laptop window; zoom controls remain available.
+
+Independent finish review: ship for this scoped routing fix. The reviewer inspected the original screenshot, four current captures, and routing code. Its nonblocking focus finding was corrected by tracking pointer hover and keyboard focus separately. Dense topologies beyond the captured fixture remain outside this visual verification.

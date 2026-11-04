@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import type { Octokit } from '@octokit/rest';
-import ELK from 'elkjs/lib/elk.bundled.js';
+import { layoutWorkflow } from './workflow-layout';
 import { githubCacheFor } from '../lib/github-client';
 import { createGitHubWork, joinGitHubWork, type GitHubWork } from '../lib/github-scheduler';
 import { prActionTarget } from './pr-actions-service';
@@ -191,7 +191,6 @@ interface RunData {
   checkedAt: number;
   definitionUrl?: string;
 }
-const layout = new ELK();
 async function readGraph(
   client: Octokit,
   input: WorkflowGraphInput,
@@ -296,27 +295,21 @@ async function readGraph(
   const topology = createHash('sha256')
     .update(JSON.stringify([assembled.nodes.map((n) => n.id), assembled.edges.map((e) => e.id)]))
     .digest('hex');
-  const positions = await cached(client, `workflow-layout:v1:${topology}`, Infinity, async () => {
-    const result = await layout.layout({
-      id: 'workflow',
-      layoutOptions: {
-        'elk.algorithm': 'layered',
-        'elk.direction': 'RIGHT',
-        'elk.spacing.nodeNode': '28',
-        'elk.layered.spacing.nodeNodeBetweenLayers': '62',
-        'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
-      },
-      children: assembled.nodes.map((n) => ({ id: n.id, width: 244, height: 112 })),
-      edges: assembled.edges.map((e) => ({ id: e.id, sources: [e.source], targets: [e.target] })),
-    });
-    return (result.children ?? []).map((n) => ({ id: n.id, x: n.x ?? 0, y: n.y ?? 0 }));
-  });
-  const byId = new Map(positions.map((p) => [p.id, p]));
+  const routed = await cached(client, `workflow-layout:v2:${topology}`, Infinity, () =>
+    layoutWorkflow(assembled.nodes, assembled.edges)
+  );
+  const byId = new Map(routed.nodes.map((n) => [n.id, n]));
+  const edgesById = new Map(routed.edges.map((e) => [e.id, e.points]));
   return {
     target: { url: input.url, headSha: input.headSha },
     run: data.run,
-    nodes: assembled.nodes.map((n) => ({ ...n, x: byId.get(n.id)?.x ?? 0, y: byId.get(n.id)?.y ?? 0 })),
-    edges: assembled.edges,
+    nodes: assembled.nodes.map((n) => ({
+      ...n,
+      x: byId.get(n.id)?.x ?? 0,
+      y: byId.get(n.id)?.y ?? 0,
+      ports: byId.get(n.id)?.ports,
+    })),
+    edges: assembled.edges.map((e) => ({ ...e, points: edgesById.get(e.id) })),
     groups: assembled.groups,
     checkedAt: data.checkedAt,
     warnings: [

@@ -36,7 +36,14 @@ export interface WorkflowDefinitionJob {
   inputs?: Record<string, string | number | boolean>;
   children?: WorkflowDefinitionJob[];
 }
+export interface WorkflowPort {
+  id: string;
+  type: 'source' | 'target';
+  x: number;
+  y: number;
+}
 export interface WorkflowGraphNode {
+  ports?: WorkflowPort[];
   id: string;
   name: string;
   group?: string;
@@ -52,7 +59,7 @@ export interface WorkflowGraph {
   target: CheckTarget;
   run: WorkflowRunInfo;
   nodes: WorkflowGraphNode[];
-  edges: { id: string; source: string; target: string }[];
+  edges: { id: string; source: string; target: string; points?: { x: number; y: number }[] }[];
   groups: { id: string; name: string }[];
   checkedAt: number;
   warnings: string[];

@@ -1,3 +1,5 @@
+import { layoutWorkflow } from '../src/workflow-layout';
+import { workflowEdgePath } from '../lib/workflow-edge-path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseWorkflow, assembleWorkflow } from '../src/workflow-definition';
@@ -292,4 +294,55 @@ void test('completed workflow data survives SQLite restart with no network reque
     await second.pool.closeStorage();
     await fs.rm(dir, { recursive: true, force: true });
   }
+});
+
+void test('routed fan-in, fan-out and skip-layer dependencies avoid every unrelated card', async () => {
+  const nodes = ['semantic-version', 'define-release-channel', 'build-macos', 'build-windows', 'publish'].map((id) => ({
+    id,
+  }));
+  const edges = [
+    ['semantic-version', 'build-macos'],
+    ['semantic-version', 'build-windows'],
+    ['define-release-channel', 'build-macos'],
+    ['define-release-channel', 'build-windows'],
+    ['build-macos', 'publish'],
+    ['build-windows', 'publish'],
+    ['semantic-version', 'publish'],
+  ].map(([source, target]) => ({ id: source + '->' + target, source, target }));
+  const routed = await layoutWorkflow(nodes, edges);
+  for (const edge of edges) {
+    const points = routed.edges.find((e) => e.id === edge.id)!.points;
+    const source = routed.nodes.find((n) => n.id === edge.source)!;
+    const target = routed.nodes.find((n) => n.id === edge.target)!;
+    const start = source.ports.find((p) => p.id === 'source:' + edge.id)!;
+    const end = target.ports.find((p) => p.id === 'target:' + edge.id)!;
+    assert.deepEqual(points[0], { x: source.x + start.x, y: source.y + start.y });
+    assert.deepEqual(points.at(-1), { x: target.x + end.x, y: target.y + end.y });
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1],
+        b = points[i];
+      assert.ok(a.x === b.x || a.y === b.y, 'Orthogonal segments');
+      for (const node of routed.nodes.filter((n) => n.id !== edge.source && n.id !== edge.target)) {
+        const crosses =
+          a.x === b.x
+            ? a.x > node.x - 4 &&
+              a.x < node.x + 248 &&
+              Math.max(a.y, b.y) > node.y - 4 &&
+              Math.min(a.y, b.y) < node.y + 116
+            : a.y > node.y - 4 &&
+              a.y < node.y + 116 &&
+              Math.max(a.x, b.x) > node.x - 4 &&
+              Math.min(a.x, b.x) < node.x + 248;
+        assert.equal(crosses, false, edge.id + ' crosses ' + node.id);
+      }
+    }
+    assert.ok(workflowEdgePath(points).startsWith('M '));
+  }
+  for (const node of routed.nodes)
+    assert.equal(
+      new Set(node.ports.map((p) => `${p.x},${p.y}`)).size,
+      node.ports.length,
+      'Each dependency has its own endpoint'
+    );
+  assert.deepEqual(await layoutWorkflow(nodes, edges), routed, 'Layout is stable');
 });
