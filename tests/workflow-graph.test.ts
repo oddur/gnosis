@@ -1,4 +1,10 @@
-import { workflowFailureInsight, workflowJobDetails } from '../lib/workflow-graph';
+import {
+  workflowVisibleSteps,
+  workflowJobSteps,
+  withWorkflowSteps,
+  workflowFailureInsight,
+  workflowJobDetails,
+} from '../lib/workflow-graph';
 import {
   attentionJobs,
   nextAttentionJob,
@@ -198,6 +204,7 @@ function harness(onRequest?: (url: URL) => Promise<void>) {
   };
   let files: Record<string, string> = {};
   let stepText = '';
+  let stepData: WorkflowJob['steps'] | undefined;
   let workflow = source,
     failSource = false,
     pause: Promise<void> | undefined;
@@ -222,7 +229,9 @@ function harness(onRequest?: (url: URL) => Promise<void>) {
               started_at: j.startedAt,
               completed_at: j.completedAt,
               html_url: '',
-              steps: stepText ? [{ number: 1, name: stepText, status: 'completed', conclusion: 'success' }] : [],
+              steps:
+                stepData ??
+                (stepText ? [{ number: 1, name: stepText, status: 'completed', conclusion: 'success' }] : []),
             })
           ),
         };
@@ -255,6 +264,9 @@ function harness(onRequest?: (url: URL) => Promise<void>) {
     pool,
     files: (value: Record<string, string>) => {
       files = value;
+    },
+    steps: (value: WorkflowJob['steps']) => {
+      stepData = value;
     },
     stepText: (value: string) => {
       stepText = value;
@@ -1154,4 +1166,62 @@ void test('fan-in port ordering avoids crossed final dependencies regardless of 
     assert.deepEqual(JSON.parse(JSON.stringify(result)), result, 'Coordinates survive persisted cache without drift');
     assert.deepEqual(await layoutWorkflow(nodes, input), result, 'Ordering remains deterministic');
   }
+});
+
+void test('step previews follow execution order and keep the active or failed step in view', () => {
+  const steps = Array.from({ length: 8 }, (_, i) => ({
+    name: `Step ${i + 1}`,
+    number: i + 1,
+    status: 'completed',
+    conclusion: 'success',
+  }));
+  const value = { ...job(1, 'Build'), steps };
+  steps[5].status = 'in_progress';
+  assert.deepEqual(
+    workflowVisibleSteps(value).map((s) => s.number),
+    [5, 6, 7]
+  );
+  steps[5].status = 'completed';
+  steps[5].conclusion = 'failure';
+  assert.deepEqual(
+    workflowVisibleSteps(value).map((s) => s.number),
+    [5, 6, 7]
+  );
+  assert.equal(workflowVisibleSteps(value, true).length, 8);
+  steps[5].conclusion = 'success';
+  assert.deepEqual(
+    workflowVisibleSteps(value).map((s) => s.number),
+    [6, 7, 8]
+  );
+  const queued = { ...value, steps: steps.map((s) => ({ ...s, status: 'queued', conclusion: null })) };
+  assert.deepEqual(
+    workflowVisibleSteps(queued).map((s) => s.number),
+    [1, 2, 3]
+  );
+  const grouped = { id: 'group', name: 'Group', jobs: [value, queued], x: 0, y: 0 };
+  assert.equal(withWorkflowSteps(grouped), grouped, 'Group summaries do not mix steps from different jobs');
+});
+void test('job step expansion reroutes locally and supports REST timestamps in existing caches', async () => {
+  const h = harness();
+  const steps = Array.from({ length: 6 }, (_, i) => ({
+    name: `Step ${i + 1}`,
+    number: i + 1,
+    status: 'completed',
+    conclusion: 'success',
+    started_at: '2026-11-04T10:00:00Z',
+    completed_at: '2026-11-04T10:00:12Z',
+  }));
+  h.steps(steps);
+  const initial = await readWorkflowGraph(h.client, input);
+  const initialNode = initial?.nodes.find((n) => n.id === 'build');
+  assert.ok(initialNode);
+  const calls = h.calls.length;
+  const expanded = await readWorkflowGraph(h.client, { ...input, expandedSteps: ['build'] }, { cachedOnly: true });
+  const node = expanded?.nodes.find((n) => n.id === 'build');
+  assert.ok(node);
+  assert.equal(node.stepsExpanded, true);
+  assert.equal((node.height ?? 0) - (initialNode.height ?? 0), 84);
+  assert.equal(workflowJobSteps(node.jobs[0])[0].startedAt, steps[0].started_at);
+  assert.ok(expanded?.edges.every((e) => e.points?.length));
+  assert.equal(h.calls.length, calls, 'Expand must not refetch jobs or definitions');
 });

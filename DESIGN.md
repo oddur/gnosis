@@ -316,3 +316,8 @@ Stack and PR names carry a leading identity icon in headings, navigation, select
 Commit breadcrumbs show the first line of the commit message with GitCommitHorizontal, retaining the hash in the searchable picker. File breadcrumbs and picker options use the shared FileTypeIcon for the path, including light/dark variants. Long breadcrumb labels truncate; picker labels wrap.
 
 Workspace section icons use the shared WorkspaceIcon mapping in tabs, breadcrumbs, selectors, and related navigation: Summary = LayoutList, Changes = FileDiff, Commits = GitCommitHorizontal, Checks = ListChecks, Explanation = BookOpen, Local notes = NotebookPen. Keep visible text labels; icons are decorative and inherit text color. Check status icons continue to represent status rather than section identity.
+
+
+### Workflow job steps
+
+Individual Checks graph nodes show a compact step list with status icons, names, and durations. Preview three ordered steps around the running step, then a failure, then the latest completed step. Show all steps expands the full list; grouped nodes keep their job summary until expanded. Keep dependency routing outside the card, preserve the existing header action for details, and expose full truncated step names and status in tooltips. Expansion uses cached workflow data and backend layout. Remember it within the current workflow session. Timestamp-less steps show no invented duration.

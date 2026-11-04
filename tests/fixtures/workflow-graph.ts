@@ -1,3 +1,4 @@
+import { withWorkflowSteps } from '../../lib/workflow-graph';
 import type { WorkflowGraph, WorkflowGraphInput, WorkflowJob, WorkflowRuns } from '../../lib/workflow-graph';
 import type { CheckTarget, PrChecks } from '../../lib/pr-checks';
 export function workflowMocks(snapshots: Map<string, PrChecks>) {
@@ -31,7 +32,26 @@ export function workflowMocks(snapshots: Map<string, PrChecks>) {
           startedAt: check.startedAt,
           completedAt: check.completedAt,
           url: check.url ?? '',
-          steps: id === 3 ? [{ name: 'Build application', number: 1, status: 'in_progress', conclusion: null }] : [],
+          steps:
+            id === 4
+              ? [
+                  'Set up job',
+                  'Checkout',
+                  'Install dependencies',
+                  'Lint source',
+                  'Check formatting',
+                  'Complete job',
+                ].map((name, i) => ({
+                  name,
+                  number: i + 1,
+                  status: 'completed',
+                  conclusion: 'success',
+                  startedAt: '2026-11-04T10:00:00Z',
+                  completedAt: '2026-11-04T10:00:12Z',
+                }))
+              : id === 3
+                ? [{ name: 'Build application', number: 1, status: 'in_progress', conclusion: null }]
+                : [],
         };
       };
       const expanded = input.expanded?.includes('test');
@@ -79,7 +99,7 @@ export function workflowMocks(snapshots: Map<string, PrChecks>) {
               ]
             : [{ id: 'test', name: 'Platform tests', expandable: true, jobs: [job(1), job(3)], x: 315, y: 140 }]),
           { id: 'deploy', name: 'Deploy preview', jobs: [job(5)], x: 630, y: 90, definition: 'deploy' },
-        ],
+        ].map((node) => withWorkflowSteps(node, input.expandedSteps)),
         edges: (expanded
           ? [
               ['lint', 'types'],
