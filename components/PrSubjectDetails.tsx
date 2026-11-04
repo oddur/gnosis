@@ -1,7 +1,6 @@
-import type { ReactNode } from 'react';
 import { SearchableSelect } from './SearchableSelect';
 import { PrEntryActions, type PrGenerationActionsFor } from './PrEntryActions';
-import { PrDetails } from './PrDetails';
+import { PrDetails, type PrOverviewContent } from './PrDetails';
 import { memberReadiness } from './PrReadiness';
 import type { ReviewSubject } from '../lib/workbench';
 import type { PrStatus } from '../lib/types';
@@ -28,13 +27,13 @@ export function PrSubjectDetails({
   generationActions,
   onReview,
   reviewDisabled,
-  checkSummary,
+  overview,
 }: {
   subject: ReviewSubject;
   generationActions?: PrGenerationActionsFor;
   onReview?: (member: ReviewSubject['members'][number]) => void;
   reviewDisabled?: boolean;
-  checkSummary?: (url: string) => ReactNode;
+  overview?: PrOverviewContent;
   activeUrl: string;
   onSelect: (url: string) => void;
   statuses?: Partial<Record<string, PrStatus>>;
@@ -118,9 +117,9 @@ export function PrSubjectDetails({
           <MemberReviewStatus member={member} signals={signals.find(s => s.url === member.url && s.headSha === member.headSha) ?? statuses[member.url]?.signals} checking={statusChecking && !statusErrors[member.url]} />
         </div>}
         <PrDetails
+          overview={overview}
           key={member.url}
           member={member}
-          checkSummary={checkSummary?.(member.url)}
           starControl={
             stacked && starredUrls && onStarChange ? (
               <PrEntryActions {...generationActions?.([member])} onReview={onReview} reviewDisabled={reviewDisabled} members={[member]} starredUrls={starredUrls} busy={starBusy || muteBusy} onStarChange={onStarChange} onMute={onMute} />

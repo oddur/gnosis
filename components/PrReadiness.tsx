@@ -21,17 +21,19 @@ export function memberReadiness(
 export function PrReadiness({
   member,
   status,
-  checkSummary,
   signals,
   error,
   onRetry,
+  compact = false,
+  evidence,
 }: {
   member: ReviewMember;
   status?: PrStatus;
-  checkSummary?: ReactNode;
   signals?: QueueSignals;
   error?: string;
   onRetry?: () => void;
+  compact?: boolean;
+  evidence?: ReactNode;
 }) {
   const currentSignals =
     signals && (!status?.signals || signals.checkedAt >= status.signals.checkedAt) ? signals : status?.signals;
@@ -76,6 +78,47 @@ export function PrReadiness({
       ? null
       : currentSignals.readiness.mergeable === 'MERGEABLE'
     : (status ?? member).mergeable;
+  // The final ready-state detail restates the verdict. Keep optional-update facts.
+  const summaryDetails = readiness.ready ? readiness.details.slice(0, -1) : readiness.details;
+  if (compact)
+    return (
+      <section className="pr-readiness pr-readiness-compact" aria-label={`Review readiness for PR #${member.number}`}>
+        <div className="pr-summary-decision">
+          <div className="pr-merge-detail">
+            <div className="pr-summary-decision-heading">
+              <ReadinessBadge readiness={readiness} />
+              <ReadinessCheckedAt readiness={readiness} />
+            </div>
+            {summaryDetails.length > 0 && (
+              <ul>
+                {summaryDetails.map((detail) => (
+                  <li key={detail}>{detail}</li>
+                ))}
+              </ul>
+            )}
+            {(!readiness.ready || readiness.stale) && (
+              <a className="pr-merge-requirements" href={member.url} target="_blank" rel="noopener noreferrer">
+                Merge requirements on GitHub
+              </a>
+            )}
+          </div>
+          <PrActions
+            key={member.url}
+            member={member}
+            onChanged={onRetry}
+            compact
+            hasConflicts={readiness.label === 'Merge conflicts'}
+          />
+        </div>
+        {error && (
+          <div className="pr-status-error" role="status">
+            <p>{githubFailureMessage(error)}</p>
+            {onRetry && <button onClick={onRetry}>Retry GitHub status</button>}
+          </div>
+        )}
+        {evidence}
+      </section>
+    );
   return (
     <section className="pr-readiness" aria-label={`Review readiness for PR #${member.number}`}>
       <div className="pr-merge-detail">
@@ -93,7 +136,7 @@ export function PrReadiness({
         </div>
       </div>
       <div className="pr-readiness-row">
-        {checkSummary ?? (status?.ciChecks.length ? (
+        {status?.ciChecks.length ? (
           <details className="pr-checks">
             <summary>
               <CheckIcon size={14} />
@@ -128,7 +171,7 @@ export function PrReadiness({
             <CheckIcon size={14} />
             {checks}
           </span>
-        ))}
+        )}
         <span>
           <GitPullRequest size={14} />
           {status

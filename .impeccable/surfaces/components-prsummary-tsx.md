@@ -36,3 +36,16 @@ The heading and member rows share one clock for saved status freshness. The stac
 The dependency list uses the full width. Each PR expands in place to show confirmed blockers, uncertain requirements, check results, and scoped actions. Optional cancelled checks and optional branch updates never join the blocker list. Fresh GitHub eligibility remains authoritative. Long check lists show three results before a disclosure for the rest. Ready PRs without warnings omit redundant details.
 
 Below 760px of content width, the status columns move below each PR with visible labels. Smaller layouts stack the labels and values. Actions load permissions on demand, reuse the existing revision guards, and show explicit confirmation. Rerunning failed jobs and rerunning a cancelled workflow are distinct actions. Displaying the summary adds no permission or check-detail requests.
+
+
+## PR summary layout — November 2026
+
+The PR summary's reading path is identity and review decision → merge verdict and next action → compact GitHub evidence → author description. Merge readiness appears once on Summary and stays in the header on other tabs. The full stack overview retains its dependency-first layout.
+
+The compact decision area retains freshness and blocker facts. Resolve conflicts stays visible when current signals report conflicts, even if permission data has not caught up. Draft PRs offer Mark ready; other PRs retain Merge. PR actions contains auto-merge, both update methods, draft conversion, and permission refresh. Existing permissions, revision validation, and confirmations remain authoritative. Healthy ready-state boilerplate and the duplicate check/review/conflict rollup were removed.
+
+Checks open the Checks tab. Review/discussion summaries expand details, with keyboard focus transferred to the evidence heading. Show details remains a stable disclosure. Unknown results use a question-mark icon. Discussions remain lazy; delayed, unavailable, and stale information stays explicit. Routine sync text is available to assistive technology without adding a permanent visible row.
+
+Author description is followed alongside by a 260px metadata column. Change counts link to Changes. Saved AI briefings are collapsed and explicitly attributed. Stack context expands within the metadata column; its PR badges remain compact, titles wrap, and current-PR/source-branch context remains visible. Below 850px of content width, metadata follows the description. No new palette or typography was introduced.
+
+Verification: PR summary, merge readiness, PR actions, review evidence, and Checks browser suites pass, covering both themes, laptop/narrow layouts, 200% evidence text, lazy sync, fresh/stale/error states, draft transitions, guarded merge/update confirmation, cached check details, and stack navigation. The layout regression keeps the author heading above 500px at 1280×800 and confirms stack expansion does not move it. TypeScript, focused lint, and 49 domain tests pass. Captures are under `.impeccable/review/pr-summary`, `merge-readiness`, `pr-actions`, and `review-evidence`. Independent rendered/source finish assessment: ship after focus, unknown-state icon, conflict-action, and sidebar badge fixes. No shipping raster assets were added.

@@ -26,7 +26,7 @@ void app.whenReady().then(async () => {
   };
   const click = (label: string) =>
     js(
-      `(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(label)});if(!b)throw Error('Missing ${label}');b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
+      `(()=>{const b=[...document.querySelectorAll('button')].find(b=>(b.textContent.trim()===${JSON.stringify(label)} || (${JSON.stringify(label)}==='Refresh' && b.getAttribute('aria-label')==='Refresh GitHub information')));if(!b)throw Error('Missing ${label}');b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
     );
   const capture = async (name: string) => {
     win.show();
@@ -66,7 +66,8 @@ void app.whenReady().then(async () => {
       true
     );
     await capture('collapsed-light');
-    await click('Show details');
+    await js(`(()=>{const button=document.querySelectorAll('.review-evidence-summary button')[2];button.focus();button.click()})()`);
+    await wait(`document.activeElement===document.querySelector('.review-evidence h2')`);
     await wait("[...window.evidenceSubscriptions.values()].some(v=>v.kind==='discussion')");
     await js(
       `(()=>{const target=[...window.evidenceSubscriptions.values()].find(v=>v.kind==='discussion').targets[0];window.evidenceTarget=target;window.pushEvidence('discussion',{...target,baseSha:'base',checkedAt:Date.now(),threads:[{id:'t1',path:'src/worker.ts',isResolved:false,isOutdated:true,comments:[{url:target.url+'#discussion_r1'}]}]})})()`

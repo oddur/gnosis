@@ -10,6 +10,7 @@ export function StackContext({
   now,
   onOpen,
   onStack,
+  compact = false,
 }: {
   subject: ReviewSubject;
   currentUrl: string;
@@ -17,12 +18,19 @@ export function StackContext({
   now: number;
   onOpen: (url: string) => void;
   onStack: () => void;
+  compact?: boolean;
 }) {
   const signals = useCachedQueueSignals(account, subject.members, true);
   return (
-    <details className="stack-context">
+    <details className={`stack-context ${compact ? 'stack-context-compact' : ''}`}>
       <summary>
-        In stack: {subject.title} <span>· {subject.members.length} PRs</span>
+        {compact ? (
+          `Stack · ${subject.members.length} PRs`
+        ) : (
+          <>
+            In stack: {subject.title} <span>· {subject.members.length} PRs</span>
+          </>
+        )}
       </summary>
       <div className="stack-context-heading">
         <span>Current PR highlighted below</span>

@@ -2,7 +2,6 @@ import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 void app.whenReady().then(async () => {
@@ -27,7 +26,7 @@ void app.whenReady().then(async () => {
     if(!button) throw Error('Missing button: '+${JSON.stringify(label)});
     button.dispatchEvent(new MouseEvent("mousedown",{bubbles:true,button:0})); button.click();
   })()`);
-  const shots = path.join(os.tmpdir(), 'gnosis-workbench-screenshots');
+  const shots = path.resolve('.impeccable/review/pr-summary');
   fs.mkdirSync(shots, { recursive: true });
   const capture = async (name: string) => {
     if (process.platform === 'darwin') app.show();
@@ -153,12 +152,13 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('.mermaid-diagram').scrollIntoView({block:'center'})");
     await capture('pr-summary-mermaid-dark');
     await js("document.querySelector('.pr-summary-content').scrollTop = 0");
+    assert.ok(await js(`document.querySelector('.pr-description-heading').getBoundingClientRect().top < 500`), 'The author description should be in the first laptop viewport');
     await capture('pr-summary-dark');
     window.setSize(980, 700);
     await capture('pr-summary-laptop');
     assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
     window.setSize(540, 760);
-    await wait("!!document.querySelector('.pr-check-summary li')");
+    await wait("!!document.querySelector('.review-evidence-summary button')");
     assert.equal(
       await js(
         "document.querySelector('.pr-summary-page').scrollWidth <= document.querySelector('.pr-summary-page').clientWidth"
@@ -245,6 +245,10 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('.stack-overview-member[data-pr-url$=\"/122\"] .stack-member-title > button:not(.entity-badge)').click()");
     await wait("document.querySelector('.pr-overview-heading h1')?.textContent.includes('adaptive batching')");
     assert.match(await js<string>("document.querySelector('.stack-context [aria-current=page] .stack-parent-link').textContent"), /#121/);
+    const descriptionTop = await js<number>(`document.querySelector('.pr-description').getBoundingClientRect().top`);
+    await js(`document.querySelector('.stack-context').open=true`);
+    assert.equal(await js(`document.querySelector('.pr-description').getBoundingClientRect().top`), descriptionTop, 'Expanding stack context must not push down the description');
+    await capture('pr-summary-stack-context');
     window.setSize(980, 700);
     await js("window.selectOption('[aria-label=\"Review scope\"]', 'https://github.com/klang/engine/pull/121')");
     await wait("document.querySelector('.pr-overview-heading h1')?.textContent.includes('Route worker')");

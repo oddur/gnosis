@@ -35,11 +35,15 @@ export function PrActions({
   onChanged,
   trigger,
   mergeReady = false,
+  compact = false,
+  hasConflicts = false,
 }: {
   member: ReviewMember;
   stackMembers?: ReviewMember[];
   onChanged?: () => void;
   mergeReady?: boolean;
+  compact?: boolean;
+  hasConflicts?: boolean;
   /** A contextual action loads permissions only when invoked. */
   trigger?: (open: (kind: PrActionKind) => void, busy: boolean) => ReactNode;
 }) {
@@ -202,8 +206,12 @@ export function PrActions({
   }
   if (!member.url.startsWith('https://github.com/')) return null;
   return (
-    <div className={`pr-actions ${stackMembers ? 'pr-actions-stack' : ''}`}>
-      {trigger ? trigger(kind => { void open(kind); }, busy) : stackMembers ? (
+    <div className={`pr-actions ${stackMembers ? 'pr-actions-stack' : ''} ${compact ? 'pr-actions-compact' : ''}`}>
+      {trigger ? (
+        trigger((kind) => {
+          void open(kind);
+        }, busy)
+      ) : stackMembers ? (
         <Button
           size="sm"
           variant={mergeReady ? 'default' : 'outline'}
@@ -213,10 +221,107 @@ export function PrActions({
           <GitMerge size={14} />
           Merge whole stack…
         </Button>
+      ) : compact ? (
+        <>
+          <div className="pr-action-controls">
+            {hasConflicts || state?.mergeable === 'CONFLICTING' || state?.mergeState === 'DIRTY' ? (
+              <Button size="sm" variant="outline" onClick={() => openConflictWorkspace(member.url)}>
+                Resolve conflicts…
+              </Button>
+            ) : state?.isDraft ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={loading || busy || !active || !state.canChangeDraft}
+                onClick={() => void open('mark-ready')}
+              >
+                Mark ready for review…
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={loading || busy || !!blocked}
+                title={blocked}
+                onClick={() => void open('merge')}
+              >
+                <GitMerge size={14} />
+                {mergeLabel}
+              </Button>
+            )}
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger asChild>
+                <Button size="sm" variant="ghost" disabled={loading || busy}>
+                  PR actions <ChevronDown size={13} />
+                </Button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content className="pr-update-menu pr-summary-action-menu" align="end" sideOffset={5}>
+                  <DropdownMenu.Item disabled={!!blocked} onSelect={() => void open('merge')} title={blocked}>
+                    <strong>{mergeLabel}</strong>
+                    {blocked && <span>{blocked}</span>}
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item
+                    disabled={
+                      !active || !!state.stack || !(state.autoMerge ? state.canDisableAuto : state.canEnableAuto)
+                    }
+                    onSelect={() => void open(state?.autoMerge ? 'disable-auto' : 'enable-auto')}
+                  >
+                    <strong>{state?.autoMerge ? 'Disable auto-merge…' : 'Enable auto-merge…'}</strong>
+                    {state?.stack && <span>Unavailable for native GitHub stacks.</span>}
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Separator />
+                  <DropdownMenu.Item
+                    disabled={!!updateBlocked}
+                    onSelect={() => void open('update-merge')}
+                    title={updateBlocked}
+                  >
+                    <strong>Update with merge commit</strong>
+                    <span>{updateBlocked || `Merge ${state?.baseBranch ?? member.baseBranch} into this branch.`}</span>
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item
+                    disabled={!!updateBlocked}
+                    onSelect={() => void open('update-rebase')}
+                    title={updateBlocked}
+                  >
+                    <strong>Update with rebase</strong>
+                    <span>{updateBlocked || 'Replay commits on the base branch. Commit history changes.'}</span>
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Separator />
+                  <DropdownMenu.Item
+                    disabled={!active || !state.canChangeDraft}
+                    onSelect={() => void open(state?.isDraft ? 'mark-ready' : 'convert-draft')}
+                  >
+                    <strong>{state?.isDraft ? 'Mark ready for review…' : 'Convert to draft…'}</strong>
+                    {state && !state.canChangeDraft && <span>Requires the PR author or write permission.</span>}
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item
+                    onSelect={() => {
+                      void refresh();
+                      onChanged?.();
+                    }}
+                  >
+                    <strong>Refresh PR actions</strong>
+                  </DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
+          </div>
+          {state?.autoMerge && (
+            <p className="pr-action-note">Auto-merge is on · {mergeMethodLabels[state.autoMerge]}.</p>
+          )}
+          {state && !state.canWrite && (
+            <p className="pr-action-note">You do not have write permission to merge this PR.</p>
+          )}
+        </>
       ) : (
         <>
           <div className="pr-action-controls">
-            {(state?.mergeable === 'CONFLICTING' || state?.mergeState === 'DIRTY') && <Button size="sm" variant="outline" onClick={() => openConflictWorkspace(member.url)}>Resolve conflicts…</Button>}
+            {(state?.mergeable === 'CONFLICTING' || state?.mergeState === 'DIRTY') && (
+              <Button size="sm" variant="outline" onClick={() => openConflictWorkspace(member.url)}>
+                Resolve conflicts…
+              </Button>
+            )}
             <Button
               size="sm"
               onClick={() => void open('merge')}

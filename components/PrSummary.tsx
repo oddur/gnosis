@@ -9,7 +9,6 @@ import { SearchableSelect } from './SearchableSelect';
 import { stackScopeChoices } from '../lib/stack-workspace';
 import { Button } from './ui/button';
 import { PrChecksView, type CheckFocus } from './PrChecksView';
-import { PrCheckSummary } from './PrCheckSummary';
 import { usePrChecks } from '../lib/use-pr-checks';
 import { checkCounts } from '../lib/pr-checks';
 import { RepositoryBadge, PrBadge } from './EntityBadge';
@@ -303,6 +302,7 @@ function PrSummaryContent({
   const changeScope = (id: string) => { remember(); onScopeChange?.(id); };
   const evidence = (
     <ReviewEvidence
+      compact={!stacked}
       key={`${account}:${item.subject.id}`}
       subject={item.subject}
       account={account}
@@ -415,8 +415,8 @@ function PrSummaryContent({
         </header>}</PrEntryActions>
         <div ref={statusRef} hidden={tab === 'brief'} className="pr-merge-status" data-tour="summary" aria-label={stacked ? 'Stack status' : 'PR status'}>
           {!stacked && <SubjectReviewStatus subject={item.subject} signals={signals} checking={!signalsLoaded && !!account} now={statusNow} />}
-          <ReadinessBadge readiness={stackStatus?.blocked ? { ...readiness, label: 'Not ready to merge' } : readiness} reviewStatusShown staleLabel={stacked ? 'Status needs refresh' : undefined} />
-          {stacked && readiness.checkedAt === undefined ? <span className="merge-readiness-checked">Merge requirements not confirmed for all PRs</span> : <ReadinessCheckedAt readiness={readiness} label={stacked ? 'Merge requirements checked' : undefined} />}
+          {(stacked || tab !== 'summary') && <ReadinessBadge readiness={stackStatus?.blocked ? { ...readiness, label: 'Not ready to merge' } : readiness} reviewStatusShown staleLabel={stacked ? 'Status needs refresh' : undefined} />}
+          {(stacked || tab !== 'summary') && (stacked && readiness.checkedAt === undefined ? <span className="merge-readiness-checked">Merge requirements not confirmed for all PRs</span> : <ReadinessCheckedAt readiness={readiness} label={stacked ? 'Merge requirements checked' : undefined} />)}
           {mergePlan && <StackChecksFreshness plan={mergePlan} now={statusNow} delayed={Object.values(checks.errors).some(Boolean)} />}
           {stacked && <button aria-label="Refresh status" title="Refresh status" disabled={statusRefreshing || !account} onClick={onRetryStatus}><RefreshCw size={14} className={statusRefreshing ? 'animate-spin' : undefined} /></button>}
           {!stacked && <div className="pr-summary-review-actions" inert={tab !== 'summary'} style={{ visibility: tab === 'summary' ? 'visible' : 'hidden' }}>{summaryReview.controls}</div>}
@@ -494,14 +494,6 @@ function PrSummaryContent({
                 {warning}
               </p>
             ))}
-            {!stacked && evidence}
-            {!stacked && item.briefing?.status === 'ready' && (
-              <details className="pr-briefing" open>
-                <summary>AI briefing</summary>
-                <Markdown>{item.briefing.summary ?? ''}</Markdown>
-              </details>
-            )}
-            {parentStack && <StackContext subject={parentStack} currentUrl={first.url} account={account} now={statusNow} onOpen={changeScope} onStack={() => changeScope(parentStack.id)} />}
             {stacked ? <div className="stack-summary-layout">
               <div className="stack-summary-main">
                 <StackOverview account={account} now={statusNow} checking={!signalsLoaded && !!account} onRefresh={onRetryStatus} refreshBusy={statusRefreshing || !account} item={item} signals={signals} checks={checks.values} checkErrors={checks.errors} checksBusy={checks.busy} matchingUrls={matchingUrls}
@@ -510,6 +502,12 @@ function PrSummaryContent({
                 <StackBriefing briefing={item.briefing} actions={generationActions?.(item.subject.members)} onActivity={onShowActivity} onSetup={onGitHubAuth} connected={!!account} />
               </div>
             </div> : <PrSubjectDetails
+              overview={{
+                evidence,
+                onChanges: () => onTabChange('changes'),
+                stackContext: parentStack && <StackContext subject={parentStack} currentUrl={first.url} account={account} now={statusNow} onOpen={changeScope} onStack={() => changeScope(parentStack.id)} compact />,
+                briefing: item.briefing?.status === 'ready' && <details className="pr-briefing"><summary>AI briefing</summary><Markdown>{item.briefing.summary ?? ''}</Markdown></details>,
+              }}
               generationActions={generationActions}
               onReview={onReview}
               reviewDisabled={!account}
@@ -527,7 +525,6 @@ function PrSummaryContent({
                 remember();
                 setMemberUrl(url);
               }}
-              checkSummary={url => <PrCheckSummary value={checks.values[url]} error={checks.errors[url]} busy={checks.busy} onOpen={id => openChecks(url, id)} />}
               statuses={statuses}
               statusErrors={statusErrors}
               onRetryStatus={onRetryStatus}

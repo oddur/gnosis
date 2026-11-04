@@ -6,8 +6,16 @@ import type { PrStatus } from '../lib/types';
 import { Markdown } from './Markdown';
 import { PrLabels } from './PrLabels';
 import { PrReadiness } from './PrReadiness';
+import { DiffStats } from './DiffStats';
 import type { QueueSignals } from '../lib/queue-signals';
 import type { ReactNode } from 'react';
+
+export interface PrOverviewContent {
+  evidence: ReactNode;
+  stackContext?: ReactNode;
+  briefing?: ReactNode;
+  onChanges: () => void;
+}
 
 function date(value: string) {
   const parsed = new Date(value);
@@ -20,28 +28,28 @@ export function PrDetails({
   member: m,
   starControl,
   status,
-  checkSummary,
   signals,
   statusError,
   onRetryStatus,
   showTitle = true,
   showIdentity = true,
+  overview,
 }: {
   member: ReviewMember;
   starControl?: ReactNode;
   status?: PrStatus;
-  checkSummary?: ReactNode;
   signals?: QueueSignals;
   statusError?: string;
   onRetryStatus?: () => void;
   showTitle?: boolean;
   showIdentity?: boolean;
+  overview?: PrOverviewContent;
 }) {
   const SectionHeading = showTitle ? 'h3' : 'h2';
   const meta = status ?? m;
   const state = m.merged ? 'Merged' : m.state === 'closed' ? 'Closed' : m.isDraft ? 'Draft' : 'Open';
   return (
-    <article className="pr-details" aria-label={`Pull request #${m.number}`}>
+    <article className={`pr-details ${overview ? 'pr-details-overview' : ''}`} aria-label={`Pull request #${m.number}`}>
       {showIdentity && (
         <header className="pr-details-heading">
           <div>
@@ -51,8 +59,13 @@ export function PrDetails({
               </h2>
             )}
             <p>
-              {showTitle && <><RepositoryBadge repo={m.repo} /> · </>}
-              <span className={`pr-state pr-state-${state.toLowerCase()}`}>{state}</span> · by <GitHubAuthor login={m.author}/>
+              {showTitle && (
+                <>
+                  <RepositoryBadge repo={m.repo} /> ·{' '}
+                </>
+              )}
+              <span className={`pr-state pr-state-${state.toLowerCase()}`}>{state}</span> · by{' '}
+              <GitHubAuthor login={m.author} />
             </p>
           </div>
           {starControl}
@@ -61,10 +74,32 @@ export function PrDetails({
           </a>
         </header>
       )}
-      <PrReadiness checkSummary={checkSummary} member={m} status={status} signals={signals} error={statusError} onRetry={onRetryStatus} />
+      <PrReadiness
+        compact={!!overview}
+        evidence={overview?.evidence}
+        member={m}
+        status={status}
+        signals={signals}
+        error={statusError}
+        onRetry={onRetryStatus}
+      />
       <div className="pr-details-columns">
         <section className="pr-description" aria-label={`Author description for PR #${m.number}`}>
-          <SectionHeading>Author description</SectionHeading>
+          {overview?.briefing}
+          <div className="pr-description-heading">
+            <SectionHeading>Author description</SectionHeading>
+            {overview && (
+              <button className="pr-description-changes" onClick={overview.onChanges} aria-label="View changed files">
+                {m.changedFileCount === undefined ? (
+                  `${m.commitCount} commits`
+                ) : (
+                  <>
+                    {m.changedFileCount} files <DiffStats additions={m.additions ?? 0} deletions={m.deletions ?? 0} />
+                  </>
+                )}
+              </button>
+            )}
+          </div>
           {m.description.trim() ? (
             <Markdown
               githubSource={{ repo: m.headRepo || m.repo, ref: m.headSha || m.headBranch }}
@@ -74,25 +109,50 @@ export function PrDetails({
               {m.description}
             </Markdown>
           ) : (
-            <p className="text-sm text-muted-foreground">No description provided by <GitHubAuthor login={m.author}/>.</p>
+            <p className="text-sm text-muted-foreground">
+              No description provided by <GitHubAuthor login={m.author} />.
+            </p>
           )}
         </section>
         <aside className="pr-metadata" aria-label={`Metadata for PR #${m.number}`}>
+          {overview?.stackContext}
           <SectionHeading>People & branches</SectionHeading>
           <dl>
             <dt>Branches</dt>
             <dd className="pr-branches">
               {m.headRepo !== m.baseRepo && <RepositoryBadge repo={m.headRepo} />}
               <BranchBadge branch={m.headBranch} repo={m.headRepo} />
-              <span aria-label="into">→</span><BranchBadge branch={m.baseBranch} repo={m.baseRepo} />
+              <span aria-label="into">→</span>
+              <BranchBadge branch={m.baseBranch} repo={m.baseRepo} />
             </dd>
             <dt>Labels</dt>
             <dd>{m.labels.length ? <PrLabels members={[m]} /> : 'None'}</dd>
             <dt>Assignees</dt>
-            <dd>{m.assignees?.length ? <span className="entity-badge-group">{m.assignees.map(login => <GitHubAuthor key={login} login={login} />)}</span> : 'Unassigned'}</dd>
+            <dd>
+              {m.assignees?.length ? (
+                <span className="entity-badge-group">
+                  {m.assignees.map((login) => (
+                    <GitHubAuthor key={login} login={login} />
+                  ))}
+                </span>
+              ) : (
+                'Unassigned'
+              )}
+            </dd>
             <dt>Review requested from</dt>
             <dd>
-              {meta.requestedReviewers.length || meta.requestedTeams.length ? <span className="entity-badge-group">{meta.requestedReviewers.map(login => <GitHubAuthor key={login} login={login} />)}{meta.requestedTeams.map(team => <span key={team}>Team {team}</span>)}</span> : 'No reviewers requested'}
+              {meta.requestedReviewers.length || meta.requestedTeams.length ? (
+                <span className="entity-badge-group">
+                  {meta.requestedReviewers.map((login) => (
+                    <GitHubAuthor key={login} login={login} />
+                  ))}
+                  {meta.requestedTeams.map((team) => (
+                    <span key={team}>Team {team}</span>
+                  ))}
+                </span>
+              ) : (
+                'No reviewers requested'
+              )}
             </dd>
           </dl>
           <details className="pr-secondary-metadata">
