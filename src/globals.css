@@ -3696,7 +3696,10 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .stack-merge-plan ul { list-style:none;margin:0;padding:0;display:grid;gap:8px; }
 .stack-merge-plan li { display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;font-size:var(--type-control); }
 .stack-merge-plan .stack-plan-task { display:inline-flex;align-items:center;gap:6px; }
-.stack-plan-prs { display:flex;flex-wrap:wrap;gap:4px 12px; }
+.stack-plan-prs { display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:0;max-width:100%; }
+.stack-plan-prs > a { display:inline-flex;align-items:baseline;gap:6px;max-width:100%;overflow-wrap:anywhere; }
+.stack-plan-prs .subject-icon { margin-right:0; }
+.stack-plan-pr-number { flex-shrink:0;white-space:nowrap; }
 .stack-plan-prs :is(button,a),.stack-inline-actions :is(button,a),.stack-inline-wait :is(button,a) { color:var(--primary);text-align:left;text-decoration:underline;text-underline-offset:3px;font-size:inherit; }
 .stack-visible-blockers { list-style:none;margin:4px 0 0;padding:0;display:grid;gap:6px; }
 .stack-visible-blockers > li { display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 16px;font-size:var(--type-control); }

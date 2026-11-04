@@ -1,3 +1,4 @@
+import { SubjectIcon } from './SubjectIcon';
 import { StackMarkReady } from './StackMarkReady';
 import { Clock3, CircleAlert } from 'lucide-react';
 import type { stackMergePlan } from '../lib/stack-merge-plan';
@@ -40,9 +41,10 @@ export function StackMergePlan({
                     onOpen(member);
                   }}
                   title={`Open PR #${member.number}: ${member.title}`}
-                  aria-label={`Open PR #${member.number}: ${group.label}`}
+                  aria-label={`Open PR #${member.number}: ${member.title}. ${group.label}`}
                 >
-                  #{member.number}
+                  <SubjectIcon kind="pr" /><span className="stack-plan-pr-number">#{member.number}</span>
+                  <span>{member.title}</span>
                 </a>
               ))}
             </span>
