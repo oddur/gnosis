@@ -1,4 +1,5 @@
-import { useId, useState } from 'react';
+import { SubjectIcon } from './SubjectIcon';
+import { useId, useLayoutEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
@@ -7,6 +8,7 @@ import {
   GitPullRequest,
   MessageSquare,
   CircleHelp,
+  Clock3,
   RefreshCw,
 } from 'lucide-react';
 import { Button } from './ui/button';
@@ -28,6 +30,7 @@ export function ReviewEvidence({
   onRefresh,
   refreshBusy,
   refreshError,
+  compact = false,
 }: {
   subject: ReviewSubject;
   signals: QueueSignals[];
@@ -39,8 +42,17 @@ export function ReviewEvidence({
   onRefresh: () => void;
   refreshBusy: boolean;
   refreshError?: string;
+  compact?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const focusDetails = useRef(false);
+  useLayoutEffect(() => {
+    if (expanded && focusDetails.current) {
+      focusDetails.current = false;
+      heading.current?.focus({ preventScroll: true });
+    }
+  }, [expanded]);
   const id = useId();
   const discussions = useEvidenceDiscussions(subject, account, expanded);
   const evidence = subject.members.map((member) =>
@@ -78,7 +90,9 @@ export function ReviewEvidence({
       ? evidence[0].rows.map((row) => ({
           label:
             row.kind === 'discussion' && row.checkedAt === undefined && !row.issue
-              ? 'Discussions: show details to load'
+              ? compact
+                ? 'Load discussions'
+                : 'Discussions: show details to load'
               : row.label,
           tone: row.tone,
           parts: row.labelParts,
@@ -181,13 +195,58 @@ export function ReviewEvidence({
       </div>
     );
   }
+  const summary = (
+    <div className="review-evidence-summary">
+      {summaries.map((item, index) =>
+        compact ? (
+          <button
+            key={index}
+            data-tone={item.tone}
+            onClick={() => {
+              if (index === 0) onChecks(subject.members[0].url);
+              else {
+                focusDetails.current = true;
+                setExpanded(true);
+              }
+            }}
+          >
+            {index === 0 ? (
+              item.tone === 'danger' ? (
+                <AlertCircle size={14} aria-hidden="true" />
+              ) : item.tone === 'warning' ? (
+                <Clock3 size={14} aria-hidden="true" />
+              ) : item.tone === 'success' ? (
+                <CheckCircle2 size={14} aria-hidden="true" />
+              ) : (
+                <CircleHelp size={14} aria-hidden="true" />
+              )
+            ) : index === 1 ? (
+              <GitPullRequest size={14} aria-hidden="true" />
+            ) : (
+              <MessageSquare size={14} aria-hidden="true" />
+            )}
+            <span>{labelContent(item.label, item.parts)}</span>
+          </button>
+        ) : (
+          <span key={index} data-tone={item.tone}>
+            {labelContent(item.label, item.parts)}
+          </span>
+        )
+      )}
+    </div>
+  );
   return (
-    <section className="review-evidence" aria-labelledby={`${id}-title`}>
+    <section className={`review-evidence ${compact ? 'review-evidence-compact' : ''}`} aria-labelledby={`${id}-title`}>
       <header>
-        <div>
-          <h2 id={`${id}-title`}>Checks, reviews &amp; discussions</h2>
-          <p className="review-evidence-intro">Check what needs attention before you submit your review.</p>
+        <div className={compact && !expanded ? 'sr-only' : undefined}>
+          <h2 id={`${id}-title`} ref={heading} tabIndex={-1}>
+            Checks, reviews &amp; discussions
+          </h2>
+          {!compact && subject.kind !== 'stack' && (
+            <p className="review-evidence-intro">Check what needs attention before you submit your review.</p>
+          )}
         </div>
+        {compact && !expanded && summary}
         <div className="review-evidence-controls">
           <Button
             variant="ghost"
@@ -200,7 +259,7 @@ export function ReviewEvidence({
             }}
           >
             <RefreshCw size={14} aria-hidden="true" className={busy ? 'animate-spin' : undefined} />
-            Refresh
+            {!compact && 'Refresh'}
           </Button>
           <Button
             variant="ghost"
@@ -214,7 +273,10 @@ export function ReviewEvidence({
           </Button>
         </div>
       </header>
-      <p className="review-evidence-sync" role="status">
+      <p
+        className={`review-evidence-sync ${(compact || subject.kind === 'stack') && !expanded && account && !busy && !issues.length && !refreshError ? 'sr-only' : ''}`}
+        role="status"
+      >
         {status}
       </p>
       <span className="sr-only" aria-live="polite" aria-atomic="true">
@@ -224,15 +286,7 @@ export function ReviewEvidence({
               .join('. ')
           : ''}
       </span>
-      {!expanded && (
-        <div className="review-evidence-summary">
-          {summaries.map((item, index) => (
-            <span key={index} data-tone={item.tone}>
-              {labelContent(item.label, item.parts)}
-            </span>
-          ))}
-        </div>
-      )}
+      {!compact && !expanded && summary}
       {expanded && (
         <div id={`${id}-details`} className="review-evidence-details">
           {evidence.map(({ member, rows }) => (
@@ -240,7 +294,7 @@ export function ReviewEvidence({
               <div className="review-evidence-scope">
                 {subject.kind === 'stack' && (
                   <h3>
-                    <a href={member.url} target="_blank" rel="noopener noreferrer">
+                    <SubjectIcon kind="pr" /><a href={member.url} target="_blank" rel="noopener noreferrer">
                       #{member.number}
                     </a>{' '}
                     {member.title}

@@ -1,3 +1,4 @@
+import { WorkspaceIcon } from './WorkspaceIcon';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ClipboardCopy, Eye, MoreHorizontal, Trash2, Undo2 } from 'lucide-react';
 import { DropdownMenu } from 'radix-ui';
@@ -107,7 +108,7 @@ export function AgentBriefView({
       <header className="agent-brief-header">
         <div>
           <h2 ref={heading} tabIndex={-1}>
-            Local notes <span>{comments.length}</span>
+            <WorkspaceIcon tab="brief" />Local notes <span>{comments.length}</span>
           </h2>
           <p>Notes for {scopeLabel} only. Saved on this computer, never posted to GitHub.</p>
         </div>
@@ -242,7 +243,7 @@ export function AgentBriefView({
           <strong>No local notes for {scopeLabel}</strong>
           <p>In Changes, select a line or range, write your note, and choose Add local note.</p>
           <Button variant="outline" size="sm" onClick={onOpenChanges}>
-            Open Changes
+            <WorkspaceIcon tab="changes" />Open Changes
           </Button>
         </div>
       ) : (

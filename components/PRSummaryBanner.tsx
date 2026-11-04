@@ -1,3 +1,4 @@
+import { SubjectIcon } from './SubjectIcon';
 import { PrBadge, BranchBadge } from './EntityBadge';
 import { GitHubAuthor } from './GitHubAuthor';
 import { ExternalLink, ArrowLeft, Settings, GitCompare } from 'lucide-react';
@@ -51,7 +52,7 @@ export function PRSummaryBanner({ review, onBack, onOpenSettings }: Props) {
               Back
             </button>
           )}
-          <h1 className="text-sm font-semibold tracking-tight truncate text-foreground/90">{review.prTitle}</h1>
+          <h1 className="text-sm font-semibold tracking-tight truncate text-foreground/90">{!isLocal && <SubjectIcon kind={review.snapshot?.subject.kind === 'stack' ? 'stack' : 'pr'} />}{review.prTitle}</h1>
           <span className={`${risk.badgeClassName} shrink-0 text-xs px-1.5 py-0.5 rounded-sm leading-normal`}>
             {risk.label}
           </span>

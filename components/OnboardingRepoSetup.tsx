@@ -1,5 +1,8 @@
+import { RepositoryMark } from './RepositoryAppearance';
+import { useRepositorySettings } from '../lib/use-repository-settings';
+import { repositoryKey } from '../lib/repository-settings';
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { X, Search, Eye } from 'lucide-react';
+import { X, Search } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import type { RepoSearchResult } from '../lib/types';
@@ -13,6 +16,7 @@ interface Props {
 const REPO_REF_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 export function OnboardingRepoSetup({ open, onComplete, onSkip }: Props) {
+  const { settings } = useRepositorySettings();
   const [query, setQuery] = useState('');
   const [suggestions, setSuggestions] = useState<RepoSearchResult[]>([]);
   const [selectedRepos, setSelectedRepos] = useState<string[]>([]);
@@ -133,7 +137,7 @@ export function OnboardingRepoSetup({ open, onComplete, onSkip }: Props) {
                     className="w-full text-left px-3 py-2 text-sm hover:bg-accent transition-colors flex flex-col gap-0.5"
                     onMouseDown={(e) => { e.preventDefault(); addRepo(repo.fullName); }}
                   >
-                    <span className="font-mono text-xs text-foreground">{repo.fullName}</span>
+                    <span className="font-mono text-xs text-foreground"><RepositoryMark repo={repo.fullName} settings={settings[repositoryKey(repo.fullName)]} /></span>
                     {repo.description && (
                       <span className="text-xs text-muted-foreground truncate">{repo.description}</span>
                     )}
@@ -156,8 +160,7 @@ export function OnboardingRepoSetup({ open, onComplete, onSkip }: Props) {
                 key={repo}
                 className="inline-flex items-center gap-1 px-2 py-1 text-xs font-mono bg-accent rounded-md text-foreground"
               >
-                <Eye className="h-3 w-3 text-muted-foreground" />
-                {repo}
+                <RepositoryMark repo={repo} settings={settings[repositoryKey(repo)]} />
                 <button
                   type="button"
                   onClick={() => removeRepo(repo)}

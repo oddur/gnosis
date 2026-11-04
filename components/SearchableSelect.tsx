@@ -1,7 +1,11 @@
+import { WorkspaceIcon } from './WorkspaceIcon';
+import type { WorkspaceTab } from '../lib/navigation-history';
+import { FileTypeIcon } from './FileTypeIcon';
+import { SubjectIcon } from './SubjectIcon';
 import { RepositoryMark } from './RepositoryAppearance';
 import { useRepositorySettings } from '../lib/use-repository-settings';
 import { repositoryKey, validRepository } from '../lib/repository-settings';
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Combobox,
   findComboboxContainer,
@@ -16,6 +20,9 @@ import {
 export interface SelectionOption {
   value: string;
   label: string;
+  kind?: 'stack' | 'pr' | 'repository' | 'commit';
+  filePath?: string;
+  workspaceTab?: WorkspaceTab;
 }
 
 /** A compact selector with local search. Typing never changes the committed value. */
@@ -52,7 +59,13 @@ export function SearchableSelect({
   placeholder?: string;
 }) {
   const { settings } = useRepositorySettings();
-  const optionLabel = (value: string, label: string | undefined) => repositoryOptions && validRepository(value) ? <RepositoryMark repo={label ?? value} settings={settings[repositoryKey(value)]} /> : label;
+  const identities = new Map(options.map(option => [option.value, option]));
+  const identityLabel = (value: string, label: ReactNode) => {
+    const option = identities.get(value);
+    const icon = option?.workspaceTab ? <WorkspaceIcon tab={option.workspaceTab} /> : option?.filePath ? <FileTypeIcon filePath={option.filePath} /> : option?.kind ? <SubjectIcon kind={option.kind} /> : null;
+    return icon && label ? <span className="subject-name">{icon}<span>{label}</span></span> : label;
+  };
+  const optionLabel = (value: string, label: string | undefined) => repositoryOptions && validRepository(value) ? <RepositoryMark repo={label ?? value} settings={settings[repositoryKey(value)]} /> : identityLabel(value, label);
   const trigger = useRef<HTMLButtonElement>(null);
   const [container, setContainer] = useState<HTMLElement | null>(null);
   const [query, setQuery] = useState('');
@@ -113,7 +126,7 @@ export function SearchableSelect({
           setOpen(true);
         }}
       >
-        {triggerLabel ?? optionLabel(value, labels.get(value)) ?? placeholder}
+        {triggerLabel !== undefined ? identityLabel(value, triggerLabel) : optionLabel(value, labels.get(value)) ?? placeholder}
       </ComboboxTrigger>
       <ComboboxContent container={container} collisionBoundary={popupBoundary === 'viewport' ? [] : undefined} className={popupClassName}>
         <ComboboxInput aria-label={`Search ${label.toLowerCase()}`} placeholder="Type to search…" />

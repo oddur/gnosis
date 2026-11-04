@@ -55,7 +55,7 @@ void app.whenReady().then(async () => {
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()"
     );
     await click('Open PR overview');
-    await wait("document.querySelector('.pr-merge-status')?.textContent.includes('Update required to merge')");
+    await wait("(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-merge-status'))?.textContent.includes('Update required to merge')");
     assert.match(
       await js<string>("document.querySelector('.pr-merge-detail').textContent"),
       /Rebase onto main, or merge main/
@@ -70,7 +70,7 @@ void app.whenReady().then(async () => {
       await click(tab);
       assert.equal(await js("document.querySelector('.pr-merge-status .pr-review-status').textContent"), 'Approved');
       assert.match(
-        await js<string>("document.querySelector('.pr-merge-status').textContent"),
+        await js<string>("(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-merge-status')).textContent"),
         /Update required to merge/
       );
     }
@@ -83,7 +83,7 @@ void app.whenReady().then(async () => {
     await js("document.documentElement.classList.remove('dark');window.mode='conflicts'");
     await click('Refresh status');
     await wait(
-      "document.querySelector('.pr-merge-status')?.textContent.includes('Merge conflicts')"
+      "(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-merge-status'))?.textContent.includes('Merge conflicts')"
     );
     assert.match(await js<string>("document.querySelector('.pr-merge-detail').textContent"), /resolve the conflicts/);
     assert.equal(await js("document.querySelector('.pr-merge-status .pr-review-status').textContent"), 'Approved');
@@ -91,14 +91,14 @@ void app.whenReady().then(async () => {
     await js("window.mode='clean'");
     await click('Refresh status');
     await wait(
-      "document.querySelector('.pr-merge-status')?.textContent.includes('Ready to merge')"
+      "(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-merge-status'))?.textContent.includes('Ready to merge')"
     );
     assert.match(await js<string>("document.querySelector('.pr-merge-detail').textContent"), /updating is optional/);
     await capture('optional-update');
     await js('window.failStatus=true;const realNow=Date.now;Date.now=()=>realNow()+6*60*1000;void 0');
     await click('Refresh status');
     await wait(
-      "document.querySelector('.pr-merge-status')?.textContent.includes('Readiness out of date')"
+      "(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-merge-status'))?.textContent.includes('Readiness out of date')"
     );
     assert.equal(await js("!!document.querySelector('.pr-merge-status .is-success')"), false);
     assert.equal(await js("document.querySelector('.pr-merge-status .pr-review-status').textContent"), 'Approved · Out of date');
@@ -107,7 +107,7 @@ void app.whenReady().then(async () => {
     await js("window.failStatus=false;window.mode='behind'");
     await click('Refresh status');
     await wait(
-      "document.querySelector('.pr-merge-status')?.textContent.includes('Update required to merge')"
+      "(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-merge-status'))?.textContent.includes('Update required to merge')"
     );
     assert.ok((await js<number>('window.forceReads')) >= 4);
     await click('Review queue');
@@ -117,7 +117,7 @@ void app.whenReady().then(async () => {
     await capture('queue');
     await js("document.querySelector('.queue-item:has(.queue-disclosure) .queue-row-main').click()");
     await click('Open stack overview');
-    await wait("document.querySelector('.pr-merge-status')?.textContent.includes('Not ready to merge')");
+    await wait("(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-merge-status'))?.textContent.includes('Not ready to merge')");
     await js("document.querySelector('.stack-overview-member[data-pr-url$=\"/121\"] .stack-member-title > button:not(.entity-badge)').click()");
     assert.match(
       await js<string>("document.querySelector('.pr-merge-detail').textContent"),
@@ -127,7 +127,7 @@ void app.whenReady().then(async () => {
     await click('Back to stack');
     await js("window.mode='clean'");
     await click('Refresh status');
-    await wait("document.querySelector('.pr-merge-status')?.textContent.includes('All open PRs meet merge requirements')");
+    await wait("(document.querySelector('.pr-summary-content[data-state=active] .pr-merge-detail') ?? document.querySelector('.pr-merge-status'))?.textContent.includes('All open PRs meet merge requirements')");
     await capture('stack-next');
     await js(`window.reviewDecisions={
       'https://github.com/klang/engine/pull/120':'CHANGES_REQUESTED',

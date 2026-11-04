@@ -7,7 +7,8 @@ import {
   ChevronRight,
   Command as CommandIcon,
   FileCode2,
-  GitBranch,
+  BookMarked,
+  Layers,
   GitPullRequest,
   Loader2,
   Search,
@@ -27,7 +28,7 @@ import type { PrSearchResult } from '../lib/types';
 
 const icons = {
   pr: GitPullRequest,
-  stack: GitBranch,
+  stack: Layers,
   briefing: Sparkles,
   topic: Sparkles,
   file: FileCode2,
@@ -35,7 +36,7 @@ const icons = {
   comment: MessageSquare,
   explainer: Sparkles,
   view: Settings2,
-  repository: GitBranch,
+  repository: BookMarked,
 };
 function Highlight({ text, query }: { text: string; query: string }) {
   const tokens = query

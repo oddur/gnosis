@@ -1,3 +1,4 @@
+import { WorkspaceIcon } from './WorkspaceIcon';
 import { usePrReadVisit } from '../lib/pr-read-context';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { inspectionData } from '../lib/inspection-cache';
@@ -124,7 +125,7 @@ export function PrExplanation({
       {limited.length > 0 && <div className="explanation-status" role="status">
         <span>A complete explanation is unavailable: {limited.map(m => `PR #${m.number}`).join(', ')} exceeds GitHub’s 3,000-file limit.
           {' '}Inspect the available files in Changes, open a smaller PR, or review a local checkout.</span>
-        <Button variant="outline" size="sm" onClick={onOpenChanges}>Open Changes</Button>
+        <Button variant="outline" size="sm" onClick={onOpenChanges}><WorkspaceIcon tab="changes" />Open Changes</Button>
       </div>}
       {(running || newer || changed || failed || error || loadError) && (
         <div className="explanation-status" role={error || loadError ? 'alert' : 'status'}>

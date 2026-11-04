@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Root, Element } from 'hast';
 import { scopeMarkdownHeadings } from '../lib/markdown-headings';
-import { memberReadiness } from '../components/PrReadiness';
+import { memberReadiness } from '../lib/merge-readiness';
 import type { ReviewMember } from '../lib/workbench';
 import type { PrStatus } from '../lib/types';
 

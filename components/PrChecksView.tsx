@@ -1,3 +1,4 @@
+import { SubjectIcon } from './SubjectIcon';
 import { preferredChecksView, rememberChecksView, type ChecksView } from '../lib/checks-view';
 import { lazy, Suspense } from 'react';
 const WorkflowGraphView = lazy(() => import('./WorkflowGraph').then((m) => ({ default: m.WorkflowGraphView })));
@@ -464,7 +465,7 @@ export function PrChecksView({
               return (
                 <section key={member.url} className="checks-pr-group">
                   <h2>
-                    #{member.number} <span>{member.title}</span>
+                    <SubjectIcon kind="pr" />#{member.number} <span>{member.title}</span>
                   </h2>
                   <p className="checks-revision">
                     {snapshot ? (

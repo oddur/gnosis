@@ -57,14 +57,6 @@ export function StackDependencyChain({
       {!order.linear && (
         <p className="stack-chain-note">This group is not a single linear chain. Dependencies are listed per PR.</p>
       )}
-      {renderColumns && (
-        <div className="stack-status-columns" aria-hidden="true">
-          <span>{order.linear ? 'Pull request · tip to base' : 'Pull request · dependencies'}</span>
-          <span>Review status</span>
-          <span>Checks</span>
-          <span>Branch</span>
-        </div>
-      )}
       <ol className="stack-overview-members" aria-label={order.linear ? 'Stack from tip to base' : 'PR dependencies'}>
         {members.map((member) => {
           const signal = signals.find((value) => value.url === member.url && value.headSha === member.headSha);

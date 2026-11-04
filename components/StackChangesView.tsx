@@ -240,7 +240,7 @@ export function StackChangesView({
                 triggerLabel={reviewUrl ? `PR #${reviewUrl.split('/').pop()}` : 'PR discussions & review…'}
                 popupBoundary="viewport"
                 options={members.map((m) => ({
-                  value: m.metadata.url,
+                  value: m.metadata.url, kind: 'pr' as const,
                   label: `#${m.metadata.url.split('/').pop()} · ${m.metadata.title}`,
                 }))}
                 onValueChange={setReviewUrl}

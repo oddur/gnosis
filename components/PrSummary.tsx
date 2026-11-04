@@ -1,3 +1,5 @@
+import { WorkspaceIcon, workspaceTabs } from './WorkspaceIcon';
+import { SubjectIcon } from './SubjectIcon';
 import { stackMergePlan } from '../lib/stack-merge-plan';
 import { ReviewEvidence } from './ReviewEvidence';
 import { StackChecksFreshness } from './StackMergePlan';
@@ -9,7 +11,6 @@ import { SearchableSelect } from './SearchableSelect';
 import { stackScopeChoices } from '../lib/stack-workspace';
 import { Button } from './ui/button';
 import { PrChecksView, type CheckFocus } from './PrChecksView';
-import { PrCheckSummary } from './PrCheckSummary';
 import { usePrChecks } from '../lib/use-pr-checks';
 import { checkCounts } from '../lib/pr-checks';
 import { RepositoryBadge, PrBadge } from './EntityBadge';
@@ -303,6 +304,7 @@ function PrSummaryContent({
   const changeScope = (id: string) => { remember(); onScopeChange?.(id); };
   const evidence = (
     <ReviewEvidence
+      compact={!stacked}
       key={`${account}:${item.subject.id}`}
       subject={item.subject}
       account={account}
@@ -316,8 +318,7 @@ function PrSummaryContent({
       refreshError={Object.values(statusErrors)[0]}
     />
   );
-  const tabs = [{ value: 'summary', label: 'Summary' }, { value: 'changes', label: 'Changes' },
-    { value: 'commits', label: 'Commits' }, { value: 'checks', label: 'Checks' }, { value: 'explanation', label: 'Explanation' }, { value: 'brief', label: 'Local notes' }];
+  const tabs = workspaceTabs;
   return (
     <Tabs.Root
       value={tab}
@@ -327,17 +328,17 @@ function PrSummaryContent({
       }}
       asChild
     >
-      <main className={`pr-summary-page ${stacked ? 'is-stack' : ''} ${tab !== 'summary' ? 'showing-changes' : ''} ${tab === 'brief' ? 'showing-local-notes' : ''} ${tab === 'checks' ? 'showing-checks' : ''}`}>
+      <main className={`pr-summary-page ${stacked ? 'is-stack' : ''} ${tab !== 'summary' ? 'showing-changes' : ''} ${tab === 'checks' ? 'showing-checks' : ''}`}>
         <div className="pr-summary-toolbar">
           <div className="pr-summary-toolbar-inner">
             <ReviewBreadcrumbs scope={tab} base={[
               { id: 'origin', label: navigation.viewName, navigate: () => { remember(); (onQueue ?? onBack)(); } },
-              ...(parentStack ? [{ id: 'parent-stack', label: parentStack.title, title: 'Stack', navigate: () => changeScope(parentStack.id) }] : []),
-              { id: 'subject', label: stacked ? `Stack · ${item.subject.title}` : `${first.repo} #${first.number}`,
+              ...(parentStack ? [{ id: 'parent-stack', kind: 'stack' as const, label: parentStack.title, title: 'Stack', navigate: () => changeScope(parentStack.id) }] : []),
+              { id: 'subject', kind: stacked ? 'stack' : 'pr', label: stacked ? item.subject.title : `${first.repo} #${first.number}`,
                 title: item.subject.title, navigate: () => { remember(); onTabChange('summary'); },
                 pickerLabel: parentStack ? 'PR in stack' : 'PR or stack', value: item.subject.id, options: parentStack ? stackScopeChoices(parentStack).slice(1) : navigation.choices,
                 select: id => { remember(); if (parentStack) changeScope(id); else navigation.select(id); } },
-              { id: 'tab', label: tabs.find(t => t.value === tab)?.label ?? 'Summary',
+              { id: 'tab', workspaceTab: tab, label: tabs.find(t => t.value === tab)?.label ?? 'Summary',
                 pickerLabel: 'Review tab', value: tab, options: tabs,
                 select: value => { remember(); onTabChange(value as typeof tab); } },
             ]} />
@@ -369,12 +370,12 @@ function PrSummaryContent({
           onRefresh={onRetryStatus}>{actions => <header className="pr-overview-heading">
           <div className="pr-title-with-star">
             <h1 ref={heading} tabIndex={-1} title={item.subject.title}>
-              {item.subject.title}
+              <SubjectIcon kind={stacked ? 'stack' : 'pr'} />{item.subject.title}
             </h1>
             <PrStarMarker members={item.subject.members} starredUrls={starredUrls} />
             {stacked && onRenameStack && !renaming && <button className="workbench-icon" aria-label="Rename stack" title="Rename stack on this computer" onClick={() => { setName(item.subject.name ?? item.subject.title); setNameError(''); setRenaming(true); }}><Pencil size={15} /></button>}
             {actions}
-            {stacked && tab !== 'brief' && <PrActions member={item.subject.members[item.subject.members.length - 1]} stackMembers={item.subject.members} mergeReady={readiness.ready} onChanged={onRetryStatus} />}
+            {stacked && <PrActions member={item.subject.members[item.subject.members.length - 1]} stackMembers={item.subject.members} mergeReady={readiness.ready} onChanged={onRetryStatus} />}
           </div>
           {renaming && <form className="stack-name-form" onSubmit={event => {
             event.preventDefault(); if (!onRenameStack || nameBusy) return;
@@ -390,7 +391,7 @@ function PrSummaryContent({
               {starError}
             </p>
           )}
-          <div className="pr-summary-context" hidden={tab === 'brief'}>
+          <div className="pr-summary-context">
             <span>
               {stacked ? (
                 <>
@@ -413,26 +414,26 @@ function PrSummaryContent({
             )}
           </div>
         </header>}</PrEntryActions>
-        <div ref={statusRef} hidden={tab === 'brief'} className="pr-merge-status" data-tour="summary" aria-label={stacked ? 'Stack status' : 'PR status'}>
+        <div ref={statusRef} className="pr-merge-status" data-tour="summary" aria-label={stacked ? 'Stack status' : 'PR status'}>
           {!stacked && <SubjectReviewStatus subject={item.subject} signals={signals} checking={!signalsLoaded && !!account} now={statusNow} />}
-          <ReadinessBadge readiness={stackStatus?.blocked ? { ...readiness, label: 'Not ready to merge' } : readiness} reviewStatusShown staleLabel={stacked ? 'Status needs refresh' : undefined} />
-          {stacked && readiness.checkedAt === undefined ? <span className="merge-readiness-checked">Merge requirements not confirmed for all PRs</span> : <ReadinessCheckedAt readiness={readiness} label={stacked ? 'Merge requirements checked' : undefined} />}
+          {(stacked || tab !== 'summary') && <ReadinessBadge readiness={stackStatus?.blocked ? { ...readiness, label: 'Not ready to merge' } : readiness} reviewStatusShown staleLabel={stacked ? 'Status needs refresh' : undefined} />}
+          {(stacked || tab !== 'summary') && (stacked && readiness.checkedAt === undefined ? <span className="merge-readiness-checked">Merge requirements not confirmed for all PRs</span> : <ReadinessCheckedAt readiness={readiness} label={stacked ? 'Merge requirements checked' : undefined} />)}
           {mergePlan && <StackChecksFreshness plan={mergePlan} now={statusNow} delayed={Object.values(checks.errors).some(Boolean)} />}
           {stacked && <button aria-label="Refresh status" title="Refresh status" disabled={statusRefreshing || !account} onClick={onRetryStatus}><RefreshCw size={14} className={statusRefreshing ? 'animate-spin' : undefined} /></button>}
           {!stacked && <div className="pr-summary-review-actions" inert={tab !== 'summary'} style={{ visibility: tab === 'summary' ? 'visible' : 'hidden' }}>{summaryReview.controls}</div>}
         </div>
         <div className="pr-workspace-navigation">
         {scopeStack && onScopeChange && <nav className="stack-scope-bar" aria-label="Stack navigation">
-          <Layers size={15} aria-hidden="true" /><SearchableSelect label="Review scope" value={item.subject.id} triggerLabel={stacked ? 'Whole stack' : `#${first.number} · ${scopeStack.members.findIndex(m => m.url === first.url) + 1} of ${scopeStack.members.length}`} options={stackScopeChoices(scopeStack)} onValueChange={changeScope} popupBoundary="viewport" popupClassName="stack-scope-popup" />
-          {parentStack && <button className="stack-back" onClick={() => changeScope(parentStack.id)}>Back to stack</button>}
+          {parentStack ? <Button variant="ghost" size="sm" className="stack-back" aria-label="Back to stack" onClick={() => changeScope(parentStack.id)}><ChevronLeft size={15} aria-hidden="true" /><SubjectIcon kind="stack" />Stack</Button> : null}
+          <SearchableSelect label="Review scope" value={item.subject.id} triggerLabel={stacked ? 'Whole stack' : `#${first.number} · ${scopeStack.members.findIndex(m => m.url === first.url) + 1} of ${scopeStack.members.length}`} options={stackScopeChoices(scopeStack)} onValueChange={changeScope} popupBoundary="viewport" popupClassName="stack-scope-popup" />
         </nav>}
         <Tabs.List className="pr-overview-tabs" aria-label="PR overview">
-          <Tabs.Trigger value="summary">Summary</Tabs.Trigger>
-          <Tabs.Trigger value="changes" data-tour="changes">Changes</Tabs.Trigger>
-          <Tabs.Trigger value="commits">Commits</Tabs.Trigger>
-          <Tabs.Trigger value="checks">Checks{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>
-          <Tabs.Trigger value="explanation" data-tour="explanation">Explanation</Tabs.Trigger>
-          <Tabs.Trigger value="brief">Local notes{brief.comments.length > 0 && <span className="brief-tab-count">{brief.comments.length}</span>}</Tabs.Trigger>
+          <Tabs.Trigger value="summary"><WorkspaceIcon tab="summary" />Summary</Tabs.Trigger>
+          <Tabs.Trigger value="changes" data-tour="changes"><WorkspaceIcon tab="changes" />Changes</Tabs.Trigger>
+          <Tabs.Trigger value="commits"><WorkspaceIcon tab="commits" />Commits</Tabs.Trigger>
+          <Tabs.Trigger value="checks"><WorkspaceIcon tab="checks" />Checks{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>
+          <Tabs.Trigger value="explanation" data-tour="explanation"><WorkspaceIcon tab="explanation" />Explanation</Tabs.Trigger>
+          <Tabs.Trigger value="brief"><WorkspaceIcon tab="brief" />Local notes{brief.comments.length > 0 && <span className="brief-tab-count">{brief.comments.length}</span>}</Tabs.Trigger>
         </Tabs.List>
 
         </div>
@@ -494,14 +495,6 @@ function PrSummaryContent({
                 {warning}
               </p>
             ))}
-            {!stacked && evidence}
-            {!stacked && item.briefing?.status === 'ready' && (
-              <details className="pr-briefing" open>
-                <summary>AI briefing</summary>
-                <Markdown>{item.briefing.summary ?? ''}</Markdown>
-              </details>
-            )}
-            {parentStack && <StackContext subject={parentStack} currentUrl={first.url} account={account} now={statusNow} onOpen={changeScope} onStack={() => changeScope(parentStack.id)} />}
             {stacked ? <div className="stack-summary-layout">
               <div className="stack-summary-main">
                 <StackOverview account={account} now={statusNow} checking={!signalsLoaded && !!account} onRefresh={onRetryStatus} refreshBusy={statusRefreshing || !account} item={item} signals={signals} checks={checks.values} checkErrors={checks.errors} checksBusy={checks.busy} matchingUrls={matchingUrls}
@@ -510,6 +503,12 @@ function PrSummaryContent({
                 <StackBriefing briefing={item.briefing} actions={generationActions?.(item.subject.members)} onActivity={onShowActivity} onSetup={onGitHubAuth} connected={!!account} />
               </div>
             </div> : <PrSubjectDetails
+              overview={{
+                evidence,
+                onChanges: () => onTabChange('changes'),
+                stackContext: parentStack && <StackContext subject={parentStack} currentUrl={first.url} account={account} now={statusNow} onOpen={changeScope} onStack={() => changeScope(parentStack.id)} compact />,
+                briefing: item.briefing?.status === 'ready' && <details className="pr-briefing"><summary>AI briefing</summary><Markdown>{item.briefing.summary ?? ''}</Markdown></details>,
+              }}
               generationActions={generationActions}
               onReview={onReview}
               reviewDisabled={!account}
@@ -527,7 +526,6 @@ function PrSummaryContent({
                 remember();
                 setMemberUrl(url);
               }}
-              checkSummary={url => <PrCheckSummary value={checks.values[url]} error={checks.errors[url]} busy={checks.busy} onOpen={id => openChecks(url, id)} />}
               statuses={statuses}
               statusErrors={statusErrors}
               onRetryStatus={onRetryStatus}

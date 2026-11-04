@@ -1,3 +1,6 @@
+import { RepositoryMark } from './RepositoryAppearance';
+import { useRepositorySettings } from '../lib/use-repository-settings';
+import { repositoryKey } from '../lib/repository-settings';
 import { useState, useEffect, useMemo } from 'react';
 import { Search } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -12,6 +15,7 @@ interface Props {
 }
 
 export function PRPickerDialog({ open, onOpenChange, onSelect }: Props) {
+  const { settings } = useRepositorySettings();
   const [prs, setPrs] = useState<PrSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -137,7 +141,7 @@ export function PRPickerDialog({ open, onOpenChange, onSelect }: Props) {
                       : 'border-transparent hover:text-foreground'
                   }`}
                 >
-                  {repo}
+                  <RepositoryMark repo={repo} settings={settings[repositoryKey(repo)]} />
                 </button>
               ))}
             </div>

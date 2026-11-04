@@ -420,12 +420,12 @@ export function PrChangesView({
       ...(!commit && !combined && subject.kind === 'stack' && entry
         ? [
             {
-              id: 'member',
+              id: 'member', kind: 'pr' as const,
               label: `Source #${entry.snapshot.url.split('/').pop()}`,
               pickerLabel: 'Source PR in stack changes',
               value: entry.snapshot.url,
               options: subject.members.map((member) => ({
-                value: member.url,
+                value: member.url, kind: 'pr' as const,
                 label: `#${member.number} · ${member.title}`,
               })),
               select: (url: string) => {
@@ -439,12 +439,13 @@ export function PrChangesView({
         ? [
             {
               id: 'file',
+              filePath: entry.file.path,
               label: entry.file.path,
               pickerLabel: 'File in comparison',
               value: entry.key,
               options: visible
                 .filter((e) => e.snapshot.url === entry.snapshot.url)
-                .map((e) => ({ value: e.key, label: e.file.path })),
+                .map((e) => ({ value: e.key, label: e.file.path, filePath: e.file.path })),
               select,
             },
           ]

@@ -89,11 +89,11 @@ void app
         "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()"
       );
       await click('Open PR overview');
-      await wait("document.querySelectorAll('.pr-check-summary li').length===3");
+      await wait("document.querySelectorAll('.review-evidence-summary > button').length===3");
       await js(
         `window.graphWarmCalls=[];window.electronAPI.prepareWorkflowGraph=async(target)=>{window.graphWarmCalls.push(target)};undefined`
       );
-      await js("document.querySelector('.pr-check-summary li button').click()");
+      await js("document.querySelector('.review-evidence-summary > button').click()");
       await wait("document.querySelectorAll('.check-row').length===6");
       assert.equal(await js('window.graphWarmCalls.filter(Boolean).length'), 1, 'Opening Checks warms one workflow');
       await installRoutes();
@@ -585,8 +585,8 @@ void app
         `[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()`
       );
       await click('Open PR overview');
-      await wait(`document.querySelectorAll('.pr-check-summary li').length===3`);
-      await js(`document.querySelector('.pr-check-summary li button').click()`);
+      await wait(`document.querySelectorAll('.review-evidence-summary > button').length===3`);
+      await js(`document.querySelector('.review-evidence-summary > button').click()`);
       await wait(`document.querySelectorAll('.check-row').length===6`);
       await installRoutes();
       await js(`(()=>{
@@ -725,8 +725,8 @@ void app
         "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()"
       );
       await click('Open PR overview');
-      await wait(`document.querySelectorAll('.pr-check-summary li').length===3`);
-      await js(`document.querySelector('.pr-check-summary li button').click()`);
+      await wait(`document.querySelectorAll('.review-evidence-summary > button').length===3`);
+      await js(`document.querySelector('.review-evidence-summary > button').click()`);
       await wait(`document.querySelectorAll('.check-row').length===6`);
       await installRoutes();
       await js(`(async()=>{
@@ -767,7 +767,7 @@ void app
           "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()"
         );
         await click('Open PR overview');
-        await wait(`document.querySelectorAll('.pr-check-summary li').length===3`);
+        await wait(`document.querySelectorAll('.review-evidence-summary > button').length===3`);
         await js(
           `(()=>{const tab=[...document.querySelectorAll('[role="tab"]')].find(b=>b.textContent.startsWith('Checks'));tab.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));tab.click()})()`
         );

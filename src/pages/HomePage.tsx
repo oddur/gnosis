@@ -1,3 +1,4 @@
+import { SubjectIcon } from '../../components/SubjectIcon';
 import { useSettingsShortcut } from '../../lib/use-settings-shortcut';
 import { preferencesUpdated } from '../../lib/use-repository-settings';
 import { ModelEffortSelect } from '../../components/ModelEffortSelect';
@@ -819,8 +820,8 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
   useEffect(() => { onReviewOriginChange?.(JSON.parse(originSignature) as { name: string; reviews: { id: string; title: string }[] }); }, [originSignature, onReviewOriginChange]);
   const summaryChoices = savedView
     ? [...new Map(saved.map(entry => [entry.snapshot?.subject.id ?? entry.prUrl,
-      { value: entry.snapshot?.subject.id ?? entry.prUrl, label: entry.prTitle }])).values()]
-    : orderedItems.map(item => ({ value: item.subject.id, label: item.subject.kind === 'stack'
+      { value: entry.snapshot?.subject.id ?? entry.prUrl, label: entry.prTitle, kind: entry.snapshot?.subject.kind === 'stack' ? 'stack' as const : entry.prUrl.startsWith('local:') ? undefined : 'pr' as const }])).values()]
+    : orderedItems.map(item => ({ value: item.subject.id, kind: item.subject.kind === 'stack' ? 'stack' as const : 'pr' as const, label: item.subject.kind === 'stack'
       ? `Stack · ${item.subject.title}` : `${item.subject.members[0].repo} #${item.subject.members[0].number} · ${item.subject.title}` }));
   const summaryNavigation = useRef(0);
   const restoredNavigation = useRef(0);
@@ -1818,7 +1819,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                         disabled={entry.status === 'generating'}
                         onClick={() => (entry.status === 'failed' ? void start(entry.prUrl) : void open(entry))}
                       >
-                        <span className="queue-title">{entry.prTitle}</span>
+                        <span className="queue-title">{!entry.prUrl.startsWith('local:') && <SubjectIcon kind={entry.snapshot?.subject.kind === 'stack' ? 'stack' : 'pr'} />}{entry.prTitle}</span>
                       </button>
                         <span className="queue-meta">
                           {entry.snapshot?.subject.kind === 'stack'
@@ -1951,7 +1952,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                     <X size={16} />
                   </button>
                 </div>
-                <h2>{selectedItem.subject.title}</h2>
+                <h2><SubjectIcon kind={selectedItem.subject.kind === 'stack' ? 'stack' : 'pr'} />{selectedItem.subject.title}</h2>
                 {briefingSelection && (
                   <p className="text-xs text-muted-foreground mb-3" aria-label="Briefing model">
                     Briefing model: {briefingModelLabel}
@@ -2068,7 +2069,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                             void window.electronAPI.openExternal(m.url);
                           }}
                         >
-                          #{m.number} {m.title}
+                          <SubjectIcon kind="pr" />#{m.number} {m.title}
                         </a>
                         <PrLabels members={[m]} />
                         <p>
@@ -2142,7 +2143,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                   />
                   <SearchableSelect label="Dependent PR" value={childUrl} onValueChange={setChildUrl}
                     placeholder="Choose dependent PR"
-                    options={selectedItem.subject.members.map(m => ({ value: m.url, label: `#${m.number} ${m.title}` }))}
+                    options={selectedItem.subject.members.map(m => ({ value: m.url, kind: 'pr' as const, label: `#${m.number} ${m.title}` }))}
                   />
                   <Button
                     size="sm"

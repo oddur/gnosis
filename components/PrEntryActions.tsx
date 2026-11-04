@@ -1,7 +1,8 @@
+import { WorkspaceIcon } from './WorkspaceIcon';
 import { useContext } from 'react';
 import { PrReadContext } from '../lib/pr-read-context';
 import { Mail, MailOpen } from 'lucide-react';
-import { BookOpen, Copy, ExternalLink, FileText, RefreshCw, Star, VolumeX, MessageSquare } from 'lucide-react';
+import { Copy, ExternalLink, FileText, RefreshCw, Star, VolumeX, MessageSquare } from 'lucide-react';
 import type { ReviewMember } from '../lib/workbench';
 import { EntryActions, type EntryActionGroups } from './EntryActions';
 import type { ComponentProps } from 'react';
@@ -62,7 +63,7 @@ export function prEntryActionGroups({
         ? [
             {
               label: 'Generate explanation',
-              icon: <BookOpen size={15} />,
+              icon: <WorkspaceIcon tab="explanation" />,
               disabled: explanationDisabled,
               run: onGenerateExplanation,
             },

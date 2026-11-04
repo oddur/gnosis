@@ -35,11 +35,15 @@ export function PrActions({
   onChanged,
   trigger,
   mergeReady = false,
+  compact = false,
+  hasConflicts = false,
 }: {
   member: ReviewMember;
   stackMembers?: ReviewMember[];
   onChanged?: () => void;
   mergeReady?: boolean;
+  compact?: boolean;
+  hasConflicts?: boolean;
   /** A contextual action loads permissions only when invoked. */
   trigger?: (open: (kind: PrActionKind) => void, busy: boolean) => ReactNode;
 }) {
@@ -202,8 +206,12 @@ export function PrActions({
   }
   if (!member.url.startsWith('https://github.com/')) return null;
   return (
-    <div className={`pr-actions ${stackMembers ? 'pr-actions-stack' : ''}`}>
-      {trigger ? trigger(kind => { void open(kind); }, busy) : stackMembers ? (
+    <div className={`pr-actions ${stackMembers ? 'pr-actions-stack' : ''} ${compact ? 'pr-actions-compact' : ''}`}>
+      {trigger ? (
+        trigger((kind) => {
+          void open(kind);
+        }, busy)
+      ) : stackMembers ? (
         <Button
           size="sm"
           variant={mergeReady ? 'default' : 'outline'}
@@ -216,7 +224,11 @@ export function PrActions({
       ) : (
         <>
           <div className="pr-action-controls">
-            {(state?.mergeable === 'CONFLICTING' || state?.mergeState === 'DIRTY') && <Button size="sm" variant="outline" onClick={() => openConflictWorkspace(member.url)}>Resolve conflicts…</Button>}
+            {(hasConflicts || state?.mergeable === 'CONFLICTING' || state?.mergeState === 'DIRTY') && (
+              <Button size="sm" variant="outline" onClick={() => openConflictWorkspace(member.url)}>
+                Resolve conflicts…
+              </Button>
+            )}
             <Button
               size="sm"
               onClick={() => void open('merge')}
@@ -241,31 +253,62 @@ export function PrActions({
             >
               {state?.autoMerge ? 'Disable auto-merge…' : 'Enable auto-merge…'}
             </Button>
-            <DropdownMenu.Root>
-              <DropdownMenu.Trigger asChild>
-                <Button size="sm" variant="outline" disabled={loading || busy || !!updateBlocked} title={updateBlocked}>
-                  <GitBranch size={14} />
-                  Update branch
-                  <ChevronDown size={13} />
+            {compact ? (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={loading || busy || !!updateBlocked}
+                  title={updateBlocked}
+                  onClick={() => void open('update-merge')}
+                >
+                  <GitMerge size={14} />
+                  Update with merge commit…
                 </Button>
-              </DropdownMenu.Trigger>
-              <DropdownMenu.Portal>
-                <DropdownMenu.Content className="pr-update-menu" align="start" sideOffset={5}>
-                  <DropdownMenu.Item onSelect={() => void open('update-merge')}>
-                    <strong>Update with merge commit</strong>
-                    <span>
-                      Merge {state?.baseBranch ?? member.baseBranch} into {state?.headBranch ?? member.headBranch}.
-                    </span>
-                  </DropdownMenu.Item>
-                  <DropdownMenu.Item onSelect={() => void open('update-rebase')}>
-                    <strong>Update with rebase</strong>
-                    <span>
-                      Replay this branch’s commits on {state?.baseBranch ?? member.baseBranch}. Commit history changes.
-                    </span>
-                  </DropdownMenu.Item>
-                </DropdownMenu.Content>
-              </DropdownMenu.Portal>
-            </DropdownMenu.Root>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={loading || busy || !!updateBlocked}
+                  title={updateBlocked}
+                  onClick={() => void open('update-rebase')}
+                >
+                  <GitBranch size={14} />
+                  Update with rebase…
+                </Button>
+              </>
+            ) : (
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={loading || busy || !!updateBlocked}
+                    title={updateBlocked}
+                  >
+                    <GitBranch size={14} />
+                    Update branch
+                    <ChevronDown size={13} />
+                  </Button>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content className="pr-update-menu" align="start" sideOffset={5}>
+                    <DropdownMenu.Item onSelect={() => void open('update-merge')}>
+                      <strong>Update with merge commit</strong>
+                      <span>
+                        Merge {state?.baseBranch ?? member.baseBranch} into {state?.headBranch ?? member.headBranch}.
+                      </span>
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item onSelect={() => void open('update-rebase')}>
+                      <strong>Update with rebase</strong>
+                      <span>
+                        Replay this branch’s commits on {state?.baseBranch ?? member.baseBranch}. Commit history
+                        changes.
+                      </span>
+                    </DropdownMenu.Item>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
+            )}
             <Button
               size="sm"
               variant="outline"
@@ -292,7 +335,7 @@ export function PrActions({
               <RefreshCw size={14} className={loading ? 'motion-safe:animate-spin' : undefined} />
             </button>
           </div>
-          {state && (state.mergeable === 'CONFLICTING' || state.mergeState === 'DIRTY') && (
+          {!compact && state && (state.mergeable === 'CONFLICTING' || state.mergeState === 'DIRTY') && (
             <p className="pr-action-note">{updateBlocked}</p>
           )}
           {state?.autoMerge && (

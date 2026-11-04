@@ -55,6 +55,7 @@ void app.whenReady().then(async () => {
     );
     await click('Open PR overview');
     await wait("document.querySelector('.pr-action-controls button')?.disabled===false");
+    assert.ok(await js(`[...document.querySelectorAll('.pr-action-controls button')].filter(b=>b.getBoundingClientRect().width>0).length>=6`), 'PR actions are directly visible without opening a menu');
     await capture('summary-light-1280');
     await click('Merge PR…');
     await wait('!!document.querySelector(\'[aria-label="Merge method"]\')');
@@ -104,17 +105,15 @@ void app.whenReady().then(async () => {
     await js("document.documentElement.classList.remove('dark')");
     await js('window.conflicts=true');
     await click('Refresh PR actions');
-    await wait("[...document.querySelectorAll('button')].find(b=>b.textContent==='Update branch').disabled");
-    assert.match(await js<string>("document.querySelector('.pr-actions').textContent"), /Resolve merge conflicts/);
+    await wait("[...document.querySelectorAll('button')].find(b=>b.textContent==='Update with rebase…').disabled");
+    assert.match(await js<string>("document.querySelector('.pr-actions').textContent"), /Resolve conflicts/);
     await capture('conflicts-light-1280');
     await js('window.conflicts=false');
     await click('Refresh PR actions');
-    await wait("![...document.querySelectorAll('button')].find(b=>b.textContent==='Update branch').disabled");
-    await click('Update branch');
-    await wait("!!document.querySelector('[role=menuitem]')");
+    await wait("![...document.querySelectorAll('button')].find(b=>b.textContent==='Update with rebase…').disabled");
     await js('window.conflicts=true');
     await js(
-      "[...document.querySelectorAll('[role=menuitem]')].find(e=>e.textContent.startsWith('Update with rebase')).click()"
+      "[...document.querySelectorAll('.pr-action-controls button')].find(e=>e.textContent==='Update with rebase…').click()"
     );
     await wait("document.querySelector('.pr-action-dialog')?.textContent.includes('Resolve merge conflicts')");
     assert.equal(
@@ -138,11 +137,9 @@ void app.whenReady().then(async () => {
     await click('Disable auto-merge');
     await wait("!document.querySelector('.pr-action-dialog')");
     assert.equal(await js('window.writes.at(-1).kind'), 'disable-auto');
-    await click('Update branch');
-    await wait("!!document.querySelector('[role=menuitem]')");
     await capture('update-menu-light-1280');
     await js(
-      "[...document.querySelectorAll('[role=menuitem]')].find(e=>e.textContent.startsWith('Update with rebase')).click()"
+      "[...document.querySelectorAll('.pr-action-controls button')].find(e=>e.textContent==='Update with rebase…').click()"
     );
     await wait("!!document.querySelector('.pr-action-members')");
     assert.match(await js<string>("document.querySelector('.pr-action-dialog').textContent"), /main → fix-0/);
@@ -151,10 +148,8 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('.pr-action-dialog')");
     assert.equal(await js('window.writes.at(-1).kind'), 'update-rebase');
     assert.equal(await js('window.writes.at(-1).revisions[0].headSha'), 'head-0');
-    await click('Update branch');
-    await wait("!!document.querySelector('[role=menuitem]')");
     await js(
-      "[...document.querySelectorAll('[role=menuitem]')].find(e=>e.textContent.startsWith('Update with merge commit')).click()"
+      "[...document.querySelectorAll('.pr-action-controls button')].find(e=>e.textContent==='Update with merge commit…').click()"
     );
     await wait("!!document.querySelector('.pr-action-members')");
     await click('Update branch with merge commit');

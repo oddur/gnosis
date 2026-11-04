@@ -1,3 +1,4 @@
+import type { WorkspaceTab } from './navigation-history';
 import {
   createContext,
   useContext,
@@ -13,6 +14,9 @@ export interface ReviewCrumb {
   id: string;
   label: string;
   title?: string;
+  kind?: 'stack' | 'pr' | 'repository' | 'commit';
+  filePath?: string;
+  workspaceTab?: WorkspaceTab;
   navigate?: () => void;
   pickerLabel?: string;
   value?: string;
