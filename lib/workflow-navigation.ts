@@ -4,6 +4,21 @@ import type { WorkflowGraphNode, WorkflowJob, WorkflowRunInfo } from './workflow
 export function workflowRunLabel(run: WorkflowRunInfo) {
   return `${run.name} · ${checkLabel({ name: run.name, url: run.url, status: run.status === 'completed' ? 'completed' : run.status === 'in_progress' ? 'in_progress' : 'queued', conclusion: run.conclusion })} · Attempt ${run.attempt}`;
 }
+export function workflowJobCount(run: WorkflowRunInfo, snapshot?: PrChecks, knownCount = run.jobCount) {
+  const matching =
+    snapshot?.headSha === run.sha
+      ? snapshot.checks.filter((check) => {
+          if (check.kind !== 'check') return false;
+          const job = snapshot.details?.[check.id]?.job;
+          if (job) return job.runId === run.id && job.attempt === run.attempt;
+          // Without attempt evidence, a reused run URL must not count jobs from an earlier rerun.
+          return run.attempt === 1 && !!check.url?.startsWith(`${run.url}/job/`);
+        })
+      : [];
+  const reported = new Set(matching.map((check) => check.id)).size;
+  if (knownCount !== undefined && knownCount >= reported) return { count: knownCount, exact: true };
+  return reported ? { count: reported, exact: false } : undefined;
+}
 export function preferredWorkflow(runs: WorkflowRunInfo[]): WorkflowRunInfo | undefined {
   const rank = (run: WorkflowRunInfo) =>
     run.status !== 'completed'
@@ -56,6 +71,7 @@ export function nextAttentionJob(
   return items.at(current < 0 ? (direction === 1 ? 0 : -1) : (current + direction + items.length) % items.length);
 }
 export interface WorkflowViewState {
+  workflowsOpen?: boolean;
   memberUrl?: string;
   runId?: number;
   expanded: string[];

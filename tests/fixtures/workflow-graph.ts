@@ -7,6 +7,7 @@ export function workflowMocks(snapshots: Map<string, PrChecks>) {
     path: '.github/workflows/ci.yml',
     sha: '',
     attempt: 1,
+    jobCount: 5,
     status: 'in_progress',
     conclusion: null,
     url: 'https://github.com/klang/engine/actions/runs/9',
@@ -37,6 +38,7 @@ export function workflowMocks(snapshots: Map<string, PrChecks>) {
       return {
         target: input,
         run: { ...run, sha: input.headSha },
+        totalJobs: 5,
         checkedAt: Date.now(),
         warnings: [],
         definitionUrl: 'https://github.com/klang/engine/blob/' + input.headSha + '/.github/workflows/ci.yml',

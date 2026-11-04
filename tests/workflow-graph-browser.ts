@@ -66,6 +66,10 @@ void app
       fs.writeFileSync(path.join(dir, name + '.png'), (await win.webContents.capturePage()).toPNG());
     };
     const installRoutes = async () => {
+      // Renderer inspection caches can restore the list without calling the new page's fixture API.
+      await js(
+        `(async()=>{const queue=await window.electronAPI.workbenchQueue();await Promise.all(queue.items.flatMap(item=>item.subject.members).map(member=>window.electronAPI.getPrChecks({url:member.url,headSha:member.headSha})));})()`
+      );
       await wait('window.checksFixture.snapshots.size > 0');
       const routes: Record<string, Awaited<ReturnType<typeof layoutWorkflow>>> = {};
       for (const mode of ['collapsed', 'expanded']) {
@@ -518,6 +522,78 @@ void app
       await js("document.querySelector('.workflow-expanded-groups button').click()");
       await wait("document.querySelectorAll('.workflow-job').length===6");
       assert.equal(await js('window.graphNetworkCalls'), 0, 'Stage and dependency navigation must stay local');
+      // Many workflows: readable full names, status/count evidence, and local search.
+      await loadWorkbenchPage(win, process.env.GNOSIS_WORKBENCH_URL + '?pr-summary&checks');
+      await waitForWorkbenchQueue(win.webContents);
+      await js(
+        `[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()`
+      );
+      await click('Open PR overview');
+      await wait(`document.querySelectorAll('.pr-check-summary li').length===3`);
+      await js(`document.querySelector('.pr-check-summary li button').click()`);
+      await wait(`document.querySelectorAll('.check-row').length===6`);
+      await installRoutes();
+      await js(`(()=>{
+        const readRuns=window.electronAPI.getWorkflowRuns, readGraph=window.electronAPI.getWorkflowGraph;
+        window.workflowSidebarRequests=0;
+        window.electronAPI.getWorkflowRuns=async(input,options)=>{
+          const value=await readRuns(input,options), base=value.runs[0];
+          const names=['Build and test','Buf Checks (Gameplay)','Check LFS Issues','Publish Gameplay gRPC Client Packages','Seed Test Pipeline','One-Time Develop Merge'];
+          return {...value,runs:names.map((name,i)=>({...base,id:9+i,url:'https://github.com/klang/engine/actions/runs/'+(9+i),name,path:'.github/workflows/ci-'+i+'.yml',jobCount:i===3?undefined:5+i,status:i===3?'queued':i===2?'completed':'in_progress',conclusion:i===2?'success':null}))};
+        };
+        window.electronAPI.getWorkflowGraph=async(input,options)=>{
+          if(!options?.cachedOnly)window.workflowSidebarRequests++;
+          const graph=await readGraph(input,options),runs=await window.electronAPI.getWorkflowRuns(input);
+          return {...graph,run:runs.runs.find(r=>r.id===input.runId)};
+        };
+      })()`);
+      await click('Graph');
+      await wait(
+        `document.querySelectorAll('.workflow-run-option').length===6 && document.querySelector('.workflow-sidebar').getBoundingClientRect().width>0 && !!document.querySelector('.workflow-job')`
+      );
+      assert.ok(
+        await js(
+          `document.querySelector('.workflow-sidebar').textContent.includes('5 jobs') && document.querySelector('.workflow-sidebar').textContent.includes('Jobs: —')`
+        )
+      );
+      await capture('workflow-sidebar-light');
+      const sidebarRequests = await js(`window.workflowSidebarRequests`);
+      win.focus();
+      win.webContents.focus();
+      await js(`document.querySelector('.workflow-run-option').focus()`);
+      win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Down' });
+      win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Down' });
+      await wait(`document.activeElement===document.querySelectorAll('.workflow-run-option')[1]`);
+      assert.equal(
+        await js(`window.workflowSidebarRequests`),
+        sidebarRequests,
+        'Arrow navigation must not load workflows'
+      );
+      await js(
+        `(()=>{const input=document.querySelector('[aria-label="Find workflow"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Publish Gameplay');input.dispatchEvent(new Event('input',{bubbles:true}));})()`
+      );
+      await wait(`document.querySelectorAll('.workflow-run-option').length===1`);
+      assert.equal(await js(`window.workflowSidebarRequests`), sidebarRequests, 'Workflow search stays local');
+      await js(`document.querySelector('.workflow-run-option').click()`);
+      await wait(
+        `document.querySelector('.workflow-active-run').textContent==='Publish Gameplay gRPC Client Packages'`
+      );
+      await js(
+        `document.querySelector('[aria-label="Clear workflow search"]').click();document.documentElement.classList.add('dark')`
+      );
+      await capture('workflow-sidebar-dark');
+      win.setContentSize(900, 700);
+      await wait(`document.querySelector('.workflow-sidebar').hidden`);
+      await js(`document.querySelector('[aria-label="Show workflows"]').click()`);
+      await wait(
+        `document.activeElement?.getAttribute('aria-label')==='Find workflow' && document.querySelector('.workflow-content').inert`
+      );
+      await capture('workflow-sidebar-compact-dark');
+      win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+      win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+      await wait(
+        `document.querySelector('.workflow-sidebar').hidden && document.activeElement?.getAttribute('aria-label')==='Show workflows'`
+      );
       if (process.env.GNOSIS_WORKFLOW_REPLAY) {
         const saved = JSON.parse(fs.readFileSync(process.env.GNOSIS_WORKFLOW_REPLAY, 'utf8'));
         const actual = assembleWorkflow(saved.definitions, saved.jobs, []);

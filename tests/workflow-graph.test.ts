@@ -3,6 +3,7 @@ import {
   nextAttentionJob,
   preferredWorkflow,
   workflowRunLabel,
+  workflowJobCount,
   workflowSession,
 } from '../lib/workflow-navigation';
 import { withGitHubPriority } from '../lib/github-scheduler';
@@ -18,6 +19,7 @@ import { parseWorkflow, assembleWorkflow } from '../src/workflow-definition';
 import { readWorkflowGraph, readWorkflowRuns } from '../src/workflow-graph-service';
 import { createGitHubClientPool, githubCacheFor } from './cache-test-pool';
 import type { WorkflowJob } from '../lib/workflow-graph';
+import type { PrChecks } from '../lib/pr-checks';
 
 const source = `name: CI
 on: pull_request
@@ -243,6 +245,19 @@ void test('concurrent reads coalesce and account caches are isolated', async () 
   assert.equal(h.calls.filter((c) => c.includes('/jobs')).length, 1);
   await readWorkflowGraph(h.other, input);
   assert.equal(h.calls.filter((c) => c.includes('/jobs')).length, 2);
+});
+void test('workflow job counts reuse per-attempt cache without fetching jobs for the list', async () => {
+  const h = harness();
+  assert.equal((await readWorkflowRuns(h.client, target))?.runs[0].jobCount, undefined);
+  assert.equal(h.calls.filter((c) => c.includes('/jobs')).length, 0);
+  const graph = await readWorkflowGraph(h.client, input);
+  assert.equal(graph?.run.jobCount, 4);
+  const before = h.calls.length;
+  assert.equal((await readWorkflowRuns(h.client, target, { cachedOnly: true }))?.runs[0].jobCount, 4);
+  assert.equal(h.calls.length, before);
+  assert.equal((await readWorkflowRuns(h.other, target))?.runs[0].jobCount, undefined);
+  h.run.run_attempt = 2;
+  assert.equal((await readWorkflowRuns(h.client, target, { force: true }))?.runs[0].jobCount, undefined);
 });
 void test('a rerun invalidates completed jobs; layout stays stable', async () => {
   const h = harness();
@@ -929,4 +944,53 @@ void test('graph exploration memory is scoped by account and revision', () => {
   assert.deepEqual(workflowSession('alice:pr1:head1').expanded, ['matrix']);
   assert.deepEqual(workflowSession('bob:pr1:head1').expanded, []);
   assert.deepEqual(workflowSession('alice:pr1:head2').expanded, []);
+});
+void test('workflow counts distinguish reported jobs, exact totals, and unknown reruns', () => {
+  const run = {
+    id: 9,
+    name: 'CI',
+    path: '.github/workflows/ci.yml',
+    sha,
+    attempt: 1,
+    status: 'in_progress',
+    conclusion: null,
+    url: 'https://github.com/o/r/actions/runs/9',
+  };
+  const snapshot: PrChecks = {
+    ...target,
+    checkedAt: Date.now(),
+    checks: [
+      {
+        id: 'check:1',
+        databaseId: 1,
+        kind: 'check',
+        provider: 'GitHub Actions',
+        required: null,
+        name: 'Build',
+        status: 'completed',
+        conclusion: 'success',
+        startedAt: null,
+        completedAt: null,
+        url: `${run.url}/job/1`,
+      },
+    ],
+  };
+  assert.deepEqual(workflowJobCount(run, snapshot), { count: 1, exact: false });
+  assert.deepEqual(workflowJobCount({ ...run, jobCount: 7 }, snapshot), { count: 7, exact: true });
+  assert.deepEqual(workflowJobCount({ ...run, jobCount: 0 }, snapshot), { count: 1, exact: false });
+  assert.equal(workflowJobCount({ ...run, attempt: 2 }, snapshot), undefined);
+  assert.equal(workflowJobCount({ ...run, id: 90, url: run.url + '0' }, snapshot), undefined);
+  assert.equal(workflowJobCount(run, { ...snapshot, headSha: 'b'.repeat(40) }), undefined);
+  snapshot.details = {
+    'check:1': {
+      ...target,
+      id: 'check:1',
+      title: '',
+      summary: '',
+      text: '',
+      annotations: [],
+      job: { id: 1, runId: 9, attempt: 2, status: 'in_progress', canRerun: false, steps: [] },
+    },
+  };
+  assert.deepEqual(workflowJobCount({ ...run, attempt: 2 }, snapshot), { count: 1, exact: false });
 });

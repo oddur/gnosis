@@ -1,6 +1,8 @@
 import type { CheckTarget, CheckStep, PrCheck } from './pr-checks';
 
 export interface WorkflowRunInfo {
+  jobCount?: number;
+  event?: string;
   id: number;
   name: string;
   path: string;

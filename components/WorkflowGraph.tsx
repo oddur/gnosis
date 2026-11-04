@@ -1,4 +1,5 @@
 import { WorkflowViewMenu } from './WorkflowViewMenu';
+import { WorkflowSidebar } from './WorkflowSidebar';
 import { WorkflowDetailNavigation } from './WorkflowDetailNavigation';
 import { createPortal } from 'react-dom';
 import {
@@ -6,12 +7,11 @@ import {
   nextAttentionJob,
   preferredWorkflow,
   prChecksHint,
-  workflowRunLabel,
   workflowSession,
 } from '../lib/workflow-navigation';
 import { readableWorkflowViewport } from '../lib/workflow-viewport';
 import { workflowEdgePath } from '../lib/workflow-edge-path';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   useUpdateNodeInternals,
@@ -41,6 +41,7 @@ import {
   LoaderCircle,
   Minus,
   Plus,
+  PanelLeft,
 } from 'lucide-react';
 import type { ReviewSubject } from '../lib/workbench';
 import { checkDuration, checkGroup, checkLabel, type PrChecks, type PrCheck, type CheckFilter } from '../lib/pr-checks';
@@ -284,6 +285,22 @@ export function WorkflowGraphView({
   const [focused, setFocused] = useState<string>();
   const highlight = hovered ?? focused;
   const session = useMemo(() => workflowSession(stateKey), [stateKey]);
+  const sidebarId = useId();
+  const workflowToggle = useRef<HTMLButtonElement>(null);
+  const [workflowsOpen, setWorkflowsOpen] = useState(session.workflowsOpen);
+  const [sidebarFocus, setSidebarFocus] = useState(0);
+  const [compactSidebar, setCompactSidebar] = useState(() => window.matchMedia('(max-width:1000px)').matches);
+  useEffect(() => {
+    const media = window.matchMedia('(max-width:1000px)');
+    const change = () => setCompactSidebar(media.matches);
+    media.addEventListener('change', change);
+    return () => media.removeEventListener('change', change);
+  }, []);
+  const closeWorkflows = () => {
+    setWorkflowsOpen(false);
+    workflowToggle.current?.focus();
+  };
+  const [jobCounts, setJobCounts] = useState<Record<string, number>>({});
   const [memberUrl, setMemberUrl] = useState(
     session.memberUrl ??
       subject.members.find((m) => values[m.url]?.checks.some((c) => checkGroup(c) === 'attention'))?.url ??
@@ -298,6 +315,16 @@ export function WorkflowGraphView({
   const [runId, setRunId] = useState<number | undefined>(session.runId);
   const runs = runsState?.scope === scope ? runsState.value : undefined;
   const run = runs?.runs.find((r) => r.id === runId) ?? runs?.runs[0];
+  const sidebarOpen = workflowsOpen ?? (!!runs && runs.runs.length > 1 && !compactSidebar);
+  const chooseWorkflow = (id: number) => {
+    if (id !== run?.id) {
+      onContextChange();
+      setRunId(id);
+      setExpanded([]);
+      setFocusNodeId(undefined);
+    }
+    if (compactSidebar) closeWorkflows();
+  };
   const [expanded, setExpanded] = useState<string[]>(session.expanded);
   const [grouping, setGrouping] = useState<WorkflowGrouping>(rememberedGrouping ?? 'adaptive');
   const [groupingReady, setGroupingReady] = useState(rememberedGrouping !== undefined);
@@ -342,8 +369,8 @@ export function WorkflowGraphView({
   const [focusNodeId, setFocusNodeId] = useState<string | undefined>(session.focusNodeId);
   const [navigationNodeId, setNavigationNodeId] = useState<string>();
   useEffect(() => {
-    Object.assign(session, { memberUrl, runId, expanded, showSkipped, showCompleted, focusNodeId });
-  }, [session, memberUrl, runId, expanded, showSkipped, showCompleted, focusNodeId]);
+    Object.assign(session, { memberUrl, runId, expanded, showSkipped, showCompleted, focusNodeId, workflowsOpen });
+  }, [session, memberUrl, runId, expanded, showSkipped, showCompleted, focusNodeId, workflowsOpen]);
   const [graphState, setGraph] = useState<{ key: string; value: Graph }>();
   const [runError, setRunError] = useState('');
   const [graphError, setGraphError] = useState('');
@@ -433,6 +460,10 @@ export function WorkflowGraphView({
           : current
       );
     const key = `${scope}:${value.run.id}:${value.run.attempt}`;
+    if (value.run.jobCount !== undefined) {
+      const count = value.run.jobCount;
+      setJobCounts((current) => (current[key] === count ? current : { ...current, [key]: count }));
+    }
     setGraph((current) =>
       current?.key === key && current.value.checkedAt > value.checkedAt ? current : { key, value }
     );
@@ -725,17 +756,29 @@ export function WorkflowGraphView({
           />
         )}
         {!!runs?.runs.length && (
-          <SearchableSelect
-            label="Workflow"
-            value={String(run?.id ?? '')}
-            options={runs.runs.map((r) => ({ value: String(r.id), label: workflowRunLabel(r) }))}
-            onValueChange={(value) => {
-              onContextChange();
-              setRunId(Number(value));
-              setExpanded([]);
-              setFocusNodeId(undefined);
-            }}
-          />
+          <>
+            <Button
+              ref={workflowToggle}
+              size="sm"
+              variant={sidebarOpen ? 'secondary' : 'outline'}
+              aria-label="Show workflows"
+              aria-controls={sidebarId}
+              aria-expanded={sidebarOpen}
+              onClick={() => {
+                if (sidebarOpen) closeWorkflows();
+                else {
+                  if (detailHost) onRevealContext();
+                  setWorkflowsOpen(true);
+                  setSidebarFocus((n) => n + 1);
+                }
+              }}
+            >
+              <PanelLeft size={15} /> Workflows ({runs.runs.length})
+            </Button>
+            <span className="workflow-active-run" title={run?.name}>
+              {run?.name}
+            </span>
+          </>
         )}
         {run && (
           <a
@@ -875,144 +918,174 @@ export function WorkflowGraphView({
           detailHost
         )}
       {toolbarHost ? createPortal(toolbarControls, toolbarHost) : toolbarControls}
-      {error && (
-        <div className="workflow-notice" role="status">
-          {graph ? 'Showing saved workflow. ' : ''}
-          {error}{' '}
-          <Button variant="ghost" size="sm" onClick={() => setRetry((n) => n + 1)}>
-            Retry workflow
-          </Button>
-        </div>
-      )}
-      {runs?.warning && <p className="workflow-notice">{runs.warning}</p>}
-      {graph?.warnings.length ? (
-        <details className="workflow-notice">
-          <summary>Some dependencies are unavailable</summary>
-          {graph.warnings.map((warning, i) => (
-            <p key={i}>{warning}</p>
-          ))}
-        </details>
-      ) : null}
-      <span
-        className={
-          [...outsideFailures.values()].some((items) => items.length)
-            ? 'workflow-scope-status workflow-context-notice'
-            : 'sr-only workflow-scope-status'
-        }
-        role="status"
-      >
-        {filter === 'running' && !activeCount
-          ? 'No active jobs in this view'
-          : [...outsideFailures.values()].some((items) => items.length)
-            ? 'Failed prerequisites outside this view'
-            : issues.length
-              ? ''
-              : 'No jobs need attention in this view'}
-      </span>
-      {preferenceError && (
-        <div className="workflow-notice" role="status">
-          {preferenceError}
-        </div>
-      )}
-      {graph?.focus && (
-        <div className="workflow-navigation">
-          <Button variant="outline" size="sm" onClick={() => setFocusNodeId(undefined)}>
-            Back to workflow
-          </Button>
-          <span role="status">Prerequisites and dependants of {graph.focus.name}</span>
-        </div>
-      )}
-      {graph && !graph.focus && expanded.length > 0 && (
-        <div className="workflow-expanded-groups" aria-label="Expanded job groups">
-          {graph.groups
-            .filter((g) => expanded.includes(g.id))
-            .map((g) => (
-              <Button key={g.id} size="sm" variant="ghost" onClick={() => toggle(g.id)}>
-                <Minus size={13} /> Collapse {g.name}
+      <div className="workflow-browser">
+        <WorkflowSidebar
+          key={scope}
+          id={sidebarId}
+          runs={runs?.runs ?? []}
+          selected={run?.id}
+          snapshot={snapshot}
+          counts={Object.fromEntries(
+            Object.entries(jobCounts)
+              .filter(([key]) => key.startsWith(`${scope}:`))
+              .map(([key, count]) => [key.slice(scope.length + 1), count])
+          )}
+          open={sidebarOpen}
+          focusRequest={sidebarFocus}
+          onSelect={chooseWorkflow}
+          onClose={closeWorkflows}
+        />
+        {sidebarOpen && compactSidebar && (
+          <button
+            className="workflow-sidebar-backdrop"
+            aria-label="Close workflow list"
+            onClick={closeWorkflows}
+            tabIndex={-1}
+          />
+        )}
+        <div className="workflow-content" inert={sidebarOpen && compactSidebar}>
+          {error && (
+            <div className="workflow-notice" role="status">
+              {graph ? 'Showing saved workflow. ' : ''}
+              {error}{' '}
+              <Button variant="ghost" size="sm" onClick={() => setRetry((n) => n + 1)}>
+                Retry workflow
               </Button>
-            ))}
-        </div>
-      )}
-      <div className="workflow-canvas" ref={canvas}>
-        {graph && (
-          <div className="workflow-viewport-actions" role="group" aria-label="Graph zoom">
-            <Button
-              variant="outline"
-              size="sm"
-              title="Readable size"
-              aria-label="Readable size"
-              onClick={() => {
-                const bounds = canvasBounds();
-                if (flow && bounds)
-                  void flow.setViewport(readableWorkflowViewport(viewportGraph ?? graph, bounds.width, bounds.height));
-              }}
-            >
-              <Focus size={16} />
-              <span className="sr-only">Readable size</span>
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              title="Fit entire workflow"
-              aria-label="Fit entire workflow"
-              onClick={() => void flow?.fitView({ padding: 0.15, minZoom: 0.1, maxZoom: 1 })}
-            >
-              <Expand size={16} />
-              <span className="sr-only">Fit entire workflow</span>
-            </Button>
-          </div>
-        )}
-
-        {graph?.nodes.length ? (
-          <ReactFlow<JobNode>
-            key={graphKey}
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            onInit={setFlow}
-            onMoveEnd={(_event, viewport) => {
-              session.viewport = viewport;
-              session.viewportKey = viewportKey;
-            }}
-            nodesDraggable={false}
-            nodesConnectable={false}
-            edgesFocusable={false}
-            elementsSelectable={false}
-            minZoom={0.1}
-            maxZoom={1.5}
-            panOnScroll
-            preventScrolling
-            aria-label="CI job dependencies"
+            </div>
+          )}
+          {runs?.warning && <p className="workflow-notice">{runs.warning}</p>}
+          {graph?.warnings.length ? (
+            <details className="workflow-notice">
+              <summary>Some dependencies are unavailable</summary>
+              {graph.warnings.map((warning, i) => (
+                <p key={i}>{warning}</p>
+              ))}
+            </details>
+          ) : null}
+          <span
+            className={
+              [...outsideFailures.values()].some((items) => items.length)
+                ? 'workflow-scope-status workflow-context-notice'
+                : 'sr-only workflow-scope-status'
+            }
+            role="status"
           >
-            <Controls showInteractive={false} showFitView={false} />
-            <MiniMap
-              pannable
-              zoomable
-              ariaLabel="Workflow map. Drag to navigate."
-              nodeColor={(node) => {
-                const group = outcome(byId.get(node.id)?.jobs ?? []).group;
-                return group === 'attention'
-                  ? 'var(--color-danger)'
-                  : group === 'running'
-                    ? 'var(--color-warning)'
-                    : 'var(--muted-foreground)';
-              }}
-              maskColor="color-mix(in srgb, var(--background) 75%, transparent)"
-              style={{ width: 120, height: 72, background: 'var(--card)', border: '1px solid var(--border)' }}
-            />
-          </ReactFlow>
-        ) : (
-          <div className="checks-empty">
-            <Expand size={24} />
-            <h2>{loadingRuns || loadingGraph ? 'Loading workflow graph…' : 'No workflow jobs reported'}</h2>
-            <p>
-              {loadingRuns || loadingGraph
-                ? 'Reading jobs and their workflow definitions.'
-                : 'GitHub Actions workflows appear here. External checks remain available in List view.'}
-            </p>
+            {filter === 'running' && !activeCount
+              ? 'No active jobs in this view'
+              : [...outsideFailures.values()].some((items) => items.length)
+                ? 'Failed prerequisites outside this view'
+                : issues.length
+                  ? ''
+                  : 'No jobs need attention in this view'}
+          </span>
+          {preferenceError && (
+            <div className="workflow-notice" role="status">
+              {preferenceError}
+            </div>
+          )}
+          {graph?.focus && (
+            <div className="workflow-navigation">
+              <Button variant="outline" size="sm" onClick={() => setFocusNodeId(undefined)}>
+                Back to workflow
+              </Button>
+              <span role="status">Prerequisites and dependants of {graph.focus.name}</span>
+            </div>
+          )}
+          {graph && !graph.focus && expanded.length > 0 && (
+            <div className="workflow-expanded-groups" aria-label="Expanded job groups">
+              {graph.groups
+                .filter((g) => expanded.includes(g.id))
+                .map((g) => (
+                  <Button key={g.id} size="sm" variant="ghost" onClick={() => toggle(g.id)}>
+                    <Minus size={13} /> Collapse {g.name}
+                  </Button>
+                ))}
+            </div>
+          )}
+          <div className="workflow-canvas" ref={canvas}>
+            {graph && (
+              <div className="workflow-viewport-actions" role="group" aria-label="Graph zoom">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  title="Readable size"
+                  aria-label="Readable size"
+                  onClick={() => {
+                    const bounds = canvasBounds();
+                    if (flow && bounds)
+                      void flow.setViewport(
+                        readableWorkflowViewport(viewportGraph ?? graph, bounds.width, bounds.height)
+                      );
+                  }}
+                >
+                  <Focus size={16} />
+                  <span className="sr-only">Readable size</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  title="Fit entire workflow"
+                  aria-label="Fit entire workflow"
+                  onClick={() => void flow?.fitView({ padding: 0.15, minZoom: 0.1, maxZoom: 1 })}
+                >
+                  <Expand size={16} />
+                  <span className="sr-only">Fit entire workflow</span>
+                </Button>
+              </div>
+            )}
+
+            {graph?.nodes.length ? (
+              <ReactFlow<JobNode>
+                key={graphKey}
+                nodes={nodes}
+                edges={edges}
+                nodeTypes={nodeTypes}
+                edgeTypes={edgeTypes}
+                onInit={setFlow}
+                onMoveEnd={(_event, viewport) => {
+                  session.viewport = viewport;
+                  session.viewportKey = viewportKey;
+                }}
+                nodesDraggable={false}
+                nodesConnectable={false}
+                edgesFocusable={false}
+                elementsSelectable={false}
+                minZoom={0.1}
+                maxZoom={1.5}
+                panOnScroll
+                preventScrolling
+                aria-label="CI job dependencies"
+              >
+                <Controls showInteractive={false} showFitView={false} />
+                <MiniMap
+                  pannable
+                  zoomable
+                  ariaLabel="Workflow map. Drag to navigate."
+                  nodeColor={(node) => {
+                    const group = outcome(byId.get(node.id)?.jobs ?? []).group;
+                    return group === 'attention'
+                      ? 'var(--color-danger)'
+                      : group === 'running'
+                        ? 'var(--color-warning)'
+                        : 'var(--muted-foreground)';
+                  }}
+                  maskColor="color-mix(in srgb, var(--background) 75%, transparent)"
+                  style={{ width: 120, height: 72, background: 'var(--card)', border: '1px solid var(--border)' }}
+                />
+              </ReactFlow>
+            ) : (
+              <div className="checks-empty">
+                <Expand size={24} />
+                <h2>{loadingRuns || loadingGraph ? 'Loading workflow graph…' : 'No workflow jobs reported'}</h2>
+                <p>
+                  {loadingRuns || loadingGraph
+                    ? 'Reading jobs and their workflow definitions.'
+                    : 'GitHub Actions workflows appear here. External checks remain available in List view.'}
+                </p>
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
     </section>
   );

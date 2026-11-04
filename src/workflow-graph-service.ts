@@ -76,7 +76,23 @@ const info = (run: ApiRun): WorkflowRunInfo => ({
   status: run.status ?? 'queued',
   conclusion: run.conclusion,
   url: run.html_url,
+  event: run.event,
 });
+const jobCountKey = (input: CheckTarget, run: WorkflowRunInfo) =>
+  `workflow-job-count:v1:${input.url}@${input.headSha}:${run.id}:${run.attempt}`;
+interface JobCount {
+  count: number;
+  checkedAt: number;
+}
+const isJobCount = (value: unknown): value is JobCount =>
+  !!value &&
+  typeof value === 'object' &&
+  'count' in value &&
+  typeof value.count === 'number' &&
+  Number.isSafeInteger(value.count) &&
+  value.count >= 0 &&
+  'checkedAt' in value &&
+  typeof value.checkedAt === 'number';
 export async function readWorkflowRuns(
   client: Octokit,
   input: CheckTarget,
@@ -84,44 +100,56 @@ export async function readWorkflowRuns(
 ): Promise<WorkflowRuns | undefined> {
   const { owner, repo, pull_number } = target(input);
   const key = `workflow-runs:v1:${input.url}@${input.headSha}`;
-  if (options.cachedOnly)
-    return githubCacheFor(client)?.get(
-      key,
-      (v): v is Saved<WorkflowRuns> => !!v && typeof v === 'object' && 'value' in v
-    )?.value.value;
-  return cached(
-    client,
-    key,
-    25_000,
-    async () => {
-      const { data } = await client.actions.listWorkflowRunsForRepo({
-        owner,
-        repo,
-        head_sha: input.headSha,
-        per_page: 100,
-        headers: { 'cache-control': 'no-cache' },
-      });
-      const runs = data.workflow_runs.filter(
-        (run) =>
-          run.head_sha === input.headSha &&
-          (!run.pull_requests?.length || run.pull_requests.some((pr) => pr.number === pull_number))
+  const cache = githubCacheFor(client);
+  const validate = (v: unknown): v is Saved<WorkflowRuns> => !!v && typeof v === 'object' && 'value' in v;
+  const result = options.cachedOnly
+    ? (cache?.get(key, validate)?.value ?? (await cache?.getPrepared(key, validate)))?.value
+    : await cached(
+        client,
+        key,
+        25_000,
+        async () => {
+          const { data } = await client.actions.listWorkflowRunsForRepo({
+            owner,
+            repo,
+            head_sha: input.headSha,
+            per_page: 100,
+            headers: { 'cache-control': 'no-cache' },
+          });
+          const runs = data.workflow_runs.filter(
+            (run) =>
+              run.head_sha === input.headSha &&
+              (!run.pull_requests?.length || run.pull_requests.some((pr) => pr.number === pull_number))
+          );
+          // The latest execution of each workflow/event is the relevant one, not historical reruns.
+          const latest = new Map<string, ApiRun>();
+          for (const run of runs) {
+            const key = `${run.workflow_id}:${run.event}`;
+            const previous = latest.get(key);
+            if (!previous || run.id > previous.id) latest.set(key, run);
+          }
+          return {
+            ...input,
+            runs: [...latest.values()].map(info),
+            checkedAt: Date.now(),
+            ...(data.total_count > 100
+              ? { warning: 'Showing workflows from the latest 100 runs on this commit.' }
+              : {}),
+          };
+        },
+        options.force
       );
-      // The latest execution of each workflow/event is the relevant one, not historical reruns.
-      const latest = new Map<string, ApiRun>();
-      for (const run of runs) {
-        const key = `${run.workflow_id}:${run.event}`;
-        const previous = latest.get(key);
-        if (!previous || run.id > previous.id) latest.set(key, run);
-      }
-      return {
-        ...input,
-        runs: [...latest.values()].map(info),
-        checkedAt: Date.now(),
-        ...(data.total_count > 100 ? { warning: 'Showing workflows from the latest 100 runs on this commit.' } : {}),
-      };
-    },
-    options.force
-  );
+  if (!result) return;
+  return {
+    ...result,
+    runs: await Promise.all(
+      result.runs.map(async (run) => {
+        const key = jobCountKey(input, run);
+        const count = cache?.get(key, isJobCount)?.value ?? (await cache?.getPrepared(key, isJobCount));
+        return count ? { ...run, jobCount: count.count } : run;
+      })
+    ),
+  };
 }
 interface Reference {
   path: string;
@@ -313,6 +341,7 @@ async function readGraph(
               page,
               headers: { 'cache-control': 'no-cache' },
             });
+            runInfo.jobCount = batch.total_count;
             for (const job of batch.jobs) {
               const checkId = /\/check-runs\/(\d+)$/.exec(job.check_run_url)?.[1];
               jobs.push({
@@ -349,6 +378,13 @@ async function readGraph(
     );
   }
   if (!data) return;
+  // Small per-attempt summaries avoid loading every workflow payload to populate navigation.
+  if (data.run.jobCount !== undefined && runCache?.version() === cacheScope.getStore()?.generation) {
+    const key = jobCountKey(input, data.run);
+    const existing = runCache?.get(key, isJobCount)?.value;
+    if (!existing || existing.checkedAt < data.checkedAt)
+      runCache?.set(key, { count: data.run.jobCount, checkedAt: data.checkedAt });
+  }
   const assembled = assembleWorkflow(data.definitions, data.jobs, expanded);
   if (assembled.nodes.length > 600 || assembled.edges.length > 3000)
     throw Error('This graph is too large. Collapse groups or use List view.');
