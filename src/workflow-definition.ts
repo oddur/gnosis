@@ -147,8 +147,13 @@ export function assembleWorkflow(definitions: WorkflowDefinitionJob[], jobs: Wor
         .filter((leaf) => leaf.id === id || leaf.id.startsWith(id + '/'))
         .flatMap((leaf) => matches.get(leaf.id) ?? []);
       const expandable = (!direct.length && !!def.children?.length) || children.length > 1;
-      if (expandable) groups.push({ id, name: def.name });
-      if (expandable && expanded.includes(id)) {
+      // Expand every ancestor of a failed job, including nested reusable workflows.
+      // Such groups must not offer a collapse action that would conceal the failure.
+      const needsAttention = children.some(
+        (job) => job.status === 'completed' && !['success', 'neutral', 'skipped'].includes(job.conclusion ?? '')
+      );
+      if (expandable && !needsAttention) groups.push({ id, name: def.name });
+      if (expandable && (needsAttention || expanded.includes(id))) {
         const nested =
           def.children?.length && (!direct.length || children.length > direct.length)
             ? build(def.children, id + '/', def.name, id)

@@ -111,3 +111,7 @@ Grouping depends on workflow complexity, not viewport size. Stage selection happ
 Scoped evidence: the documenter inspected `components/WorkflowGraph.tsx`, `src/workflow-stages.ts`, and current `desktop-light.png`, `grouping-menu-dark.png`, and `narrow-controls-dark.png` captures in `.impeccable/review/workflow-graph/`. They show the selector in the existing workbench control row, its three choices in dark theme, and wrapped controls at narrow width. The incumbent tokens and sidecar remain unchanged.
 
 Implementation-session verification supplied for this refinement: 39 workflow tests passed; the full unit suite passed 714 tests with no failures; TypeScript and lint passed. Graph browser coverage passed for grouping choice, persistence, no network requests on mode changes, and responsive sizes. The layout detector returned no findings. The documenter did not rerun these checks. Independent scoped finish review returned ship with no material fixes. These results cover the tested fixtures and changed surface, not every live workflow topology.
+
+## Failure visibility
+
+Matrix and reusable-workflow groups automatically expand when a descendant needs attention, including nested calls. These groups offer no collapse action while the failure remains. Failed, cancelled, timed-out, and action-required jobs retain individual cards and dependency edges in every grouping mode, including with completed/skipped jobs hidden.

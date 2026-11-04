@@ -67,6 +67,48 @@ void test('declared dependencies survive matrix collapse and expansion', () => {
     ]
   );
 });
+void test('failed matrix jobs stay individually visible without manual expansion', () => {
+  const defs = parseWorkflow(source);
+  for (const conclusion of ['failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure']) {
+    const jobs = [job(1, 'Build'), job(2, 'Test Linux', conclusion), job(3, 'Test macOS'), job(4, 'Deploy')];
+    const assembled = assembleWorkflow(defs, jobs, []);
+    for (const grouping of ['adaptive', 'compact', 'off'] as const) {
+      const staged = stageWorkflow(assembled.nodes, assembled.edges, [], grouping);
+      const graph = compactWorkflow(staged.nodes, staged.edges, { showCompleted: false, showSkipped: false });
+      const failed = graph.nodes.find((node) => node.jobs.some((j) => j.id === 2));
+      assert.equal(failed?.jobs.length, 1, `${conclusion} must not hide inside a group`);
+      assert.equal(failed?.name, 'Test Linux');
+      assert.ok(!assembled.groups.some((group) => group.id === 'test'), 'Cannot offer collapse for a failed group');
+      assert.ok(graph.edges.some((edge) => edge.target === failed?.id));
+      assert.ok(graph.edges.some((edge) => edge.source === failed?.id));
+    }
+  }
+});
+void test('nested reusable workflows expose failed descendants and preserve dependency edges', () => {
+  const defs = parseWorkflow(
+    'jobs:\n  prepare: {}\n  native:\n    name: Native Bundle\n    needs: prepare\n    uses: ./native.yml\n  result:\n    needs: native\n'
+  );
+  defs[1].children = parseWorkflow('jobs:\n  build:\n    uses: ./build.yml\n  verify:\n    needs: build\n');
+  defs[1].children[0].children = parseWorkflow('jobs:\n  compile: {}\n  package:\n    needs: compile\n');
+  const graph = assembleWorkflow(
+    defs,
+    [
+      job(1, 'prepare'),
+      job(2, 'Native Bundle / build / compile'),
+      job(3, 'Native Bundle / build / package', 'failure'),
+      job(4, 'Native Bundle / verify', 'skipped'),
+      job(5, 'result', 'failure'),
+    ],
+    []
+  );
+  assert.equal(graph.unmatched, 0);
+  assert.equal(graph.nodes.find((node) => node.jobs.some((j) => j.id === 3))?.jobs.length, 1);
+  assert.ok(
+    graph.edges.some((edge) => edge.source === 'native/build/compile' && edge.target === 'native/build/package')
+  );
+  assert.ok(graph.edges.some((edge) => edge.source === 'native/build/package' && edge.target === 'native/verify'));
+  assert.ok(!graph.groups.some((group) => group.id === 'native' || group.id === 'native/build'));
+});
 void test('duplicate job names never invent a mapping', () => {
   const graph = assembleWorkflow(
     parseWorkflow('jobs:\n  a:\n    name: Test\n  b:\n    name: Test\n    needs: a\n'),
