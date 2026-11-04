@@ -1,3 +1,4 @@
+import { stageWorkflow, focusWorkflow } from './workflow-stages';
 import { compactWorkflow } from './workflow-visibility';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
@@ -292,7 +293,9 @@ async function readGraph(
   const assembled = assembleWorkflow(data.definitions, data.jobs, expanded);
   if (assembled.nodes.length > 600 || assembled.edges.length > 3000)
     throw Error('This graph is too large. Collapse groups or use List view.');
-  const compact = compactWorkflow(assembled.nodes, assembled.edges, input);
+  const stages = stageWorkflow(assembled.nodes, assembled.edges, expanded);
+  const focused = focusWorkflow(stages.nodes, stages.edges, input.focusNodeId);
+  const compact = compactWorkflow(focused.nodes, focused.edges, input);
   // Status changes preserve layout unless a visibility group changes.
   const topology = createHash('sha256')
     .update(JSON.stringify([compact.nodes.map((n) => [n.id, n.height]), compact.edges.map((e) => e.id)]))
@@ -312,7 +315,9 @@ async function readGraph(
       ports: byId.get(n.id)?.ports,
     })),
     edges: compact.edges.map((e) => ({ ...e, points: edgesById.get(e.id) })),
-    groups: assembled.groups,
+    groups: [...assembled.groups, ...stages.groups],
+    focus: focused.focus,
+    totalJobs: data.jobs.length,
     checkedAt: data.checkedAt,
     warnings: [
       ...data.warnings,

@@ -100,11 +100,13 @@ export function assembleWorkflow(definitions: WorkflowDefinitionJob[], jobs: Wor
   const claimed = new Set<number>();
   const leaves: { id: string; definition: WorkflowDefinitionJob; names: string[]; group?: string; groupId?: string }[] =
     [];
+  const callers: typeof leaves = [];
   function gather(defs: WorkflowDefinitionJob[], prefix = '', namePrefixes = [''], group?: string, groupId?: string) {
     for (const def of defs) {
       const id = prefix + def.id;
       const names = namePrefixes.flatMap((p) => def.names.map((n) => p + n));
-      if (def.children?.length)
+      if (def.children?.length) {
+        callers.push({ id, definition: def, names, group, groupId });
         gather(
           def.children,
           id + '/',
@@ -112,14 +114,17 @@ export function assembleWorkflow(definitions: WorkflowDefinitionJob[], jobs: Wor
           def.name,
           id
         );
-      else leaves.push({ id, definition: def, names, group, groupId });
+      } else leaves.push({ id, definition: def, names, group, groupId });
     }
   }
   gather(definitions);
   const matches = new Map<string, WorkflowJob[]>();
   for (const job of jobs) {
-    const candidates = leaves.filter((leaf) => leaf.names.includes(job.name));
-    if (candidates.length === 1) {
+    const candidates = [...leaves, ...callers].filter((leaf) => leaf.names.includes(job.name));
+    if (
+      candidates.length === 1 &&
+      (!candidates[0].definition.children?.length || (job.status === 'completed' && job.conclusion === 'skipped'))
+    ) {
       const id = candidates[0].id;
       matches.set(id, [...(matches.get(id) ?? []), job]);
       claimed.add(job.id);
@@ -137,30 +142,35 @@ export function assembleWorkflow(definitions: WorkflowDefinitionJob[], jobs: Wor
     const endpoints = new Map<string, { entries: string[]; exits: string[] }>();
     for (const def of defs) {
       const id = prefix + def.id;
-      const children = leaves
+      const direct = matches.get(id) ?? [];
+      const children = [...leaves, ...callers]
         .filter((leaf) => leaf.id === id || leaf.id.startsWith(id + '/'))
         .flatMap((leaf) => matches.get(leaf.id) ?? []);
-      const expandable = !!def.children?.length || children.length > 1;
+      const expandable = (!direct.length && !!def.children?.length) || children.length > 1;
       if (expandable) groups.push({ id, name: def.name });
       if (expandable && expanded.includes(id)) {
-        if (def.children?.length) endpoints.set(def.id, build(def.children, id + '/', def.name, id));
-        else {
-          const ids = children.map((job) => {
-            const childId = `${id}/job:${job.id}`;
-            nodes.push({
-              id: childId,
-              name: job.name,
-              jobs: [job],
-              group: def.name,
-              groupId: id,
-              definition: id,
-              x: 0,
-              y: 0,
-            });
-            return childId;
+        const nested =
+          def.children?.length && (!direct.length || children.length > direct.length)
+            ? build(def.children, id + '/', def.name, id)
+            : undefined;
+        const ids = (nested ? direct : children).map((job) => {
+          const childId = `${id}/job:${job.id}`;
+          nodes.push({
+            id: childId,
+            name: job.name,
+            jobs: [job],
+            group: def.name,
+            groupId: id,
+            definition: id,
+            x: 0,
+            y: 0,
           });
-          endpoints.set(def.id, { entries: ids, exits: ids });
-        }
+          return childId;
+        });
+        endpoints.set(def.id, {
+          entries: [...(nested?.entries ?? []), ...ids],
+          exits: [...(nested?.exits ?? []), ...ids],
+        });
       } else {
         nodes.push({ id, name: def.name, jobs: children, expandable, definition: id, group, groupId, x: 0, y: 0 });
         endpoints.set(def.id, { entries: [id], exits: [id] });

@@ -1,3 +1,4 @@
+import { readableWorkflowViewport } from '../lib/workflow-viewport';
 import { workflowEdgePath } from '../lib/workflow-edge-path';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -9,12 +10,14 @@ import {
   Position,
   Controls,
   MarkerType,
+  MiniMap,
   type Node,
   type NodeProps,
   type ReactFlowInstance,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
+  Focus,
   Circle,
   CircleAlert,
   CircleCheck,
@@ -81,6 +84,7 @@ type JobNode = Node<
     prerequisite?: string;
     onOpen: () => void;
     onExpand: () => void;
+    onFocusDependencies: () => void;
     onHighlight: (active: boolean, input: 'pointer' | 'focus') => void;
   },
   'job'
@@ -94,20 +98,41 @@ function JobCard({ id, data }: NodeProps<JobNode>) {
   }, [id, portSignature, updateNodeInternals]);
   const { group, label, Icon } = outcome(item.jobs);
   const active = item.jobs.flatMap((job) => job.steps).find((step) => step.status === 'in_progress');
-  const secondary = item.unmapped
-    ? 'Dependency mapping unavailable'
-    : data.prerequisite
-      ? `Prerequisite failed: ${data.prerequisite}`
-      : item.jobs.length > 1
-        ? `${item.jobs.length} jobs${item.jobs.some((j) => j.status !== 'completed') ? ` · ${item.jobs.filter((j) => j.status !== 'completed').length} running or queued` : ''}`
-        : active
-          ? active.name
-          : item.group !== item.name
-            ? item.group
-            : undefined;
+  const stageCounts = item.stage
+    ? [
+        [item.jobs.filter((j) => j.status !== 'completed').length, 'active'],
+        [item.jobs.filter((j) => j.status === 'completed' && j.conclusion === 'success').length, 'passed'],
+        [
+          item.jobs.filter(
+            (j) => j.status === 'completed' && (j.conclusion === 'skipped' || j.conclusion === 'neutral')
+          ).length,
+          'skipped / neutral',
+        ],
+        [item.stage.unreported, 'not reported'],
+      ]
+        .filter(([count]) => Number(count) > 0)
+        .map(([count, text]) => `${count} ${text}`)
+        .join(' · ')
+    : undefined;
+  const secondary = item.stage
+    ? stageCounts && stageCounts !== label
+      ? stageCounts
+      : 'Expand to inspect jobs'
+    : item.unmapped
+      ? 'Dependency mapping unavailable'
+      : data.prerequisite
+        ? `Prerequisite failed: ${data.prerequisite}`
+        : item.jobs.length > 1
+          ? `${item.jobs.length} jobs${item.jobs.some((j) => j.status !== 'completed') ? ` · ${item.jobs.filter((j) => j.status !== 'completed').length} running or queued` : ''}`
+          : active
+            ? active.name
+            : item.group !== item.name
+              ? item.group
+              : undefined;
   return (
     <div
       className="workflow-job"
+      data-stage={!!item.stage || undefined}
       data-collapsed={item.collapsed || undefined}
       data-dim={data.dim || undefined}
       data-selected={data.selected || undefined}
@@ -137,7 +162,9 @@ function JobCard({ id, data }: NodeProps<JobNode>) {
         title={
           item.collapsed
             ? `${item.unmapped ? 'Dependency mapping unavailable\n' : ''}${item.jobs.map((job) => job.name).join('\n')}\nClick to show ${item.collapsed} jobs`
-            : item.name
+            : item.stage
+              ? item.stage.names.join('\n')
+              : item.name
         }
       >
         <span className="workflow-job-name">
@@ -159,6 +186,16 @@ function JobCard({ id, data }: NodeProps<JobNode>) {
           </span>
         )}
       </button>
+      {!item.collapsed && (
+        <button
+          className="workflow-focus nodrag"
+          onClick={data.onFocusDependencies}
+          aria-label={`Show dependencies for ${item.name}`}
+          title="Show this job, its prerequisites, and dependants"
+        >
+          <Focus size={14} />
+        </button>
+      )}
       {item.expandable && (
         <button
           className="workflow-expand nodrag"
@@ -213,6 +250,7 @@ export function WorkflowGraphView({
   const [expanded, setExpanded] = useState<string[]>([]);
   const [showSkipped, setShowSkipped] = useState(true);
   const [showCompleted, setShowCompleted] = useState(true);
+  const [focusNodeId, setFocusNodeId] = useState<string>();
   const [graphState, setGraph] = useState<{ key: string; value: Graph }>();
   const [runError, setRunError] = useState('');
   const [graphError, setGraphError] = useState('');
@@ -223,6 +261,7 @@ export function WorkflowGraphView({
   const requests = useRef({ runs: refreshNonce, graph: refreshNonce, retry: 0, graphRetry: 0 });
   const graphKey = `${scope}:${run?.id}:${run?.attempt}`;
   const graph = graphState?.key === graphKey ? graphState.value : undefined;
+  useEffect(() => setFocusNodeId(undefined), [graphKey]);
   useEffect(() => {
     setHovered(undefined);
     setFocused(undefined);
@@ -258,7 +297,7 @@ export function WorkflowGraphView({
   useEffect(() => {
     if (!member || !sha || !run) return;
     let live = true;
-    const input = { url: member.url, headSha: sha, runId: run.id, expanded, showSkipped, showCompleted };
+    const input = { url: member.url, headSha: sha, runId: run.id, expanded, showSkipped, showCompleted, focusNodeId };
     const force = requests.current.graph !== refreshNonce || requests.current.graphRetry !== retry;
     requests.current.graphRetry = retry;
     requests.current.graph = refreshNonce;
@@ -293,7 +332,7 @@ export function WorkflowGraphView({
     return () => {
       live = false;
     };
-  }, [graphKey, expansions, showSkipped, showCompleted, runs?.checkedAt, refreshNonce, retry]);
+  }, [graphKey, expansions, showSkipped, showCompleted, focusNodeId, runs?.checkedAt, refreshNonce, retry]);
   const [now, setNow] = useState(Date.now);
   const running = graph?.nodes.some((n) => n.jobs.some((j) => j.status === 'in_progress'));
   useEffect(() => {
@@ -315,18 +354,24 @@ export function WorkflowGraphView({
     return () => observer.disconnect();
   }, []);
   const [flow, setFlow] = useState<ReactFlowInstance<JobNode>>();
+  const selectedNode = graph?.nodes.find((node) => selectedId && node.jobs.some((job) => job.checkId === selectedId));
+  const viewportGraph =
+    graph && selectedNode && !graph.focus
+      ? { ...graph, focus: { id: selectedNode.id, name: selectedNode.name } }
+      : graph;
   const topology = graph?.nodes.map((n) => `${n.id}:${n.x}:${n.y}`).join('|');
   const fitted = useRef('');
   useEffect(() => {
     if (!flow || !graph || !topology) return;
-    const key = `${graphKey}:${topology}:${canvasSize}`;
+    const key = `${graphKey}:${topology}:${canvasSize}:${selectedNode?.id ?? ''}:${graph.focus?.id ?? ''}`;
     if (fitted.current === key) return;
     const timer = setTimeout(() => {
-      void flow.fitView({ padding: 0.15, maxZoom: 1, minZoom: 0.35 });
+      const bounds = canvas.current?.getBoundingClientRect();
+      if (bounds) void flow.setViewport(readableWorkflowViewport(viewportGraph ?? graph, bounds.width, bounds.height));
       fitted.current = key;
     }, 100);
     return () => clearTimeout(timer);
-  }, [flow, topology, graphKey, canvasSize]);
+  }, [flow, topology, graphKey, canvasSize, selectedNode?.id, graph?.focus?.id]);
   const displayed = useMemo(
     () =>
       graph?.nodes.map((n) => ({
@@ -354,6 +399,7 @@ export function WorkflowGraphView({
     if (source && outcome(source.jobs).group === 'attention') failureSources.set(edge.target, source.name);
   }
   const toggle = (id: string) => {
+    if (focusNodeId === id) setFocusNodeId(undefined);
     setHovered(undefined);
     setFocused(undefined);
     setExpanded((current) => (current.includes(id) ? current.filter((v) => v !== id) : [...current, id]));
@@ -383,6 +429,11 @@ export function WorkflowGraphView({
           active ? item.id : current === item.id ? undefined : current
         ),
       onExpand: () => toggle(item.id),
+      onFocusDependencies: () => {
+        setFocusNodeId(item.id);
+        setHovered(undefined);
+        setFocused(undefined);
+      },
       onOpen: () => {
         if (item.collapsed) {
           if (item.collapsed === 'skipped') setShowSkipped(true);
@@ -430,6 +481,7 @@ export function WorkflowGraphView({
               setMemberUrl(value);
               setRunId(undefined);
               setExpanded([]);
+              setFocusNodeId(undefined);
             }}
           />
         )}
@@ -442,6 +494,7 @@ export function WorkflowGraphView({
               onContextChange();
               setRunId(Number(value));
               setExpanded([]);
+              setFocusNodeId(undefined);
             }}
           />
         )}
@@ -489,7 +542,8 @@ export function WorkflowGraphView({
       {graph && (
         <div className="workflow-context">
           <span>
-            {run?.sha.slice(0, 7)} · {graph.nodes.flatMap((n) => n.jobs).length} jobs
+            {run?.sha.slice(0, 7)} · {graph.nodes.flatMap((n) => n.jobs).length}
+            {graph.focus ? ` of ${graph.totalJobs}` : ''} jobs
           </span>
           <span>Arrows follow workflow prerequisites</span>
           {snapshot?.checks.some((c) => c.kind === 'status') && <span>External checks are in List</span>}
@@ -514,10 +568,41 @@ export function WorkflowGraphView({
             />
             Show completed
           </label>
+          <div className="workflow-viewport-actions">
+            {' '}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                const bounds = canvas.current?.getBoundingClientRect();
+                if (flow && bounds)
+                  void flow.setViewport(readableWorkflowViewport(viewportGraph ?? graph, bounds.width, bounds.height));
+              }}
+            >
+              <Focus size={14} />
+              Readable size
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void flow?.fitView({ padding: 0.15, minZoom: 0.1, maxZoom: 1 })}
+            >
+              <Expand size={14} />
+              Fit entire workflow
+            </Button>
+          </div>
           {(!showSkipped || !showCompleted) && <span>Hidden jobs are collapsed. Failures stay visible.</span>}
         </div>
       )}
-      {graph && expanded.length > 0 && (
+      {graph?.focus && (
+        <div className="workflow-navigation">
+          <Button variant="outline" size="sm" onClick={() => setFocusNodeId(undefined)}>
+            Back to workflow
+          </Button>
+          <span role="status">Dependencies of {graph.focus.name}</span>
+        </div>
+      )}
+      {graph && !graph.focus && expanded.length > 0 && (
         <div className="workflow-expanded-groups" aria-label="Expanded job groups">
           {graph.groups
             .filter((g) => expanded.includes(g.id))
@@ -541,15 +626,21 @@ export function WorkflowGraphView({
             nodesConnectable={false}
             edgesFocusable={false}
             elementsSelectable={false}
-            minZoom={0.2}
+            minZoom={0.1}
             maxZoom={1.5}
             panOnScroll
-            fitView
-            fitViewOptions={{ padding: 0.15, maxZoom: 1 }}
             preventScrolling
             aria-label="CI job dependencies"
           >
-            <Controls showInteractive={false} />
+            <Controls showInteractive={false} showFitView={false} />
+            <MiniMap
+              pannable
+              zoomable
+              ariaLabel="Workflow map. Drag to navigate."
+              nodeColor="var(--muted-foreground)"
+              maskColor="color-mix(in srgb, var(--background) 75%, transparent)"
+              style={{ width: 120, height: 72, background: 'var(--card)', border: '1px solid var(--border)' }}
+            />
           </ReactFlow>
         ) : (
           <div className="checks-empty">

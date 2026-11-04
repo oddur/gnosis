@@ -1,3 +1,5 @@
+import { stageWorkflow, focusWorkflow } from '../src/workflow-stages';
+import { assembleWorkflow } from '../src/workflow-definition';
 import { compactWorkflow } from '../src/workflow-visibility';
 import { layoutWorkflow } from '../src/workflow-layout';
 import type { WorkflowGraph } from '../lib/workflow-graph';
@@ -127,7 +129,7 @@ void app
       win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' });
       await wait("document.querySelector('.check-detail:not([hidden]) h2')?.textContent.includes('TypeScript')");
       await wait(
-        "(()=>{const canvas=document.querySelector('.workflow-canvas').getBoundingClientRect();return [...document.querySelectorAll('.react-flow__node')].every(n=>{const r=n.getBoundingClientRect();return r.left>=canvas.left-1 && r.right<=canvas.right+1 && r.top>=canvas.top-1 && r.bottom<=canvas.bottom+1})})()"
+        "(()=>{const canvas=document.querySelector('.workflow-canvas').getBoundingClientRect();const r=document.querySelector('.workflow-job[data-selected]').getBoundingClientRect();return r.left>=canvas.left-1 && r.right<=canvas.right+1 && r.top>=canvas.top-1 && r.bottom<=canvas.bottom+1 && document.querySelector('.react-flow__viewport').style.transform.includes('scale(1)')})()"
       );
       await capture('laptop-detail-dark');
       await js(`document.querySelector('[aria-label="Close job details"]').click()`);
@@ -295,6 +297,80 @@ void app
           "[...document.querySelectorAll('.workflow-visibility label')].find(l=>l.textContent==='Show skipped').querySelector('input').checked"
         )
       );
+
+      await js(
+        "[...document.querySelectorAll('.workflow-visibility label')].find(l=>l.textContent==='Show completed').querySelector('input').click()"
+      );
+      await wait("document.querySelectorAll('.workflow-job[data-collapsed]').length===0");
+      const installStages = async (
+        baseNodes: WorkflowGraph['nodes'],
+        baseEdges: WorkflowGraph['edges'],
+        focusId: string
+      ) => {
+        const overview = stageWorkflow(baseNodes, baseEdges, []);
+        const groupIds = overview.groups.map((g) => g.id);
+        const projections: Record<string, unknown> = {};
+        for (const expand of [false, true])
+          for (const focus of [undefined, focusId]) {
+            const stage = stageWorkflow(baseNodes, baseEdges, expand ? groupIds : []);
+            const focused = focusWorkflow(stage.nodes, stage.edges, focus);
+            const layout = await layoutWorkflow(focused.nodes, focused.edges);
+            projections[`${expand}:${focus ?? ''}`] = {
+              ...focused,
+              groups: stage.groups,
+              totalJobs: baseNodes.flatMap((n) => n.jobs).length,
+              nodes: focused.nodes.map((n) => ({ ...n, ...layout.nodes.find((r) => r.id === n.id) })),
+              edges: focused.edges.map((e) => ({ ...e, points: layout.edges.find((r) => r.id === e.id)?.points })),
+            };
+          }
+        await js(
+          `(()=>{const projections=${JSON.stringify(projections)},groups=${JSON.stringify(groupIds)},read=window.electronAPI.getWorkflowGraph;window.electronAPI.getWorkflowGraph=async(input,options)=>{const original=await read(input,options),projected=projections[String(groups.some(id=>input.expanded?.includes(id)))+':'+(input.focusNodeId??'')];return {...original,focus:undefined,...projected};};document.querySelector('[aria-label="Refresh checks"]').click();})()`
+        );
+        return overview;
+      };
+      await installStages(busyNodes, busyEdges, 'build-macos');
+      await wait(
+        "document.querySelectorAll('.workflow-job').length===6 && !!document.querySelector('.workflow-job[data-stage]')"
+      );
+      await wait("document.querySelector('.react-flow__viewport').style.transform.includes('scale(1)')");
+      assert.equal(
+        await js("document.querySelector('.workflow-job-name').getBoundingClientRect().height > 15"),
+        true,
+        'Job text stays at readable size'
+      );
+      await capture('stages-dark');
+      await js("document.querySelector('.workflow-job[data-stage] .workflow-job-open').click()");
+      await wait("document.querySelectorAll('.workflow-job').length===23");
+      await wait("document.querySelector('.react-flow__viewport').style.transform.includes('scale(1)')");
+      await capture('stages-expanded-dark');
+      await click('Fit entire workflow');
+      await wait("!document.querySelector('.react-flow__viewport').style.transform.includes('scale(1)')");
+      await click('Readable size');
+      await wait("document.querySelector('.react-flow__viewport').style.transform.includes('scale(1)')");
+      await js('document.querySelector(\'[aria-label="Show dependencies for build-macos"]\').click()');
+      await wait("document.querySelectorAll('.workflow-job').length===4");
+      assert.equal(
+        await js('!!document.querySelector(\'[aria-label="build-windows: Failed"]\')'),
+        false,
+        'Focus excludes sibling branches'
+      );
+      await capture('dependencies-focus-dark');
+      await click('Back to workflow');
+      await wait("document.querySelectorAll('.workflow-job').length===23");
+      await js("document.querySelector('.workflow-expanded-groups button').click()");
+      await wait("document.querySelectorAll('.workflow-job').length===6");
+      if (process.env.GNOSIS_WORKFLOW_REPLAY) {
+        const saved = JSON.parse(fs.readFileSync(process.env.GNOSIS_WORKFLOW_REPLAY, 'utf8'));
+        const actual = assembleWorkflow(saved.definitions, saved.jobs, []);
+        assert.equal(actual.unmatched, 0);
+        const focus = actual.nodes.find((n) => !n.expandable && n.jobs.length)?.id ?? actual.nodes[0].id;
+        const overview = await installStages(actual.nodes, actual.edges, focus);
+        await wait(`document.querySelectorAll('.workflow-job').length===${overview.nodes.length}`);
+        await wait("document.querySelector('.react-flow__viewport').style.transform.includes('scale(1)')");
+        await capture('replayed-workflow-dark');
+        win.setContentSize(1920, 1080);
+        await capture('replayed-workflow-wide-dark');
+      }
       assert.equal(errors.length, 0, errors.join('\n'));
       console.log(
         'Workflow graph browser checks passed: graph/list, matrix expansion, details, keyboard, stable updates, filters, cached errors, laptop and narrow themes.'

@@ -43,6 +43,7 @@ export interface WorkflowPort {
   y: number;
 }
 export interface WorkflowGraphNode {
+  stage?: { count: number; names: string[]; unreported: number };
   height?: number;
   collapsed?: 'skipped' | 'completed';
   ports?: WorkflowPort[];
@@ -58,6 +59,8 @@ export interface WorkflowGraphNode {
   y: number;
 }
 export interface WorkflowGraph {
+  focus?: { id: string; name: string };
+  totalJobs?: number;
   target: CheckTarget;
   run: WorkflowRunInfo;
   nodes: WorkflowGraphNode[];
@@ -69,6 +72,7 @@ export interface WorkflowGraph {
 }
 export interface WorkflowGraphInput extends CheckTarget {
   runId: number;
+  focusNodeId?: string;
   showSkipped?: boolean;
   showCompleted?: boolean;
   expanded?: string[];

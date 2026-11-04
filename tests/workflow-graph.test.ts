@@ -1,3 +1,5 @@
+import { stageWorkflow, focusWorkflow } from '../src/workflow-stages';
+import { readableWorkflowViewport } from '../lib/workflow-viewport';
 import { compactWorkflow } from '../src/workflow-visibility';
 import { layoutWorkflow } from '../src/workflow-layout';
 import { workflowEdgePath } from '../lib/workflow-edge-path';
@@ -425,4 +427,147 @@ void test('visibility toggles reuse saved run data and cached routing without Gi
   assert.equal(h.calls.length, count);
   const restored = await readWorkflowGraph(h.client, input, { cachedOnly: true });
   assert.deepEqual(restored, full);
+});
+
+void test('skipped reusable workflow is reported once at its caller, without empty child placeholders', () => {
+  const definitions = parseWorkflow(
+    'jobs:\n  prepare: {}\n  service:\n    name: Service build\n    needs: prepare\n    uses: ./.github/workflows/service.yml\n  publish:\n    needs: service\n'
+  );
+  definitions[1].children = parseWorkflow(
+    'jobs:\n  compile:\n    name: Compile\n  upload:\n    needs: compile\n    name: Upload\n'
+  );
+  const jobs = [job(1, 'prepare'), job(2, 'Service build', 'skipped'), job(3, 'publish')];
+  for (const expanded of [[], ['service']]) {
+    const graph = assembleWorkflow(definitions, jobs, expanded);
+    assert.equal(graph.unmatched, 0);
+    assert.equal(graph.nodes.length, 3);
+    assert.equal(graph.nodes.find((n) => n.id === 'service')?.jobs[0].conclusion, 'skipped');
+    assert.ok(!graph.nodes.find((n) => n.id === 'service')?.expandable);
+    assert.equal(graph.edges.length, 2);
+  }
+});
+
+void test('parallel stages retain status and edges, expand deterministically, and never merge different needs', () => {
+  const nodes = ['start', 'a', 'b', 'c', 'different', 'end'].map((id, i) => ({
+    id,
+    name: id,
+    x: 0,
+    y: 0,
+    jobs: [job(i, id, id === 'b' ? 'failure' : 'success')],
+  }));
+  const edges = [
+    ['start', 'a'],
+    ['start', 'b'],
+    ['start', 'c'],
+    ['a', 'end'],
+    ['b', 'end'],
+    ['c', 'end'],
+    ['different', 'end'],
+  ].map(([source, target]) => ({ id: `${source}->${target}`, source, target }));
+  const stage = stageWorkflow(nodes, edges, []);
+  assert.equal(stage.nodes.length, 4);
+  const group = stage.nodes.find((n) => n.stage)!;
+  assert.equal(group.stage?.count, 3);
+  assert.equal(group.jobs.filter((j) => j.conclusion === 'failure').length, 1);
+  assert.equal(stage.edges.length, 3);
+  assert.ok(stage.nodes.some((n) => n.id === 'different'));
+  const expanded = stageWorkflow(nodes, edges, [group.id]);
+  assert.deepEqual(expanded.nodes, nodes);
+  assert.deepEqual(expanded.edges, edges);
+  assert.equal(
+    stageWorkflow(
+      nodes.map((n) => ({ ...n, jobs: n.jobs.map((j) => ({ ...j, conclusion: 'success' })) })),
+      edges,
+      []
+    ).groups[0].id,
+    group.id
+  );
+  assert.equal(stageWorkflow(nodes, [], []).nodes.length, nodes.length);
+});
+void test('dependency focus includes ancestors and descendants without siblings, and protects focused jobs from collapse', () => {
+  const nodes = ['root', 'a', 'b', 'end'].map((id, i) => ({ id, name: id, x: 0, y: 0, jobs: [job(i, id)] }));
+  const edges = [
+    ['root', 'a'],
+    ['root', 'b'],
+    ['a', 'end'],
+    ['b', 'end'],
+  ].map(([source, target]) => ({ id: `${source}->${target}`, source, target }));
+  const focused = focusWorkflow(nodes, edges, 'a');
+  assert.deepEqual(
+    focused.nodes.map((n) => n.id),
+    ['root', 'a', 'end']
+  );
+  assert.equal(focused.edges.length, 2);
+  assert.equal(focused.focus?.name, 'a');
+  const compact = compactWorkflow(focused.nodes, focused.edges, { showCompleted: false, focusNodeId: 'a' });
+  assert.ok(compact.nodes.some((n) => n.id === 'a' && !n.collapsed));
+  assert.deepEqual(focusWorkflow(nodes, edges, 'missing'), { nodes, edges });
+});
+void test('readable viewport never scales text down and anchors a large graph at its connected entry', () => {
+  const graph = {
+    nodes: [
+      { id: 'entry', name: 'entry', jobs: [], x: 20, y: 2000 },
+      { id: 'next', name: 'next', jobs: [], x: 330, y: 4000 },
+    ],
+    edges: [{ id: 'edge', source: 'entry', target: 'next' }],
+  } as Parameters<typeof readableWorkflowViewport>[0];
+  const viewport = readableWorkflowViewport(graph, 900, 500);
+  assert.equal(viewport.zoom, 1);
+  assert.ok(viewport.x + graph.nodes[0].x >= 0);
+  assert.ok(viewport.y + graph.nodes[0].y >= 0 && viewport.y + graph.nodes[0].y + 112 <= 500);
+  graph.focus = { id: 'next', name: 'next' };
+  const focused = readableWorkflowViewport(graph, 900, 500);
+  assert.ok(focused.y + graph.nodes[1].y >= 0 && focused.y + graph.nodes[1].y + 112 <= 500);
+});
+void test('a skipped caller with an ambiguous name still stays disconnected', () => {
+  const defs = parseWorkflow(
+    'jobs:\n  caller:\n    name: Same\n    uses: ./.github/workflows/child.yml\n  leaf:\n    name: Same\n'
+  );
+  defs[0].children = parseWorkflow('jobs:\n  child: {}\n');
+  assert.equal(assembleWorkflow(defs, [job(1, 'Same', 'skipped')], []).unmatched, 1);
+});
+
+void test('expanded reusable matrix preserves skipped callers alongside executed children', () => {
+  const defs = parseWorkflow(
+    'jobs:\n  call:\n    name: Call (${{ matrix.os }})\n    uses: ./.github/workflows/child.yml\n    strategy:\n      matrix:\n        os: [a, b]\n'
+  );
+  defs[0].children = parseWorkflow('jobs:\n  child:\n    name: Child\n');
+  for (const jobs of [
+    [job(1, 'Call (a)', 'skipped'), job(2, 'Call (b) / Child')],
+    [job(1, 'Call (a)', 'skipped'), job(2, 'Call (b)', 'skipped')],
+  ]) {
+    const graph = assembleWorkflow(defs, jobs, ['call']);
+    assert.equal(graph.unmatched, 0);
+    assert.deepEqual(graph.nodes.flatMap((n) => n.jobs.map((j) => j.id)).sort(), [1, 2]);
+    assert.equal(graph.nodes.filter((n) => !n.jobs.length).length, 0);
+  }
+});
+void test('unreported stage members cannot disappear through status compaction', () => {
+  const nodes = ['a', 'b', 'c', 'end'].map((id, i) => ({
+    id,
+    name: id,
+    x: 0,
+    y: 0,
+    jobs: id === 'b' ? [] : [job(i, id)],
+  }));
+  const edges = ['a', 'b', 'c'].map((source) => ({ id: source, source, target: 'end' }));
+  const stage = stageWorkflow(nodes, edges, []);
+  const compact = compactWorkflow(stage.nodes, stage.edges, { showCompleted: false, showSkipped: false });
+  assert.ok(compact.nodes.some((n) => n.stage?.unreported === 1 && !n.collapsed));
+});
+
+void test('focus keeps upstream jobs visible on axes that fit, even when another axis overflows', () => {
+  const graph: Parameters<typeof readableWorkflowViewport>[0] = {
+    nodes: [
+      { id: 'root', name: 'root', jobs: [], x: 12, y: 12 },
+      { id: 'focus', name: 'focus', jobs: [], x: 330, y: 300 },
+      { id: 'end', name: 'end', jobs: [], x: 640, y: 500 },
+    ],
+    edges: [],
+    focus: { id: 'focus', name: 'focus' },
+  };
+  const view = readableWorkflowViewport(graph, 1280, 250);
+  assert.ok(view.x + graph.nodes[0].x >= 0);
+  assert.ok(view.x + graph.nodes[2].x + 244 <= 1280);
+  assert.equal(view.zoom, 1);
 });

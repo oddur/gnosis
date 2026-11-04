@@ -5,7 +5,7 @@ import type { WorkflowGraph, WorkflowGraphNode, WorkflowGraphInput } from '../li
 export function compactWorkflow(
   nodes: WorkflowGraphNode[],
   edges: WorkflowGraph['edges'],
-  options: Pick<WorkflowGraphInput, 'showSkipped' | 'showCompleted'>
+  options: Pick<WorkflowGraphInput, 'showSkipped' | 'showCompleted' | 'focusNodeId'>
 ) {
   const groups = new Map<string, { kind: 'skipped' | 'completed'; members: WorkflowGraphNode[] }>();
   const replacements = new Map<string, string>();
@@ -20,7 +20,12 @@ export function compactWorkflow(
             )
           ? 'completed'
           : undefined;
-    if (!kind || (kind === 'skipped' ? options.showSkipped !== false : options.showCompleted !== false)) {
+    if (
+      node.id === options.focusNodeId ||
+      !!node.stage?.unreported ||
+      !kind ||
+      (kind === 'skipped' ? options.showSkipped !== false : options.showCompleted !== false)
+    ) {
       visible.push(node);
       continue;
     }

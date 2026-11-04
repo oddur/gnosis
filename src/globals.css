@@ -3915,7 +3915,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .workflow-notice summary { cursor:pointer; }
 .workflow-notice p { margin-top:8px; }
 .workflow-expanded-groups { display:flex; flex-wrap:wrap; gap:4px; padding:0 12px 8px; }
-.workflow-canvas { flex:1; min-height:240px; position:relative; background:var(--background); }
+.workflow-canvas { flex:1; min-height:180px; position:relative; background:var(--background); }
 .workflow-canvas .react-flow { --xy-edge-stroke-default:var(--muted-foreground); --xy-edge-stroke-width-default:1.2; --xy-background-color-default:var(--background); --xy-controls-button-background-color-default:var(--card); --xy-controls-button-background-color-hover-default:var(--accent); --xy-controls-button-color-default:var(--foreground); --xy-controls-button-border-color-default:var(--border); }
 .workflow-canvas .react-flow__controls { border:1px solid var(--border); box-shadow:none; }
 .workflow-canvas .react-flow__controls-button { width:30px; height:30px; }
@@ -3958,3 +3958,14 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .workflow-job[data-collapsed] .workflow-job-open { flex-direction:row; align-items:center; gap:8px; }
 .workflow-job[data-collapsed] .workflow-job-name { font-weight:500; padding-right:0; }
 .workflow-job[data-collapsed] .workflow-job-open > svg { flex-shrink:0; }
+
+.workflow-navigation { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; padding:0 12px 8px; }
+.workflow-navigation > span { font-size:12px; color:var(--muted-foreground); overflow-wrap:anywhere; }
+.workflow-focus { position:absolute; right:30px; top:5px; width:24px; height:24px; display:grid; place-items:center; border-radius:4px; color:var(--muted-foreground); }
+.workflow-focus:hover { background:var(--accent); color:var(--foreground); }
+.workflow-job-name { padding-right:42px; }
+
+.workflow-job[data-stage] { height:136px; }
+.workflow-job[data-stage] .workflow-job-context { white-space:normal; line-height:1.5; }
+
+.workflow-viewport-actions { display:flex; flex-wrap:wrap; gap:4px; margin-left:auto; }
