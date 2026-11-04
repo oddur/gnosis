@@ -2,7 +2,7 @@
 version: 1
 slug: "components-workflowgraph-tsx"
 primary_target: "components/WorkflowGraph.tsx"
-related_targets: ["components/PrChecksView.tsx","src/workflow-graph-service.ts","src/workflow-definition.ts","src/globals.css"]
+related_targets: ["components/WorkflowViewMenu.tsx","components/PrChecksView.tsx","components/PrSummary.tsx","lib/workflow-navigation.ts","src/workflow-graph-service.ts","src/workflow-definition.ts","src/globals.css"]
 ---
 
 # Workflow dependency graph
@@ -15,15 +15,33 @@ OWN-WORLD: Existing compact toolbar, searchable selectors, semantic check colors
 
 STORY: Switch List to Graph; select a workflow (and source PR for stacks); inspect statuses and prerequisites; expand matrix/reusable groups; select a job to use existing output, steps, logs and rerun tools. Unknown mappings stay disconnected with an explanation.
 
-FIRST VIEWPORT: The Checks toolbar keeps filters and refresh beside List/Graph. Graph uses available workspace width with a compact workflow/source row and a left-to-right pan-and-zoom canvas. Selecting a job opens the existing detail pane; Close restores the canvas width. Canvas resizing and topology changes reframe the graph; status-only refreshes preserve position and zoom. At ≤700px the detail pane stacks below the graph: selection reveals and focuses that region, and Close returns the viewport to the graph. Filter states dim other jobs but retain dependency context.
+FIRST VIEWPORT: Checks keeps a compact PR identity and List/Graph toolbar above the workflow/source selector. The selector includes status and attempt, a GitHub link, View, and freshness. A separate triage row offers All jobs, Needs attention, Running, Next issue, and External checks with counts for the current scope. Visibility and grouping live inside View; zoom, Readable size, Fit entire workflow, and the minimap sit on the canvas. Details open beside a wide canvas, overlay its right side at ≤1050px of workspace width, and cover it at ≤700px. Selection focuses details; Close or Escape restores the originating control. Graphs start at readable scale. Status-only refreshes preserve position and zoom; topology and canvas-size changes reframe the graph. Filters dim other jobs but retain dependency context.
 
 FORM: User-confirmed extension from the GitHub Actions screenshot, using React Flow and ELK. The backend parses workflow YAML at immutable run revisions and lays out declared prerequisites from left to right. Static matrices and reusable workflows form collapsible groups. Job status comes from actual run/check results; prerequisite failure is contextual evidence, not a guessed downstream status. Unavailable mappings stay disconnected, with a node label and dependency notice. No concept tournament; code-led implementation in the established surface.
 
 RECOVERY: Keep the saved graph visible when a refresh fails. State that it is saved, expose the error and Retry workflow, and retain revision and freshness context. Workflow and stack source-PR changes close the old details and reset group expansion. External provider checks remain accessible in List.
 
-FINISH: Ship verdict from the scoped finish reviewer on 2026-11-04. The reviewer inspected replacement laptop-detail and narrow captures plus the corrected code, and marked both prior findings resolved: graph clipping after the laptop detail pane opened, and narrow details remaining offscreen. This verdict covers the graph extension, not an application-wide audit.
+FINISH: The fresh independent finish review returned ship on 2026-11-04, covering all five review-contract sections with no material fixes. A general subagent applied the finish-reviewer contract because no registered reviewer type was available; no quality board ran. This is an ordinary Operate refinement of the existing workbench and a surface-scoped review, not a full application audit.
 
-## Reviewed evidence
+## Current behavior and evidence
+
+Without a saved selection, Graph starts with the first PR needing attention and prefers a workflow needing attention, then an active run, then a healthy completed run. Needs attention frames the first affected job. Next issue cycles through affected jobs, expands their group when needed, and opens the existing check details. Running frames the first active job. Counts and empty messages describe the current graph scope, including dependency focus. External checks opens that PR’s provider checks in List.
+
+The graph stays mounted during List detours. Returning restores the selected graph job. Account/revision-scoped session state retains source PR, workflow run, expansion, visibility, dependency focus, and viewport. Grouping remains a saved preference. The View popover uses checkboxes for Show skipped and Show passed and neutral, descriptive radio choices for Adaptive, Compact, and Off, plus keyboard help and source metadata. These replace the previous always-visible visibility row and searchable grouping selector. Group eligibility and topology safety rules remain unchanged.
+
+The documenter inspected `components/WorkflowGraph.tsx`, `components/WorkflowViewMenu.tsx`, `components/PrChecksView.tsx`, `components/PrSummary.tsx`, `lib/workflow-navigation.ts`, and the final workflow styles in `src/globals.css` against PRODUCT.md and DESIGN.md. All seven required current captures in `.impeccable/review/workflow-graph/` were opened and visually validated: `desktop-light.png`, `laptop-detail-dark.png`, `narrow-dark.png`, `narrow-controls-dark.png`, `grouping-menu-dark.png`, `stages-dark.png`, and `dependencies-focus-dark.png`. They show the compact light workspace, dark detail overlays, wrapping narrow triage controls, View options, grouped stages, and focused prerequisites/dependants. The narrow detail overlay covers the graph and makes it inert; it no longer stacks below the canvas.
+
+Builder-reported validation: 717 unit tests passed, including 42 workflow tests; TypeScript, focused lint, and diff checks passed; graph and existing Checks browser suites passed. The detector returned zero primary findings and 101 pre-existing `globals.css` advisories from before the changed graph CSS. The documenter did not rerun those checks. Final independent review returned ship with no material fixes.
+
+These captures verify fixture states and dimensions, not live GitHub correctness or all workflow topologies. Large workflows require panning at readable scale; a laptop overlay can obscure part of the graph while details are open. Unsupported mappings keep their explicit notices. No new visual world, token changes, sidecar regeneration, or shipping raster assets were needed. The existing DESIGN.md baseline reference, sidecar date, older CSS declarations overridden by the final graph block, and unrelated detector advisories remain outside this surface documentation pass.
+
+## Historical implementation and verification records
+
+The following records preserve earlier implementation evidence and reported test totals. Their control placement, detail layout, and initial framing descriptions are historical; current behavior is defined above. Capture filenames reused by later passes now show the current implementation and do not independently preserve the earlier appearance.
+
+### Initial reviewed evidence
+
+The initial scoped finish reviewer returned ship on 2026-11-04 after inspecting replacement laptop-detail and narrow captures plus corrected code. It marked the prior laptop graph-clipping and offscreen narrow-detail findings resolved under the layout then in use.
 
 The documenter compared the current components and appended workflow styles against PRODUCT.md, DESIGN.md, the existing sidecar, and seven browser captures in `.impeccable/review/workflow-graph/`: `desktop-light.png`, `detail-light.png`, `laptop-dark.png`, `laptop-detail-dark.png`, `narrow-dark.png`, `cached-error-dark.png`, and `stack-light.png`. The replacement laptop-detail and narrow captures show the corrected fit and detail-reveal behavior. `failure.png` is excluded.
 
@@ -31,13 +49,13 @@ The graph preserves the incumbent workbench's cool surfaces, semantic status col
 
 Implementation-session QA reported: full suite 687 passed / 2 skipped; 17 workflow unit tests passed; graph and existing Checks browser flows passed; TypeScript and lint checks passed; macOS packaging passed. These results were supplied by the implementing agent, not rerun by the documenter.
 
-## Limitations and existing drift
+### Limitations and existing drift
 
 Screenshots establish the captured fixture states and sizes, not live GitHub data correctness or every workflow topology. At laptop detail widths the fitted graph becomes smaller; zoom controls remain available. Unsupported or ambiguous definitions must retain their explicit mapping notices rather than invent edges.
 
 This scoped documentation adds graph behavior only. The existing DESIGN.md baseline commit reference and the older sidecar generation date remain unchanged; the pre-existing bulk-rerun paragraph remains after the Do/Don't list. These are existing documentation drift, not new graph token changes.
 
-## Readability follow-up
+### Readability follow-up
 
 The user’s live workflow exposed edges passing behind unrelated job cards. Layout now preserves ELK’s orthogonal route points with distinct incoming and outgoing attachment points. The renderer rounds the routed corners without changing the path. Hover and keyboard focus highlight immediate dependencies and dim unrelated cards and edges. Duplicate job/definition names are omitted; active steps, group counts, and prerequisite failures remain.
 
@@ -45,13 +63,13 @@ Rendered evidence: `routing-fanin-dark.png` recreates the reported five-job shap
 
 Independent finish review: ship for this scoped routing fix. The reviewer inspected the original screenshot, four current captures, and routing code. Its nonblocking focus finding was corrected by tracking pointer hover and keyboard focus separately. Dense topologies beyond the captured fixture remain outside this visual verification.
 
-## Job visibility controls
+### Job visibility controls
 
 Show skipped and Show completed are independent, initially enabled controls above the canvas. Completed covers success and neutral outcomes. Failed, cancelled, active, mixed-state, and unreported groups remain visible. Hidden jobs use 48px-high count summaries; only identical original incoming/outgoing dependency sets can share one. Summaries keep arrows, job-name tooltips, mapping notices in their titles, and count-aware accessible labels. Clicking a summary restores its category. The backend compacts and routes cached data; the renderer refreshes handle geometry when ports change.
 
 Verification: 21 workflow tests pass, including topology preservation, unsafe-to-hide states, compact ports, and cache reuse without GitHub requests. Browser coverage compacts a 23-job fan-out to six cards, verifies all eight dependency paths, keeps failed/running cards visible, and restores skipped jobs from a summary. `visibility-collapsed-dark.png` captures that result. TypeScript, focused lint, and the layout detector pass. This verifies the fixture, not every live workflow or missing dependency mapping.
 
-## Large workflows and dependency focus
+### Large workflows and dependency focus
 
 The earlier fit-to-window behavior is superseded: graphs open at 1:1 scale. Each axis that fits is centered independently; overflowing overviews start at the top, and focused/selected jobs stay readable. Fit entire workflow is explicit. Readable size restores full text size. The minimap supports panning and zooming. Viewport controls share the visibility row; compact panes keep a 180px minimum canvas.
 
@@ -63,7 +81,7 @@ Verification: 29 workflow tests cover mapping, expansion, status safety, topolog
 
 Independent finish review: ship. Source review and final captures confirm all four focused jobs fit at 1280×800 and the replayed 25-job workflow has seven readable cards at 1920×1080. The review found and verified fixes for dropped skipped matrix variants, hidden unknown stage members, and viewport framing. The reviewer did not independently rerun the reported checks.
 
-## Workflow cache and local navigation
+### Workflow cache and local navigation
 
 Expanding groups, focusing dependencies, and changing visibility now project saved workflow data without a network revalidation. Check freshness and explicit refresh own network updates independently; a refresh finishing during navigation applies to the current view. If saved data was evicted or cleared, the existing Retry workflow action reloads it explicitly.
 
@@ -72,11 +90,11 @@ Parsed files are cached by immutable source revision and caller inputs. Resolved
 The old 20-reference limit counted repeated files. Resolution now counts distinct immutable sources (50 maximum), with independent limits of ten nesting levels and 500 calls plus cycle detection. The reported run resolves 21 distinct files without warnings. Browser regression tests assert no network-capable graph requests during navigation and retain the chosen expansion when a pending refresh finishes. Validation: 34 workflow tests and 46 combined workflow/cache tests pass, along with graph browser checks, TypeScript, and focused lint.
 
 
-## Cold-load responsiveness
+### Cold-load responsiveness
 
 The open Checks workspace warms its first PR’s default workflow. Preparation respects the API reserve and replaces queued targets when navigating. Cold graph requests take interactive priority; cached refreshes keep lower priority. Jobs and independent workflow sources overlap through a three-read HTTP limit. Request starts remain paced and rate-limit responses stop subsequent dispatch. Ordinary traffic and mutations remain serialized.
 
-## Adaptive parallel grouping
+### Adaptive parallel grouping
 
 Parallel jobs sits beside the visibility controls and reuses the searchable selector. Adaptive is the saved default. It leaves graphs of 16 or fewer nodes open. Above that count, it groups eligible sets of at least six nodes, largest first, until the planned count is 16 or fewer or no eligible sets remain. Compact groups eligible sets of at least three; Off disables inferred parallel stages. Eligibility requires identical original predecessor/successor sets, at least one dependency connection, and only finished successful, neutral, or skipped jobs. Active, failed, cancelled, unknown, and mixed groups stay separate. Matrix and reusable-workflow groups expand independently in all modes.
 

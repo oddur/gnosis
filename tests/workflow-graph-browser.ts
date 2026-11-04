@@ -48,6 +48,17 @@ void app
       js(
         `(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(text)});if(!b)throw Error('Missing '+${JSON.stringify(text)});b.click()})()`
       );
+    const openView = async () => {
+      if (!(await js(`!!document.querySelector('.workflow-view-menu')`)))
+        await js(`document.querySelector('[aria-label="Graph view options"]').click()`);
+      await wait(`!!document.querySelector('.workflow-view-menu')`);
+    };
+    const closeView = async () => {
+      if (await js(`!!document.querySelector('.workflow-view-menu')`)) {
+        await js(`document.querySelector('[aria-label="Graph view options"]').click()`);
+        await wait(`!document.querySelector('.workflow-view-menu')`);
+      }
+    };
     const capture = async (name: string) => {
       await new Promise((r) => setTimeout(r, 500));
       const dir = path.resolve('.impeccable/review/workflow-graph');
@@ -108,6 +119,10 @@ void app
         true,
         'Do not repeat the definition ID'
       );
+      assert.ok(
+        await js(`document.querySelector('.workflow-canvas').getBoundingClientRect().height > 400`),
+        'Checks should give the graph at least half the laptop height'
+      );
       await capture('desktop-light');
       const positions = await js("[...document.querySelectorAll('.react-flow__node')].map(n=>n.style.transform)");
       const viewport = await js("document.querySelector('.react-flow__viewport').style.transform");
@@ -118,7 +133,7 @@ void app
         positions
       );
       assert.equal(await js("document.querySelector('.react-flow__viewport').style.transform"), viewport);
-      await click('Needs attention');
+      await click('Needs attention (2)');
       assert.ok(await js("document.querySelectorAll('.workflow-job[data-dim]').length>0"));
       await wait("document.querySelectorAll('.react-flow__edge').length===4");
       assert.equal(
@@ -126,7 +141,7 @@ void app
         4,
         'Filters preserve dependency context'
       );
-      await click('All checks');
+      await click('All jobs');
       await js(
         `(()=>{const read=window.electronAPI.getWorkflowGraph;window.graphNetworkCalls=0;window.electronAPI.getWorkflowGraph=(input,options)=>{if(!options?.cachedOnly)window.graphNetworkCalls++;return read(input,options);};})()`
       );
@@ -178,6 +193,12 @@ void app
         "(()=>{const canvas=document.querySelector('.workflow-canvas').getBoundingClientRect();const r=document.querySelector('.workflow-job[data-selected]').getBoundingClientRect();return r.left>=canvas.left-1 && r.right<=canvas.right+1 && r.top>=canvas.top-1 && r.bottom<=canvas.bottom+1 && document.querySelector('.react-flow__viewport').style.transform.includes('scale(1)')})()"
       );
       await capture('laptop-detail-dark');
+      assert.equal(await js(`document.activeElement?.getAttribute('aria-label')`), 'Selected check details');
+      await js(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
+      await wait(`!!document.querySelector('.check-detail[hidden]')`);
+      assert.equal(await js(`document.activeElement?.getAttribute('aria-label')`), 'TypeScript: Failed');
+      await js(`document.activeElement.click()`);
+      await wait(`!!document.querySelector('.check-detail:not([hidden])')`);
       await js(`document.querySelector('[aria-label="Close job details"]').click()`);
       win.setContentSize(620, 760);
       await capture('narrow-controls-dark');
@@ -198,6 +219,22 @@ void app
       await js('void (window.electronAPI.getWorkflowGraph=window.graphRead)');
       await click('Retry workflow');
       await wait("!document.querySelector('.workflow-notice')");
+      await js(`document.querySelector('.workflow-triage button:nth-child(1)')?.focus()`);
+      await click('Next issue');
+      await wait(`!!document.querySelector('.check-detail:not([hidden]) .check-attention')`);
+      await js(`document.querySelector('[aria-label="Close job details"]').click()`);
+      await js(`document.querySelector('[aria-label="Expand Platform tests"]')?.click()`);
+      await wait(`document.querySelectorAll('.workflow-job').length===5`);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const rememberedViewport = await js(`document.querySelector('.react-flow__viewport').style.transform`);
+      await click('List');
+      await click('Graph');
+      await wait(`document.querySelectorAll('.workflow-job').length===5`);
+      assert.equal(
+        await js(`document.querySelector('.react-flow__viewport').style.transform`),
+        rememberedViewport,
+        'List detour must retain the graph viewport'
+      );
       await click('List');
       await wait("document.querySelectorAll('.check-row').length===6");
       win.setContentSize(1280, 800);
@@ -319,12 +356,14 @@ void app
         `(()=>{const variants=${JSON.stringify(variants)},read=window.electronAPI.getWorkflowGraph;window.electronAPI.getWorkflowGraph=async(input,options)=>({...await read(input,options),...variants[\`\${input.showSkipped!==false}:\${input.showCompleted!==false}\`]});document.querySelector('[aria-label="Refresh checks"]').click();})()`
       );
       await wait("document.querySelectorAll('.workflow-job').length===23");
+      await openView();
       await js(
         "[...document.querySelectorAll('.workflow-visibility label')].find(l=>l.textContent==='Show skipped').querySelector('input').click()"
       );
       await wait("document.querySelectorAll('.workflow-job').length===6");
+      await openView();
       await js(
-        "[...document.querySelectorAll('.workflow-visibility label')].find(l=>l.textContent==='Show completed').querySelector('input').click()"
+        "[...document.querySelectorAll('.workflow-visibility label')].find(l=>l.textContent==='Show passed and neutral').querySelector('input').click()"
       );
       await wait("document.querySelectorAll('.workflow-job[data-collapsed]').length===4");
       assert.equal(
@@ -336,19 +375,23 @@ void app
         1
       );
       await wait("document.querySelectorAll('.react-flow__edge').length===8");
+      await closeView();
       await capture('visibility-collapsed-dark');
       await js('document.querySelector(\'[aria-label$="Show skipped jobs"]\').click()');
       await wait("document.querySelectorAll('.workflow-job').length===23");
+      await openView();
       assert.ok(
         await js(
           "[...document.querySelectorAll('.workflow-visibility label')].find(l=>l.textContent==='Show skipped').querySelector('input').checked"
         )
       );
 
+      await openView();
       await js(
-        "[...document.querySelectorAll('.workflow-visibility label')].find(l=>l.textContent==='Show completed').querySelector('input').click()"
+        "[...document.querySelectorAll('.workflow-visibility label')].find(l=>l.textContent==='Show passed and neutral').querySelector('input').click()"
       );
       await wait("document.querySelectorAll('.workflow-job[data-collapsed]').length===0");
+      await closeView();
       const installStages = async (
         baseNodes: WorkflowGraph['nodes'],
         baseEdges: WorkflowGraph['edges'],
@@ -389,17 +432,15 @@ void app
       await capture('stages-dark');
       await js('window.graphNetworkCalls=0');
       const chooseGrouping = async (value: string) => {
-        await js(`document.querySelector('[aria-label="Group parallel jobs"]').click()`);
-        await wait(`!!document.querySelector('[role="option"][data-value="${value}"]')`);
-        await js(`document.querySelector('[role="option"][data-value="${value}"]').click()`);
+        await openView();
+        await js(`document.querySelector('.workflow-grouping input[value="${value}"]').click()`);
         await wait(`window.electronAPI.loadPreferences().then(p=>p.workflowGrouping==='${value}')`);
+        await closeView();
       };
-      await js(`document.querySelector('[aria-label="Group parallel jobs"]').click()`);
-      await wait(`document.querySelectorAll('[role="option"]').length===3`);
+      await openView();
       await capture('grouping-menu-dark');
-      await js(`document.querySelector('[role="option"][data-value="off"]').click()`);
+      await chooseGrouping('off');
       await wait("document.querySelectorAll('.workflow-job').length===23");
-      await wait(`window.electronAPI.loadPreferences().then(p=>p.workflowGrouping==='off')`);
       await chooseGrouping('compact');
       await wait("document.querySelectorAll('.workflow-job').length===6");
       await chooseGrouping('adaptive');

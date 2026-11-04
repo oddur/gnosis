@@ -3972,3 +3972,46 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 
 .workflow-grouping { display:flex; align-items:center; gap:6px; }
 .workflow-grouping > button { min-height:28px; width:110px; font-size:12px; }
+
+/* Checks is an inspection workspace: keep identity, give the evidence the room. */
+.pr-summary-page.showing-checks .pr-summary-toolbar-inner { padding-block:6px; }
+.pr-summary-page.showing-checks .pr-overview-heading { padding-top:4px; }
+.pr-summary-page.showing-checks .pr-overview-heading h1 { font-size:var(--type-body); line-height:1.5; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pr-summary-page.showing-checks .pr-summary-context { display:none; }
+.pr-summary-page.showing-checks .pr-merge-status { padding-block:2px; gap:4px 12px; }
+.pr-summary-page.showing-checks .merge-readiness-checked { display:none; }
+.pr-summary-page.showing-checks .pr-overview-tabs button { padding-block:6px; }
+.checks-toolbar > [hidden], .workflow-host[hidden] { display:none; }
+.checks-graph-panes, .checks-graph-panes.with-detail { display:flex; position:relative; container:checks / inline-size; overflow:hidden; }
+.workflow-host { flex:1; min-width:0; min-height:0; display:flex; }
+.workflow-host .workflow-graph-view { flex:1; min-width:0; min-height:0; }
+.checks-graph-panes.with-detail .check-detail { flex:0 0 min(36%,460px); min-width:320px; background:var(--background); }
+.checks-graph-panes .check-detail:focus { outline:none; }
+.workflow-selectors { padding:6px 12px; gap:6px; flex-shrink:0; }
+.workflow-selectors [role=combobox] { max-width:280px; }
+.workflow-selectors > a { padding:6px; }
+.workflow-triage { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; padding:4px 12px 6px; border-bottom:1px solid var(--border); flex-shrink:0; }
+.workflow-triage > [role=group] { display:flex; flex-wrap:wrap; gap:4px; }
+.workflow-scope-status { font-size:12px; color:var(--muted-foreground); margin-right:auto; }
+.workflow-viewport-actions { position:absolute; left:56px; bottom:16px; z-index:5; margin:0; flex-wrap:nowrap; }
+.workflow-viewport-actions button { width:32px; padding:0; background:var(--card); }
+.workflow-view-menu { z-index:80; width:min(340px,calc(100vw - 24px)); max-height:min(620px,var(--radix-popover-content-available-height)); overflow:auto; padding:16px; background:var(--popover); color:var(--foreground); border:1px solid var(--border); border-radius:6px; font-size:13px; }
+.workflow-view-menu fieldset { display:flex; flex-direction:column; align-items:stretch; gap:8px; padding:0; margin:0 0 16px; }
+.workflow-view-menu legend { font-weight:600; margin-bottom:8px; }
+.workflow-view-menu label { display:flex; align-items:flex-start; gap:8px; cursor:pointer; }
+.workflow-view-menu input { margin-top:3px; width:14px; height:14px; accent-color:var(--ring); flex-shrink:0; }
+.workflow-view-menu strong { display:block; font-weight:500; }
+.workflow-view-menu small, .workflow-view-menu p { display:block; color:var(--muted-foreground); font-size:12px; line-height:1.5; }
+.workflow-view-menu summary { cursor:pointer; }
+.workflow-view-menu details p { margin-top:8px; }
+.workflow-view-menu :is(input,summary):focus-visible { outline:2px solid var(--ring); outline-offset:3px; }
+.workflow-view-metadata { display:flex; flex-wrap:wrap; gap:8px 12px; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); font-size:12px; color:var(--muted-foreground); }
+.workflow-view-metadata a { display:inline-flex; align-items:center; gap:4px; text-decoration:underline; text-underline-offset:3px; }
+@container checks (max-width:1050px) {
+  .checks-graph-panes.with-detail .check-detail { position:absolute; inset:0 0 0 auto; z-index:6; width:min(460px,100%); min-width:0; max-height:100%; border-left:1px solid var(--border); border-top:0; }
+}
+@container checks (max-width:700px) {
+  .checks-graph-panes.with-detail .check-detail { width:100%; }
+  .workflow-selectors [role=combobox] { flex:1; max-width:100%; min-width:0; }
+  .workflow-scope-status { flex-basis:100%; order:2; }
+}

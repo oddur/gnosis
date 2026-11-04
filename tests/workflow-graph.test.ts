@@ -1,3 +1,10 @@
+import {
+  attentionJobs,
+  nextAttentionJob,
+  preferredWorkflow,
+  workflowRunLabel,
+  workflowSession,
+} from '../lib/workflow-navigation';
 import { withGitHubPriority } from '../lib/github-scheduler';
 import { createWorkflowGraphPreloader } from '../src/workflow-graph-preloader';
 import { stageWorkflow, focusWorkflow } from '../src/workflow-stages';
@@ -868,4 +875,49 @@ void test('grouping modes project cached workflow data without additional GitHub
     4
   );
   assert.equal(h.calls.length, requests);
+});
+
+void test('attention navigation includes failures inside groups, deduplicates jobs, and cycles through issues', () => {
+  const failing = job(1, 'Type check', 'failure'),
+    cancelled = job(2, 'Tests', 'cancelled');
+  const nodes = [
+    { id: 'matrix', name: 'Matrix', x: 0, y: 0, jobs: [failing, job(3, 'Passing'), cancelled] },
+    { id: 'duplicate', name: 'Duplicate', x: 0, y: 0, jobs: [failing] },
+  ];
+  const issues = attentionJobs(nodes);
+  assert.deepEqual(
+    issues.map((item) => item.job.id),
+    [1, 2]
+  );
+  assert.equal(nextAttentionJob(issues)?.job.id, 1);
+  assert.equal(nextAttentionJob(issues, 'check:1')?.job.id, 2);
+  assert.equal(nextAttentionJob(issues, 'check:2')?.job.id, 1);
+  assert.equal(nextAttentionJob([]), undefined);
+});
+void test('workflow selection prioritizes reported failure, then running, without inventing job counts', () => {
+  const base = {
+    id: 1,
+    name: 'CI',
+    path: '.github/workflows/ci.yml',
+    sha,
+    attempt: 2,
+    status: 'completed',
+    conclusion: 'success',
+    url: '',
+  };
+  const failure = { ...base, id: 2, conclusion: 'failure' };
+  const running = { ...base, id: 3, status: 'in_progress', conclusion: null };
+  assert.equal(preferredWorkflow([base, running, failure])?.id, 2);
+  assert.equal(preferredWorkflow([base, running])?.id, 3);
+  assert.equal(preferredWorkflow([]), undefined);
+  assert.equal(workflowRunLabel(failure), 'CI · Failed · Attempt 2');
+});
+void test('graph exploration memory is scoped by account and revision', () => {
+  const state = workflowSession('alice:pr1:head1');
+  state.expanded = ['matrix'];
+  state.runId = 9;
+  state.viewport = { x: 12, y: 23, zoom: 0.8 };
+  assert.deepEqual(workflowSession('alice:pr1:head1').expanded, ['matrix']);
+  assert.deepEqual(workflowSession('bob:pr1:head1').expanded, []);
+  assert.deepEqual(workflowSession('alice:pr1:head2').expanded, []);
 });

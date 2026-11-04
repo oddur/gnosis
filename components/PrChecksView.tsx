@@ -48,8 +48,10 @@ export function PrChecksView({
   refresh,
   focus,
   onSource,
+  stateKey,
 }: {
   subject: ReviewSubject;
+  stateKey?: string;
   values: Partial<Record<string, PrChecks>>;
   errors: Partial<Record<string, string>>;
   busy: boolean;
@@ -59,7 +61,29 @@ export function PrChecksView({
 }) {
   const [view, setView] = useState<'list' | 'graph'>('list');
   const [graphDetails, setGraphDetails] = useState(false);
-  const firstMember = subject.members.at(0);
+  const [graphVisited, setGraphVisited] = useState(false);
+  const graphButton = useRef<HTMLButtonElement>(null);
+  const graphSelection = useRef<Selection | undefined>(undefined);
+  const detailOrigin = useRef<HTMLElement | null>(null);
+  const panes = useRef<HTMLDivElement>(null);
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    if (!panes.current) return;
+    const observer = new ResizeObserver(([entry]) => setNarrow(entry.contentRect.width <= 700));
+    observer.observe(panes.current);
+    return () => observer.disconnect();
+  }, []);
+  const closeGraphDetails = () => {
+    setGraphDetails(false);
+    requestAnimationFrame(() => {
+      const origin = detailOrigin.current;
+      if (origin?.isConnected && origin.getClientRects().length) origin.focus({ preventScroll: true });
+      else graphButton.current?.focus({ preventScroll: true });
+    });
+  };
+  const firstMember =
+    subject.members.find((m) => values[m.url]?.checks.some((c) => checkGroup(c) === 'attention')) ??
+    subject.members.at(0);
   const warmUrl = firstMember?.url;
   const warmSha = (warmUrl && values[warmUrl]?.headSha) || firstMember?.headSha;
   useEffect(() => {
@@ -76,16 +100,10 @@ export function PrChecksView({
   const [filter, setFilter] = useState<CheckFilter>('all');
   const [selected, setSelected] = useState<Selection>();
   useEffect(() => {
-    if (view !== 'graph' || !window.matchMedia('(max-width: 700px)').matches) return;
-    const frame = requestAnimationFrame(() => {
-      const pane = detailPane.current;
-      if (graphDetails) {
-        pane?.scrollIntoView({ block: 'start' });
-        pane?.focus({ preventScroll: true });
-      } else if (pane?.parentElement) pane.parentElement.scrollTop = 0;
-    });
+    if (view !== 'graph' || !graphDetails) return;
+    const frame = requestAnimationFrame(() => detailPane.current?.focus({ preventScroll: true }));
     return () => cancelAnimationFrame(frame);
-  }, [view, graphDetails, selected]);
+  }, [view, graphDetails, selected?.check.id]);
   const [detailCache, setDetailCache] = useState<Record<string, { value: CheckDetails; receivedAt: number }>>({});
   const previousAttempt = useRef(0);
   const [error, setError] = useState('');
@@ -290,17 +308,19 @@ export function PrChecksView({
           <Button
             size="sm"
             variant={view === 'graph' ? 'secondary' : 'ghost'}
+            ref={graphButton}
             aria-pressed={view === 'graph'}
             onClick={() => {
+              setGraphVisited(true);
               setView('graph');
-              setGraphDetails(false);
+              if (graphSelection.current) setSelected(graphSelection.current);
             }}
           >
             Graph
           </Button>
         </div>
         <BulkCheckRerun key={subject.id} members={subject.members} values={values} onChanged={() => refresh()} />
-        <div role="group" aria-label="Filter checks">
+        <div role="group" aria-label="Filter checks" hidden={view === 'graph'}>
           {(['all', 'attention', 'running'] as const).map((value) => (
             <Button
               key={value}
@@ -336,24 +356,44 @@ export function PrChecksView({
         </Button>
       </div>
       <div
+        ref={panes}
         className={`checks-panes${view === 'graph' ? ` checks-graph-panes${graphDetails ? ' with-detail' : ''}` : ''}`}
       >
-        {view === 'graph' ? (
-          <Suspense fallback={<div className="checks-empty">Loading graph view…</div>}>
-            <WorkflowGraphView
-              subject={subject}
-              values={values}
-              filter={filter}
-              refreshNonce={graphRefresh}
-              onContextChange={() => setGraphDetails(false)}
-              selectedId={graphDetails ? selected?.check.id : undefined}
-              onSelect={(snapshot, check) => {
-                setSelected({ snapshot, check });
-                setGraphDetails(true);
-              }}
-            />
-          </Suspense>
-        ) : (
+        {graphVisited && (
+          <div className="workflow-host" hidden={view !== 'graph'} inert={view !== 'graph' || (graphDetails && narrow)}>
+            <Suspense fallback={<div className="checks-empty">Loading graph view…</div>}>
+              <WorkflowGraphView
+                key={`${stateKey ?? subject.id}:${subject.members.map((m) => values[m.url]?.headSha ?? m.headSha).join(':')}`}
+                stateKey={`${stateKey ?? subject.id}:${subject.members.map((m) => values[m.url]?.headSha ?? m.headSha).join(':')}`}
+                active={view === 'graph'}
+                onFilterChange={setFilter}
+                onExternalChecks={(url) => {
+                  setFilter('all');
+                  setView('list');
+                  const source = values[url];
+                  const check = source?.checks.find((c) => c.kind === 'status');
+                  if (source && check) setSelected({ snapshot: source, check });
+                }}
+                subject={subject}
+                values={values}
+                filter={filter}
+                refreshNonce={graphRefresh}
+                onContextChange={() => {
+                  setGraphDetails(false);
+                  graphSelection.current = undefined;
+                }}
+                selectedId={graphSelection.current?.check.id}
+                onSelect={(snapshot, check) => {
+                  graphSelection.current = { snapshot, check };
+                  detailOrigin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                  setSelected({ snapshot, check });
+                  setGraphDetails(true);
+                }}
+              />
+            </Suspense>
+          </div>
+        )}
+        {view === 'list' && (
           <nav className="checks-list" aria-label="Checks by PR">
             {subject.members.map((member) => {
               const snapshot = values[member.url];
@@ -457,6 +497,13 @@ export function PrChecksView({
           hidden={view === 'graph' && !graphDetails}
           className="check-detail"
           aria-label="Selected check details"
+          onKeyDown={(event) => {
+            if (view === 'graph' && event.key === 'Escape' && !event.defaultPrevented) {
+              event.preventDefault();
+              event.stopPropagation();
+              closeGraphDetails();
+            }
+          }}
         >
           {view === 'graph' && (
             <Button
@@ -464,7 +511,7 @@ export function PrChecksView({
               size="sm"
               variant="ghost"
               aria-label="Close job details"
-              onClick={() => setGraphDetails(false)}
+              onClick={closeGraphDetails}
             >
               <X size={16} /> Close
             </Button>

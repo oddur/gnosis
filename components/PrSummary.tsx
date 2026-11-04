@@ -327,7 +327,7 @@ function PrSummaryContent({
       }}
       asChild
     >
-      <main className={`pr-summary-page ${stacked ? 'is-stack' : ''} ${tab !== 'summary' ? 'showing-changes' : ''} ${tab === 'brief' ? 'showing-local-notes' : ''}`}>
+      <main className={`pr-summary-page ${stacked ? 'is-stack' : ''} ${tab !== 'summary' ? 'showing-changes' : ''} ${tab === 'brief' ? 'showing-local-notes' : ''} ${tab === 'checks' ? 'showing-checks' : ''}`}>
         <div className="pr-summary-toolbar">
           <div className="pr-summary-toolbar-inner">
             <ReviewBreadcrumbs scope={tab} base={[
@@ -368,7 +368,7 @@ function PrSummaryContent({
           busy={starBusy || muteBusy || statusRefreshing} onStarChange={onStarChange} onMute={onMute}
           onRefresh={onRetryStatus}>{actions => <header className="pr-overview-heading">
           <div className="pr-title-with-star">
-            <h1 ref={heading} tabIndex={-1}>
+            <h1 ref={heading} tabIndex={-1} title={item.subject.title}>
               {item.subject.title}
             </h1>
             <PrStarMarker members={item.subject.members} starredUrls={starredUrls} />
@@ -451,7 +451,7 @@ function PrSummaryContent({
           <AgentBriefView key={item.subject.id} subject={item.subject} parentStack={parentStack} onOpenScope={onScopeChange ? changeScope : undefined} onOpenComment={openBriefComment} onOpenChanges={() => onTabChange('changes')} />
         </Tabs.Content>
         <Tabs.Content value="checks" className="pr-changes-tab">
-          <PrChecksView key={`${account}:${item.subject.id}`} subject={item.subject} {...checks} focus={checkFocus}
+          <PrChecksView key={`${account}:${item.subject.id}`} stateKey={`${account}:${item.subject.id}`} subject={item.subject} {...checks} focus={checkFocus}
             onSource={(url, path, line, headSha) => {
               setInitialFile({ url, path, line, headSha }); onTabChange('changes');
             }} />
