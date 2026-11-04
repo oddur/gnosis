@@ -6,14 +6,42 @@ export async function waitForWorkbenchQueue(contents: WebContents, expectedItems
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     if (await contents.executeJavaScript(ready)) return;
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  const state = await contents.executeJavaScript(`({readyState:document.readyState,rows:document.querySelectorAll('.queue-item').length,api:!!window.electronAPI,text:document.body.innerText.slice(0,4000)})`);
+  const state = await contents.executeJavaScript(
+    `({readyState:document.readyState,rows:document.querySelectorAll('.queue-item').length,api:!!window.electronAPI,text:document.body.innerText.slice(0,4000)})`
+  );
   throw new Error(`Workbench queue did not become ready: ${JSON.stringify(state)}`);
 }
 
 /** loadURL resolves before the fixture's top-level dynamic imports finish rendering. */
 export async function loadWorkbenchPage(window: BrowserWindow, url: string): Promise<void> {
+  // Keep what the page reported so a render timeout explains itself (script errors, Vite reloads).
+  const log: string[] = [];
+  const onConsole = ({ level, message }: { level: string; message: string }) => {
+    if (level === 'error' || level === 'warning' || message.includes('[vite]')) log.push(`${level}: ${message}`);
+  };
+  const onGone = (_: unknown, details: { reason: string }) => log.push(`renderer gone: ${details.reason}`);
+  window.webContents.on('console-message', onConsole);
+  window.webContents.on('render-process-gone', onGone);
+  try {
+    await loadAndRender(window, url);
+  } catch (error) {
+    const state: unknown = await window.webContents
+      .executeJavaScript(
+        `({readyState:document.readyState,root:document.querySelector('#root')?.innerHTML.slice(0,500)??null,text:document.body?.innerText.slice(0,1000)??''})`
+      )
+      .catch((stateError: unknown) => String(stateError));
+    throw new Error(
+      `${(error as Error).message}\nPage state: ${JSON.stringify(state)}\nPage log:\n${log.slice(-30).join('\n') || '(none)'}`
+    );
+  } finally {
+    window.webContents.off('console-message', onConsole);
+    window.webContents.off('render-process-gone', onGone);
+  }
+}
+
+async function loadAndRender(window: BrowserWindow, url: string): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
@@ -28,8 +56,9 @@ export async function loadWorkbenchPage(window: BrowserWindow, url: string): Pro
   if (!new URL(url).pathname.startsWith('/tests/fixtures/')) return;
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
-    if (await window.webContents.executeJavaScript("Boolean(document.querySelector('#root')?.firstElementChild)")) return;
-    await new Promise(resolve => setTimeout(resolve, 100));
+    if (await window.webContents.executeJavaScript("Boolean(document.querySelector('#root')?.firstElementChild)"))
+      return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(`Fixture did not render after loading ${url}`);
 }

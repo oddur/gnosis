@@ -1,4 +1,5 @@
 import { build } from 'esbuild';
+import { electronTestShim } from './electron-test-build.mjs';
 import { createHash } from 'node:crypto';
 import { createServer } from 'vite';
 import { spawn } from 'node:child_process';
@@ -86,6 +87,7 @@ try {
     platform: 'node',
     format: 'cjs',
     external: ['electron'],
+    plugins: [electronTestShim],
   });
   if (markdownReview) await build({ entryPoints: ['src/markdown-review-worker.ts'], outfile: path.join(dir, 'markdown-review-worker.cjs'), bundle: true, platform: 'node', format: 'cjs' });
   const env = {
