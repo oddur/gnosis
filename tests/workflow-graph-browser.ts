@@ -72,14 +72,14 @@ void app
       );
       await wait('window.checksFixture.snapshots.size > 0');
       const routes: Record<string, Awaited<ReturnType<typeof layoutWorkflow>>> = {};
-      for (const mode of ['collapsed', 'expanded']) {
+      for (const mode of ['collapsed', 'expanded', 'annotations']) {
         const graph = await js<WorkflowGraph>(
-          `(async()=>{const snapshot=[...window.checksFixture.snapshots.values()][0];return window.electronAPI.getWorkflowGraph({...snapshot,runId:9,expanded:${mode === 'expanded' ? "['test']" : '[]'}})})()`
+          `(async()=>{const snapshot=[...window.checksFixture.snapshots.values()][0];return window.electronAPI.getWorkflowGraph({...snapshot,runId:9,expandedAnnotations:${mode === 'annotations' ? "['types']" : '[]'},expanded:${mode === 'expanded' ? "['test']" : '[]'}})})()`
         );
         routes[mode] = await layoutWorkflow(graph.nodes, graph.edges);
       }
       await js(
-        `(()=>{const routes=${JSON.stringify(routes)},read=window.electronAPI.getWorkflowGraph;window.electronAPI.getWorkflowGraph=async(input,options)=>{const graph=await read(input,options),route=routes[input.expanded?.includes('test')?'expanded':'collapsed'];return {...graph,nodes:graph.nodes.map(n=>({...n,...route.nodes.find(r=>r.id===n.id)})),edges:graph.edges.map(e=>({...e,points:route.edges.find(r=>r.id===e.id)?.points}))};};})()`
+        `(()=>{const routes=${JSON.stringify(routes)},read=window.electronAPI.getWorkflowGraph;window.electronAPI.getWorkflowGraph=async(input,options)=>{const graph=await read(input,options),route=routes[input.expandedAnnotations?.includes('types')?'annotations':input.expanded?.includes('test')?'expanded':'collapsed'];return {...graph,nodes:graph.nodes.map(n=>({...n,...route.nodes.find(r=>r.id===n.id)})),edges:graph.edges.map(e=>({...e,points:route.edges.find(r=>r.id===e.id)?.points}))};};})()`
       );
     };
     try {
@@ -133,7 +133,10 @@ void app
         await js(`document.querySelector('.workflow-canvas').getBoundingClientRect().height > 400`),
         'Checks should give the graph at least half the laptop height'
       );
-      await wait(`document.querySelector('.workflow-failure-message')?.textContent.includes('reconnect callback')`);
+      await wait(`document.querySelector('.workflow-inline-annotation p')?.textContent.includes('reconnect callback')`);
+      assert.ok(await js(`!document.body.textContent.includes('View failure annotation')`));
+      await js(`document.querySelector('.workflow-inline-annotation p').click()`);
+      assert.ok(await js(`!!document.querySelector('.check-detail[hidden]')`), 'Annotation text does not open details');
       await capture('failure-annotation-light');
       await js(
         `(()=>{const card=document.querySelector('[data-id="types"] .workflow-job');const r=card.getBoundingClientRect();card.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,button:2,clientX:r.left+30,clientY:r.top+30}));})()`
@@ -633,13 +636,18 @@ void app
         window.electronAPI.getWorkflowGraph=async(...args)=>{const value=await readGraph(...args);return {...value,run:{...value.run,status:'completed',conclusion:'failure'}}};
         for(const snapshot of window.checksFixture.snapshots.values()){
           const detail=await window.electronAPI.getCheckDetails({...snapshot,id:'check:2'});
-          snapshot.details={'check:2':{...detail,checkedAt:Date.now(),job:{...detail.job,canRerun:true}}};
+          snapshot.details={'check:2':{...detail,annotations:[...detail.annotations,{...detail.annotations[0],title:'Runner unavailable',message:'The job was not acquired by a hosted runner after multiple attempts. '+ 'No runner was available for this platform. '.repeat(12)}],checkedAt:Date.now(),job:{...detail.job,canRerun:true}}};
         }
         document.documentElement.classList.add('dark');
       })()`);
       await click('Graph');
-      await wait(`document.querySelector('.workflow-failure-message')?.textContent.includes('reconnect callback')`);
+      await wait(`document.querySelector('.workflow-inline-annotation p')?.textContent.includes('reconnect callback')`);
+      await click('Show all 2 annotations');
+      await wait(`document.querySelector('[data-id="types"] .workflow-job').getBoundingClientRect().height>400`);
+      assert.ok(await js(`document.querySelectorAll('[data-id="types"] .workflow-inline-annotation').length===2`));
       await capture('failure-annotation-dark');
+      await click('Show less');
+      await wait(`document.querySelector('[data-id="types"] .workflow-job').getBoundingClientRect().height<300`);
       await js(
         `(()=>{const card=document.querySelector('[data-id="types"] .workflow-job');const r=card.getBoundingClientRect();card.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,button:2,clientX:r.left+30,clientY:r.top+30}));})()`
       );

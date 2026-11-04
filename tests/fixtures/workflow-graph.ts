@@ -45,7 +45,16 @@ export function workflowMocks(snapshots: Map<string, PrChecks>) {
         groups: [{ id: 'test', name: 'Platform tests' }],
         nodes: [
           { id: 'lint', name: 'Lint', jobs: [job(4)], x: 0, y: 90, definition: 'lint' },
-          { id: 'types', name: 'TypeScript', height: 232, jobs: [job(2)], x: 315, y: 0, definition: 'types' },
+          {
+            id: 'types',
+            name: 'TypeScript',
+            height: input.expandedAnnotations?.includes('types') ? 440 : 232,
+            annotationsExpanded: input.expandedAnnotations?.includes('types'),
+            jobs: [job(2)],
+            x: 315,
+            y: 0,
+            definition: 'types',
+          },
           ...(expanded
             ? [
                 {

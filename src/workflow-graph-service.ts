@@ -388,6 +388,12 @@ async function readGraph(
   const assembled = assembleWorkflow(data.definitions, data.jobs, expanded);
   if (assembled.nodes.length > 600 || assembled.edges.length > 3000)
     throw Error('This graph is too large. Collapse groups or use List view.');
+  for (const node of assembled.nodes) {
+    if (node.height === 232 && input.expandedAnnotations?.includes(node.id)) {
+      node.annotationsExpanded = true;
+      node.height = 440;
+    }
+  }
   const stages = stageWorkflow(assembled.nodes, assembled.edges, expanded, workflowGrouping(input.grouping));
   const focused = focusWorkflow(stages.nodes, stages.edges, input.focusNodeId);
   const compact = compactWorkflow(focused.nodes, focused.edges, input);

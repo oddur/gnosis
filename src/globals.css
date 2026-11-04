@@ -4101,11 +4101,15 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
   .workflow-active-run { max-width:220px; }
 }
 
-/* Failure context stays within reserved card space while cached annotations arrive. */
-.workflow-job[data-failure-context] { height:232px; }
-.workflow-failure-context { display:flex; flex-direction:column; gap:6px; min-height:0; padding-top:8px; border-top:1px solid var(--border); font-size:12px; line-height:1.5; }
-.workflow-failed-step { font-weight:600; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
-.workflow-failure-message { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere; }
-.workflow-failure-link { display:flex; align-items:center; gap:4px; color:var(--foreground); text-decoration:underline; text-underline-offset:3px; }
-.workflow-job[data-failure-context] .workflow-job-context { margin-top:auto; }
+/* Annotation bodies are selectable card content; only explicit expansion changes the layout. */
+.workflow-job[data-failure-context] { height:232px; display:flex; flex-direction:column; }
+.workflow-job[data-failure-context] .workflow-job-open { height:auto; flex-shrink:0; }
+.workflow-failure-context { display:flex; flex:1; flex-direction:column; gap:6px; min-height:0; margin:0 12px 12px; padding-top:8px; border-top:1px solid var(--border); font-size:12px; line-height:1.5; user-select:text; }
+.workflow-failed-step { font-weight:600; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; flex-shrink:0; }
+.workflow-annotation-content { min-height:0; overflow:hidden; overflow-wrap:anywhere; }
+.workflow-inline-annotation p { white-space:pre-wrap; }
+.workflow-inline-annotation strong { display:block; margin-bottom:4px; font-weight:600; }
+.workflow-inline-annotation + .workflow-inline-annotation { border-top:1px solid var(--border); padding-top:10px; margin-top:10px; }
+.workflow-annotation-toggle { display:flex; flex-shrink:0; align-items:center; gap:4px; width:fit-content; color:var(--foreground); text-decoration:underline; text-underline-offset:3px; }
+.workflow-job[data-annotations-expanded] .workflow-annotation-content { overflow:auto; }
 .check-detail-refresh { display:inline-flex; flex-shrink:0; margin-left:6px; color:var(--muted-foreground); }

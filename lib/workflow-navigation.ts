@@ -71,6 +71,7 @@ export function nextAttentionJob(
   return items.at(current < 0 ? (direction === 1 ? 0 : -1) : (current + direction + items.length) % items.length);
 }
 export interface WorkflowViewState {
+  expandedAnnotations?: string[];
   workflowsOpen?: boolean;
   memberUrl?: string;
   runId?: number;

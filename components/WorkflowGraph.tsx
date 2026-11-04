@@ -129,6 +129,7 @@ type JobNode = Node<
     onRevealPrerequisite: () => void;
     onOpen: () => void;
     onExpand: () => void;
+    onToggleAnnotations: () => void;
     onFocusDependencies: () => void;
     onHighlight: (active: boolean, input: 'pointer' | 'focus') => void;
   },
@@ -143,6 +144,17 @@ function JobCard({ id, data }: NodeProps<JobNode>) {
   }, [id, portSignature, updateNodeInternals]);
   const { group, label, Icon } = outcome(item.jobs);
   const insight = item.jobs.length === 1 ? workflowFailureInsight(item.jobs[0], data.detail) : undefined;
+  const annotationText = useRef<HTMLDivElement>(null);
+  const [annotationOverflow, setAnnotationOverflow] = useState(false);
+  useEffect(() => {
+    const text = annotationText.current;
+    if (!text) return;
+    const measure = () => setAnnotationOverflow(text.scrollHeight > text.clientHeight + 1);
+    const observer = new ResizeObserver(measure);
+    observer.observe(text);
+    measure();
+    return () => observer.disconnect();
+  }, [insight?.annotation?.message, insight?.annotation?.title, item.annotationsExpanded]);
   const active = item.jobs.flatMap((job) => job.steps).find((step) => step.status === 'in_progress');
   const stageCounts = item.stage
     ? [
@@ -180,6 +192,7 @@ function JobCard({ id, data }: NodeProps<JobNode>) {
       className="workflow-job"
       style={{ height: item.height }}
       data-failure-context={!!insight || undefined}
+      data-annotations-expanded={item.annotationsExpanded || undefined}
       data-stage={!!item.stage || undefined}
       data-collapsed={item.collapsed || undefined}
       data-dim={data.dim || undefined}
@@ -239,39 +252,53 @@ function JobCard({ id, data }: NodeProps<JobNode>) {
             </span>
           </span>
         )}
-        {insight && (
-          <span className="workflow-failure-context">
-            {insight.step && (
-              <strong className="workflow-failed-step" title={insight.step}>
-                Step: {insight.step}
-              </strong>
-            )}
-            {insight.annotation ? (
-              <>
-                <span
-                  className="workflow-failure-message"
-                  title={[insight.annotation.title, insight.annotation.message].filter(Boolean).join('\n')}
-                >
-                  {insight.annotation.message || insight.annotation.title}
-                </span>
-                <span className="workflow-failure-link">
-                  {insight.count > 1 ? `View ${insight.count} failure annotations` : 'View failure annotation'}{' '}
-                  <ArrowRight size={12} />
-                </span>
-              </>
-            ) : (
-              <span className="workflow-failure-link">
-                View job details <ArrowRight size={12} />
-              </span>
-            )}
-          </span>
-        )}
         {!item.collapsed && secondary && !data.outsidePrerequisite && (
           <span className="workflow-job-context" title={secondary}>
             {secondary}
           </span>
         )}
       </button>
+      {insight && (insight.annotation || insight.step) && (
+        <div className="workflow-failure-context nodrag nowheel">
+          {insight.step && (
+            <strong className="workflow-failed-step" title={insight.step}>
+              Step: {insight.step}
+            </strong>
+          )}
+          <div
+            className="workflow-annotation-content"
+            ref={annotationText}
+            tabIndex={item.annotationsExpanded ? 0 : undefined}
+            aria-label="Failure annotations"
+          >
+            {(item.annotationsExpanded ? insight.annotations : insight.annotations.slice(0, 1)).map(
+              (annotation, index) => (
+                <div className="workflow-inline-annotation" key={index}>
+                  {annotation.title &&
+                    !['failure', 'error'].includes(annotation.title.toLowerCase()) &&
+                    annotation.title !== annotation.message && <strong>{annotation.title}</strong>}
+                  <p>{annotation.message || annotation.title}</p>
+                </div>
+              )
+            )}
+          </div>
+          {(item.annotationsExpanded || annotationOverflow || insight.count > 1) && (
+            <button
+              type="button"
+              className="workflow-annotation-toggle"
+              aria-expanded={!!item.annotationsExpanded}
+              onClick={data.onToggleAnnotations}
+            >
+              {item.annotationsExpanded
+                ? 'Show less'
+                : insight.count > 1
+                  ? `Show all ${insight.count} annotations`
+                  : 'Show full annotation'}
+              {item.annotationsExpanded ? <Minus size={12} /> : <Plus size={12} />}
+            </button>
+          )}
+        </div>
+      )}
       {data.outsidePrerequisite && (
         <button
           className="workflow-outside-prerequisite nodrag"
@@ -439,6 +466,7 @@ export function WorkflowGraphView({
     if (compactSidebar) closeWorkflows();
   };
   const [expanded, setExpanded] = useState<string[]>(session.expanded);
+  const [expandedAnnotations, setExpandedAnnotations] = useState<string[]>(session.expandedAnnotations ?? []);
   const [grouping, setGrouping] = useState<WorkflowGrouping>(rememberedGrouping ?? 'adaptive');
   const [groupingReady, setGroupingReady] = useState(rememberedGrouping !== undefined);
   const [preferenceError, setPreferenceError] = useState('');
@@ -482,8 +510,27 @@ export function WorkflowGraphView({
   const [focusNodeId, setFocusNodeId] = useState<string | undefined>(session.focusNodeId);
   const [navigationNodeId, setNavigationNodeId] = useState<string>();
   useEffect(() => {
-    Object.assign(session, { memberUrl, runId, expanded, showSkipped, showCompleted, focusNodeId, workflowsOpen });
-  }, [session, memberUrl, runId, expanded, showSkipped, showCompleted, focusNodeId, workflowsOpen]);
+    Object.assign(session, {
+      memberUrl,
+      runId,
+      expanded,
+      showSkipped,
+      showCompleted,
+      focusNodeId,
+      workflowsOpen,
+      expandedAnnotations,
+    });
+  }, [
+    session,
+    memberUrl,
+    runId,
+    expanded,
+    showSkipped,
+    showCompleted,
+    focusNodeId,
+    workflowsOpen,
+    expandedAnnotations,
+  ]);
   const [graphState, setGraph] = useState<{ key: string; value: Graph }>();
   const [runError, setRunError] = useState('');
   const [graphError, setGraphError] = useState('');
@@ -537,7 +584,7 @@ export function WorkflowGraphView({
       live = false;
     };
   }, [scope, observedAt, refreshNonce, retry, active]);
-  const viewKey = JSON.stringify([expansions, showSkipped, showCompleted, focusNodeId, grouping]);
+  const viewKey = JSON.stringify([expandedAnnotations, expansions, showSkipped, showCompleted, focusNodeId, grouping]);
   const requestedView = {
     graphKey,
     viewKey,
@@ -546,6 +593,7 @@ export function WorkflowGraphView({
       headSha: sha ?? '',
       runId: run?.id ?? 0,
       expanded,
+      expandedAnnotations,
       grouping,
       showSkipped,
       showCompleted,
@@ -833,6 +881,10 @@ export function WorkflowGraphView({
             active ? item.id : current === item.id ? undefined : current
           ),
         onExpand: () => toggle(item.id),
+        onToggleAnnotations: () =>
+          setExpandedAnnotations((current) =>
+            current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id]
+          ),
         onFocusDependencies: () => {
           setFocusNodeId(item.id);
           setHovered(undefined);

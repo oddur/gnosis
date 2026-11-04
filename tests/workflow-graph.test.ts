@@ -180,6 +180,7 @@ const sha = 'a'.repeat(40),
   target = { url: 'https://github.com/o/r/pull/1', headSha: sha },
   input = { ...target, runId: 9 };
 function harness(onRequest?: (url: URL) => Promise<void>) {
+  let testConclusion = 'success';
   const calls: string[] = [];
   const run = {
     id: 9,
@@ -214,14 +215,16 @@ function harness(onRequest?: (url: URL) => Promise<void>) {
       else if (url.pathname.endsWith('/jobs'))
         data = {
           total_count: 4,
-          jobs: [job(1, 'Build'), job(2, 'Test Linux'), job(3, 'Test macOS'), job(4, 'Deploy')].map((j) => ({
-            ...j,
-            check_run_url: `https://api.github.com/repos/o/r/check-runs/${j.id}`,
-            started_at: j.startedAt,
-            completed_at: j.completedAt,
-            html_url: '',
-            steps: stepText ? [{ number: 1, name: stepText, status: 'completed', conclusion: 'success' }] : [],
-          })),
+          jobs: [job(1, 'Build'), job(2, 'Test Linux', testConclusion), job(3, 'Test macOS'), job(4, 'Deploy')].map(
+            (j) => ({
+              ...j,
+              check_run_url: `https://api.github.com/repos/o/r/check-runs/${j.id}`,
+              started_at: j.startedAt,
+              completed_at: j.completedAt,
+              html_url: '',
+              steps: stepText ? [{ number: 1, name: stepText, status: 'completed', conclusion: 'success' }] : [],
+            })
+          ),
         };
       else if (url.pathname.includes('/contents/')) {
         const body = files[decodeURIComponent(url.pathname.split('/contents/')[1])] ?? workflow;
@@ -242,6 +245,9 @@ function harness(onRequest?: (url: URL) => Promise<void>) {
     }) as typeof fetch,
   });
   return {
+    failJob: () => {
+      testConclusion = 'failure';
+    },
     client: pool.client('account'),
     other: pool.client('another-account'),
     calls,
@@ -1072,7 +1078,12 @@ void test('graph failure insights use failure annotations only and reject other 
   assert.equal(workflowJobDetails(failed, { ...run, attempt: 3 }, detail), undefined);
   assert.equal(workflowJobDetails(failed, { ...run, sha: 'b'.repeat(40) }, detail), undefined);
   assert.equal(workflowJobDetails({ ...failed, id: 2 }, run, detail), undefined);
-  assert.deepEqual(workflowFailureInsight(failed, detail), { annotation, count: 1, step: undefined });
+  assert.deepEqual(workflowFailureInsight(failed, detail), {
+    annotation,
+    annotations: [annotation],
+    count: 1,
+    step: undefined,
+  });
   assert.equal(workflowFailureInsight(job(1, 'Passed'), detail), undefined);
   assert.equal(
     workflowFailureInsight(failed, {
@@ -1084,4 +1095,20 @@ void test('graph failure insights use failure annotations only and reject other 
     })?.step,
     'Build native bundle'
   );
+});
+
+void test('expanding inline annotations reroutes cached graph without GitHub requests', async () => {
+  const h = harness();
+  h.failJob();
+  const initial = await readWorkflowGraph(h.client, input);
+  const count = h.calls.length;
+  const id = 'test/job:2';
+  assert.equal(initial?.nodes.find((n) => n.id === id)?.height, 232);
+  const expanded = await readWorkflowGraph(h.client, { ...input, expandedAnnotations: [id] }, { cachedOnly: true });
+  assert.equal(expanded?.nodes.find((n) => n.id === id)?.height, 440);
+  assert.equal(expanded?.nodes.find((n) => n.id === id)?.annotationsExpanded, true);
+  assert.ok(expanded?.edges.every((edge) => edge.points?.length));
+  const collapsed = await readWorkflowGraph(h.client, input, { cachedOnly: true });
+  assert.equal(collapsed?.nodes.find((n) => n.id === id)?.height, 232);
+  assert.equal(h.calls.length, count);
 });

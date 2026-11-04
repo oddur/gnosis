@@ -45,6 +45,7 @@ export interface WorkflowPort {
   y: number;
 }
 export interface WorkflowGraphNode {
+  annotationsExpanded?: boolean;
   /** Direct prerequisites omitted by dependency focus; retain their reported state. */
   outsidePrerequisites?: Pick<WorkflowGraphNode, 'id' | 'name' | 'jobs'>[];
   stage?: { count: number; names: string[]; unreported: number };
@@ -79,6 +80,7 @@ export function workflowGrouping(value: unknown): WorkflowGrouping {
   return value === 'compact' || value === 'off' ? value : 'adaptive';
 }
 export interface WorkflowGraphInput extends CheckTarget {
+  expandedAnnotations?: string[];
   grouping?: WorkflowGrouping;
   runId: number;
   focusNodeId?: string;
@@ -131,5 +133,5 @@ export function workflowFailureInsight(job: WorkflowJob, detail?: CheckDetails) 
   const step = (detail?.job?.steps ?? job.steps).find(
     (step) => step.status === 'completed' && step.conclusion === 'failure'
   );
-  return { annotation: failures.at(0), count: failures.length, step: step?.name };
+  return { annotation: failures.at(0), annotations: failures, count: failures.length, step: step?.name };
 }
