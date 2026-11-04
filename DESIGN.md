@@ -153,6 +153,7 @@ The shared header has a minimum height of 56px with 10px vertical and 20px horiz
 | Review panes | Resizable 40/60 split, minimums 25/30 | Explicit pane tabs at ≤1000px |
 | Overview | Maximum 1100px; 1.4fr/1fr columns; 32px gap | One column at ≤850px |
 | Settings | Maximum 672px wide and 80dvh high; internal scrolling | Tabs form two columns at ≤620px |
+| Checks graph | Full-width canvas; selected job opens the existing detail pane beside it | Detail pane uses 42% with a 290px minimum at ≤900px; stacks below the graph at ≤700px |
 
 Review prose has 20px vertical and 22px horizontal padding; code panes use 16px.
 Queue rows use 13px vertical padding, 14px on the left, and 20px on the right.
@@ -235,6 +236,16 @@ Checks follow new attempts on the displayed commit automatically. A new commit r
 A compact “To merge this stack” list groups required actions and links to the affected PR overviews, ordered base first within each group. Drafts have a one-click “Mark all ready” action with inline progress and partial-failure recovery. It changes only draft status, and retains the existing permission and revision guards. Show each blocker and its remedy in the PR row without expansion. Name required check failures; separate running checks as waiting. Keep optional check results outside the required-action list. Expand a row for supporting check details. Show separate timestamps for merge requirements and check results, including missing or delayed results. Permission reads start on action, with the existing confirmation and revision checks. Ready rows omit redundant details. Below 760px of content width, status columns move under the PR and retain visible labels.
 
 Standalone PR summaries place the Checks, reviews & discussions disclosure before the description. Stack summaries lead with the dependency list, which already shows review, check, and branch status for each PR. Detailed GitHub evidence follows that list, before the stack briefing. Use the existing 24px stack section gap without additional evidence margins. Expanding the disclosure must not shift the dependency rows above it.
+
+### Workflow dependency graph
+
+[WorkflowGraph](components/WorkflowGraph.tsx) extends Checks with a List/Graph switch, the existing status filters, and searchable workflow selectors. Stacks add a source-PR selector. Keep the selected run's revision, attempt, freshness, and source link visible. External providers remain in List.
+
+The backend reads workflow YAML at the run's immutable revision. Jobs flow left to right along declared prerequisites; matrix and reusable-workflow groups expand into their jobs. Show actual reported statuses with icons and text. A failed prerequisite is supporting context, not an inferred replacement for a downstream job's status. Missing mappings stay disconnected and carry an explicit notice.
+
+Job nodes use panel surfaces, thin borders, compact 13px names, and 12px status, duration, and context text. Selection uses the existing accent surface; failed jobs and their outgoing dependency paths use the danger color. Filters dim other jobs while retaining the dependency structure. Reuse the workbench focus treatment and flat canvas controls; introduce no new palette or type tokens.
+
+Selecting a job opens the existing output, steps, annotations, logs, and rerun tools. Reframe the graph when the canvas resizes or its topology changes, including opening and closing details. Status-only updates preserve pan and zoom. At narrow widths, selection scrolls to and focuses the detail region below the graph; Close returns the viewport to the graph. Preserve a saved graph after refresh failure, explain its freshness, and offer Retry workflow.
 
 ### Source identity and Activity
 

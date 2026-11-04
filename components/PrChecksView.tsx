@@ -1,6 +1,8 @@
+import { lazy, Suspense } from 'react';
+const WorkflowGraphView = lazy(() => import('./WorkflowGraph').then((m) => ({ default: m.WorkflowGraphView })));
 import { BulkCheckRerun } from './BulkCheckRerun';
 import { useEffect, useRef, useState } from 'react';
-import { CircleAlert, CircleCheck, CircleMinus, Clock3, ExternalLink, RefreshCw } from 'lucide-react';
+import { CircleAlert, CircleCheck, CircleMinus, Clock3, ExternalLink, RefreshCw, X } from 'lucide-react';
 import type { ReviewSubject } from '../lib/workbench';
 import {
   checkCounts,
@@ -55,10 +57,25 @@ export function PrChecksView({
   focus?: CheckFocus;
   onSource: (url: string, path: string, line: number, headSha: string) => void;
 }) {
+  const [view, setView] = useState<'list' | 'graph'>('list');
+  const [graphDetails, setGraphDetails] = useState(false);
+  const [graphRefresh, setGraphRefresh] = useState(0);
+  const detailPane = useRef<HTMLDivElement>(null);
   const operation = useRef(0);
   const [requested, setRequested] = useState(false);
   const [filter, setFilter] = useState<CheckFilter>('all');
   const [selected, setSelected] = useState<Selection>();
+  useEffect(() => {
+    if (view !== 'graph' || !window.matchMedia('(max-width: 700px)').matches) return;
+    const frame = requestAnimationFrame(() => {
+      const pane = detailPane.current;
+      if (graphDetails) {
+        pane?.scrollIntoView({ block: 'start' });
+        pane?.focus({ preventScroll: true });
+      } else if (pane?.parentElement) pane.parentElement.scrollTop = 0;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [view, graphDetails, selected]);
   const [detailCache, setDetailCache] = useState<Record<string, { value: CheckDetails; receivedAt: number }>>({});
   const previousAttempt = useRef(0);
   const [error, setError] = useState('');
@@ -78,6 +95,7 @@ export function PrChecksView({
       if (snapshot && check) {
         setSelected({ snapshot, check });
         setFilter('all');
+        setView('list');
         setHandledFocus(focus.nonce);
       }
     } else if (!selected) {
@@ -250,6 +268,27 @@ export function PrChecksView({
   return (
     <section className="pr-checks-workspace" aria-label="PR checks">
       <div className="checks-toolbar">
+        <div role="group" aria-label="Checks view">
+          <Button
+            size="sm"
+            variant={view === 'list' ? 'secondary' : 'ghost'}
+            aria-pressed={view === 'list'}
+            onClick={() => setView('list')}
+          >
+            List
+          </Button>
+          <Button
+            size="sm"
+            variant={view === 'graph' ? 'secondary' : 'ghost'}
+            aria-pressed={view === 'graph'}
+            onClick={() => {
+              setView('graph');
+              setGraphDetails(false);
+            }}
+          >
+            Graph
+          </Button>
+        </div>
         <BulkCheckRerun key={subject.id} members={subject.members} values={values} onChanged={() => refresh()} />
         <div role="group" aria-label="Filter checks">
           {(['all', 'attention', 'running'] as const).map((value) => (
@@ -263,15 +302,22 @@ export function PrChecksView({
               {value === 'all'
                 ? 'All checks'
                 : value === 'attention'
-                  ? `Needs attention (${counts.attention})`
-                  : `Running (${counts.running})`}
+                  ? view === 'graph'
+                    ? 'Needs attention'
+                    : `Needs attention (${counts.attention})`
+                  : view === 'graph'
+                    ? 'Running'
+                    : `Running (${counts.running})`}
             </Button>
           ))}
         </div>
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => refresh()}
+          onClick={() => {
+            refresh();
+            setGraphRefresh((n) => n + 1);
+          }}
           disabled={busy}
           aria-label="Refresh checks"
           title="Refresh checks"
@@ -279,103 +325,140 @@ export function PrChecksView({
           <RefreshCw size={15} className={busy ? 'animate-spin' : undefined} />
         </Button>
       </div>
-      <div className="checks-panes">
-        <nav className="checks-list" aria-label="Checks by PR">
-          {subject.members.map((member) => {
-            const snapshot = values[member.url];
-            const checks = snapshot
-              ? orderedChecks(
-                  snapshot.checks.map((check) =>
-                    detail?.state &&
-                    details &&
-                    selected?.snapshot.url === snapshot.url &&
-                    selected.snapshot.headSha === snapshot.headSha &&
-                    selected.check.id === check.id &&
-                    snapshot.checkedAt <= details.receivedAt
-                      ? { ...check, ...detail.state }
-                      : check
-                  ),
-                  filter
-                )
-              : [];
-            return (
-              <section key={member.url} className="checks-pr-group">
-                <h2>
-                  #{member.number} <span>{member.title}</span>
-                </h2>
-                <p className="checks-revision">
-                  {snapshot ? (
-                    <>
-                      {snapshot.headSha.slice(0, 7)} · Checked {timeAgo(new Date(snapshot.checkedAt).toISOString())}
-                    </>
-                  ) : busy ? (
-                    'Loading checks…'
-                  ) : (
-                    'Checks not loaded'
-                  )}
-                </p>
-                {errors[member.url] && (
-                  <p className="checks-notice checks-sync-status" role="status">
-                    {snapshot ? 'Showing saved results. ' : ''}
-                    {errors[member.url]}{' '}
-                    <button
-                      className="underline underline-offset-4"
-                      disabled={busy}
-                      onClick={() => refresh(member.url)}
-                    >
-                      Refresh this PR
-                    </button>
-                  </p>
-                )}
-                {snapshot?.warning && <p className="checks-notice">{snapshot.warning}</p>}
-                {checks.map((check) => (
-                  <button
-                    className="check-row"
-                    key={check.id}
-                    aria-current={
-                      selected?.snapshot.url === member.url &&
+      <div
+        className={`checks-panes${view === 'graph' ? ` checks-graph-panes${graphDetails ? ' with-detail' : ''}` : ''}`}
+      >
+        {view === 'graph' ? (
+          <Suspense fallback={<div className="checks-empty">Loading graph view…</div>}>
+            <WorkflowGraphView
+              subject={subject}
+              values={values}
+              filter={filter}
+              refreshNonce={graphRefresh}
+              onContextChange={() => setGraphDetails(false)}
+              selectedId={graphDetails ? selected?.check.id : undefined}
+              onSelect={(snapshot, check) => {
+                setSelected({ snapshot, check });
+                setGraphDetails(true);
+              }}
+            />
+          </Suspense>
+        ) : (
+          <nav className="checks-list" aria-label="Checks by PR">
+            {subject.members.map((member) => {
+              const snapshot = values[member.url];
+              const checks = snapshot
+                ? orderedChecks(
+                    snapshot.checks.map((check) =>
+                      detail?.state &&
+                      details &&
+                      selected?.snapshot.url === snapshot.url &&
+                      selected.snapshot.headSha === snapshot.headSha &&
                       selected.check.id === check.id &&
-                      selected.snapshot.headSha === snapshot?.headSha
-                        ? 'true'
-                        : undefined
-                    }
-                    onClick={() => {
-                      if (snapshot) setSelected({ snapshot, check });
-                    }}
-                  >
-                    <CheckIcon
-                      check={
-                        snapshot && awaitingCheck(snapshot, check)
-                          ? { ...check, status: 'queued', conclusion: null }
-                          : check
-                      }
-                    />
-                    <span className="check-row-content">
-                      <strong>{check.name}</strong>
-                      <small>
-                        {check.provider} ·{' '}
-                        <span
-                          className={`check-${snapshot && awaitingCheck(snapshot, check) ? 'running' : checkGroup(check)}`}
-                        >
-                          {snapshot && awaitingCheck(snapshot, check) ? 'Rerun requested' : checkLabel(check)}
-                        </span>
-                      </small>
-                    </span>
-                    <span className="check-duration">
-                      {snapshot && awaitingCheck(snapshot, check) ? '' : checkDuration(check)}
-                    </span>
-                  </button>
-                ))}
-                {snapshot && !checks.length && (
-                  <p className="checks-notice">
-                    {snapshot.checks.length ? 'No checks match this filter.' : 'No checks reported for this commit.'}
+                      snapshot.checkedAt <= details.receivedAt
+                        ? { ...check, ...detail.state }
+                        : check
+                    ),
+                    filter
+                  )
+                : [];
+              return (
+                <section key={member.url} className="checks-pr-group">
+                  <h2>
+                    #{member.number} <span>{member.title}</span>
+                  </h2>
+                  <p className="checks-revision">
+                    {snapshot ? (
+                      <>
+                        {snapshot.headSha.slice(0, 7)} · Checked {timeAgo(new Date(snapshot.checkedAt).toISOString())}
+                      </>
+                    ) : busy ? (
+                      'Loading checks…'
+                    ) : (
+                      'Checks not loaded'
+                    )}
                   </p>
-                )}
-              </section>
-            );
-          })}
-        </nav>
-        <div className="check-detail" aria-label="Selected check details">
+                  {errors[member.url] && (
+                    <p className="checks-notice checks-sync-status" role="status">
+                      {snapshot ? 'Showing saved results. ' : ''}
+                      {errors[member.url]}{' '}
+                      <button
+                        className="underline underline-offset-4"
+                        disabled={busy}
+                        onClick={() => refresh(member.url)}
+                      >
+                        Refresh this PR
+                      </button>
+                    </p>
+                  )}
+                  {snapshot?.warning && <p className="checks-notice">{snapshot.warning}</p>}
+                  {checks.map((check) => (
+                    <button
+                      className="check-row"
+                      key={check.id}
+                      aria-current={
+                        selected?.snapshot.url === member.url &&
+                        selected.check.id === check.id &&
+                        selected.snapshot.headSha === snapshot?.headSha
+                          ? 'true'
+                          : undefined
+                      }
+                      onClick={() => {
+                        if (snapshot) setSelected({ snapshot, check });
+                      }}
+                    >
+                      <CheckIcon
+                        check={
+                          snapshot && awaitingCheck(snapshot, check)
+                            ? { ...check, status: 'queued', conclusion: null }
+                            : check
+                        }
+                      />
+                      <span className="check-row-content">
+                        <strong>{check.name}</strong>
+                        <small>
+                          {check.provider} ·{' '}
+                          <span
+                            className={`check-${snapshot && awaitingCheck(snapshot, check) ? 'running' : checkGroup(check)}`}
+                          >
+                            {snapshot && awaitingCheck(snapshot, check) ? 'Rerun requested' : checkLabel(check)}
+                          </span>
+                        </small>
+                      </span>
+                      <span className="check-duration">
+                        {snapshot && awaitingCheck(snapshot, check) ? '' : checkDuration(check)}
+                      </span>
+                    </button>
+                  ))}
+                  {snapshot && !checks.length && (
+                    <p className="checks-notice">
+                      {snapshot.checks.length ? 'No checks match this filter.' : 'No checks reported for this commit.'}
+                    </p>
+                  )}
+                </section>
+              );
+            })}
+          </nav>
+        )}
+        <div
+          ref={detailPane}
+          tabIndex={-1}
+          role="region"
+          hidden={view === 'graph' && !graphDetails}
+          className="check-detail"
+          aria-label="Selected check details"
+        >
+          {view === 'graph' && (
+            <Button
+              className="workflow-close-detail"
+              size="sm"
+              variant="ghost"
+              aria-label="Close job details"
+              onClick={() => setGraphDetails(false)}
+            >
+              <X size={16} /> Close
+            </Button>
+          )}
           {!selected || !displayedCheck ? (
             <div className="checks-empty">
               <CircleCheck size={24} />

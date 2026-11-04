@@ -1,3 +1,4 @@
+import { workflowMocks } from './workflow-graph';
 import type { CheckDetails, CheckSelection, CheckTarget, PrChecks, PrCheck } from '../../lib/pr-checks';
 export function checksMocks() {
   let newer = false;
@@ -51,6 +52,7 @@ export function checksMocks() {
     },
   });
   return {
+    ...workflowMocks(snapshots),
     getPrChecks,
     getCheckDetails: (input: CheckSelection): Promise<CheckDetails> =>
       Promise.resolve({

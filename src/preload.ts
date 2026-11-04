@@ -1,3 +1,4 @@
+import type { WorkflowRuns, WorkflowGraph, WorkflowGraphInput } from '../lib/workflow-graph';
 import type { GitHubSyncInterest, GitHubSyncEvent } from '../lib/github-sync';
 import type { OnboardingState, SetupDraft } from '../lib/onboarding';
 import type { HarnessEnvironment, EnvironmentVariable } from '../lib/harness-environment';
@@ -232,6 +233,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   searchPullRequests: (): Promise<PrSearchResult[]> => ipcRenderer.invoke('search-pull-requests'),
   searchRepos: (query: string): Promise<RepoSearchResult[]> => ipcRenderer.invoke('search-repos', query),
   reRenderHunks: (review: ReviewGuide): Promise<ReviewGuide> => ipcRenderer.invoke('re-render-hunks', review),
+  getWorkflowRuns: (target: CheckTarget, options?: ChecksOptions): Promise<WorkflowRuns | undefined> => ipcRenderer.invoke('workflow-runs', target, options),
+  getWorkflowGraph: (input: WorkflowGraphInput, options?: ChecksOptions): Promise<WorkflowGraph | undefined> => ipcRenderer.invoke('workflow-graph', input, options),
   getPrChecks: (target: CheckTarget, options?: ChecksOptions): Promise<PrChecks | undefined> => ipcRenderer.invoke('pr-checks', target, options),
   getCheckDetails: (target: CheckSelection, options?: { force?: boolean }): Promise<CheckDetails> => ipcRenderer.invoke('check-details', target, options),
   getCheckLog: (target: CheckSelection): Promise<CheckLog> => ipcRenderer.invoke('check-log', target),

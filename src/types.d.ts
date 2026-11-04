@@ -1,3 +1,4 @@
+import type { WorkflowRuns, WorkflowGraph, WorkflowGraphInput } from '../lib/workflow-graph';
 import type { GitHubSyncInterest, GitHubSyncEvent } from '../lib/github-sync';
 import type { OnboardingState, SetupDraft } from '../lib/onboarding';
 import type { HarnessEnvironment, EnvironmentVariable } from '../lib/harness-environment';
@@ -149,6 +150,8 @@ declare global {
       searchPullRequests: () => Promise<PrSearchResult[]>;
       searchRepos: (query: string) => Promise<RepoSearchResult[]>;
       reRenderHunks: (review: ReviewGuide) => Promise<ReviewGuide>;
+      getWorkflowRuns: (target: CheckTarget, options?: ChecksOptions) => Promise<WorkflowRuns | undefined>;
+      getWorkflowGraph: (input: WorkflowGraphInput, options?: ChecksOptions) => Promise<WorkflowGraph | undefined>;
       getPrChecks: (target: CheckTarget, options?: ChecksOptions) => Promise<PrChecks | undefined>;
       getCheckDetails: (target: CheckSelection, options?: { force?: boolean }) => Promise<CheckDetails>;
       getCheckLog: (target: CheckSelection) => Promise<CheckLog>;

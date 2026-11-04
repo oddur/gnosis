@@ -1,3 +1,5 @@
+import { readWorkflowRuns, readWorkflowGraph } from './workflow-graph-service';
+import type { WorkflowGraphInput } from '../lib/workflow-graph';
 import { createCheckDetailsPreloader } from './check-details-preloader';
 import { normalizeRepositorySettings, normalizeBriefingLimit } from '../lib/repository-settings';
 import { normalizeEffort } from '../lib/effort';
@@ -3006,6 +3008,8 @@ ipcMain.handle('pr-checks', (_event, input: CheckTarget, options: ChecksOptions 
     const value = await readPrChecks(client, { url: input.url, headSha: metadata.headSha }, options);
     return value && withCachedCheckDetails(client, value);
   })));
+ipcMain.handle('workflow-runs', (_event, input: CheckTarget, options?: ChecksOptions) => withGitHubPriority(options?.background ? 'foreground' : 'interactive', () => checkAccount(client => readWorkflowRuns(client, input, options))));
+ipcMain.handle('workflow-graph', (_event, input: WorkflowGraphInput, options?: ChecksOptions) => withGitHubPriority(options?.background ? 'foreground' : 'interactive', () => checkAccount(client => readWorkflowGraph(client, input, options))));
 handleInteractive('check-details', (_event, input: CheckSelection, options?: { force?: boolean }) => checkAccount(client => readCheckDetails(client, input, { force: options?.force === true })));
 handleInteractive('check-log', (_event, input: CheckSelection) => checkAccount(client => readCheckLog(client, input)));
 handleInteractive('rerun-checks', async (_event, input: CheckSelection & { mode: 'failed' | 'all' }) => {
