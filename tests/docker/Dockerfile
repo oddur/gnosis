@@ -10,6 +10,8 @@ RUN apt-get update \
     fonts-liberation fonts-dejavu-core fonts-noto-color-emoji \
   && rm -rf /var/lib/apt/lists/*
 
+# Tells the browser-check scripts they may open windows here.
+ENV GNOSIS_IN_DOCKER=1
 WORKDIR /app
 RUN chown node:node /app
 USER node

@@ -9,6 +9,9 @@ import path from 'node:path';
 import process from 'node:process';
 import electron from 'electron';
 import { setTimeout, clearTimeout } from 'node:timers';
+import { requireBrowserTestEnvironment } from './browser-test-host.mjs';
+
+requireBrowserTestEnvironment();
 const prBadgePreviews = process.argv.includes('--pr-badge-previews');
 const fileFilters = process.argv.includes('--file-filters');
 const navigationHistory = process.argv.includes('--navigation-history') || process.argv.includes('--navigation-swipe');

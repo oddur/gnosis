@@ -84,14 +84,14 @@ task pre-commit:run
 
 ## Browser checks
 
-The Electron browser checks (`test:explainer`, `test:workbench`, `test:diagrams`) open real windows and take focus. To run them without touching your screen, use Docker. They then run under Xvfb on Linux, as in the Linux CI job:
+The Electron browser checks (`test:explainer`, `test:workbench`, `test:diagrams`, `test:electron-smoke`) open real windows and take focus, so on a dev machine they refuse to start and print the Docker command to use. In Docker they run under Xvfb on Linux, as in the Linux CI job:
 
 ```bash
 npm run test:browser:docker                       # full suite, as on CI
 npm run test:browser:docker -- --review-evidence  # a single workbench check
 ```
 
-Set `GNOSIS_DOCKER_PLATFORM=linux/amd64` to match CI's architecture on Apple Silicon (slower, emulated).
+Set `GNOSIS_DOCKER_PLATFORM=linux/amd64` to match CI's architecture on Apple Silicon (slower, emulated). Set `GNOSIS_BROWSER_ON_HOST=1` to run a check on your own machine, for example the macOS-only `--navigation-swipe` check.
 
 ## Code style
 

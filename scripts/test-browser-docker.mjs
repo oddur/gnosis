@@ -11,6 +11,8 @@ import process from 'node:process';
 const image = 'gnosis-browser-tests';
 const platform = process.env.GNOSIS_DOCKER_PLATFORM ? ['--platform', process.env.GNOSIS_DOCKER_PLATFORM] : [];
 const args = process.argv.slice(2);
+// `node scripts/test-browser-docker.mjs -- …` keeps the separator that npm would strip.
+if (args[0] === '--') args.shift();
 const commands = !args.length
   ? ['npm run test:explainer', 'npm run test:workbench', 'npm run test:diagrams']
   : args[0].startsWith('--')

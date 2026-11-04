@@ -7,6 +7,9 @@ import path from 'node:path';
 import process from 'node:process';
 import electron from 'electron';
 import { setTimeout, clearTimeout } from 'node:timers';
+import { requireBrowserTestEnvironment } from './browser-test-host.mjs';
+
+requireBrowserTestEnvironment();
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-browser-test-'));
 try {
