@@ -73,6 +73,7 @@ export function nextAttentionJob(
 export interface WorkflowViewState {
   viewports?: Record<string, { x: number; y: number; zoom: number }>;
   expandedAnnotations?: string[];
+  expandedSteps?: string[];
   workflowsOpen?: boolean;
   memberUrl?: string;
   runId?: number;

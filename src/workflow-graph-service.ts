@@ -1,4 +1,4 @@
-import { workflowGrouping } from '../lib/workflow-graph';
+import { workflowGrouping, withWorkflowSteps } from '../lib/workflow-graph';
 import { stageWorkflow, focusWorkflow } from './workflow-stages';
 import { compactWorkflow } from './workflow-visibility';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -397,6 +397,7 @@ async function readGraph(
   const stages = stageWorkflow(assembled.nodes, assembled.edges, expanded, workflowGrouping(input.grouping));
   const focused = focusWorkflow(stages.nodes, stages.edges, input.focusNodeId);
   const compact = compactWorkflow(focused.nodes, focused.edges, input);
+  compact.nodes = compact.nodes.map((node) => withWorkflowSteps(node, input.expandedSteps));
   // Status changes preserve layout unless a visibility group changes.
   const topology = createHash('sha256')
     .update(JSON.stringify([compact.nodes.map((n) => [n.id, n.height]), compact.edges.map((e) => e.id)]))

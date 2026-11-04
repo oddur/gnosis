@@ -145,3 +145,12 @@ Viewport fitting uses actual canvas bounds rather than delayed ResizeObserver st
 The empty canvas now centers a compact state with 24px minimum horizontal padding. A three-node SVG motif carries one subtle moving connection; reduced-motion mode uses a static connection. The status distinguishes finding workflow runs from loading jobs/definitions. After five seconds, a non-live elapsed timer appears beside “You can keep browsing.” Error and empty states are distinct, and zoom controls appear only when there are graph nodes.
 
 Rendered review covered light and dark 1280×800 and dark 760×640 captures (`loading-light.png`, `loading-dark.png`, `loading-compact-dark.png`). The workflow browser suite verifies spacing, animation, elapsed feedback, reduced motion, successful completion, and existing graph navigation. TypeScript and focused source lint pass.
+
+
+### Job-step lists (2026-11-04)
+
+Individual job nodes now include ordered step rows with familiar status icons and timing. Three-row previews follow the active step, then a failed step, then the latest completion. Show all steps expands the complete list and Show fewer steps restores the preview. Group summaries do not mix steps from several jobs. Full names and states remain available in titles and accessible text. The existing job header opens details.
+
+Step counts reserve node geometry before backend routing, and expansion uses the cache-only projection. Existing cached REST timestamps are normalized for duration display without discarding the cache. Expansion state survives List detours within a workflow session and resets when choosing a different workflow.
+
+Validation: 51 workflow unit tests, TypeScript, focused source lint, and the Docker workflow browser suite passed. Browser checks cover six visible expanded rows and durations, no new network read on expansion, collapse, and existing graph navigation/layout regressions. Inspected `job-steps-expanded-light.png` and `job-steps-expanded-dark.png` in `.impeccable/review/workflow-graph/`. Live local instance launched from `/Users/oddur/gnosis-job-steps`. Long names truncate within the compact 244px node and retain full title text; very long expanded lists increase graph height.

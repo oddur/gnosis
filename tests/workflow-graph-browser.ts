@@ -72,14 +72,14 @@ void app
       );
       await wait('window.checksFixture.snapshots.size > 0');
       const routes: Record<string, Awaited<ReturnType<typeof layoutWorkflow>>> = {};
-      for (const mode of ['collapsed', 'expanded', 'annotations']) {
+      for (const mode of ['collapsed', 'expanded', 'annotations', 'steps']) {
         const graph = await js<WorkflowGraph>(
-          `(async()=>{const snapshot=[...window.checksFixture.snapshots.values()][0];return window.electronAPI.getWorkflowGraph({...snapshot,runId:9,expandedAnnotations:${mode === 'annotations' ? "['types']" : '[]'},expanded:${mode === 'expanded' ? "['test']" : '[]'}})})()`
+          `(async()=>{const snapshot=[...window.checksFixture.snapshots.values()][0];return window.electronAPI.getWorkflowGraph({...snapshot,runId:9,expandedSteps:${mode === 'steps' ? "['lint']" : '[]'},expandedAnnotations:${mode === 'annotations' ? "['types']" : '[]'},expanded:${mode === 'expanded' ? "['test']" : '[]'}})})()`
         );
         routes[mode] = await layoutWorkflow(graph.nodes, graph.edges);
       }
       await js(
-        `(()=>{const routes=${JSON.stringify(routes)},read=window.electronAPI.getWorkflowGraph;window.electronAPI.getWorkflowGraph=async(input,options)=>{const graph=await read(input,options),route=routes[input.expandedAnnotations?.includes('types')?'annotations':input.expanded?.includes('test')?'expanded':'collapsed'];return {...graph,nodes:graph.nodes.map(n=>({...n,...route.nodes.find(r=>r.id===n.id)})),edges:graph.edges.map(e=>({...e,points:route.edges.find(r=>r.id===e.id)?.points}))};};})()`
+        `(()=>{const routes=${JSON.stringify(routes)},read=window.electronAPI.getWorkflowGraph;window.electronAPI.getWorkflowGraph=async(input,options)=>{const graph=await read(input,options),route=routes[input.expandedSteps?.includes('lint')?'steps':input.expandedAnnotations?.includes('types')?'annotations':input.expanded?.includes('test')?'expanded':'collapsed'];return {...graph,nodes:graph.nodes.map(n=>({...n,...route.nodes.find(r=>r.id===n.id)})),edges:graph.edges.map(e=>({...e,points:route.edges.find(r=>r.id===e.id)?.points}))};};})()`
       );
     };
     try {
@@ -164,6 +164,29 @@ void app
       assert.ok(await js(`!document.body.textContent.includes('View failure annotation')`));
       await js(`document.querySelector('.workflow-inline-annotation p').click()`);
       assert.ok(await js(`!!document.querySelector('.check-detail[hidden]')`), 'Annotation text does not open details');
+      assert.equal(await js("document.querySelectorAll('[data-id=lint] .workflow-job-steps li').length"), 3);
+      await js(
+        "window.beforeStepRequests=window.graphColdCalls.filter(c=>!c.options?.cachedOnly).length;document.querySelector('[data-id=lint] .workflow-steps-toggle').click()"
+      );
+      await wait("document.querySelectorAll('[data-id=lint] .workflow-job-steps li').length===6");
+      assert.equal(
+        await js('window.graphColdCalls.filter(c=>!c.options?.cachedOnly).length'),
+        await js('window.beforeStepRequests'),
+        'Expanding steps only projects cached data'
+      );
+      assert.ok(
+        await js(
+          `(()=>{const card=document.querySelector('[data-id=lint] .workflow-job'), rows=[...card.querySelectorAll('.workflow-job-steps li')], last=rows.at(-1).getBoundingClientRect();return last.bottom<=card.getBoundingClientRect().bottom && rows.every(row=>row.textContent.includes('12s'))})()`
+        ),
+        'All rows and durations fit within the expanded node'
+      );
+      await capture('job-steps-expanded-light');
+      await js("document.documentElement.classList.add('dark')");
+      await capture('job-steps-expanded-dark');
+      await js(
+        "document.documentElement.classList.remove('dark');document.querySelector('[data-id=lint] .workflow-steps-toggle').click()"
+      );
+      await wait("document.querySelectorAll('[data-id=lint] .workflow-job-steps li').length===3");
       await capture('failure-annotation-light');
       await js(
         `(()=>{const card=document.querySelector('[data-id="types"] .workflow-job');const r=card.getBoundingClientRect();card.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,button:2,clientX:r.left+30,clientY:r.top+30}));})()`

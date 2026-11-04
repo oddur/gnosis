@@ -4170,3 +4170,18 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .workflow-annotation-toggle { display:flex; flex-shrink:0; align-items:center; gap:4px; width:fit-content; color:var(--foreground); text-decoration:underline; text-underline-offset:3px; }
 .workflow-job[data-annotations-expanded] .workflow-annotation-content { overflow:auto; }
 .check-detail-refresh { display:inline-flex; flex-shrink:0; margin-left:6px; color:var(--muted-foreground); }
+
+/* Step lists share the job card, with geometry reserved before graph layout. */
+.workflow-job[data-has-steps] { display:flex; flex-direction:column; }
+.workflow-job[data-has-steps] > .workflow-job-open { height:110px; flex-shrink:0; }
+.workflow-job-steps { flex-shrink:0; padding:0 12px 8px; border-top:1px solid var(--border); font-size:12px; }
+.workflow-steps-heading { display:flex; justify-content:space-between; align-items:center; height:24px; color:var(--muted-foreground); }
+.workflow-steps-heading > span { font-variant-numeric:tabular-nums; }
+.workflow-job-steps ol { list-style:none; margin:0; padding:0; }
+.workflow-job-steps li { display:flex; align-items:center; gap:6px; height:28px; }
+.workflow-job-steps li > svg { flex-shrink:0; }
+.workflow-step-name { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; color:var(--foreground); }
+.workflow-job-steps .check-skipped .workflow-step-name { color:var(--muted-foreground); }
+.workflow-step-duration { color:var(--muted-foreground); flex-shrink:0; font-variant-numeric:tabular-nums; }
+.workflow-steps-toggle { display:flex; align-items:center; justify-content:space-between; width:100%; height:30px; color:var(--muted-foreground); text-align:left; }
+.workflow-steps-toggle:hover { color:var(--foreground); }
