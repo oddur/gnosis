@@ -9,15 +9,6 @@ import type { QueueSignals } from '../lib/queue-signals';
 import { mergeReadiness } from '../lib/merge-readiness';
 import { ReadinessBadge, ReadinessCheckedAt } from './MergeReadiness';
 
-export function memberReadiness(
-  member: ReviewMember,
-  status?: PrStatus,
-  _error?: string,
-  signals?: QueueSignals
-): string {
-  return mergeReadiness(member, signals ?? status?.signals).label;
-}
-
 export function PrReadiness({
   member,
   status,

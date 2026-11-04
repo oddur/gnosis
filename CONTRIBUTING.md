@@ -82,6 +82,17 @@ To run all hooks against all files (not just staged ones):
 task pre-commit:run
 ```
 
+## Browser checks
+
+The Electron browser checks (`test:explainer`, `test:workbench`, `test:diagrams`, `test:electron-smoke`) open real windows and take focus, so on a dev machine they refuse to start and print the Docker command to use. In Docker they run under Xvfb on Linux, as in the Linux CI job:
+
+```bash
+npm run test:browser:docker                       # full suite, as on CI
+npm run test:browser:docker -- --review-evidence  # a single workbench check
+```
+
+Set `GNOSIS_DOCKER_PLATFORM=linux/amd64` to match CI's architecture on Apple Silicon (slower, emulated). Set `GNOSIS_BROWSER_ON_HOST=1` to run a check on your own machine, for example the macOS-only `--navigation-swipe` check.
+
 ## Code style
 
 - ESLint and Prettier handle formatting — pre-commit fixes it on commit, or run `task format` and `task lint:fix` manually

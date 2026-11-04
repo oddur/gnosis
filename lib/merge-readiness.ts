@@ -1,3 +1,4 @@
+import type { PrStatus } from './types';
 import { QUEUE_SIGNALS_TTL, type QueueSignals } from './queue-signals';
 import type { ReviewMember, ReviewSubject } from './workbench';
 
@@ -168,3 +169,13 @@ export function subjectReadiness(subject: ReviewSubject, signals: QueueSignals[]
     ],
   };
 }
+
+export function memberReadiness(
+  member: ReviewMember,
+  status?: PrStatus,
+  _error?: string,
+  signals?: QueueSignals
+): string {
+  return mergeReadiness(member, signals ?? status?.signals).label;
+}
+

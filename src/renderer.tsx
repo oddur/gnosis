@@ -1,3 +1,4 @@
+import { initializeChecksView } from '../lib/checks-view';
 import { initializeDiffHighlighter } from '../lib/diff-highlighter';
 import { initializeReviewState } from '../lib/renderer-review-state';
 import { createRoot } from 'react-dom/client';
@@ -36,6 +37,7 @@ async function start() {
       window.electronAPI.loadPreferences().catch(() => undefined),
     ]);
     initializeDiffHighlighter(preferences);
+    initializeChecksView(preferences);
     root.render(<App />);
   }
   catch (error) {

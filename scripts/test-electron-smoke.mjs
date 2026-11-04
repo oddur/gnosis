@@ -6,6 +6,9 @@ import path from 'node:path';
 import process from 'node:process';
 import { setTimeout, clearTimeout } from 'node:timers';
 import electron from 'electron';
+import { requireBrowserTestEnvironment } from './browser-test-host.mjs';
+
+requireBrowserTestEnvironment();
 
 const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'gnosis-electron-smoke-'));
 try {

@@ -1,7 +1,7 @@
 import { SearchableSelect } from './SearchableSelect';
 import { PrEntryActions, type PrGenerationActionsFor } from './PrEntryActions';
 import { PrDetails, type PrOverviewContent } from './PrDetails';
-import { memberReadiness } from './PrReadiness';
+import { memberReadiness } from '../lib/merge-readiness';
 import type { ReviewSubject } from '../lib/workbench';
 import type { PrStatus } from '../lib/types';
 import type { QueueSignals } from '../lib/queue-signals';

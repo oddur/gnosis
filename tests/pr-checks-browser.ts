@@ -91,6 +91,16 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.check-detail-header h2')?.textContent==='TypeScript'");
     assert.equal(await js("window.detailReads.filter(id=>['check:1','check:2'].includes(id)).length"), 0, 'Preloaded jobs render without a detail request');
     assert.equal(await js('window.detailLoadingFlashes'), 0, 'Switching preloaded jobs must not flash a loading state');
+    await js(
+      `(()=>{const read=window.electronAPI.getCheckDetails;window.resumeDetailRefresh=undefined;window.electronAPI.getCheckDetails=async(...args)=>{if(args[1]?.force && !window.resumeDetailRefresh)await new Promise(resolve=>window.resumeDetailRefresh=resolve);return read(...args)}})()`
+    );
+    await js(`document.querySelector('[aria-label="Refresh job steps"]').click()`);
+    await wait(`!!document.querySelector('.check-detail-refresh') && !!window.resumeDetailRefresh`);
+    assert.equal(await js('window.detailLoadingFlashes'), 0, 'Refreshing preserves cached output');
+    assert.ok(await js(`document.querySelector('.check-annotations').textContent.includes('reconnect callback')`));
+    await capture('cached-refresh-light');
+    await js(`window.resumeDetailRefresh()`);
+    await wait(`!document.querySelector('.check-detail-refresh')`);
     await js('window.detailObserver.disconnect()');
     await js("[...document.querySelectorAll('.check-row')].find(b=>b.textContent.includes('Lint')).click()");
     await wait(
