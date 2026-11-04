@@ -12,6 +12,8 @@ import { CommentMarkdown } from './CommentMarkdown';
 import { MarkdownCommentEditor } from './MarkdownCommentEditor';
 import { useEvidenceDiscussions } from '../lib/use-evidence-discussions';
 import {
+  feedbackOptionsKey,
+  isGitHubActionsFeedback,
   feedbackItems,
   feedbackKey,
   feedbackReadKey,
@@ -58,6 +60,9 @@ export function PrFeedbackView({
   const [selectedKey, setSelectedKey] = useSessionDraft<string | undefined>(`feedback-selection:${scope}`, undefined);
   const [prUrl, setPrUrl] = useState(initialPrUrl ?? '');
   const [, rerender] = useState(0);
+  const [savingOptions, setSavingOptions] = useState(false);
+  const [optionsError, setOptionsError] = useState('');
+  const hideGitHubActions = !account || readReviewState(feedbackOptionsKey(account)) !== false;
   const [readError, setReadError] = useState('');
   const [writeError, setWriteError] = useState('');
   const [requesting, setRequesting] = useState('');
@@ -80,7 +85,11 @@ export function PrFeedbackView({
   const all = subject.members
     .flatMap((member) => feedbackItems(member, discussions.values[member.url]))
     .sort((a, b) => feedbackActivity(b).localeCompare(feedbackActivity(a)));
-  const scoped = all.filter((item) => !prUrl || item.member.url === prUrl);
+  const scoped = all.filter(
+    (item) => (!prUrl || item.member.url === prUrl) && (!hideGitHubActions || !isGitHubActionsFeedback(item))
+  );
+  const hiddenActions =
+    hideGitHubActions && all.some((item) => (!prUrl || item.member.url === prUrl) && isGitHubActionsFeedback(item));
   const isUnread = (item: FeedbackItem) => {
     if (!account) return false;
     const fingerprint = feedbackFingerprint(item, account);
@@ -95,7 +104,7 @@ export function PrFeedbackView({
         feedbackKey(item) === selectedKey ||
         (filter === 'unread' ? isUnread(item) : item.thread && !item.thread.isResolved))
   );
-  const selected = all.find((item) => feedbackKey(item) === selectedKey);
+  const selected = scoped.find((item) => feedbackKey(item) === selectedKey);
   const virtual = useVirtualizer({
     count: shown.length,
     getScrollElement: () => list.current,
@@ -149,6 +158,20 @@ export function PrFeedbackView({
   function select(item: FeedbackItem) {
     setSelectedKey(feedbackKey(item));
     setWriteError('');
+  }
+  async function changeActionsFilter(hide: boolean) {
+    if (!account || savingOptions) return;
+    setSavingOptions(true);
+    setOptionsError('');
+    try {
+      await writeReviewState(feedbackOptionsKey(account), hide);
+      if (hide && selected && isGitHubActionsFeedback(selected)) setSelectedKey(undefined);
+      rerender((n) => n + 1);
+    } catch {
+      setOptionsError('Could not save the GitHub Actions filter. Try again.');
+    } finally {
+      setSavingOptions(false);
+    }
   }
   async function markUnread() {
     if (!selected || !account) return;
@@ -204,6 +227,11 @@ export function PrFeedbackView({
   return (
     <ReviewDraftScope.Provider value={`feedback:${account}`}>
       <div className="feedback-workspace" ref={root} data-conversation-open={!!selected}>
+        {optionsError && (
+          <div className="feedback-notice" role="alert">
+            {optionsError}
+          </div>
+        )}
         <div className="feedback-toolbar">
           <div className="feedback-filters" role="group" aria-label="Filter feedback">
             {(['all', 'unread', 'unresolved'] as const).map((value) => (
@@ -242,6 +270,18 @@ export function PrFeedbackView({
               }}
             />
           )}
+          <label
+            className="feedback-actions-filter"
+            title="Hide GitHub Actions comments. Conversations with human replies stay visible."
+          >
+            <input
+              type="checkbox"
+              checked={hideGitHubActions}
+              disabled={savingOptions}
+              onChange={(event) => void changeActionsFilter(event.target.checked)}
+            />
+            Hide GitHub Actions
+          </label>
           {reviewers.length > 0 && (
             <Popover.Root>
               <Popover.Trigger asChild>
@@ -477,16 +517,20 @@ export function PrFeedbackView({
                           ? 'No unread feedback'
                           : filter === 'unresolved'
                             ? 'No unresolved threads'
-                            : 'No feedback yet'}
+                            : hiddenActions
+                              ? 'No matching feedback'
+                              : 'No feedback yet'}
                     </h2>
                     <p>
                       {failures.length
                         ? 'Some PRs are unavailable. Retry to check their feedback.'
                         : snapshotMissing.length
                           ? 'Some PRs are still loading.'
-                          : filter === 'all'
-                            ? 'GitHub comments and reviews will appear here.'
-                            : 'Choose All to see the other conversations.'}
+                          : hiddenActions
+                            ? 'GitHub Actions comments are hidden. Clear Hide GitHub Actions to include them.'
+                            : filter === 'all'
+                              ? 'GitHub comments and reviews will appear here.'
+                              : 'Choose All to see the other conversations.'}
                     </p>
                   </>
                 )}

@@ -9,6 +9,8 @@ import assert from 'node:assert/strict';
 import type { Octokit } from '@octokit/rest';
 import { createReviewThreadService } from '../src/review-thread-service';
 import {
+  feedbackOptionsKey,
+  isGitHubActionsFeedback,
   feedbackItems,
   feedbackFingerprint,
   feedbackReadKey,
@@ -55,6 +57,7 @@ function harness({ paginate = false, denied = false, requested = false, approved
     reads: string[] = [];
   const client = {
     request: async (_route: string, input: { query: string; variables: Record<string, unknown> }) => {
+      await Promise.resolve();
       reads.push(input.query);
       const pr = input.query.includes('query FeedbackPage')
         ? { comments: page([{ ...comment, id: 'C2' }]) }
@@ -72,11 +75,13 @@ function harness({ paginate = false, denied = false, requested = false, approved
     },
     issues: {
       createComment: async (input: unknown) => {
+        await Promise.resolve();
         writes.push(input);
       },
     },
     pulls: {
       requestReviewers: async (input: unknown) => {
+        await Promise.resolve();
         writes.push(input);
       },
     },
@@ -120,7 +125,8 @@ void test('review requests refresh permissions and decisions, target one reviewe
   assert.equal(already.writes.length, 0);
 });
 void test('unread is account/source scoped, changes on incoming edits/replies but not own replies', () => {
-  const item = feedbackItems(member, snapshot).find((i) => i.kind === 'thread')!;
+  const item = feedbackItems(member, snapshot).find((i) => i.kind === 'thread');
+  assert.ok(item);
   const first = feedbackFingerprint(item, 'oddur');
   item.comments = [...item.comments, { ...comment, id: 'own', author: { login: 'oddur', avatarUrl: '' } }];
   assert.equal(feedbackFingerprint(item, 'oddur'), first);
@@ -131,19 +137,22 @@ void test('unread is account/source scoped, changes on incoming edits/replies bu
     feedbackReadKey('oddur', item),
     feedbackReadKey('oddur', { ...item, member: { ...member, url: url + '2' } })
   );
-  const summary = feedbackItems(member, snapshot).find((i) => i.kind === 'review')!;
+  const summary = feedbackItems(member, snapshot).find((i) => i.kind === 'review');
+  assert.ok(summary);
   assert.deepEqual(summary.relatedThreads, ['T1']);
 });
 void test('later approvals/dismissals supersede change requests without resolving code threads', () => {
   assert.equal(feedbackReviewers(snapshot)[0].unresolved, 1);
   const next = structuredClone(snapshot);
-  next.feedback!.reviews.push({ ...review, id: 'R2', state: 'APPROVED', submittedAt: '2026-11-02T10:00:00Z' });
+  assert.ok(next.feedback);
+  next.feedback.reviews.push({ ...review, id: 'R2', state: 'APPROVED', submittedAt: '2026-11-02T10:00:00Z' });
   assert.equal(feedbackReviewers(next).length, 0);
   assert.equal(next.threads[0].isResolved, false);
 });
 
 void test('stack-wide activity ordering includes replies and edits without losing source identity', () => {
-  const first = feedbackItems(member, snapshot).find((item) => item.kind === 'thread')!;
+  const first = feedbackItems(member, snapshot).find((item) => item.kind === 'thread');
+  assert.ok(first);
   const second = {
     ...first,
     member: { ...member, url: url + '2', number: 12 },
@@ -182,4 +191,18 @@ void test('disk hydration displays immediately without discarding an in-flight n
     if (original) Object.defineProperty(globalThis, 'window', original);
     else Reflect.deleteProperty(globalThis, 'window');
   }
+});
+
+void test('GitHub Actions filter hides either login spelling but keeps human and unknown-author replies', () => {
+  const item = feedbackItems(member, snapshot)[0];
+  for (const login of ['github-actions', 'github-actions[bot]', 'GitHub-Actions[BOT]']) {
+    const bot = { ...comment, author: { login, avatarUrl: '' } };
+    assert.equal(isGitHubActionsFeedback({ ...item, comments: [bot] }), true);
+    assert.equal(isGitHubActionsFeedback({ ...item, comments: [bot, comment] }), false);
+    assert.equal(isGitHubActionsFeedback({ ...item, comments: [bot, { ...comment, author: null }] }), false);
+  }
+  assert.equal(isGitHubActionsFeedback({ ...item, comments: [] }), false);
+  assert.equal(isGitHubActionsFeedback({ ...item, comments: [comment] }), false);
+  assert.equal(feedbackOptionsKey('ODDUR'), feedbackOptionsKey('oddur'));
+  assert.notEqual(feedbackOptionsKey('maya'), feedbackOptionsKey('oddur'));
 });

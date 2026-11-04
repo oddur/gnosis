@@ -84,3 +84,10 @@ export const feedbackActivity = (item: FeedbackItem) =>
     const time = comment.updatedAt ?? comment.createdAt;
     return time > latest ? time : latest;
   }, '');
+
+/** Hide only automation-only conversations; never discard a human or unknown-author reply. */
+export const isGitHubActionsFeedback = (item: FeedbackItem) =>
+  item.comments.length > 0 &&
+  item.comments.every((comment) => /^github-actions(?:\[bot\])?$/i.test(comment.author?.login ?? ''));
+export const feedbackOptionsKey = (account: string) =>
+  `gnosis-feedback-options:v1:${encodeURIComponent(account.toLowerCase())}`;

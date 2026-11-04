@@ -22,7 +22,7 @@ void app.whenReady().then(async () => {
       if (await js(code)) return;
       await new Promise((r) => setTimeout(r, 40));
     }
-    throw Error(`Timeout: ${code}\n${errors.join('\n')}\n${await js('document.body.innerText.slice(-6000)')}`);
+    throw Error(`Timeout: ${code}\n${errors.join('\n')}\n${await js<string>('document.body.innerText.slice(-6000)')}`);
   };
   const click = (label: string) =>
     js(
@@ -46,6 +46,7 @@ void app.whenReady().then(async () => {
         const t={id:'t-'+m.number,path:'src/uploads/confirm.ts',line:42,startLine:null,diffSide:'RIGHT',isResolved:false,isOutdated:index===1,viewerCanResolve:true,viewerCanUnresolve:false,comments:[{...c,id:'tc-'+m.number,diffHunk:'@@ -38,5 +38,6 @@\n const pending = await uploads.find(id);\n-if (pending.owner === owner) {\n+if (pending.owner === owner &&\n+    pending.generation === generation) {\n   await uploads.confirm(id);\n }',pullRequestReview:{id:'r-'+m.number},viewerCanUpdate:false,viewerCanDelete:false}]};
         window.feedbackData.set(m.url,{headSha:m.headSha,baseSha:m.baseSha,checkedAt:Date.now(),threads:[t],feedback:{comments:[{...c,body:'The migration is safe to run before this deploy. Can you add the rollback command to the PR description?'}],reviews:[{...c,id:'r-'+m.number,state:'CHANGES_REQUESTED',submittedAt:stamp,body:'The new upload path is easier to follow. One correctness issue remains in confirmation.\n\n- Keep the generation check before committing.\n- Return a conflict if the pending owner changed.'}],requestedReviewers:[],viewerCanUpdate:true,state:'OPEN'}});
       }
+      for(const data of window.feedbackData.values())data.feedback.comments.push({...data.feedback.comments[0],id:'actions-'+data.feedback.comments[0].id,body:'Client/server tests passed',author:{login:'github-actions[bot]',avatarUrl:''}});
       window.electronAPI.getCachedReviewThreads=async url=>structuredClone(window.feedbackData.get(url));
       window.electronAPI.getReviewThreads=async url=>{window.feedbackReads++;if(window.failFeedback)throw Error('GitHub is temporarily unavailable');return structuredClone(window.feedbackData.get(url)??{headSha:'',baseSha:'',threads:[],feedback:{comments:[],reviews:[],requestedReviewers:[],viewerCanUpdate:false,state:'OPEN'}})};
       window.electronAPI.reviewThreadAction=async req=>{if(window.failFeedbackWrite)throw Error('Could not save to GitHub');window.feedbackWrites.push(req);const t=window.feedbackData.get(req.prUrl).threads.find(t=>t.id===req.threadId);if(req.action==='reply')t.comments.push({...t.comments[0],id:'reply-'+Date.now(),body:req.body,author:{login:'oddur',avatarUrl:''},createdAt:new Date().toISOString()});else {t.isResolved=req.action==='resolve';t.viewerCanResolve=!t.isResolved;t.viewerCanUnresolve=t.isResolved;}return structuredClone(t)};
@@ -63,6 +64,18 @@ void app.whenReady().then(async () => {
       await js("document.querySelectorAll('.feedback-row.is-unread').length"),
       9,
       'Opening the tab must not read all conversations'
+    );
+    assert.equal(await js("document.querySelector('.feedback-actions-filter input').checked"), true);
+    await js("document.querySelector('.feedback-actions-filter input').click()");
+    await wait("document.querySelector('.feedback-filters button').textContent.trim()==='All 12'");
+    await click('Summary');
+    await click('Feedback');
+    await wait("document.querySelector('.feedback-actions-filter input')?.checked===false");
+    await js('document.querySelector(\'[data-feedback-id="actions-c-120"]\').click()');
+    await wait("document.querySelector('.feedback-conversation')?.textContent.includes('Client/server tests passed')");
+    await js("document.querySelector('.feedback-actions-filter input').click()");
+    await wait(
+      "document.querySelector('.feedback-filters button').textContent.trim()==='All 9' && document.querySelector('.feedback-workspace').dataset.conversationOpen==='false'"
     );
     await capture('stack-list-light');
     await js('document.querySelector(\'[data-feedback-id="t-120"]\').click()');
