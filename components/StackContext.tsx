@@ -1,3 +1,4 @@
+import { SubjectIcon } from './SubjectIcon';
 import { StackDependencyChain } from './StackDependencyChain';
 import { useCachedQueueSignals } from '../lib/use-queue-signals';
 import type { ReviewSubject } from '../lib/workbench';
@@ -24,6 +25,7 @@ export function StackContext({
   return (
     <details className={`stack-context ${compact ? 'stack-context-compact' : ''}`}>
       <summary>
+        <SubjectIcon kind="stack" />
         {compact ? (
           `Stack · ${subject.members.length} PRs`
         ) : (

@@ -613,7 +613,7 @@ export function PrFileInspection({
             triggerLabel="Comment in PR…"
             popupBoundary="viewport"
             options={commentSources.map((s) => ({
-              value: s.metadata.url,
+              value: s.metadata.url, kind: 'pr' as const,
               label: `#${s.metadata.url.split('/').pop()} · ${s.metadata.title}`,
             }))}
             onValueChange={(url) => onOpenSource?.(url, combinedSourcePath(url))}

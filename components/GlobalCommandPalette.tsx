@@ -8,6 +8,7 @@ import {
   Command as CommandIcon,
   FileCode2,
   GitBranch,
+  Layers,
   GitPullRequest,
   Loader2,
   Search,
@@ -27,7 +28,7 @@ import type { PrSearchResult } from '../lib/types';
 
 const icons = {
   pr: GitPullRequest,
-  stack: GitBranch,
+  stack: Layers,
   briefing: Sparkles,
   topic: Sparkles,
   file: FileCode2,

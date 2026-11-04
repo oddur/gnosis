@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useSyncExternalStore } from 'react';
 import { DropdownMenu } from 'radix-ui';
-import { Clock, GitBranch, ListFilter, BookOpen } from 'lucide-react';
+import { Clock, Layers, ListFilter, BookOpen } from 'lucide-react';
 import type { RecentlyViewedStore, RecentVisit } from '../lib/recently-viewed';
 import { PrStateIcon } from './QueueMetadata';
 
@@ -70,7 +70,7 @@ function HistoryMenu({ store, open }: HistoryContext) {
                   >
                     <span className="recent-history-label">{entry.label}</span>
                     {subject?.kind === 'stack' ? (
-                      <GitBranch size={16} aria-label="PR stack" />
+                      <Layers size={16} aria-label="PR stack" />
                     ) : member ? (
                       <PrStateIcon member={member} />
                     ) : entry.location.page === 'review' ? (

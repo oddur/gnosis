@@ -1,3 +1,4 @@
+import { SubjectIcon } from './SubjectIcon';
 import { Fragment, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Popover } from 'radix-ui';
@@ -19,11 +20,11 @@ function Segment({ crumb, current = false }: { crumb: ReviewCrumb; current?: boo
     <>
       {crumb.navigate ? (
         <BreadcrumbLink render={<button type="button" onClick={crumb.navigate} title={crumb.title ?? crumb.label} />}>
-          {crumb.label}
+          {crumb.kind && <SubjectIcon kind={crumb.kind} />}{crumb.label}
         </BreadcrumbLink>
       ) : !picker ? (
         <BreadcrumbPage title={crumb.title ?? crumb.label} aria-current={current ? 'page' : undefined}>
-          {crumb.label}
+          {crumb.kind && <SubjectIcon kind={crumb.kind} />}{crumb.label}
         </BreadcrumbPage>
       ) : null}
       {picker && (
@@ -32,7 +33,7 @@ function Segment({ crumb, current = false }: { crumb: ReviewCrumb; current?: boo
           value={crumb.value ?? ''}
           options={
             crumb.value && !crumb.options?.some((option) => option.value === crumb.value)
-              ? [{ value: crumb.value, label: crumb.title ?? crumb.label }, ...(crumb.options ?? [])]
+              ? [{ value: crumb.value, label: crumb.title ?? crumb.label, kind: crumb.kind }, ...(crumb.options ?? [])]
               : (crumb.options ?? [])
           }
           onValueChange={(value) => crumb.select?.(value)}
@@ -72,7 +73,7 @@ export function ReviewBreadcrumbs({ base, scope }: { base: ReviewCrumb[]; scope:
       <ol ref={measure} className="breadcrumb-measure" aria-hidden="true" inert>
         {crumbs.map((crumb) => (
           <li key={crumb.id}>
-            <span>{crumb.label}</span>
+            {crumb.kind && <SubjectIcon kind={crumb.kind} />}<span>{crumb.label}</span>
             {crumb.select && <ChevronDown size={14} />}
             <ChevronRight size={14} />
           </li>

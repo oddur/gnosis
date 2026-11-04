@@ -1,3 +1,4 @@
+import { SubjectIcon } from './SubjectIcon';
 import { RepositoryBadge, PrBadge } from './EntityBadge';
 import { GitHubAuthor } from './GitHubAuthor';
 import { sourceForPath } from '../lib/workbench';
@@ -44,7 +45,7 @@ export function WorkbenchOverview({
           {reviewed.size}/{review.slides.length} topics reviewed
         </span>
       </div>
-      {!embedded && <h1>{review.prTitle}</h1>}
+      {!embedded && <h1>{!review.prUrl.startsWith('local:') && <SubjectIcon kind={subject?.kind === 'stack' ? 'stack' : 'pr'} />}{review.prTitle}</h1>}
       {!embedded && (subject || review.prDescription) && (
         <div className="pr-overview-switch" aria-label="Overview content">
           <button aria-pressed={!showDetails} onClick={() => setShowDetails(false)}>

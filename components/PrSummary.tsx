@@ -1,3 +1,4 @@
+import { SubjectIcon } from './SubjectIcon';
 import { stackMergePlan } from '../lib/stack-merge-plan';
 import { ReviewEvidence } from './ReviewEvidence';
 import { StackChecksFreshness } from './StackMergePlan';
@@ -332,8 +333,8 @@ function PrSummaryContent({
           <div className="pr-summary-toolbar-inner">
             <ReviewBreadcrumbs scope={tab} base={[
               { id: 'origin', label: navigation.viewName, navigate: () => { remember(); (onQueue ?? onBack)(); } },
-              ...(parentStack ? [{ id: 'parent-stack', label: parentStack.title, title: 'Stack', navigate: () => changeScope(parentStack.id) }] : []),
-              { id: 'subject', label: stacked ? `Stack · ${item.subject.title}` : `${first.repo} #${first.number}`,
+              ...(parentStack ? [{ id: 'parent-stack', kind: 'stack' as const, label: parentStack.title, title: 'Stack', navigate: () => changeScope(parentStack.id) }] : []),
+              { id: 'subject', kind: stacked ? 'stack' : 'pr', label: stacked ? item.subject.title : `${first.repo} #${first.number}`,
                 title: item.subject.title, navigate: () => { remember(); onTabChange('summary'); },
                 pickerLabel: parentStack ? 'PR in stack' : 'PR or stack', value: item.subject.id, options: parentStack ? stackScopeChoices(parentStack).slice(1) : navigation.choices,
                 select: id => { remember(); if (parentStack) changeScope(id); else navigation.select(id); } },
@@ -369,7 +370,7 @@ function PrSummaryContent({
           onRefresh={onRetryStatus}>{actions => <header className="pr-overview-heading">
           <div className="pr-title-with-star">
             <h1 ref={heading} tabIndex={-1}>
-              {item.subject.title}
+              <SubjectIcon kind={stacked ? 'stack' : 'pr'} />{item.subject.title}
             </h1>
             <PrStarMarker members={item.subject.members} starredUrls={starredUrls} />
             {stacked && onRenameStack && !renaming && <button className="workbench-icon" aria-label="Rename stack" title="Rename stack on this computer" onClick={() => { setName(item.subject.name ?? item.subject.title); setNameError(''); setRenaming(true); }}><Pencil size={15} /></button>}
@@ -423,7 +424,7 @@ function PrSummaryContent({
         </div>
         <div className="pr-workspace-navigation">
         {scopeStack && onScopeChange && <nav className="stack-scope-bar" aria-label="Stack navigation">
-          {parentStack ? <Button variant="ghost" size="sm" className="stack-back" aria-label="Back to stack" onClick={() => changeScope(parentStack.id)}><ChevronLeft size={15} aria-hidden="true" />Stack</Button> : <Layers size={15} aria-hidden="true" />}
+          {parentStack ? <Button variant="ghost" size="sm" className="stack-back" aria-label="Back to stack" onClick={() => changeScope(parentStack.id)}><ChevronLeft size={15} aria-hidden="true" /><SubjectIcon kind="stack" />Stack</Button> : null}
           <SearchableSelect label="Review scope" value={item.subject.id} triggerLabel={stacked ? 'Whole stack' : `#${first.number} · ${scopeStack.members.findIndex(m => m.url === first.url) + 1} of ${scopeStack.members.length}`} options={stackScopeChoices(scopeStack)} onValueChange={changeScope} popupBoundary="viewport" popupClassName="stack-scope-popup" />
         </nav>}
         <Tabs.List className="pr-overview-tabs" aria-label="PR overview">

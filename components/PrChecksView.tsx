@@ -1,3 +1,4 @@
+import { SubjectIcon } from './SubjectIcon';
 import { BulkCheckRerun } from './BulkCheckRerun';
 import { useEffect, useRef, useState } from 'react';
 import { CircleAlert, CircleCheck, CircleMinus, Clock3, ExternalLink, RefreshCw } from 'lucide-react';
@@ -301,7 +302,7 @@ export function PrChecksView({
             return (
               <section key={member.url} className="checks-pr-group">
                 <h2>
-                  #{member.number} <span>{member.title}</span>
+                  <SubjectIcon kind="pr" />#{member.number} <span>{member.title}</span>
                 </h2>
                 <p className="checks-revision">
                   {snapshot ? (

@@ -1,3 +1,4 @@
+import { SubjectIcon } from './SubjectIcon';
 import { GitBranch, ArrowRight, MessageSquare, CircleCheck, CircleX, Clock3 } from 'lucide-react';
 import type { PrBadgePreview } from '../lib/pr-badge-preview';
 import { prReviewStatus } from '../lib/pr-review-status';
@@ -18,7 +19,7 @@ export function PrBadgeTooltip({
   if (!preview)
     return (
       <div className="pr-badge-preview">
-        <strong>{title || 'Pull request'}</strong>
+        <strong><SubjectIcon kind="pr" />{title || 'Pull request'}</strong>
         <p>{failed ? 'Saved PR details are unavailable. Try again.' : 'No PR details saved yet.'}</p>
       </div>
     );
@@ -33,7 +34,7 @@ export function PrBadgeTooltip({
   const comments = signals?.comments ?? member.commentCount;
   return (
     <div className="pr-badge-preview">
-      <strong className="pr-badge-preview-title">{member.title}</strong>
+      <strong className="pr-badge-preview-title"><SubjectIcon kind="pr" />{member.title}</strong>
       <span className="pr-badge-preview-meta">
         By {member.author} · Updated {timeAgo(member.updatedAt)}
       </span>

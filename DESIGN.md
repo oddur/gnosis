@@ -279,3 +279,5 @@ Sidecar snippets illustrate the primitives without a React or Tailwind runtime; 
 - Don't rely on animation or color alone to explain status.
 
 Bulk check reruns are available in the stack overview and Checks toolbar. Group by workflow run; failed workflows rerun failed jobs and dependents, while any cancelled job makes the run use all jobs. Confirm the affected PRs and workflow scope. Exclude running workflows and external providers; retain accepted requests after partial failure so Retry only submits remaining workflows.
+
+Stack and PR names carry a leading identity icon in headings, navigation, selectors, and saved history: Lucide Layers for stacks and GitPullRequest for PRs. Preserve the existing status-aware PR icons in queue rows. Do not duplicate an icon when the adjacent PR badge already identifies the same row. Keep icons decorative, text searchable, and long option labels wrapping; local repository reviews are not labelled as PRs.

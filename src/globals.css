@@ -3929,3 +3929,13 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
   .pr-details-overview .pr-details-columns { grid-template-columns:minmax(0,1fr); gap:24px; }
   .pr-details-overview .pr-metadata { border-left:0; border-top:1px solid var(--border); padding:16px 0 0; }
 }
+
+/* Identity icons stay with names, while status keeps its own semantic color. */
+.subject-icon { display:inline-block; width:1em; height:1em; flex-shrink:0; vertical-align:-0.125em; margin-right:0.375em; color:var(--muted-foreground); }
+.subject-name { display:inline-flex; align-items:center; min-width:0; max-width:100%; }
+.subject-name > span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.subject-name > .subject-icon { width:14px; height:14px; }
+.stack-back .subject-icon { margin-right:0; }
+.breadcrumb-measure .subject-icon { margin-right:0; }
+.selection-option .subject-name { align-items:baseline; }
+.selection-option .subject-name > span { white-space:normal; overflow-wrap:anywhere; }

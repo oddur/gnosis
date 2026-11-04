@@ -1,3 +1,4 @@
+import { SubjectIcon } from './SubjectIcon';
 import { useId, useLayoutEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
@@ -293,7 +294,7 @@ export function ReviewEvidence({
               <div className="review-evidence-scope">
                 {subject.kind === 'stack' && (
                   <h3>
-                    <a href={member.url} target="_blank" rel="noopener noreferrer">
+                    <SubjectIcon kind="pr" /><a href={member.url} target="_blank" rel="noopener noreferrer">
                       #{member.number}
                     </a>{' '}
                     {member.title}

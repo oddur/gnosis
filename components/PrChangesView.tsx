@@ -420,12 +420,12 @@ export function PrChangesView({
       ...(!commit && !combined && subject.kind === 'stack' && entry
         ? [
             {
-              id: 'member',
+              id: 'member', kind: 'pr' as const,
               label: `Source #${entry.snapshot.url.split('/').pop()}`,
               pickerLabel: 'Source PR in stack changes',
               value: entry.snapshot.url,
               options: subject.members.map((member) => ({
-                value: member.url,
+                value: member.url, kind: 'pr' as const,
                 label: `#${member.number} · ${member.title}`,
               })),
               select: (url: string) => {
