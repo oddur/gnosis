@@ -3939,3 +3939,4 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .breadcrumb-measure .subject-icon { margin-right:0; }
 .selection-option .subject-name { align-items:baseline; }
 .selection-option .subject-name > span { white-space:normal; overflow-wrap:anywhere; }
+.subject-name > .file-type-icon { margin-right:0.375em; align-self:center; }

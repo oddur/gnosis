@@ -645,19 +645,19 @@ export function PrCommitsView({
             ...(selection && first && last
               ? [
                   {
-                    id: 'commit',
+                    id: 'commit', kind: 'commit' as const,
                     label:
                       chosen.length > 1
-                        ? `${short(first.sha)}…${short(last.sha)} (${chosen.length} commits)`
-                        : short(last.sha),
-                    title: chosen.map((commit) => commit.message.split('\n')[0]).join(' → '),
+                        ? `${chosen.length} commits: ${first.message.split('\n')[0]} → ${last.message.split('\n')[0]}`
+                        : last.message.split('\n')[0] || short(last.sha),
+                    title: chosen.map((commit) => `${commit.message.split('\n')[0]} · ${short(commit.sha)}`).join(' → '),
                     pickerLabel: 'Commit',
                     value: chosen.length > 1 ? 'current-range' : last.sha,
                     options: [
                       ...(chosen.length > 1
                         ? [
                             {
-                              value: 'current-range',
+                              value: 'current-range', kind: 'commit' as const,
                               label: `${chosen.length} commits · ${short(first.sha)}…${short(last.sha)}`,
                             },
                           ]
@@ -666,8 +666,8 @@ export function PrCommitsView({
                         .slice()
                         .reverse()
                         .map((commit) => ({
-                          value: commit.sha,
-                          label: `${short(commit.sha)} · ${commit.message.split('\n')[0]}`,
+                          value: commit.sha, kind: 'commit' as const,
+                          label: `${commit.message.split('\n')[0]} · ${short(commit.sha)}`,
                         })),
                     ],
                     select: (sha: string) => {

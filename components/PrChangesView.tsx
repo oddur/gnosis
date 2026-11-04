@@ -439,12 +439,13 @@ export function PrChangesView({
         ? [
             {
               id: 'file',
+              filePath: entry.file.path,
               label: entry.file.path,
               pickerLabel: 'File in comparison',
               value: entry.key,
               options: visible
                 .filter((e) => e.snapshot.url === entry.snapshot.url)
-                .map((e) => ({ value: e.key, label: e.file.path })),
+                .map((e) => ({ value: e.key, label: e.file.path, filePath: e.file.path })),
               select,
             },
           ]
