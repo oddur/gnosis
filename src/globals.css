@@ -4036,3 +4036,8 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
   .workflow-detail-toolbar { flex-wrap:wrap; }
   .workflow-detail-navigation { flex-basis:100%; }
 }
+
+.checks-toolbar .checks-view-switch { display:inline-flex; flex-wrap:nowrap; gap:2px; padding:3px; background:var(--secondary); border:1px solid var(--input); border-radius:6px; }
+.checks-view-switch button { min-width:88px; height:30px; padding-inline:12px; gap:6px; border:1px solid transparent; border-radius:4px; color:var(--foreground); }
+.checks-view-switch button[aria-pressed=true] { background:var(--accent); color:var(--accent-foreground); border-color:var(--ring); font-weight:600; }
+.checks-view-switch button[aria-pressed=false]:hover { background:var(--card); }

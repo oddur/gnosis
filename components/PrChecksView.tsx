@@ -2,7 +2,17 @@ import { lazy, Suspense } from 'react';
 const WorkflowGraphView = lazy(() => import('./WorkflowGraph').then((m) => ({ default: m.WorkflowGraphView })));
 import { BulkCheckRerun } from './BulkCheckRerun';
 import { useEffect, useRef, useState } from 'react';
-import { CircleAlert, CircleCheck, CircleMinus, Clock3, ExternalLink, RefreshCw, X } from 'lucide-react';
+import {
+  CircleAlert,
+  CircleCheck,
+  CircleMinus,
+  Clock3,
+  ExternalLink,
+  List,
+  RefreshCw,
+  Workflow,
+  X,
+} from 'lucide-react';
 import type { ReviewSubject } from '../lib/workbench';
 import {
   checkCounts,
@@ -309,18 +319,13 @@ export function PrChecksView({
   return (
     <section className="pr-checks-workspace" aria-label="PR checks">
       <div className="checks-toolbar">
-        <div role="group" aria-label="Checks view">
-          <Button
-            size="sm"
-            variant={view === 'list' ? 'secondary' : 'ghost'}
-            aria-pressed={view === 'list'}
-            onClick={() => setView('list')}
-          >
-            List
+        <div className="checks-view-switch" role="group" aria-label="Checks view">
+          <Button size="sm" variant="ghost" aria-pressed={view === 'list'} onClick={() => setView('list')}>
+            <List size={15} aria-hidden="true" /> List
           </Button>
           <Button
             size="sm"
-            variant={view === 'graph' ? 'secondary' : 'ghost'}
+            variant="ghost"
             ref={graphButton}
             aria-pressed={view === 'graph'}
             onClick={() => {
@@ -329,7 +334,7 @@ export function PrChecksView({
               if (graphSelection.current) setSelected(graphSelection.current);
             }}
           >
-            Graph
+            <Workflow size={15} aria-hidden="true" /> Graph
           </Button>
         </div>
         <BulkCheckRerun key={subject.id} members={subject.members} values={values} onChanged={() => refresh()} />

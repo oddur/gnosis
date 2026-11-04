@@ -239,7 +239,7 @@ Standalone PR summaries place the Checks, reviews & discussions disclosure befor
 
 ### Workflow dependency graph
 
-[WorkflowGraph](components/WorkflowGraph.tsx) extends Checks with a List/Graph switch and searchable workflow selectors. Checks compresses the PR heading and supporting metadata to give evidence more room. Stacks add a source-PR selector with attention counts. Workflow labels include status and attempt; freshness and the GitHub run link remain beside the selector. The View menu holds revision, job count, and workflow source details. External checks opens the selected PR’s provider checks in List.
+[WorkflowGraph](components/WorkflowGraph.tsx) extends Checks with searchable workflow selectors and an icon-labelled List/Graph segmented toggle whose shared bordered surface, blue selected accent, and ring border reinforce its `aria-pressed` state. Checks compresses the PR heading and supporting metadata to give evidence more room. Stacks add a source-PR selector with attention counts. Workflow labels include status and attempt; freshness and the GitHub run link remain beside the selector. The View menu holds revision, job count, and workflow source details. External checks opens the selected PR’s provider checks in List.
 
 Opening Checks warms the first PR needing attention, falling back to the first PR, subject to the API reserve. Without a saved selection, Graph also prefers that PR and chooses a workflow needing attention before an active or completed healthy run. Leaving Checks drops queued preparation. Cold graph loads use interactive priority: jobs and workflow sources load concurrently, with at most three opted-in HTTP reads, paced request starts, and shared backoff. Writes and ordinary background reads remain serialized.
 
