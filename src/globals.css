@@ -2070,6 +2070,9 @@ body:has(.activity-drawer) .app-toasts:not([data-inline]) { bottom:auto; top:64p
 .github-thread summary { display:flex; align-items:center; flex-wrap:wrap; gap:6px; padding:8px 10px; cursor:pointer; }
 .github-thread[open] .github-thread-chevron { transform:rotate(90deg); }
 .github-thread-state { color:var(--muted-foreground); margin-left:auto; font-size:var(--type-caption); }
+.github-thread[data-resolved=true] { background:color-mix(in srgb,var(--muted) 45%,var(--background)); border-color:color-mix(in srgb,var(--border) 65%,transparent); }
+.github-thread[data-resolved=true] > summary, .github-thread[data-resolved=true] .github-comment-body { color:var(--muted-foreground); }
+.github-thread-resolution { display:inline-flex; align-items:center; gap:4px; padding:1px 6px; border-radius:4px; background:var(--muted); color:var(--foreground); font-weight:500; vertical-align:middle; }
 .github-thread-comments article { padding:10px 12px; border-top:1px solid var(--border); }
 .github-thread-comments header { display:flex; align-items:center; flex-wrap:wrap; gap:6px 10px; margin-bottom:6px; font-size:var(--type-caption); }
 .github-thread-comments time { color:var(--muted-foreground); }

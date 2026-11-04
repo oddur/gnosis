@@ -87,6 +87,10 @@ void app.whenReady().then(async () => {
     await click('Resolve thread');
     await wait("document.querySelector('.github-thread-state').textContent.includes('Resolved')");
     assert.equal(await js('window.feedbackWrites.at(-1).prUrl'), await js('window.feedbackSubject.members[0].url'));
+    await capture('resolved-thread-light');
+    await js("document.documentElement.classList.add('dark')");
+    await capture('resolved-thread-dark');
+    await js("document.documentElement.classList.remove('dark')");
     await click('Reopen thread');
     await wait("document.querySelector('.github-thread-state').textContent.includes('Unresolved')");
     await click('Reply');

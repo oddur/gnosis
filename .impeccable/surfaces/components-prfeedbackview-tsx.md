@@ -57,3 +57,5 @@ Screenshot evidence lives in `../review/feedback/`:
 - Recovery and failed writes: `cached-error-dark.png`, `reply-error.png`, `resolve-error-with-draft.png`, `failure.png`.
 
 These PNGs are review evidence only, not shipping product assets. The incumbent visual world, tokens, and sidecar remain unchanged. The local extension is recorded in `DESIGN.md` under Layout and Address Feedback.
+
+Resolved threads use the shared muted card treatment and a checkmarked Resolved label in Feedback and inline diffs. Comment text remains readable; reopening restores active styling. Verified in light/dark Docker captures (`resolved-thread-light`, `resolved-thread-dark`). Changes file trees omit zero-comment badges; the Changes browser check verifies the icon does not leak onto line statistics.

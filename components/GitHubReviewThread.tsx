@@ -72,16 +72,28 @@ export function GitHubReviewThread({ thread, reason, onAction, onCommentAction, 
   }
   const first = thread.comments.length ? thread.comments[0] : undefined;
   return (
-    <details className="github-thread" data-thread-id={thread.id} open={expanded ?? !thread.isResolved}>
+    <details
+      className="github-thread"
+      data-thread-id={thread.id}
+      data-resolved={thread.isResolved}
+      open={expanded ?? !thread.isResolved}
+    >
       <summary>
         <ChevronRight className="github-thread-chevron" size={12} aria-hidden="true" />
-        {thread.isResolved ? <Check size={14} aria-hidden="true" /> : <MessageSquare size={14} aria-hidden="true" />}
+        <MessageSquare size={14} aria-hidden="true" />
         <span>
           {first?.author?.login ?? 'GitHub'} · {thread.comments.length}{' '}
           {thread.comments.length === 1 ? 'comment' : 'comments'}
         </span>
         <span className="github-thread-state">
-          {thread.isResolved ? 'Resolved' : 'Unresolved'}
+          {thread.isResolved ? (
+            <span className="github-thread-resolution">
+              <Check size={13} aria-hidden="true" />
+              Resolved
+            </span>
+          ) : (
+            'Unresolved'
+          )}
           {thread.isOutdated ? ' · Outdated' : ''}
         </span>
       </summary>
