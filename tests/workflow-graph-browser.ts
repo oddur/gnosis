@@ -124,6 +124,11 @@ void app
         'Checks should give the graph at least half the laptop height'
       );
       await capture('desktop-light');
+      win.setContentSize(1920, 900);
+      await wait(`document.querySelector('.checks-toolbar').getBoundingClientRect().height<=56`);
+      await capture('wide-toolbar-light');
+      win.setContentSize(1280, 800);
+      await new Promise((resolve) => setTimeout(resolve, 300));
       const positions = await js("[...document.querySelectorAll('.react-flow__node')].map(n=>n.style.transform)");
       const viewport = await js("document.querySelector('.react-flow__viewport').style.transform");
       await js('document.querySelector(\'[aria-label="Refresh checks"]\').click()');

@@ -4041,3 +4041,30 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .checks-view-switch button { min-width:88px; height:30px; padding-inline:12px; gap:6px; border:1px solid transparent; border-radius:4px; color:var(--foreground); }
 .checks-view-switch button[aria-pressed=true] { background:var(--accent); color:var(--accent-foreground); border-color:var(--ring); font-weight:600; }
 .checks-view-switch button[aria-pressed=false]:hover { background:var(--card); }
+
+/* One shared Checks toolbar; wrap control groups only when space requires it. */
+.checks-toolbar { justify-content:flex-start; gap:6px 10px; padding:8px 12px; }
+.checks-graph-controls:not([hidden]) { display:contents; }
+.checks-toolbar .workflow-selectors, .checks-toolbar .workflow-triage { border:0; padding:0; gap:6px; flex-shrink:1; min-width:0; }
+.checks-toolbar .workflow-selectors { flex-wrap:wrap; }
+.checks-toolbar .workflow-selectors [role=combobox] { max-width:260px; }
+.checks-toolbar .workflow-triage { gap:4px; }
+.checks-toolbar .workflow-updating { margin-left:auto; white-space:nowrap; }
+.checks-toolbar > button[aria-label="Refresh checks"] { margin-left:auto; }
+.checks-toolbar:has(.workflow-updating) > button[aria-label="Refresh checks"] { margin-left:0; }
+.workflow-context-notice { margin:0; padding:6px 12px; }
+@media (max-width:700px) {
+  .checks-toolbar .workflow-selectors { flex:1 1 100%; }
+  .checks-toolbar .workflow-selectors [role=combobox] { flex:1; max-width:100%; min-width:0; }
+  .checks-toolbar .workflow-triage { flex:1 1 100%; flex-wrap:wrap; }
+}
+
+@media (max-width:1450px) {
+  .checks-toolbar .workflow-updating > span { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+}
+
+@media (max-width:700px) {
+  .checks-toolbar .checks-view-switch { order:-3; }
+  .checks-toolbar .workflow-updating { order:-2; }
+  .checks-toolbar > button[aria-label="Refresh checks"] { order:-1; }
+}

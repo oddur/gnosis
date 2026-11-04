@@ -79,6 +79,7 @@ export function PrChecksView({
   const panes = useRef<HTMLDivElement>(null);
   const [narrow, setNarrow] = useState(false);
   const [detailNavigation, setDetailNavigation] = useState<HTMLDivElement | null>(null);
+  const [graphToolbar, setGraphToolbar] = useState<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!panes.current) return;
     const observer = new ResizeObserver(([entry]) => setNarrow(entry.contentRect.width <= 1050));
@@ -337,6 +338,7 @@ export function PrChecksView({
             <Workflow size={15} aria-hidden="true" /> Graph
           </Button>
         </div>
+        <div className="checks-graph-controls" ref={setGraphToolbar} hidden={view !== 'graph'} />
         <BulkCheckRerun key={subject.id} members={subject.members} values={values} onChanged={() => refresh()} />
         <div role="group" aria-label="Filter checks" hidden={view === 'graph'}>
           {(['all', 'attention', 'running'] as const).map((value) => (
@@ -384,6 +386,7 @@ export function PrChecksView({
                 key={`${stateKey ?? subject.id}:${subject.members.map((m) => values[m.url]?.headSha ?? m.headSha).join(':')}`}
                 stateKey={`${stateKey ?? subject.id}:${subject.members.map((m) => values[m.url]?.headSha ?? m.headSha).join(':')}`}
                 active={view === 'graph'}
+                toolbarHost={view === 'graph' ? graphToolbar : null}
                 detailHost={view === 'graph' && graphDetails ? detailNavigation : null}
                 onRevealContext={closeGraphDetails}
                 onFilterChange={setFilter}

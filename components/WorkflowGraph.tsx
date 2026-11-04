@@ -262,12 +262,14 @@ export function WorkflowGraphView({
   active = true,
   stateKey,
   detailHost,
+  toolbarHost,
   onRevealContext,
 }: {
   subject: ReviewSubject;
   active?: boolean;
   stateKey: string;
   detailHost?: HTMLElement | null;
+  toolbarHost?: HTMLElement | null;
   onRevealContext: () => void;
   onExternalChecks: (url: string) => void;
   onFilterChange: (value: CheckFilter) => void;
@@ -702,33 +704,8 @@ export function WorkflowGraphView({
         ? 'workflow-edge-failed'
         : undefined,
   }));
-  return (
-    <section className="workflow-graph-view" aria-label="Workflow dependency graph">
-      {detailHost &&
-        createPortal(
-          <WorkflowDetailNavigation
-            count={issues.length}
-            position={issues.findIndex((i) => i.job.checkId === selectedId)}
-            onMove={(direction) => navigateIssue(true, direction)}
-            onReveal={revealPrerequisite}
-            onClose={onRevealContext}
-            prerequisites={[
-              ...(
-                graph?.edges.filter((e) => e.target === selectedNode?.id).flatMap((e) => byId.get(e.source) ?? []) ?? []
-              ).map((n) => ({ id: n.id, name: n.name, label: outcome(n.jobs).label })),
-              ...(selectedNode?.outsidePrerequisites ?? []).map((n) => ({
-                id: n.id,
-                name: n.name,
-                label: outcome(outsideJobs(n)).label,
-                outside: true,
-              })),
-            ]}
-            dependants={(
-              graph?.edges.filter((e) => e.source === selectedNode?.id).flatMap((e) => byId.get(e.target) ?? []) ?? []
-            ).map((n) => ({ id: n.id, name: n.name, label: outcome(n.jobs).label }))}
-          />,
-          detailHost
-        )}
+  const toolbarControls = (
+    <>
       <div className="workflow-selectors">
         {subject.members.length > 1 && (
           <SearchableSelect
@@ -791,36 +768,7 @@ export function WorkflowGraphView({
             )}
           </WorkflowViewMenu>
         )}
-        <span className="workflow-updating" role="status">
-          {loadingRuns || loadingGraph ? (
-            <>
-              <LoaderCircle size={13} className="animate-spin" /> Updating
-            </>
-          ) : graph ? (
-            `Checked ${timeAgo(new Date(graph.checkedAt).toISOString())}`
-          ) : (
-            ''
-          )}
-        </span>
       </div>
-      {error && (
-        <div className="workflow-notice" role="status">
-          {graph ? 'Showing saved workflow. ' : ''}
-          {error}{' '}
-          <Button variant="ghost" size="sm" onClick={() => setRetry((n) => n + 1)}>
-            Retry workflow
-          </Button>
-        </div>
-      )}
-      {runs?.warning && <p className="workflow-notice">{runs.warning}</p>}
-      {graph?.warnings.length ? (
-        <details className="workflow-notice">
-          <summary>Some dependencies are unavailable</summary>
-          {graph.warnings.map((warning, i) => (
-            <p key={i}>{warning}</p>
-          ))}
-        </details>
-      ) : null}
       {graph && (
         <div className="workflow-triage">
           <div role="group" aria-label="Highlight jobs in this workflow">
@@ -855,23 +803,17 @@ export function WorkflowGraphView({
               Running ({activeCount})
             </Button>
           </div>
-          <span className="workflow-scope-status" role="status">
-            {filter === 'running' && !activeCount
-              ? 'No active jobs in this view'
-              : [...outsideFailures.values()].some((items) => items.length)
-                ? 'Failed prerequisites outside this view'
-                : issues.length
-                  ? ''
-                  : 'No jobs need attention in this view'}
-          </span>
-          <Button
-            size="sm"
-            variant={issues.length ? 'outline' : 'ghost'}
-            disabled={!issues.length}
-            onClick={() => navigateIssue(true)}
-          >
-            Next issue <ArrowRight size={14} />
-          </Button>
+
+          {!!issues.length && (
+            <Button
+              size="sm"
+              variant={issues.length ? 'outline' : 'ghost'}
+              disabled={!issues.length}
+              onClick={() => navigateIssue(true)}
+            >
+              Next issue <ArrowRight size={14} />
+            </Button>
+          )}
           {!!snapshot?.checks.some((c) => c.kind === 'status') && (
             <Button size="sm" variant="ghost" onClick={() => member && onExternalChecks(member.url)}>
               External checks ({snapshot.checks.filter((c) => c.kind === 'status').length})
@@ -879,6 +821,94 @@ export function WorkflowGraphView({
           )}
         </div>
       )}
+      <span
+        className="workflow-updating"
+        role="status"
+        title={
+          loadingRuns || loadingGraph
+            ? 'Updating workflow'
+            : graph
+              ? `Checked ${timeAgo(new Date(graph.checkedAt).toISOString())}`
+              : undefined
+        }
+      >
+        {loadingRuns || loadingGraph ? (
+          <>
+            <LoaderCircle size={13} className="animate-spin" /> <span>Updating</span>
+          </>
+        ) : graph ? (
+          <>
+            <Clock3 size={13} aria-hidden="true" />
+            <span>Checked {timeAgo(new Date(graph.checkedAt).toISOString())}</span>
+          </>
+        ) : (
+          ''
+        )}
+      </span>
+    </>
+  );
+  return (
+    <section className="workflow-graph-view" aria-label="Workflow dependency graph">
+      {detailHost &&
+        createPortal(
+          <WorkflowDetailNavigation
+            count={issues.length}
+            position={issues.findIndex((i) => i.job.checkId === selectedId)}
+            onMove={(direction) => navigateIssue(true, direction)}
+            onReveal={revealPrerequisite}
+            onClose={onRevealContext}
+            prerequisites={[
+              ...(
+                graph?.edges.filter((e) => e.target === selectedNode?.id).flatMap((e) => byId.get(e.source) ?? []) ?? []
+              ).map((n) => ({ id: n.id, name: n.name, label: outcome(n.jobs).label })),
+              ...(selectedNode?.outsidePrerequisites ?? []).map((n) => ({
+                id: n.id,
+                name: n.name,
+                label: outcome(outsideJobs(n)).label,
+                outside: true,
+              })),
+            ]}
+            dependants={(
+              graph?.edges.filter((e) => e.source === selectedNode?.id).flatMap((e) => byId.get(e.target) ?? []) ?? []
+            ).map((n) => ({ id: n.id, name: n.name, label: outcome(n.jobs).label }))}
+          />,
+          detailHost
+        )}
+      {toolbarHost ? createPortal(toolbarControls, toolbarHost) : toolbarControls}
+      {error && (
+        <div className="workflow-notice" role="status">
+          {graph ? 'Showing saved workflow. ' : ''}
+          {error}{' '}
+          <Button variant="ghost" size="sm" onClick={() => setRetry((n) => n + 1)}>
+            Retry workflow
+          </Button>
+        </div>
+      )}
+      {runs?.warning && <p className="workflow-notice">{runs.warning}</p>}
+      {graph?.warnings.length ? (
+        <details className="workflow-notice">
+          <summary>Some dependencies are unavailable</summary>
+          {graph.warnings.map((warning, i) => (
+            <p key={i}>{warning}</p>
+          ))}
+        </details>
+      ) : null}
+      <span
+        className={
+          [...outsideFailures.values()].some((items) => items.length)
+            ? 'workflow-scope-status workflow-context-notice'
+            : 'sr-only workflow-scope-status'
+        }
+        role="status"
+      >
+        {filter === 'running' && !activeCount
+          ? 'No active jobs in this view'
+          : [...outsideFailures.values()].some((items) => items.length)
+            ? 'Failed prerequisites outside this view'
+            : issues.length
+              ? ''
+              : 'No jobs need attention in this view'}
+      </span>
       {preferenceError && (
         <div className="workflow-notice" role="status">
           {preferenceError}
