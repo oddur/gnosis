@@ -83,7 +83,8 @@ void test('edit call uses selected model and source in isolation, never sends di
   assert.equal(calls[0].effort, 'high');
   assert.equal(calls[0].isolated, true);
   assert.equal(calls[0].allowedTools, undefined);
-  assert.ok(calls[0].content.includes(source));
+  for (const line of source.split('\n')) assert.ok(calls[0].content.includes(line));
+  assert.ok(calls[0].content.includes('[S2]'));
   assert.ok(!calls[0].content.includes('svgIllustration'));
   assert.ok(calls[0].systemPrompt.includes('Use short bullets.'));
 });
@@ -245,4 +246,52 @@ void test('ambiguous duplicate chapter edits are all rejected while unrelated ed
   assert.equal(result[0], draft, 'Do not pick an arbitrary duplicate');
   assert.equal(result[1].narrative, edit.narrative);
   assert.throws(() => applyExplanationEdits(drafts, { edits: {} }, source));
+});
+
+void test('numbered source citations accept real evidence and reject missing or non-source lines', () => {
+  const evidence = `<diff_hunks>\n--- cache.ts (modified) [hunk-0]\n${source}\n</diff_hunks>`;
+  const drafts = [draft];
+  assert.equal(
+    applyExplanationEdits(drafts, { edits: [{ ...edit, evidence: [3, 4] }] }, evidence)[0].narrative,
+    edit.narrative
+  );
+  for (const bad of [0, -1, 1, 2, 5, 100, 3.5, NaN]) {
+    assert.equal(applyExplanationEdits(drafts, { edits: [{ ...edit, evidence: [bad] }] }, evidence), drafts);
+  }
+});
+
+void test('numbered evidence is stable after non-source context is removed and still preserves quote compatibility', async () => {
+  const drafts = [draft];
+  const result = await refineExplanationText({
+    drafts,
+    source: `<story_arc>Unsupported planner claim</story_arc>\n<diff_hunks>\n${source}\n</diff_hunks>`,
+    model: DEFAULT_CODEX_MODEL,
+    generate: (options) => {
+      assert.ok(options.content.includes('[S3]  // Client entries remain until the session ends.'));
+      assert.ok(!options.content.includes('Unsupported planner claim'));
+      return Promise.resolve(JSON.stringify({ edits: [{ ...edit, evidence: [3] }] }));
+    },
+  });
+  assert.equal(result[0].narrative, edit.narrative);
+  assert.equal(applyExplanationEdits(drafts, { edits: [edit] }, source)[0].narrative, edit.narrative);
+});
+
+void test('cross-file edits can cite several short source references without accepting unknown evidence or oversized quotations', () => {
+  const evidence = Array.from({ length: 12 }, (_, index) => `+establishBoundary${index}();`).join('\n');
+  const references = Array.from({ length: 12 }, (_, index) => index + 1);
+  const drafts = [draft];
+  assert.equal(
+    applyExplanationEdits(drafts, { edits: [{ ...edit, evidence: references }] }, evidence)[0].narrative,
+    edit.narrative
+  );
+  assert.equal(
+    applyExplanationEdits(drafts, { edits: [{ ...edit, evidence: [...references, 999] }] }, evidence),
+    drafts
+  );
+  assert.equal(applyExplanationEdits(drafts, { edits: [{ ...edit, evidence: Array(513).fill(1) }] }, evidence), drafts);
+  const longQuote = 'meaningful_source_'.repeat(20);
+  assert.equal(
+    applyExplanationEdits(drafts, { edits: [{ ...edit, evidence: Array(10).fill(longQuote) }] }, longQuote),
+    drafts
+  );
 });
