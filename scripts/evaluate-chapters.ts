@@ -1,6 +1,8 @@
 /** Replay a saved review's code through the current planner/writers without GitHub or app-state writes. */
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { buildExplanationSource, refineExplanationText } from '../lib/review-refinement';
+import { getProvider } from '../lib/provider';
 import { planReview, generateSlide, finalizeReviewOverview } from '../lib/agent';
 import { buildPlannerContext, buildTopicContext } from '../lib/context-builder';
 import { formatHunkIndexForPrompt, sortDiffHunks, type IndexedHunk } from '../lib/diff-parse';
@@ -59,7 +61,16 @@ async function main() {
   await fs.writeFile(path.join(output, 'planner-input.txt'), context, { mode: 0o600 });
   console.log(`Planning ${review.prTitle}: ${hunks.length} hunks, ${model}, ${effort} effort`);
   const signal = AbortSignal.timeout(15 * 60_000);
-  const plan = await planReview(index, context, provider, model, undefined, false, signal, { effort });
+  // Reuse saved writers to isolate the editor's effect without another paid generation.
+  const reuse = arg('reuse-writers');
+  if (reuse) {
+    const previous = JSON.parse(await fs.readFile(path.join(reuse, 'before.json'), 'utf8')) as ReviewGuide;
+    if (previous.prUrl !== review.prUrl || previous.headSha !== review.headSha || previous.baseSha !== review.baseSha)
+      throw Error('Reused writers must belong to the same PR and saved revision.');
+  }
+  const plan: Awaited<ReturnType<typeof planReview>> = reuse
+    ? (JSON.parse(await fs.readFile(path.join(reuse, 'plan.json'), 'utf8')) as Awaited<ReturnType<typeof planReview>>)
+    : await planReview(index, context, provider, model, undefined, false, signal, { effort });
   await save('plan.json', plan);
   const topics = [...plan.topics].sort((a, b) => a.order - b.order);
   const assignments = topics.flatMap((topic) => topic.hunkIds);
@@ -92,23 +103,44 @@ async function main() {
           topics,
           review.projectClaudeContext
         );
-        const result = await generateSlide({
-          providerName: provider,
-          model,
-          effort,
-          topicContext,
-          signal,
-          reviewSuggestions: false,
-          instructions:
-            'This evaluation compares chapter grouping and prose only. Return svgIllustration, mechanism, d2Diagram, and explainerIdea as null. Use only the supplied saved-source evidence; do not use tools or add a diagram description.',
-        });
-        const item = { title: result.title ?? topic.title, hunkIds: topic.hunkIds, output: result };
+        const draft = reuse
+          ? (JSON.parse(
+              await fs.readFile(path.join(reuse, `chapter-${start + offset + 1}-draft.json`), 'utf8')
+            ) as WriterSlideOutput)
+          : await generateSlide({
+              providerName: provider,
+              model,
+              effort,
+              topicContext,
+              signal,
+              reviewSuggestions: false,
+              instructions:
+                'This evaluation compares chapter grouping and prose only. Return svgIllustration, mechanism, d2Diagram, and explainerIdea as null. Use only the supplied saved-source evidence; do not use tools or add a diagram description.',
+            });
+        await save(`chapter-${start + offset + 1}-draft.json`, draft);
+        const item = { title: draft.title ?? topic.title, hunkIds: topic.hunkIds, output: draft };
         await save(`chapter-${start + offset + 1}.json`, item);
         console.log(`Finished: ${item.title}`);
         return item;
       })
     );
     after.push(...batch);
+  }
+  const edited = await refineExplanationText({
+    drafts: after.map((item) => item.output),
+    source: buildExplanationSource(hunks),
+    model,
+    effort,
+    signal,
+    generate: async (options) => {
+      const response = await getProvider(provider).generate(options);
+      await save('edit-response.json', response);
+      return response;
+    },
+  });
+  for (let index = 0; index < after.length; index++) {
+    after[index].output = edited[index];
+    await save(`chapter-${index + 1}.json`, after[index]);
   }
   const summary = await finalizeReviewOverview({
     providerName: provider,
