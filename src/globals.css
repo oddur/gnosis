@@ -4362,3 +4362,42 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .changes-feedback-undo button { color:var(--ring);text-decoration:underline;text-underline-offset:3px; }
 
 @media(max-width:1000px) { .changes-workspace.chat-open .changes-feedback-sidebar { display:none; } }
+
+/* Code threads reserve the reading pane for code and keep response actions in reach. */
+.pr-summary-page:has(.pr-changes-tab[data-state=active] .changes-feedback) .pr-summary-toolbar-inner { padding-block:0; }
+.pr-summary-page:has(.pr-changes-tab[data-state=active] .changes-feedback) .pr-overview-heading { padding-top:4px; }
+.pr-summary-page:has(.pr-changes-tab[data-state=active] .changes-feedback) .pr-title-with-star { align-items:center;flex-wrap:nowrap; }
+.pr-summary-page:has(.pr-changes-tab[data-state=active] .changes-feedback) .pr-overview-heading h1 { flex:1;min-width:0;font-size:var(--type-body);line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.pr-summary-page:has(.pr-changes-tab[data-state=active] .changes-feedback) .pr-summary-context { display:none; }
+.pr-summary-page:has(.pr-changes-tab[data-state=active] .changes-feedback) .pr-merge-status { padding-block:0;min-height:24px;gap:4px 12px; }
+.pr-summary-page:has(.pr-changes-tab[data-state=active] .changes-feedback) .pr-merge-status :is(.merge-readiness-checked,.stack-checks-freshness,.pr-summary-review-actions) { display:none; }
+.pr-summary-page:has(.pr-changes-tab[data-state=active] .changes-feedback) .pr-workspace-navigation { flex-wrap:nowrap;gap:12px; }
+.pr-summary-page:has(.pr-changes-tab[data-state=active] .changes-feedback) .stack-scope-bar { width:auto;padding:4px 12px;border-right:1px solid var(--border); }
+.pr-summary-page:has(.pr-changes-tab[data-state=active] .changes-feedback) .stack-scope-bar .selection-trigger { max-width:160px; }
+.pr-summary-page:has(.pr-changes-tab[data-state=active] .changes-feedback) .pr-overview-tabs { flex:1;min-width:0;width:auto;gap:16px;padding-left:0; }
+.pr-summary-page:has(.pr-changes-tab[data-state=active] .changes-feedback) .pr-overview-tabs button { padding-block:6px; }
+.pr-changes:has(.changes-feedback) .changes-toolbar { padding:2px 12px;gap:4px; }
+.changes-feedback-list-tools { padding:12px;gap:6px; }
+.changes-feedback-meta { flex-wrap:wrap;font-size:12px; }
+.changes-feedback-navigation { min-height:32px;padding:0 12px; }
+.changes-feedback-dock { flex-shrink:0;min-height:48px;border-top:1px solid var(--border);background:var(--background); }
+.changes-feedback-dock .github-thread-actions { margin:0;padding:8px 12px;align-items:center;gap:8px; }
+.changes-feedback-dock .github-thread-actions > span { color:var(--muted-foreground);font-size:12px; }
+.changes-feedback .changes-file-header { padding:8px 12px;gap:4px 12px; }
+.changes-feedback-undo { padding:6px 12px;border-bottom:1px solid var(--border);flex-shrink:0;min-width:0; }
+.changes-feedback-undo > span { white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0; }
+.changes-feedback-undo > svg,.changes-feedback-undo > button { flex-shrink:0; }
+.changes-feedback-heading:focus-visible,.changes-feedback-empty h2:focus-visible { outline:2px solid var(--ring);outline-offset:-2px;border-radius:var(--radius); }
+.changes-feedback-refresh { flex-shrink:0;max-height:30vh;overflow:auto;margin:8px 12px;padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);background:var(--muted);font-size:12px;line-height:1.5; }
+.changes-feedback-refresh > div { display:flex;align-items:center;gap:8px; }
+.changes-feedback-refresh > div > span { flex:1; }
+.changes-feedback-refresh > details { margin-top:4px; }
+.changes-feedback-refresh summary { cursor:pointer;width:fit-content;color:var(--muted-foreground); }
+.changes-feedback-refresh details p { padding-top:8px; }
+.changes-feedback-refresh details button { color:var(--ring);text-decoration:underline;text-underline-offset:3px; }
+@media(max-width:700px) {
+  .pr-changes:has(.changes-feedback) .changes-toolbar { padding-inline:8px; }
+  .changes-feedback-navigation { padding-inline:8px; }
+  .changes-feedback-navigation .changes-feedback-pr { flex-basis:auto;flex:1; }
+  .changes-feedback-refresh > div { align-items:flex-start;flex-wrap:wrap; }
+}

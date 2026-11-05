@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { ArrowLeft, ArrowRight, Check, MessageSquare } from 'lucide-react';
 import { Button } from './ui/button';
@@ -65,7 +65,11 @@ export function ChangesFeedback({
     document.addEventListener('visibilitychange', visible);
     return () => document.removeEventListener('visibilitychange', visible);
   }, []);
-  const [lastResolved, setLastResolved] = useState<{ url: string; id: string }>();
+  const [lastResolved, setLastResolved] = useState<{ url: string; id: string; path: string; number: number }>();
+  const [actionHost, setActionHost] = useState<HTMLDivElement | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const retryLock = useRef(false);
+  const returnFocusKey = useRef<string | undefined>(undefined);
   const [undoBusy, setUndoBusy] = useState(false);
   const [undoError, setUndoError] = useState('');
   const pending = useRef(new Set<string>());
@@ -101,6 +105,25 @@ export function ChangesFeedback({
     overscan: 4,
     getItemKey: (i) => feedbackKey(shown[i]),
   });
+  useLayoutEffect(() => {
+    if (!mobileList || !returnFocusKey.current) return;
+    const key = returnFocusKey.current;
+    returnFocusKey.current = undefined;
+    list.current?.focus({ preventScroll: true });
+    const row = shown.findIndex((item) => feedbackKey(item) === key);
+    if (row < 0) return;
+    virtual.scrollToIndex(row);
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() =>
+        list.current?.querySelector<HTMLButtonElement>(`[data-index="${row}"] button`)?.focus({ preventScroll: true })
+      );
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [mobileList]);
+  function backToThreads() {
+    returnFocusKey.current = selectedKey;
+    setMobileList(true);
+  }
   const initialApplied = useRef(false);
   useEffect(() => {
     if (!initialThreadId || initialApplied.current) return;
@@ -141,6 +164,17 @@ export function ChangesFeedback({
     const data = discussion.discussions[member.url]?.data;
     return data ? feedbackReviewers(data).map((reviewer) => ({ ...reviewer, member })) : [];
   });
+  async function retryFeedback(urls: string[]) {
+    if (retryLock.current) return;
+    retryLock.current = true;
+    setRetrying(true);
+    try {
+      await Promise.allSettled(urls.map((url) => discussion.refresh(url)));
+    } finally {
+      retryLock.current = false;
+      setRetrying(false);
+    }
+  }
   function choose(item: FeedbackItem) {
     setSelectedKey(feedbackKey(item));
     setMobileList(false);
@@ -166,6 +200,7 @@ export function ChangesFeedback({
           thread={thread}
           expanded={thread.id === selected?.id ? true : undefined}
           onResolvedNext={thread.id === selected?.id ? nextAfterResolve : undefined}
+          actionContainer={thread.id === selected?.id ? actionHost : undefined}
           onAction={
             account
               ? async (action, body) => {
@@ -181,7 +216,12 @@ export function ChangesFeedback({
                     });
                     discussion.replace(item.member.url, next);
                     if (action === 'resolve' && next.viewerCanUnresolve) {
-                      setLastResolved({ url: item.member.url, id: thread.id });
+                      setLastResolved({
+                        url: item.member.url,
+                        id: thread.id,
+                        path: thread.path,
+                        number: item.member.number,
+                      });
                       setUndoError('');
                     }
                     if (action === 'unresolve') setLastResolved((old) => (old?.id === thread.id ? undefined : old));
@@ -230,6 +270,8 @@ export function ChangesFeedback({
         action: 'unresolve',
       });
       discussion.replace(lastResolved.url, next);
+      const restored = all.find((item) => item.member.url === lastResolved.url && item.id === lastResolved.id);
+      if (restored) choose({ ...restored, thread: next });
       setLastResolved((current) => (current?.id === lastResolved.id ? undefined : current));
     } catch {
       setUndoError('Could not reopen the thread. Try Undo again.');
@@ -268,9 +310,9 @@ export function ChangesFeedback({
               <input type="checkbox" checked={showResolved} onChange={(e) => setShowResolved(e.target.checked)} /> Show
               resolved
             </label>
-            <span>All files, including those hidden by file filters.</span>
+            <span title="File filters do not hide code feedback.">Includes hidden files</span>
           </div>
-          <div className="changes-feedback-list" ref={list}>
+          <div className="changes-feedback-list" ref={list} tabIndex={-1} aria-label="Code threads">
             <div style={{ height: virtual.getTotalSize(), position: 'relative' }}>
               {virtual.getVirtualItems().map((row) => {
                 const item = shown[row.index],
@@ -316,6 +358,7 @@ export function ChangesFeedback({
                       </span>
                       <span className="changes-feedback-meta">
                         {unread && <i aria-label="Unread" />} {item.comments[0]?.author?.login ?? 'Deleted account'} ·{' '}
+                        {item.comments.length} {item.comments.length === 1 ? 'comment' : 'comments'} ·{' '}
                         {thread.isResolved
                           ? 'Resolved'
                           : thread.isOutdated
@@ -341,7 +384,7 @@ export function ChangesFeedback({
         </aside>
         <section className="changes-feedback-main" aria-label="Feedback and code">
           <div className="changes-feedback-navigation">
-            <Button className="changes-feedback-back" variant="ghost" size="sm" onClick={() => setMobileList(true)}>
+            <Button className="changes-feedback-back" variant="ghost" size="sm" onClick={backToThreads}>
               <ArrowLeft size={14} />
               Threads
             </Button>
@@ -366,14 +409,6 @@ export function ChangesFeedback({
             >
               <ArrowRight size={16} />
             </Button>
-            {lastResolved && (
-              <span className="changes-feedback-undo" role="status">
-                Thread resolved{' '}
-                <button disabled={undoBusy} onClick={() => void undoResolution()}>
-                  {undoBusy ? 'Restoring…' : 'Undo'}
-                </button>
-              </span>
-            )}
             <span className="changes-toolbar-spacer" />
             {selected && (
               <span className="changes-feedback-pr" title={selected.member.title}>
@@ -381,6 +416,49 @@ export function ChangesFeedback({
               </span>
             )}
           </div>
+          {lastResolved && (
+            <div className="changes-feedback-undo" role="status">
+              <Check size={14} aria-hidden="true" />
+              <span title={`PR #${lastResolved.number} · ${lastResolved.path}`}>
+                {lastResolved.id === selected?.id ? 'This thread resolved' : 'Previous thread resolved'} · #
+                {lastResolved.number} · {lastResolved.path}
+              </span>
+              <button disabled={undoBusy} onClick={() => void undoResolution()}>
+                {undoBusy ? 'Restoring…' : 'Undo'}
+              </button>
+            </div>
+          )}
+          {failures.length > 0 && (
+            <div className="changes-feedback-refresh" role="status">
+              <div>
+                <span>
+                  {failures.some((member) => !discussion.discussions[member.url]?.data)
+                    ? `Feedback is incomplete for ${failures.length} ${failures.length === 1 ? 'PR' : 'PRs'}.`
+                    : `Could not refresh feedback for ${failures.length} ${failures.length === 1 ? 'PR' : 'PRs'}.`}{' '}
+                  Saved conversations remain available.
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={retrying}
+                  onClick={() => void retryFeedback(failures.map((member) => member.url))}
+                >
+                  {retrying ? 'Retrying…' : 'Retry feedback'}
+                </Button>
+              </div>
+              <details>
+                <summary>Details</summary>
+                {failures.map((member) => (
+                  <p key={member.url}>
+                    PR #{member.number}: {discussion.discussions[member.url]?.error}{' '}
+                    <button disabled={retrying} onClick={() => void retryFeedback([member.url])}>
+                      Retry PR #{member.number}
+                    </button>
+                  </p>
+                ))}
+              </details>
+            </div>
+          )}
           <div className="changes-feedback-content" ref={content}>
             {undoError && (
               <p className="changes-notice" role="alert">
@@ -392,12 +470,6 @@ export function ChangesFeedback({
                 {readError}
               </p>
             )}
-            {failures.map((member) => (
-              <p className="changes-notice" role="status" key={member.url}>
-                PR #{member.number}: {discussion.discussions[member.url]?.error}
-                <button onClick={() => void discussion.refresh(member.url)}>Retry</button>
-              </p>
-            ))}
             {selected ? (
               <>
                 <h2 className={current ? 'sr-only' : 'changes-feedback-heading'} ref={heading} tabIndex={-1}>
@@ -485,6 +557,13 @@ export function ChangesFeedback({
               </div>
             )}
           </div>
+          {selected && (
+            <div
+              className="changes-feedback-dock"
+              ref={setActionHost}
+              aria-label={`Actions for PR #${selected.member.number} thread`}
+            />
+          )}
         </section>
       </div>
     </ReviewDraftScope.Provider>

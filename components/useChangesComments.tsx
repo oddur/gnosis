@@ -35,12 +35,14 @@ export function useChangesComments({
   replaceThread,
   refresh,
   enabled = true,
+  quietControls = false,
   renderThreadOverride,
   onSubmitted,
   onOpenChanges,
 }: {
   brief?: ChangesBriefTarget;
   enabled?: boolean;
+  quietControls?: boolean;
   renderThreadOverride?: (thread: Thread) => ReactNode;
   onOpenChanges?: (filePath: string) => void;
   onSubmitted?: (url: string, event: string) => void;
@@ -321,6 +323,7 @@ export function useChangesComments({
         </Button>
         <Button
           size="sm"
+          variant={quietControls ? 'outline' : 'default'}
           disabled={!writable || !!stale.length}
           onClick={() => {
             setTarget(snapshot);

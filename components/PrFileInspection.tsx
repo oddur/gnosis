@@ -370,7 +370,14 @@ export function PrFileInspection({
       );
       if (!target) return;
       sourceJump.current = undefined;
-      target.scrollIntoView({ block: 'center', behavior: 'instant' });
+      const feedbackPane = focusThreadId ? sectionRef.current?.closest('.changes-feedback-content') : null;
+      if (feedbackPane) {
+        const headerHeight = sectionRef.current?.querySelector('.changes-file-header')?.getBoundingClientRect().height ?? 0;
+        // Keep the commented line just below the sticky header, leaving room for its conversation.
+        feedbackPane.scrollTop += target.getBoundingClientRect().top - feedbackPane.getBoundingClientRect().top - headerHeight - 8;
+      } else {
+        target.scrollIntoView({ block: 'center', behavior: 'instant' });
+      }
       // The highlighter may replace line nodes. Keep keyboard focus on its stable host.
       node.tabIndex = -1;
       node.setAttribute('aria-label', `Source at ${location.side === 'before' ? 'old' : 'new'} line ${location.start}`);
@@ -818,7 +825,7 @@ export function PrFileInspection({
           </button>
         </p>
       ))}
-      {!combined && threadError && (
+      {!combined && !renderFeedbackThread && threadError && (
         <p className="changes-notice">
           {threadError}
           <button onClick={() => void refreshThreads(entry.snapshot.url)}>Retry</button>

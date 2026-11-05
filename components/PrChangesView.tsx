@@ -483,6 +483,7 @@ export function PrChangesView({
   }
   const refreshThreads = discussion.refresh;
   const comments = useChangesComments({
+    quietControls: feedbackMode,
     enabled: !commit && !combined,
     snapshot: commit || combined
       ? undefined
@@ -519,7 +520,7 @@ export function PrChangesView({
         {toolbar}
         {!commit && !combined && <div className="changes-view-switch" role="group" aria-label="Browse changes by">
           <Button variant={sidebar === 'files' ? 'secondary' : 'ghost'} size="sm" aria-pressed={sidebar === 'files'} onClick={() => { setSidebar('files'); setTreeOpen(true); }}>Files</Button>
-          <Button variant={sidebar === 'feedback' ? 'secondary' : 'ghost'} size="sm" aria-pressed={sidebar === 'feedback'} onClick={() => setSidebar('feedback')}>Feedback</Button>
+          <Button variant={sidebar === 'feedback' ? 'secondary' : 'ghost'} size="sm" aria-pressed={sidebar === 'feedback'} onClick={() => setSidebar('feedback')}>Code threads</Button>
         </div>}
         {!feedbackMode && <Button variant="ghost" size="sm" onClick={() => setTreeOpen((v) => !v)} aria-expanded={treeOpen}>
           <PanelLeft size={15} />
@@ -566,9 +567,9 @@ export function PrChangesView({
           onChange={(diffAppearance) => savePreferences({ diffAppearance })}
         />
         {!commit && !combined && (
-          <Button variant="ghost" size="sm" disabled={loading} onClick={() => void load(true)}>
-            <RefreshCw size={14} />
-            {loading ? 'Loading…' : 'Update changes'}
+          <Button variant="ghost" size={feedbackMode ? 'icon' : 'sm'} disabled={loading} aria-label="Update changes" title="Update changes" onClick={() => void load(true)}>
+            <RefreshCw size={14} className={loading ? 'animate-spin' : undefined} />
+            {!feedbackMode && (loading ? 'Loading…' : 'Update changes')}
           </Button>
         )}
       </div>

@@ -1,3 +1,5 @@
+import { createPortal } from 'react-dom';
+import { Button } from './ui/button';
 import { MarkdownCommentEditor } from './MarkdownCommentEditor';
 import { GitHubAuthor } from './GitHubAuthor';
 import { useSessionDraft } from '../lib/session-drafts';
@@ -12,11 +14,20 @@ interface Props {
   expanded?: boolean;
   reason?: string;
   onResolvedNext?: () => void;
+  actionContainer?: HTMLElement | null;
   onCommentAction?: (commentId: string, action: ReviewCommentAction['action'], body?: string) => Promise<void>;
   onAction?: (action: ReviewThreadAction['action'], body?: string) => Promise<void>;
 }
 
-export function GitHubReviewThread({ thread, reason, onAction, onCommentAction, expanded, onResolvedNext }: Props) {
+export function GitHubReviewThread({
+  thread,
+  reason,
+  onAction,
+  onCommentAction,
+  expanded,
+  onResolvedNext,
+  actionContainer,
+}: Props) {
   const [replying, setReplying] = useSessionDraft(`thread-replying:${thread.id}`, false);
   const [draft, setDraft] = useSessionDraft(`thread-reply:${thread.id}`, '');
   const [busy, setBusy] = useState(false);
@@ -29,6 +40,12 @@ export function GitHubReviewThread({ thread, reason, onAction, onCommentAction, 
       errorElement.current?.focus({ preventScroll: true });
     }
   }, [error]);
+  const replyForm = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    if (!replying || !actionContainer) return;
+    const frame = requestAnimationFrame(() => replyForm.current?.scrollIntoView({ block: 'nearest' }));
+    return () => cancelAnimationFrame(frame);
+  }, [replying, actionContainer]);
   const inputId = useId();
   const pending = useRef(false);
   const [editing, setEditing] = useState<string>();
@@ -72,6 +89,31 @@ export function GitHubReviewThread({ thread, reason, onAction, onCommentAction, 
       setBusy(false);
     }
   }
+  const actionButton = (label: string, onClick: () => void, primary = false) =>
+    actionContainer ? (
+      <Button size="sm" variant={primary ? 'default' : 'outline'} disabled={busy} onClick={onClick}>
+        {label}
+      </Button>
+    ) : (
+      <button disabled={busy} onClick={onClick}>
+        {label}
+      </button>
+    );
+  const actions = (
+    <div className="github-thread-actions" aria-label="Thread actions">
+      {!replying && actionButton('Reply', () => setReplying(true))}
+      {((thread.isResolved && thread.viewerCanUnresolve) || (!thread.isResolved && thread.viewerCanResolve)) &&
+        actionButton(
+          thread.isResolved ? 'Reopen thread' : 'Resolve thread',
+          () => void act(thread.isResolved ? 'unresolve' : 'resolve')
+        )}
+      {onResolvedNext &&
+        !thread.isResolved &&
+        thread.viewerCanResolve &&
+        actionButton('Resolve & next', () => void act('resolve', true), true)}
+      {busy && <span role="status">Saving to GitHub…</span>}
+    </div>
+  );
   const first = thread.comments.length ? thread.comments[0] : undefined;
   return (
     <details
@@ -96,7 +138,7 @@ export function GitHubReviewThread({ thread, reason, onAction, onCommentAction, 
           ) : (
             'Unresolved'
           )}
-          {thread.isOutdated ? ' · Outdated' : ''}
+          {thread.isOutdated ? ' · Earlier revision' : ''}
         </span>
       </summary>
       {reason && <p className="github-thread-reason">{reason}</p>}
@@ -172,26 +214,10 @@ export function GitHubReviewThread({ thread, reason, onAction, onCommentAction, 
           </article>
         ))}
       </div>
-      {onAction && (
-        <div className="github-thread-actions">
-          {!replying && (
-            <button disabled={busy} onClick={() => setReplying(true)}>
-              Reply
-            </button>
-          )}
-          {((thread.isResolved && thread.viewerCanUnresolve) || (!thread.isResolved && thread.viewerCanResolve)) && (
-            <button disabled={busy} onClick={() => void act(thread.isResolved ? 'unresolve' : 'resolve')}>
-              {thread.isResolved ? 'Reopen thread' : 'Resolve thread'}
-            </button>
-          )}
-          {onResolvedNext && !thread.isResolved && thread.viewerCanResolve && (
-            <button disabled={busy} onClick={() => void act('resolve', true)}>Resolve & next</button>
-          )}
-          {busy && <span role="status">Saving to GitHub…</span>}
-        </div>
-      )}
+      {onAction && (actionContainer ? createPortal(actions, actionContainer) : actions)}
       {onAction && replying && (
         <form
+          ref={replyForm}
           onSubmit={(e) => {
             e.preventDefault();
             void act('reply');
