@@ -224,6 +224,8 @@ void test('classification and negative attribute lookups are reused after restar
     os = await import('node:os'),
     path = await import('node:path');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-file-kinds-'));
+  let now = Date.now();
+  const clock = { now: () => now, sleep: (ms: number) => { now += ms; return Promise.resolve(); } };
   let calls = 0,
     updates = 0;
   const fetcher = ((_url: unknown, init: RequestInit) => {
@@ -243,7 +245,7 @@ void test('classification and negative attribute lookups are reused after restar
       })
     );
   }) as typeof fetch;
-  let pool = createGitHubClientPool({ minSpacingMs: 0, fetch: fetcher });
+  let pool = createGitHubClientPool({ ...clock, minSpacingMs: 0, fetch: fetcher });
   const done = async (n: number) => {
     for (let i = 0; i < 200 && updates < n; i++) await new Promise((r) => setTimeout(r, 5));
     assert.equal(updates, n);
@@ -257,7 +259,7 @@ void test('classification and negative attribute lookups are reused after restar
     await done(1);
     assert.equal(calls, 2);
     await pool.closeStorage();
-    pool = createGitHubClientPool({ minSpacingMs: 0, fetch: fetcher });
+    pool = createGitHubClientPool({ ...clock, minSpacingMs: 0, fetch: fetcher });
     await pool.setStorage(path.join(dir, 'budget.json'));
     service = createFileClassificationService(() => {
       updates++;

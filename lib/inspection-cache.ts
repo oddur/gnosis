@@ -43,8 +43,7 @@ export const inspectionData = createPrInspectionCache({
     firstSha: commit.sha, lastSha: commit.sha,
   }, '', true),
   review: (snapshot) => window.electronAPI.preparePrReview(snapshot.url, snapshot.metadata),
-  // Background requests remain rate-limited; minimizing the window need not stop preparation.
-  visible: () => true,
+  visible: () => document.visibilityState !== 'hidden' && navigator.onLine,
   prioritize: (urls) => {
     inspectionFiles.prioritize(urls);
     comparisonPriorities = new Map(urls.map((url, index) => [url, index]));
@@ -62,6 +61,8 @@ export const inspectionData = createPrInspectionCache({
     failed.clear();
   },
 });
+document.addEventListener('visibilitychange', () => inspectionData.resume());
+window.addEventListener('online', () => inspectionData.resume());
 
 export const inspectionFiles = createPrFileCache((request, background) =>
   window.electronAPI.getPrChangeFile(request, background)

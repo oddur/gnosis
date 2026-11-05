@@ -95,7 +95,7 @@ export function createFileClassificationService(
         .join('\n');
       const response = await client.graphql<{
         repository: Record<string, { text: string | null; byteSize: number } | null> | null;
-      }>(`query($owner:String!,$name:String!){repository(owner:$owner,name:$name){${fields}}}`, { owner, name });
+      }>(`query($owner:String!,$name:String!){rateLimit{cost} repository(owner:$owner,name:$name){${fields}}}`, { owner, name });
       if (!response.repository) throw Error('Repository attributes are unavailable');
       for (const [j, path] of batch.entries()) {
         const blob = response.repository[`a${j}`];

@@ -158,11 +158,11 @@ export function createPrInspectionCache(deps: Dependencies) {
       finish(job, generation);
       return;
     }
-    if (job.stage === 2 || job.stage === 5) {
+    if (job.stage === 3 || job.stage === 5) {
       // Newest first, with a scheduling boundary after each comparison and file.
       const commit = saved.commits.commits.at(-1 - job.commit);
       if (!commit) {
-        if (job.stage === 2) job.stage++;
+        if (job.stage === 3) job.stage++;
         else finish(job, generation);
         return;
       }
@@ -185,10 +185,10 @@ export function createPrInspectionCache(deps: Dependencies) {
       job.comparison = undefined;
       job.comparisonFile = 0;
       job.commit++;
-      if (job.stage === 2) job.stage++;
+      if (job.stage === 3) job.stage++;
       return;
     }
-    if (job.stage === 3) {
+    if (job.stage === 2) {
       const file = saved.changes.files.at(job.file);
       if (!file) {
         job.stage++;
@@ -199,7 +199,10 @@ export function createPrInspectionCache(deps: Dependencies) {
       return;
     }
     await deps.review(saved.changes);
-    job.stage++;
+    // No remaining history means this PR is prepared now. Do not defer its
+    // completion behind another PR's downloads or an unrelated rate-limit pause.
+    if (job.commit >= saved.commits.commits.length) finish(job, generation);
+    else job.stage++;
   }
   function unsupported(error: unknown) {
     return /too large|binary file|not UTF-8|no text preview|Not Found|\b404\b|file limit/i.test(String(error));
@@ -255,9 +258,14 @@ export function createPrInspectionCache(deps: Dependencies) {
         // Re-evaluate intent between every operation. Within a tier, make both tab
         // inventories available before deep downloads; never let the backlog delay an active PR.
         const tier = (job: Job) => priorities.get(job.revision.url) ?? 4;
-        const highest = ready.reduce((best, job) => Math.min(best, tier(job)), Infinity);
-        const preferred = ready.filter(job => tier(job) === highest);
-        const job = preferred.find(job => job.stage < 2) ?? preferred.at(0);
+        const essentials = ready.filter(job => job.stage < 5);
+        const candidates = essentials.length ? essentials : ready;
+        const highest = candidates.reduce((best, job) => Math.min(best, tier(job)), Infinity);
+        const preferred = candidates.filter(job => tier(job) === highest);
+        // Make each likely destination usable before one PR's history consumes
+        // the tier's allowance. Current files precede commit comparisons.
+        const job = preferred.find(job => job.stage < 2) ?? preferred.find(job => job.stage === 2) ??
+          preferred.find(job => job.stage < 5) ?? preferred.at(0);
         if (!job) break;
         currentJob = job;
         try {
@@ -298,7 +306,7 @@ export function createPrInspectionCache(deps: Dependencies) {
     const job = activeJob ?? pending[0];
     const match = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)$/.exec(job.revision.url);
     const identity = match ? `${match[1]} #${match[2]}` : 'PR';
-    const phase = ['Changed-file list', 'Commit list', 'Newest commit', 'Changed files', 'Review diff', 'Earlier commits'][job.stage] ?? 'Saved content';
+    const phase = ['Changed-file list', 'Commit list', 'Changed files', 'Newest commit', 'Review diff', 'Earlier commits'][job.stage] ?? 'Saved content';
     let detail = `${identity} · ${phase}`;
     if (paused) detail = budgetPaused || waiting.some(job => job.rateLimited)
       ? 'Waiting for GitHub’s API allowance. Retrying automatically.'
@@ -371,6 +379,7 @@ export function createPrInspectionCache(deps: Dependencies) {
       kick();
     },
     flush: drain,
+    resume: () => kick(),
     stop() {
       // Navigation pauses the worker; only an account change invalidates cached content.
       stopped = true;

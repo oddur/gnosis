@@ -1,17 +1,18 @@
 import { Octokit } from '@octokit/rest';
 import type { OctokitResponse } from '@octokit/types';
 import { createHash } from 'node:crypto';
-import fs from 'node:fs';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createGitHubCache, isCacheRecord, type GitHubCache } from './github-cache';
+import { automaticDeadline, automaticSpacing, automaticWindow, type AutomaticUsage } from './github-budget';
 import {
   createGitHubScheduler,
-  githubPriority,
   githubPriorityScope,
   githubParallelReads,
   createGitHubWork,
   joinGitHubWork,
   githubReadSignal,
+  githubAutomatic,
   type GitHubWork,
 } from './github-scheduler';
 
@@ -43,9 +44,10 @@ export function githubCachedResponses(client: Octokit) {
       .map((entry) => entry.response) ?? []
   );
 }
-function freshness(headers: Headers, now: number) {
+function freshness(headers: Headers, now: number, immutable = false) {
   const control = String(headers['cache-control'] ?? '');
   if (/\b(no-cache|no-store)\b/i.test(control)) return now;
+  if (immutable) return now + 24 * 60 * 60_000;
   const seconds = /(?:^|,)\s*max-age=(\d+)/i.exec(control)?.[1];
   const age = Number(headers.age) || 0;
   return now + Math.max(0, Math.min(60, seconds === undefined ? 60 : Number(seconds)) - age) * 1000;
@@ -61,6 +63,7 @@ const backgroundReserve = (resource: string, budget: Budget) =>
   Math.min(resource === 'search' ? 3 : 1000, budget.limit * 0.1);
 interface AccountState {
   budgets: Partial<Record<string, Budget>>;
+  automatic: Partial<Record<string, AutomaticUsage>>;
   blockedUntil: number;
   secondaryStrikes: number;
   lastSecondary: number;
@@ -109,6 +112,7 @@ export function createGitHubClientPool(options: Options = {}) {
   const clients = new Map<string, Octokit>();
   const snapshots = createGitHubCache(now);
   let storage: string | undefined;
+  let budgetWrites = Promise.resolve();
   const keyFor = (token?: string | null) =>
     createHash('sha256')
       .update(token || 'anonymous')
@@ -116,20 +120,24 @@ export function createGitHubClientPool(options: Options = {}) {
   const stateFor = (key: string) => {
     let state = states.get(key);
     if (!state) {
-      state = { budgets: {}, blockedUntil: 0, secondaryStrikes: 0, lastSecondary: 0 };
+      state = { budgets: {}, automatic: {}, blockedUntil: 0, secondaryStrikes: 0, lastSecondary: 0 };
       states.set(key, state);
     }
     return state;
   };
   const persist = () => {
-    if (!storage) return;
-    try {
-      fs.mkdirSync(path.dirname(storage), { recursive: true });
-      fs.writeFileSync(storage + '.tmp', JSON.stringify(Object.fromEntries(states)), { mode: 0o600 });
-      fs.renameSync(storage + '.tmp', storage);
-    } catch {
-      /* A disk failure must not replace the API result or disable in-memory backoff. */
-    }
+    if (!storage) return budgetWrites;
+    const file = storage, payload = JSON.stringify(Object.fromEntries(states));
+    budgetWrites = budgetWrites.then(async () => {
+      try {
+        await fs.mkdir(path.dirname(file), { recursive: true });
+        await fs.writeFile(file + '.tmp', payload, { mode: 0o600 });
+        await fs.rename(file + '.tmp', file);
+      } catch {
+        /* A disk failure must not replace the API result or disable in-memory backoff. */
+      }
+    });
+    return budgetWrites;
   };
   const backoff = (token?: string | null, background = false, resources?: readonly string[]) => {
     const state = stateFor(keyFor(token));
@@ -142,6 +150,10 @@ export function createGitHubClientPool(options: Options = {}) {
       else if (background && budget.remaining <= backgroundReserve(resource, budget))
         reserveDeadline = Math.max(reserveDeadline, budget.reset);
     }
+    if (background) for (const [resource, usage] of Object.entries(state.automatic)) {
+      if (resources && !resources.includes(resource)) continue;
+      reserveDeadline = Math.max(reserveDeadline, automaticDeadline(resource, usage, now(), state.budgets[resource], !!token));
+    }
     if (hardDeadline > now()) return new GitHubBackoffError(hardDeadline);
     if (reserveDeadline > now())
       return new GitHubBackoffError(reserveDeadline, 'Background updates paused to preserve your API allowance');
@@ -149,8 +161,8 @@ export function createGitHubClientPool(options: Options = {}) {
   return {
     backoff,
     setCacheSizeMB: (value: unknown) => snapshots.setSizeMB(value),
-    flushStorage: () => snapshots.flush(),
-    closeStorage: () => snapshots.close(),
+    flushStorage: async () => { await snapshots.flush(); await budgetWrites; },
+    closeStorage: async () => { await snapshots.close(); await budgetWrites; },
     async setStorage(file: string) {
       storage = file;
       await snapshots.setStorage(path.join(path.dirname(file), 'github-cache.json'));
@@ -160,7 +172,7 @@ export function createGitHubClientPool(options: Options = {}) {
             ? (value as Record<string, unknown>)
             : undefined;
         const number = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
-        const saved = record(JSON.parse(fs.readFileSync(file, 'utf8')));
+        const saved = record(JSON.parse(await fs.readFile(file, 'utf8')));
         for (const [key, raw] of Object.entries(saved ?? {})) {
           const value = record(raw);
           if (!/^[a-f0-9]{64}$/.test(key) || !value) continue;
@@ -180,8 +192,16 @@ export function createGitHubClientPool(options: Options = {}) {
               reset: number(budget.reset),
             };
           }
+          const automatic: AccountState['automatic'] = {};
+          for (const [resource, rawUsage] of Object.entries(record(value.automatic) ?? {})) {
+            const usage = record(rawUsage);
+            if (usage && typeof usage.startedAt === 'number' && Number.isFinite(usage.startedAt) &&
+              usage.startedAt <= now() && typeof usage.spent === 'number' && Number.isFinite(usage.spent) && usage.spent >= 0)
+              automatic[resource] = { startedAt: usage.startedAt, spent: usage.spent };
+          }
           states.set(key, {
             budgets,
+            automatic,
             blockedUntil: number(value.blockedUntil),
             secondaryStrikes: number(value.secondaryStrikes),
             lastSecondary: number(value.lastSecondary),
@@ -197,14 +217,14 @@ export function createGitHubClientPool(options: Options = {}) {
     },
     rememberLogin(token: string, login: string) {
       stateFor(keyFor(token)).login = login;
-      persist();
+      void persist();
     },
     forget(token: string) {
       // Keep the cooldown: signing out and back in must not bypass GitHub's deadline.
       delete stateFor(keyFor(token)).login;
       clients.delete(keyFor(token));
       snapshots.scope(keyFor(token)).clear();
-      persist();
+      void persist();
     },
     client(token?: string | null): Octokit {
       const key = keyFor(token);
@@ -241,7 +261,6 @@ export function createGitHubClientPool(options: Options = {}) {
             limit,
             reset,
           };
-          persist();
         }
       };
       client.hook.wrap('request', (request, requestOptions) => {
@@ -255,6 +274,15 @@ export function createGitHubClientPool(options: Options = {}) {
         // Binary images use a separate bounded memory cache, never the JSON disk cache.
         const binary = requestOptions.request.responseType === 'arraybuffer';
         const cacheable = get && !binary && requestOptions.request.cache !== 'no-store';
+        // Only exact Git object identities are immutable. PRs, branches, checks,
+        // commit REST metadata (comments/signatures), and comparisons are not.
+        const url = new URL(endpoint.url);
+        const sha = /^(?:[a-f\d]{40}|[a-f\d]{64})$/i;
+        const immutable = cacheable && (
+          (/^\/repos\/[^/]+\/[^/]+\/contents\//.test(url.pathname) && sha.test(url.searchParams.get('ref') ?? '')) ||
+          /^\/repos\/[^/]+\/[^/]+\/git\/(?:blobs|trees)\/(?:[a-f\d]{40}|[a-f\d]{64})$/i.test(url.pathname)
+        );
+        const freshFor = immutable ? 24 * 60 * 60_000 : 60_000;
         const graphRead =
           graph && typeof requestOptions.query === 'string' && /^\s*(query\b|\{)/.test(requestOptions.query);
         const readOnly = get || graphRead;
@@ -276,7 +304,7 @@ export function createGitHubClientPool(options: Options = {}) {
             !force &&
             !saved.revalidate &&
             saved.value.freshUntil > now() &&
-            saved.value.freshUntil <= saved.savedAt + 60_000
+            saved.value.freshUntil <= saved.savedAt + freshFor
           )
             return saved.value.response;
         };
@@ -297,7 +325,7 @@ export function createGitHubClientPool(options: Options = {}) {
             !force &&
             !stored.revalidate &&
             cached.freshUntil > now() &&
-            cached.freshUntil <= stored.savedAt + 60_000
+            cached.freshUntil <= stored.savedAt + freshFor
           ) {
             if (requestOptions.request.signal?.aborted) throw new Error('GitHub request was aborted');
             return structuredClone(cached.response);
@@ -306,18 +334,19 @@ export function createGitHubClientPool(options: Options = {}) {
             requestOptions.request.signal?.throwIfAborted();
             const failed = get && unavailable.get(requestKey);
             if (failed && failed.retryAt > now()) throw failed.error;
-            const priority = githubPriority();
+            const automatic = readOnly && githubAutomatic();
             const budget = state.budgets[resource];
             const reserve =
-              priority === 'background' && budget ? backgroundReserve(resource, budget) : 0;
+              automatic && budget ? backgroundReserve(resource, budget) : 0;
             const deadline = Math.max(
               state.blockedUntil,
-              budget && budget.remaining <= reserve ? budget.reset : 0
+              budget && budget.remaining <= reserve ? budget.reset : 0,
+              automatic ? automaticDeadline(resource, state.automatic[resource], now(), budget, !!token) : 0
             );
             if (deadline > now())
               throw new GitHubBackoffError(
                 deadline,
-                priority === 'background'
+                automatic
                   ? 'Background updates are waiting to preserve your GitHub allowance'
                   : undefined
               );
@@ -325,7 +354,7 @@ export function createGitHubClientPool(options: Options = {}) {
           gate();
           // Pacing is not a failed operation. Release the network scheduler while
           // waiting, and resume this request so multi-request reads keep their progress.
-          if (githubPriority() === 'background' && (backgroundDue.get(resource) ?? 0) > now()) return paced;
+          if (readOnly && githubAutomatic() && (backgroundDue.get(resource) ?? 0) > now()) return paced;
           // Reserve start times serially even when the network reads overlap.
           const start = dispatch.then(async () => {
             const spacing = (options.minSpacingMs ?? 100) - (now() - lastRequest);
@@ -335,6 +364,18 @@ export function createGitHubClientPool(options: Options = {}) {
           });
           dispatch = start.catch(() => {});
           await start;
+          const automatic = readOnly && githubAutomatic();
+          const beforeBudget = state.budgets[resource];
+          let graphCost: number | undefined;
+          let charged: AutomaticUsage | undefined;
+          if (automatic) {
+            const previous = state.automatic[resource];
+            charged = previous && now() < previous.startedAt + automaticWindow(resource)
+              ? previous : { startedAt: now(), spent: 0 };
+            charged.spent++;
+            state.automatic[resource] = charged;
+            await persist();
+          }
           // A failed write may still have reached GitHub. Invalidate without replaying it.
           const invalidateWrite = () => {
             const lfsDownload =
@@ -386,6 +427,11 @@ export function createGitHubClientPool(options: Options = {}) {
             // Hooks share the original options object, including auth and request logging.
             if (binary) requestOptions.request.parseSuccessResponseBody = false;
             const response = await request(requestOptions);
+            if (graph && isCacheRecord(response.data) && isCacheRecord(response.data.data) &&
+              isCacheRecord(response.data.data.rateLimit)) {
+              const cost = response.data.data.rateLimit.cost;
+              if (typeof cost === 'number' && Number.isFinite(cost) && cost >= 0) graphCost = cost;
+            }
             if (get) unavailable.delete(requestKey);
             if (binary) {
               // GitHub raw images can carry charset=utf-8. Bypass Octokit's text decoding,
@@ -393,15 +439,6 @@ export function createGitHubClientPool(options: Options = {}) {
               response.data = await new Response(response.data as ReadableStream<Uint8Array>).arrayBuffer();
             }
             observe(response.headers);
-            const budget = state.budgets[resource];
-            const priority = githubPriority();
-            if (priority === 'background' && budget && budget.reset > now()) {
-              const reserve = backgroundReserve(resource, budget);
-              backgroundDue.set(
-                resource,
-                now() + Math.ceil((budget.reset - now()) / Math.max(1, budget.remaining - reserve))
-              );
-            }
             if (
               graph &&
               (response.data as { errors?: { type?: string }[] }).errors?.some((e) => e.type === 'RATE_LIMITED')
@@ -421,7 +458,7 @@ export function createGitHubClientPool(options: Options = {}) {
                 const data: unknown = response.data;
                 cache.set(requestKey, {
                   response: { status: response.status, url: response.url || endpoint.url, headers, data },
-                  freshUntil: freshness(response.headers, now()),
+                  freshUntil: freshness(response.headers, now(), immutable),
                 });
               } else cache.delete(requestKey);
             }
@@ -450,7 +487,7 @@ export function createGitHubClientPool(options: Options = {}) {
                         : {}),
                     },
                   },
-                  freshUntil: freshness(response.headers, now()),
+                  freshUntil: freshness(response.headers, now(), immutable),
                 });
               return response;
             }
@@ -475,7 +512,7 @@ export function createGitHubClientPool(options: Options = {}) {
                   now() + Math.min(3_600_000, 60_000 * 2 ** (state.secondaryStrikes - 1))
                 );
               }
-              persist();
+              await persist();
               throw new GitHubBackoffError(Math.max(state.blockedUntil, limited.retryAt));
             }
             if (get && [500, 502, 503, 504].includes(e.status ?? 0)) {
@@ -501,6 +538,20 @@ export function createGitHubClientPool(options: Options = {}) {
             }
             throw error;
           } finally {
+            if (charged) {
+              const budget = state.budgets[resource];
+              // GraphQL charges points, not HTTP requests. A same-window delta
+              // includes query cost (and conservatively any concurrent external use).
+              if (resource === 'graphql') {
+                const delta = budget && beforeBudget?.reset === budget.reset ? beforeBudget.remaining - budget.remaining : 1;
+                charged.spent += Math.max(0, (graphCost ?? delta) - 1);
+              }
+              const quotaSpacing = budget && budget.reset > now()
+                ? Math.ceil((budget.reset - now()) / Math.max(1, budget.remaining - backgroundReserve(resource, budget))) : 0;
+              backgroundDue.set(resource, now() + Math.max(quotaSpacing,
+                automaticSpacing(resource, charged, now(), budget, !!token)));
+            }
+            if (charged || state.budgets[resource] !== beforeBudget) await persist();
             if (timer) clearTimeout(timer);
             invalidateWrite();
           }

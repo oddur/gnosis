@@ -23,6 +23,8 @@ Visible rows / open PR / open discussion
 
 Running checks retain the short cadence. Visible queue rows use the shared status batch at most once per two minutes. Offscreen rows do not schedule status reads. Navigation retains recent task freshness for five minutes, so reopening a PR does not restart its polling clock.
 
+Routine sync shares the automatic API budget described in [GitHub synchronization](github-sync.md#request-scheduling), including foreground refreshes of the open PR. Bounded follow-ups after user writes use requested capacity.
+
 These are scheduling intervals, not delivery guarantees. GitHub backoff, request duration, and higher-priority work can delay a refresh. REST and GraphQL budget pauses remain separate. Failed reads back off and keep the last data. A successful retry clears the screen's error, even when the data is unchanged.
 
 Sync pauses while offline, suspended, or without a visible app window. Resume, reconnect, and focus request catch-up work. A short focus debounce prevents repeated application switching from producing request bursts. Manual refresh remains available through the existing interactive request path.

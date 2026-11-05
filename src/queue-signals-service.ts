@@ -124,7 +124,7 @@ export function createQueueSignalsService(now = Date.now, revisionChanged?: (cli
     const existing = account.pending.get(batchKey);
     if (existing) return [...result, ...(await withGitHubPriority(priority, () => joinGitHubWork(existing)))];
     const version = cache?.version();
-    const query = `query { ${missing
+    const query = `query { rateLimit { cost } ${missing
       .map(
         (
           { owner, repo, number, request },

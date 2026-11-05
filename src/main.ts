@@ -707,7 +707,7 @@ void app.whenReady().then(async () => {
   applyBinaryOverrides(loadPreferences());
   createWindow();
   initTrayIfEnabled();
-  setStatusFetcher(fetchPrStatus);
+  setStatusFetcher(url => withGitHubPriority('background', () => fetchPrStatus(url)));
   rebuildTrayMenu();
   setupAutoUpdater();
 
@@ -1540,7 +1540,7 @@ ipcMain.handle('get-pr-status', async (_event, prUrl: string, force: boolean = f
   if (isLocalUrl(prUrl)) {
     throw new Error('Local review — no PR status available');
   }
-  const status = await withGitHubPriority(force ? 'interactive' : 'foreground', () => fetchPrStatus(prUrl, force));
+  const status = await withGitHubPriority(force ? 'interactive' : 'foreground', () => fetchPrStatus(prUrl, force), { automatic: !force });
   if (!status) throw new Error('Not authenticated');
   return status;
 });
@@ -2570,7 +2570,8 @@ ipcMain.handle('get-queue-signals', async (_event, requests: QueueSignalRequest[
   const token = getResolvedToken();
   if (!token) return [];
   const account = cachedLogin;
-  const values = await getQueueSignals(getGitHubClient(token), requests, options);
+  const values = await withGitHubPriority(options?.force ? 'interactive' : options?.active ? 'foreground' : 'background',
+    () => getQueueSignals(getGitHubClient(token), requests, options), { automatic: !options?.force });
   if (account && workbench.observeReadSignals(account, values)) broadcastToAllWindows('pr-read-state-changed');
   return values;
 });
@@ -2868,7 +2869,7 @@ const githubSync = createGitHubSyncService({
     const blocked = githubClients.backoff(token, background, resources);
     if (blocked) return { retryAt: blocked.retryAt, message: blocked.reason };
   },
-  read: async (kind, targets, priority) => {
+  read: async (kind, targets, priority, requestedFollowUp) => {
     const token = cachedToken;
     const client = getGitHubClient(token);
     const values = await withGitHubPriority(priority === 'active' ? 'foreground' : 'background', async (): Promise<GitHubSyncUpdate[]> => {
@@ -2904,7 +2905,7 @@ const githubSync = createGitHubSyncService({
         } else results.push({ kind, url: target.url, value: await reviewThreads.list(client, target.url) });
       }
       return results;
-    });
+    }, { automatic: !requestedFollowUp });
     return token === cachedToken ? values : [];
   },
   publish: publishGitHubUpdates,
@@ -3023,14 +3024,14 @@ ipcMain.handle('pr-checks', (_event, input: CheckTarget, options: ChecksOptions 
     const metadata = await getPrMetadata(client, owner, repo, pullNumber, !!options.force);
     const value = await readPrChecks(client, { url: input.url, headSha: metadata.headSha }, options);
     return value && withCachedCheckDetails(client, value);
-  })));
+  }), { automatic: options.background }));
 ipcMain.handle('prepare-workflow-graph', (_event, target?: CheckTarget) => {
   workflowWarmAccount = cachedToken;
   workflowGraphPreload.setTarget(target);
   void workflowGraphPreload.tick();
 });
-ipcMain.handle('workflow-runs', (_event, input: CheckTarget, options?: ChecksOptions) => withGitHubPriority(options?.background ? 'foreground' : 'interactive', () => checkAccount(client => readWorkflowRuns(client, input, options))));
-ipcMain.handle('workflow-graph', (_event, input: WorkflowGraphInput, options?: ChecksOptions) => withGitHubPriority(options?.background ? 'foreground' : 'interactive', () => checkAccount(client => readWorkflowGraph(client, input, options))));
+ipcMain.handle('workflow-runs', (_event, input: CheckTarget, options?: ChecksOptions) => withGitHubPriority(options?.background ? 'foreground' : 'interactive', () => checkAccount(client => readWorkflowRuns(client, input, options)), { automatic: options?.background }));
+ipcMain.handle('workflow-graph', (_event, input: WorkflowGraphInput, options?: ChecksOptions) => withGitHubPriority(options?.background ? 'foreground' : 'interactive', () => checkAccount(client => readWorkflowGraph(client, input, options)), { automatic: options?.background }));
 ipcMain.handle('cached-check-details', (_event, input: CheckSelection) => checkAccount(client => Promise.resolve(cachedCheckDetails(client, input))));
 handleInteractive('check-details', (_event, input: CheckSelection, options?: { force?: boolean }) => checkAccount(client => readCheckDetails(client, input, { force: options?.force === true })));
 handleInteractive('check-log', (_event, input: CheckSelection) => checkAccount(client => readCheckLog(client, input)));
