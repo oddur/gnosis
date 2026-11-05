@@ -1,3 +1,4 @@
+import { LoadingState } from './LoadingState';
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
 const Workspace = lazy(() => import('./ConflictWorkspace').then((module) => ({ default: module.ConflictWorkspace })));
@@ -23,7 +24,8 @@ export function ConflictWorkspaceHost() {
         >
           <DialogContent>
             <DialogTitle>Resolve conflicts</DialogTitle>
-            <DialogDescription>Opening the conflict editor…</DialogDescription>
+            <DialogDescription className="sr-only">Review and resolve merge conflicts.</DialogDescription>
+            <LoadingState title="Opening the conflict editor…" />
           </DialogContent>
         </Dialog>
       }

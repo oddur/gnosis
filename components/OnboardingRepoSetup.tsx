@@ -1,3 +1,4 @@
+import { LoadingIndicator } from './LoadingState';
 import { RepositoryMark } from './RepositoryAppearance';
 import { useRepositorySettings } from '../lib/use-repository-settings';
 import { repositoryKey } from '../lib/repository-settings';
@@ -148,7 +149,7 @@ export function OnboardingRepoSetup({ open, onComplete, onSkip }: Props) {
           )}
 
           {loading && query.length >= 2 && suggestions.length === 0 && (
-            <p className="text-xs text-muted-foreground mt-2">Searching...</p>
+            <LoadingIndicator className="text-xs mt-2">Searching GitHub…</LoadingIndicator>
           )}
         </div>
 

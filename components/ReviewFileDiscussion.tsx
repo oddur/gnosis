@@ -1,3 +1,4 @@
+import { LoadingIndicator } from './LoadingState';
 import { ExplanationMarkdownPreview } from './ExplanationMarkdownPreview';
 import { isMarkdownFile, type MarkdownLocation } from '../lib/markdown-review';
 import { useMarkdownView } from '../lib/use-markdown-view';
@@ -129,9 +130,10 @@ export function ReviewFileDiscussion({ review, enabled = true, onAsk, ...diff }:
       {prUrl && (
         <div className="github-discussion-toolbar">
           <span>
-            {busy
-              ? 'Loading GitHub comments…'
-              : `${threads.length} GitHub ${threads.length === 1 ? 'thread' : 'threads'} · ${unresolved} unresolved`}
+            {busy && !threads.length ? <LoadingIndicator>Loading GitHub comments…</LoadingIndicator> : <>
+              {`${threads.length} GitHub ${threads.length === 1 ? 'thread' : 'threads'} · ${unresolved} unresolved`}
+              {busy && <LoadingIndicator className="ml-2">Refreshing…</LoadingIndicator>}
+            </>}
           </span>
           {unplaced.length > 0 && (
             <button

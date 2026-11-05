@@ -1,8 +1,9 @@
+import { LoadingState } from './LoadingState';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { UnresolvedFile } from '@pierre/diffs';
 import { CodeView, EditProvider, File, MultiFileDiff } from '@pierre/diffs/react';
 import { Editor, type EditorFactory } from '@pierre/diffs/edit';
-import { Check, CircleAlert, CircleCheck, CheckCheck, Loader2, RotateCcw, Sparkles } from 'lucide-react';
+import { Check, CircleAlert, CircleCheck, CheckCheck, RotateCcw, Sparkles } from 'lucide-react';
 import { Button } from './ui/button';
 import { RestackReview } from './RestackReview';
 import { ToastHost } from './ui/toast';
@@ -406,14 +407,8 @@ export function ConflictWorkspace({ url, onClose }: { url: string; onClose: () =
           </div>
         )}
         {!session ? (
-          <div className="conflict-empty">
-            {busy && <Loader2 className="animate-spin" size={22} />}
-            <p>
-              {busy
-                ? 'Preparing conflicts… Progress and cancellation are in Activity.'
-                : 'The workspace could not be prepared.'}
-            </p>
-          </div>
+          busy ? <LoadingState title="Preparing conflicts…" description="Progress and cancellation are in Activity." hint="You can keep browsing." /> :
+          <div className="conflict-empty"><p>The workspace could not be prepared.</p></div>
         ) : session.status === 'published' ? (
           <div className="conflict-published" data-restack={!!session.dependents?.length}>
             <div className="conflict-published-result">

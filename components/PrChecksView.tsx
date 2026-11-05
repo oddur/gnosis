@@ -1,3 +1,4 @@
+import { LoadingState, LoadingIndicator } from './LoadingState';
 import { SubjectIcon } from './SubjectIcon';
 import { preferredChecksView, rememberChecksView, type ChecksView } from '../lib/checks-view';
 import { lazy, Suspense } from 'react';
@@ -405,7 +406,7 @@ export function PrChecksView({
       >
         {graphVisited && (
           <div className="workflow-host" hidden={view !== 'graph'} inert={view !== 'graph' || (graphDetails && narrow)}>
-            <Suspense fallback={<div className="checks-empty">Loading graph view…</div>}>
+            <Suspense fallback={<LoadingState title="Loading graph view…" />}>
               <WorkflowGraphView
                 key={`${stateKey ?? subject.id}:${subject.members.map((m) => values[m.url]?.headSha ?? m.headSha).join(':')}`}
                 stateKey={`${stateKey ?? subject.id}:${subject.members.map((m) => values[m.url]?.headSha ?? m.headSha).join(':')}`}
@@ -473,7 +474,7 @@ export function PrChecksView({
                         {snapshot.headSha.slice(0, 7)} · Checked {timeAgo(new Date(snapshot.checkedAt).toISOString())}
                       </>
                     ) : busy ? (
-                      'Loading checks…'
+                      <LoadingIndicator>Loading checks…</LoadingIndicator>
                     ) : (
                       'Checks not loaded'
                     )}
@@ -656,7 +657,7 @@ export function PrChecksView({
                   {error} <button onClick={() => setAttempt((n) => n + 1)}>Retry details</button>
                 </p>
               ) : !detail ? (
-                <p role="status">Loading check details…</p>
+                <LoadingState compact title="Loading check details…" />
               ) : (
                 <>
                   {error && (
@@ -747,7 +748,7 @@ export function PrChecksView({
                     <section className="check-logs">
                       <h3>Job log</h3>
                       <Button size="sm" variant="outline" disabled={logBusy} onClick={() => void loadLog()}>
-                        {logBusy ? 'Loading log…' : log ? 'Reload log' : 'Load log'}
+                        {logBusy ? <LoadingIndicator>Loading log…</LoadingIndicator> : log ? 'Reload log' : 'Load log'}
                       </Button>
                       {logError && (
                         <p role="alert" className="checks-error">

@@ -1,3 +1,4 @@
+import { LoadingState, LoadingIndicator } from './LoadingState';
 import { WorkspaceIcon } from './WorkspaceIcon';
 import { usePrReadVisit } from '../lib/pr-read-context';
 import { useEffect, useState, useSyncExternalStore } from 'react';
@@ -133,7 +134,7 @@ export function PrExplanation({
             {error ||
               loadError ||
               (running
-                ? 'Generating explanation. Keep reviewing while it runs.'
+                ? <LoadingIndicator announce={false}>Generating explanation. Keep reviewing while it runs.</LoadingIndicator>
                 : failed
                   ? review
                     ? 'The explanation could not be completed. Your saved version is still available.'
@@ -187,6 +188,7 @@ export function PrExplanation({
       ) : (
         !review && (
           <div className="explanation-empty">
+            {wanted && !loadError ? <LoadingState title="Opening saved explanation" description="Reading the explanation saved on this computer." /> : <>
             <h2>
               {loadError
                 ? 'Saved explanation could not be opened'
@@ -201,6 +203,7 @@ export function PrExplanation({
                   ? 'Reading the explanation saved on this computer.'
                   : 'Get a guided walkthrough of what changed, why it matters, and where to focus your review. Explore the code, ask questions, and open interactive diagrams alongside it.'}
             </p>
+            </>}
             {!wanted && !running && !failed && !error && (
               <div className="explanation-empty-actions">
                 <Button onClick={generate} disabled={!preferences || limited.length > 0}>

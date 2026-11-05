@@ -1,3 +1,4 @@
+import { LoadingIndicator } from './LoadingState';
 import { useEffect, useState, useRef, type ReactNode } from 'react';
 import { ArrowRight, Check, X } from 'lucide-react';
 import { Button } from './ui/button';
@@ -112,7 +113,7 @@ export function GettingStarted({
           </p>
           <p role="status">
             {check === 'checking'
-              ? `Checking for ${toolName}…`
+              ? <LoadingIndicator announce={false}>Checking for {toolName}…</LoadingIndicator>
               : check === 'found'
                 ? `${toolName} found. Make sure you are signed in to it in your terminal.`
                 : check === 'missing'
