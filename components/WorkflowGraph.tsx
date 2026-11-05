@@ -65,6 +65,8 @@ import {
   checkDetailsKey,
 } from '../lib/pr-checks';
 import {
+  workflowJobSteps,
+  workflowVisibleSteps,
   workflowJobCheck,
   workflowJobDetails,
   workflowFailureInsight,
@@ -131,6 +133,7 @@ type JobNode = Node<
     onOpen: () => void;
     onExpand: () => void;
     onToggleAnnotations: () => void;
+    onToggleSteps: () => void;
     onFocusDependencies: () => void;
     onHighlight: (active: boolean, input: 'pointer' | 'focus') => void;
   },
@@ -156,6 +159,9 @@ function JobCard({ id, data }: NodeProps<JobNode>) {
     measure();
     return () => observer.disconnect();
   }, [insight?.annotation?.message, insight?.annotation?.title, item.annotationsExpanded]);
+  const job = item.jobs.length === 1 && !item.stage && !item.collapsed ? item.jobs[0] : undefined;
+  const steps = job ? workflowJobSteps(job) : [];
+  const visibleSteps = job ? workflowVisibleSteps(job, item.stepsExpanded) : [];
   const active = item.jobs.flatMap((job) => job.steps).find((step) => step.status === 'in_progress');
   const stageCounts = item.stage
     ? [
@@ -193,6 +199,7 @@ function JobCard({ id, data }: NodeProps<JobNode>) {
       className="workflow-job"
       style={{ height: item.height }}
       data-failure-context={!!insight || undefined}
+      data-has-steps={!!steps.length || undefined}
       data-annotations-expanded={item.annotationsExpanded || undefined}
       data-stage={!!item.stage || undefined}
       data-collapsed={item.collapsed || undefined}
@@ -259,6 +266,49 @@ function JobCard({ id, data }: NodeProps<JobNode>) {
           </span>
         )}
       </button>
+      {job && steps.length > 0 && (
+        <div className="workflow-job-steps nodrag nowheel">
+          <div className="workflow-steps-heading">
+            Steps{' '}
+            <span>
+              {steps.filter((step) => step.status === 'completed').length}/{steps.length} complete
+            </span>
+          </div>
+          <ol aria-label={`${item.name} steps`}>
+            {visibleSteps.map((step) => {
+              const state = outcome([{ ...job, status: step.status, conclusion: step.conclusion }]);
+              const duration = checkDuration(step, data.now);
+              return (
+                <li
+                  key={step.number}
+                  className={`check-${state.group}`}
+                  title={`${step.number}. ${step.name} — ${state.label}${duration ? ` · ${duration}` : ''}`}
+                >
+                  <state.Icon
+                    size={13}
+                    className={step.status === 'in_progress' ? 'animate-spin' : undefined}
+                    aria-hidden="true"
+                  />
+                  <span className="sr-only">{state.label}: </span>
+                  <span className="workflow-step-name">{step.name}</span>
+                  <span className="workflow-step-duration">{duration}</span>
+                </li>
+              );
+            })}
+          </ol>
+          {steps.length > 3 && (
+            <button
+              type="button"
+              className="workflow-steps-toggle"
+              aria-expanded={!!item.stepsExpanded}
+              onClick={data.onToggleSteps}
+            >
+              {item.stepsExpanded ? 'Show fewer steps' : `Show all ${steps.length} steps`}
+              {item.stepsExpanded ? <Minus size={12} aria-hidden="true" /> : <Plus size={12} aria-hidden="true" />}
+            </button>
+          )}
+        </div>
+      )}
       {insight && (insight.annotation || insight.step) && (
         <div className="workflow-failure-context nodrag nowheel">
           {insight.step && (
@@ -481,6 +531,7 @@ export function WorkflowGraphView({
       runId: id,
       expanded: [],
       expandedAnnotations: [],
+      expandedSteps: [],
       grouping,
       showSkipped,
       showCompleted,
@@ -496,7 +547,7 @@ export function WorkflowGraphView({
       // Reject an old workflow's response even before React commits the selection change.
       latestView.current = {
         graphKey: key,
-        viewKey: JSON.stringify([[], '', showSkipped, showCompleted, undefined, grouping]),
+        viewKey: JSON.stringify([[], [], '', showSkipped, showCompleted, undefined, grouping]),
         input: { ...input, focusNodeId: undefined },
       };
       // React Flow debounces move-end events; capture the outgoing viewport now.
@@ -513,6 +564,7 @@ export function WorkflowGraphView({
       setRunId(id);
       setExpanded([]);
       setExpandedAnnotations([]);
+      setExpandedSteps([]);
       setFocusNodeId(undefined);
       setNavigationNodeId(undefined);
       setGraph({ key, value });
@@ -541,6 +593,7 @@ export function WorkflowGraphView({
     });
   };
   const [expanded, setExpanded] = useState<string[]>(session.expanded);
+  const [expandedSteps, setExpandedSteps] = useState<string[]>(session.expandedSteps ?? []);
   const [expandedAnnotations, setExpandedAnnotations] = useState<string[]>(session.expandedAnnotations ?? []);
   const [grouping, setGrouping] = useState<WorkflowGrouping>(rememberedGrouping ?? 'adaptive');
   const [groupingReady, setGroupingReady] = useState(rememberedGrouping !== undefined);
@@ -602,6 +655,7 @@ export function WorkflowGraphView({
       focusNodeId,
       workflowsOpen,
       expandedAnnotations,
+      expandedSteps,
     });
   }, [
     session,
@@ -613,6 +667,7 @@ export function WorkflowGraphView({
     focusNodeId,
     workflowsOpen,
     expandedAnnotations,
+    expandedSteps,
   ]);
   const [graphState, setGraph] = useState<{ key: string; value: Graph }>();
   const [runError, setRunError] = useState('');
@@ -667,7 +722,15 @@ export function WorkflowGraphView({
       live = false;
     };
   }, [scope, observedAt, refreshNonce, retry, active]);
-  const viewKey = JSON.stringify([expandedAnnotations, expansions, showSkipped, showCompleted, focusNodeId, grouping]);
+  const viewKey = JSON.stringify([
+    expandedAnnotations,
+    expandedSteps,
+    expansions,
+    showSkipped,
+    showCompleted,
+    focusNodeId,
+    grouping,
+  ]);
   const requestedView = {
     graphKey,
     viewKey,
@@ -677,6 +740,7 @@ export function WorkflowGraphView({
       runId: run?.id ?? 0,
       expanded,
       expandedAnnotations,
+      expandedSteps,
       grouping,
       showSkipped,
       showCompleted,
@@ -708,7 +772,12 @@ export function WorkflowGraphView({
       const count = value.run.jobCount;
       setJobCounts((current) => (current[key] === count ? current : { ...current, [key]: count }));
     }
-    if (!request.input.expanded.length && !request.input.expandedAnnotations.length && !request.input.focusNodeId) {
+    if (
+      !request.input.expanded.length &&
+      !request.input.expandedAnnotations.length &&
+      !request.input.expandedSteps.length &&
+      !request.input.focusNodeId
+    ) {
       const cacheKey = preparedKey(value.run.id, value.run.attempt);
       preparedGraphs.current.delete(cacheKey);
       preparedGraphs.current.set(cacheKey, value);
@@ -987,6 +1056,10 @@ export function WorkflowGraphView({
             active ? item.id : current === item.id ? undefined : current
           ),
         onExpand: () => toggle(item.id),
+        onToggleSteps: () =>
+          setExpandedSteps((current) =>
+            current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id]
+          ),
         onToggleAnnotations: () =>
           setExpandedAnnotations((current) =>
             current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id]

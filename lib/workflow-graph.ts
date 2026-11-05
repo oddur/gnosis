@@ -46,6 +46,7 @@ export interface WorkflowPort {
 }
 export interface WorkflowGraphNode {
   annotationsExpanded?: boolean;
+  stepsExpanded?: boolean;
   /** Direct prerequisites omitted by dependency focus; retain their reported state. */
   outsidePrerequisites?: Pick<WorkflowGraphNode, 'id' | 'name' | 'jobs'>[];
   stage?: { count: number; names: string[]; unreported: number };
@@ -81,6 +82,7 @@ export function workflowGrouping(value: unknown): WorkflowGrouping {
 }
 export interface WorkflowGraphInput extends CheckTarget {
   expandedAnnotations?: string[];
+  expandedSteps?: string[];
   grouping?: WorkflowGrouping;
   runId: number;
   focusNodeId?: string;
@@ -134,4 +136,41 @@ export function workflowFailureInsight(job: WorkflowJob, detail?: CheckDetails) 
     (step) => step.status === 'completed' && step.conclusion === 'failure'
   );
   return { annotation: failures.at(0), annotations: failures, count: failures.length, step: step?.name };
+}
+
+/** Support both normalized steps and previously cached GitHub REST step timestamps. */
+export function workflowJobSteps(job: WorkflowJob): CheckStep[] {
+  return job.steps
+    .map((step) => {
+      const legacy = step as CheckStep & { started_at?: string | null; completed_at?: string | null };
+      return {
+        ...step,
+        startedAt: step.startedAt ?? legacy.started_at,
+        completedAt: step.completedAt ?? legacy.completed_at,
+      };
+    })
+    .sort((a, b) => a.number - b.number);
+}
+export function workflowVisibleSteps(job: WorkflowJob, expanded = false): CheckStep[] {
+  const steps = workflowJobSteps(job);
+  if (expanded || steps.length <= 3) return steps;
+  const active = steps.findIndex((step) => step.status === 'in_progress');
+  const failed = steps.findIndex(
+    (step) => step.status === 'completed' && !['success', 'skipped', 'neutral'].includes(step.conclusion ?? '')
+  );
+  const complete = steps.reduce((last, step, index) => (step.status === 'completed' ? index : last), -1);
+  const focus = active >= 0 ? active : failed >= 0 ? failed : Math.max(0, complete);
+  const start = Math.max(0, Math.min(focus - 1, steps.length - 3));
+  return steps.slice(start, start + 3);
+}
+/** Reserve step geometry before backend layout, so expanded lists never overlap adjacent jobs. */
+export function withWorkflowSteps(node: WorkflowGraphNode, expandedSteps: readonly string[] = []): WorkflowGraphNode {
+  if (node.stage || node.collapsed || node.jobs.length !== 1 || !node.jobs[0].steps.length) return node;
+  const stepsExpanded = expandedSteps.includes(node.id);
+  const rows = workflowVisibleSteps(node.jobs[0], stepsExpanded).length;
+  return {
+    ...node,
+    stepsExpanded,
+    height: (node.height ?? 112) + 33 + rows * 28 + (node.jobs[0].steps.length > 3 ? 30 : 0),
+  };
 }

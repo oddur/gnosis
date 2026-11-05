@@ -103,6 +103,7 @@ jobs:
 
       - name: Publish
         env:
+          NODE_OPTIONS: --max-old-space-size=4096
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_CLIENT_SECRET: ${{ secrets.GH_CLIENT_SECRET }}
           APPLE_ID: ${{ runner.os == 'macOS' && secrets.APPLE_ID || '' }}
