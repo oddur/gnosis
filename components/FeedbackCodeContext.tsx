@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { ChevronRight, RefreshCw } from 'lucide-react';
 import { Button } from './ui/button';
 import { PrFileInspection, type ChangeFileEntry } from './PrFileInspection';
 import { PrFileChat } from './PrFileChat';
@@ -40,6 +40,7 @@ export function FeedbackCodeContext({
     item.member
   );
   const earlier = context === 'earlier';
+  const [contextOpen, setContextOpen] = useState(() => !thread.isResolved && context === 'current');
   useEffect(() => {
     if (!fullFile) return;
     let live = true;
@@ -77,19 +78,24 @@ export function FeedbackCodeContext({
   const lines = hunk?.split('\n').filter((line) => !line.startsWith('@@')) ?? [];
   const shown = expanded ? lines : lines.slice(-6);
   return (
-    <section className="feedback-code-context" aria-label="Commented code">
-      <div className="feedback-code-heading">
-        <span>
-          {earlier
-            ? 'Earlier revision · code when commented'
-            : context === 'unavailable'
-              ? 'Original comment context'
-              : 'Code when commented'}
-          {!earlier && thread.line ? ` · Line ${thread.line}` : ''}
-        </span>
+    <details
+      className="feedback-code-context"
+      aria-label="Commented code"
+      open={contextOpen}
+      onToggle={(event) => setContextOpen(event.currentTarget.open)}
+    >
+      <summary className="feedback-code-heading">
+        <ChevronRight size={14} aria-hidden="true" />
+        {earlier
+          ? 'Code from earlier revision'
+          : context === 'unavailable'
+            ? 'Original code context'
+            : `Commented code${thread.line ? ` · Line ${thread.line}` : ''}`}
+      </summary>
+      <div className="feedback-code-tools">
         {preferences && (
           <Button size="sm" variant="ghost" aria-expanded={fullFile} onClick={() => setFullFile((value) => !value)}>
-            {fullFile ? 'Hide full file' : earlier ? 'Compare current file' : 'Show full file'}
+            {fullFile ? 'Hide full file' : earlier ? 'View current file' : 'Show full file'}
           </Button>
         )}
       </div>
@@ -115,7 +121,7 @@ export function FeedbackCodeContext({
           </>
         ) : (
           <p className="feedback-context-unavailable">
-            GitHub did not provide the original code context. The conversation is still available below.
+            GitHub did not provide code context for this comment.
           </p>
         ))}
       {fullFile && preferences && (
@@ -164,6 +170,6 @@ export function FeedbackCodeContext({
           )}
         </div>
       )}
-    </section>
+    </details>
   );
 }

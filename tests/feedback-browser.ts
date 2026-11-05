@@ -153,7 +153,7 @@ void app.whenReady().then(async () => {
     );
     await capture('review-dark');
     await js('document.querySelector(\'[data-feedback-id="t-121"]\').click()');
-    await wait("document.querySelector('.feedback-code-heading').textContent.includes('Earlier revision')");
+    await wait("document.querySelector('.feedback-code-heading').textContent.includes('earlier revision')");
     assert.equal(
       await js(
         "[...document.querySelectorAll('.feedback-conversation button')].some(b=>b.textContent==='Open in Changes')"
@@ -278,7 +278,7 @@ void app.whenReady().then(async () => {
     await click('Reply');
     await js("(()=>{const input=document.querySelector('.feedback-conversation textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'Keep this reply while browsing.');input.dispatchEvent(new Event('input',{bubbles:true}));})()");
     await js("document.querySelector('[data-feedback-id=\"t-121\"]').click()");
-    await wait("document.querySelector('.feedback-code-heading')?.textContent.includes('Earlier revision')");
+    await wait("document.querySelector('.feedback-code-heading')?.textContent.includes('earlier revision')");
     await js("document.querySelector('[data-feedback-id=\"t-120\"]').click()");
     await wait("document.querySelector('.feedback-conversation textarea')?.value==='Keep this reply while browsing.'");
     await js('window.failFeedbackWrite=true');
@@ -344,6 +344,40 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.feedback-conversation')?.textContent.includes('The new upload path')");
     assert.match(await js<string>("document.querySelector('.feedback-conversation').textContent"), /#120/);
     await capture('address-from-stack-dark');
+    // Real-world density: resolved old feedback, deep paths, and a short discussion on a large window.
+    await js(`(async()=>{
+      const m=window.feedbackSubject.members[0],data=window.feedbackData.get(m.url);
+      const thread=data.threads[0];thread.path='project/workers/unity-client/Assets/Klang/Seed/Scripts/Client/UI/EvolveUI/ClientLocalizationCompilation.asset';
+      thread.isResolved=true;thread.isOutdated=true;thread.comments[0].body='Unrelated change?';
+      thread.comments[1].body='Yes. The latest commit removes the unrelated asset change.';
+      const {receiveDiscussion}=await import('/lib/review-discussion-cache.ts');receiveDiscussion(m.url,structuredClone(data));
+    })()`);
+    await js("document.querySelector('[data-feedback-id=\"t-120\"]').click()");
+    win.setContentSize(1920,1100);
+    await new Promise(r=>setTimeout(r,150));
+    assert.ok(await js("document.querySelector('.feedback-list').getBoundingClientRect().width<=360"),'Wide windows keep the list bounded');
+    assert.equal(await js("document.querySelector('.feedback-code-context').open"),false,'Earlier resolved code starts collapsed');
+    assert.ok(await js("document.querySelector('.feedback-response-dock').getBoundingClientRect().bottom<innerHeight-200"),'Short conversations keep response controls nearby');
+    assert.ok(await js("[...document.querySelectorAll('.feedback-row-state')].every(el=>el.getBoundingClientRect().height<24)"),'Resolution labels stay on one line');
+    assert.equal(await js("document.querySelector('[data-feedback-id=\"t-120\"] .feedback-row-file').textContent"),'ClientLocalizationCompilation.asset');
+    await capture('refined-long-path-wide-dark');
+    win.setContentSize(1280,800);
+    await js("document.documentElement.classList.remove('dark')");
+    await capture('refined-resolved-light');
+    win.setContentSize(900,600);
+    await js("document.documentElement.classList.add('dark')");
+    await capture('refined-long-path-short-dark');
+    assert.ok(await js("document.querySelector('.feedback-response-dock').getBoundingClientRect().bottom<=innerHeight"));
+    win.setContentSize(1280,800);
+    win.webContents.setZoomFactor(2);
+    await new Promise(r=>setTimeout(r,150));
+    assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'),true,'Feedback remains contained at 200% zoom');
+    assert.ok(await js("document.querySelector('.pr-summary-page').scrollHeight>document.querySelector('.pr-summary-page').clientHeight"),'Extreme zoom makes the page scroll instead of clipping its contents');
+    await js("document.querySelector('.feedback-response-dock').scrollIntoView({block:'end'})");
+    await new Promise(r=>setTimeout(r,100));
+    assert.ok(await js("(()=>{const r=document.querySelector('.feedback-response-dock').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight})()"),'Response controls remain reachable at 200% zoom');
+    await capture('refined-zoom-dark');
+    win.webContents.setZoomFactor(1);
     assert.equal(errors.filter((e) => !e.includes('favicon')).length, 0, errors.join('\n'));
     console.log(
       'Feedback passed: stack aggregation, read/unread persistence, code context, resolution/reopen, reply recovery, reviewer requests, cached errors, keyboard and laptop/narrow light/dark layouts.'

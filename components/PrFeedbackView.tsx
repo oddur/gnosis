@@ -36,7 +36,12 @@ const excerpt = (item: FeedbackItem) =>
   item.comments[0]?.body
     .replace(/^[#>*\s]+/, '')
     .replace(/\s+/g, ' ')
-    .slice(0, 180) || feedbackStateLabel(item.state);
+    .slice(0, 180) ||
+  ({ APPROVED: 'Approved this PR', CHANGES_REQUESTED: 'Requested changes', DISMISSED: 'Review dismissed' }[
+    item.state ?? ''
+  ] ??
+    'Commented on this PR');
+const fileName = (path: string) => path.split('/').at(-1) || path;
 const kindLabel = (item: FeedbackItem) =>
   item.thread
     ? item.thread.isResolved
@@ -534,6 +539,8 @@ export function PrFeedbackView({
                       data-feedback-index={row.index}
                       data-feedback-id={item.id}
                       className={`feedback-row ${isUnread(item) ? 'is-unread' : ''}`}
+                      data-resolved={item.thread?.isResolved || undefined}
+                      data-event={(!item.thread && !item.comments[0]?.body.trim()) || undefined}
                       style={{
                         position: 'absolute',
                         top: 0,
@@ -560,19 +567,26 @@ export function PrFeedbackView({
                           <span>{item.comments.length} comments</span>
                         </span>
                       )}
-                      <span className="feedback-row-location">
-                        {item.thread ? <FileCode size={13} /> : <MessageSquare size={13} />}
-                        {item.thread?.path ?? kindLabel(item)}
-                        {item.thread && (
-                          <span>
-                            {kindLabel(item)}
-                            {item.thread.isOutdated ? ' · Outdated' : ''}
+                      {(item.thread || item.comments[0]?.body.trim()) && (
+                        <span className="feedback-row-location">
+                          {item.thread ? <FileTypeIcon filePath={item.thread.path} /> : <MessageSquare size={13} />}
+                          <span className="feedback-row-file" title={item.thread?.path}>
+                            {item.thread ? fileName(item.thread.path) : kindLabel(item)}
                           </span>
-                        )}
-                      </span>
+                          {item.thread && (
+                            <span className="feedback-row-state">
+                              {item.thread.isResolved && <Check size={12} aria-hidden="true" />}
+                              {kindLabel(item)}
+                            </span>
+                          )}
+                        </span>
+                      )}
                       {subject.kind === 'stack' && (
-                        <span className="feedback-source">
-                          <SubjectIcon kind="pr" />#{item.member.number} {item.member.title}
+                        <span className="feedback-source" title={`#${item.member.number} ${item.member.title}`}>
+                          <SubjectIcon kind="pr" />
+                          <span>
+                            #{item.member.number} {item.member.title}
+                          </span>
                         </span>
                       )}
                     </button>
@@ -638,13 +652,18 @@ export function PrFeedbackView({
                     Conversations
                   </Button>
                   <div>
-                    <span className="feedback-source">
+                    <span className="feedback-source" title={`#${selected.member.number} ${selected.member.title}`}>
                       <SubjectIcon kind="pr" />#{selected.member.number} {selected.member.title}
                     </span>
-                    <h2 ref={detail} tabIndex={-1}>
+                    <h2 ref={detail} tabIndex={-1} title={selected.thread?.path}>
                       {selected.thread && <FileTypeIcon filePath={selected.thread.path} />}
-                      {selected.thread?.path ?? kindLabel(selected)}
+                      <span className="feedback-file-name">{selected.thread ? fileName(selected.thread.path) : kindLabel(selected)}</span>
                     </h2>
+                    {selected.thread?.path.includes('/') && (
+                      <span className="feedback-file-directory" title={selected.thread.path}>
+                        {selected.thread.path.slice(0, selected.thread.path.lastIndexOf('/'))}
+                      </span>
+                    )}
                   </div>
                   {selected.kind === 'review' &&
                     (() => {
@@ -662,56 +681,38 @@ export function PrFeedbackView({
                   <Button variant="ghost" size="sm" onClick={() => void markUnread()}>
                     Mark unread
                   </Button>
-                </header>
-                <nav className="feedback-thread-navigation" aria-label="Conversation navigation">
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Previous conversation"
-                    disabled={selectedIndex <= 0}
-                    onClick={() => select(shown[selectedIndex - 1])}
-                  >
-                    <ArrowLeft size={15} />
-                  </Button>
-                  <span>
-                    {selectedIndex + 1} of {shown.length}
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Next conversation"
-                    disabled={selectedIndex < 0 || selectedIndex >= shown.length - 1}
-                    onClick={() => select(shown[selectedIndex + 1])}
-                  >
-                    <ArrowRight size={15} />
-                  </Button>
-                  {selected.thread && (
-                    <Button variant="ghost" size="sm" onClick={() => onSource(selected)}>
-                      Open in Changes
+                  <nav className="feedback-thread-navigation" aria-label="Conversation navigation">
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Previous conversation"
+                      disabled={selectedIndex <= 0}
+                      onClick={() => select(shown[selectedIndex - 1])}
+                    >
+                      <ArrowLeft size={15} />
                     </Button>
-                  )}
-                </nav>
+                    <span>
+                      {selectedIndex + 1} of {shown.length}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Next conversation"
+                      disabled={selectedIndex < 0 || selectedIndex >= shown.length - 1}
+                      onClick={() => select(shown[selectedIndex + 1])}
+                    >
+                      <ArrowRight size={15} />
+                    </Button>
+                    {selected.thread && (
+                      <Button variant="ghost" size="sm" onClick={() => onSource(selected)}>
+                        Open in Changes
+                      </Button>
+                    )}
+                  </nav>
+                </header>
                 <div className="feedback-conversation-body" key={feedbackKey(selected)}>
                   {selected.thread && (
                     <div className="feedback-thread-detail">
-                      <FeedbackCodeContext
-                        item={selected}
-                        thread={selected.thread}
-                        preferences={preferences}
-                        discussion={{
-                          discussions: Object.fromEntries(
-                            Object.entries(discussions.values).map(([url, data]) => [
-                              url,
-                              { data, error: discussions.errors[url]?.message },
-                            ])
-                          ),
-                          refresh: async (url) => {
-                            await refreshDiscussion(url);
-                          },
-                          replace: replaceDiscussionThread,
-                        }}
-                        onSource={() => onSource(selected)}
-                      />
                       <GitHubReviewThread
                         thread={selected.thread}
                         actionContainer={actionHost}
@@ -739,6 +740,24 @@ export function PrFeedbackView({
                           });
                           replaceDiscussionThread(selected.member.url, next);
                         }}
+                      />
+                      <FeedbackCodeContext
+                        item={selected}
+                        thread={selected.thread}
+                        preferences={preferences}
+                        discussion={{
+                          discussions: Object.fromEntries(
+                            Object.entries(discussions.values).map(([url, data]) => [
+                              url,
+                              { data, error: discussions.errors[url]?.message },
+                            ])
+                          ),
+                          refresh: async (url) => {
+                            await refreshDiscussion(url);
+                          },
+                          replace: replaceDiscussionThread,
+                        }}
+                        onSource={() => onSource(selected)}
                       />
                     </div>
                   )}
