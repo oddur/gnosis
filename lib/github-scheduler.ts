@@ -6,6 +6,7 @@ const rank: Record<GitHubPriority, number> = { interactive: 2, foreground: 1, ba
 interface PriorityScope {
   priority: GitHubPriority;
   parallelReads?: boolean;
+  automatic?: boolean;
   parent?: PriorityScope;
 }
 const context = new AsyncLocalStorage<PriorityScope>();
@@ -27,8 +28,14 @@ export function githubPriority(scope = githubPriorityScope()): GitHubPriority {
   const parent = scope.parent && githubPriority(scope.parent);
   return parent && rank[parent] > rank[scope.priority] ? parent : scope.priority;
 }
-export const withGitHubPriority = <T>(priority: GitHubPriority, operation: () => T): T =>
-  context.run({ priority }, operation);
+export const withGitHubPriority = <T>(priority: GitHubPriority, operation: () => T, options: { automatic?: boolean } = {}): T =>
+  context.run({ priority, automatic: options.automatic ?? (context.getStore() && githubAutomatic() ? true : undefined) }, operation);
+/** Automatic refreshes can be urgent without borrowing the user's interactive allowance. */
+export function githubAutomatic(scope = githubPriorityScope()): boolean {
+  if (githubPriority(scope) === 'interactive') return false;
+  if (scope.automatic !== undefined) return scope.automatic;
+  return scope.parent ? githubAutomatic(scope.parent) : githubPriority(scope) === 'background';
+}
 /** Opt in only for independent reads on the visible workflow's critical path. */
 export const withParallelGitHubReads = <T>(operation: () => T): T =>
   context.run({ priority: githubPriority(), parallelReads: true, parent: context.getStore() }, operation);
@@ -46,7 +53,12 @@ export function createGitHubWork<T>(operation: () => Promise<T>): GitHubWork<T> 
 }
 export function joinGitHubWork<T>(work: GitHubWork<T>): Promise<T> {
   const priority = githubPriority();
-  if (rank[priority] > rank[work.scope.priority]) work.scope.priority = priority;
+  if (rank[priority] > rank[work.scope.priority]) {
+    work.scope.priority = priority;
+    work.scope.automatic = githubAutomatic();
+  }
+  // A user-requested generation can join an automatic foreground refresh.
+  if (!githubAutomatic() && rank[priority] >= rank[work.scope.priority]) work.scope.automatic = false;
   return work.promise;
 }
 

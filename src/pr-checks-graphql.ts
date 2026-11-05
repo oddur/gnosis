@@ -77,7 +77,7 @@ export async function readChecksGraphQL(client: Octokit, targets: CheckTarget[])
   }));
   while (states.some((state) => !state.done)) {
     const active = states.filter((state) => !state.done);
-    const query = `query { ${active
+    const query = `query { rateLimit { cost } ${active
       .map(
         (
           { parsed: { owner, repo, pull_number }, cursor },

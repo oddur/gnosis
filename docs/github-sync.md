@@ -22,7 +22,7 @@ Checkpoints preserve completed pages and details across rate limits and restarts
 
 ## Request scheduling
 
-Each credential has one serial network scheduler with three priorities:
+Each credential has one shared network scheduler with three priorities:
 
 | Priority | Work |
 | --- | --- |
@@ -42,11 +42,16 @@ Explanation preparation reports completed files, including both required sides, 
 
 Optional file age and churn start only after the explanation inputs are ready, at background priority. They do not delay delivery: the review includes available history or its known file inventory, and cancels unfinished history requests. These requests also stop on generation failure or cancellation.
 
-The scheduler reserves API allowance for interaction. Background requests pause near exhaustion and spread out as the remaining allowance decreases.
+Automatic work has its own budget: 20% of the reported allowance per credential and API resource. For a standard REST token, that is 1,000 automatic requests per local hour. Search uses a one-minute window. The counters survive restarts and sign-out. Automatic requests are paced across the window, with a separate pause near GitHub's exhaustion threshold.
+
+This budget includes preloads, discovery, tray status, automatic briefings, and routine refreshes of visible PRs and checks. Urgent automatic reads retain foreground scheduling priority but still count against the budget. Manual refreshes, writes, user-requested explanations, and bounded follow-ups after a write can use the reserved capacity. All work still obeys GitHub's actual limits.
+
+GraphQL sync queries report their point cost. Other GraphQL reads use the observed same-window quota decrease when available, or one point until cost is known. A query already in flight can cross the local budget; later automatic queries pause. Budget persistence uses asynchronous, ordered atomic writes in Electron.
 Primary limits apply separately to REST, search, and GraphQL. Secondary limits pause all network work for the credential.
 Server retry deadlines and exponential backoff still apply. Writes are never replayed automatically.
 
 The HTTP response cache permits 2,000 entries and 32 MB. Each response has a 1 MB limit and a seven-day retention limit.
+Contents and Git blob/tree responses pinned to a full SHA can remain fresh for 24 hours. Branch names, PR metadata, checks, explicit refreshes, and no-cache responses keep their existing validation rules.
 Prepared changes, commits, files, and review diffs also use a separate SQLite table. Memory eviction does not delete these prepared downloads.
 The total downloaded-content budget defaults to 512 MB. **Settings → Integrations → GitHub cache → Disk cache size** offers 128 MB through 4 GB.
 The HTTP cache uses 32 MB of that budget. Prepared downloads use the remainder, with 30-day retention and a 24 MB entry limit.
@@ -75,12 +80,12 @@ When a PR base or head SHA changes, discovery schedules that revision for prepar
 Read-state changes update these priorities without repeating completed preparation. Stack members use their individual unread states.
 The selected [list sort](pr-list-sorting.md) sets the order within these priority groups for PRs in the current view.
 
-Within each priority group, file and commit lists come first. Preparation then downloads the newest commit, changed files, review diff, and older commits.
+Within each priority group, file and commit lists come first, then current changed files, the newest commit, and the review diff. Older commit history runs after these stages have completed for all ready PRs, so one long history cannot consume the budget before other PRs are usable.
 Every individual commit and its files are eligible. Custom commit ranges, alternate merge parents, and LFS downloads remain on demand.
 One preparation operation runs at a time. The scheduler checks priorities between operations, so a new selection moves ahead of unfinished work.
 The current operation finishes before priorities change. Completed operations do not repeat after a pause or a priority change.
 Background requests respect the shared GitHub allowance, reserved interactive capacity, and backoff. Failed operations retry with increasing delays.
-Unsupported previews do not block other files. Preparation continues during navigation and while the window is hidden. It never starts AI generation.
+Unsupported previews do not block other files. Preparation continues during navigation. It pauses between operations while the window is hidden or offline, then resumes when the window becomes visible or connectivity returns. It never starts AI generation.
 
 Activity shows one **Preparing PRs for instant opening** entry below user-requested tasks. It shows the current PR, preparation stage, progress, and prepared/pending counts.
 When GitHub limits stop preparation, the entry shows a pause and keeps its progress visible. Failed operations retry automatically.
@@ -89,6 +94,7 @@ The entry disappears after preparation finishes. It does not create a completion
 A local restore pass loads saved inventories before network work starts. Changes and Commits use prepared data immediately when available.
 An open diff keeps its displayed revision until the reviewer selects **Update changes**. Preparation of a newer revision does not replace displayed code.
 Metadata and CI updates do not repeat content downloads for unchanged base and head SHAs.
+Source bytes also have a shared SQLite cache keyed by credential, repository, full commit SHA, and path. A new head reuses unchanged base-file bytes; PR, commit, and stack comparisons share matching source. Concurrent reads share one download. This cache uses the existing disk budget and is removed by Clear cache. LFS downloads remain explicit.
 Guided reviews check the current revision, then reuse its prepared file list, comparison base, full diff, and file contents.
 Generation checks the revision again before saving. Fork files retain their source repository. Renamed files retain both paths.
 
@@ -146,6 +152,8 @@ Other tests cover progressive results, checkpoint recovery, credential changes, 
 The Electron tests cover the header indicator, retry information, keyboard tooltips, stable controls, and compact layouts.
 Preload tests verify tab opening without loading screens, file reuse, and updates that preserve the open diff.
 Service tests verify exact-revision reuse during generation, account isolation, and revisions that change during preparation.
+
+A deterministic transport simulation previously spent 1,000 REST preload requests in 800,199 ms (about 13 minutes). It now spreads those requests across about an hour and pauses further automatic reads until the local window resets. Interactive requests and cached reads remain available. Other regressions cover restart accounting, GraphQL cost, unchanged file-side reuse, and current changes before history. The browser fixture verifies prepared Changes and Commits open without loading flashes.
 
 ## Follow-up
 

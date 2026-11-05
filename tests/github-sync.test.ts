@@ -432,3 +432,20 @@ void test('unchanged discussions publish fresh observation times without increas
   const last = updates.at(-1);
   assert.equal(last?.kind === 'discussion' && last.value.checkedAt, 480_000);
 });
+
+void test('only bounded write follow-ups borrow requested capacity from the transport budget', async () => {
+  const requested: boolean[] = [];
+  let now = 1_000_000;
+  const sync = createGitHubSyncService({
+    now: () => now, account: () => 'alice', enabled: () => true, backoff: () => undefined,
+    read: (_kind, _targets, _priority, followUp) => { requested.push(followUp); return Promise.resolve([]); },
+    publish: () => {},
+  });
+  sync.observe('1:checks', { kind: 'checks', priority: 'active', targets: [target()] });
+  await sync.tick();
+  sync.invalidate([target().url], ['checks'], { followUp: true });
+  await sync.tick();
+  now += 300_000;
+  await sync.tick();
+  assert.deepEqual(requested, [false, true, false]);
+});

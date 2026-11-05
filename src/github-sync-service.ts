@@ -35,7 +35,8 @@ interface Deps {
   read: (
     kind: GitHubSyncKind,
     targets: GitHubSyncTarget[],
-    priority: 'active' | 'visible'
+    priority: 'active' | 'visible',
+    requestedFollowUp: boolean
   ) => Promise<GitHubSyncUpdate[]>;
   publish: (updates: GitHubSyncUpdate[]) => void;
   failed?: (failures: GitHubSyncFailure[]) => void;
@@ -163,7 +164,8 @@ export function createGitHubSyncService(deps: Deps) {
           const updates = await deps.read(
             kind,
             batch.map((task) => task.target),
-            priority
+            priority,
+            followUp
           );
           if (generation !== epoch || deps.account() !== account) return;
           const accepted: GitHubSyncUpdate[] = [];

@@ -106,7 +106,7 @@ export function createReviewThreadService(now = Date.now) {
     do {
       const data: { repository: { pullRequest: Pull | null } | null } = await graphql(
         client,
-        `query ReviewThreads($owner:String!,$repo:String!,$number:Int!,$cursor:String) { repository(owner:$owner,name:$repo) { pullRequest(number:$number) { headRefOid baseRefOid reviewThreads(first:50,after:$cursor) { nodes { ${threadFields} } ${pageFields} } } } }`,
+        `query ReviewThreads($owner:String!,$repo:String!,$number:Int!,$cursor:String) { rateLimit { cost } repository(owner:$owner,name:$repo) { pullRequest(number:$number) { headRefOid baseRefOid reviewThreads(first:50,after:$cursor) { nodes { ${threadFields} } ${pageFields} } } } }`,
         { ...variables, cursor }
       );
       const pr = data.repository?.pullRequest;
@@ -121,7 +121,7 @@ export function createReviewThreadService(now = Date.now) {
         while (after) {
           const more: { node: { comments: Page<GitHubReviewComment> } | null } = await graphql(
             client,
-            `query ThreadReplies($id:ID!,$after:String!) { node(id:$id) { ... on PullRequestReviewThread { comments(first:100,after:$after) { nodes { ${commentFields} } ${pageFields} } } } }`,
+            `query ThreadReplies($id:ID!,$after:String!) { rateLimit { cost } node(id:$id) { ... on PullRequestReviewThread { comments(first:100,after:$after) { nodes { ${commentFields} } ${pageFields} } } } }`,
             { id: thread.id, after }
           );
           if (!more.node) throw new Error('This discussion is no longer available. Refresh comments.');
