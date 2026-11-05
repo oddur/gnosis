@@ -1,10 +1,10 @@
+import { LoadingState } from './LoadingState';
 import { RepositoryMark } from './RepositoryAppearance';
 import { useRepositorySettings } from '../lib/use-repository-settings';
 import { repositoryKey } from '../lib/repository-settings';
 import { useState, useEffect, useMemo } from 'react';
 import { Search } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { Skeleton } from '@/components/ui/skeleton';
 import { timeAgo } from '@/lib/utils';
 import type { PrSearchResult } from '@/lib/types';
 
@@ -150,11 +150,7 @@ export function PRPickerDialog({ open, onOpenChange, onSelect }: Props) {
 
         <div className="overflow-y-auto -mx-6 min-h-0 max-h-[50vh]">
           {loading && (
-            <div className="flex flex-col gap-3 px-6 py-2">
-              <Skeleton className="h-14 w-full rounded-sm" />
-              <Skeleton className="h-14 w-full rounded-sm" />
-              <Skeleton className="h-14 w-full rounded-sm" />
-            </div>
+            <LoadingState title="Finding your pull requests…" description="Checking authored PRs and review requests." />
           )}
 
           {error && <p className="text-sm text-destructive py-4 text-center">{error}</p>}

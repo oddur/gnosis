@@ -1,3 +1,4 @@
+import { LoadingIndicator } from './LoadingState';
 import { WorkspaceIcon } from './WorkspaceIcon';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ClipboardCopy, Eye, MoreHorizontal, Trash2, Undo2 } from 'lucide-react';
@@ -199,7 +200,7 @@ export function AgentBriefView({
         </p>
       )}
       <p className="agent-brief-notice" role="status">
-        {notice}
+        {busy ? <LoadingIndicator announce={false}>{busy}</LoadingIndicator> : notice}
       </p>
       {removed.length > 0 && (
         <div className="agent-brief-undo">

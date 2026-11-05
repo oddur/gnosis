@@ -1,3 +1,4 @@
+import { LoadingIndicator } from './LoadingState';
 import { RepositorySettingsList } from './RepositorySettingsList';
 import { ModelEffortSelect } from './ModelEffortSelect';
 import { effortLabels, normalizeEffort } from '../lib/effort';
@@ -297,7 +298,7 @@ export function OnboardingSetup({
               <div className="setup-cli">
                 <span role="status">
                   {cli === null
-                    ? 'Checking Claude Code and Codex…'
+                    ? <LoadingIndicator announce={false}>Checking Claude Code and Codex…</LoadingIndicator>
                     : available.length
                       ? `${available.map((id) => (id === 'claude' ? 'Claude Code' : 'Codex')).join(' and ')} found on this computer.`
                       : 'No AI tool found yet. You can still read PRs and inspect diffs.'}

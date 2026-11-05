@@ -1,3 +1,4 @@
+import { LoadingIndicator } from './LoadingState';
 import type { ReactNode } from 'react';
 import { PrActions } from './PrActions';
 import { DiffStats } from './DiffStats';
@@ -159,18 +160,18 @@ export function PrReadiness({
           </details>
         ) : (
           <span>
-            <CheckIcon size={14} />
-            {checks}
+            {(status || rollup || error || !onRetry) && <CheckIcon size={14} />}
+            {!status && !rollup && !error && onRetry ? <LoadingIndicator>{checks}</LoadingIndicator> : checks}
           </span>
         )}
         <span>
-          <GitPullRequest size={14} />
+          {(status || error || !onRetry) && <GitPullRequest size={14} />}
           {status
             ? `${status.reviewSummary.approved} ${status.reviewSummary.approved === 1 ? 'approval' : 'approvals'}`
             : error
               ? 'Reviews unavailable'
               : onRetry
-                ? 'Loading reviews…'
+                ? <LoadingIndicator>Loading reviews…</LoadingIndicator>
                 : 'Reviews not saved'}
           {!!status?.reviewSummary.changesRequested && ` · ${status.reviewSummary.changesRequested} changes requested`}
         </span>

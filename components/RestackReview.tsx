@@ -1,3 +1,4 @@
+import { LoadingIndicator } from './LoadingState';
 import { useEffect, useState, type ComponentProps } from 'react';
 import { CodeView } from '@pierre/diffs/react';
 import { GitBranch, CheckCircle2 } from 'lucide-react';
@@ -60,7 +61,7 @@ export function RestackReview({
       <div className="restack-body">
         {!plan && (
           <Button disabled={busy || !count} onClick={onPrepare}>
-            {busy ? 'Preparing restack…' : `Prepare restack · ${count} PRs`}
+            {busy ? <LoadingIndicator>Preparing restack…</LoadingIndicator> : `Prepare restack · ${count} PRs`}
           </Button>
         )}
         {plan?.blocked && (

@@ -1,3 +1,4 @@
+import { LoadingIndicator } from './LoadingState';
 import { SourceBadges } from './EntityBadge';
 import { GitHubAuthor } from './GitHubAuthor';
 import { commandRecents as recentIds, rememberCommandDestination as remember } from '../lib/command-recents';
@@ -391,8 +392,7 @@ export function GlobalCommandPalette({
               )}
               {pending && !commandOnly && (
                 <CommandItem disabled value="loading" className="global-command-empty">
-                  <Loader2 size={18} className="animate-spin" />
-                  <p>Searching this computer…</p>
+                  <LoadingIndicator>Searching this computer…</LoadingIndicator>
                 </CommandItem>
               )}
               {!pending && !groups.length && !filteredCommands.length && !remote?.length && (

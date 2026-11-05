@@ -1,3 +1,4 @@
+import { LoadingIndicator } from './LoadingState';
 import { useEffect, useId, useState } from 'react';
 import { FolderGit2 } from 'lucide-react';
 import { Button } from './ui/button';
@@ -62,7 +63,7 @@ export function LocalCloneSettings({ repo }: { repo: string }) {
           {!loaded
             ? error
               ? 'Could not load clone settings'
-              : 'Loading clone settings…'
+              : <LoadingIndicator>Loading clone settings…</LoadingIndicator>
             : clone
               ? clone.lastError
                 ? 'Using GitHub when the clone is unavailable'

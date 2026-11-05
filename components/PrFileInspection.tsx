@@ -1,3 +1,4 @@
+import { LoadingState, LoadingIndicator } from './LoadingState';
 import { DIFF_HIGHLIGHTER } from '../lib/diff-highlighter';
 import { stackFileProgressKey, stackFileSourcePath, stackFileDiscussions } from '../lib/stack-changes';
 import { GitHubReviewThread } from './GitHubReviewThread';
@@ -641,9 +642,7 @@ export function PrFileInspection({
       {!compactMove && (
         <>
           {!contents && !preview && !fileError && (
-            <div className="changes-loading" role="status">
-              Loading file contents…
-            </div>
+            <LoadingState compact className="changes-loading" title="Loading file contents…" />
           )}
           {fileError && (
             <div className="changes-empty" role="alert">
@@ -695,7 +694,7 @@ export function PrFileInspection({
               <span>
                 {markdownError?.key === markdownKey
                   ? markdownError.message
-                  : 'Preparing rendered view… Source remains available below.'}
+                  : <LoadingIndicator announce={false}>Preparing rendered view… Source remains available below.</LoadingIndicator>}
               </span>
               {markdownError?.key === markdownKey && (
                 <button onClick={() => setMarkdownAttempt((n) => n + 1)}>Retry</button>

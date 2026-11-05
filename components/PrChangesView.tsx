@@ -1,3 +1,4 @@
+import { LoadingState, LoadingIndicator } from './LoadingState';
 import { watchGitHub } from '../lib/watch-github';
 import { stackFileDiscussions } from '../lib/stack-changes';
 import { loadInspectionBatch, inspectionFailure, type InspectionFailure } from '../lib/inspection-batch';
@@ -77,7 +78,7 @@ export interface CommitWorkspace {
   header: ReactNode;
   status: ReactNode;
   tools: ReactNode;
-  fileStatus: string;
+  fileStatus: ReactNode;
   filesOpen: boolean;
   toggleFiles: () => void;
   onOpenCurrentFile: (url: string, path: string) => void;
@@ -545,7 +546,7 @@ export function PrChangesView({
         />
         {!commit && !combined && (
           <Button variant="ghost" size="sm" disabled={loading} onClick={() => void load(true)}>
-            <RefreshCw size={14} />
+            <RefreshCw size={14} className={loading ? 'motion-safe:animate-spin' : undefined} />
             {loading ? 'Loading…' : 'Update changes'}
           </Button>
         )}
@@ -568,7 +569,7 @@ export function PrChangesView({
         Large diffs load as you open each file to keep this view responsive. All available filenames remain searchable.
       </div>}
       {loading && <div className="changes-notice" role="status">
-        <span>Loading {pendingMembers.length} {pendingMembers.length === 1 ? 'PR' : 'PRs'}… Available files are ready to review.</span>
+        <LoadingIndicator announce={false}>Loading {pendingMembers.length} {pendingMembers.length === 1 ? 'PR' : 'PRs'}… Available files are ready to review.</LoadingIndicator>
         <button onClick={() => { loadController.current?.abort(); setLoadErrors(errors => [...errors, ...pendingMembers.map(url => ({ url, message: 'Loading was stopped.' }))]); setLoading(false); setPendingMembers([]); }}>Stop loading</button>
       </div>}
       {loadErrors.map(failure => <InspectionFailureNotice key={failure.url} failure={failure}
@@ -653,7 +654,7 @@ export function PrChangesView({
                     {commit.fileStatus}
                   </p>
                 ) : loading && !snapshots.length ? (
-                  <p role="status">Loading changed files…</p>
+                  <LoadingState compact title="Loading changed files…" />
                 ) : !visible.length ? (
                   <p role="status">
                     {hidden
@@ -789,7 +790,8 @@ export function PrChangesView({
               }
             />
           ) : (
-            <p className="changes-empty">{loading ? 'Loading changed files…' : loadErrors.length ? 'Changed files are unavailable. Retry or open the PR on GitHub.' : 'No changed files.'}</p>
+            loading ? <LoadingState title="Loading changed files…" hint="You can keep browsing." /> :
+            <p className="changes-empty">{loadErrors.length ? 'Changed files are unavailable. Retry or open the PR on GitHub.' : 'No changed files.'}</p>
           )}
         </div>
         {chatOpen && chatRequest && (

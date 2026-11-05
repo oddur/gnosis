@@ -1,3 +1,4 @@
+import { LoadingIndicator } from './LoadingState';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { FolderOpen, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -351,11 +352,11 @@ export function LocalRepoDialog({ supportsTools = true, open, onOpenChange, onSu
                 )}
               </div>
             ) : loadingRefs ? (
-              <span className="text-muted-foreground">Reading branches…</span>
+              <LoadingIndicator>Reading branches…</LoadingIndicator>
             ) : preview ? (
               <DiffPreview count={preview.changedFileCount} mergeBase={preview.mergeBase} loading={loadingPreview} />
             ) : loadingPreview ? (
-              <span className="text-muted-foreground">Checking diff…</span>
+              <LoadingIndicator>Checking diff…</LoadingIndicator>
             ) : null}
           </div>
 

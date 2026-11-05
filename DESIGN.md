@@ -321,3 +321,10 @@ Workspace section icons use the shared WorkspaceIcon mapping in tabs, breadcrumb
 ### Workflow job steps
 
 Individual Checks graph nodes show a compact step list with status icons, names, and durations. Preview three ordered steps around the running step, then a failure, then the latest completed step. Show all steps expands the full list; grouped nodes keep their job summary until expanded. Keep dependency routing outside the card, preserve the existing header action for details, and expose full truncated step names and status in tooltips. Expansion uses cached workflow data and backend layout. Remember it within the current workflow session. Timestamp-less steps show no invented duration.
+
+
+### Loading feedback
+
+Use `LoadingState` for an empty pane and its compact variant for file previews or small panels. The shared three-node signal comes from the Checks graph. Use `LoadingIndicator` for inline work and refreshes; keep cached content visible. Show the actual operation in plain text. Do not simulate completion percentages or cycle through invented phases.
+
+Motion stops for reduced-motion preferences, hidden windows, and offscreen indicators. One shared intersection observer handles visibility. Optional elapsed time appears after five seconds and is excluded from live announcements. Announce the operation once through its status region; use `announce={false}` inside an existing status region. Loading does not delay completion or trigger additional requests.

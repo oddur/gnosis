@@ -1,3 +1,4 @@
+import { LoadingIndicator } from './LoadingState';
 import { useEffect, useState } from 'react';
 import type { Briefing } from '../lib/workbench';
 import type { PrGenerationActions } from './PrEntryActions';
@@ -27,7 +28,7 @@ export function StackBriefing({ briefing, actions, onActivity, onSetup, connecte
     : status === 'paused' ? briefing?.pauseReason === 'filter' ? 'Automatic briefing paused by your filters.' : briefing?.pauseDetail ?? 'Automatic briefing paused.'
     : status === 'queued' ? 'Stack briefing queued.' : 'No stack briefing yet.';
   return <div className="stack-briefing-state">
-    <span role="status">{message}</span>
+    <span role="status">{connected && running ? <LoadingIndicator announce={false}>{message}</LoadingIndicator> : message}</span>
     {running || status === 'queued' ? <Button size="sm" variant="ghost" onClick={onActivity}>View activity</Button>
       : !connected ? <Button size="sm" variant="ghost" onClick={onSetup}>Connect GitHub</Button>
       : actions && !actions.briefingDisabled ? <Button size="sm" variant="ghost" onClick={() => {

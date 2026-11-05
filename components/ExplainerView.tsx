@@ -1,3 +1,4 @@
+import { LoadingIndicator } from './LoadingState';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowUpRight, Pause, Play, RotateCcw, SkipForward } from 'lucide-react';
 import { Button } from './ui/button';
@@ -141,11 +142,11 @@ export function ExplainerView({ reviewId, slide, onClose, onSaved, onShowActivit
             role="status"
             className="flex flex-wrap items-center gap-3 py-2 border-y border-border mb-2 text-sm shrink-0"
           >
-            <span>
+            <LoadingIndicator announce={false}>
               {artifact
                 ? 'Refining in the background. We’ll notify you when it’s ready.'
                 : 'Building in the background. We’ll notify you when it’s ready.'}
-            </span>
+            </LoadingIndicator>
             <Button variant="ghost" size="sm" onClick={onShowActivity}>
               View activity
             </Button>
