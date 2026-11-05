@@ -199,7 +199,10 @@ export function createPrInspectionCache(deps: Dependencies) {
       return;
     }
     await deps.review(saved.changes);
-    job.stage++;
+    // No remaining history means this PR is prepared now. Do not defer its
+    // completion behind another PR's downloads or an unrelated rate-limit pause.
+    if (job.commit >= saved.commits.commits.length) finish(job, generation);
+    else job.stage++;
   }
   function unsupported(error: unknown) {
     return /too large|binary file|not UTF-8|no text preview|Not Found|\b404\b|file limit/i.test(String(error));

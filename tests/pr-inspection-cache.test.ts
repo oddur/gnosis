@@ -455,3 +455,22 @@ void test('current changes are ready before spending requests on commit history'
       'Opening Changes must not wait for historical comparisons and file downloads');
   } finally { f.cache.stop(); }
 });
+
+for (const commits of [0, 1]) {
+  void test(`preload progress completes a PR with ${commits} commits before starting the next PR`, async () => {
+    const observed: unknown[] = [];
+    const f = fixture({ commits, onFile: (snapshot) => {
+      if (snapshot.metadata.headSha === 'next') {
+        observed.push(f.cache.activity()?.progress);
+      }
+      return Promise.resolve();
+    } });
+    try {
+      f.cache.setTargets('one', [r, { ...r, url: r.url + '2', headSha: 'next' }], { active: [r.url] });
+      await f.cache.flush();
+      assert.equal(observed.length, 3);
+      assert.deepEqual(observed, Array(3).fill({ completed: 1, total: 2, unit: 'PRs' }));
+      assert.equal(f.cache.activity(), undefined);
+    } finally { f.cache.stop(); }
+  });
+}
