@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { normalizeInlineExplanations } from '../lib/inline-explanations';
+import {
+  normalizeInlineExplanations,
+  resolveGeneratedInlineExplanations,
+  numberExplanationDiffs,
+} from '../lib/inline-explanations';
 import type { DiffHunk, InlineExplanation } from '../lib/types';
 
 const filePath = 'PR-example~repo-12/src/queue.ts';
@@ -92,4 +96,70 @@ void test('saved notes are dropped when their source changes; file status preven
     normalizeInlineExplanations([{ ...moved, side: 'LEFT' }], [added], [{ filename: filePath, status: 'added' }]),
     []
   );
+});
+
+void test('newly generated notes repair unique exact quotes without relocating saved notes', () => {
+  const wrong = { ...note, line: 99 };
+  assert.deepEqual(resolveGeneratedInlineExplanations([wrong], [hunk]), [note]);
+  assert.deepEqual(normalizeInlineExplanations([wrong], [hunk]), []);
+  assert.deepEqual(resolveGeneratedInlineExplanations([{ ...wrong, side: 'LEFT' }], [hunk]), []);
+  assert.deepEqual(resolveGeneratedInlineExplanations([{ ...wrong, filePath: 'src/queue.ts' }], [hunk]), []);
+  assert.deepEqual(resolveGeneratedInlineExplanations([{ ...wrong, code: 'return dispatchLater();' }], [hunk]), []);
+});
+
+void test('repair does not guess between duplicate statements or punctuation-only anchors', () => {
+  const duplicate = { ...hunk, hunkHeader: '@@ -100,1 +100,1 @@', content: '+return await dispatch();' };
+  assert.deepEqual(resolveGeneratedInlineExplanations([{ ...note, line: 50 }], [hunk, duplicate]), []);
+  assert.deepEqual(
+    resolveGeneratedInlineExplanations([note], [hunk, duplicate]),
+    [note],
+    'An exact coordinate still disambiguates'
+  );
+  const punctuation = { ...hunk, content: '+});' };
+  assert.deepEqual(resolveGeneratedInlineExplanations([{ ...note, line: 99, code: '});' }], [punctuation]), []);
+});
+
+void test('explicit changes take precedence over stale overlapping context regardless of hunk order', () => {
+  const stale = { ...hunk, hunkHeader: '@@ -4,1 +4,1 @@', content: ' return dispatch();' };
+  for (const hunks of [
+    [hunk, stale],
+    [stale, hunk],
+  ]) {
+    assert.deepEqual(normalizeInlineExplanations([note], hunks), [note]);
+    assert.deepEqual(normalizeInlineExplanations([{ ...note, code: 'return dispatch();' }], hunks), []);
+    const removed = { ...note, side: 'LEFT' as const, code: 'return dispatch();' };
+    assert.deepEqual(normalizeInlineExplanations([removed], hunks), [removed]);
+  }
+});
+
+void test('conflicting explicit source cannot validate or repair an anchor', () => {
+  const conflict = { ...hunk, content: hunk.content.replace('+return await dispatch();', '+return retry();') };
+  for (const hunks of [
+    [hunk, conflict],
+    [conflict, hunk],
+  ]) {
+    assert.deepEqual(normalizeInlineExplanations([note], hunks), []);
+    assert.deepEqual(resolveGeneratedInlineExplanations([{ ...note, line: 99 }], hunks), []);
+  }
+  assert.deepEqual(
+    resolveGeneratedInlineExplanations([{ ...note, line: 99 }], [hunk, hunk]),
+    [note],
+    'Repeated copies of the same coordinate are not ambiguity'
+  );
+});
+
+void test('prompt coordinates match source sides across additions, removals, files and no-newline markers', () => {
+  const input =
+    '<diff_hunks>\n--- a.ts (modified) [hunk-0]\n@@ -9,2 +12,2 @@\n-old();\n+new();\n shared();\n--- b.ts (added) [hunk-1]\n@@ -0,0 +1,1 @@\n+created();\n\\ No newline at end of file\n</diff_hunks>';
+  const result = numberExplanationDiffs(input);
+  assert.ok(result.includes('[L:9 R:-] -old();'));
+  assert.ok(result.includes('[L:- R:12] +new();'));
+  assert.ok(result.includes('[L:10 R:13]  shared();'));
+  assert.ok(result.includes('[L:- R:1] +created();'));
+  assert.ok(result.includes('--- b.ts (added) [hunk-1]'));
+  const full = numberExplanationDiffs(
+    '<full_diff>\ndiff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1,1 +1,0 @@\n--- a SQL comment\n</full_diff>'
+  );
+  assert.ok(full.includes('[L:1 R:-] --- a SQL comment'), 'A removed SQL comment is not a file boundary');
+  assert.equal(numberExplanationDiffs('plain source without a diff header'), 'plain source without a diff header');
 });

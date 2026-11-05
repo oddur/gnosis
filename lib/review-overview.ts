@@ -17,7 +17,8 @@ Keep technical names, code, and quoted source text exact. Include enough detail 
 export const SLIDE_NARRATIVE_DIRECTIVE = `SLIDE NARRATIVE — narrative
 Explain what the reviewer must understand about this part of the change: the takeaway and the essential reasoning.
 State the main takeaway first. Then explain only the causal connection and consequential boundary needed to understand it. Use short bullets for separate points, without mandatory labels or headings. An unchanged constraint belongs here when omitting it would imply a broader change.
-Use inline annotations to explain how specific code enforces that behavior. Do not repeat that explanation in the narrative.
+Use the narrative for the chapter's purpose, behavioral change, and consequential boundary. Put fixture values, local callback ordering, conversion arithmetic, and field-level guards in inline annotations when they carry a useful insight. These are examples, not a mandatory inventory. Omit ordinary implementation details rather than moving them into notes.
+Plan useful inline insights before writing the narrative. Keep a brief narrative connection where necessary, but do not explain the same mechanism on both surfaces. A reader should understand the chapter's outcome without reading every note.
 Aim for roughly 60–100 words for most slide narratives. This is a soft target, not a minimum or maximum.
 A simple change can need one sentence. Use more words when the reasoning needs them. Do not add text to reach the target.
 `;

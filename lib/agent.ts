@@ -7,7 +7,7 @@ import { REVIEW_OVERVIEW_DIRECTIVE, REVIEW_PROSE_DIRECTIVE, SLIDE_NARRATIVE_DIRE
 import { D2_DIRECTIVE, D2_PLANNER_DIRECTIVE } from './d2-guidance';
 import { normalizeD2Diagram, normalizeDiagramBrief } from './diagram-spec';
 import { FILE_SUMMARY_DIRECTIVE } from './file-summaries';
-import { INLINE_EXPLANATION_DIRECTIVE } from './inline-explanations';
+import { INLINE_EXPLANATION_DIRECTIVE, numberExplanationDiffs } from './inline-explanations';
 import { getProvider } from './provider';
 import { EXPLAINER_IDEA_DIRECTIVE } from './explainer';
 import type { AIReviewGuide, ModelId, PlannerOutput, Provider, WriterSlideOutput } from './types';
@@ -261,11 +261,11 @@ export async function generateReviewGuide(opts: GenerateReviewGuideOptions): Pro
       `${webSourcesSchema}\n}`
     );
     const userMessage = customInstructions
-      ? contextPackage +
+      ? numberExplanationDiffs(contextPackage) +
         slideSchema +
         extraInstruction +
         `\n\n<reviewer_instructions>\nThe reviewer has provided custom instructions that MUST take priority over default style guidelines.\n${customInstructions}\n</reviewer_instructions>`
-      : contextPackage + slideSchema + extraInstruction;
+      : numberExplanationDiffs(contextPackage) + slideSchema + extraInstruction;
 
     const reviewSuggestionsDirective = reviewSuggestions ? '' : REVIEW_SUGGESTIONS_DISABLED;
 
@@ -597,7 +597,12 @@ export async function generateSlide(opts: GenerateSlideOptions): Promise<WriterS
     });
   if (system.length + suffix.length > 100_000)
     throw Error('Review instructions are too large. Shorten the custom instructions and try again.');
-  let sourceContext = await budgetReviewContext(topicContext, REVIEW_CONTEXT_BUDGET, summarize, signal);
+  let sourceContext = await budgetReviewContext(
+    numberExplanationDiffs(topicContext),
+    REVIEW_CONTEXT_BUDGET,
+    summarize,
+    signal
+  );
   let userMessage = sourceContext + suffix;
   console.log(`[writer] Starting ${providerName} (${model}) with ${userMessage.length} chars`);
 

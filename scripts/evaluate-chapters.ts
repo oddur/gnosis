@@ -2,6 +2,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { buildExplanationSource, refineExplanationText } from '../lib/review-refinement';
+import { normalizeInlineExplanations, resolveGeneratedInlineExplanations } from '../lib/inline-explanations';
 import { getProvider } from '../lib/provider';
 import { planReview, generateSlide, finalizeReviewOverview } from '../lib/agent';
 import { buildPlannerContext, buildTopicContext } from '../lib/context-builder';
@@ -126,6 +127,15 @@ async function main() {
     );
     after.push(...batch);
   }
+  const anchors = after.map((item) => {
+    const selected = item.hunkIds.flatMap((id) => map.get(id) ?? []).map((hunk) => ({ ...hunk, renderedHtml: '' }));
+    const generated = item.output.inlineExplanations ?? [];
+    const exact = normalizeInlineExplanations(generated, selected, files);
+    const accepted = resolveGeneratedInlineExplanations(generated, selected, files);
+    item.output = { ...item.output, inlineExplanations: accepted };
+    return { title: item.title, generated, exact, accepted };
+  });
+  await save('anchor-validation.json', anchors);
   const edited = await refineExplanationText({
     drafts: after.map((item) => item.output),
     source: buildExplanationSource(hunks),

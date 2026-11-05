@@ -99,7 +99,7 @@ import { buildContextPackage, buildPlannerContext, buildTopicContext } from '../
 import { generateReviewGuide, planReview, generateSlide, finalizeReviewOverview } from '../lib/agent';
 import { buildArchive, parseArchive } from '../lib/review-archive';
 import { normalizeFileSummaries } from '../lib/file-summaries';
-import { normalizeInlineExplanations } from '../lib/inline-explanations';
+import { normalizeInlineExplanations, resolveGeneratedInlineExplanations } from '../lib/inline-explanations';
 import { captureExplainerContext, normalizeExplainerIdea, parseExplainer } from '../lib/explainer';
 import { createExplainerService } from './explainer-service';
 import { protectExplainerFrames, validateExplainerInBrowser, validateSvgIllustrationInBrowser } from './explainer-validation';
@@ -1967,7 +1967,7 @@ async function runBackgroundGeneration(
 
       const plannerContext = buildPlannerContext(prData, changedFiles, hunkIndex, excludedFilesSummary, projectClaudeContext, indexedHunks);
       checkpoint = await openReviewCheckpoint(path.join(getReviewsDir(), 'unfinished'), {
-        version: 4, account: generationAccount, provider, model, instructions, educationMode, reviewSuggestions,
+        version: 5, account: generationAccount, provider, model, instructions, educationMode, reviewSuggestions,
         thinking, effort, scope: request.prUrl, snapshot: reviewSnapshot?.fingerprint, baseSha: prData.baseSha, headSha: prData.headSha,
         localToolsOn, plannerContext, hunkIndex,
       });
@@ -2003,7 +2003,7 @@ async function runBackgroundGeneration(
               projectClaudeContext,
             );
 
-            const topicKey = reviewFingerprint({ topicCtx, topic, version: 3 });
+            const topicKey = reviewFingerprint({ topicCtx, topic, version: 4 });
             const writerOutput = checkpoint!.get(topicKey) ?? await generateSlide({
               validateIllustration: validateSvgIllustrationInBrowser,
               topicContext: topicCtx,
@@ -2156,6 +2156,10 @@ async function runBackgroundGeneration(
       });
     }
 
+    // The editor can remove narrative detail only when its inline explanation will actually display.
+    for (const slide of resolvedSlides) {
+      slide.inlineExplanations = resolveGeneratedInlineExplanations(slide.inlineExplanations, slide.diffHunks, allChangedFiles);
+    }
     reportReviewPhase({ reviewId, phase: 'Checking explanation text' });
     resolvedSlides = await refineExplanationText({
       drafts: resolvedSlides, source: contextPackage || buildExplanationSource(indexedHunks),
