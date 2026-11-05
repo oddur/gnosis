@@ -1967,7 +1967,7 @@ async function runBackgroundGeneration(
 
       const plannerContext = buildPlannerContext(prData, changedFiles, hunkIndex, excludedFilesSummary, projectClaudeContext, indexedHunks);
       checkpoint = await openReviewCheckpoint(path.join(getReviewsDir(), 'unfinished'), {
-        version: 5, account: generationAccount, provider, model, instructions, educationMode, reviewSuggestions,
+        version: 6, account: generationAccount, provider, model, instructions, educationMode, reviewSuggestions,
         thinking, effort, scope: request.prUrl, snapshot: reviewSnapshot?.fingerprint, baseSha: prData.baseSha, headSha: prData.headSha,
         localToolsOn, plannerContext, hunkIndex,
       });
@@ -2003,7 +2003,7 @@ async function runBackgroundGeneration(
               projectClaudeContext,
             );
 
-            const topicKey = reviewFingerprint({ topicCtx, topic, version: 4 });
+            const topicKey = reviewFingerprint({ topicCtx, topic, version: 5 });
             const writerOutput = checkpoint!.get(topicKey) ?? await generateSlide({
               validateIllustration: validateSvgIllustrationInBrowser,
               topicContext: topicCtx,

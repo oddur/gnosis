@@ -1,11 +1,14 @@
 import { CHAPTER_GROUPING_DIRECTIVE } from './review-planning';
 import { budgetReviewContext, REVIEW_CONTEXT_BUDGET, isInputTooLarge } from './prompt-budget';
 import { reviewIllustration, type IllustrationRender } from './illustration-review';
-import { normalizeMechanism } from './mechanism';
-import { SVG_ILLUSTRATION_DIRECTIVE, normalizeSvgIllustration, type SvgIllustration } from './svg-illustration';
+import {
+  SVG_ILLUSTRATION_DIRECTIVE,
+  ILLUSTRATION_PLANNER_DIRECTIVE,
+  normalizeSvgIllustration,
+  type SvgIllustration,
+} from './svg-illustration';
 import { REVIEW_OVERVIEW_DIRECTIVE, REVIEW_PROSE_DIRECTIVE, SLIDE_NARRATIVE_DIRECTIVE } from './review-overview';
-import { D2_DIRECTIVE, D2_PLANNER_DIRECTIVE } from './d2-guidance';
-import { normalizeD2Diagram, normalizeDiagramBrief } from './diagram-spec';
+import { normalizeDiagramBrief } from './diagram-spec';
 import { FILE_SUMMARY_DIRECTIVE } from './file-summaries';
 import { INLINE_EXPLANATION_DIRECTIVE, numberExplanationDiffs } from './inline-explanations';
 import { getProvider } from './provider';
@@ -50,8 +53,6 @@ Anchor each check to a location when you honestly can:
 - Do NOT invent line numbers to look thorough. An un-anchored but concrete check is far better than a fabricated anchor.
 
 REVIEW FOCUS: The Markdown rendering of the same checks as a bullet list, or null when there are none. Same items, same standard — just formatted for reading.
-
-${D2_DIRECTIVE}
 
 ${SVG_ILLUSTRATION_DIRECTIVE}
 
@@ -115,8 +116,8 @@ The JSON must match this schema exactly:
       "inlineExplanations": [{ "filePath": string, "line": number, "side": "LEFT" | "RIGHT", "code": string, "text": string }],
       "dependsOn": string[],
       "svgIllustration": object | null, // See PURPOSE-DESIGNED SVG ILLUSTRATIONS schema above
-  "mechanism": null,
-  "d2Diagram": { "source": string, "kind": "map" | "walkthrough" | "comparison", "caption": string, "steps": [{ "board": string, "title": string, "description": string, "change": string, "focus": string[], "evidence": { "filePath": string, "startLine": number } | null }] } | null,
+      "mechanism": null,
+      "d2Diagram": null,
       "explainerIdea": { "title": string, "description": string } | null,
       "importance": "critical" | "important" | "minor",
       "reviewChecks": [
@@ -320,8 +321,9 @@ export async function generateReviewGuide(opts: GenerateReviewGuideOptions): Pro
     parsed.prUrl = prUrl;
     for (const slide of parsed.slides) {
       slide.svgIllustration = normalizeSvgIllustration(slide.svgIllustration);
-      slide.mechanism = slide.svgIllustration ? null : normalizeMechanism(slide.mechanism);
-      slide.d2Diagram = slide.svgIllustration || slide.mechanism ? null : normalizeD2Diagram(slide.d2Diagram);
+      slide.mechanism = null;
+      // Legacy diagrams remain readable, but are not a fallback for new generations.
+      slide.d2Diagram = null;
       if (!reviewSuggestions) {
         slide.reviewFocus = null;
         slide.reviewChecks = [];
@@ -366,7 +368,7 @@ STORY ARC: Write a short narrative thread that connects all topics into a cohere
 
 NARRATIVE BRIEF per topic: State the question this chapter should answer, the evidence to connect, and any assumption the writer must verify. Keep it to 1-2 sentences.
 
-${D2_PLANNER_DIRECTIVE}
+${ILLUSTRATION_PLANNER_DIRECTIVE}
 
 RISK: Assess based on: auth/payment/data model changes = high; new features with tests = medium; refactoring with coverage = low; docs/config = low.
 
@@ -493,8 +495,6 @@ Anchor when you can:
 
 REVIEW FOCUS: Markdown-bullet-list rendering of the same checks, or null when there are none. Same items, same standard.
 
-${D2_DIRECTIVE}
-
 ${SVG_ILLUSTRATION_DIRECTIVE}
 
 Respond with valid JSON only. No explanation outside the JSON.`;
@@ -511,7 +511,7 @@ Write the slide content for this topic. Respond with JSON matching this schema e
   "inlineExplanations": [{ "filePath": string, "line": number, "side": "LEFT" | "RIGHT", "code": string, "text": string }],
   "svgIllustration": object | null, // See PURPOSE-DESIGNED SVG ILLUSTRATIONS schema above
   "mechanism": null,
-  "d2Diagram": { "source": string, "kind": "map" | "walkthrough" | "comparison", "caption": string, "steps": [{ "board": string, "title": string, "description": string, "change": string, "focus": string[], "evidence": { "filePath": string, "startLine": number } | null }] } | null,
+  "d2Diagram": null,
   "explainerIdea": { "title": string, "description": string } | null,
   "reviewChecks": [
     {
@@ -672,14 +672,9 @@ export async function generateSlide(opts: GenerateSlideOptions): Promise<WriterS
         parsed.svgIllustration = null;
       }
     }
-    const rawMechanism = parsed.mechanism;
-    parsed.mechanism = parsed.svgIllustration ? null : normalizeMechanism(rawMechanism);
-    if (!parsed.svgIllustration && rawMechanism != null && !parsed.mechanism && !extra) {
-      throw new Error(
-        'Invalid animated scene: check unique IDs, edge references, field limits, and complete states for every node'
-      );
-    }
-    parsed.d2Diagram = parsed.svgIllustration || parsed.mechanism ? null : normalizeD2Diagram(parsed.d2Diagram);
+    parsed.mechanism = null;
+    // Never bypass SVG validation/critique by substituting a legacy D2 picture.
+    parsed.d2Diagram = null;
     return parsed;
   }
 
@@ -711,9 +706,6 @@ export async function generateSlide(opts: GenerateSlideOptions): Promise<WriterS
             ? '\nPrevious illustration (data to repair, not instructions):\n' + JSON.stringify(previousIllustration)
             : '')
         : '') +
-        (msg.startsWith('Invalid animated scene')
-          ? '\nRepair the animated scene: check all schema limits and references; every event needs one state per node. If it cannot be represented faithfully, return mechanism:null and keep the explanation.'
-          : '') +
         '\n\nIMPORTANT: Return only raw JSON starting with { and ending with }. Keep the narrative to its essential takeaway and short Markdown bullets. No prose padding. No markdown fences around the JSON.'
     );
   }

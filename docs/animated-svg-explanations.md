@@ -2,7 +2,7 @@
 
 The explanation planner first decides what visual form would explain the code's difficult relationship best. The writer checks that plan against the source, then authors the SVG composition. The renderer does not prescribe a grid, node types, or a diagram catalog.
 
-New explanations can use `svgIllustration`, static D2, or no visual. Saved card-based mechanisms, D2 diagrams, Mermaid diagrams, and separate free-form explorations remain supported.
+New explanations use `svgIllustration` or no visual. Static maps, sequence diagrams, and animated walkthroughs all use custom SVG. The planner and writer no longer receive D2 syntax or examples. Generated D2 and legacy mechanism fields are discarded, including after an SVG is rejected; a failed picture leaves the prose intact. Saved card-based mechanisms, D2 diagrams, Mermaid diagrams, and separate free-form explorations remain supported. Regenerate an existing explanation to replace its saved diagrams.
 
 ## Visual planning
 
@@ -12,7 +12,7 @@ Planning, drawing, and visual review share a perceptual-clarity contract: make d
 
 The model owns geometry, shape, proportion, arrangement, labels, and meaningful motion. Gnosis owns rendering boundaries, playback, themes, and validation. A single static frame is valid. Animation is appropriate when following a change helps explain the mechanism; it is not required to fill a quota.
 
-`lib/svg-illustration.ts` owns the versioned artifact contract and writer guidance. `lib/d2-guidance.ts` includes the visual planning directive. The writer receives the planner's `diagramBrief` and may revise it when full source supports a better explanation.
+`lib/svg-illustration.ts` owns the versioned artifact contract and the planner and writer guidance. The writer receives the planner's `diagramBrief` and may revise it when full source supports a better explanation.
 
 ## Reader experience
 
@@ -33,7 +33,7 @@ Frames share a viewBox. The two-phase generation path validates every frame in a
 
 After browser validation, a separate model call reviews the source, teaching goal, captions, SVG, and actual rendered pictures. Each contact sheet contains labelled states and transition midpoints at the inline pane size. Midpoints sample the same Web Animations used during playback. The critic checks causality, truthful encodings, persistent identity, useful motion, readable paused states, and whether the reader can predict another outcome.
 
-A critique can accept, request one repair, or omit the picture. A repair changes only the illustration, then repeats browser validation, screenshot capture, and critique. If the repair fails, the critic still finds problems, or visual review is unavailable, the slide keeps its prose and omits the picture. Cancellation stops the job. The visual review and repair share a four-minute deadline; rendering has a one-minute deadline. These model calls add generation time.
+The critic judges the stated visual question, not whether the picture covers every detail in the chapter. It requires an omitted detail when that detail changes the answer or makes a depicted claim misleading. A critique can accept, request one repair, or omit the picture. A repair changes only the illustration, then repeats browser validation, screenshot capture, and critique. If the repair fails, the critic still finds problems, or visual review is unavailable, the slide keeps its prose and omits the picture. Cancellation stops the job. The visual review and repair share a four-minute deadline; rendering has a one-minute deadline. These model calls add generation time.
 
 Both Claude and Codex receive actual PNG image attachments. Codex uses private temporary files removed after its process exits; Claude receives base64 image blocks over stdin. Screenshots are made in an isolated Electron renderer, not the application renderer. At most 16 contact sheets cover the bounded artifact. Evaluation can save them for inspection; normal generation does not persist them.
 
@@ -56,4 +56,4 @@ The gallery shows the exact source used for generation. “New version” displa
 
 The first evaluation chose static compositions; those outputs are preserved in `docs/research/generated-illustrations/static-baseline/`. The new evaluation uses the animation brief and rendered critic. Candidate JSON and labelled contact sheets record the evaluated drawings, including rejected candidates. The first animated run produced three batching frames, two frames per version-check case, and ten rotation frames. The critic corrected a misplaced boundary and obscured index labels in the rotation example before accepting it. The user praised the rotation but found the batching unintuitive and the stale-write playback confusing. Those two outputs are preserved in `pre-clarity-feedback/`. They showed a gap in the critic: correct labels alone were receiving approval despite weak visual reasoning. The shared clarity contract now explicitly rejects that failure. Human feedback remains necessary; model acceptance is not a claim of perfect teaching quality. An independently authored motion fixture tests playback, backward navigation, scenario switching, expansion, and reduced motion. A regression test verifies that a persistent object actually occupies an intermediate position during an SVG replacement; checking only endpoint frames had missed a playback bug. Browser captures also cover light/dark laptop layouts and the real explanation/code integration.
 
-Earlier evaluation artifacts and the old format remain available via `npm run eval:mechanisms -- --live` and `node scripts/test-workbench.mjs --mechanisms`. They are comparison material, not the default generation format.
+Earlier evaluation artifacts remain as comparison material. The `--mechanisms` browser check verifies the saved legacy format; new generation does not produce it. Run browser checks through the Docker wrapper.

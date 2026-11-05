@@ -1,6 +1,6 @@
 # D2 explanation diagrams
 
-New explanations use D2 with the local TALA engine. Saved Mermaid diagrams and Mermaid fences in PR descriptions still use Mermaid. Opening a saved explanation does not call a model or rewrite it. Saved D2 diagrams gain the current rendering behavior without regeneration. Improved generated prose and richer guidance metadata require a newly generated diagram or explanation.
+Saved D2 explanations use the local TALA engine. New explanations use [custom SVG illustrations](animated-svg-explanations.md). Saved Mermaid diagrams and Mermaid fences in PR descriptions still use Mermaid. Opening a saved explanation does not call a model or rewrite it. Saved D2 diagrams gain the current rendering behavior without regeneration. Improved generated prose and richer guidance metadata require a newly generated diagram or explanation.
 
 A diagram primarily teaches how the change works: its trigger, data or state movement, decisions, invariant, and outcome. Before/after comparison supports that explanation when the contrast clarifies the mechanism. The viewer supports architecture containers, role icons, annotated sequences, concrete algorithm states, and before/after changes.
 
@@ -36,7 +36,7 @@ Writers check this proposal against the source and can revise or reject it. They
 
 A useful diagram reduces the reader's reasoning effort. Each step explains one meaningful decision or discovery, rather than one function call. The first view supplies a takeaway without extra clicks. Prose states the rationale, the diagram exposes a difficult relationship, and code supplies evidence. A static example can replace a walkthrough. The writer omits a diagram when its terminology and navigation require more effort than they save.
 
- Whole-review and topic writers share [the instructions](../lib/d2-guidance.ts) and [compiler-checked recipes](../lib/d2-recipes.ts).
+The following guidance describes the older D2 generation format. New writers receive the [SVG instructions](../lib/svg-illustration.ts). [Compiler-checked D2 recipes](../lib/d2-recipes.ts) remain as compatibility fixtures.
 
 The instructions ask the writer to:
 
