@@ -26,15 +26,20 @@ export function StackChangesView({
   initialFile,
   onOpenPr,
   onOpenBrief,
+  onOpenFeedback,
+  onInitialFeedbackShown,
 }: {
   subject: ReviewSubject;
   preferences: Preferences;
   account: string;
   initialFile?: ChangesInitialFile;
   onOpenPr: (url: string) => void;
+  onInitialFeedbackShown?: () => void;
   onOpenBrief?: () => void;
+  onOpenFeedback?: (url?: string, requestReview?: boolean) => void;
 }) {
   const initialMode: Mode | undefined = initialFile && (initialFile.view === 'combined' ? 'combined' : 'by-pr');
+  const [addressFeedback, setAddressFeedback] = useState(false);
   const [mode, setMode] = useState<Mode>(
     () => initialMode ?? rememberedMode ?? preferences.stackChangesMode ?? 'combined'
   );
@@ -197,6 +202,7 @@ export function StackChangesView({
   const toolbar = (
     <>
       {switcher}
+      {mode === 'combined' && <Button size="sm" variant="ghost" onClick={() => { choose('by-pr'); setAddressFeedback(true); }}>Address feedback</Button>}
       {mode === 'combined' && (
         <Button
           variant="ghost"
@@ -342,8 +348,12 @@ export function StackChangesView({
       {mode === 'by-pr' ? (
         <PrChangesView
           key={`by-pr:${subject.id}`}
+          addressFeedback={addressFeedback}
           subject={subject}
           preferences={preferences}
+          account={account}
+          onOpenFeedback={onOpenFeedback}
+          onInitialFeedbackShown={onInitialFeedbackShown}
           toolbar={toolbar}
           initialFile={initialMode === 'by-pr' ? initialFile : undefined}
           onOpenBrief={onOpenBrief}
@@ -357,6 +367,9 @@ export function StackChangesView({
           key={`combined:${subject.id}`}
           subject={subject}
           preferences={preferences}
+          account={account}
+          onOpenFeedback={onOpenFeedback}
+          onInitialFeedbackShown={onInitialFeedbackShown}
           toolbar={toolbar}
           combined={{ snapshot, onOpenSource: openSource }}
           initialFile={initialMode === 'combined' ? initialFile : undefined}

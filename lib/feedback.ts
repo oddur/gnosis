@@ -91,3 +91,15 @@ export const isGitHubActionsFeedback = (item: FeedbackItem) =>
   item.comments.every((comment) => /^github-actions(?:\[bot\])?$/i.test(comment.author?.login ?? ''));
 export const feedbackOptionsKey = (account: string) =>
   `gnosis-feedback-options:v1:${encodeURIComponent(account.toLowerCase())}`;
+
+/** GitHub coordinates are valid only for the displayed revision and side. */
+export function feedbackCodeContext(
+  thread: GitHubReviewThread,
+  discussion: Pick<GitHubReviewThreads, 'headSha' | 'baseSha'> | undefined,
+  displayed: { headSha: string; baseSha: string } | undefined
+): 'current' | 'earlier' | 'unavailable' {
+  if (thread.isOutdated) return 'earlier';
+  if (!discussion || !displayed) return 'unavailable';
+  if (discussion.headSha !== displayed.headSha || (thread.diffSide === 'LEFT' && discussion.baseSha !== displayed.baseSha)) return 'earlier';
+  return thread.line === null ? 'unavailable' : 'current';
+}

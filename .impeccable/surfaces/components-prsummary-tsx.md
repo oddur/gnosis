@@ -63,3 +63,7 @@ Verification: two-PR draft/optional-failure case, ten-PR healthy stack, five com
 
 
 Stack-status clarification: replaced the ambiguous “Confirm merge requirements” group with explicit missing, stale, pending GitHub evaluation, and repository-hook explanations. The guidance panel shows ready/waiting/unconfirmed counts and confirmed-blocker counts from the existing stack status model, plus a refresh action through the existing scheduler. Known blockers precede uncertainty; shared reasons appear once. Verified with 16 readiness unit tests, TypeScript, focused lint, and the Docker stack-merge-details browser suite, including refresh behavior and narrow light/dark captures. Captures: `.impeccable/review/stack-merge-details/unknown-status-dark.png`, `unknown-status-light.png`, `unknown-status-narrow.png`, and `collapsed-light.png`.
+
+## Address feedback in Changes
+
+Stack review blockers open Feedback inside Gnosis, scoped to the source PR and its review summary. Address in Changes enters a Files / Feedback workspace with ordered thread navigation, one focused diff, inline replies, Resolve & next, and inline Undo. Preserve drafts, normal file-scroll position, read state, and Viewed marks. Source PR identity drives breadcrumbs and review actions. Old coordinates never attach to current code: show original context and label Earlier revision. Completion distinguishes resolved discussions from required approval and offers explicit review requests.

@@ -11,11 +11,12 @@ interface Props {
   thread: Thread;
   expanded?: boolean;
   reason?: string;
+  onResolvedNext?: () => void;
   onCommentAction?: (commentId: string, action: ReviewCommentAction['action'], body?: string) => Promise<void>;
   onAction?: (action: ReviewThreadAction['action'], body?: string) => Promise<void>;
 }
 
-export function GitHubReviewThread({ thread, reason, onAction, onCommentAction, expanded }: Props) {
+export function GitHubReviewThread({ thread, reason, onAction, onCommentAction, expanded, onResolvedNext }: Props) {
   const [replying, setReplying] = useSessionDraft(`thread-replying:${thread.id}`, false);
   const [draft, setDraft] = useSessionDraft(`thread-reply:${thread.id}`, '');
   const [busy, setBusy] = useState(false);
@@ -51,13 +52,14 @@ export function GitHubReviewThread({ thread, reason, onAction, onCommentAction, 
       setBusy(false);
     }
   }
-  async function act(action: ReviewThreadAction['action']) {
+  async function act(action: ReviewThreadAction['action'], advance = false) {
     if (!onAction || pending.current) return;
     pending.current = true;
     setBusy(true);
     setError('');
     try {
       await onAction(action, action === 'reply' ? draft : undefined);
+      if (advance) onResolvedNext?.();
       if (action === 'reply') {
         setDraft('');
         setReplying(false);
@@ -181,6 +183,9 @@ export function GitHubReviewThread({ thread, reason, onAction, onCommentAction, 
             <button disabled={busy} onClick={() => void act(thread.isResolved ? 'unresolve' : 'resolve')}>
               {thread.isResolved ? 'Reopen thread' : 'Resolve thread'}
             </button>
+          )}
+          {onResolvedNext && !thread.isResolved && thread.viewerCanResolve && (
+            <button disabled={busy} onClick={() => void act('resolve', true)}>Resolve & next</button>
           )}
           {busy && <span role="status">Saving to GitHub…</span>}
         </div>

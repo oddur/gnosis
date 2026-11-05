@@ -1,3 +1,4 @@
+import { useEvidenceDiscussions } from '../lib/use-evidence-discussions';
 import { stackDependencyOrder } from '../lib/stack-overview';
 import { BulkCheckRerun } from './BulkCheckRerun';
 import { useEffect, useState, useSyncExternalStore } from 'react';
@@ -31,6 +32,7 @@ export function StackOverview({
   matchingUrls,
   onOpen,
   onChecks,
+  onFeedback,
 }: {
   now: number;
   account: string | null;
@@ -45,8 +47,10 @@ export function StackOverview({
   matchingUrls?: string[];
   onOpen: (member: ReviewMember) => void;
   onChecks: (member: ReviewMember, id?: string) => void;
+  onFeedback: (member: ReviewMember) => void;
 }) {
   const { subject } = item;
+  const discussions = useEvidenceDiscussions(subject, account, false);
   const linear = stackDependencyOrder(subject).linear;
   const plan = stackMergePlan(subject, signals, checks, now);
   const progress = useFileProgress();
@@ -204,6 +208,8 @@ export function StackOverview({
             onChecks={() =>
               onChecks(member, factsFor(member).required[0]?.id ?? factsFor(member).requiredRunning[0]?.id)
             }
+            onFeedback={() => onFeedback(member)}
+            feedbackCount={discussions.values[member.url]?.threads.filter(thread => !thread.isResolved).length}
             onRefresh={onRefresh}
             refreshDisabled={refreshBusy}
           />

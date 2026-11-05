@@ -47,15 +47,22 @@ export function PrFeedbackView({
   subject,
   account,
   initialPrUrl,
+  intent,
+  onIntentHandled,
   onSource,
 }: {
   subject: ReviewSubject;
   account: string | null;
   initialPrUrl?: string;
+  intent?: 'address' | 'request';
+  onIntentHandled?: () => void;
   onSource: (item: FeedbackItem) => void;
 }) {
   const discussions = useEvidenceDiscussions(subject, account, true, true);
   const scope = `${account}:${subject.id}`;
+  const [requestsOpen, setRequestsOpen] = useState(intent === 'request');
+  const initialSelection = useRef(false);
+  useEffect(() => { if (intent === 'request') onIntentHandled?.(); }, [intent]);
   const [filter, setFilter] = useSessionDraft<'all' | 'unread' | 'unresolved'>(`feedback-filter:${scope}`, 'all');
   const [selectedKey, setSelectedKey] = useSessionDraft<string | undefined>(`feedback-selection:${scope}`, undefined);
   const [prUrl, setPrUrl] = useState(initialPrUrl ?? '');
@@ -104,6 +111,14 @@ export function PrFeedbackView({
         feedbackKey(item) === selectedKey ||
         (filter === 'unread' ? isUnread(item) : item.thread && !item.thread.isResolved))
   );
+  useEffect(() => {
+    if (intent !== 'address' || initialSelection.current || !scoped.length) return;
+    initialSelection.current = true;
+    setFilter('all');
+    const first = scoped.find(item => item.state === 'CHANGES_REQUESTED') ?? scoped.find(item => item.thread && !item.thread.isResolved) ?? scoped[0];
+    setSelectedKey(feedbackKey(first));
+    onIntentHandled?.();
+  }, [intent, scoped]);
   const selected = scoped.find((item) => feedbackKey(item) === selectedKey);
   const virtual = useVirtualizer({
     count: shown.length,
@@ -283,7 +298,7 @@ export function PrFeedbackView({
             Hide GitHub Actions
           </label>
           {reviewers.length > 0 && (
-            <Popover.Root>
+            <Popover.Root open={requestsOpen} onOpenChange={setRequestsOpen}>
               <Popover.Trigger asChild>
                 <Button size="sm" variant="outline" aria-label="Review requests">
                   <Send size={14} />
@@ -554,6 +569,10 @@ export function PrFeedbackView({
                       {selected.thread?.path ?? kindLabel(selected)}
                     </h2>
                   </div>
+                  {selected.kind === 'review' && (() => {
+                    const next = scoped.find(item => item.thread && !item.thread.isResolved && selected.relatedThreads.includes(item.id));
+                    return next && <Button variant="outline" size="sm" onClick={() => onSource(next)}>Address in Changes</Button>;
+                  })()}
                   <Button variant="ghost" size="sm" onClick={() => void markUnread()}>
                     Mark unread
                   </Button>
@@ -571,15 +590,11 @@ export function PrFeedbackView({
                                 ? 'Saved thread · code when commented'
                                 : 'Code when commented'
                           }
-                          onSource={
-                            !selected.thread.isOutdated && selected.headSha === selected.member.headSha
-                              ? () => onSource(selected)
-                              : undefined
-                          }
+                          onSource={() => onSource(selected)}
                         />
                       ) : (
                         <p className="feedback-context-unavailable">
-                          Code context is unavailable. Open the original comment on GitHub.
+                          Code context is unavailable. <button onClick={() => onSource(selected)}>Open in Changes</button>
                         </p>
                       )}
                       <GitHubReviewThread

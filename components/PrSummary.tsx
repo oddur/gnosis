@@ -145,6 +145,7 @@ function PrSummaryContent({
   const [nameBusy, setNameBusy] = useState(false);
   const [nameError, setNameError] = useState('');
   const [feedbackPr, setFeedbackPr] = useState<string>();
+  const [feedbackIntent, setFeedbackIntent] = useState<'address' | 'request'>();
   const [initialFile, setInitialFile] = useState<ChangesInitialFile>();
   // A jump happens once. Returning to Changes later restores where the reviewer left off.
   useEffect(() => {
@@ -441,20 +442,23 @@ function PrSummaryContent({
 
         </div>
         <Tabs.Content value="changes" className="pr-changes-tab">
-          {preferences && (stacked ? <StackChangesView key={`${account}:${item.subject.id}`} subject={item.subject} preferences={preferences} account={account ?? ''} initialFile={initialFile} onOpenPr={changeScope} onOpenBrief={() => onTabChange('brief')} /> :
+          {preferences && (stacked ? <StackChangesView key={`${account}:${item.subject.id}`} subject={item.subject} preferences={preferences} account={account ?? ''} initialFile={initialFile} onInitialFeedbackShown={() => setInitialFile(undefined)} onOpenFeedback={(url, requestReview) => { setFeedbackPr(url); setFeedbackIntent(requestReview ? 'request' : undefined); onTabChange('feedback'); }} onOpenPr={changeScope} onOpenBrief={() => onTabChange('brief')} /> :
             <PrChangesView
               key={item.subject.id}
               subject={item.subject}
               preferences={preferences}
+              account={account ?? ''}
+              onOpenFeedback={(url, requestReview) => { setFeedbackPr(url); setFeedbackIntent(requestReview ? 'request' : undefined); onTabChange('feedback'); }}
               initialFile={initialFile}
+              onInitialFeedbackShown={() => setInitialFile(undefined)}
               onOpenBrief={() => onTabChange('brief')}
             />
           )}
         </Tabs.Content>
         <Tabs.Content value="feedback" className="pr-changes-tab">
-          <PrFeedbackView key={`${account}:${item.subject.id}:${feedbackPr ?? ''}`} subject={item.subject} account={account} initialPrUrl={feedbackPr} onSource={item => {
+          <PrFeedbackView key={`${account}:${item.subject.id}:${feedbackPr ?? ''}`} subject={item.subject} account={account} initialPrUrl={feedbackPr} intent={feedbackIntent} onIntentHandled={() => setFeedbackIntent(undefined)} onSource={item => {
             if (!item.thread) return;
-            setInitialFile({ url: item.member.url, headSha: item.headSha, path: item.thread.path, line: item.thread.line ?? undefined, side: item.thread.diffSide === 'LEFT' ? 'before' : 'after' }); onTabChange('changes');
+            setInitialFile({ url: item.member.url, headSha: item.headSha, path: item.thread.path, threadId: item.id, line: item.thread.line ?? undefined, side: item.thread.diffSide === 'LEFT' ? 'before' : 'after' }); onTabChange('changes');
           }} />
         </Tabs.Content>
         <Tabs.Content value="brief" className="pr-changes-tab">
@@ -507,7 +511,7 @@ function PrSummaryContent({
             {stacked ? <div className="stack-summary-layout">
               <div className="stack-summary-main">
                 <StackOverview account={account} now={statusNow} checking={!signalsLoaded && !!account} onRefresh={onRetryStatus} refreshBusy={statusRefreshing || !account} item={item} signals={signals} checks={checks.values} checkErrors={checks.errors} checksBusy={checks.busy} matchingUrls={matchingUrls}
-                  onOpen={member => changeScope(member.url)} onChecks={(member, id) => { setCheckFocus({ url: member.url, id, nonce: Date.now() }); changeScope(member.url); onTabChange('checks'); }} />
+                  onFeedback={member => { setFeedbackPr(member.url); setFeedbackIntent('address'); onTabChange('feedback'); }} onOpen={member => changeScope(member.url)} onChecks={(member, id) => { setCheckFocus({ url: member.url, id, nonce: Date.now() }); changeScope(member.url); onTabChange('checks'); }} />
                 {evidence}
                 <StackBriefing briefing={item.briefing} actions={generationActions?.(item.subject.members)} onActivity={onShowActivity} onSetup={onGitHubAuth} connected={!!account} />
               </div>

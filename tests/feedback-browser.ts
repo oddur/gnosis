@@ -43,7 +43,7 @@ void app.whenReady().then(async () => {
       const q=await window.electronAPI.workbenchQueue();const stack=q.items.find(i=>i.subject.kind==='stack');window.feedbackSubject=stack.subject;
       for(const [index,m] of stack.subject.members.entries()){
         const stamp='2026-11-03T10:00:00Z';const c={id:'c-'+m.number,body:'Please keep the pending owner check. A retry can arrive after a newer upload has replaced this generation.',author:{login:'maya',avatarUrl:''},createdAt:stamp,updatedAt:stamp,url:m.url+'#issuecomment-1'};
-        const t={id:'t-'+m.number,path:'src/uploads/confirm.ts',line:42,startLine:null,diffSide:'RIGHT',isResolved:false,isOutdated:index===1,viewerCanResolve:true,viewerCanUnresolve:false,comments:[{...c,id:'tc-'+m.number,diffHunk:'@@ -38,5 +38,6 @@\n const pending = await uploads.find(id);\n-if (pending.owner === owner) {\n+if (pending.owner === owner &&\n+    pending.generation === generation) {\n   await uploads.confirm(id);\n }',pullRequestReview:{id:'r-'+m.number},viewerCanUpdate:false,viewerCanDelete:false}]};
+        const t={id:'t-'+m.number,path:index===1?'src/uploads/confirm.ts':index===2?'src/new.ts':'src/worker.ts',line:index===2?2:36,startLine:null,diffSide:'RIGHT',isResolved:false,isOutdated:index===1,viewerCanResolve:true,viewerCanUnresolve:false,comments:[{...c,id:'tc-'+m.number,diffHunk:'@@ -38,5 +38,6 @@\n const pending = await uploads.find(id);\n-if (pending.owner === owner) {\n+if (pending.owner === owner &&\n+    pending.generation === generation) {\n   await uploads.confirm(id);\n }',pullRequestReview:{id:'r-'+m.number},viewerCanUpdate:false,viewerCanDelete:false}]};
         window.feedbackData.set(m.url,{headSha:m.headSha,baseSha:m.baseSha,checkedAt:Date.now(),threads:[t],feedback:{comments:[{...c,body:'The migration is safe to run before this deploy. Can you add the rollback command to the PR description?'}],reviews:[{...c,id:'r-'+m.number,state:'CHANGES_REQUESTED',submittedAt:stamp,body:'The new upload path is easier to follow. One correctness issue remains in confirmation.\n\n- Keep the generation check before committing.\n- Return a conflict if the pending owner changed.'}],requestedReviewers:[],viewerCanUpdate:true,state:'OPEN'}});
       }
       for(const data of window.feedbackData.values())data.feedback.comments.push({...data.feedback.comments[0],id:'actions-'+data.feedback.comments[0].id,body:'Client/server tests passed',author:{login:'github-actions[bot]',avatarUrl:''}});
@@ -158,7 +158,8 @@ void app.whenReady().then(async () => {
       await js(
         "[...document.querySelectorAll('.feedback-conversation button')].some(b=>b.textContent==='Open in Changes')"
       ),
-      false
+      true,
+      'Earlier revision threads can be addressed in Changes using original context'
     );
     await capture('outdated-dark');
     await js('window.failFeedback=true');
@@ -252,6 +253,95 @@ void app.whenReady().then(async () => {
       await js("document.querySelector('.feedback-conversation-body').getBoundingClientRect().height>=150"),
       'Short laptop retains readable content'
     );
+
+    // Continue through code feedback, preserving source PRs, drafts and safe revision placement.
+    win.setContentSize(1280, 800);
+    await js(`(async()=>{
+      const {markFileViewed}=await import('/lib/file-view-progress.ts');
+      const {fileRevisionKey}=await import('/lib/pr-changes.ts');
+      const m=window.feedbackSubject.members[0];
+      await markFileViewed(fileRevisionKey(m.url,'src/worker.ts',m.baseSha,m.headSha),true);
+      await window.electronAPI.updateFileFilters({filters:{hiddenExtensions:['.ts']}});
+    })()`);
+    await click('Open in Changes');
+    await wait("!!document.querySelector('.changes-feedback-original .github-thread[data-thread-id=\"t-121\"]')");
+    assert.match(await js<string>("document.querySelector('.changes-feedback-original').textContent"), /Earlier revision/);
+    assert.equal(await js("document.querySelector('.changes-feedback-original .feedback-code').textContent.includes('pending.generation')"), true);
+    await capture('changes-earlier-light');
+    await js("document.querySelector('[data-feedback-thread=\"t-120\"]').click()");
+    await wait("!!document.querySelector('.changes-feedback-active-thread .github-thread[data-thread-id=\"t-120\"]')");
+    assert.ok(await js("!!document.querySelector('.changes-feedback-content .commit-stream-file')"), 'Current thread shows the actual file diff');
+    assert.ok(await js("document.querySelector('.changes-feedback-content .commit-stream-file-body').checkVisibility()"), 'Viewed files open for feedback without resetting progress');
+    assert.equal(await js("document.querySelector('.changes-feedback-content .changes-file-header input[type=checkbox]').checked"), true);
+    assert.equal(await js("document.querySelector('.changes-toolbar').textContent.includes('Review PR #120')"), true);
+    await capture('changes-current-light');
+    await click('Reply');
+    await js("(()=>{const input=document.querySelector('.changes-feedback-active-thread textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'Keep this reply while browsing threads.');input.dispatchEvent(new Event('input',{bubbles:true}));})()");
+    await js("document.querySelector('[aria-label=\"Next feedback thread\"]').click()");
+    await wait("!!document.querySelector('.changes-feedback-original')");
+    await js("document.querySelector('[aria-label=\"Previous feedback thread\"]').click()");
+    await wait("document.querySelector('.changes-feedback-active-thread textarea')?.value==='Keep this reply while browsing threads.'");
+    await js('window.failFeedbackWrite=true');
+    await click('Resolve & next');
+    await wait("document.querySelector('.changes-feedback-active-thread .github-thread-error')?.textContent.includes('Thread wasn’t resolved')");
+    assert.equal(await js("document.querySelector('[data-feedback-thread=\"t-120\"]').getAttribute('aria-current')"), 'true', 'Failure must not advance');
+    await js('window.failFeedbackWrite=false');
+    await click('Cancel');
+    await click('Resolve & next');
+    await wait("document.querySelector('[data-feedback-thread=\"t-121\"]').getAttribute('aria-current')==='true'");
+    assert.equal(await js('window.feedbackWrites.at(-1).threadId'), 't-120');
+    assert.equal(await js('window.feedbackWrites.at(-1).prUrl'), await js('window.feedbackSubject.members[0].url'));
+    await click('Undo');
+    await wait("window.feedbackData.get(window.feedbackSubject.members[0].url).threads[0].isResolved===false");
+    await js("document.querySelector('[data-feedback-thread=\"t-120\"]').click()");
+    await click('Resolve & next');
+    await wait("document.querySelector('[data-feedback-thread=\"t-121\"]').getAttribute('aria-current')==='true'");
+    await click('Resolve & next');
+    await wait("document.querySelector('[data-feedback-thread=\"t-122\"]').getAttribute('aria-current')==='true'");
+    await wait("!!document.querySelector('.changes-feedback-active-thread .github-thread[data-thread-id=\"t-122\"]')");
+    assert.equal(await js("document.querySelector('.changes-toolbar').textContent.includes('Review PR #122')"), true, 'Review actions follow the selected thread source');
+    assert.equal(await js("document.querySelector('.review-breadcrumbs')?.textContent.includes('src/new.ts') ?? document.body.textContent.includes('src/new.ts')"), true);
+    assert.deepEqual(await js("window.electronAPI.loadFileFilters().then(s=>s.hiddenExtensions)"), ['.ts'], 'Inspecting filtered files preserves filter preferences');
+    await capture('changes-next-pr-light');
+    await js("document.documentElement.classList.add('dark')");
+    await capture('changes-next-pr-dark');
+    win.setContentSize(640, 800);
+    await new Promise(r => setTimeout(r, 150));
+    assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
+    assert.ok(await js("document.querySelector('.changes-feedback-content').getBoundingClientRect().height>200"));
+    await capture('changes-narrow-dark');
+    await click('Threads');
+    await wait("document.querySelector('.changes-feedback-sidebar').checkVisibility()");
+    await capture('changes-narrow-list-dark');
+    await js("document.querySelector('[data-feedback-thread=\"t-122\"]').click()");
+    await click('Resolve & next');
+    await wait("!!document.querySelector('.changes-feedback-empty')");
+    assert.match(await js<string>("document.querySelector('.changes-feedback-empty').textContent"), /still requests changes/);
+    assert.ok(await js("document.querySelector('.changes-feedback-empty').checkVisibility()"), 'Completion is visible on narrow screens');
+    await capture('changes-complete-dark');
+    win.setContentSize(1280, 800);
+    await js("document.querySelector('.changes-feedback-reviewer button').click()");
+    await wait("!!document.querySelector('.feedback-reviewers')");
+    assert.match(await js<string>("document.querySelector('.feedback-reviewers').textContent"), /No unresolved threads/);
+    await capture('changes-request-review-dark');
+    await js("document.querySelector('[aria-label=\"Close review requests\"]').click()");
+    await click('Changes');
+    await wait("!!document.querySelector('.changes-feedback-empty')");
+    assert.equal(await js("document.querySelector('.changes-feedback-active-thread')===null"), true, 'Returning does not reopen the initial thread');
+
+    await click('Summary');
+    await js(`(async()=>{
+      const {publishQueueSignals}=await import('/lib/use-queue-signals.ts');
+      const read=window.electronAPI.getQueueSignals;
+      window.electronAPI.getQueueSignals=async requests=>(await read(requests)).map(value=>({...value,readiness:{...value.readiness,reviewDecision:'CHANGES_REQUESTED',mergeState:'BLOCKED'}}));
+      publishQueueSignals('oddur',await window.electronAPI.getQueueSignals(window.feedbackSubject.members.map(({url,headSha})=>({url,headSha}))));
+    })()`);
+    await wait("!!document.querySelector('.stack-overview [data-blocker-key=review] button')");
+    assert.equal(await js("!!document.querySelector('.stack-overview [data-blocker-key=review] a')"), false, 'Review blockers lead into Gnosis');
+    await js("document.querySelector('.stack-overview [data-pr-url$=\"/120\"] [data-blocker-key=review] button').click()");
+    await wait("document.querySelector('.feedback-conversation')?.textContent.includes('The new upload path')");
+    assert.match(await js<string>("document.querySelector('.feedback-conversation').textContent"), /#120/);
+    await capture('address-from-stack-dark');
     assert.equal(errors.filter((e) => !e.includes('favicon')).length, 0, errors.join('\n'));
     console.log(
       'Feedback passed: stack aggregation, read/unread persistence, code context, resolution/reopen, reply recovery, reviewer requests, cached errors, keyboard and laptop/narrow light/dark layouts.'

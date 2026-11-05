@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import type { Octokit } from '@octokit/rest';
 import { createReviewThreadService } from '../src/review-thread-service';
 import {
+  feedbackCodeContext,
   feedbackOptionsKey,
   isGitHubActionsFeedback,
   feedbackItems,
@@ -205,4 +206,18 @@ void test('GitHub Actions filter hides either login spelling but keeps human and
   assert.equal(isGitHubActionsFeedback({ ...item, comments: [comment] }), false);
   assert.equal(feedbackOptionsKey('ODDUR'), feedbackOptionsKey('oddur'));
   assert.notEqual(feedbackOptionsKey('maya'), feedbackOptionsKey('oddur'));
+});
+
+
+void test('Code feedback uses current coordinates only on the matching revision and side', () => {
+  const active = { ...thread, isOutdated: false };
+  const displayed = { headSha: 'head', baseSha: 'base' };
+  assert.equal(feedbackCodeContext(active, snapshot, displayed), 'current');
+  assert.equal(feedbackCodeContext(thread, snapshot, displayed), 'earlier');
+  assert.equal(feedbackCodeContext(active, snapshot, { ...displayed, headSha: 'new-head' }), 'earlier');
+  assert.equal(feedbackCodeContext({ ...active, diffSide: 'LEFT' }, snapshot, { ...displayed, baseSha: 'new-base' }), 'earlier');
+  assert.equal(feedbackCodeContext(active, snapshot, { ...displayed, baseSha: 'new-base' }), 'current');
+  assert.equal(feedbackCodeContext({ ...active, line: null }, snapshot, displayed), 'unavailable');
+  assert.equal(feedbackCodeContext(active, snapshot, undefined), 'unavailable');
+  assert.equal(feedbackCodeContext(active, undefined, displayed), 'unavailable');
 });
