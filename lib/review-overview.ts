@@ -6,6 +6,7 @@ Give the reader the shortest explanation that preserves the important reasoning.
 Before writing, select the information the reviewer needs to understand the behavior or a consequential constraint.
 Explain each idea once. Do not repeat details already clear in the code, annotations, or another slide.
 State what tests assert without claiming they passed. Do not add routine disclaimers that tests were not run or that unrelated paths are not covered. Include a limitation only when it changes how the reader should interpret this change.
+Make the opening claim accurate on its own. If a condition, component boundary, rollout limit, or exception changes its meaning, include that qualification with the claim instead of revealing it in a later bullet. Keep the opening readable; do not list unrelated caveats.
 Preserve conditions and exceptions that change the outcome. Do not turn a conditional behavior into a general claim to shorten the text.
 Summarize related changes by their meaning. List functions, tests, or queries only when their names help the reviewer understand the change.
 Prefer short Markdown bullets to long paragraphs. Use headings and blank lines to make separate ideas easy to read.

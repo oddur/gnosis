@@ -58,8 +58,9 @@ void test('invalid citations, chapter mappings and annotation anchors cannot rep
     { ...edit, annotations: [edit.annotations[0], edit.annotations[0]] },
     { ...edit, annotations: [{ index: 0, text: 'word '.repeat(46) }] },
   ];
-  for (const candidate of invalid) assert.throws(() => applyExplanationEdits([draft], { edits: [candidate] }, source));
-  assert.throws(() => applyExplanationEdits([draft], { edits: [edit, edit] }, source));
+  for (const candidate of invalid)
+    assert.equal(applyExplanationEdits([draft], { edits: [candidate] }, source)[0], draft);
+  assert.equal(applyExplanationEdits([draft], { edits: [edit, edit] }, source)[0], draft);
   assert.equal(draft.narrative, 'Changing the prompt clears all cached translations.');
 });
 
@@ -176,7 +177,7 @@ void test('source citations tolerate diff indentation but reject changed code an
   const correction = { ...edit, evidence: ['if (entry.generation !== generation) return false;\n    save(entry);'] };
   assert.equal(applyExplanationEdits([draft], { edits: [correction] }, code)[0].narrative, edit.narrative);
   for (const quote of ['if (entry.generation === generation) return false;', ' '.repeat(20)]) {
-    assert.throws(() => applyExplanationEdits([draft], { edits: [{ ...edit, evidence: [quote] }] }, code));
+    assert.equal(applyExplanationEdits([draft], { edits: [{ ...edit, evidence: [quote] }] }, code)[0], draft);
   }
 });
 
@@ -213,4 +214,35 @@ void test('whole-review source includes every hunk or explicitly declines an ove
   assert.ok(evidence?.includes('newValue();'));
   assert.ok(evidence?.includes(hunks[0].id));
   assert.equal(buildExplanationSource([{ ...hunks[0], expandedContent: 'x'.repeat(450_000) }]), null);
+});
+
+void test('a bad citation or anchor preserves that whole chapter but does not discard independent valid edits', () => {
+  const drafts = [draft, { ...draft, title: 'Another chapter' }];
+  for (const invalid of [
+    { ...edit, chapter: 1, evidence: ['invented source quotation'] },
+    { ...edit, chapter: 1, annotations: [{ index: 3, text: 'Invalid anchor' }] },
+  ]) {
+    for (const edits of [
+      [edit, invalid],
+      [invalid, edit],
+    ]) {
+      const rejected: (number | null)[] = [];
+      const result = applyExplanationEdits(drafts, { edits }, source, (chapter) => rejected.push(chapter));
+      assert.equal(result[0].narrative, edit.narrative);
+      assert.equal(result[1], drafts[1], 'Neither narrative nor annotations of the rejected chapter change');
+      assert.deepEqual(rejected, [1]);
+    }
+  }
+});
+
+void test('ambiguous duplicate chapter edits are all rejected while unrelated edits still apply', () => {
+  const drafts = [draft, { ...draft, title: 'Another chapter' }];
+  const result = applyExplanationEdits(
+    drafts,
+    { edits: [edit, { ...edit, narrative: 'Contradictory edit' }, { ...edit, chapter: 1 }, null, { chapter: 99 }] },
+    source
+  );
+  assert.equal(result[0], draft, 'Do not pick an arbitrary duplicate');
+  assert.equal(result[1].narrative, edit.narrative);
+  assert.throws(() => applyExplanationEdits(drafts, { edits: {} }, source));
 });

@@ -16,6 +16,7 @@ ${REVIEW_PROSE_DIRECTIVE}
 - Preserve the main takeaway and every supported condition or exception needed to interpret it. Explicitly name the component that provides a guarantee. Unchanged behavior can be essential context: retain it when omitting it would suggest a broader change.
 - Correct unsupported claims, new behavior confused with unchanged context, and claims that tests passed merely because tests exist. Missing source is not proof of missing behavior. When evidence is incomplete, narrow or remove the claim; do not invent a qualification.
 - Check relationships across chapters. When two components retain state, validate inputs, or enforce different parts of a contract, explain the boundary where a reader could otherwise infer an end-to-end guarantee. Put the qualification with the claim it limits; do not leave it implicit in a different chapter. Remove repeated explanations across chapters while keeping each chapter understandable.
+- Read the opening claim by itself: could the reader infer a stronger guarantee or broader rollout than the source supports? Put a consequential condition in that claim rather than correcting it later. Do not turn every opening into a caveat list; include only what changes its meaning.
 - Keep the essential causal connection: what changes, how it works, and the boundary that matters. These are questions to answer when relevant, not mandatory headings or a template.
 - An inline insight must explain a non-obvious consequence, interaction, invariant, or distinction. Remove a note that merely narrates its anchor or repeats nearby comments. Do not invent a failure or benefit to rescue a weak note. A direct paraphrase of a loop, slice, assignment, or assertion is not an insight.
 - Keep useful text unchanged. Remove repeated explanations; do not move all the inline detail into the narrative. There is no target word count or annotation count. Use short Markdown bullets when they make separate ideas easier to scan.
@@ -25,7 +26,8 @@ ${REVIEW_PROSE_DIRECTIVE}
 
 Return raw JSON: {"edits":[{"chapter":0,"evidence":["exact source excerpt"],"narrative":"replacement Markdown","annotations":[{"index":0,"text":"replacement insight"}]}]}.
 Return {"edits":[]} when no correction is needed. Chapter and annotation indices are zero-based, as supplied. Omit narrative or annotations to keep that field unchanged. When annotations is present it replaces that chapter's list: include each retained note once, in source order, with its existing index. An empty list removes all notes. You cannot add notes or change their code anchors.
-Every edited chapter must cite 1–6 excerpts from SOURCE (12–500 characters each) that support the edit. Copy code exactly; indentation and diff markers may be omitted. For removing repetition or a paraphrase, cite the relevant code. Quotes are checked against supplied source; they must not come from the draft alone. These quotes are internal evidence, not reader-facing prose. Keep annotation text to 1–2 sentences, at most 45 words and 320 characters. Return only necessary edits.`;
+Return at most one edit per chapter. Each edit must stand on its own: do not rely on another proposed edit being accepted.
+Every edited chapter must cite 1–6 excerpts from SOURCE (12–500 characters each) that support the edit. Prefer short, continuous quotes of one statement or comment. Copy code exactly; indentation and diff markers may be omitted. Never join separated lines, skip a description or comment inside a quote, or use an ellipsis. Use separate quotes for separate locations. For removing repetition or a paraphrase, cite the relevant code. Quotes are checked against supplied source; they must not come from the draft alone. These quotes are internal evidence, not reader-facing prose. Keep annotation text to 1–2 sentences, at most 45 words and 320 characters. Return only necessary edits.`;
 
 function object(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -40,57 +42,72 @@ function quotedSource(value: string): string {
     .trim();
 }
 
-/** Apply text-only edits atomically. Never let a model rewrite anchors, coverage, or other review fields. */
-export function applyExplanationEdits<T extends ExplanationText>(drafts: T[], value: unknown, source: string): T[] {
+/** Each chapter edit is atomic; a bad edit cannot discard valid edits to other chapters. */
+export function applyExplanationEdits<T extends ExplanationText>(
+  drafts: T[],
+  value: unknown,
+  source: string,
+  onRejected: (chapter: number | null, reason: string) => void = () => {}
+): T[] {
   if (!object(value) || !Array.isArray(value.edits)) throw Error('Missing explanation edits');
   const result = [...drafts];
-  const seen = new Set<number>();
+  const counts = new Map<number, number>();
+  for (const edit of value.edits as unknown[]) {
+    if (object(edit) && Number.isInteger(edit.chapter)) {
+      const index = edit.chapter as number;
+      counts.set(index, (counts.get(index) ?? 0) + 1);
+    }
+  }
   const normalizedSource = quotedSource(source);
   for (const edit of value.edits as unknown[]) {
-    if (!object(edit) || !Number.isInteger(edit.chapter)) throw Error('Invalid chapter index');
-    const index = edit.chapter as number;
-    if (index < 0 || index >= drafts.length || seen.has(index)) throw Error('Unknown or duplicate chapter');
-    seen.add(index);
-    if (
-      !Array.isArray(edit.evidence) ||
-      edit.evidence.length < 1 ||
-      edit.evidence.length > 6 ||
-      !edit.evidence.every(
-        (quote: unknown) =>
-          typeof quote === 'string' &&
-          quote.trim().length >= 12 &&
-          quote.length <= 500 &&
-          (source.includes(quote) || normalizedSource.includes(quotedSource(quote)))
+    try {
+      if (!object(edit) || !Number.isInteger(edit.chapter)) throw Error('Invalid chapter index');
+      const index = edit.chapter as number;
+      if (index < 0 || index >= drafts.length || counts.get(index) !== 1) throw Error('Unknown or duplicate chapter');
+      if (
+        !Array.isArray(edit.evidence) ||
+        edit.evidence.length < 1 ||
+        edit.evidence.length > 6 ||
+        !edit.evidence.every(
+          (quote: unknown) =>
+            typeof quote === 'string' &&
+            quote.trim().length >= 12 &&
+            quote.length <= 500 &&
+            (source.includes(quote) || normalizedSource.includes(quotedSource(quote)))
+        )
       )
-    )
-      throw Error('Edit lacks matching source evidence');
-    const updated = { ...drafts[index] };
-    if (edit.narrative !== undefined) {
-      if (typeof edit.narrative !== 'string' || !edit.narrative.trim() || edit.narrative.length > 12000)
-        throw Error('Invalid edited narrative');
-      updated.narrative = edit.narrative.trim();
-    }
-    if (edit.annotations !== undefined) {
-      if (!Array.isArray(edit.annotations)) throw Error('Invalid edited annotations');
-      const originals = drafts[index].inlineExplanations ?? [];
-      const retained = new Set<number>();
-      const replacements: InlineExplanation[] = [];
-      for (const note of edit.annotations as unknown[]) {
-        if (!object(note) || !Number.isInteger(note.index)) throw Error('Invalid annotation index');
-        const anchor = note.index as number;
-        if (anchor < 0 || anchor >= originals.length || retained.has(anchor))
-          throw Error('Unknown or duplicate anchor');
-        retained.add(anchor);
-        if (typeof note.text !== 'string') throw Error('Invalid insight text');
-        const text = note.text.replace(/\s+/g, ' ').trim();
-        if (!text || text.length > 320 || text.split(/\s+/).length > 45) throw Error('Invalid insight length');
-        replacements.push({ ...originals[anchor], text });
+        throw Error('Edit lacks matching source evidence');
+      const updated = { ...drafts[index] };
+      if (edit.narrative !== undefined) {
+        if (typeof edit.narrative !== 'string' || !edit.narrative.trim() || edit.narrative.length > 12000)
+          throw Error('Invalid edited narrative');
+        updated.narrative = edit.narrative.trim();
       }
-      updated.inlineExplanations = replacements;
+      if (edit.annotations !== undefined) {
+        if (!Array.isArray(edit.annotations)) throw Error('Invalid edited annotations');
+        const originals = drafts[index].inlineExplanations ?? [];
+        const retained = new Set<number>();
+        const replacements: InlineExplanation[] = [];
+        for (const note of edit.annotations as unknown[]) {
+          if (!object(note) || !Number.isInteger(note.index)) throw Error('Invalid annotation index');
+          const anchor = note.index as number;
+          if (anchor < 0 || anchor >= originals.length || retained.has(anchor))
+            throw Error('Unknown or duplicate anchor');
+          retained.add(anchor);
+          if (typeof note.text !== 'string') throw Error('Invalid insight text');
+          const text = note.text.replace(/\s+/g, ' ').trim();
+          if (!text || text.length > 320 || text.split(/\s+/).length > 45) throw Error('Invalid insight length');
+          replacements.push({ ...originals[anchor], text });
+        }
+        updated.inlineExplanations = replacements;
+      }
+      result[index] = updated;
+    } catch (error) {
+      const chapter = object(edit) && Number.isInteger(edit.chapter) ? (edit.chapter as number) : null;
+      onRejected(chapter, error instanceof Error ? error.message : 'Invalid chapter edit');
     }
-    result[index] = updated;
   }
-  return result;
+  return result.some((chapter, index) => chapter !== drafts[index]) ? result : drafts;
 }
 
 /** All available diff context, across chapter boundaries. Never substitute samples for a complete audit. */
@@ -188,7 +205,9 @@ export async function refineExplanationText<T extends ExplanationText>(options: 
       .trim()
       .replace(/^```(?:json)?\s*/, '')
       .replace(/\s*```$/, '');
-    const result = applyExplanationEdits(options.drafts, JSON.parse(json) as unknown, source);
+    const result = applyExplanationEdits(options.drafts, JSON.parse(json) as unknown, source, (chapter, reason) => {
+      console.warn(`[explanation-edit] Skipped chapter ${chapter === null ? 'unknown' : chapter + 1}: ${reason}`);
+    });
     console.log(
       `[explanation-edit] Updated ${result.filter((chapter, i) => chapter !== options.drafts[i]).length} chapter(s)`
     );
