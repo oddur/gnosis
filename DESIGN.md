@@ -334,3 +334,6 @@ Workspace section icons use the shared WorkspaceIcon mapping in tabs, breadcrumb
 ### Workflow job steps
 
 Individual Checks graph nodes show a compact step list with status icons, names, and durations. Preview three ordered steps around the running step, then a failure, then the latest completed step. Show all steps expands the full list; grouped nodes keep their job summary until expanded. Keep dependency routing outside the card, preserve the existing header action for details, and expose full truncated step names and status in tooltips. Expansion uses cached workflow data and backend layout. Remember it within the current workflow session. Timestamp-less steps show no invented duration.
+
+
+Stack merge guidance separates confirmed blockers from missing or stale merge status. Its heading names the number of blocking PRs, or uses a neutral question icon for unconfirmed status. Show a confirmed-ready count, concrete reasons beside titled PR links, and a Refresh merge status action for incomplete evidence. List known blockers before uncertain information. If all unknown PRs share the same reason, state it once. Never present missing merge information as a confirmed blocker.

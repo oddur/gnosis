@@ -95,7 +95,7 @@ export function StackOverview({
     );
   return (
     <section className="stack-overview" aria-label="Stack overview">
-      <StackMergePlan key={subject.id} plan={plan} onOpen={onOpen} account={account} onChanged={onRefresh} />
+      <StackMergePlan key={subject.id} plan={plan} onOpen={onOpen} account={account} onChanged={onRefresh} refreshing={checking || refreshBusy} />
       <div className="stack-overview-heading">
         <div>
           <h2>Pull requests <span className="stack-member-count">{subject.members.length}</span></h2>

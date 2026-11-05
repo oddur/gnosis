@@ -133,6 +133,29 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.bulkReady.length'), 2);
     assert.equal(await js('window.bulkReady[1].kind'), 'mark-ready');
     assert.equal(await js('window.bulkReady[1].url'), 'https://github.com/klang/engine/pull/122');
+    await js(`(()=>{
+      const read=window.electronAPI.getQueueSignals;
+      const readChecks=window.electronAPI.getPrChecks;
+      window.electronAPI.getPrChecks=async(...args)=>({...await readChecks(...args),checks:[],checkedAt:Date.now()+1});
+      document.dispatchEvent(new Event('visibilitychange'));
+      window.stackRefreshReads=0;
+      window.electronAPI.getQueueSignals=async(...args)=>{window.stackRefreshReads++;return (await read(...args)).map(value=>({...value,readiness:undefined}));};
+      window.publishStatus();
+    })()`);
+    await wait("document.querySelector('.stack-merge-plan h2')?.textContent.includes('Merge status not confirmed')");
+    assert.ok(await js("document.querySelector('.stack-plan-summary').textContent.includes('3 unconfirmed')"));
+    assert.ok(await js("document.querySelector('.stack-plan-detail').textContent.includes('not been loaded')"));
+    assert.ok(await js("!document.querySelector('.stack-merge-plan').hasAttribute('data-blocked')"));
+    await wait("!document.querySelector('.stack-plan-heading button').disabled");
+    await js("window.beforeStackRefresh=window.stackRefreshReads;document.querySelector('.stack-plan-heading button').click()");
+    await wait('window.stackRefreshReads>window.beforeStackRefresh');
+    await js("document.querySelectorAll('*').forEach(element=>{if(element.scrollTop)element.scrollTop=0})");
+    await capture('unknown-status-dark');
+    await js("document.documentElement.classList.remove('dark')");
+    await capture('unknown-status-light');
+    await viewport(640,700);
+    await capture('unknown-status-narrow');
+    assert.ok(await js('document.documentElement.scrollWidth<=innerWidth'));
     console.log('Stack status passed: single hierarchy, separate blockers and optional checks, lazy actions, scoped reruns, stale state, responsive light/dark layouts.');
     app.exit(0);
   } catch (error) { console.error(error); await capture('failure'); console.log(await js('document.body.innerText')); app.exit(1); }
