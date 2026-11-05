@@ -1,3 +1,4 @@
+import { buildPlannerEvidence } from './review-planning';
 import type { PrMetadata, ChangedFile, ProjectClaudeContext, TopicPlan } from './types';
 import type { IndexedHunk } from './diff-parse';
 import { normalizeDiagramBrief } from './diagram-spec';
@@ -257,14 +258,15 @@ ${expandedDiff}
 }
 
 /**
- * Build a lightweight context string for the planner phase — only PR metadata and hunk index.
+ * Build planner context from metadata, a complete hunk index, and bounded source evidence.
  */
 export function buildPlannerContext(
   prData: PrMetadata,
   changedFiles: ChangedFile[],
   hunkIndex: string,
   excludedFilesSummary?: string,
-  claudeContext?: ProjectClaudeContext | null
+  claudeContext?: ProjectClaudeContext | null,
+  planningHunks?: IndexedHunk[]
 ): string {
   const totalAdditions = changedFiles.reduce((s, f) => s + f.additions, 0);
   const totalDeletions = changedFiles.reduce((s, f) => s + f.deletions, 0);
@@ -281,6 +283,7 @@ Files changed: ${changedFiles.length} | Lines added: ${totalAdditions} | Lines d
   if (claudeSection) ctx += '\n\n' + claudeSection;
   if (excludedFilesSummary) ctx += '\n\n' + excludedFilesSummary;
   ctx += '\n\n' + hunkIndex;
+  if (planningHunks) ctx += '\n\n' + buildPlannerEvidence(planningHunks);
 
   return ctx;
 }

@@ -1964,9 +1964,9 @@ async function runBackgroundGeneration(
       // ── Two-phase: planner → parallel writers ──
       reportReviewPhase( { reviewId, phase: 'Planning review structure' });
 
-      const plannerContext = buildPlannerContext(prData, changedFiles, hunkIndex, excludedFilesSummary, projectClaudeContext);
+      const plannerContext = buildPlannerContext(prData, changedFiles, hunkIndex, excludedFilesSummary, projectClaudeContext, indexedHunks);
       checkpoint = await openReviewCheckpoint(path.join(getReviewsDir(), 'unfinished'), {
-        version: 1, account: generationAccount, provider, model, instructions, educationMode, reviewSuggestions,
+        version: 2, account: generationAccount, provider, model, instructions, educationMode, reviewSuggestions,
         thinking, effort, scope: request.prUrl, snapshot: reviewSnapshot?.fingerprint, baseSha: prData.baseSha, headSha: prData.headSha,
         localToolsOn, plannerContext, hunkIndex,
       });

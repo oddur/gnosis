@@ -1,3 +1,4 @@
+import { CHAPTER_GROUPING_DIRECTIVE } from './review-planning';
 import { budgetReviewContext, REVIEW_CONTEXT_BUDGET, isInputTooLarge } from './prompt-budget';
 import { reviewIllustration, type IllustrationRender } from './illustration-review';
 import { normalizeMechanism } from './mechanism';
@@ -24,17 +25,7 @@ ${REVIEW_OVERVIEW_DIRECTIVE}
 
 ${SLIDE_NARRATIVE_DIRECTIVE}
 
-ORDERING: Order slides so the reviewer always has context before they need it.
-- Show foundational changes first (base types, interfaces, schemas, abstract classes)
-- Then show implementations that depend on those foundations
-- Then show call sites and consumers
-- Show tests after the code they test
-- Show config and documentation last
-
-GROUPING: Group changes that are logically related and should be understood together.
-- A change to an interface and its implementation belong in the same slide if small, or sequential slides if large
-- Unrelated changes to the same file should be in different slides
-- Refactoring a function and adding a test for it are two different slides
+${CHAPTER_GROUPING_DIRECTIVE}
 
 REVIEW CHECKS: The reviewer has read your narrative. Give them only the concrete things they STILL need to check to approve with confidence (0–4 checks; no minimum). Use these for unresolved risks; explain established behavior in the narrative or inlineExplanations.
 
@@ -178,7 +169,7 @@ const FOCUS_DIRECTIVE = `
 REVIEW FOCUS RULES
 Apply these rules on top of all other guidelines:
 
-1. SKIP slides for trivial changes: whitespace-only edits, import reordering, rename-only refactors, boilerplate ceremony (license headers, generated code, auto-formatted files).
+1. SKIP dedicated slides for proven mechanical-only changes: whitespace, import reordering, license headers, generated code, and auto-formatting. Keep their hunks with the related topic or remaining changes. A move or rename can affect behavior; check its context before treating it as trivial.
 2. If there are minor changes worth noting, merge them into a single "Minor changes" slide at the END of the slides array. Otherwise omit them entirely.
 3. FOCUS slides on: system design decisions, algorithmic complexity, state management, API surface changes, security implications, error handling patterns.
 4. In reviewFocus, be more opinionated — call out what actually matters, not just what changed. Flag risks, trade-offs, and design choices the reviewer should push back on.
@@ -363,23 +354,17 @@ export async function generateReviewGuide(opts: GenerateReviewGuideOptions): Pro
 
 // ── Two-phase generation: Planner + Writers ──────────────────────
 
-const PLANNER_SYSTEM = `You are a code review architect. Given a pull request's metadata and its diff hunk index, your job is to plan the review structure — grouping related hunks into logical topics and ordering them for optimal understanding.
+const PLANNER_SYSTEM = `You are a code review architect. Given a pull request's metadata, complete diff hunk index, and available source excerpts, your job is to plan the review structure — grouping related hunks into logical topics and ordering them for optimal understanding.
 
-ORDERING: Foundations first (types, interfaces, schemas) → implementations → consumers → tests → config/docs.
-
-GROUPING: Group hunks that are logically related and should be understood together.
-- A change to an interface and its implementation belong in the same topic
-- Unrelated changes to the same file should be in different topics
-- Refactoring and its tests are separate topics
-- Trivial changes (whitespace, imports, formatting) should be merged into a single "Minor changes" topic at the end, or omitted entirely
+${CHAPTER_GROUPING_DIRECTIVE}
 
 ${REVIEW_OVERVIEW_DIRECTIVE}
 
 The summary is a draft based on the supplied evidence. Keep claims within that evidence; the topic writers inspect the actual source.
 
-STORY ARC: Write a 2-3 sentence narrative thread that connects all topics into a coherent story. This tells each slide writer how their topic fits into the bigger picture. Example: "This PR migrates the auth layer from session cookies to JWT tokens. The foundation is a new Token type and validation middleware, which the route handlers then adopt, followed by test updates."
+STORY ARC: Write a short narrative thread that connects all topics into a coherent story. State the purpose of the change and how the topics connect without repeating their explanations.
 
-NARRATIVE BRIEF per topic: Write a 1-2 sentence direction for each topic's slide writer. Explain what angle to take, what to emphasize, and how this topic relates to others. Example: "This introduces the core Token type that all subsequent auth changes depend on. Emphasize the design choices in the token structure and expiry handling."
+NARRATIVE BRIEF per topic: State the question this chapter should answer, the evidence to connect, and any assumption the writer must verify. Keep it to 1-2 sentences.
 
 ${D2_PLANNER_DIRECTIVE}
 
@@ -479,7 +464,7 @@ export async function planReview(
 
 const WRITER_SYSTEM = `You are an expert code reviewer writing one slide of a guided code review. You are given a specific topic with its relevant diff hunks, file contents, and narrative direction from the review planner.
 
-CONTEXT: You are writing ONE slide in a multi-slide review. The <story_arc> tells you the overall PR narrative. The <narrative_brief> tells you what angle to take for THIS slide. Use this direction for consistency, but verify it against the actual source. Return a short title naming what these hunks actually establish. Correct a misleading planner title directly; do not spend narrative text explaining the mismatch.
+CONTEXT: You are writing ONE slide in a multi-slide review. Answer the chapter's central question by connecting the implementation, its callers, and supporting tests where relevant. Explain what a test asserts without claiming it passed. Keep this explanation scoped to its assigned hunks; do not repeat prerequisite chapters. Distinguish added or removed behavior from unchanged diff context and comment-only edits. Preserve the component boundary, condition, or exception that limits a claim; never turn a local guarantee into a system-wide one. The <story_arc> tells you the overall PR narrative. The <narrative_brief> tells you what angle to take for THIS slide. Use this direction for consistency, but verify it against the actual source. Return a short title naming what these hunks actually establish. Correct a misleading planner title directly; do not spend narrative text explaining the mismatch.
 
 ${REVIEW_PROSE_DIRECTIVE}
 
