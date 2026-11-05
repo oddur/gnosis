@@ -72,6 +72,7 @@ export function PrFileInspection({
   onOpenSource,
   briefSubject,
   onOpenBrief,
+  onOpenFeedback,
 }: {
   entry: ChangeFileEntry;
   sourceLine?: number;
@@ -81,6 +82,7 @@ export function PrFileInspection({
   /** The stack or PR whose agent brief collects comments made here. */
   briefSubject?: ReviewSubject;
   onOpenBrief?: () => void;
+  onOpenFeedback?: (url: string, threadId: string) => void;
   onOpenSource?: (url: string, path: string) => void;
   classificationControl?: ReactNode;
   preferences: Preferences;
@@ -303,8 +305,8 @@ export function PrFileInspection({
     const source = combinedThreads.find((t) => t.thread.id === thread.id)?.source;
     return (
       <div key={thread.id} className="combined-thread">
-        <Button variant="link" size="sm" onClick={() => source && onOpenSource?.(source.metadata.url, thread.path)}>
-          PR #{source?.metadata.url.split('/').pop()} · Open to reply
+        <Button variant="link" size="sm" onClick={() => { if (source) { if (onOpenFeedback) onOpenFeedback(source.metadata.url, thread.id); else onOpenSource?.(source.metadata.url, thread.path); } }}>
+          PR #{source?.metadata.url.split('/').pop()} · {onOpenFeedback ? 'Address feedback' : 'Open to reply'}
         </Button>
         <GitHubReviewThread thread={thread} />
       </div>
@@ -342,6 +344,7 @@ export function PrFileInspection({
     enabled: !commit && !combined,
     snapshot: commit || combined ? undefined : entry.snapshot,
     renderThreadOverride: combined ? renderCombinedThread : renderFeedbackThread,
+    onOpenFeedback,
     path: entry.file.path,
     activeKey,
     // Unchanged moves keep all published discussions below both source and Markdown views.
@@ -370,14 +373,7 @@ export function PrFileInspection({
       );
       if (!target) return;
       sourceJump.current = undefined;
-      const feedbackPane = focusThreadId ? sectionRef.current?.closest('.changes-feedback-content') : null;
-      if (feedbackPane) {
-        const headerHeight = sectionRef.current?.querySelector('.changes-file-header')?.getBoundingClientRect().height ?? 0;
-        // Keep the commented line just below the sticky header, leaving room for its conversation.
-        feedbackPane.scrollTop += target.getBoundingClientRect().top - feedbackPane.getBoundingClientRect().top - headerHeight - 8;
-      } else {
-        target.scrollIntoView({ block: 'center', behavior: 'instant' });
-      }
+      target.scrollIntoView({ block: 'center', behavior: 'instant' });
       // The highlighter may replace line nodes. Keep keyboard focus on its stable host.
       node.tabIndex = -1;
       node.setAttribute('aria-label', `Source at ${location.side === 'before' ? 'old' : 'new'} line ${location.start}`);

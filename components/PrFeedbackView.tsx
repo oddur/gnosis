@@ -1,8 +1,11 @@
+import { createPortal } from 'react-dom';
+import { FeedbackCodeContext } from './FeedbackCodeContext';
+import type { Preferences } from '../lib/types';
 import { Popover } from 'radix-ui';
 import { SearchableSelect } from './SearchableSelect';
 import { FileTypeIcon } from './FileTypeIcon';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowLeft, Check, FileCode, MessageSquare, RefreshCw, Send, X, Reply } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, FileCode, MessageSquare, RefreshCw, Send, X, Reply } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Button } from './ui/button';
 import { GitHubAuthor } from './GitHubAuthor';
@@ -47,6 +50,8 @@ export function PrFeedbackView({
   subject,
   account,
   initialPrUrl,
+  initialThreadId,
+  preferences,
   intent,
   onIntentHandled,
   onSource,
@@ -54,15 +59,24 @@ export function PrFeedbackView({
   subject: ReviewSubject;
   account: string | null;
   initialPrUrl?: string;
+  initialThreadId?: string;
+  preferences?: Preferences;
   intent?: 'address' | 'request';
   onIntentHandled?: () => void;
   onSource: (item: FeedbackItem) => void;
 }) {
   const discussions = useEvidenceDiscussions(subject, account, true, true);
   const scope = `${account}:${subject.id}`;
+  const [actionHost, setActionHost] = useState<HTMLDivElement | null>(null);
+  const [lastResolved, setLastResolved] = useState<FeedbackItem>();
+  const [undoBusy, setUndoBusy] = useState(false);
+  const [completed, setCompleted] = useState(false);
+  const undoLock = useRef(false);
   const [requestsOpen, setRequestsOpen] = useState(intent === 'request');
   const initialSelection = useRef(false);
-  useEffect(() => { if (intent === 'request') onIntentHandled?.(); }, [intent]);
+  useEffect(() => {
+    if (intent === 'request') onIntentHandled?.();
+  }, [intent]);
   const [filter, setFilter] = useSessionDraft<'all' | 'unread' | 'unresolved'>(`feedback-filter:${scope}`, 'all');
   const [selectedKey, setSelectedKey] = useSessionDraft<string | undefined>(`feedback-selection:${scope}`, undefined);
   const [prUrl, setPrUrl] = useState(initialPrUrl ?? '');
@@ -112,14 +126,61 @@ export function PrFeedbackView({
         (filter === 'unread' ? isUnread(item) : item.thread && !item.thread.isResolved))
   );
   useEffect(() => {
-    if (intent !== 'address' || initialSelection.current || !scoped.length) return;
+    if ((!initialThreadId && intent !== 'address') || initialSelection.current || !scoped.length) return;
+    const target = initialThreadId ? scoped.find((item) => item.id === initialThreadId) : undefined;
+    if (initialThreadId && !target) return;
     initialSelection.current = true;
     setFilter('all');
-    const first = scoped.find(item => item.state === 'CHANGES_REQUESTED') ?? scoped.find(item => item.thread && !item.thread.isResolved) ?? scoped[0];
+    const first =
+      target ??
+      scoped.find((item) => item.state === 'CHANGES_REQUESTED') ??
+      scoped.find((item) => item.thread && !item.thread.isResolved) ??
+      scoped[0];
     setSelectedKey(feedbackKey(first));
     onIntentHandled?.();
-  }, [intent, scoped]);
+  }, [intent, initialThreadId, scoped]);
   const selected = scoped.find((item) => feedbackKey(item) === selectedKey);
+  const currentSelection = useRef(selectedKey);
+  currentSelection.current = selectedKey;
+  const latestScoped = useRef(scoped);
+  latestScoped.current = scoped;
+  const selectedIndex = shown.findIndex((item) => feedbackKey(item) === selectedKey);
+  function nextAfterResolve() {
+    if (!selected || currentSelection.current !== feedbackKey(selected)) return;
+    const items = latestScoped.current;
+    const at = items.findIndex((item) => feedbackKey(item) === feedbackKey(selected));
+    const next = [...items.slice(at + 1), ...items.slice(0, at)].find(
+      (item) => item.thread && !item.thread.isResolved && feedbackKey(item) !== feedbackKey(selected)
+    );
+    if (next) select(next);
+    else {
+      setCompleted(true);
+      setSelectedKey(undefined);
+      requestAnimationFrame(() => detail.current?.focus({ preventScroll: true }));
+    }
+  }
+  async function undoResolution() {
+    if (!lastResolved || undoLock.current) return;
+    undoLock.current = true;
+    setUndoBusy(true);
+    setWriteError('');
+    try {
+      const next = await window.electronAPI.reviewThreadAction({
+        prUrl: lastResolved.member.url,
+        threadId: lastResolved.id,
+        action: 'unresolve',
+      });
+      replaceDiscussionThread(lastResolved.member.url, next);
+      setPrUrl(lastResolved.member.url === prUrl || !prUrl ? prUrl : lastResolved.member.url);
+      select(lastResolved);
+      setLastResolved((current) => (current?.id === lastResolved.id ? undefined : current));
+    } catch {
+      setWriteError('Could not reopen the thread. Try Undo again.');
+    } finally {
+      undoLock.current = false;
+      setUndoBusy(false);
+    }
+  }
   const virtual = useVirtualizer({
     count: shown.length,
     getScrollElement: () => list.current,
@@ -167,10 +228,13 @@ export function PrFeedbackView({
     return () => cancelAnimationFrame(frame);
   }, [selectedKey]);
   function backToList() {
+    setCompleted(false);
     returnFocusKey.current = selectedKey;
     setSelectedKey(undefined);
+    if (!selectedKey) requestAnimationFrame(() => list.current?.focus({ preventScroll: true }));
   }
   function select(item: FeedbackItem) {
+    setCompleted(false);
     setSelectedKey(feedbackKey(item));
     setWriteError('');
   }
@@ -241,7 +305,7 @@ export function PrFeedbackView({
     );
   return (
     <ReviewDraftScope.Provider value={`feedback:${account}`}>
-      <div className="feedback-workspace" ref={root} data-conversation-open={!!selected}>
+      <div className="feedback-workspace" ref={root} data-conversation-open={!!selected || completed}>
         {optionsError && (
           <div className="feedback-notice" role="alert">
             {optionsError}
@@ -256,6 +320,7 @@ export function PrFeedbackView({
                 size="sm"
                 aria-pressed={filter === value}
                 onClick={() => {
+                  setCompleted(false);
                   setFilter(value);
                   setSelectedKey(undefined);
                 }}
@@ -553,6 +618,18 @@ export function PrFeedbackView({
             )}
           </div>
           <section className="feedback-conversation" aria-label="Selected conversation">
+            {lastResolved && (
+              <div className="feedback-resolution" role="status">
+                <Check size={14} aria-hidden="true" />
+                <span title={`PR #${lastResolved.member.number} · ${lastResolved.thread?.path}`}>
+                  {lastResolved.id === selected?.id ? 'This thread resolved' : 'Previous thread resolved'} · #
+                  {lastResolved.member.number} · {lastResolved.thread?.path}
+                </span>
+                <button disabled={undoBusy} onClick={() => void undoResolution()}>
+                  {undoBusy ? 'Restoring…' : 'Undo'}
+                </button>
+              </div>
+            )}
             {selected ? (
               <>
                 <header className="feedback-conversation-header">
@@ -569,36 +646,76 @@ export function PrFeedbackView({
                       {selected.thread?.path ?? kindLabel(selected)}
                     </h2>
                   </div>
-                  {selected.kind === 'review' && (() => {
-                    const next = scoped.find(item => item.thread && !item.thread.isResolved && selected.relatedThreads.includes(item.id));
-                    return next && <Button variant="outline" size="sm" onClick={() => onSource(next)}>Address in Changes</Button>;
-                  })()}
+                  {selected.kind === 'review' &&
+                    (() => {
+                      const next = scoped.find(
+                        (item) => item.thread && !item.thread.isResolved && selected.relatedThreads.includes(item.id)
+                      );
+                      return (
+                        next && (
+                          <Button variant="outline" size="sm" onClick={() => select(next)}>
+                            Address code threads
+                          </Button>
+                        )
+                      );
+                    })()}
                   <Button variant="ghost" size="sm" onClick={() => void markUnread()}>
                     Mark unread
                   </Button>
                 </header>
+                <nav className="feedback-thread-navigation" aria-label="Conversation navigation">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Previous conversation"
+                    disabled={selectedIndex <= 0}
+                    onClick={() => select(shown[selectedIndex - 1])}
+                  >
+                    <ArrowLeft size={15} />
+                  </Button>
+                  <span>
+                    {selectedIndex + 1} of {shown.length}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Next conversation"
+                    disabled={selectedIndex < 0 || selectedIndex >= shown.length - 1}
+                    onClick={() => select(shown[selectedIndex + 1])}
+                  >
+                    <ArrowRight size={15} />
+                  </Button>
+                  {selected.thread && (
+                    <Button variant="ghost" size="sm" onClick={() => onSource(selected)}>
+                      Open in Changes
+                    </Button>
+                  )}
+                </nav>
                 <div className="feedback-conversation-body" key={feedbackKey(selected)}>
                   {selected.thread && (
-                    <>
-                      {selected.comments[0]?.diffHunk ? (
-                        <FeedbackCode
-                          content={selected.comments[0].diffHunk}
-                          label={
-                            selected.thread.isOutdated
-                              ? 'Outdated thread · code when commented'
-                              : selected.headSha !== selected.member.headSha
-                                ? 'Saved thread · code when commented'
-                                : 'Code when commented'
-                          }
-                          onSource={() => onSource(selected)}
-                        />
-                      ) : (
-                        <p className="feedback-context-unavailable">
-                          Code context is unavailable. <button onClick={() => onSource(selected)}>Open in Changes</button>
-                        </p>
-                      )}
+                    <div className="feedback-thread-detail">
+                      <FeedbackCodeContext
+                        item={selected}
+                        thread={selected.thread}
+                        preferences={preferences}
+                        discussion={{
+                          discussions: Object.fromEntries(
+                            Object.entries(discussions.values).map(([url, data]) => [
+                              url,
+                              { data, error: discussions.errors[url]?.message },
+                            ])
+                          ),
+                          refresh: async (url) => {
+                            await refreshDiscussion(url);
+                          },
+                          replace: replaceDiscussionThread,
+                        }}
+                        onSource={() => onSource(selected)}
+                      />
                       <GitHubReviewThread
                         thread={selected.thread}
+                        actionContainer={actionHost}
+                        onResolvedNext={nextAfterResolve}
                         expanded
                         onAction={async (action, body) => {
                           const next = await window.electronAPI.reviewThreadAction({
@@ -608,6 +725,9 @@ export function PrFeedbackView({
                             body,
                           });
                           replaceDiscussionThread(selected.member.url, next);
+                          if (action === 'resolve' && next.viewerCanUnresolve) setLastResolved(selected);
+                          if (action === 'unresolve')
+                            setLastResolved((current) => (current?.id === selected.id ? undefined : current));
                         }}
                         onCommentAction={async (commentId, action, body) => {
                           const next = await window.electronAPI.reviewCommentAction({
@@ -620,12 +740,13 @@ export function PrFeedbackView({
                           replaceDiscussionThread(selected.member.url, next);
                         }}
                       />
-                    </>
+                    </div>
                   )}
                   {!selected.thread && (
                     <FeedbackMessage
                       key={selected.id}
                       item={selected}
+                      actionContainer={actionHost}
                       onReply={async (body) => {
                         await window.electronAPI.feedbackAction({
                           prUrl: selected.member.url,
@@ -660,7 +781,49 @@ export function PrFeedbackView({
                     </nav>
                   )}
                 </div>
+                <div
+                  className="feedback-response-dock"
+                  ref={setActionHost}
+                  aria-label={`Actions for PR #${selected.member.number} conversation`}
+                />
               </>
+            ) : completed ? (
+              <div className="feedback-empty feedback-complete">
+                <Check aria-hidden="true" />
+                <h2 ref={detail} tabIndex={-1}>
+                  {snapshotMissing.length || failures.length
+                    ? 'Feedback could not be confirmed'
+                    : unresolved
+                      ? 'More feedback needs attention'
+                      : 'No unresolved code threads'}
+                </h2>
+                <p>
+                  {prUrl ? 'In this PR. ' : ''}Resolving threads does not approve a PR. Review decisions and general
+                  comments may still need a response.
+                </p>
+                {(snapshotMissing.length > 0 || failures.length > 0) && (
+                  <p>Some PR feedback is unavailable. Refresh feedback to check for remaining threads.</p>
+                )}
+                {unresolved > 0 && (
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      const next = scoped.find((item) => item.thread && !item.thread.isResolved);
+                      if (next) select(next);
+                    }}
+                  >
+                    Continue with unresolved feedback
+                  </Button>
+                )}
+                {reviewers.length > 0 && (
+                  <Button variant="outline" size="sm" onClick={() => setRequestsOpen(true)}>
+                    Review feedback & request review
+                  </Button>
+                )}
+                <Button variant="ghost" size="sm" onClick={backToList}>
+                  All conversations
+                </Button>
+              </div>
             ) : (
               <div className="feedback-empty">
                 <MessageSquare aria-hidden="true" />
@@ -674,7 +837,15 @@ export function PrFeedbackView({
     </ReviewDraftScope.Provider>
   );
 }
-function FeedbackMessage({ item, onReply }: { item: FeedbackItem; onReply: (body: string) => Promise<void> }) {
+function FeedbackMessage({
+  item,
+  onReply,
+  actionContainer,
+}: {
+  item: FeedbackItem;
+  onReply: (body: string) => Promise<void>;
+  actionContainer?: HTMLElement | null;
+}) {
   const [draft, setDraft] = useSessionDraft(`feedback-reply:${feedbackKey(item)}`, '');
   const [replying, setReplying] = useSessionDraft(`feedback-replying:${feedbackKey(item)}`, false);
   const [busy, setBusy] = useState(false),
@@ -707,6 +878,28 @@ function FeedbackMessage({ item, onReply }: { item: FeedbackItem; onReply: (body
       setBusy(false);
     }
   }
+  const replyButton = (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => {
+        setReplying(true);
+        setSent(false);
+      }}
+    >
+      Reply
+    </Button>
+  );
+  const replyActions = (
+    <div className="feedback-reply-actions">
+      <Button type="submit" form={`feedback-reply-form-${item.id}`} disabled={busy || !draft.trim()} size="sm">
+        {busy ? 'Posting…' : 'Reply on GitHub'}
+      </Button>
+      <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => setReplying(false)}>
+        Cancel
+      </Button>
+    </div>
+  );
   return (
     <article className="feedback-message">
       <header>
@@ -720,6 +913,7 @@ function FeedbackMessage({ item, onReply }: { item: FeedbackItem; onReply: (body
       {sent && <p role="status">Reply posted to the PR discussion.</p>}
       {replying ? (
         <form
+          id={`feedback-reply-form-${item.id}`}
           onSubmit={(e) => {
             e.preventDefault();
             void send();
@@ -748,65 +942,14 @@ function FeedbackMessage({ item, onReply }: { item: FeedbackItem; onReply: (body
                 </details>
               </div>
             )}
-            <div className="feedback-reply-actions">
-              <Button type="submit" disabled={busy || !draft.trim()} size="sm">
-                {busy ? 'Posting…' : 'Reply on GitHub'}
-              </Button>
-              <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={() => setReplying(false)}>
-                Cancel
-              </Button>
-            </div>
+            {actionContainer ? createPortal(replyActions, actionContainer) : replyActions}
           </div>
         </form>
+      ) : actionContainer ? (
+        createPortal(replyButton, actionContainer)
       ) : (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            setReplying(true);
-            setSent(false);
-          }}
-        >
-          Reply
-        </Button>
+        replyButton
       )}
     </article>
-  );
-}
-
-function FeedbackCode({ content, label, onSource }: { content: string; label: string; onSource?: () => void }) {
-  const query = '(max-width:760px), (max-height:700px)';
-  const [compact, setCompact] = useState(() => window.matchMedia(query).matches);
-  const [expanded, setExpanded] = useState(false);
-  useEffect(() => {
-    const media = window.matchMedia(query);
-    const change = () => setCompact(media.matches);
-    media.addEventListener('change', change);
-    return () => media.removeEventListener('change', change);
-  }, []);
-  const lines = content.split('\n');
-  const shown = expanded ? lines : lines.slice(-8);
-  return (
-    <details className="feedback-code-context" open={!compact}>
-      <summary>{label}</summary>
-      {onSource && (
-        <Button size="sm" variant="ghost" onClick={onSource}>
-          Open in Changes
-        </Button>
-      )}
-      <pre className="feedback-code" aria-label="Code when commented">
-        {shown.map((line, index) => (
-          <span key={index} data-change={line.startsWith('+') ? 'added' : line.startsWith('-') ? 'removed' : undefined}>
-            {line}
-            {'\n'}
-          </span>
-        ))}
-      </pre>
-      {lines.length > 8 && (
-        <Button size="sm" variant="ghost" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
-          {expanded ? 'Less code context' : `Show all ${lines.length} lines of context`}
-        </Button>
-      )}
-    </details>
   );
 }

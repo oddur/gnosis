@@ -15,6 +15,7 @@ interface Props {
   reason?: string;
   onResolvedNext?: () => void;
   actionContainer?: HTMLElement | null;
+  onOpenFeedback?: () => void;
   onCommentAction?: (commentId: string, action: ReviewCommentAction['action'], body?: string) => Promise<void>;
   onAction?: (action: ReviewThreadAction['action'], body?: string) => Promise<void>;
 }
@@ -27,6 +28,7 @@ export function GitHubReviewThread({
   expanded,
   onResolvedNext,
   actionContainer,
+  onOpenFeedback,
 }: Props) {
   const [replying, setReplying] = useSessionDraft(`thread-replying:${thread.id}`, false);
   const [draft, setDraft] = useSessionDraft(`thread-reply:${thread.id}`, '');
@@ -101,7 +103,16 @@ export function GitHubReviewThread({
     );
   const actions = (
     <div className="github-thread-actions" aria-label="Thread actions">
+      {onOpenFeedback && actionButton('Address feedback', onOpenFeedback)}
       {!replying && actionButton('Reply', () => setReplying(true))}
+      {replying && actionContainer && (
+        <>
+          <Button size="sm" type="submit" form={`${inputId}-form`} disabled={busy || !draft.trim()}>
+            Reply on GitHub
+          </Button>
+          {actionButton('Cancel', () => setReplying(false))}
+        </>
+      )}
       {((thread.isResolved && thread.viewerCanUnresolve) || (!thread.isResolved && thread.viewerCanResolve)) &&
         actionButton(
           thread.isResolved ? 'Reopen thread' : 'Resolve thread',
@@ -217,6 +228,7 @@ export function GitHubReviewThread({
       {onAction && (actionContainer ? createPortal(actions, actionContainer) : actions)}
       {onAction && replying && (
         <form
+          id={`${inputId}-form`}
           ref={replyForm}
           onSubmit={(e) => {
             e.preventDefault();
@@ -233,14 +245,16 @@ export function GitHubReviewThread({
             disabled={busy}
             autoFocus
           />
-          <div className="github-thread-actions">
-            <button type="submit" disabled={busy || !draft.trim()}>
-              Reply on GitHub
-            </button>
-            <button type="button" disabled={busy} onClick={() => setReplying(false)}>
-              Cancel
-            </button>
-          </div>
+          {!actionContainer && (
+            <div className="github-thread-actions">
+              <button type="submit" disabled={busy || !draft.trim()}>
+                Reply on GitHub
+              </button>
+              <button type="button" disabled={busy} onClick={() => setReplying(false)}>
+                Cancel
+              </button>
+            </div>
+          )}
         </form>
       )}
       {error && (

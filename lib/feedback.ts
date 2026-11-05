@@ -3,6 +3,7 @@ import type { ReviewMember } from './workbench';
 export interface FeedbackItem {
   id: string;
   headSha?: string;
+  baseSha?: string;
   member: ReviewMember;
   kind: 'thread' | 'review' | 'comment';
   comments: GitHubReviewComment[];
@@ -15,6 +16,7 @@ export function feedbackItems(member: ReviewMember, snapshot?: GitHubReviewThrea
   const items: FeedbackItem[] = snapshot.threads.map((thread) => ({
     id: thread.id,
     headSha: snapshot.headSha,
+    baseSha: snapshot.baseSha,
     member,
     kind: 'thread',
     thread,

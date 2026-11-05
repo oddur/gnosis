@@ -1,5 +1,3 @@
-import { ChangesFeedback } from './ChangesFeedback';
-import { useSessionDraft } from '../lib/session-drafts';
 import { watchGitHub } from '../lib/watch-github';
 import { stackFileDiscussions } from '../lib/stack-changes';
 import { loadInspectionBatch, inspectionFailure, type InspectionFailure } from '../lib/inspection-batch';
@@ -65,7 +63,6 @@ export function rememberChangesFile(subjectId: string, path: string) {
 }
 export interface ChangesInitialFile {
   url: string;
-  threadId?: string;
   path: string;
   line?: number;
   headSha?: string;
@@ -96,14 +93,9 @@ export function PrChangesView({
   onActiveFile,
   onOpenBrief,
   onOpenFeedback,
-  onInitialFeedbackShown,
-  account = '',
-  addressFeedback = false,
 }: {
-  onInitialFeedbackShown?: () => void;
   account?: string;
-  addressFeedback?: boolean;
-  onOpenFeedback?: (url?: string, requestReview?: boolean) => void;
+  onOpenFeedback?: (url?: string, threadId?: string) => void;
   subject: ReviewSubject;
   preferences: Preferences;
   commit?: CommitWorkspace;
@@ -114,10 +106,6 @@ export function PrChangesView({
   onOpenBrief?: () => void;
   initialFile?: ChangesInitialFile;
 }) {
-  const [sidebar, setSidebar] = useSessionDraft<'files' | 'feedback'>(`changes-sidebar:${account}:${subject.id}`, initialFile?.threadId || addressFeedback ? 'feedback' : 'files');
-  useEffect(() => { if (initialFile?.threadId || addressFeedback) setSidebar('feedback'); }, [initialFile, addressFeedback]);
-  const [feedbackSource, setFeedbackSource] = useState<{ url: string; path: string }>();
-  const feedbackMode = !commit && !combined && sidebar === 'feedback';
   const positionId = combined ? `combined:${subject.id}` : commit ? commitPositionId(subject.id, commit.snapshot) : subject.id;
   const stream = useRef<CommitDiffStreamHandle>(null);
   const workspace = useRef<HTMLElement>(null);
@@ -293,12 +281,11 @@ export function PrChangesView({
   const visible = allowed.filter((e) => !unviewed || !progress.isFileViewed(viewKey(e)));
   const selectionIndex = entries.findIndex((e) => e.key === selected);
   const visibleKeys = new Set(visible.map((e) => e.key));
-  const fileEntry =
+  const entry =
     visible.find((e) => e.key === selected) ??
     (!position.selected && preferredPath ? visible.find(e => e.file.path === preferredPath) : undefined) ??
     entries.slice(selectionIndex + 1).find((e) => visibleKeys.has(e.key)) ??
     visible.at(0);
-  const entry = feedbackMode ? entries.find(e => e.snapshot.url === feedbackSource?.url && (e.file.path === feedbackSource.path || e.file.previousPath === feedbackSource.path)) : fileEntry;
   const activeKey = entry ? viewKey(entry) : '';
   const carried = useRef(false);
   useEffect(() => {
@@ -366,7 +353,7 @@ export function PrChangesView({
     [entries, visibleSignature, viewedSignature, discussion.discussions]
   );
   useEffect(() => {
-    if (!initialFile || initialFile.threadId) return;
+    if (!initialFile) return;
     const match = entries.find(
       (e) =>
         // The combined diff has one source; its tip may have changed since a brief comment was written.
@@ -421,7 +408,6 @@ export function PrChangesView({
     return () => cancel.forEach((stop) => stop());
   }, [activeKey, entries, visibleSignature, contextLines]);
   async function select(key: string) {
-    setSidebar('files');
     const target = entries.find((e) => e.key === key);
     if (!target) return;
     if (!allowed.some((e) => e.key === key)) await reveal();
@@ -483,11 +469,10 @@ export function PrChangesView({
   }
   const refreshThreads = discussion.refresh;
   const comments = useChangesComments({
-    quietControls: feedbackMode,
     enabled: !commit && !combined,
     snapshot: commit || combined
       ? undefined
-      : feedbackMode ? snapshots.find(snapshot => snapshot.url === feedbackSource?.url) : (entry?.snapshot ?? entries.find((e) => e.key === selected)?.snapshot ?? snapshots.at(0)),
+      : (entry?.snapshot ?? entries.find((e) => e.key === selected)?.snapshot ?? snapshots.at(0)),
     path: entry?.file.path,
     activeKey,
     inline: [],
@@ -518,11 +503,7 @@ export function PrChangesView({
     >
       <div className="changes-toolbar">
         {toolbar}
-        {!commit && !combined && <div className="changes-view-switch" role="group" aria-label="Browse changes by">
-          <Button variant={sidebar === 'files' ? 'secondary' : 'ghost'} size="sm" aria-pressed={sidebar === 'files'} onClick={() => { setSidebar('files'); setTreeOpen(true); }}>Files</Button>
-          <Button variant={sidebar === 'feedback' ? 'secondary' : 'ghost'} size="sm" aria-pressed={sidebar === 'feedback'} onClick={() => setSidebar('feedback')}>Code threads</Button>
-        </div>}
-        {!feedbackMode && <Button variant="ghost" size="sm" onClick={() => setTreeOpen((v) => !v)} aria-expanded={treeOpen}>
+        <Button variant="ghost" size="sm" onClick={() => setTreeOpen((v) => !v)} aria-expanded={treeOpen}>
           <PanelLeft size={15} />
           {commit ? (
             'Commits & files'
@@ -531,8 +512,9 @@ export function PrChangesView({
               File tree <span>{entries.length}</span>
             </>
           )}
-        </Button>}
-        {!feedbackMode && (!commit || commit.snapshot) && (
+        </Button>
+        {!commit && onOpenFeedback && <Button variant="outline" size="sm" onClick={() => onOpenFeedback()}>Address feedback</Button>}
+        {(!commit || commit.snapshot) && (
           <span className="changes-progress">
             {entries.filter((e) => progress.isFileViewed(viewKey(e))).length} / {entries.length} viewed
             {incomplete && ' · available files'}
@@ -540,7 +522,7 @@ export function PrChangesView({
         )}
         <span className="changes-toolbar-spacer" />
         {commit?.tools}
-        {!commit && !combined && (!feedbackMode || !!feedbackSource) && comments.controls}
+        {!commit && !combined && comments.controls}
         {!commit && !combined && entry && (
           <Button
             variant="ghost"
@@ -552,14 +534,13 @@ export function PrChangesView({
             <RefreshCw size={14} />
           </Button>
         )}
-        {!feedbackMode && <RawFileFilters
+        <RawFileFilters
           filters={filters}
           paths={entries.map((e) => e.file.path)}
           hidden={hidden}
           generated={[...kinds.values()].filter((k) => k.generated.value).length}
           tests={[...kinds.values()].filter((k) => k.test.value).length}
         />
-        }
         <DiffAppearanceMenu
           layout={prefs.diffLayout}
           onLayoutChange={(diffLayout) => savePreferences({ diffLayout })}
@@ -567,9 +548,9 @@ export function PrChangesView({
           onChange={(diffAppearance) => savePreferences({ diffAppearance })}
         />
         {!commit && !combined && (
-          <Button variant="ghost" size={feedbackMode ? 'icon' : 'sm'} disabled={loading} aria-label="Update changes" title="Update changes" onClick={() => void load(true)}>
+          <Button variant="ghost" size="sm" disabled={loading} aria-label="Update changes" title="Update changes" onClick={() => void load(true)}>
             <RefreshCw size={14} className={loading ? 'animate-spin' : undefined} />
-            {!feedbackMode && (loading ? 'Loading…' : 'Update changes')}
+            {loading ? 'Loading…' : 'Update changes'}
           </Button>
         )}
       </div>
@@ -626,11 +607,7 @@ export function PrChangesView({
         </div>
       )}
       {!commit && !combined && comments.panel}
-      {feedbackMode ? <div className={`changes-workspace${chatOpen ? ' chat-open' : ''}`}><ChangesFeedback subject={subject} account={account} discussion={discussion} entries={entries} onInspect={setFeedbackSource} initialThreadId={initialFile?.threadId} onInitialThreadHandled={onInitialFeedbackShown} onOpenFeedback={onOpenFeedback}
-        renderFile={(target, focus) => <PrFileInspection key={viewKey(target)} entry={target} preferences={prefs} discussion={discussion} sourceLine={focus.line} sourceSide={focus.side} focusThreadId={focus.threadId} renderFeedbackThread={focus.renderThread} briefSubject={subject} onOpenBrief={onOpenBrief} onAsk={(text) => { setChatEntry(target); setSelection(text); setChatOpen(true); }} />}
-      />
-        {chatOpen && chatRequest && <PrFileChat key={chatEntry ? viewKey(chatEntry) : activeKey} request={chatRequest} focusRequest={chatFocusRequest} preferences={prefs} selection={selection} onClose={() => setChatOpen(false)} />}
-      </div> : <div
+      <div
         className={`changes-workspace${treeOpen ? '' : ' tree-hidden'}${chatOpen ? ' chat-open' : ''}`}
         style={{ '--changes-tree-width': `${treeWidth}px` } as CSSProperties}
       >
@@ -769,6 +746,7 @@ export function PrChangesView({
                       />
                     }
                     discussion={discussion}
+                    onOpenFeedback={onOpenFeedback}
                     onOpenCurrentFile={commit?.onOpenCurrentFile}
                     onOpenSource={combined?.onOpenSource}
                     onViewedNext={next}
@@ -829,7 +807,7 @@ export function PrChangesView({
             onClose={() => setChatOpen(false)}
           />
         )}
-      </div>}
+      </div>
     </section>
   );
 }

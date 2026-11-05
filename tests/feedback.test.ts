@@ -208,16 +208,34 @@ void test('GitHub Actions filter hides either login spelling but keeps human and
   assert.notEqual(feedbackOptionsKey('maya'), feedbackOptionsKey('oddur'));
 });
 
-
 void test('Code feedback uses current coordinates only on the matching revision and side', () => {
   const active = { ...thread, isOutdated: false };
   const displayed = { headSha: 'head', baseSha: 'base' };
   assert.equal(feedbackCodeContext(active, snapshot, displayed), 'current');
   assert.equal(feedbackCodeContext(thread, snapshot, displayed), 'earlier');
   assert.equal(feedbackCodeContext(active, snapshot, { ...displayed, headSha: 'new-head' }), 'earlier');
-  assert.equal(feedbackCodeContext({ ...active, diffSide: 'LEFT' }, snapshot, { ...displayed, baseSha: 'new-base' }), 'earlier');
+  assert.equal(
+    feedbackCodeContext({ ...active, diffSide: 'LEFT' }, snapshot, { ...displayed, baseSha: 'new-base' }),
+    'earlier'
+  );
   assert.equal(feedbackCodeContext(active, snapshot, { ...displayed, baseSha: 'new-base' }), 'current');
   assert.equal(feedbackCodeContext({ ...active, line: null }, snapshot, displayed), 'unavailable');
   assert.equal(feedbackCodeContext(active, snapshot, undefined), 'unavailable');
   assert.equal(feedbackCodeContext(active, undefined, displayed), 'unavailable');
+});
+
+void test('Feedback carries both revision SHAs for safe links back to Changes', () => {
+  const items = feedbackItems(member, { ...snapshot, threads: [{ ...thread, isOutdated: false, diffSide: 'LEFT' }] });
+  const item = items.find((item) => item.kind === 'thread');
+  assert.ok(item?.thread);
+  assert.equal(item.headSha, 'head');
+  assert.equal(item.baseSha, 'base');
+  assert.equal(
+    feedbackCodeContext(
+      item.thread,
+      { headSha: item.headSha, baseSha: item.baseSha },
+      { headSha: 'head', baseSha: 'retargeted-base' }
+    ),
+    'earlier'
+  );
 });

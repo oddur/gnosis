@@ -153,13 +153,13 @@ void app.whenReady().then(async () => {
     );
     await capture('review-dark');
     await js('document.querySelector(\'[data-feedback-id="t-121"]\').click()');
-    await wait("document.querySelector('.feedback-code-context > summary').textContent.includes('Outdated thread')");
+    await wait("document.querySelector('.feedback-code-heading').textContent.includes('Earlier revision')");
     assert.equal(
       await js(
         "[...document.querySelectorAll('.feedback-conversation button')].some(b=>b.textContent==='Open in Changes')"
       ),
       true,
-      'Earlier revision threads can be addressed in Changes using original context'
+      'Earlier revision threads keep an optional route to current Changes'
     );
     await capture('outdated-dark');
     await js('window.failFeedback=true');
@@ -254,110 +254,82 @@ void app.whenReady().then(async () => {
       'Short laptop retains readable content'
     );
 
-    // Continue through code feedback, preserving source PRs, drafts and safe revision placement.
+    // Feedback is the only response workspace, including code context and cross-PR progression.
     win.setContentSize(1280, 800);
-    await js(`(async()=>{
-      const {markFileViewed}=await import('/lib/file-view-progress.ts');
-      const {fileRevisionKey}=await import('/lib/pr-changes.ts');
-      const m=window.feedbackSubject.members[0];
-      await markFileViewed(fileRevisionKey(m.url,'src/worker.ts',m.baseSha,m.headSha),true);
-      await window.electronAPI.updateFileFilters({filters:{hiddenExtensions:['.ts']}});
-    })()`);
-    await js(`(()=>{
-      window.syncInterests=new Map();window.syncListeners=new Set();
-      window.electronAPI.githubSyncVersion=1;
-      window.electronAPI.onGitHubSync=callback=>{window.syncListeners.add(callback);return()=>window.syncListeners.delete(callback)};
-      window.electronAPI.watchGitHub=(id,interest)=>{if(interest)window.syncInterests.set(id,interest);else window.syncInterests.delete(id)};
-      window.failDiscussionSync=()=>{for(const [id,interest] of window.syncInterests)if(interest.kind==='discussion')for(const callback of window.syncListeners)callback({subscriptionId:id,updates:[],failures:interest.targets.map(t=>({url:t.url,message:'GitHub is temporarily unavailable'}))})};
-    })()`);
-    await click('Open in Changes');
-    await wait("!!document.querySelector('.changes-feedback-original .github-thread[data-thread-id=\"t-121\"]')");
-    assert.match(await js<string>("document.querySelector('.changes-feedback-original').textContent"), /Earlier revision/);
-    assert.equal(await js("document.querySelector('.changes-feedback-original .feedback-code').textContent.includes('pending.generation')"), true);
-    await capture('changes-earlier-light');
-    await js("document.querySelector('[data-feedback-thread=\"t-120\"]').click()");
-    await wait("!!document.querySelector('.changes-feedback-active-thread .github-thread[data-thread-id=\"t-120\"]')");
-    assert.ok(await js("!!document.querySelector('.changes-feedback-content .commit-stream-file')"), 'Current thread shows the actual file diff');
-    assert.ok(await js("document.querySelector('.changes-feedback-content .commit-stream-file-body').checkVisibility()"), 'Viewed files open for feedback without resetting progress');
-    assert.equal(await js("document.querySelector('.changes-feedback-content .changes-file-header input[type=checkbox]').checked"), true);
-    assert.equal(await js("document.querySelector('.changes-toolbar').textContent.includes('Review PR #120')"), true);
-    await wait("!!document.querySelector('.changes-feedback-dock button')");
-    assert.equal(await js("[...document.querySelectorAll('.changes-view-switch button')].some(b=>b.textContent==='Code threads')"), true);
-    await capture('changes-current-light');
+    await js('document.querySelector(\'[aria-label="Filter by PR"]\').click()');
+    await wait("!!document.querySelector('[role=option]')");
+    await js("[...document.querySelectorAll('[role=option]')].find(o=>o.textContent==='All PRs').click()");
+    await js("[...document.querySelectorAll('.feedback-filters button')].find(b=>b.textContent.startsWith('All ')).click()");
+    await js("document.querySelector('[data-feedback-id=\"t-120\"]').click()");
+    await wait("!!document.querySelector('.feedback-response-dock button')");
+    await capture('feedback-code-light');
     win.setContentSize(900,600);
     await new Promise(r=>setTimeout(r,150));
-    assert.ok(await js("document.querySelector('.changes-feedback-content').getBoundingClientRect().height>=240"), 'Short laptop retains at least 240px of reading space');
-    assert.ok(await js("(()=>{const r=document.querySelector('.changes-feedback-dock').getBoundingClientRect();return r.top>0&&r.bottom<=innerHeight&&r.height>=40})()"), 'Thread actions remain visible at short laptop size');
-    await js("document.querySelector('[data-feedback-thread=\"t-121\"]').click()");
-    await wait("!!document.querySelector('.changes-feedback-original')");
-    await js("document.querySelector('[data-feedback-thread=\"t-120\"]').click()");
-    await wait("(()=>{const thread=document.querySelector('.changes-feedback-active-thread');const pane=document.querySelector('.changes-feedback-content');return thread&&thread.getBoundingClientRect().top<pane.getBoundingClientRect().bottom-80})()");
-    await capture('changes-current-short-laptop-light');
+    assert.ok(await js("document.querySelector('.feedback-conversation-body').getBoundingClientRect().height>=180"), 'Short laptop retains reading space');
+    assert.ok(await js("(()=>{const r=document.querySelector('.feedback-response-dock').getBoundingClientRect();return r.top>0&&r.bottom<=innerHeight&&r.height>=40})()"), 'Response controls stay visible');
+    assert.ok(await js("(()=>{const t=document.querySelector('.github-thread-comments').getBoundingClientRect(),p=document.querySelector('.feedback-conversation-body').getBoundingClientRect();return t.top<p.bottom&&t.bottom>p.top})()"), 'The conversation leads on a short laptop');
+    await capture('feedback-code-short-laptop-light');
     win.setContentSize(1280,800);
-    await js('window.failDiscussionSync()');
-    await wait("document.querySelector('.changes-feedback-refresh')?.textContent.includes('3 PRs')");
-    assert.equal(await js("document.querySelectorAll('.changes-feedback-refresh').length"),1, 'Stack refresh failures share one notice');
-    assert.ok(await js("!!document.querySelector('.changes-feedback-active-thread')"), 'Refresh errors retain the cached conversation');
-    assert.equal(await js("document.querySelector('.changes-feedback-refresh details').open"),false);
-    assert.ok(await js("(()=>{const r=document.querySelector('.changes-feedback-refresh').getBoundingClientRect();return r.top>=0&&r.bottom<innerHeight})()"), 'Refresh recovery stays visible above retained content');
-    await capture('changes-refresh-error-light');
-    await click('Retry feedback');
-    await wait("!document.querySelector('.changes-feedback-refresh')");
+    await click('Show full file');
+    await wait("!!document.querySelector('.feedback-full-file .commit-stream-file')");
+    assert.equal(await js("document.querySelectorAll('.feedback-conversation .github-thread').length"),1,'Full context must not duplicate conversations');
+    await capture('feedback-full-file-light');
+    await click('Hide full file');
     await click('Reply');
-    await js("(()=>{const input=document.querySelector('.changes-feedback-active-thread textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'Keep this reply while browsing threads.');input.dispatchEvent(new Event('input',{bubbles:true}));})()");
-    await js("document.querySelector('[aria-label=\"Next feedback thread\"]').click()");
-    await wait("!!document.querySelector('.changes-feedback-original')");
-    await js("document.querySelector('[aria-label=\"Previous feedback thread\"]').click()");
-    await wait("document.querySelector('.changes-feedback-active-thread textarea')?.value==='Keep this reply while browsing threads.'");
+    await js("(()=>{const input=document.querySelector('.feedback-conversation textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'Keep this reply while browsing.');input.dispatchEvent(new Event('input',{bubbles:true}));})()");
+    await js("document.querySelector('[data-feedback-id=\"t-121\"]').click()");
+    await wait("document.querySelector('.feedback-code-heading')?.textContent.includes('Earlier revision')");
+    await js("document.querySelector('[data-feedback-id=\"t-120\"]').click()");
+    await wait("document.querySelector('.feedback-conversation textarea')?.value==='Keep this reply while browsing.'");
     await js('window.failFeedbackWrite=true');
     await click('Resolve & next');
-    await wait("document.querySelector('.changes-feedback-active-thread .github-thread-error')?.textContent.includes('Thread wasn’t resolved')");
-    assert.equal(await js("document.querySelector('[data-feedback-thread=\"t-120\"]').getAttribute('aria-current')"), 'true', 'Failure must not advance');
+    await wait("document.querySelector('.github-thread-error')?.textContent.includes('Thread wasn’t resolved')");
+    assert.equal(await js("document.querySelector('[data-feedback-id=\"t-120\"]').getAttribute('aria-current')"), 'true', 'Failure must not advance');
     await js('window.failFeedbackWrite=false');
+    await click('Open in Changes');
+    await wait("!!document.querySelector('.changes-diff-pane .github-thread[data-thread-id=\"t-120\"]')");
+    assert.equal(await js("!!document.querySelector('.changes-view-switch')"),false,'Changes has no feedback viewing mode');
+    await wait("document.querySelector('.changes-diff-pane .github-thread[data-thread-id=\"t-120\"] textarea')?.value==='Keep this reply while browsing.'");
+    await js("[...document.querySelectorAll('.changes-diff-pane .github-thread[data-thread-id=\"t-120\"] button')].find(b=>b.textContent==='Address feedback').click()");
+    await wait("document.querySelector('.feedback-conversation .github-thread')?.getAttribute('data-thread-id')==='t-120'");
+    assert.equal(await js("document.querySelector('.pr-overview-tabs [data-state=active]').textContent"),'Feedback');
+    await wait("document.querySelector('.feedback-conversation textarea')?.value==='Keep this reply while browsing.'");
     await click('Cancel');
+    // A thread deep link scopes to its PR. Return to all PRs before processing the stack.
+    await js('document.querySelector(\'[aria-label="Filter by PR"]\').click()');
+    await wait("!!document.querySelector('[role=option]')");
+    await js("[...document.querySelectorAll('[role=option]')].find(o=>o.textContent==='All PRs').click()");
+    await js("document.querySelector('[data-feedback-id=\"t-120\"]').click()");
     await click('Resolve & next');
-    await wait("document.querySelector('[data-feedback-thread=\"t-121\"]').getAttribute('aria-current')==='true'");
-    assert.equal(await js('window.feedbackWrites.at(-1).threadId'), 't-120');
+    await wait("document.querySelector('.feedback-conversation .github-thread')?.getAttribute('data-thread-id')==='t-121'");
     assert.equal(await js('window.feedbackWrites.at(-1).prUrl'), await js('window.feedbackSubject.members[0].url'));
-    assert.match(await js<string>("document.querySelector('.changes-feedback-undo').textContent"), /Previous thread resolved.*#120.*src\/worker.ts/);
+    assert.match(await js<string>("document.querySelector('.feedback-resolution').textContent"),/Previous thread resolved.*#120.*src\/worker.ts/);
     await click('Undo');
-    await wait("window.feedbackData.get(window.feedbackSubject.members[0].url).threads[0].isResolved===false");
-    await wait("document.querySelector('[data-feedback-thread=\"t-120\"]').getAttribute('aria-current')==='true'");
+    await wait("document.querySelector('.feedback-conversation .github-thread')?.getAttribute('data-thread-id')==='t-120'");
+    assert.equal(await js('window.feedbackData.get(window.feedbackSubject.members[0].url).threads[0].isResolved'),false);
     await click('Resolve & next');
-    await wait("document.querySelector('[data-feedback-thread=\"t-121\"]').getAttribute('aria-current')==='true'");
+    await wait("document.querySelector('.feedback-conversation .github-thread')?.getAttribute('data-thread-id')==='t-121'");
     await click('Resolve & next');
-    await wait("document.querySelector('[data-feedback-thread=\"t-122\"]').getAttribute('aria-current')==='true'");
-    await wait("!!document.querySelector('.changes-feedback-active-thread .github-thread[data-thread-id=\"t-122\"]')");
-    assert.equal(await js("document.querySelector('.changes-toolbar').textContent.includes('Review PR #122')"), true, 'Review actions follow the selected thread source');
-    assert.equal(await js("document.querySelector('.review-breadcrumbs')?.textContent.includes('src/new.ts') ?? document.body.textContent.includes('src/new.ts')"), true);
-    assert.deepEqual(await js("window.electronAPI.loadFileFilters().then(s=>s.hiddenExtensions)"), ['.ts'], 'Inspecting filtered files preserves filter preferences');
-    await capture('changes-next-pr-light');
+    await wait("document.querySelector('.feedback-conversation .github-thread')?.getAttribute('data-thread-id')==='t-122'");
     await js("document.documentElement.classList.add('dark')");
-    await capture('changes-next-pr-dark');
-    win.setContentSize(640, 800);
-    await new Promise(r => setTimeout(r, 150));
-    assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
-    assert.ok(await js("document.querySelector('.changes-feedback-content').getBoundingClientRect().height>200"));
-    await capture('changes-narrow-dark');
-    await js("document.querySelector('.changes-feedback-back').focus()");
-    await click('Threads');
-    await wait("document.querySelector('.changes-feedback-sidebar').checkVisibility() && document.activeElement?.getAttribute('data-feedback-thread')==='t-122'");
-    await capture('changes-narrow-list-dark');
-    await js("document.querySelector('[data-feedback-thread=\"t-122\"]').click()");
+    await capture('feedback-next-pr-dark');
+    win.setContentSize(640,800);
+    await new Promise(r=>setTimeout(r,150));
+    assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'),true);
+    await capture('feedback-code-narrow-dark');
+    await click('Conversations');
+    await wait("document.querySelector('.feedback-list').checkVisibility({visibilityProperty:true}) && document.activeElement?.getAttribute('data-feedback-id')==='t-122'");
+    await js("document.querySelector('[data-feedback-id=\"t-122\"]').click()");
     await click('Resolve & next');
-    await wait("!!document.querySelector('.changes-feedback-empty')");
-    assert.match(await js<string>("document.querySelector('.changes-feedback-empty').textContent"), /still requests changes/);
-    assert.ok(await js("document.querySelector('.changes-feedback-empty').checkVisibility()"), 'Completion is visible on narrow screens');
-    await capture('changes-complete-dark');
-    win.setContentSize(1280, 800);
-    await js("document.querySelector('.changes-feedback-reviewer button').click()");
+    await wait("!!document.querySelector('.feedback-complete')");
+    assert.match(await js<string>("document.querySelector('.feedback-complete').textContent"),/does not approve a PR/);
+    assert.ok(await js("document.querySelector('.feedback-complete').checkVisibility()"));
+    await capture('feedback-complete-dark');
+    await click('Review feedback & request review');
     await wait("!!document.querySelector('.feedback-reviewers')");
     assert.match(await js<string>("document.querySelector('.feedback-reviewers').textContent"), /No unresolved threads/);
-    await capture('changes-request-review-dark');
     await js("document.querySelector('[aria-label=\"Close review requests\"]').click()");
-    await click('Changes');
-    await wait("!!document.querySelector('.changes-feedback-empty')");
-    assert.equal(await js("document.querySelector('.changes-feedback-active-thread')===null"), true, 'Returning does not reopen the initial thread');
+    win.setContentSize(1280,800);
 
     await click('Summary');
     await js(`(async()=>{
