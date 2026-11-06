@@ -1,3 +1,4 @@
+import { checkGroupIcons } from '../lib/interface-icons';
 import {
   ContextMenu,
   ContextMenuTrigger,
@@ -40,9 +41,6 @@ import {
   Network,
   ArrowRight,
   Circle,
-  CircleAlert,
-  CircleCheck,
-  CircleMinus,
   Clock3,
   Expand,
   ExternalLink,
@@ -100,20 +98,20 @@ function outcome(jobs: WorkflowJob[]) {
         jobs.length === 1
           ? checkLabel({ ...jobs[0], status: 'completed' })
           : `${counts.attention} ${counts.attention === 1 ? 'needs' : 'need'} attention`,
-      Icon: CircleAlert,
+      Icon: checkGroupIcons.attention,
     };
   if (counts.running)
     return {
       group: 'running',
       label: jobs.some((j) => j.status === 'in_progress') ? 'Running' : 'Queued',
-      Icon: jobs.some((j) => j.status === 'in_progress') ? LoaderCircle : Clock3,
+      Icon: jobs.some((j) => j.status === 'in_progress') ? LoaderCircle : checkGroupIcons.running,
     };
   if (counts.passed)
-    return { group: 'passed', label: jobs.length === 1 ? 'Passed' : `${counts.passed} passed`, Icon: CircleCheck };
+    return { group: 'passed', label: jobs.length === 1 ? 'Passed' : `${counts.passed} passed`, Icon: checkGroupIcons.passed };
   return {
     group: 'skipped',
     label: jobs.length === 1 ? checkLabel({ ...jobs[0], status: 'completed' }) : `${counts.skipped} skipped / neutral`,
-    Icon: CircleMinus,
+    Icon: checkGroupIcons.skipped,
   };
 }
 type JobNode = Node<

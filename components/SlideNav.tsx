@@ -1,4 +1,5 @@
-import { MessageSquarePlus } from 'lucide-react';
+import { ArrowLeft, ArrowRight } from 'lucide-react';
+import { WorkbenchIcon } from './WorkbenchIcon';
 
 interface Props {
   compact?: boolean;
@@ -52,7 +53,7 @@ export function SlideNav({
           className="group flex items-baseline gap-3 text-left min-w-0 disabled:opacity-30 disabled:cursor-default"
           title={compact ? `Previous: ${prevTitle ?? 'Overview'} (←)` : 'Previous (←)'}
         >
-          <span className="slide-meta shrink-0 group-hover:text-foreground transition-colors">←</span>
+          <ArrowLeft size={14} aria-hidden="true" className="slide-meta shrink-0 group-hover:text-foreground transition-colors" />
           <span className="flex flex-col gap-0.5 min-w-0">
             <span className="slide-meta nav-direction">Previous</span>
             <span className="nav-topic-title font-sans text-sm text-muted-foreground group-hover:text-foreground transition-colors truncate">
@@ -81,7 +82,7 @@ export function SlideNav({
               onClick={onSubmitReview}
               className="inline-flex items-center gap-1.5 slide-meta hover:text-foreground transition-colors"
             >
-              <MessageSquarePlus className="h-3 w-3" />
+              <WorkbenchIcon name="review" size={14} />
               Submit to GitHub
               {commentCount > 0 && <span className="text-[var(--ring)] tabular-nums">({commentCount})</span>}
             </button>
@@ -106,7 +107,7 @@ export function SlideNav({
                 {commentCount > 0 && <span className="text-[var(--ring)] tabular-nums"> ({commentCount})</span>}
               </span>
             </span>
-            <span className="slide-meta shrink-0 text-foreground group-hover:opacity-80 transition-opacity">→</span>
+            <ArrowRight size={14} aria-hidden="true" className="slide-meta shrink-0 text-foreground group-hover:opacity-80 transition-opacity" />
           </button>
         ) : (
           <button
@@ -121,7 +122,7 @@ export function SlideNav({
                 {nextTitle ?? '—'}
               </span>
             </span>
-            <span className="slide-meta shrink-0 text-foreground group-hover:opacity-80 transition-opacity">→</span>
+            <ArrowRight size={14} aria-hidden="true" className="slide-meta shrink-0 text-foreground group-hover:opacity-80 transition-opacity" />
           </button>
         )}
       </div>

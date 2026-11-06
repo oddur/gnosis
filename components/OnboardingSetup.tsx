@@ -136,8 +136,8 @@ export function OnboardingSetup({
       >
         <div className="setup-heading">
           <div>
-            <DialogTitle>Make Gnosis yours</DialogTitle>
-            <DialogDescription>A review queue built around your work.</DialogDescription>
+            <DialogTitle>Set up Gnosis</DialogTitle>
+            <DialogDescription>Choose repositories, queue filters, and AI models.</DialogDescription>
           </div>
           <Button variant="ghost" size="icon" disabled={saving} aria-label="Save setup and close" onClick={onPause}>
             <X size={18} />
@@ -166,9 +166,9 @@ export function OnboardingSetup({
           <QuestionnaireProgress className="setup-progress" />
           <div inert={saving} className="setup-body">
             <QuestionnaireItem name="goals" multiple>
-              <QuestionnaireTitle>What brings you to Gnosis?</QuestionnaireTitle>
+              <QuestionnaireTitle>Choose queue views</QuestionnaireTitle>
               <QuestionnaireDescription>
-                Choose all that apply. Each goal gets its own saved view.
+                Each selection creates a saved view.
               </QuestionnaireDescription>
               <QuestionnaireChoices className="setup-choices">
                 {SETUP_GOALS.map((goal) => (
@@ -250,9 +250,9 @@ export function OnboardingSetup({
             )}
             {!draft.local && (
               <QuestionnaireItem name="filters">
-                <QuestionnaireTitle>Keep the queue focused</QuestionnaireTitle>
+                <QuestionnaireTitle>Queue filters</QuestionnaireTitle>
                 <QuestionnaireDescription>
-                  These defaults keep older work and bot updates out of the way.
+                  Choose which PRs appear in your queue.
                 </QuestionnaireDescription>
                 <label className="setup-field">
                   PRs last updated
@@ -290,10 +290,9 @@ export function OnboardingSetup({
               </QuestionnaireItem>
             )}
             <QuestionnaireItem name="ai">
-              <QuestionnaireTitle>Choose how AI helps</QuestionnaireTitle>
+              <QuestionnaireTitle>Explanations and briefings</QuestionnaireTitle>
               <QuestionnaireDescription>
-                Choose a model for detailed explanations and one for quick briefings. You can change either later in
-                Settings.
+                Choose models for code walkthroughs and short PR summaries.
               </QuestionnaireDescription>
               <div className="setup-cli">
                 <span role="status">
@@ -447,7 +446,7 @@ export function OnboardingSetup({
             </QuestionnaireItem>
             <QuestionnaireItem name="finish">
               <QuestionnaireTitle>
-                {draft.local ? 'Ready for local reviews' : 'Your queue, ready to review'}
+                Review setup
               </QuestionnaireTitle>
               <QuestionnaireDescription>
                 Review what will change. Nothing is applied until you choose Apply setup.

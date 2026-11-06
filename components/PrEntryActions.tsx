@@ -1,8 +1,9 @@
 import { WorkspaceIcon } from './WorkspaceIcon';
+import { WorkbenchIcon } from './WorkbenchIcon';
 import { useContext } from 'react';
 import { PrReadContext } from '../lib/pr-read-context';
 import { Mail, MailOpen } from 'lucide-react';
-import { Copy, ExternalLink, FileText, RefreshCw, Star, VolumeX, MessageSquare } from 'lucide-react';
+import { Copy, ExternalLink, RefreshCw, Star, VolumeX } from 'lucide-react';
 import type { ReviewMember } from '../lib/workbench';
 import { EntryActions, type EntryActionGroups } from './EntryActions';
 import type { ComponentProps } from 'react';
@@ -54,7 +55,7 @@ export function prEntryActionGroups({
     onReadChange ? [{ label: unread ? 'Mark as read' : 'Mark as unread', icon: unread ? <MailOpen size={15} /> : <Mail size={15} />, disabled: busy, run: () => onReadChange(!!unread) }] : [],
     onReview ? members.filter(member => !isLocalUrl(member.url)).map(member => ({
       label: `Review PR #${member.number}…`,
-      icon: <MessageSquare size={15} />,
+      icon: <WorkbenchIcon name="review" />,
       disabled: reviewDisabled || member.merged || member.state !== 'open',
       run: () => onReview(member),
     })) : [],
@@ -73,7 +74,7 @@ export function prEntryActionGroups({
         ? [
             {
               label: stackBriefing ? 'Generate stack briefing' : 'Generate briefing',
-              icon: <FileText size={15} />,
+              icon: <WorkbenchIcon name="briefing" />,
               disabled: briefingDisabled,
               run: onGenerateBriefing,
             },

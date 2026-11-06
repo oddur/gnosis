@@ -1,4 +1,6 @@
 import { RepositoryIcon } from './RepositoryAppearance';
+import { subjectIcons } from '../lib/interface-icons';
+import { WorkbenchIcon } from './WorkbenchIcon';
 import { useRepositorySettings } from '../lib/use-repository-settings';
 import { repositoryKey } from '../lib/repository-settings';
 import type { PrBadgePreview } from '../lib/pr-badge-preview';
@@ -6,14 +8,8 @@ import { PrBadgeTooltip } from './PrBadgeTooltip';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Check,
-  Settings2,
   Copy,
   ExternalLink,
-  GitBranch,
-  GitCommitHorizontal,
-  GitPullRequest,
-  BookMarked,
-  UserRound,
   X,
 } from 'lucide-react';
 import { useCopyToClipboard } from '../lib/use-copy';
@@ -37,11 +33,11 @@ const names: Record<Kind, string> = {
   user: 'username',
 };
 const icons = {
-  pr: GitPullRequest,
-  repository: BookMarked,
-  branch: GitBranch,
-  commit: GitCommitHorizontal,
-  user: UserRound,
+  pr: subjectIcons.pr,
+  repository: subjectIcons.repository,
+  branch: subjectIcons.branch,
+  commit: subjectIcons.commit,
+  user: subjectIcons.user,
 };
 
 /** Metadata is a copy control. Navigation belongs to the surrounding title or breadcrumb. */
@@ -221,7 +217,7 @@ export function RepositoryBadge({ repo }: { repo?: string }) {
   if (!repo) return null;
   const appearance = settings[repositoryKey(repo)] ?? {};
   return <EntityBadge kind="repository" value={repo} href={`https://github.com/${repo}`} icon={<RepositoryIcon settings={appearance} />} className={`repository-color-${appearance.color ?? 'default'}`}
-    menuActions={configure && <ContextMenuItem className="entry-menu-item" onClick={() => configure(repo)}><Settings2 size={15} />Repository settings…</ContextMenuItem>} />;
+    menuActions={configure && <ContextMenuItem className="entry-menu-item" onClick={() => configure(repo)}><WorkbenchIcon name="settings" />Repository settings…</ContextMenuItem>} />;
 }
 export function PrBadge({ url, number, title }: { url: string; number?: number | string; title?: string }) {
   const [open, setOpen] = useState(false);

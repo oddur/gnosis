@@ -317,7 +317,8 @@ export function PrChangesView({
   useEffect(() => {
     if (!awaitingSelection && entry && !visible.some((e) => e.key === selected)) {
       setSelected(entry.key);
-      stream.current?.scrollToFile(entry.key);
+      // A fresh commit opens at its message; filter fallbacks still jump to the next file.
+      if (selected || !commit?.header) stream.current?.scrollToFile(entry.key);
     }
   }, [visibleSignature, awaitingSelection]);
   const reveal = async () => {
@@ -710,13 +711,13 @@ export function PrChangesView({
           />
         )}
         <div className="changes-diff-pane">
-          {commit?.header}
           {snapshots.length > 0 || commit ? (
             <CommitDiffStream
               ref={stream}
               files={streamFiles}
+              header={commit?.header}
               selected={entry?.key ?? ''}
-              initialPosition={{ key: position.selected || entry?.key || '', offset: position.scroll[activeKey] ?? 0 }}
+              initialPosition={{ key: position.selected || (commit ? '' : entry?.key) || '', offset: position.scroll[activeKey] ?? 0 }}
               onPosition={(key, offset) => {
                 if (awaitingSelection) return;
                 const target = entries.find((e) => e.key === key);

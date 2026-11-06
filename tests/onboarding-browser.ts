@@ -111,7 +111,7 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('.github-auth-dialog')");
     assert.equal(await js("document.querySelectorAll('.queue-empty').length"), 0);
     await capture('connected');
-    await click('I’ll explore on my own');
+    await click('Dismiss setup');
     await wait("!document.querySelector('.getting-started')");
     await loadWorkbenchPage(win, url + '?onboarding');
     await wait("!!document.querySelector('.workbench-connect')");
@@ -132,7 +132,7 @@ void app.whenReady().then(async () => {
       true
     );
     await js(
-      "[...document.querySelectorAll('.workbench-help summary')].find(s=>s.textContent==='Get more from a review').click()"
+      "[...document.querySelectorAll('.workbench-help summary')].find(s=>s.textContent==='Code and explanations').click()"
     );
     win.webContents.setZoomFactor(2);
     await new Promise((r) => setTimeout(r, 200));

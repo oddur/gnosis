@@ -111,18 +111,15 @@ export function WorkbenchHelp({ onGettingStarted, onWalkthrough }: { onGettingSt
               <X size={16} />
             </Popover.Close>
           </div>
-          <p>Choose a change, understand its intent, then inspect the code.</p>
           <ol className="workbench-help-steps">
             <li>
-              Open a PR overview to read the author’s description and GitHub status. No AI setup is needed for this
-              step. PRs that build on each other appear as a stack.
+              Open a PR to read its description, inspect changes, and check GitHub status. AI setup is optional.
             </li>
             <li>
-              Generate an AI explanation for a walkthrough beside the code. Ask questions or explore a concept as
-              needed.
+              Generate an explanation for a walkthrough beside the code. Use Chat for questions.
             </li>
             <li>
-              Mark files Viewed and topics reviewed to keep your place. Submit feedback to GitHub when you are ready.
+              Mark files Viewed to track progress. Use Review PR to send comments, approve, or request changes.
             </li>
           </ol>
           {onWalkthrough && <Popover.Close asChild><button className="workbench-help-link" onClick={onWalkthrough}>Show walkthrough</button></Popover.Close>}
@@ -140,22 +137,18 @@ export function WorkbenchHelp({ onGettingStarted, onWalkthrough }: { onGettingSt
             </Popover.Close>
           )}
           <details className="workbench-help-shortcuts">
-            <summary>Get more from a review</summary>
+            <summary>Code and explanations</summary>
             <p>
-              <strong>Follow the evidence.</strong> Read the file summary, inspect its diff, then use blue inline
-              explanations for extra context. GitHub discussions show their author and replies separately.
+              <strong>Inline explanations</strong> add context on a blue background. GitHub comments show their author and replies.
             </p>
             <p>
-              <strong>Reveal what you need.</strong> Diffs start with a few surrounding lines. Reveal more context, or
-              open Diff appearance to choose Unified or Split and adjust how code changes are shown.
+              <strong>Diff appearance</strong> controls Unified or Split view and surrounding lines. Expand hidden lines in the diff for more context.
             </p>
             <p>
-              <strong>Compare images.</strong> Before and After show the saved image revisions, including SVG. Expand an
-              image for a closer look; SVG source and comments are below the preview.
+              <strong>Images</strong> show Before and After revisions. Expand a preview to inspect it; SVG source and comments are below it.
             </p>
             <p>
-              <strong>Keep moving.</strong> Ask a question or create an interactive explanation for a tricky concept.
-              Generation continues in Activity; the result is saved so you can return to it.
+              <strong>Activity</strong> tracks generation. Results are saved when complete.
             </p>
           </details>
           <h3>Terms you’ll see</h3>

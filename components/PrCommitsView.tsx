@@ -344,7 +344,7 @@ export function PrCommitsView({
         <span>{groups.reduce((n, g) => n + g.commits.length, 0)}</span>
       </button>
       {commitsOpen && (
-        <div className="commit-browser">
+        <div className="commit-browser" data-files-open={filesOpen}>
           <div className="commit-range-controls">
             <label>
               <input
@@ -491,11 +491,11 @@ export function PrCommitsView({
   const header = first && last && (
     <div className="commit-detail" key={key}>
       <div className="commit-detail-title">
-        <strong>
+        <h2>
           {chosen.length > 1
             ? `${chosen.length} commits · ${short(first.sha)} → ${short(last.sha)}`
             : first.message.split('\n')[0]}
-        </strong>
+        </h2>
         <Button
           variant="ghost"
           size="sm"
@@ -510,6 +510,24 @@ export function PrCommitsView({
         >
           <ExternalLink size={14} />
         </Button>
+      </div>
+      <div className="commit-messages" aria-label="Commit messages">
+        {chosen.map((c) => {
+          const [title, ...body] = c.message.split('\n');
+          const description = body.join('\n').trim();
+          return (
+            <article key={c.sha}>
+              {chosen.length > 1 && <h3>{title}</h3>}
+              <div className="commit-detail-meta">
+                {c.author.login ? <GitHubAuthor login={c.author.login} /> : <span>{authorName(c)}</span>}
+                <CommitBadge sha={c.sha} repo={activeList?.metadata.headRepo} />
+                <time title={c.authoredAt}>{c.authoredAt ? timeAgo(c.authoredAt) : ''}</time>
+                {c.verified && <span className="commit-verified">Verified</span>}
+              </div>
+              {description && <p className="commit-message-body">{description}</p>}
+            </article>
+          );
+        })}
       </div>
       <div className="commit-baseline">
         <span>
@@ -551,29 +569,16 @@ export function PrCommitsView({
           </span>
         )}
       </div>
-      <details>
-        <summary title="Full commit messages, authors, and metadata">Details</summary>
-        <div className="commit-messages">
-          <div className="commit-detail-meta">
-            {first.author.login ? <GitHubAuthor login={first.author.login} /> : <span>{first.author.name}</span>}
-            <time title={first.authoredAt}>{first.authoredAt ? timeAgo(first.authoredAt) : ''}</time>
-            {chosen.length === 1 && first.verified && <span className="commit-verified">Verified</span>}
-          </div>
-          <p>Viewed progress is for this comparison and does not affect the full PR.</p>
-          {chosen.map((c) => (
-            <article key={c.sha}>
-              <pre>{c.message}</pre>
-              <p>
-                <CommitBadge sha={c.sha} repo={activeList?.metadata.headRepo} /> · {c.author.login ? <GitHubAuthor login={c.author.login} /> : c.author.name} · Authored {c.authoredAt || 'date unavailable'}
-              </p>
-              <p>
-                Committed by {c.committer || c.author.name} · {c.committedAt || 'date unavailable'} · {c.parents.length}{' '}
-                {c.parents.length === 1 ? 'parent' : 'parents'}
-                {c.verified ? ' · Verified' : ''}
-              </p>
-            </article>
-          ))}
-        </div>
+      <details className="commit-metadata">
+        <summary>Commit metadata</summary>
+        <p>Viewed progress is for this comparison and does not affect the full PR.</p>
+        {chosen.map((c) => (
+          <p key={c.sha}>
+            <CommitBadge sha={c.sha} repo={activeList?.metadata.headRepo} /> · Authored {c.authoredAt || 'date unavailable'}
+            {' · '}Committed by {c.committer || c.author.name} · {c.committedAt || 'date unavailable'}
+            {' · '}{c.parents.length} {c.parents.length === 1 ? 'parent' : 'parents'}
+          </p>
+        ))}
       </details>
     </div>
   );

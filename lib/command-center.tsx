@@ -1,9 +1,11 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { SearchDestination } from './command-search';
+import type { LucideIcon } from 'lucide-react';
 import { GlobalCommandPalette } from '../components/GlobalCommandPalette';
 
 export interface AppCommand {
   id: string;
+  icon?: LucideIcon;
   label: string;
   keywords?: string;
   group?: string;

@@ -11,6 +11,7 @@ import { ChangesCommentComposer } from './ChangesCommentComposer';
 import { ChangesDraftComment } from './ChangesDraftComment';
 import { SubmitReviewDialog } from './SubmitReviewDialog';
 import { Button } from './ui/button';
+import { WorkbenchIcon } from './WorkbenchIcon';
 
 type Location = { line: number; startLine?: number; side: 'LEFT' | 'RIGHT'; startSide?: 'LEFT' };
 interface Annotation {
@@ -331,6 +332,7 @@ export function useChangesComments({
             setReviewOpen(true);
           }}
         >
+          <WorkbenchIcon name="review" />
           Review PR #{url.split('/').pop() ?? ''}
           {drafts.length ? ` (${drafts.length})` : ''}
         </Button>

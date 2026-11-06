@@ -18,6 +18,7 @@ import { useSessionDraft } from '../../lib/session-drafts';
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { type DiffAppearance } from '../../lib/review-diff';
 import { ArrowLeft, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react';
+import { workbenchIcons, workspaceSections } from '../../lib/interface-icons';
 import { PRSummaryBanner } from '../../components/PRSummaryBanner';
 import { StaleBanner } from '../../components/StaleBanner';
 import { WorkbenchOverview } from '../../components/WorkbenchOverview';
@@ -642,6 +643,7 @@ function ReviewPageContent({
 
     commands.push({
       id: 'overview',
+      icon: workspaceSections.summary.icon,
       label: 'Jump to overview',
       hint: 'g g',
       group: 'Reading',
@@ -653,6 +655,7 @@ function ReviewPageContent({
       const num = (idx + 1).toString().padStart(2, '0');
       commands.push({
         id: `slide-${slide.id}`,
+        icon: workspaceSections.explanation.icon,
         label: `${num}  ${slide.title}`,
         group: 'Reading',
         keywords: slide.title,
@@ -664,6 +667,7 @@ function ReviewPageContent({
       commands.push(
         {
           id: 'unified',
+          icon: workspaceSections.changes.icon,
           label: 'Switch to unified diff',
           hint: 'u',
           group: 'Reviewing',
@@ -672,6 +676,7 @@ function ReviewPageContent({
         },
         {
           id: 'split',
+          icon: workspaceSections.changes.icon,
           label: 'Switch to split diff',
           hint: 's',
           group: 'Reviewing',
@@ -680,6 +685,7 @@ function ReviewPageContent({
         },
         {
           id: 'chat',
+          icon: workbenchIcons.chat,
           label: 'Ask about this topic',
           hint: 'c',
           group: 'Reviewing',
@@ -692,6 +698,7 @@ function ReviewPageContent({
     commands.push(
       {
         id: 'submit',
+        icon: workbenchIcons.review,
         label: comments.length > 0 ? `Submit to GitHub (${comments.length} comments)` : 'Submit to GitHub',
         group: 'Reviewing',
         keywords: 'send post approve',
@@ -699,6 +706,7 @@ function ReviewPageContent({
       },
       {
         id: 'shortcuts',
+        icon: workbenchIcons.help,
         label: 'Show keyboard shortcuts',
         hint: '?',
         group: 'Anywhere',
@@ -707,6 +715,7 @@ function ReviewPageContent({
       },
       {
         id: 'settings',
+        icon: workbenchIcons.settings,
         label: 'Open settings',
         group: 'Anywhere',
         keywords: 'preferences config theme font',
@@ -714,6 +723,7 @@ function ReviewPageContent({
       },
       {
         id: 'back',
+        icon: ArrowLeft,
         label: 'Back to home',
         group: 'Anywhere',
         keywords: 'exit close leave',
@@ -742,6 +752,7 @@ function ReviewPageContent({
             ? [
                 {
                   id: 'review:explore',
+                  icon: workbenchIcons.diagram,
                   label: review.slides[currentSlide - 1]?.explainer
                     ? 'Open interactive explanation'
                     : 'Create interactive explanation',

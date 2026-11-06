@@ -247,9 +247,6 @@ export function ReviewEvidence({
           <h2 id={`${id}-title`} ref={heading} tabIndex={-1}>
             Checks, reviews &amp; discussions
           </h2>
-          {!compact && subject.kind !== 'stack' && (
-            <p className="review-evidence-intro">Check what needs attention before you submit your review.</p>
-          )}
         </div>
         {compact && !expanded && summary}
         <div className="review-evidence-controls">

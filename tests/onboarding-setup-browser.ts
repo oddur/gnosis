@@ -89,10 +89,10 @@ void app.whenReady().then(async () => {
     await click('Resume setup');
     await current('Which repositories');
     await click('Next');
-    await current('Keep the queue focused');
+    await current('Queue filters');
     await capture('filters-light');
     await click('Next');
-    await current('Choose how AI helps');
+    await current('Explanations and briefings');
     await wait("document.querySelector('.setup-cli')?.textContent.includes('No AI tool')");
     await capture('ai-missing');
     assert.equal(await js("[...document.querySelectorAll('.setup-actions button')].find(b=>b.textContent==='Next').disabled"), true);
@@ -133,7 +133,7 @@ void app.whenReady().then(async () => {
     win.reload();
     await wait("document.body.innerText.includes('Resume setup')");
     await click('Resume setup');
-    await current('Choose how AI helps');
+    await current('Explanations and briefings');
     await wait("document.querySelector('.setup-cli')?.textContent.includes('Claude Code and Codex found')");
     assert.match(await js<string>("document.querySelector('[aria-label=\"Explanation model\"]').textContent"), /Opus 5.5/);
     assert.match(await js<string>("document.querySelector('[aria-label=\"Briefing model\"]').textContent"), /GPT-6.1 Terra/);
@@ -149,7 +149,7 @@ void app.whenReady().then(async () => {
     await js("document.documentElement.classList.remove('dark')");
     win.setSize(1280, 850);
     await click('Next');
-    await current('Your queue');
+    await current('Review setup');
     assert.equal(await js("document.querySelector('.setup-summary').textContent.includes('Explanations: Claude · Opus 5.5') && document.querySelector('.setup-summary').textContent.includes('Briefings: Codex · GPT-6.1 Terra')"), true);
     await capture('preview-light');
     assert.equal(await js("document.querySelector('.setup-body').getBoundingClientRect().bottom <= document.querySelector('.setup-actions').getBoundingClientRect().top"), true, 'preview scrolls above the footer');
@@ -190,7 +190,7 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('.gnosis-tour')");
     await click('Help and terminology');
     await click('Run setup again');
-    await current('What brings');
+    await current('Choose queue views');
     await js("document.documentElement.classList.add('dark')");
     win.setSize(640, 700);
     await capture('goals-narrow-dark');
@@ -203,9 +203,9 @@ void app.whenReady().then(async () => {
     );
     await click('Use local reviews without GitHub');
     await click('Next');
-    await current('Choose how AI helps');
+    await current('Explanations and briefings');
     await click('Set up AI later');
-    await current('Ready for local');
+    await current('Review setup');
     await click('Apply setup');
     await wait("!document.querySelector('.setup-dialog')");
     assert.equal(

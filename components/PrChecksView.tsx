@@ -1,15 +1,12 @@
 import { LoadingState, LoadingIndicator } from './LoadingState';
 import { SubjectIcon } from './SubjectIcon';
+import { checkGroupIcons } from '../lib/interface-icons';
 import { preferredChecksView, rememberChecksView, type ChecksView } from '../lib/checks-view';
 import { lazy, Suspense } from 'react';
 const WorkflowGraphView = lazy(() => import('./WorkflowGraph').then((m) => ({ default: m.WorkflowGraphView })));
 import { BulkCheckRerun } from './BulkCheckRerun';
 import { useEffect, useRef, useState } from 'react';
 import {
-  CircleAlert,
-  CircleCheck,
-  CircleMinus,
-  Clock3,
   ExternalLink,
   List,
   RefreshCw,
@@ -44,14 +41,7 @@ export interface CheckFocus {
 type Selection = { snapshot: PrChecks; check: PrCheck };
 export function CheckIcon({ check }: { check: PrCheck }) {
   const group = checkGroup(check),
-    Icon =
-      group === 'attention'
-        ? CircleAlert
-        : group === 'running'
-          ? Clock3
-          : group === 'passed'
-            ? CircleCheck
-            : CircleMinus;
+    Icon = checkGroupIcons[group];
   return <Icon size={16} className={`check-${group}`} aria-hidden="true" />;
 }
 export function PrChecksView({
@@ -572,7 +562,6 @@ export function PrChecksView({
           )}
           {!selected || !displayedCheck ? (
             <div className="checks-empty">
-              <CircleCheck size={24} />
               <h2>Select a check</h2>
               <p>Choose a result to inspect its output and annotations.</p>
             </div>

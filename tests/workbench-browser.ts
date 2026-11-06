@@ -82,7 +82,7 @@ void app.whenReady().then(async () => {
     await js(`document.querySelector('[aria-label="Ignore Dependabot PRs"]').click()`);
     await js(`document.querySelector('[data-slot="dialog-close"]').click()`);
     assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
-    assert.equal(await js("getComputedStyle(document.querySelector('.queue-toolbar h1')).fontSize"), '22px');
+    assert.equal(await js("getComputedStyle(document.querySelector('.queue-toolbar h1')).fontSize"), '24px');
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );

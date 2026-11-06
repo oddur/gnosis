@@ -19,6 +19,7 @@ export function CommitDiffStream({
   onPosition,
   renderFile,
   completion,
+  header,
   ref,
 }: {
   files: StreamFile[];
@@ -27,9 +28,21 @@ export function CommitDiffStream({
   onPosition: (key: string, offset: number) => void;
   renderFile: (key: string, next: () => void) => ReactNode;
   completion?: ReactNode;
+  header?: ReactNode;
   ref?: Ref<CommitDiffStreamHandle>;
 }) {
   const viewport = useRef<HTMLDivElement>(null);
+  const headerElement = useRef<HTMLDivElement>(null);
+  const [headerHeight, setHeaderHeight] = useState(0);
+  useLayoutEffect(() => {
+    const element = headerElement.current;
+    if (!element) { setHeaderHeight(0); return; }
+    const measure = () => setHeaderHeight(element.getBoundingClientRect().height);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [!!header]);
   const initial = useRef(initialPosition);
   const pending = useRef<{ key: string; offset: number; until: number; focus?: boolean } | undefined>(
     initial.current.key ? { ...initial.current, until: Date.now() + 1500 } : undefined
@@ -48,6 +61,7 @@ export function CommitDiffStream({
   const keyAt = useCallback((i: number) => current.current.files[i].key, []);
   const virtual = useVirtualizer({
     count: files.length,
+    paddingStart: headerHeight,
     getScrollElement: () => viewport.current,
     getItemKey: keyAt,
     estimateSize: (i) =>
@@ -86,7 +100,7 @@ export function CommitDiffStream({
     if (pending.current) return;
     const top = viewport.current?.scrollTop ?? 0;
     const item = virtual.getVirtualItems().find(row => row.end > top + 2);
-    if (item) pending.current = { key: String(item.key), offset: Math.max(0, top - item.start), until: Date.now() + 1500 };
+    if (item) pending.current = { key: String(item.key), offset: top - item.start, until: Date.now() + 1500 };
   } }));
   useLayoutEffect(() => {
     const target = pending.current;
@@ -106,7 +120,7 @@ export function CommitDiffStream({
     }
     const el = viewport.current;
     if (el) {
-      el.scrollTop = item.start + Math.min(target.offset, Math.max(0, item.size - 60));
+      el.scrollTop = Math.max(0, item.start + Math.min(target.offset, Math.max(0, item.size - 60)));
       if (target.focus) {
         const action = el.querySelector<HTMLButtonElement>(`[data-index="${index}"] [data-viewed-next]`);
         if (action) {
@@ -127,11 +141,11 @@ export function CommitDiffStream({
     const rows = virtual.getVirtualItems();
     const active = rows.find((row) => row.end > el.scrollTop + 2) ?? rows.at(-1);
     if (active)
-      current.current.onPosition(current.current.files[active.index].key, Math.max(0, el.scrollTop - active.start));
+      current.current.onPosition(current.current.files[active.index].key, el.scrollTop - active.start);
   }
   useLayoutEffect(() => {
     remember();
-  }, [virtual.scrollOffset, files]);
+  }, [virtual.scrollOffset, files, headerHeight]);
   return (
     <div
       className="changes-code-scroll commit-diff-stream"
@@ -160,6 +174,7 @@ export function CommitDiffStream({
       onScroll={remember}
     >
       <div className="commit-stream-content" style={{ height: virtual.getTotalSize() }}>
+        {header && <div ref={headerElement}>{header}</div>}
         {rows.map((item) => {
           return (
             <div
