@@ -1,3 +1,4 @@
+import { prepareReviewSource } from './review-start-source';
 import { createWorkflowGraphPreloader } from './workflow-graph-preloader';
 import { readWorkflowRuns, readWorkflowGraph } from './workflow-graph-service';
 import type { WorkflowGraphInput } from '../lib/workflow-graph';
@@ -63,8 +64,7 @@ import { createReviewComment, submitPrReview } from './review-write-service';
 import type { ReviewThreadAction, ReviewCommentAction, CreateReviewCommentRequest } from '../lib/review-threads';
 import type { ActivityAction } from '../lib/activity';
 import { createWorkbenchService } from './workbench-service';
-import { StackDiffSource } from '../lib/stack-source';
-import { snapshot, fingerprint, type ReviewSubject, type ReviewSnapshot, type GroupingOverride } from '../lib/workbench';
+import { fingerprint, type ReviewSubject, type ReviewSnapshot, type GroupingOverride } from '../lib/workbench';
 import { app, autoUpdater, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell, session, net, powerMonitor } from 'electron';
 import path from 'path';
 import fs from 'fs';
@@ -2415,30 +2415,11 @@ ipcMain.handle('workbench-freshness', async (_event, old: ReviewSnapshot) => {
 async function startReview(request: GenerateReviewRequest): Promise<StartReviewResult> {
   const token = getResolvedToken();
   workbench.interrupt();
-  let subject: ReviewSubject | undefined;
-  if (workbench.mutedUrls().has(request.prUrl)) throw new Error('This PR is muted. Restore it from Muted PRs first.');
-  if (!isLocalUrl(request.prUrl)) {
-    // Verify the requested PR before queue discovery or creating a generation/history entry.
-    await checkGitHubPrAccess(getGitHubClient(token), request.prUrl);
-    await workbench.queue();
-    subject = request.subjectId ? workbench.subject(request.subjectId) : !request.standalone ? (await workbench.queue()).items.find(i=>i.subject.members.some(m=>m.url===request.prUrl))?.subject : undefined;
-    if (request.subjectId && !subject) throw new Error('This stack is no longer in the queue. Refresh and try again.');
-    if (subject) {
-      for (const member of subject.members) {
-        if (member.url !== request.prUrl) await checkGitHubPrAccess(getGitHubClient(token), member.url);
-      }
-      subject = await workbench.fresh(subject);
-    }
-  }
-  const source = subject && subject.members.length > 1 ? new StackDiffSource(subject, token) : await createDiffSource(request.prUrl, { token });
-  const prData = await source.getMetadata();
-  if (!subject && !isLocalUrl(request.prUrl)) {
-    const parsed=parsePrUrl(request.prUrl);
-    const repo=parsed.owner+'/'+parsed.repo;
-    subject={scope:request.standalone ? 'single' : undefined,id:request.prUrl,kind:'pr',title:prData.title,members:[{...prData,repo,headRepo:prData.headRepo??repo,baseRepo:prData.baseRepo??repo,number:parsed.pullNumber,role:'watched'}],edges:[],warnings:[]};
-  }
-  if (subject?.members.length === 1) subject.members[0] = {...subject.members[0],...prData,headRepo:prData.headRepo??subject.members[0].headRepo,baseRepo:prData.baseRepo??subject.members[0].baseRepo};
-  const reviewSnapshot = subject ? snapshot(subject) : undefined;
+  const { source, prData, reviewSnapshot } = await prepareReviewSource(request, {
+    token,
+    workbench,
+    checkAccess: (url) => checkGitHubPrAccess(getGitHubClient(token), url),
+  });
 
   const reviewId = crypto.randomUUID();
   const prState = prData.merged ? 'merged' : prData.state === 'open' ? 'open' : 'closed';
