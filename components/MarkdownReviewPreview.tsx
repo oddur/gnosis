@@ -1,3 +1,4 @@
+import { markdownHeadings } from './MarkdownHeadings';
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode, type ComponentProps, type ReactElement } from 'react';
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime';
 import { toJsxRuntime } from 'hast-util-to-jsx-runtime';
@@ -32,6 +33,7 @@ const Tree = memo(function Tree({ tree }: { tree: Root }) {
         jsx,
         jsxs,
         components: {
+          ...markdownHeadings,
           img: PreviewImage,
           pre: PreviewCode,
         },

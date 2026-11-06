@@ -103,7 +103,7 @@ export function WorkbenchOverview({
             </section>
             <aside>
               <h2>Where to focus</h2>
-              <Markdown className="text-sm leading-relaxed">{review.riskRationale}</Markdown>
+              <Markdown className="reading-prose">{review.riskRationale}</Markdown>
               <h2>{subject?.kind === 'stack' ? 'PRs in this stack' : 'GitHub feedback'}</h2>
               {subject ? (
                 subject.members.map((m, i) => {

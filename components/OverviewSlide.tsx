@@ -249,7 +249,7 @@ export function OverviewSlide({ review, prStatus, onNavigate }: Props) {
         {review.prDescription && (
           <CollapsibleSection title="PR description" delay="120ms">
             <div className="mt-3 ml-4 max-h-64 overflow-y-auto border-l border-border pl-4">
-              <Markdown className="text-sm text-muted-foreground leading-relaxed">{review.prDescription}</Markdown>
+              <Markdown className="reading-prose">{review.prDescription}</Markdown>
             </div>
           </CollapsibleSection>
         )}

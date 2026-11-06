@@ -13,6 +13,7 @@ export function scopeMarkdownHeadings({ startLevel }: { startLevel: number }) {
     let previous = startLevel - 1;
     for (const node of headings) {
       const level = Math.min(6, previous + 1, startLevel + Number(node.tagName[1]) - minimum);
+      node.properties.dataReadingLevel = Number(node.tagName[1]);
       node.tagName = `h${level}`;
       previous = level;
     }
