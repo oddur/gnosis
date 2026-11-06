@@ -1,3 +1,4 @@
+import { needsResponse } from './response-needed';
 import { DEFAULT_LABEL_FILTER, normalizeLabelFilter, labelFilterActive, matchesLabelFilter, describeLabelFilter, type PrLabelFilter } from './pr-label-filter';
 import { DEFAULT_PR_SORT, normalizePrListSort, sortQueueItems, type PrListSort } from './pr-list-sort';
 import type { QueueSignals } from './queue-signals';
@@ -7,7 +8,7 @@ export interface QueueFilters {
   sort: PrListSort;
   starredOnly: boolean;
   readStatus: 'all' | 'unread' | 'read';
-  involvement: 'all' | 'mine' | 'review' | 'authored';
+  involvement: 'all' | 'mine' | 'review' | 'authored' | 'response';
   query: string;
   repo: string;
   repos?: string[];
@@ -52,7 +53,7 @@ export function normalizeQueueFilters(value: unknown): QueueFilters {
     sort: normalizePrListSort(raw.sort),
     starredOnly: raw.starredOnly === true,
     readStatus: choice('readStatus', ['all', 'unread', 'read'], raw.unreadOnly === true ? 'unread' : 'all'),
-    involvement: choice('involvement', ['all', 'mine', 'review', 'authored'], 'all'),
+    involvement: choice('involvement', ['all', 'mine', 'review', 'authored', 'response'], 'all'),
     query: text('query', ''),
     repo: text('repo', 'all'),
     ...(Array.isArray(raw.repos) && raw.repos.length ? { repos: [...new Set(raw.repos.filter((r): r is string => typeof r === 'string' && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r)).map(r => r.toLowerCase()))].slice(0, 100) } : {}),
@@ -108,7 +109,7 @@ export function matchesInvolvement(member: ReviewMember, involvement: QueueFilte
   if (involvement === 'all') return true;
   if (!login) return false;
   if (involvement === 'mine') return isMyPr(member, login);
-  if (involvement === 'authored') return member.author.toLowerCase() === login.toLowerCase();
+  if (involvement === 'authored' || involvement === 'response') return member.author.toLowerCase() === login.toLowerCase();
   return member.assignees?.some(name => name.toLowerCase() === login.toLowerCase()) === true ||
     member.requestedReviewers.some(name => name.toLowerCase() === login.toLowerCase()) ||
     member.role === 'assigned' || member.role === 'review-requested';
@@ -144,6 +145,7 @@ export function matchesQueueFilters(
       (!filters.starredOnly || item.starredUrls?.includes(m.url)) &&
       (filters.readStatus === 'all' || (filters.readStatus === 'unread') === !!item.unreadUrls?.includes(m.url)) &&
       matchesInvolvement(m, filters.involvement, login) &&
+      (filters.involvement !== 'response' || (m.state === 'open' && !m.merged && needsResponse(item.responses?.[m.url]))) &&
       matchesRepositories(m.repo, filters) &&
       (filters.author === 'all' || m.author.toLowerCase() === filters.author.toLowerCase()) &&
       matchesTargetBranch(m.baseBranch, filters.targetBranch) &&
@@ -181,7 +183,7 @@ export function describeQueueFilters(filters: QueueFilters): { key: keyof QueueF
   const labels: Partial<Record<keyof QueueFilters, string>> = {
     starredOnly: 'Starred PRs',
     readStatus: filters.readStatus === 'unread' ? 'Unread PRs' : 'Read PRs',
-    involvement: { all: 'All PRs', mine: 'Involving me', review: 'Needs my review', authored: 'Authored by me' }[filters.involvement],
+    involvement: { all: 'All PRs', mine: 'Involving me', review: 'Needs my review', authored: 'Authored by me', response: 'Needs my response' }[filters.involvement],
     ...(filters.repos?.length ? { repos: `Repositories: ${filters.repos.join(', ')}` } : {}),
     query: `Search: ${filters.query}`,
     repo: filters.repo,

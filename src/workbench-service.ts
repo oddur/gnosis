@@ -1,3 +1,5 @@
+import { responseNeeded } from '../lib/response-needed';
+import type { GitHubReviewThreads } from '../lib/review-threads';
 import { repositorySettings, repositoryDiscoverySettings, subjectRecentlyUpdated, discoveryInactivityDays, subjectRepositories, localBriefingDay, briefingBudget, automaticBriefingBlock } from '../lib/repository-settings';
 import { prBadgePreview, type PrBadgePreview } from '../lib/pr-badge-preview';
 import { focusStackPr } from '../lib/stack-workspace';
@@ -96,6 +98,7 @@ interface Deps {
   busy: () => boolean;
   activities?: ActivityService;
   client?: () => Octokit;
+  cachedDiscussion?: (url: string) => GitHubReviewThreads | undefined;
   cachedSignals?: (requests: QueueSignalRequest[]) => QueueSignals[];
   signals?: (client: Octokit, requests: QueueSignalRequest[]) => Promise<QueueSignals[]>;
   provider?: typeof getProvider;
@@ -237,6 +240,7 @@ export function createWorkbenchService(deps: Deps) {
         s.overrides
       ),
     ];
+    const responseSignals = new Map((deps.cachedSignals?.(allMembers.filter(member => member.author.toLowerCase() === s.account.toLowerCase())) ?? []).map(value => [value.url, value]));
     const allItems = subjects.map((subject) => {
       const review =
         history.find((h) => (h.snapshot?.subject.id ?? h.prUrl) === subject.id) ??
@@ -252,6 +256,7 @@ export function createWorkbenchService(deps: Deps) {
         updatedAt: cached?.updatedAt ?? new Date(now()).toISOString(),
       } : cached;
       const item = {
+        responses: Object.fromEntries(subject.members.filter(member => member.author.toLowerCase() === s.account.toLowerCase()).map(member => [member.url, responseNeeded(member, s.account, responseSignals.get(member.url), deps.cachedDiscussion?.(member.url))])),
         subject,
         review,
         briefing,

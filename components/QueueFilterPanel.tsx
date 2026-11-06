@@ -95,11 +95,12 @@ export function QueueFilterPanel({
             <option value="all">All PRs in your queue</option>
             <option value="mine">Involving me</option>
             <option value="review">Needs my review</option>
+            <option value="response">Needs my response</option>
             <option value="authored">Authored by me</option>
           </select>
         </label>
         <p id={`${id}-involvement-help`}>
-          {filters.involvement === 'review' ? 'PRs assigned to you or requesting your review.' : filters.involvement === 'authored' ? 'PRs you authored.' : filters.involvement === 'mine'
+          {filters.involvement === 'response' ? 'Your open PRs with changes requested or unresolved feedback from someone else. Uses shared cached GitHub data.' : filters.involvement === 'review' ? 'PRs assigned to you or requesting your review.' : filters.involvement === 'authored' ? 'PRs you authored.' : filters.involvement === 'mine'
             ? 'PRs you authored, are assigned to, or were asked to review.'
             : 'PRs involving you and from repositories added in Settings.'}
         </p>

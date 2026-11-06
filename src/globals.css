@@ -4419,3 +4419,10 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
   .loading-state-compact { padding:16px; }
 }
 button .loading-indicator,button .loading-spinner { color:inherit; }
+
+.queue-response-status { padding:8px 16px; color:var(--muted-foreground); font-size:var(--type-caption); line-height:1.5; border-bottom:1px solid var(--border); }
+.queue-response-status summary { cursor:pointer; }
+.queue-response-status p { margin:4px 0 0; }
+.queue-response-reasons { display:flex; flex-wrap:wrap; gap:4px 12px; }
+.queue-response-reasons button { display:inline-flex; align-items:center; gap:4px; color:var(--foreground); font-size:var(--type-caption); text-align:left; }
+.queue-response-reasons button:hover { text-decoration:underline; text-underline-offset:3px; }

@@ -2332,6 +2332,7 @@ const workbench = createWorkbenchService({
   changed: () => { notifyLocalChange('workbench-changed'); notifyLocalChange('activity-changed'); },
   storage: appData,
   signals: (client, requests) => getQueueSignals(client, requests),
+  cachedDiscussion: url => { const token = getResolvedToken(); return token ? reviewThreads.cached(getGitHubClient(token), url) : undefined; },
   cachedSignals: requests => { const token = getResolvedToken(); return token ? cachedQueueSignals(getGitHubClient(token), requests) : []; },
   activities,
   directory: () => app.getPath('userData'),
@@ -2873,6 +2874,7 @@ function publishGitHubUpdates(updates: GitHubSyncUpdate[]) {
       if (workbench.observeReadSignals(cachedLogin, [update.value])) notifyLocalChange('workbench-changed');
     }
   }
+  if (updates.some(update => update.kind === 'signals' || update.kind === 'discussion')) notifyLocalChange('workbench-changed');
   sendSyncUpdates(updates);
 }
 const githubSync = createGitHubSyncService({

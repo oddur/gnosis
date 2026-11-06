@@ -6,6 +6,7 @@ import { matchesQueueFilters } from './queue-filters';
 export function focusStackPr(stack: QueueItem, member: ReviewMember): QueueItem {
   return {
     attention: stack.attention,
+    responses: stack.responses?.[member.url] ? { [member.url]: stack.responses[member.url] } : undefined,
     parentStack: stack.subject.kind === 'stack' ? stack.subject : stack.parentStack,
     subject: { id: member.url, kind: 'pr', scope: 'single', title: member.title, members: [member], edges: [], warnings: [] },
     unreadUrls: stack.unreadUrls?.filter(url => url === member.url),

@@ -1,3 +1,5 @@
+import { ResponseFilterStatus } from '../../components/ResponseFilterStatus';
+import { needsResponse, responseNeededLabel } from '../../lib/response-needed';
 import { LoadingState, LoadingIndicator } from '../../components/LoadingState';
 import { SubjectIcon } from '../../components/SubjectIcon';
 import { useSettingsShortcut } from '../../lib/use-settings-shortcut';
@@ -761,6 +763,12 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
     void refresh(true);
   };
   const queueItems = filters.starredOnly ? (queue.starredItems ?? []) : queue.items;
+  const responseCandidates = filters.involvement === 'response' ? queueItems.flatMap(item => item.subject.members
+    .filter(member => member.state === 'open' && !member.merged && matchesQueueFilters({ ...item, subject: { ...item.subject, members: [member] } }, { ...filters, involvement: 'authored' }, Date.now(), auth?.login))
+    .map(member => ({ member, response: item.responses?.[member.url] }))) : [];
+  const responseMembers = responseCandidates.map(candidate => candidate.member);
+  const responseIncomplete = responseCandidates.filter(candidate => !candidate.response?.complete).length;
+  const refreshResponseQueue = useCallback(() => { void refresh(false, true); }, [refresh]);
   const items = queueItems.filter((item) => matchesQueueFilters(item,
     filters.readStatus !== 'all' && openedItem?.subject.id === item.subject.id ? { ...filters, readStatus: 'all' } : filters,
     Date.now(), auth?.login));
@@ -919,7 +927,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       setError('Could not save your getting-started preference. Try dismissing it again.');
     }
   };
-  const activate = (item: QueueItem) => { setError(''); setOpenedItem(item); };
+  const activate = (item: QueueItem) => { setError(''); if (filters.involvement === 'response') setOverviewTab('feedback'); setOpenedItem(item); };
   const openPrUrl = async () => {
     setError('');
     setOpeningPr(true);
@@ -1219,7 +1227,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
           </button>}
           <div className="queue-row-content"
             onClick={event=>{if((event.target as HTMLElement).closest('a,button'))return;selectQueueEntry(s.id,event);}}
-            onDoubleClick={event=>{if(event.shiftKey||event.metaKey||event.ctrlKey||(event.target as HTMLElement).closest('a,button'))return;setError('');setOpenedItem(item);}}>
+            onDoubleClick={event=>{if(event.shiftKey||event.metaKey||event.ctrlKey||(event.target as HTMLElement).closest('a,button'))return;activate(item);}}>
           <div className="queue-row-heading">
           <button
             className="queue-row-main"
@@ -1255,8 +1263,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
             onClick={event => selectQueueEntry(s.id, event)}
             onDoubleClick={event => {
               if (event.shiftKey || event.metaKey || event.ctrlKey) return;
-              setError('');
-              setOpenedItem(item);
+              activate(item);
             }}
           >
             <span className="queue-title-line">
@@ -1294,6 +1301,13 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
           </div>
             <QueueMetadata onChecks={() => { setOpenedItem(item); setOverviewTab('checks'); }} subject={s} account={auth?.login ?? null} />
             {s.kind === 'stack' && matchingStackMembers(item, filters, auth?.login).length < s.members.length && <span className="queue-stack-matches">{matchingStackMembers(item, filters, auth?.login).length} of {s.members.length} PRs match</span>}
+            {filters.involvement === 'response' && <div className="queue-response-reasons">{s.members.flatMap(member => {
+              const response = item.responses?.[member.url];
+              if (!response || !needsResponse(response) || !matchingStackMembers(item, filters, auth?.login).includes(member.url)) return [];
+              return [<button key={member.url} onClick={() => { setOpenedItem(focusStackPr(item, member)); setOverviewTab('feedback'); }} title={`Address feedback on ${member.title}`}>
+                {s.kind === 'stack' && <><GitPullRequest size={12} aria-hidden="true" />#{member.number} · </>}{responseNeededLabel(response)}
+              </button>];
+            })}</div>}
             {item.briefing?.summary && <span className="queue-summary">{item.briefing.summary}</span>}
           </div>
         </div>}</EntryActions>
@@ -1303,7 +1317,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
               <PrEntryActions key={m.url} {...entryActions([m])} onBeforeOpen={selection.clear}>{actions => <div className={`queue-member ${queue.readStates?.[m.url]?.unread.length ? 'is-unread' : ''}`}>
                 <PrStateIcon member={m} />
                 <div className="queue-member-content">
-                  <button className="queue-member-title" onClick={event => { if (event.shiftKey || event.metaKey || event.ctrlKey) { selectQueueEntry(s.id, event); return; } setSelected(s.id); setOpenedItem(focusStackPr(item, m)); }}>
+                  <button className="queue-member-title" onClick={event => { if (event.shiftKey || event.metaKey || event.ctrlKey) { selectQueueEntry(s.id, event); return; } setSelected(s.id); activate(focusStackPr(item, m)); }}>
                     <span className="truncate">{m.title}</span>
                     <PrLabels members={[m]} />
                   </button>
@@ -1756,6 +1770,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
               <button onClick={resetFilters}>Clear filters</button>
             </div>
           )}
+          {section !== 'saved' && filters.involvement === 'response' && auth?.login && <ResponseFilterStatus account={auth.login} members={responseMembers} incomplete={responseIncomplete} onUpdated={refreshResponseQueue} />}
           {section !== 'saved' && (
             <p className="sr-only" id="queue-keyboard-help">
                 <kbd>↑</kbd> <kbd>↓</kbd> or <kbd>j</kbd> <kbd>k</kbd> select · <kbd>Enter</kbd> open · <kbd>/</kbd>{' '}
@@ -1869,7 +1884,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                   <h2>
                     {initializationFailed ? 'Gnosis could not finish starting' : section === 'starred' && !queue.starredPrs?.length ? 'No starred PRs yet' : queueFailed
                       ? 'Queue could not be loaded'
-                      : filterCount > 0
+                      : filters.involvement === 'response' && responseIncomplete > 0 ? 'No matching feedback loaded yet' : filterCount > 0
                         ? 'No PRs match these filters'
                         : !auth?.authenticated
                           ? 'Your GitHub queue is not connected'
@@ -1880,7 +1895,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                   <p>
                     {initializationFailed ? 'Your account and settings could not be read. Retry loading them to restore your review queue.' : section === 'starred' && !queue.starredPrs?.length ? 'Star a PR from the review queue or its overview to keep it here and pin it above other PRs.' : queueFailed
                       ? 'Try loading the queue again. You can still open a PR by URL or a saved review.'
-                      : filterCount > 0
+                      : filters.involvement === 'response' && responseIncomplete > 0 ? 'Some PRs still need to be checked. Matches will appear here as feedback arrives.' : filterCount > 0
                         ? 'Try fewer filters or a wider date range. One open PR must match every filter; its whole stack stays visible.'
                         : !auth?.authenticated
                           ? prefs?.guestMode

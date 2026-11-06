@@ -239,3 +239,48 @@ void test('Feedback carries both revision SHAs for safe links back to Changes', 
     'earlier'
   );
 });
+
+void test('response evidence excludes own/resolved/automation-only threads and retains outdated feedback', async () => {
+  const { responseNeeded, needsResponse } = await import('../lib/response-needed');
+  const own = { ...member, state: 'open', merged: false, author: 'oddur', headSha: 'head' } as ReviewMember;
+  const data = structuredClone(snapshot);
+  data.feedback!.reviews = [];
+  data.threads = [
+    { ...thread, id: 'old', isOutdated: true },
+    { ...thread, id: 'resolved', isResolved: true },
+    { ...thread, id: 'own', comments: [{ ...comment, author: { login: 'ODDUR', avatarUrl: '' } }] },
+    { ...thread, id: 'bot', comments: [{ ...comment, author: { login: 'github-actions[bot]', avatarUrl: '' } }] },
+  ];
+  assert.deepEqual(responseNeeded(own, 'ODDUR', undefined, data), { changesRequested: false, unresolvedThreads: 1, complete: true });
+  assert.equal(needsResponse(responseNeeded({ ...own, author: 'someone' }, 'oddur', undefined, data)), false);
+  assert.equal(needsResponse(responseNeeded({ ...own, state: 'closed' }, 'oddur', undefined, data)), false);
+  assert.equal(responseNeeded(own, 'oddur').complete, false);
+  assert.equal(responseNeeded({ ...own, headSha: 'new' }, 'oddur', undefined, data).complete, false);
+});
+
+void test('changes requested persists through a comment and clears after approval or dismissal', async () => {
+  const { responseNeeded } = await import('../lib/response-needed');
+  const own = { ...member, state: 'open', merged: false, author: 'oddur', headSha: 'head' } as ReviewMember;
+  const data = structuredClone(snapshot);
+  const original = { ...review, state: 'CHANGES_REQUESTED', submittedAt: '2026-11-01T10:00:00Z' };
+  data.feedback!.reviews = [original, { ...original, id: 'commented', state: 'COMMENTED', submittedAt: '2026-11-02T10:00:00Z' }];
+  assert.equal(responseNeeded(own, 'oddur', undefined, data).changesRequested, true);
+  for (const state of ['APPROVED', 'DISMISSED']) {
+    data.feedback!.reviews = [original, { ...original, id: 'new', state, submittedAt: '2026-11-03T10:00:00Z' }];
+    assert.equal(responseNeeded(own, 'oddur', undefined, data).changesRequested, false);
+  }
+});
+
+void test('response decisions use current revision signals and newer review evidence', async () => {
+  const { responseNeeded } = await import('../lib/response-needed');
+  const own = { ...member, state: 'open', merged: false, author: 'oddur', headSha: 'head' } as ReviewMember;
+  const signals = { url, headSha: 'head', checkedAt: 20, readiness: { reviewDecision: 'CHANGES_REQUESTED' } } as import('../lib/queue-signals').QueueSignals;
+  assert.equal(responseNeeded(own, 'oddur', signals).changesRequested, true);
+  assert.equal(responseNeeded({ ...own, headSha: 'new' }, 'oddur', signals).changesRequested, false);
+  const data = structuredClone(snapshot);
+  data.checkedAt = 30;
+  data.feedback!.reviews = [{ ...review, state: 'APPROVED' }];
+  assert.equal(responseNeeded(own, 'oddur', signals, data).changesRequested, false, 'A newer approval supersedes old queue signals');
+  data.checkedAt = 10;
+  assert.equal(responseNeeded(own, 'oddur', signals, data).changesRequested, true, 'Fresh signals supersede old review evidence');
+});

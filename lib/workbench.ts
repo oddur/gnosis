@@ -44,6 +44,7 @@ export interface Briefing {
   updatedAt: string;
 }
 export interface QueueItem {
+  responses?: Partial<Record<string, import('./response-needed').ResponseNeeded>>;
   /** Navigation context only. The subject is always the scope being reviewed. */
   parentStack?: ReviewSubject;
   unreadUrls?: string[];

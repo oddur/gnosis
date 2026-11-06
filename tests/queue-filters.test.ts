@@ -220,3 +220,26 @@ void test('target branch defaults, normalization and removable filter descriptio
   assert.deepEqual(describeQueueFilters(filters), [{ key: 'targetBranch', label: 'Target branch: release/*' }]);
   assert.equal(activeQueueFilterCount({ ...filters, targetBranch: '' }), 0);
 });
+
+void test('needs my response matches one authored open stack member and survives saved filters', () => {
+  const filters = normalizeQueueFilters({ involvement: 'response', labels: normalizeLabelFilter('bug') });
+  assert.equal(filters.involvement, 'response');
+  assert.ok(describeQueueFilters(filters).some(value => value.label === 'Needs my response'));
+  const a = member(1, { labels: ['bug'] });
+  const b = member(2, { baseBranch: 'pr-1', author: 'bob' });
+  const stack = item([a, b]);
+  stack.responses = { [b.url]: { changesRequested: true, unresolvedThreads: 0, complete: true } };
+  assert.equal(matchesQueueFilters(stack, filters, now, 'alice'), false, 'Cannot borrow feedback from another author');
+  const response = { changesRequested: false, unresolvedThreads: 1, complete: true };
+  stack.responses[a.url] = response;
+  assert.equal(matchesQueueFilters(stack, filters, now, 'ALICE'), true);
+  assert.equal(matchesQueueFilters(stack, filters, now, null), false);
+  assert.equal(matchesQueueFilters(stack, { ...filters, author: 'bob' }, now, 'alice'), false);
+  assert.deepEqual(prioritizeBriefings([stack], filters, now, 'alice'), [stack]);
+  response.unresolvedThreads = 0;
+  assert.deepEqual(prioritizeBriefings([stack], filters, now, 'alice'), []);
+  response.changesRequested = true;
+  a.state = 'closed'; a.merged = true;
+  stack.starredUrls = [a.url];
+  assert.equal(matchesQueueFilters(stack, { ...filters, starredOnly: true }, now, 'alice'), false);
+});
