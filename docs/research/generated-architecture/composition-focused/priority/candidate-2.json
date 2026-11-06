@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "title": "Promotion changes a scope, not the operation",
+  "takeaway": "The next drain reads the retained scope’s current priority; it does not use a priority copied when the task was queued.",
+  "assumptions": "The example has one pending shared operation and one active exclusive request. Positions are schematic. The active request finishes normally between the second and third frames.",
+  "exploration": {
+    "kind": "component",
+    "entities": [
+      {
+        "id": "caller",
+        "label": "Caller scope",
+        "summary": "Supplies the effective priority used when joining work.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 31
+        }
+      },
+      {
+        "id": "shared",
+        "label": "Shared read",
+        "summary": "Starts one operation and tracks separate readers. The last reader's departure signals unfinished work to abort.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/shared-read.ts",
+          "startLine": 4
+        }
+      },
+      {
+        "id": "work",
+        "label": "GitHubWork",
+        "summary": "Retains the promise and mutable scope. Parent scope references carry promotions into nested work.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 50
+        }
+      },
+      {
+        "id": "scheduler",
+        "label": "Scheduler",
+        "summary": "Selects interactive work first during drain. It allows at most three active tasks, with overlap only for explicitly permitted interactive tasks.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 71
+        }
+      }
+    ],
+    "relationships": [
+      {
+        "id": "join",
+        "from": "caller",
+        "to": "shared",
+        "label": "Read and join",
+        "summary": "Each read joins the retained work before registering its reader.",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 22
+        }
+      },
+      {
+        "id": "retain",
+        "from": "shared",
+        "to": "work",
+        "label": "Retain work",
+        "summary": "The shared operation creates and retains one GitHubWork and returns its promise.",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 18
+        }
+      },
+      {
+        "id": "scope-ref",
+        "from": "scheduler",
+        "to": "work",
+        "label": "Retained scope reference",
+        "summary": "The client submits its work scope, not a copied priority. The scheduler retains that reference and reads its current effective priority during drain.",
+        "evidence": {
+          "filePath": "lib/github-client.ts",
+          "startLine": 561
+        }
+      }
+    ]
+  },
+  "plan": {
+    "question": "How does a caller promote existing work, and when does the scheduler use that promotion?",
+    "visualApproach": "Read left to right from the interactive caller through the shared read and its retained work to the scheduler. Keep the operation and promise fixed. Label the pending task’s dashed connection as a retained scope reference, not a priority copy. In the final frame, connect the next drain to that same reference and point its read at the promoted interactive value.",
+    "whyThisForm": "Stable ownership and an explicitly retained reference expose why changing the existing scope affects later selection without creating another operation or replacing a queued priority value.",
+    "encodings": "Containment shows ownership and the scheduler’s pending and active regions. Solid lines show the read call and retained work. The labeled dashed route represents the retained scope reference. Its final arrow points at the current value consulted by drain. Priority is identified by text as well as emphasis.",
+    "motion": "The caller joins the fixed shared operation and changes its scope to interactive. The active request remains unchanged during promotion. After that request finishes, the next drain reads the promoted value and moves the same task into the active region. Reading priority and selecting the task are shown together, not as separately observable scheduler phases.",
+    "prediction": "If the active exclusive request has not finished, promoted work stays pending. When drain can select work, it evaluates the retained scope’s current effective priority.",
+    "restingState": "The same operation, promise, promoted scope, and labeled reference remain visible. The final frame preserves the drain-to-value read route alongside the selected task."
+  },
+  "scenarios": [
+    {
+      "id": "shared-promotion",
+      "title": "Join, promote, then select",
+      "input": "An interactive caller joins foreground shared work while another exclusive request is active.",
+      "frames": [
+        {
+          "title": "Existing shared work waits",
+          "caption": "The pending task retains a scope reference, not a copy of its foreground priority.",
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 600 360\"><g font-size=\"17\" fill=\"var(--ink)\"><g data-entity-id=\"caller\"><rect x=\"10\" y=\"35\" width=\"145\" height=\"100\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"22\" y=\"65\">Caller scope</text><text x=\"22\" y=\"95\">interactive</text></g><g data-entity-id=\"shared\"><rect x=\"180\" y=\"35\" width=\"180\" height=\"240\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"195\" y=\"65\">Shared read</text><text x=\"195\" y=\"94\">One operation</text><text x=\"195\" y=\"120\">One promise</text></g><g data-entity-id=\"work\"><rect x=\"193\" y=\"160\" width=\"154\" height=\"90\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"205\" y=\"187\">Work scope</text><text x=\"205\" y=\"218\">foreground</text></g><g data-entity-id=\"scheduler\"><rect x=\"385\" y=\"15\" width=\"205\" height=\"325\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"400\" y=\"44\">Scheduler</text><text x=\"400\" y=\"82\">Pending</text><line x1=\"398\" y1=\"180\" x2=\"577\" y2=\"180\" stroke=\"var(--line)\"/><text x=\"400\" y=\"300\">Existing request</text><text x=\"400\" y=\"326\">Active · exclusive</text></g><g data-relationship-id=\"join\"><path d=\"M155 110 H180\" fill=\"none\" stroke=\"var(--line)\"/><text x=\"20\" y=\"163\">Next: read()</text></g><g data-relationship-id=\"retain\"><path d=\"M270 130 V160\" fill=\"none\" stroke=\"var(--line)\"/></g><g data-relationship-id=\"scope-ref\"><path d=\"M405 128 H370 V278 H270 V250\" fill=\"none\" stroke=\"var(--accent)\" stroke-width=\"2\" stroke-dasharray=\"5 4\"/><text x=\"190\" y=\"302\">Retained scope</text><text x=\"190\" y=\"326\">reference · not a copy</text></g><g data-motion-id=\"task\" transform=\"translate(405 102)\"><rect width=\"165\" height=\"52\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"12\" y=\"32\">Shared task</text></g></g></svg>",
+          "evidence": {
+            "filePath": "lib/github-scheduler.ts",
+            "startLine": 97
+          }
+        },
+        {
+          "title": "The caller promotes the same scope",
+          "caption": "Joining mutates the referenced scope to interactive. The task stays pending: promotion neither calls drain nor stops the active request.",
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 600 360\"><g font-size=\"17\" fill=\"var(--ink)\"><g data-entity-id=\"caller\"><rect x=\"10\" y=\"35\" width=\"145\" height=\"100\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"22\" y=\"65\">Caller scope</text><text x=\"22\" y=\"95\">interactive</text></g><g data-entity-id=\"shared\"><rect x=\"180\" y=\"35\" width=\"180\" height=\"240\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"195\" y=\"65\">Shared read</text><text x=\"195\" y=\"94\">One operation</text><text x=\"195\" y=\"120\">One promise</text></g><g data-entity-id=\"work\"><rect x=\"193\" y=\"160\" width=\"154\" height=\"90\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"205\" y=\"187\">Work scope</text><text x=\"205\" y=\"218\" fill=\"var(--accent)\" font-weight=\"600\">interactive</text></g><g data-entity-id=\"scheduler\"><rect x=\"385\" y=\"15\" width=\"205\" height=\"325\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"400\" y=\"44\">Scheduler</text><text x=\"400\" y=\"82\">Pending</text><line x1=\"398\" y1=\"180\" x2=\"577\" y2=\"180\" stroke=\"var(--line)\"/><text x=\"400\" y=\"300\">Existing request</text><text x=\"400\" y=\"326\">Active · exclusive</text></g><g data-relationship-id=\"join\"><path d=\"M155 110 H180\" fill=\"none\" stroke=\"var(--accent)\" stroke-width=\"3\"/><text x=\"20\" y=\"163\">read() → join</text></g><g data-relationship-id=\"retain\"><path d=\"M270 130 V160\" fill=\"none\" stroke=\"var(--line)\"/></g><g data-relationship-id=\"scope-ref\"><path d=\"M405 128 H370 V278 H270 V250\" fill=\"none\" stroke=\"var(--accent)\" stroke-width=\"2\" stroke-dasharray=\"5 4\"/><text x=\"190\" y=\"302\">Retained scope</text><text x=\"190\" y=\"326\">reference · not a copy</text></g><g data-motion-id=\"task\" transform=\"translate(405 102)\"><rect width=\"165\" height=\"52\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"12\" y=\"32\">Shared task</text></g></g></svg>",
+          "evidence": {
+            "filePath": "lib/github-scheduler.ts",
+            "startLine": 54
+          }
+        },
+        {
+          "title": "The next drain reads the current value",
+          "caption": "After the exclusive request finishes, drain follows the retained scope reference and evaluates its current interactive priority when selecting the task.",
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 600 360\"><g font-size=\"17\" fill=\"var(--ink)\"><g data-entity-id=\"caller\"><rect x=\"10\" y=\"35\" width=\"145\" height=\"100\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"22\" y=\"65\">Caller scope</text><text x=\"22\" y=\"95\">interactive</text></g><g data-entity-id=\"shared\"><rect x=\"180\" y=\"35\" width=\"180\" height=\"240\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"195\" y=\"65\">Shared read</text><text x=\"195\" y=\"94\">One operation</text><text x=\"195\" y=\"120\">One promise</text></g><g data-entity-id=\"work\"><rect x=\"193\" y=\"160\" width=\"154\" height=\"90\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"205\" y=\"187\">Work scope</text><text x=\"205\" y=\"218\" fill=\"var(--accent)\" font-weight=\"600\">interactive</text></g><g data-entity-id=\"scheduler\"><rect x=\"385\" y=\"15\" width=\"205\" height=\"325\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"400\" y=\"44\">Scheduler</text><text x=\"400\" y=\"82\">Pending</text><line x1=\"398\" y1=\"180\" x2=\"577\" y2=\"180\" stroke=\"var(--line)\"/><text x=\"400\" y=\"300\">Prior request done</text><text x=\"400\" y=\"326\">Active · exclusive</text></g><g data-relationship-id=\"join\"><path d=\"M155 110 H180\" fill=\"none\" stroke=\"var(--line)\"/><text x=\"20\" y=\"163\">Reader waits</text></g><g data-relationship-id=\"retain\"><path d=\"M270 130 V160\" fill=\"none\" stroke=\"var(--line)\"/></g><g data-relationship-id=\"scope-ref\"><text x=\"400\" y=\"116\" font-weight=\"600\">drain reads scope</text><text x=\"400\" y=\"143\">Current priority</text><path d=\"M400 152 H370 V278 H270 V231 M370 251 H405\" fill=\"none\" stroke=\"var(--accent)\" stroke-width=\"2\" stroke-dasharray=\"5 4\"/><polygon points=\"270,229 265,239 275,239\" fill=\"var(--accent)\"/><text x=\"190\" y=\"302\">Retained scope</text><text x=\"190\" y=\"326\">reference · not a copy</text></g><g data-motion-id=\"task\" transform=\"translate(405 225)\"><rect width=\"165\" height=\"52\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"12\" y=\"32\">Shared task</text></g></g></svg>",
+          "evidence": {
+            "filePath": "lib/github-scheduler.ts",
+            "startLine": 72
+          }
+        }
+      ]
+    }
+  ]
+}

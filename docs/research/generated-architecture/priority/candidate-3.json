@@ -1,0 +1,152 @@
+{
+  "version": 1,
+  "title": "A pending task can observe promotion through retained scope",
+  "takeaway": "Joining promotes the existing work’s mutable scope. A pending task that retains that same scope can observe interactive priority at the next eligible drain; active work is not preempted.",
+  "assumptions": "S identifies one scope object, not a copied priority value. The illustrated pending task retains S only if an unshown caller supplies it to the scheduler. Positions and spacing are schematic. All entities describe context in the supplied revision.",
+  "exploration": {
+    "kind": "component",
+    "entities": [
+      {
+        "id": "caller",
+        "label": "Caller scope",
+        "summary": "Supplies effective priority through AsyncLocalStorage, including parent scopes.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 26
+        }
+      },
+      {
+        "id": "wrapper",
+        "label": "Shared GitHub read",
+        "summary": "Creates shared work once and joins it before each shared.read call.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 15
+        }
+      },
+      {
+        "id": "work",
+        "label": "GitHubWork",
+        "summary": "Retains one promise and mutable scope S across awaits. A higher-priority join updates that scope; interactive priority is never automatic.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 50
+        }
+      },
+      {
+        "id": "readers",
+        "label": "Shared read",
+        "summary": "Starts one operation immediately and owns reader lifetime. The last reader leaving aborts the shared signal only while unsettled.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/shared-read.ts",
+          "startLine": 4
+        }
+      },
+      {
+        "id": "scheduler",
+        "label": "Scheduler",
+        "summary": "Consults effective scope priority during drain. Parallel admission requires explicit permission and interactive priority; ordinary tasks execute exclusively. It neither preempts active work nor enforces rate limits.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 70
+        }
+      }
+    ],
+    "relationships": [
+      {
+        "id": "caller-read",
+        "from": "caller",
+        "to": "wrapper",
+        "label": "Read under caller scope",
+        "summary": "The read wrapper joins existing work using the current caller’s effective priority.",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 21
+        }
+      },
+      {
+        "id": "join-work",
+        "from": "wrapper",
+        "to": "work",
+        "label": "Join existing work",
+        "summary": "A higher-priority caller mutates the retained scope and receives the existing promise. Joining does not call drain.",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 54
+        }
+      },
+      {
+        "id": "register-reader",
+        "from": "wrapper",
+        "to": "readers",
+        "label": "Register reader after joining",
+        "summary": "The wrapper calls shared.read after joining; an already-aborted signal is rejected without adding a reader.",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 23
+        }
+      },
+      {
+        "id": "scope-reference",
+        "from": "scheduler",
+        "to": "work",
+        "label": "Conditional reference to S",
+        "summary": "A supplied scope object is retained rather than copied, and drain reads its effective priority. No supplied caller establishes this particular work-to-scheduler handoff. A priority string instead creates a separate scope.",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 97
+        }
+      }
+    ]
+  },
+  "plan": {
+    "question": "What lets pending selection observe an interactive caller’s promotion of existing shared work?",
+    "visualApproach": "Keep the responsibility map fixed. Give GitHubWork a visible scope compartment named S, and connect a pending task’s scope reference back to that compartment. Show S changing before highlighting the task preferred at drain. Keep reader lifetime and active execution separate.",
+    "whyThisForm": "The reference visibly terminates at the exact mutable object that the join updates. The pending task does not need a replacement priority value or a new operation to observe promotion.",
+    "encodings": "The outlined S compartment represents object identity. Its value changes while its position remains fixed. Solid arrows show established calls. The dashed reference is conditional on an unshown scope handoff. Accent identifies the promotion and subsequent priority choice, not a code change. The admission band separates preference from permission to execute.",
+    "motion": "Three fixed-layout snapshots show the existing lower-priority scope, the completed interactive join, and a later eligible drain consulting the same scope. No task moves into active execution. Active work remains unchanged, and the conditional reference remains visible throughout.",
+    "prediction": "Supplying a priority string instead of S creates a separate scope, so that pending task cannot observe later mutations of S through a shared reference.",
+    "restingState": "The interactive value in S, the pending task’s conditional reference, the competing foreground task, admission guards, and unchanged active-work region remain visible."
+  },
+  "scenarios": [
+    {
+      "id": "retained-scope",
+      "title": "An interactive caller joins existing work",
+      "input": "Existing work has background scope S. Illustratively, a pending task retains S, another pending task is foreground, and an interactive caller joins the existing work.",
+      "frames": [
+        {
+          "title": "Before the join: the pending task refers to S",
+          "caption": "The dashed reference is conditional: the supplied source supports retaining a scope object, but does not show a caller handing this work’s scope to the scheduler. The pending task refers to S rather than storing another copy of its priority.",
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 470\"><defs><marker id=\"arrow\" markerWidth=\"7\" markerHeight=\"7\" refX=\"6\" refY=\"3.5\" orient=\"auto\"><path d=\"M0 0 L7 3.5 L0 7\" fill=\"none\" stroke=\"var(--line)\"/></marker><marker id=\"accent-arrow\" markerWidth=\"7\" markerHeight=\"7\" refX=\"6\" refY=\"3.5\" orient=\"auto\"><path d=\"M0 0 L7 3.5 L0 7\" fill=\"none\" stroke=\"var(--accent)\"/></marker></defs><g data-entity-id=\"caller\"><rect x=\"12\" y=\"12\" width=\"200\" height=\"64\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"24\" y=\"37\" font-size=\"18\" fill=\"var(--muted)\">Context · Caller</text><text x=\"24\" y=\"62\" font-size=\"18\" fill=\"var(--ink)\">interactive scope</text></g><g data-entity-id=\"wrapper\"><rect x=\"12\" y=\"116\" width=\"200\" height=\"90\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"24\" y=\"140\" font-size=\"18\" fill=\"var(--muted)\">Context</text><text x=\"24\" y=\"166\" font-size=\"18\" fill=\"var(--ink)\">Shared GitHub read</text><text x=\"24\" y=\"192\" font-size=\"17\" fill=\"var(--ink)\">Join, then read</text></g><g data-relationship-id=\"caller-read\"><path d=\"M112 76 V116\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"126\" y=\"103\" font-size=\"17\" fill=\"var(--ink)\">read()</text></g><g data-entity-id=\"work\"><rect x=\"278\" y=\"12\" width=\"270\" height=\"194\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"292\" y=\"39\" font-size=\"18\" fill=\"var(--muted)\">Context · GitHubWork</text><text x=\"292\" y=\"70\" font-size=\"17\" fill=\"var(--ink)\">One operation, one promise</text><text x=\"292\" y=\"96\" font-size=\"17\" fill=\"var(--ink)\">Scope retained across awaits</text><rect x=\"294\" y=\"136\" width=\"234\" height=\"54\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\" stroke-width=\"2\"/><text x=\"306\" y=\"156\" font-size=\"16\" fill=\"var(--muted)\">Scope S</text><text x=\"306\" y=\"181\" font-size=\"20\" fill=\"var(--ink)\">background</text></g><g data-relationship-id=\"join-work\"><path d=\"M212 164 H278\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"226\" y=\"151\" font-size=\"17\" fill=\"var(--ink)\">join</text></g><g data-entity-id=\"readers\"><rect x=\"12\" y=\"322\" width=\"200\" height=\"136\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"24\" y=\"346\" font-size=\"17\" fill=\"var(--muted)\">Context · Shared read</text><text x=\"24\" y=\"372\" font-size=\"18\" fill=\"var(--ink)\">One shared promise</text><path d=\"M24 383 H200\" stroke=\"var(--line)\"/><text x=\"24\" y=\"405\" font-size=\"17\" fill=\"var(--ink)\">Last reader leaves:</text><text x=\"24\" y=\"427\" font-size=\"17\" fill=\"var(--ink)\">abort shared signal</text><text x=\"24\" y=\"449\" font-size=\"17\" fill=\"var(--ink)\">only if unsettled</text></g><g data-relationship-id=\"register-reader\"><path d=\"M112 206 V322\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"122\" y=\"274\" font-size=\"17\" fill=\"var(--ink)\">add reader</text></g><g data-entity-id=\"scheduler\"><rect x=\"248\" y=\"264\" width=\"300\" height=\"194\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"260\" y=\"287\" font-size=\"18\" fill=\"var(--muted)\">Context · Scheduler</text><rect x=\"260\" y=\"300\" width=\"130\" height=\"49\" rx=\"5\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"270\" y=\"320\" font-size=\"17\" fill=\"var(--ink)\">Shared task</text><text x=\"270\" y=\"341\" font-size=\"17\" fill=\"var(--muted)\">scope → S</text><rect x=\"402\" y=\"300\" width=\"134\" height=\"49\" rx=\"5\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"412\" y=\"320\" font-size=\"17\" fill=\"var(--ink)\">Other task</text><text x=\"412\" y=\"341\" font-size=\"17\" fill=\"var(--muted)\">foreground</text><path d=\"M260 361 H536\" stroke=\"var(--line)\"/><text x=\"260\" y=\"379\" font-size=\"17\" fill=\"var(--ink)\">Parallel + interactive:</text><text x=\"260\" y=\"398\" font-size=\"17\" fill=\"var(--ink)\">active &lt; 3; no exclusive</text><text x=\"260\" y=\"417\" font-size=\"17\" fill=\"var(--ink)\">Else: idle → exclusive</text><rect x=\"260\" y=\"426\" width=\"276\" height=\"25\" rx=\"4\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"270\" y=\"444\" font-size=\"17\" fill=\"var(--muted)\">Active work: not preempted</text></g><g data-relationship-id=\"scope-reference\"><path d=\"M260 330 H236 V252 H540 V164 H528\" fill=\"none\" stroke=\"var(--line)\" stroke-dasharray=\"5 4\" marker-end=\"url(#arrow)\"/><text x=\"278\" y=\"225\" font-size=\"17\" fill=\"var(--ink)\">Same scope, if supplied</text><text x=\"278\" y=\"246\" font-size=\"17\" fill=\"var(--muted)\">Handoff not shown</text></g></svg>",
+          "evidence": {
+            "filePath": "lib/github-scheduler.ts",
+            "startLine": 95
+          }
+        },
+        {
+          "title": "The join promotes S in place",
+          "caption": "The interactive join updates the existing scope object. It does not start another shared operation, grant parallel permission, or trigger drain.",
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 470\"><defs><marker id=\"arrow\" markerWidth=\"7\" markerHeight=\"7\" refX=\"6\" refY=\"3.5\" orient=\"auto\"><path d=\"M0 0 L7 3.5 L0 7\" fill=\"none\" stroke=\"var(--line)\"/></marker><marker id=\"accent-arrow\" markerWidth=\"7\" markerHeight=\"7\" refX=\"6\" refY=\"3.5\" orient=\"auto\"><path d=\"M0 0 L7 3.5 L0 7\" fill=\"none\" stroke=\"var(--accent)\"/></marker></defs><g data-entity-id=\"caller\"><rect x=\"12\" y=\"12\" width=\"200\" height=\"64\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"24\" y=\"37\" font-size=\"18\" fill=\"var(--muted)\">Context · Caller</text><text x=\"24\" y=\"62\" font-size=\"18\" fill=\"var(--ink)\">interactive scope</text></g><g data-entity-id=\"wrapper\"><rect x=\"12\" y=\"116\" width=\"200\" height=\"90\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"24\" y=\"140\" font-size=\"18\" fill=\"var(--muted)\">Context</text><text x=\"24\" y=\"166\" font-size=\"18\" fill=\"var(--ink)\">Shared GitHub read</text><text x=\"24\" y=\"192\" font-size=\"17\" fill=\"var(--ink)\">Join, then read</text></g><g data-relationship-id=\"caller-read\"><path d=\"M112 76 V116\" fill=\"none\" stroke=\"var(--accent)\" stroke-width=\"2\" marker-end=\"url(#accent-arrow)\"/><text x=\"126\" y=\"103\" font-size=\"17\" fill=\"var(--ink)\">read()</text></g><g data-entity-id=\"work\"><rect x=\"278\" y=\"12\" width=\"270\" height=\"194\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"292\" y=\"39\" font-size=\"18\" fill=\"var(--muted)\">Context · GitHubWork</text><text x=\"292\" y=\"70\" font-size=\"17\" fill=\"var(--ink)\">One operation, one promise</text><text x=\"292\" y=\"96\" font-size=\"17\" fill=\"var(--ink)\">Scope retained across awaits</text><rect x=\"294\" y=\"136\" width=\"234\" height=\"54\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"3\"/><text x=\"306\" y=\"156\" font-size=\"16\" fill=\"var(--muted)\">Scope S</text><text x=\"306\" y=\"181\" font-size=\"20\" fill=\"var(--accent)\">interactive</text></g><g data-relationship-id=\"join-work\"><path d=\"M212 164 H278\" fill=\"none\" stroke=\"var(--accent)\" stroke-width=\"2\" marker-end=\"url(#accent-arrow)\"/><text x=\"226\" y=\"151\" font-size=\"17\" fill=\"var(--ink)\">join</text></g><g data-entity-id=\"readers\"><rect x=\"12\" y=\"322\" width=\"200\" height=\"136\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"24\" y=\"346\" font-size=\"17\" fill=\"var(--muted)\">Context · Shared read</text><text x=\"24\" y=\"372\" font-size=\"18\" fill=\"var(--ink)\">One shared promise</text><path d=\"M24 383 H200\" stroke=\"var(--line)\"/><text x=\"24\" y=\"405\" font-size=\"17\" fill=\"var(--ink)\">Last reader leaves:</text><text x=\"24\" y=\"427\" font-size=\"17\" fill=\"var(--ink)\">abort shared signal</text><text x=\"24\" y=\"449\" font-size=\"17\" fill=\"var(--ink)\">only if unsettled</text></g><g data-relationship-id=\"register-reader\"><path d=\"M112 206 V322\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"122\" y=\"274\" font-size=\"17\" fill=\"var(--ink)\">add reader</text></g><g data-entity-id=\"scheduler\"><rect x=\"248\" y=\"264\" width=\"300\" height=\"194\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"260\" y=\"287\" font-size=\"18\" fill=\"var(--muted)\">Context · Scheduler</text><rect x=\"260\" y=\"300\" width=\"130\" height=\"49\" rx=\"5\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"270\" y=\"320\" font-size=\"17\" fill=\"var(--ink)\">Shared task</text><text x=\"270\" y=\"341\" font-size=\"17\" fill=\"var(--muted)\">scope → S</text><rect x=\"402\" y=\"300\" width=\"134\" height=\"49\" rx=\"5\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"412\" y=\"320\" font-size=\"17\" fill=\"var(--ink)\">Other task</text><text x=\"412\" y=\"341\" font-size=\"17\" fill=\"var(--muted)\">foreground</text><path d=\"M260 361 H536\" stroke=\"var(--line)\"/><text x=\"260\" y=\"379\" font-size=\"17\" fill=\"var(--ink)\">Parallel + interactive:</text><text x=\"260\" y=\"398\" font-size=\"17\" fill=\"var(--ink)\">active &lt; 3; no exclusive</text><text x=\"260\" y=\"417\" font-size=\"17\" fill=\"var(--ink)\">Else: idle → exclusive</text><rect x=\"260\" y=\"426\" width=\"276\" height=\"25\" rx=\"4\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"270\" y=\"444\" font-size=\"17\" fill=\"var(--muted)\">Active work: not preempted</text></g><g data-relationship-id=\"scope-reference\"><path d=\"M260 330 H236 V252 H540 V164 H528\" fill=\"none\" stroke=\"var(--line)\" stroke-dasharray=\"5 4\" marker-end=\"url(#arrow)\"/><text x=\"278\" y=\"225\" font-size=\"17\" fill=\"var(--ink)\">Same scope, if supplied</text><text x=\"278\" y=\"246\" font-size=\"17\" fill=\"var(--muted)\">Handoff not shown</text></g></svg>",
+          "evidence": {
+            "filePath": "lib/github-scheduler.ts",
+            "startLine": 54
+          }
+        },
+        {
+          "title": "At an eligible drain, the pending task reads promoted S",
+          "caption": "When capacity and exclusivity allow drain to inspect pending work, it reads effective priority through each retained scope. This task now ranks ahead of the foreground task. The arrow leads only to admission checks—not to preemption or guaranteed execution. Completion calls drain; joining does not.",
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 470\"><defs><marker id=\"arrow\" markerWidth=\"7\" markerHeight=\"7\" refX=\"6\" refY=\"3.5\" orient=\"auto\"><path d=\"M0 0 L7 3.5 L0 7\" fill=\"none\" stroke=\"var(--line)\"/></marker><marker id=\"accent-arrow\" markerWidth=\"7\" markerHeight=\"7\" refX=\"6\" refY=\"3.5\" orient=\"auto\"><path d=\"M0 0 L7 3.5 L0 7\" fill=\"none\" stroke=\"var(--accent)\"/></marker></defs><g data-entity-id=\"caller\"><rect x=\"12\" y=\"12\" width=\"200\" height=\"64\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"24\" y=\"37\" font-size=\"18\" fill=\"var(--muted)\">Context · Caller</text><text x=\"24\" y=\"62\" font-size=\"18\" fill=\"var(--ink)\">interactive scope</text></g><g data-entity-id=\"wrapper\"><rect x=\"12\" y=\"116\" width=\"200\" height=\"90\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"24\" y=\"140\" font-size=\"18\" fill=\"var(--muted)\">Context</text><text x=\"24\" y=\"166\" font-size=\"18\" fill=\"var(--ink)\">Shared GitHub read</text><text x=\"24\" y=\"192\" font-size=\"17\" fill=\"var(--ink)\">Join, then read</text></g><g data-relationship-id=\"caller-read\"><path d=\"M112 76 V116\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"126\" y=\"103\" font-size=\"17\" fill=\"var(--ink)\">read()</text></g><g data-entity-id=\"work\"><rect x=\"278\" y=\"12\" width=\"270\" height=\"194\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"292\" y=\"39\" font-size=\"18\" fill=\"var(--muted)\">Context · GitHubWork</text><text x=\"292\" y=\"70\" font-size=\"17\" fill=\"var(--ink)\">One operation, one promise</text><text x=\"292\" y=\"96\" font-size=\"17\" fill=\"var(--ink)\">Scope retained across awaits</text><rect x=\"294\" y=\"136\" width=\"234\" height=\"54\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"3\"/><text x=\"306\" y=\"156\" font-size=\"16\" fill=\"var(--muted)\">Scope S</text><text x=\"306\" y=\"181\" font-size=\"20\" fill=\"var(--accent)\">interactive</text></g><g data-relationship-id=\"join-work\"><path d=\"M212 164 H278\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"226\" y=\"151\" font-size=\"17\" fill=\"var(--ink)\">join</text></g><g data-entity-id=\"readers\"><rect x=\"12\" y=\"322\" width=\"200\" height=\"136\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"24\" y=\"346\" font-size=\"17\" fill=\"var(--muted)\">Context · Shared read</text><text x=\"24\" y=\"372\" font-size=\"18\" fill=\"var(--ink)\">One shared promise</text><path d=\"M24 383 H200\" stroke=\"var(--line)\"/><text x=\"24\" y=\"405\" font-size=\"17\" fill=\"var(--ink)\">Last reader leaves:</text><text x=\"24\" y=\"427\" font-size=\"17\" fill=\"var(--ink)\">abort shared signal</text><text x=\"24\" y=\"449\" font-size=\"17\" fill=\"var(--ink)\">only if unsettled</text></g><g data-relationship-id=\"register-reader\"><path d=\"M112 206 V322\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"122\" y=\"274\" font-size=\"17\" fill=\"var(--ink)\">add reader</text></g><g data-entity-id=\"scheduler\"><rect x=\"248\" y=\"264\" width=\"300\" height=\"194\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"260\" y=\"287\" font-size=\"18\" fill=\"var(--muted)\">Context · Scheduler</text><rect x=\"260\" y=\"300\" width=\"130\" height=\"49\" rx=\"5\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"3\"/><text x=\"270\" y=\"320\" font-size=\"17\" fill=\"var(--ink)\">Shared task</text><text x=\"270\" y=\"341\" font-size=\"17\" fill=\"var(--accent)\">scope → S</text><rect x=\"402\" y=\"300\" width=\"134\" height=\"49\" rx=\"5\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"412\" y=\"320\" font-size=\"17\" fill=\"var(--ink)\">Other task</text><text x=\"412\" y=\"341\" font-size=\"17\" fill=\"var(--muted)\">foreground</text><path d=\"M325 350 V361\" fill=\"none\" stroke=\"var(--accent)\" stroke-width=\"2\" marker-end=\"url(#accent-arrow)\"/><path d=\"M260 361 H536\" stroke=\"var(--line)\"/><text x=\"260\" y=\"379\" font-size=\"17\" fill=\"var(--ink)\">Parallel + interactive:</text><text x=\"260\" y=\"398\" font-size=\"17\" fill=\"var(--ink)\">active &lt; 3; no exclusive</text><text x=\"260\" y=\"417\" font-size=\"17\" fill=\"var(--ink)\">Else: idle → exclusive</text><rect x=\"260\" y=\"426\" width=\"276\" height=\"25\" rx=\"4\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"270\" y=\"444\" font-size=\"17\" fill=\"var(--muted)\">Active work: not preempted</text></g><g data-relationship-id=\"scope-reference\"><path d=\"M260 330 H236 V252 H540 V164 H528\" fill=\"none\" stroke=\"var(--accent)\" stroke-width=\"2\" stroke-dasharray=\"5 4\" marker-end=\"url(#accent-arrow)\"/><text x=\"278\" y=\"225\" font-size=\"17\" fill=\"var(--ink)\">Same scope, if supplied</text><text x=\"278\" y=\"246\" font-size=\"17\" fill=\"var(--muted)\">Handoff not shown</text></g></svg>",
+          "evidence": {
+            "filePath": "lib/github-scheduler.ts",
+            "startLine": 70
+          }
+        }
+      ]
+    }
+  ]
+}

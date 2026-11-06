@@ -1,0 +1,169 @@
+{
+  "id": "cache",
+  "title": "A cleared cache stays cleared",
+  "filePath": "lib/pr-file-cache.ts",
+  "code": "import { fileRevisionKey, type PrFileContents, type PrFileRequest } from './pr-changes';\n\n/** Keep opened immutable revisions in the renderer: revisits need no IPC or network round trip. */\nexport function createPrFileCache(\n  load: (request: PrFileRequest, background?: boolean) => Promise<PrFileContents>,\n  maxBytes = 32_000_000\n) {\n  const saved = new Map<string, { value: PrFileContents; bytes: number; url: string }>();\n  let priorities = new Map<string, number>();\n  const pending = new Map<string, { promise: Promise<PrFileContents>; background: boolean }>();\n  let bytes = 0,\n    epoch = 0;\n  const keyFor = (r: PrFileRequest) =>\n    `${r.stackComparison ? `stack:${r.stackComparison}:` : r.comparison ? 'commit:' : ''}${fileRevisionKey(r.url, r.path, r.baseSha, r.headSha)}`;\n  const peek = (r: PrFileRequest) => {\n    const key = keyFor(r),\n      entry = saved.get(key);\n    if (entry) {\n      saved.delete(key);\n      saved.set(key, entry);\n    }\n    return entry?.value;\n  };\n  function read(r: PrFileRequest, background = false): Promise<PrFileContents> {\n    const cached = peek(r);\n    if (cached && (!r.downloadLfs || ![cached.before, cached.after].some((s) => s.kind === 'lfs')))\n      return Promise.resolve(cached);\n    const key = keyFor(r),\n      pendingKey = `${key}:${!!r.downloadLfs}`,\n      existing = pending.get(pendingKey);\n    if (existing && (!existing.background || background)) return existing.promise;\n    const generation = epoch;\n    const promise = load(r, background)\n      .then((value) => {\n        const current = saved.get(key)?.value;\n        if (\n          generation === epoch &&\n          current?.lfs &&\n          ![current.before, current.after].some((s) => s.kind === 'lfs') &&\n          [value.before, value.after].some((s) => s.kind === 'lfs')\n        )\n          return current;\n        const size = [value.before, value.after].reduce(\n          (n, side) =>\n            n + (side.kind === 'text' ? side.content.length * 2 : side.kind === 'image' ? side.dataUrl.length * 2 : 0),\n          0\n        );\n        if (generation === epoch && size <= maxBytes) {\n          bytes -= saved.get(key)?.bytes ?? 0;\n          saved.set(key, { value, bytes: size, url: r.url });\n          bytes += size;\n          // Evict low-priority PRs first; preserve LRU order within each PR.\n          const eviction = [...saved].sort(\n            (a, b) => (priorities.get(b[1].url) ?? Infinity) - (priorities.get(a[1].url) ?? Infinity)\n          );\n          for (const [oldKey, old] of eviction) {\n            if (bytes <= maxBytes && saved.size <= 128) break;\n            saved.delete(oldKey);\n            bytes -= old.bytes;\n          }\n        }\n        return value;\n      })\n      .finally(() => {\n        if (pending.get(pendingKey)?.promise === promise) pending.delete(pendingKey);\n      });\n    pending.set(pendingKey, { promise, background });\n    return promise;\n  }\n  return {\n    peek,\n    read,\n    prioritize(urls: string[]) {\n      priorities = new Map(urls.map((url, index) => [url, index]));\n    },\n    clear() {\n      epoch++;\n      saved.clear();\n      pending.clear();\n      priorities.clear();\n      bytes = 0;\n    },\n  };\n}\n",
+  "files": {
+    "lib/pr-file-cache.ts": "import { fileRevisionKey, type PrFileContents, type PrFileRequest } from './pr-changes';\n\n/** Keep opened immutable revisions in the renderer: revisits need no IPC or network round trip. */\nexport function createPrFileCache(\n  load: (request: PrFileRequest, background?: boolean) => Promise<PrFileContents>,\n  maxBytes = 32_000_000\n) {\n  const saved = new Map<string, { value: PrFileContents; bytes: number; url: string }>();\n  let priorities = new Map<string, number>();\n  const pending = new Map<string, { promise: Promise<PrFileContents>; background: boolean }>();\n  let bytes = 0,\n    epoch = 0;\n  const keyFor = (r: PrFileRequest) =>\n    `${r.stackComparison ? `stack:${r.stackComparison}:` : r.comparison ? 'commit:' : ''}${fileRevisionKey(r.url, r.path, r.baseSha, r.headSha)}`;\n  const peek = (r: PrFileRequest) => {\n    const key = keyFor(r),\n      entry = saved.get(key);\n    if (entry) {\n      saved.delete(key);\n      saved.set(key, entry);\n    }\n    return entry?.value;\n  };\n  function read(r: PrFileRequest, background = false): Promise<PrFileContents> {\n    const cached = peek(r);\n    if (cached && (!r.downloadLfs || ![cached.before, cached.after].some((s) => s.kind === 'lfs')))\n      return Promise.resolve(cached);\n    const key = keyFor(r),\n      pendingKey = `${key}:${!!r.downloadLfs}`,\n      existing = pending.get(pendingKey);\n    if (existing && (!existing.background || background)) return existing.promise;\n    const generation = epoch;\n    const promise = load(r, background)\n      .then((value) => {\n        const current = saved.get(key)?.value;\n        if (\n          generation === epoch &&\n          current?.lfs &&\n          ![current.before, current.after].some((s) => s.kind === 'lfs') &&\n          [value.before, value.after].some((s) => s.kind === 'lfs')\n        )\n          return current;\n        const size = [value.before, value.after].reduce(\n          (n, side) =>\n            n + (side.kind === 'text' ? side.content.length * 2 : side.kind === 'image' ? side.dataUrl.length * 2 : 0),\n          0\n        );\n        if (generation === epoch && size <= maxBytes) {\n          bytes -= saved.get(key)?.bytes ?? 0;\n          saved.set(key, { value, bytes: size, url: r.url });\n          bytes += size;\n          // Evict low-priority PRs first; preserve LRU order within each PR.\n          const eviction = [...saved].sort(\n            (a, b) => (priorities.get(b[1].url) ?? Infinity) - (priorities.get(a[1].url) ?? Infinity)\n          );\n          for (const [oldKey, old] of eviction) {\n            if (bytes <= maxBytes && saved.size <= 128) break;\n            saved.delete(oldKey);\n            bytes -= old.bytes;\n          }\n        }\n        return value;\n      })\n      .finally(() => {\n        if (pending.get(pendingKey)?.promise === promise) pending.delete(pendingKey);\n      });\n    pending.set(pendingKey, { promise, background });\n    return promise;\n  }\n  return {\n    peek,\n    read,\n    prioritize(urls: string[]) {\n      priorities = new Map(urls.map((url, index) => [url, index]));\n    },\n    clear() {\n      epoch++;\n      saved.clear();\n      pending.clear();\n      priorities.clear();\n      bytes = 0;\n    },\n  };\n}\n"
+  },
+  "slide": {
+    "title": "clear() removes cache state, not the caller’s promise",
+    "narrative": "- After `clear()`, a caller that holds the old read promise still receives its value if the loader succeeds. `clear()` does not cancel the loader.\n- The cache advances `epoch` and removes its saved and pending entries. The old completion cannot store its value because its captured generation no longer matches `epoch`.\n- A later read can create a new pending promise for the same key. The old promise’s cleanup cannot remove that new entry.",
+    "reviewFocus": null,
+    "contextSnippets": [],
+    "fileSummaries": [
+      {
+        "filePath": "lib/pr-file-cache.ts",
+        "summary": "Uses an epoch check to block storage after clear() and a promise identity check to protect newer pending reads."
+      }
+    ],
+    "inlineExplanations": [
+      {
+        "filePath": "lib/pr-file-cache.ts",
+        "line": 62,
+        "side": "RIGHT",
+        "code": "        return value;",
+        "text": "The generation check limits storage, not delivery. An old successful load still returns its value through the promise that the caller holds."
+      },
+      {
+        "filePath": "lib/pr-file-cache.ts",
+        "line": 65,
+        "side": "RIGHT",
+        "code": "        if (pending.get(pendingKey)?.promise === promise) pending.delete(pendingKey);",
+        "text": "After `clear()`, a new read can use the same pending key. This identity check stops the old promise from deleting the new promise’s entry."
+      }
+    ],
+    "svgIllustration": {
+      "version": 1,
+      "title": "The caller keeps the promise after the cache drops its reference",
+      "takeaway": "The old load can deliver its value, but it cannot restore the cleared cache entry.",
+      "assumptions": "This example starts with a cache miss at epoch 0. The loader succeeds after clear(). P names the promise returned by read(). Vertical spacing shows order, not elapsed time.",
+      "exploration": {
+        "kind": "sequence",
+        "entities": [
+          {
+            "id": "caller",
+            "label": "Caller",
+            "summary": "Holds the promise returned by read(). Its reference remains valid after the cache clears pending.",
+            "change": "context",
+            "evidence": {
+              "filePath": "lib/pr-file-cache.ts",
+              "startLine": 68
+            }
+          },
+          {
+            "id": "cache",
+            "label": "Revision cache",
+            "summary": "Owns epoch, saved, and pending. clear() also resets priorities and byte accounting.",
+            "change": "context",
+            "evidence": {
+              "filePath": "lib/pr-file-cache.ts",
+              "startLine": 76
+            }
+          },
+          {
+            "id": "loader",
+            "label": "Asynchronous loader",
+            "summary": "Returns a promise for file contents. clear() has no call that cancels this work.",
+            "change": "context",
+            "evidence": {
+              "filePath": "lib/pr-file-cache.ts",
+              "startLine": 5
+            }
+          }
+        ],
+        "relationships": [
+          {
+            "id": "read",
+            "from": "caller",
+            "to": "cache",
+            "label": "Request file contents",
+            "summary": "A cache-miss read starts the illustrated operation.",
+            "evidence": {
+              "filePath": "lib/pr-file-cache.ts",
+              "startLine": 24
+            }
+          },
+          {
+            "id": "load",
+            "from": "cache",
+            "to": "loader",
+            "label": "Start load",
+            "summary": "read() captures epoch before it calls load().",
+            "evidence": {
+              "filePath": "lib/pr-file-cache.ts",
+              "startLine": 32
+            }
+          },
+          {
+            "id": "promise",
+            "from": "cache",
+            "to": "caller",
+            "label": "Return P",
+            "summary": "The cache stores P in pending and returns that same promise to the caller.",
+            "evidence": {
+              "filePath": "lib/pr-file-cache.ts",
+              "startLine": 67
+            }
+          },
+          {
+            "id": "completion",
+            "from": "loader",
+            "to": "cache",
+            "label": "Complete successfully",
+            "summary": "The completion handler receives the value. A different epoch blocks its saved write.",
+            "evidence": {
+              "filePath": "lib/pr-file-cache.ts",
+              "startLine": 48
+            }
+          },
+          {
+            "id": "delivery",
+            "from": "cache",
+            "to": "caller",
+            "label": "Resolve P",
+            "summary": "The handler returns the loaded value even when the generation check blocks storage.",
+            "evidence": {
+              "filePath": "lib/pr-file-cache.ts",
+              "startLine": 62
+            }
+          }
+        ]
+      },
+      "plan": {
+        "question": "Who receives the old result after clear(), and why can it not enter the cache?",
+        "visualApproach": "Use three fixed sequence lanes: Caller, Revision cache, and Asynchronous loader. Read downward from read() to result delivery. Show the caller’s retained promise separately from the cache’s pending reference.",
+        "whyThisForm": "The sequence keeps operation order and ownership visible together. The clear() step removes only the cache reference; the later result crosses the same component boundary.",
+        "encodings": "Columns identify owners. Downward position shows order. Solid arrows show calls or result delivery. The cache state panel marks the epoch change and removed pending reference. The storage panel shows the unequal generations.",
+        "motion": "Use a static sequence because all ordered events and retained references fit in one view. Motion would hide earlier evidence that the reader needs to compare ownership before and after clear().",
+        "prediction": "If clear() runs before another successful pending load completes, its caller can receive the value without that completion adding a saved entry.",
+        "restingState": "The full sequence keeps the returned promise, clear(), generation mismatch, and successful delivery visible."
+      },
+      "scenarios": [
+        {
+          "id": "clear-before-success",
+          "title": "A successful old load completes after clear()",
+          "input": "A cache-miss read captures epoch 0; clear() advances the cache to epoch 1 before the loader completes.",
+          "frames": [
+            {
+              "title": "Delivery continues; storage is blocked",
+              "caption": "The caller keeps P. Removing the cache’s pending reference does not cancel the loader or reject P.",
+              "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 480\"><defs><marker id=\"arrow\" markerWidth=\"8\" markerHeight=\"8\" refX=\"7\" refY=\"4\" orient=\"auto\"><path d=\"M0 0 L8 4 L0 8\" fill=\"var(--ink)\"/></marker></defs><g fill=\"none\" stroke=\"var(--line)\" stroke-dasharray=\"4 5\"><path d=\"M65 54 V451\"/><path d=\"M280 54 V451\"/><path d=\"M485 54 V451\"/></g><g data-entity-id=\"caller\"><rect x=\"15\" y=\"14\" width=\"100\" height=\"38\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"65\" y=\"39\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Caller</text><rect x=\"15\" y=\"178\" width=\"122\" height=\"52\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"76\" y=\"199\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Keeps P</text><text x=\"76\" y=\"220\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">after clear()</text></g><g data-entity-id=\"cache\"><rect x=\"196\" y=\"14\" width=\"168\" height=\"38\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"280\" y=\"39\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Revision cache</text><rect x=\"170\" y=\"172\" width=\"220\" height=\"106\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"280\" y=\"194\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">clear()</text><text x=\"280\" y=\"219\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">epoch: 0 → 1</text><text x=\"280\" y=\"243\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">pending P → empty</text><text x=\"280\" y=\"267\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">saved → empty</text><rect x=\"170\" y=\"330\" width=\"220\" height=\"68\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--warning)\"/><text x=\"280\" y=\"354\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">generation 0 ≠ epoch 1</text><text x=\"280\" y=\"382\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">No saved write</text></g><g data-entity-id=\"loader\"><rect x=\"407\" y=\"14\" width=\"145\" height=\"38\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"479\" y=\"39\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Async loader</text><rect x=\"438\" y=\"176\" width=\"94\" height=\"96\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"485\" y=\"215\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Still</text><text x=\"485\" y=\"239\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">active</text></g><g data-relationship-id=\"read\"><path d=\"M65 82 H280\" fill=\"none\" stroke=\"var(--ink)\" marker-end=\"url(#arrow)\"/><text x=\"163\" y=\"74\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">read()</text></g><g data-relationship-id=\"load\"><path d=\"M280 119 H485\" fill=\"none\" stroke=\"var(--ink)\" marker-end=\"url(#arrow)\"/><text x=\"382\" y=\"108\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">load(); generation = 0</text></g><g data-relationship-id=\"promise\"><path d=\"M280 156 H65\" fill=\"none\" stroke=\"var(--ink)\" marker-end=\"url(#arrow)\"/><text x=\"169\" y=\"146\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Return promise P</text></g><g data-relationship-id=\"completion\"><path d=\"M485 310 H280\" fill=\"none\" stroke=\"var(--ink)\" marker-end=\"url(#arrow)\"/><text x=\"392\" y=\"299\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Loaded value</text></g><g data-relationship-id=\"delivery\"><path d=\"M280 433 H65\" fill=\"none\" stroke=\"var(--ink)\" marker-end=\"url(#arrow)\"/><text x=\"173\" y=\"422\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">P resolves with value</text></g><text x=\"280\" y=\"470\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--muted)\">Order runs downward · clear() does not cancel load()</text></svg>",
+              "evidence": {
+                "filePath": "lib/pr-file-cache.ts",
+                "startLine": 77
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "mechanism": null,
+    "d2Diagram": null,
+    "explainerIdea": null,
+    "reviewChecks": []
+  },
+  "model": "gpt-6.1-sol",
+  "revision": "5e0bdece6a2d61f1c96999546e6d83883cb64b62",
+  "generatedAt": "2026-11-05T23:57:48.245Z"
+}

@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "title": "Promotion follows retained scope links",
+  "takeaway": "The caller changes existing work. Pending selection and later child work read the retained priority.",
+  "assumptions": "The illustration shows an existing foreground shared operation joined by an interactive caller. Connections show responsibilities, not elapsed time. Cancellation and allowance accounting are omitted.",
+  "exploration": {
+    "kind": "component",
+    "entities": [
+      {
+        "id": "caller",
+        "label": "Caller scope",
+        "summary": "AsyncLocalStorage supplies the joining caller's effective priority.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 31
+        }
+      },
+      {
+        "id": "shared",
+        "label": "Shared GitHub work",
+        "summary": "Retains one GitHubWork and joins it before attaching each reader.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 15
+        }
+      },
+      {
+        "id": "request",
+        "label": "Client request work",
+        "summary": "Runs scheduling attempts inside a retained scope and waits outside the slot after a paced result.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-client.ts",
+          "startLine": 559
+        }
+      },
+      {
+        "id": "scheduler",
+        "label": "Scheduler",
+        "summary": "Selects pending work by effective priority and controls exclusive or permitted parallel execution.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 66
+        }
+      }
+    ],
+    "relationships": [
+      {
+        "id": "join",
+        "from": "caller",
+        "to": "shared",
+        "label": "Raise retained priority",
+        "summary": "A higher-priority caller updates the existing work scope.",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 57
+        }
+      },
+      {
+        "id": "parent",
+        "from": "request",
+        "to": "shared",
+        "label": "Inherit parent priority",
+        "summary": "Child work retains the current scope as its parent; effective priority includes higher parent priorities.",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 51
+        }
+      },
+      {
+        "id": "submit",
+        "from": "request",
+        "to": "scheduler",
+        "label": "Submit scope",
+        "summary": "Each scheduling attempt supplies githubPriorityScope() and the read parallel permission.",
+        "evidence": {
+          "filePath": "lib/github-client.ts",
+          "startLine": 561
+        }
+      },
+      {
+        "id": "consult",
+        "from": "scheduler",
+        "to": "request",
+        "label": "Read effective priority",
+        "summary": "Pending selection reads the retained scope and its parent priorities rather than a copied priority value.",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 72
+        }
+      }
+    ]
+  },
+  "plan": {
+    "question": "How does a caller promotion reach pending and later requests without replacing the shared operation?",
+    "visualApproach": "Use a static behavior map with retained shared work above child request work. Put the caller beside the shared work and the scheduler below the child. Show priority inheritance separately from submission and selection.",
+    "whyThisForm": "The important relationship is a retained scope link, not a sequence of queue values. The map keeps the same operation visible and separates pending selection from active execution.",
+    "encodings": "Boxes identify responsibilities. The shared work border marks the scope that the caller updates. Upward arrows show parent-priority lookup. Downward arrows show request submission. A separate active region marks requests that promotion does not interrupt.",
+    "motion": "Static by design. Persistent scope links explain both pending and later requests without implying that scope updates preempt active execution.",
+    "prediction": "A child request created after an await can use interactive priority through its parent link, while an already active request continues.",
+    "restingState": "The caller update, retained parent link, scheduler scope read, and active-request boundary remain visible together."
+  },
+  "scenarios": [
+    {
+      "id": "retained-scope",
+      "title": "One operation, shared priority",
+      "input": "An interactive caller joins existing foreground work.",
+      "frames": [
+        {
+          "title": "The scheduler reads retained scopes",
+          "caption": "The scope can change while work waits. Selection reads its current effective priority; active execution is not interrupted.",
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 460\"><defs><marker id=\"arrow\" markerWidth=\"8\" markerHeight=\"8\" refX=\"7\" refY=\"4\" orient=\"auto\"><path d=\"M0 0 L8 4 L0 8\" fill=\"var(--line)\"/></marker></defs><g data-entity-id=\"caller\"><rect x=\"16\" y=\"24\" width=\"156\" height=\"76\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"94\" y=\"54\" text-anchor=\"middle\" fill=\"var(--ink)\" font-size=\"16\">Caller scope</text><text x=\"94\" y=\"80\" text-anchor=\"middle\" fill=\"var(--accent)\" font-size=\"16\">interactive</text></g><g data-entity-id=\"shared\"><rect x=\"314\" y=\"16\" width=\"230\" height=\"104\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"429\" y=\"44\" text-anchor=\"middle\" fill=\"var(--ink)\" font-size=\"16\">Shared GitHub work</text><text x=\"429\" y=\"73\" text-anchor=\"middle\" fill=\"var(--accent)\" font-size=\"16\">foreground → interactive</text><text x=\"429\" y=\"101\" text-anchor=\"middle\" fill=\"var(--muted)\" font-size=\"16\">Same operation and scope</text></g><g data-relationship-id=\"join\"><path d=\"M172 62 H306\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"241\" y=\"48\" text-anchor=\"middle\" fill=\"var(--ink)\" font-size=\"16\">Join: raise</text><text x=\"241\" y=\"88\" text-anchor=\"middle\" fill=\"var(--ink)\" font-size=\"16\">priority</text></g><g data-entity-id=\"request\"><rect x=\"314\" y=\"202\" width=\"230\" height=\"82\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"429\" y=\"232\" text-anchor=\"middle\" fill=\"var(--ink)\" font-size=\"16\">Client request work</text><text x=\"429\" y=\"260\" text-anchor=\"middle\" fill=\"var(--muted)\" font-size=\"16\">Also created after an await</text></g><g data-relationship-id=\"parent\"><path d=\"M429 202 V128\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"417\" y=\"155\" text-anchor=\"end\" fill=\"var(--ink)\" font-size=\"16\">Parent link:</text><text x=\"417\" y=\"180\" text-anchor=\"end\" fill=\"var(--ink)\" font-size=\"16\">inherit higher priority</text></g><g data-entity-id=\"scheduler\"><rect x=\"16\" y=\"330\" width=\"528\" height=\"114\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"32\" y=\"358\" fill=\"var(--ink)\" font-size=\"16\">Scheduler</text><text x=\"32\" y=\"388\" fill=\"var(--ink)\" font-size=\"16\">Pending: interactive first</text><line x1=\"294\" y1=\"348\" x2=\"294\" y2=\"426\" stroke=\"var(--line)\"/><text x=\"310\" y=\"358\" fill=\"var(--ink)\" font-size=\"16\">Active: continues</text><text x=\"310\" y=\"388\" fill=\"var(--muted)\" font-size=\"16\">Parallel only with flag</text><text x=\"310\" y=\"414\" fill=\"var(--muted)\" font-size=\"16\">and interactive priority</text></g><g data-relationship-id=\"submit\"><path d=\"M482 284 V322\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"468\" y=\"311\" text-anchor=\"end\" fill=\"var(--ink)\" font-size=\"16\">Submit scope</text></g><g data-relationship-id=\"consult\"><path d=\"M172 330 V243 H306\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"30\" y=\"280\" fill=\"var(--ink)\" font-size=\"16\">At selection:</text><text x=\"30\" y=\"306\" fill=\"var(--ink)\" font-size=\"16\">read effective priority</text></g></svg>",
+          "evidence": {
+            "filePath": "lib/github-scheduler.ts",
+            "startLine": 72
+          }
+        }
+      ]
+    }
+  ]
+}

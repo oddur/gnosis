@@ -11,8 +11,9 @@ import electron from 'electron';
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-d2-prototype-'));
 const server = await createServer({ configFile: 'vite.renderer.config.ts', server: { host: '127.0.0.1', port: 0 } });
 await server.listen();
-const mechanisms = process.argv.includes('--mechanisms');
-const url = `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/${mechanisms ? 'mechanisms' : 'd2'}.html${process.argv.includes('--generated') ? '?generated' : ''}`;
+const architecture = process.argv.includes('--architecture');
+const mechanisms = architecture || process.argv.includes('--mechanisms');
+const url = `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/${mechanisms ? 'mechanisms' : 'd2'}.html${architecture ? '?architecture' : process.argv.includes('--generated') ? '?generated' : ''}`;
 const main = path.join(dir, 'main.cjs');
 // 'electron' must resolve to Electron's builtin inside the child process.
 fs.writeFileSync(
@@ -31,7 +32,7 @@ app.on('window-all-closed',()=>app.quit());
 );
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
-console.log(`D2/TALA gallery: ${url}`);
+console.log(`Gnosis diagram gallery: ${url}`);
 const child = spawn(electron, [main, '--remote-debugging-port=9336'], { env, stdio: 'inherit' });
 const close = async () => {
   child.kill();

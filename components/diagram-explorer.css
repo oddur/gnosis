@@ -1,0 +1,190 @@
+.diagram-explorer-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 270px;
+  min-height: 340px;
+  height: min(58dvh, 600px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.diagram-explorer-canvas {
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 0;
+  height: 100%;
+  background: var(--background);
+}
+.diagram-explorer-viewport {
+  min-width: 0;
+  min-height: 0;
+}
+.diagram-explorer-drawing {
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.svg-illustration-dialog .diagram-explorer-drawing .svg-illustration-stage {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  margin: 0;
+}
+.diagram-explorer-canvas .react-flow__node-drawing,
+.diagram-explorer-canvas .react-flow__node-entity {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.diagram-entity-target {
+  pointer-events: auto;
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: transparent;
+  border: 2px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.diagram-entity-target:hover,
+.diagram-entity-target[aria-pressed='true'] {
+  border-color: var(--primary);
+}
+.diagram-entity-target:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+.diagram-explorer-tools {
+  display: flex;
+  gap: 2px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--background);
+}
+.diagram-inspector {
+  border-inline-start: 1px solid var(--border);
+  padding: 20px;
+  overflow-y: auto;
+  min-width: 0;
+  background: var(--card);
+}
+.diagram-inspector h3 {
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.diagram-inspector-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 8px;
+}
+.diagram-inspector-heading > button {
+  flex: none;
+  margin-top: -6px;
+  margin-right: -8px;
+}
+.diagram-change-label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  margin-top: 4px;
+}
+.diagram-inspector-summary {
+  font-size: 14px;
+  line-height: 1.65;
+  margin-top: 12px;
+  overflow-wrap: anywhere;
+}
+.diagram-relationship-endpoints {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+  margin-top: 8px;
+  color: var(--muted-foreground);
+}
+.diagram-source {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: start;
+  gap: 8px;
+  font-size: 12px;
+}
+.diagram-source code {
+  overflow-wrap: anywhere;
+  color: var(--muted-foreground);
+}
+.diagram-connections {
+  margin-top: 24px;
+}
+.diagram-connections h4 {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.diagram-connections button,
+.diagram-component-list button {
+  width: 100%;
+  display: flex;
+  text-align: start;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 10px 8px;
+  border-block-end: 1px solid var(--border);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.diagram-connections button:hover,
+.diagram-component-list button:hover {
+  background: var(--accent);
+}
+.diagram-connections button:focus-visible,
+.diagram-component-list button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.diagram-component-list {
+  margin-top: 16px;
+}
+.diagram-connections small,
+.diagram-component-list small {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.diagram-inspector-compact {
+  border-inline-start: 0;
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+  padding: 16px 0 0;
+  background: transparent;
+}
+.diagram-inspector-compact .diagram-connections {
+  margin-top: 16px;
+}
+.diagram-explorer-hint {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  padding-block: 4px 12px;
+}
+@media (max-width: 760px) {
+  .diagram-explorer-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+    min-height: 0;
+  }
+  .diagram-explorer-canvas {
+    height: 340px;
+  }
+  .diagram-inspector {
+    border-inline-start: 0;
+    border-top: 1px solid var(--border);
+    max-height: 240px;
+  }
+}

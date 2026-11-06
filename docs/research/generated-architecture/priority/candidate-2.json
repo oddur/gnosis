@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "title": "Priority and reader lifetime have separate responsibilities",
+  "takeaway": "A join updates retained work scope. Pending selection can observe that update through the same scope object.",
+  "assumptions": "This is a schematic map of current code. The dashed connection is conditional: no supplied caller shows the work scope being passed to the scheduler. All entities are context.",
+  "exploration": {
+    "kind": "component",
+    "entities": [
+      {
+        "id": "caller",
+        "label": "Caller scope",
+        "summary": "Supplies effective priority through AsyncLocalStorage and parent scopes.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 27
+        }
+      },
+      {
+        "id": "wrapper",
+        "label": "Shared GitHub read",
+        "summary": "Creates shared work and joins it before registering each reader.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 15
+        }
+      },
+      {
+        "id": "work",
+        "label": "GitHubWork",
+        "summary": "Retains the operation promise and mutable scope across awaits.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 50
+        }
+      },
+      {
+        "id": "readers",
+        "label": "Shared read",
+        "summary": "Owns reader counts and the shared abort controller.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/shared-read.ts",
+          "startLine": 4
+        }
+      },
+      {
+        "id": "scheduler",
+        "label": "Scheduler",
+        "summary": "Selects pending tasks by effective priority and controls their admission.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 70
+        }
+      }
+    ],
+    "relationships": [
+      {
+        "id": "caller-read",
+        "from": "caller",
+        "to": "wrapper",
+        "label": "Read under caller scope",
+        "summary": "The wrapper joins work under the current caller priority.",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 22
+        }
+      },
+      {
+        "id": "join-work",
+        "from": "wrapper",
+        "to": "work",
+        "label": "Join existing work",
+        "summary": "A higher-priority join updates the retained work scope.",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 57
+        }
+      },
+      {
+        "id": "register-reader",
+        "from": "wrapper",
+        "to": "readers",
+        "label": "Register reader",
+        "summary": "After joining work, the wrapper registers a reader with the caller's cancellation signal.",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 23
+        }
+      },
+      {
+        "id": "scope-handoff",
+        "from": "work",
+        "to": "scheduler",
+        "label": "Conditional scope handoff",
+        "summary": "The scheduler retains a supplied scope object. The supplied source does not establish this handoff from GitHubWork.",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 97
+        }
+      }
+    ]
+  },
+  "plan": {
+    "question": "How does caller priority reach existing work and affect pending selection?",
+    "visualApproach": "Keep the caller above the shared GitHub read. Put retained work beside it, reader lifetime below it, and scheduler admission beside the readers.",
+    "whyThisForm": "The branches separate priority ownership from cancellation. The dashed connection makes the unshown scope handoff visible.",
+    "encodings": "Solid arrows show established calls. The dashed arrow shows a conditional scope handoff. A divider separates pending selection from active execution. Positions are schematic.",
+    "motion": "Use a static map. Shared scope identity explains the connection; motion would suggest an enqueue sequence that the supplied source does not establish.",
+    "prediction": "A pending task given a priority string will not receive later updates to the work scope.",
+    "restingState": "The scope update, conditional handoff, admission conditions, and separate reader lifetime remain visible."
+  },
+  "scenarios": [
+    {
+      "id": "scope-map",
+      "title": "An interactive caller joins existing work",
+      "input": "An interactive caller reads an existing shared GitHub operation.",
+      "frames": [
+        {
+          "title": "Retained scope connects promotion to selection",
+          "caption": "The join updates scope. A later drain can observe that update if the scheduler retains the same scope. Completion releases capacity and calls drain; the join does not.",
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 470\"><defs><marker id=\"arrow\" markerWidth=\"8\" markerHeight=\"8\" refX=\"7\" refY=\"4\" orient=\"auto\"><path d=\"M0 0 L8 4 L0 8\" fill=\"none\" stroke=\"var(--line)\"/></marker></defs><g data-entity-id=\"caller\"><rect x=\"16\" y=\"14\" width=\"220\" height=\"80\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"28\" y=\"40\" font-size=\"20\" fill=\"var(--muted)\">Context · Caller</text><text x=\"28\" y=\"70\" font-size=\"20\" fill=\"var(--ink)\">interactive scope</text></g><g data-entity-id=\"wrapper\"><rect x=\"16\" y=\"144\" width=\"220\" height=\"88\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"28\" y=\"168\" font-size=\"20\" fill=\"var(--muted)\">Context</text><text x=\"28\" y=\"194\" font-size=\"20\" fill=\"var(--ink)\">Shared GitHub read</text><text x=\"28\" y=\"220\" font-size=\"20\" fill=\"var(--ink)\">Join, then read</text></g><g data-relationship-id=\"caller-read\"><path d=\"M126 94 V144\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"140\" y=\"125\" font-size=\"20\" fill=\"var(--ink)\">read()</text></g><g data-entity-id=\"work\"><rect x=\"302\" y=\"144\" width=\"242\" height=\"88\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"314\" y=\"168\" font-size=\"20\" fill=\"var(--muted)\">Context · GitHubWork</text><text x=\"314\" y=\"194\" font-size=\"20\" fill=\"var(--ink)\">Same scope updated:</text><text x=\"314\" y=\"220\" font-size=\"20\" fill=\"var(--ink)\">interactive</text></g><g data-relationship-id=\"join-work\"><path d=\"M236 188 H302\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"246\" y=\"174\" font-size=\"20\" fill=\"var(--ink)\">join</text></g><g data-entity-id=\"readers\"><rect x=\"16\" y=\"306\" width=\"220\" height=\"150\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"28\" y=\"332\" font-size=\"20\" fill=\"var(--muted)\">Context · Shared read</text><text x=\"28\" y=\"360\" font-size=\"20\" fill=\"var(--ink)\">One shared promise</text><path d=\"M28 375 H224\" stroke=\"var(--line)\"/><text x=\"28\" y=\"400\" font-size=\"20\" fill=\"var(--ink)\">Last reader leaves:</text><text x=\"28\" y=\"426\" font-size=\"20\" fill=\"var(--ink)\">abort shared signal</text><text x=\"28\" y=\"450\" font-size=\"20\" fill=\"var(--ink)\">if not settled</text></g><g data-relationship-id=\"register-reader\"><path d=\"M126 232 V306\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"140\" y=\"278\" font-size=\"20\" fill=\"var(--ink)\">add reader</text></g><g data-entity-id=\"scheduler\"><rect x=\"302\" y=\"306\" width=\"242\" height=\"150\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"314\" y=\"332\" font-size=\"20\" fill=\"var(--muted)\">Context · Scheduler</text><text x=\"314\" y=\"358\" font-size=\"20\" fill=\"var(--ink)\">Pending: priority order</text><path d=\"M314 370 H532\" stroke=\"var(--line)\"/><text x=\"314\" y=\"394\" font-size=\"20\" fill=\"var(--ink)\">Active: no interruption</text><text x=\"314\" y=\"420\" font-size=\"20\" fill=\"var(--ink)\">Parallel + interactive</text><text x=\"314\" y=\"446\" font-size=\"20\" fill=\"var(--ink)\">No exclusive; max 3</text></g><g data-relationship-id=\"scope-handoff\"><path d=\"M423 232 V306\" fill=\"none\" stroke=\"var(--line)\" stroke-dasharray=\"5 4\" marker-end=\"url(#arrow)\"/><text x=\"310\" y=\"258\" font-size=\"20\" fill=\"var(--ink)\">If passed as scope</text><text x=\"310\" y=\"284\" font-size=\"20\" fill=\"var(--muted)\">Caller not shown</text></g></svg>",
+          "evidence": {
+            "filePath": "lib/github-scheduler.ts",
+            "startLine": 54
+          }
+        }
+      ]
+    }
+  ]
+}

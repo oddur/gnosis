@@ -1,0 +1,220 @@
+{
+  "version": 1,
+  "title": "Separate prose and picture paths",
+  "takeaway": "The picture must pass visual review, but its rejection does not remove the topic prose.",
+  "assumptions": "This map shows responsibilities and handoffs, not execution time. One writer group represents the parallel topic tasks. The source box represents the supplied planner and topic contexts.",
+  "exploration": {
+    "kind": "dataflow",
+    "entities": [
+      {
+        "id": "source",
+        "label": "Source context",
+        "summary": "Supplies planner context and topic-specific source context.",
+        "change": "context",
+        "evidence": {
+          "filePath": "src/main.ts",
+          "startLine": 2000
+        }
+      },
+      {
+        "id": "planner",
+        "label": "Planner",
+        "summary": "Receives the hunk index and planner context. Supplies topics, their order, and the story arc.",
+        "change": "context",
+        "evidence": {
+          "filePath": "src/main.ts",
+          "startLine": 1974
+        }
+      },
+      {
+        "id": "writers",
+        "label": "Topic writers",
+        "summary": "Generate topic prose and optional illustrations from supplied source context.",
+        "change": "context",
+        "evidence": {
+          "filePath": "src/main.ts",
+          "startLine": 2007
+        }
+      },
+      {
+        "id": "renderer",
+        "label": "Isolated SVG renderer",
+        "summary": "Validates frames and captures images. Uses sandboxing, context isolation, disabled Node integration, and request restrictions.",
+        "change": "context",
+        "evidence": {
+          "filePath": "src/explainer-validation.ts",
+          "startLine": 76
+        }
+      },
+      {
+        "id": "critic",
+        "label": "Educational critic",
+        "summary": "Uses source, SVG data, and rendered images to accept, request repair, or omit the illustration.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/illustration-review.ts",
+          "startLine": 75
+        }
+      },
+      {
+        "id": "slide",
+        "label": "Completed slide",
+        "summary": "The main process combines writer output with resolved source hunks and topic metadata.",
+        "change": "context",
+        "evidence": {
+          "filePath": "src/main.ts",
+          "startLine": 2031
+        }
+      },
+      {
+        "id": "no-picture",
+        "label": "No picture",
+        "summary": "A null illustration leaves the other writer output available. Unavailable visual review also returns null.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/illustration-review.ts",
+          "startLine": 119
+        }
+      }
+    ],
+    "relationships": [
+      {
+        "id": "source-plan",
+        "from": "source",
+        "to": "planner",
+        "label": "Planner input",
+        "summary": "Passes the hunk index and planner context to planning.",
+        "evidence": {
+          "filePath": "src/main.ts",
+          "startLine": 1975
+        }
+      },
+      {
+        "id": "plan-writers",
+        "from": "planner",
+        "to": "writers",
+        "label": "Topics and story arc",
+        "summary": "Builds each topic context with the story arc and ordered topic plan.",
+        "evidence": {
+          "filePath": "src/main.ts",
+          "startLine": 2002
+        }
+      },
+      {
+        "id": "source-writers",
+        "from": "source",
+        "to": "writers",
+        "label": "Topic source",
+        "summary": "Builds topic context from hunks and supplied file contents.",
+        "evidence": {
+          "filePath": "src/main.ts",
+          "startLine": 2001
+        }
+      },
+      {
+        "id": "prose-slide",
+        "from": "writers",
+        "to": "slide",
+        "label": "Prose",
+        "summary": "Copies the writer narrative into the completed slide independently of its illustration field.",
+        "evidence": {
+          "filePath": "src/main.ts",
+          "startLine": 2036
+        }
+      },
+      {
+        "id": "svg-render",
+        "from": "writers",
+        "to": "renderer",
+        "label": "Optional SVG",
+        "summary": "Sends a normalized illustration to the supplied browser validator.",
+        "evidence": {
+          "filePath": "lib/agent.ts",
+          "startLine": 654
+        }
+      },
+      {
+        "id": "render-critic",
+        "from": "renderer",
+        "to": "critic",
+        "label": "Rendered images",
+        "summary": "Supplies rendered images with the illustration for critique.",
+        "evidence": {
+          "filePath": "lib/illustration-review.ts",
+          "startLine": 79
+        }
+      },
+      {
+        "id": "source-critic",
+        "from": "source",
+        "to": "critic",
+        "label": "Source evidence",
+        "summary": "Passes the writer's budgeted source context into visual review.",
+        "evidence": {
+          "filePath": "lib/agent.ts",
+          "startLine": 659
+        }
+      },
+      {
+        "id": "accept-slide",
+        "from": "critic",
+        "to": "slide",
+        "label": "Accepted SVG",
+        "summary": "An accept verdict returns the illustration, which the main process copies into the slide.",
+        "evidence": {
+          "filePath": "lib/illustration-review.ts",
+          "startLine": 93
+        }
+      },
+      {
+        "id": "repair-render",
+        "from": "critic",
+        "to": "renderer",
+        "label": "Repair and render again",
+        "summary": "Generates a repair from the findings, renders it again, and returns it to critique.",
+        "evidence": {
+          "filePath": "lib/illustration-review.ts",
+          "startLine": 109
+        }
+      },
+      {
+        "id": "omit-picture",
+        "from": "critic",
+        "to": "no-picture",
+        "label": "Omit",
+        "summary": "An omit verdict or a second non-accept verdict returns null for the illustration.",
+        "evidence": {
+          "filePath": "lib/illustration-review.ts",
+          "startLine": 94
+        }
+      }
+    ]
+  },
+  "plan": {
+    "question": "How do source context, parallel writing, rendering, and critique contribute to a completed slide?",
+    "visualApproach": "Read from the source and planner at the left to topic writers in the center and the slide at the upper right. Keep the direct prose route above the optional picture branch. Place the renderer inside an isolation boundary, then show images reaching the critic. Give the critic a separate source input, a repair return, and an omit outcome.",
+    "whyThisForm": "Separate routes make the important boundary visible: the critic controls the picture, not the prose. The renderer boundary distinguishes display validation from source-based critique.",
+    "encodings": "Boxes identify responsibilities. The outer renderer boundary means browser isolation. Solid arrows show content handoffs. The dashed return shows repair. The warning outcome means no picture, not no slide. Spacing is schematic.",
+    "motion": "This is a static map. Stable routes show the cooperation and optional picture outcome without implying execution timing.",
+    "prediction": "If the critic omits an illustration, the slide can still contain the writer's prose and resolved source hunks.",
+    "restingState": "The prose route, source input to critique, repair return, and no-picture outcome remain visible together."
+  },
+  "scenarios": [
+    {
+      "id": "review-path",
+      "title": "Prose survives picture rejection",
+      "input": "A parallel topic writer returns prose and an optional SVG illustration.",
+      "frames": [
+        {
+          "title": "Responsibilities and handoffs",
+          "caption": "The renderer supplies display evidence. The critic combines that evidence with source context and controls only the picture outcome.",
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 720 520\"><defs><marker id=\"arrow\" markerWidth=\"8\" markerHeight=\"8\" refX=\"7\" refY=\"4\" orient=\"auto\"><path d=\"M0 0 L8 4 L0 8\" fill=\"var(--muted)\"/></marker></defs><rect x=\"225\" y=\"190\" width=\"235\" height=\"125\" rx=\"12\" fill=\"none\" stroke=\"var(--line)\" stroke-width=\"2\"/><text x=\"240\" y=\"215\" font-size=\"20\" fill=\"var(--muted)\">Isolated browser</text><g data-relationship-id=\"source-plan\"><path d=\"M90 220 V125\" fill=\"none\" stroke=\"var(--muted)\" stroke-width=\"2\" marker-end=\"url(#arrow)\"/></g><g data-relationship-id=\"plan-writers\"><path d=\"M175 80 H245\" fill=\"none\" stroke=\"var(--muted)\" stroke-width=\"2\" marker-end=\"url(#arrow)\"/><text x=\"183\" y=\"62\" font-size=\"20\" fill=\"var(--ink)\">Plan</text></g><g data-relationship-id=\"source-writers\"><path d=\"M175 255 H205 V110 H245\" fill=\"none\" stroke=\"var(--muted)\" stroke-width=\"2\" marker-end=\"url(#arrow)\"/></g><g data-relationship-id=\"prose-slide\"><path d=\"M435 80 H520\" fill=\"none\" stroke=\"var(--accent)\" stroke-width=\"3\" marker-end=\"url(#arrow)\"/><text x=\"444\" y=\"62\" font-size=\"20\" fill=\"var(--ink)\">Prose</text></g><g data-relationship-id=\"svg-render\"><path d=\"M340 130 V235\" fill=\"none\" stroke=\"var(--muted)\" stroke-width=\"2\" marker-end=\"url(#arrow)\"/><text x=\"350\" y=\"166\" font-size=\"20\" fill=\"var(--ink)\">Optional SVG</text></g><g data-relationship-id=\"render-critic\"><path d=\"M435 265 H520\" fill=\"none\" stroke=\"var(--muted)\" stroke-width=\"2\" marker-end=\"url(#arrow)\"/><text x=\"442\" y=\"249\" font-size=\"20\" fill=\"var(--ink)\">Images</text></g><g data-relationship-id=\"source-critic\"><path d=\"M90 300 V380 H495 V285 H520\" fill=\"none\" stroke=\"var(--muted)\" stroke-width=\"2\" marker-end=\"url(#arrow)\"/><text x=\"210\" y=\"403\" font-size=\"20\" fill=\"var(--ink)\">Source for critique</text></g><g data-relationship-id=\"accept-slide\"><path d=\"M625 235 V130\" fill=\"none\" stroke=\"var(--success)\" stroke-width=\"2\" marker-end=\"url(#arrow)\"/><text x=\"535\" y=\"170\" font-size=\"20\" fill=\"var(--ink)\">Accepted</text><text x=\"535\" y=\"194\" font-size=\"20\" fill=\"var(--ink)\">SVG</text></g><g data-relationship-id=\"repair-render\"><path d=\"M560 305 V340 H340 V295\" fill=\"none\" stroke=\"var(--muted)\" stroke-width=\"2\" stroke-dasharray=\"6 5\" marker-end=\"url(#arrow)\"/><text x=\"365\" y=\"363\" font-size=\"20\" fill=\"var(--ink)\">Repair and render</text></g><g data-relationship-id=\"omit-picture\"><path d=\"M650 305 V430\" fill=\"none\" stroke=\"var(--warning)\" stroke-width=\"2\" marker-end=\"url(#arrow)\"/><text x=\"660\" y=\"375\" font-size=\"20\" fill=\"var(--ink)\">Omit</text></g><g data-entity-id=\"planner\"><rect x=\"10\" y=\"40\" width=\"165\" height=\"85\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"25\" y=\"72\" font-size=\"20\" fill=\"var(--ink)\">Planner</text><text x=\"25\" y=\"103\" font-size=\"20\" fill=\"var(--muted)\">Topics + arc</text></g><g data-entity-id=\"source\"><rect x=\"10\" y=\"220\" width=\"165\" height=\"80\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"25\" y=\"252\" font-size=\"20\" fill=\"var(--ink)\">Source context</text><text x=\"25\" y=\"280\" font-size=\"20\" fill=\"var(--muted)\">Hunks + files</text></g><g data-entity-id=\"writers\"><rect x=\"245\" y=\"40\" width=\"190\" height=\"90\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"260\" y=\"74\" font-size=\"20\" fill=\"var(--ink)\">Topic writers</text><text x=\"260\" y=\"106\" font-size=\"20\" fill=\"var(--muted)\">Parallel tasks</text></g><g data-entity-id=\"slide\"><rect x=\"520\" y=\"40\" width=\"180\" height=\"90\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"535\" y=\"74\" font-size=\"20\" fill=\"var(--ink)\">Completed slide</text><text x=\"535\" y=\"106\" font-size=\"20\" fill=\"var(--muted)\">Prose + hunks</text></g><g data-entity-id=\"renderer\"><rect x=\"245\" y=\"235\" width=\"190\" height=\"60\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"260\" y=\"272\" font-size=\"20\" fill=\"var(--ink)\">SVG renderer</text></g><g data-entity-id=\"critic\"><rect x=\"520\" y=\"235\" width=\"180\" height=\"70\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"535\" y=\"263\" font-size=\"20\" fill=\"var(--ink)\">Educational</text><text x=\"535\" y=\"289\" font-size=\"20\" fill=\"var(--ink)\">critic</text></g><g data-entity-id=\"no-picture\"><rect x=\"550\" y=\"430\" width=\"150\" height=\"60\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--warning)\" stroke-width=\"2\"/><text x=\"565\" y=\"467\" font-size=\"20\" fill=\"var(--ink)\">No picture</text></g></svg>",
+          "evidence": {
+            "filePath": "src/main.ts",
+            "startLine": 1995
+          }
+        }
+      ]
+    }
+  ]
+}
