@@ -36,12 +36,14 @@ export function useChangesComments({
   refresh,
   enabled = true,
   renderThreadOverride,
+  onOpenFeedback,
   onSubmitted,
   onOpenChanges,
 }: {
   brief?: ChangesBriefTarget;
   enabled?: boolean;
   renderThreadOverride?: (thread: Thread) => ReactNode;
+  onOpenFeedback?: (url: string, threadId: string) => void;
   onOpenChanges?: (filePath: string) => void;
   onSubmitted?: (url: string, event: string) => void;
   snapshot?: PrChanges;
@@ -113,37 +115,39 @@ export function useChangesComments({
     }
   };
   const renderThread = (thread: Thread) => renderThreadOverride ? renderThreadOverride(thread) : (
-    <GitHubReviewThread
-      key={thread.id}
-      thread={thread}
-      onAction={
-        account
-          ? async (action, body) => {
-              const next = await window.electronAPI.reviewThreadAction({
-                prUrl: url,
-                threadId: thread.id,
-                action,
-                body,
-              });
-              replaceThread(url, next);
-            }
-          : undefined
-      }
-      onCommentAction={
-        account
-          ? async (commentId, action, body) => {
-              const next = await window.electronAPI.reviewCommentAction({
-                prUrl: url,
-                threadId: thread.id,
-                commentId,
-                action,
-                body,
-              });
-              replaceThread(url, next);
-            }
-          : undefined
-      }
-    />
+    <ReviewDraftScope.Provider key={thread.id} value={`feedback:${account}`}>
+      <GitHubReviewThread
+        onOpenFeedback={onOpenFeedback ? () => onOpenFeedback(url, thread.id) : undefined}
+        thread={thread}
+        onAction={
+          account
+            ? async (action, body) => {
+                const next = await window.electronAPI.reviewThreadAction({
+                  prUrl: url,
+                  threadId: thread.id,
+                  action,
+                  body,
+                });
+                replaceThread(url, next);
+              }
+            : undefined
+        }
+        onCommentAction={
+          account
+            ? async (commentId, action, body) => {
+                const next = await window.electronAPI.reviewCommentAction({
+                  prUrl: url,
+                  threadId: thread.id,
+                  commentId,
+                  action,
+                  body,
+                });
+                replaceThread(url, next);
+              }
+            : undefined
+        }
+      />
+    </ReviewDraftScope.Provider>
   );
   const annotations: DiffLineAnnotation<Annotation>[] = [];
   const location = (line: number, side: Location['side']) => {

@@ -11,12 +11,16 @@ export function StackMemberDetails({
   member,
   facts,
   onChecks,
+  onFeedback,
+  feedbackCount,
   onRefresh,
   refreshDisabled,
 }: {
   member: ReviewMember;
   facts: ReturnType<typeof stackMemberStatus>;
   onChecks: () => void;
+  onFeedback: () => void;
+  feedbackCount?: number;
   onRefresh: () => void;
   refreshDisabled: boolean;
 }) {
@@ -83,9 +87,7 @@ export function StackMemberDetails({
                 )}
                 {blocker.key === 'checks' && <button onClick={onChecks}>Inspect required checks</button>}
                 {blocker.key === 'review' && (
-                  <a href={member.url} target="_blank" rel="noopener noreferrer">
-                    View reviews on GitHub <ExternalLink size={12} />
-                  </a>
+                  <button onClick={onFeedback}>Address feedback{feedbackCount ? ` · ${feedbackCount} unresolved` : ''}</button>
                 )}
                 {blocker.key === 'rules' && (
                   <a href={member.url} target="_blank" rel="noopener noreferrer">

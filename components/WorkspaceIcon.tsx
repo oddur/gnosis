@@ -1,4 +1,4 @@
-import { BookOpen, FileDiff, GitCommitHorizontal, LayoutList, ListChecks, NotebookPen } from 'lucide-react';
+import { BookOpen, FileDiff, GitCommitHorizontal, LayoutList, ListChecks, NotebookPen, MessagesSquare } from 'lucide-react';
 import type { WorkspaceTab } from '../lib/navigation-history';
 
 const sections = {
@@ -6,6 +6,7 @@ const sections = {
   changes: { label: 'Changes', icon: FileDiff },
   commits: { label: 'Commits', icon: GitCommitHorizontal },
   checks: { label: 'Checks', icon: ListChecks },
+  feedback: { label: 'Feedback', icon: MessagesSquare },
   explanation: { label: 'Explanation', icon: BookOpen },
   brief: { label: 'Local notes', icon: NotebookPen },
 } satisfies Record<WorkspaceTab, { label: string; icon: typeof BookOpen }>;

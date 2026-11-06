@@ -1,3 +1,6 @@
+import type { FeedbackRequest, ResponseIntent } from '../../lib/feedback';
+import { ResponseFilterStatus } from '../../components/ResponseFilterStatus';
+import { needsResponse } from '../../lib/response-needed';
 import { LoadingState, LoadingIndicator } from '../../components/LoadingState';
 import { SubjectIcon } from '../../components/SubjectIcon';
 import { useSettingsShortcut } from '../../lib/use-settings-shortcut';
@@ -67,6 +70,7 @@ import {
   ChevronDown,
   ChevronRight,
   GitPullRequest,
+  MessageSquare,
   Layers,
   Loader2,
   RefreshCw,
@@ -125,6 +129,8 @@ const labels = {
 };
 
 export function HomePage({ navigationRestoration, onNavigationChange, onReviewOriginChange, onReviewReady, prefillPrUrl, initialSubjectId, commandDestination, explanationDestination, onShowActivity }: Props) {
+  const [feedbackRequest, setFeedbackRequest] = useState<FeedbackRequest>();
+  const [responseUnavailable, setResponseUnavailable] = useState(0);
   const [overviewTab,setOverviewTab] = useState<WorkspaceTab>('summary');
   const [reviewRequest, setReviewRequest] = useState<PrReviewRequest>();
   const commandCenter = useCommandCenter();
@@ -213,6 +219,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
   };
   const section = savedView
     ? 'saved'
+    : filters.involvement === 'response' ? 'response'
     : filters.starredOnly
       ? 'starred'
       : filters.attention !== 'all'
@@ -297,6 +304,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
   const [summaryErrors, setSummaryErrors] = useState<Record<string, string>>({});
   const [openingPr, setOpeningPr] = useState(false);
   const [openedItem, setOpenedItem] = useState<QueueItem | null>(null);
+  useEffect(() => { if (!openedItem) setFeedbackRequest(undefined); }, [openedItem?.subject.id]);
   const [readBusy, setReadBusy] = useState(false);
   const readAccount = useRef(auth?.login);
   readAccount.current = auth?.login;
@@ -761,6 +769,12 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
     void refresh(true);
   };
   const queueItems = filters.starredOnly ? (queue.starredItems ?? []) : queue.items;
+  const responseCandidates = filters.involvement === 'response' ? queueItems.flatMap(item => item.subject.members
+    .filter(member => member.state === 'open' && !member.merged && matchesQueueFilters({ ...item, subject: { ...item.subject, members: [member] } }, { ...filters, involvement: 'authored' }, Date.now(), auth?.login))
+    .map(member => ({ member, response: item.responses?.[member.url] }))) : [];
+  const responseMembers = responseCandidates.map(candidate => candidate.member);
+  const responseIncomplete = responseCandidates.filter(candidate => !candidate.response?.complete).length;
+  const refreshResponseQueue = useCallback(() => { void refresh(false, true); }, [refresh]);
   const items = queueItems.filter((item) => matchesQueueFilters(item,
     filters.readStatus !== 'all' && openedItem?.subject.id === item.subject.id ? { ...filters, readStatus: 'all' } : filters,
     Date.now(), auth?.login));
@@ -816,7 +830,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
   }, [auth?.authenticated, auth?.login, inspectionKey]);
 
   const originName = savedView ? 'Saved reviews' : activeQueueView?.name ??
-    ({ saved: 'Saved reviews', all: 'Review queue', starred: 'Starred', requested: 'Review requests', updated: 'Updated PRs', stacks: 'Stacks', other: 'Other changes' }[section]);
+    ({ saved: 'Saved reviews', all: 'Review queue', starred: 'Starred', requested: 'Review requests', updated: 'Updated PRs', stacks: 'Stacks', other: 'Other changes', response: 'Needs my response' }[section]);
   const originSignature = JSON.stringify({ name: originName, reviews: savedView ? saved.map(entry => ({ id: entry.id, title: entry.prTitle })) : [] });
   useEffect(() => { onReviewOriginChange?.(JSON.parse(originSignature) as { name: string; reviews: { id: string; title: string }[] }); }, [originSignature, onReviewOriginChange]);
   const summaryChoices = savedView
@@ -919,7 +933,11 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       setError('Could not save your getting-started preference. Try dismissing it again.');
     }
   };
-  const activate = (item: QueueItem) => { setError(''); setOpenedItem(item); };
+  const openResponse = (item: QueueItem, intent: ResponseIntent = 'response') => {
+    setError(''); setFeedbackRequest({ id: crypto.randomUUID(), subjectId: item.subject.id, intent });
+    setOverviewTab('feedback'); setOpenedItem(item);
+  };
+  const activate = (item: QueueItem) => { if (filters.involvement === 'response') { const member = item.subject.members.find(member => matchingStackMembers(item, filters, auth?.login).includes(member.url) && needsResponse(item.responses?.[member.url])); openResponse(member ? focusStackPr(item, member) : item); } else { setError(''); setFeedbackRequest(undefined); setOpenedItem(item); } };
   const openPrUrl = async () => {
     setError('');
     setOpeningPr(true);
@@ -1005,6 +1023,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       setSavedView(target.section === 'saved');
       if (target.section !== 'saved' && target.section !== 'muted')
         updateFilters({
+          involvement: target.section === 'response' ? 'response' : filters.involvement === 'response' ? 'all' : filters.involvement,
           starredOnly: target.section === 'starred',
           attention: target.section === 'updated' || target.section === 'requested' ? target.section : 'all',
           kind: target.section === 'stacks' ? 'stack' : 'all',
@@ -1219,7 +1238,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
           </button>}
           <div className="queue-row-content"
             onClick={event=>{if((event.target as HTMLElement).closest('a,button'))return;selectQueueEntry(s.id,event);}}
-            onDoubleClick={event=>{if(event.shiftKey||event.metaKey||event.ctrlKey||(event.target as HTMLElement).closest('a,button'))return;setError('');setOpenedItem(item);}}>
+            onDoubleClick={event=>{if(event.shiftKey||event.metaKey||event.ctrlKey||(event.target as HTMLElement).closest('a,button'))return;activate(item);}}>
           <div className="queue-row-heading">
           <button
             className="queue-row-main"
@@ -1255,8 +1274,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
             onClick={event => selectQueueEntry(s.id, event)}
             onDoubleClick={event => {
               if (event.shiftKey || event.metaKey || event.ctrlKey) return;
-              setError('');
-              setOpenedItem(item);
+              activate(item);
             }}
           >
             <span className="queue-title-line">
@@ -1294,6 +1312,15 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
           </div>
             <QueueMetadata onChecks={() => { setOpenedItem(item); setOverviewTab('checks'); }} subject={s} account={auth?.login ?? null} />
             {s.kind === 'stack' && matchingStackMembers(item, filters, auth?.login).length < s.members.length && <span className="queue-stack-matches">{matchingStackMembers(item, filters, auth?.login).length} of {s.members.length} PRs match</span>}
+            {filters.involvement === 'response' && <div className="queue-response-reasons">{s.members.flatMap(member => {
+              const response = item.responses?.[member.url];
+              if (!response || !needsResponse(response) || !matchingStackMembers(item, filters, auth?.login).includes(member.url)) return [];
+              return [<span key={member.url} className="queue-response-pr">
+                {s.kind === 'stack' && <span className="queue-response-source"><GitPullRequest size={12} aria-hidden="true" />#{member.number}</span>}
+                {response.changesRequested && <button onClick={() => openResponse(focusStackPr(item, member), 'response-review')} aria-label={`Read changes requested on PR #${member.number}: ${member.title}`}><MessageSquare size={14} aria-hidden="true" />Changes requested<ArrowRight size={12} aria-hidden="true" /></button>}
+                {response.unresolvedThreads > 0 && <button onClick={() => openResponse(focusStackPr(item, member), 'response-threads')} aria-label={`Address ${response.unresolvedThreads} unresolved threads on PR #${member.number}: ${member.title}`}>{response.unresolvedThreads} unresolved {response.unresolvedThreads === 1 ? 'thread' : 'threads'}<ArrowRight size={12} aria-hidden="true" /></button>}
+              </span>];
+            })}</div>}
             {item.briefing?.summary && <span className="queue-summary">{item.briefing.summary}</span>}
           </div>
         </div>}</EntryActions>
@@ -1303,7 +1330,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
               <PrEntryActions key={m.url} {...entryActions([m])} onBeforeOpen={selection.clear}>{actions => <div className={`queue-member ${queue.readStates?.[m.url]?.unread.length ? 'is-unread' : ''}`}>
                 <PrStateIcon member={m} />
                 <div className="queue-member-content">
-                  <button className="queue-member-title" onClick={event => { if (event.shiftKey || event.metaKey || event.ctrlKey) { selectQueueEntry(s.id, event); return; } setSelected(s.id); setOpenedItem(focusStackPr(item, m)); }}>
+                  <button className="queue-member-title" onClick={event => { if (event.shiftKey || event.metaKey || event.ctrlKey) { selectQueueEntry(s.id, event); return; } setSelected(s.id); activate(focusStackPr(item, m)); }}>
                     <span className="truncate">{m.title}</span>
                     <PrLabels members={[m]} />
                   </button>
@@ -1353,7 +1380,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
             e.preventDefault();
             setOpenedItem(null);
             setSavedView(false);
-            updateFilters({ attention: 'all', kind: 'all' });
+            updateFilters({ attention: 'all', kind: 'all', involvement: filters.involvement === 'response' ? 'all' : filters.involvement });
           }}
         >
           Gnosis
@@ -1396,6 +1423,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
         <PrSummary
         key={summaryItem.subject.id}
         item={summaryItem}
+        feedbackRequest={feedbackRequest?.subjectId === summaryItem.subject.id ? feedbackRequest : undefined}
         matchingUrls={matchingStackMembers(summaryItem, filters, auth?.login)}
         onScopeChange={selectScope}
         onRenameStack={async name => {
@@ -1470,6 +1498,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
             ['all', 'Review queue', Inbox],
             ['starred', 'Starred', Star],
             ['requested', 'Review requests', GitPullRequest],
+            ['response', 'Needs my response', MessageSquare],
             ['updated', 'Updated PRs', RefreshCw],
             ['stacks', 'Stacks', Layers],
             ['saved', 'Saved reviews', Clock],
@@ -1497,7 +1526,8 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                   if (id !== 'saved') {
                     const patch: Partial<QueueFilters> = {
                       starredOnly: id === 'starred',
-                      attention: id === 'stacks' || id === 'starred' ? 'all' : (id as QueueFilters['attention']),
+                      attention: id === 'stacks' || id === 'starred' || id === 'response' ? 'all' : (id as QueueFilters['attention']),
+                      involvement: id === 'response' ? 'response' : filters.involvement === 'response' ? 'all' : filters.involvement,
                       kind: id === 'stacks' ? 'stack' : 'all',
                     };
                     if (activeQueueView)
@@ -1513,6 +1543,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                   {id === 'saved'
                     ? visibleHistory.length
                     : id === 'starred' ? queue.starredItems?.length ?? 0
+                    : id === 'response' ? queue.items.filter(item => matchesQueueFilters(item, { ...DEFAULT_QUEUE_FILTERS, involvement: 'response' }, Date.now(), auth?.login)).length
                     : id === 'all'
                       ? queue.items.length
                       : id === 'stacks'
@@ -1566,12 +1597,13 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                       ? 'Review queue'
                       : section === 'stacks'
                         ? 'Stacks'
-                        : labels[section]}
+                        : section === 'response' ? 'Needs my response' : labels[section]}
               </h1>
               {section !== 'all' && (
                 <p>
                   {section === 'saved'
                     ? 'Saved AI explanations, ready to resume.'
+                    : section === 'response' ? 'Your PRs with changes requested or unresolved feedback from others.'
                     : section === 'starred' ? 'Your starred PRs, saved on this computer. Stacks stay together.'
                     : section === 'stacks'
                       ? 'PRs that build on each other.'
@@ -1756,6 +1788,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
               <button onClick={resetFilters}>Clear filters</button>
             </div>
           )}
+          {section !== 'saved' && filters.involvement === 'response' && auth?.login && <ResponseFilterStatus account={auth.login} members={responseMembers} incomplete={responseIncomplete} onUpdated={refreshResponseQueue} onUnavailableChange={setResponseUnavailable} />}
           {section !== 'saved' && (
             <p className="sr-only" id="queue-keyboard-help">
                 <kbd>↑</kbd> <kbd>↓</kbd> or <kbd>j</kbd> <kbd>k</kbd> select · <kbd>Enter</kbd> open · <kbd>/</kbd>{' '}
@@ -1837,7 +1870,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                     </div>}</EntryActions>
                   ))
                 ) : (
-                  <div className="queue-empty">
+                  <div className="queue-empty" role={filters.involvement === 'response' ? 'status' : undefined}>
                     <Clock size={24} />
                     <h2>{query ? 'No matching saved reviews' : 'No saved reviews yet'}</h2>
                     <p>
@@ -1864,12 +1897,12 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                     renderRow={row}
                   />
               ) : gettingStartedVisible && !queueFailed ? null : (
-                <div className="queue-empty">
+                <div className="queue-empty" role={filters.involvement === 'response' ? 'status' : undefined}>
                   <Inbox size={24} />
                   <h2>
                     {initializationFailed ? 'Gnosis could not finish starting' : section === 'starred' && !queue.starredPrs?.length ? 'No starred PRs yet' : queueFailed
                       ? 'Queue could not be loaded'
-                      : filterCount > 0
+                      : filters.involvement === 'response' ? (responseIncomplete > 0 || responseUnavailable > 0 ? 'Feedback is not fully checked' : 'No PRs need your response in this view') : filterCount > 0
                         ? 'No PRs match these filters'
                         : !auth?.authenticated
                           ? 'Your GitHub queue is not connected'
@@ -1880,7 +1913,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                   <p>
                     {initializationFailed ? 'Your account and settings could not be read. Retry loading them to restore your review queue.' : section === 'starred' && !queue.starredPrs?.length ? 'Star a PR from the review queue or its overview to keep it here and pin it above other PRs.' : queueFailed
                       ? 'Try loading the queue again. You can still open a PR by URL or a saved review.'
-                      : filterCount > 0
+                      : filters.involvement === 'response' ? (responseIncomplete > 0 || responseUnavailable > 0 ? 'Showing known matches. More may appear when the remaining PRs are checked.' : 'The checked PRs have no changes requested or unresolved feedback from others.') : filterCount > 0
                         ? 'Try fewer filters or a wider date range. One open PR must match every filter; its whole stack stays visible.'
                         : !auth?.authenticated
                           ? prefs?.guestMode
@@ -1908,7 +1941,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                   >
                     {initializationFailed ? 'Retry loading account and settings' : queueFailed
                       ? 'Retry queue'
-                      : filterCount > 0
+                      : filters.involvement === 'response' ? 'Back to review queue' : filterCount > 0
                         ? 'Clear filters'
                         : section !== 'all'
                           ? 'Show review queue'

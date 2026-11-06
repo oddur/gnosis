@@ -1,3 +1,5 @@
+import { useEvidenceDiscussions } from '../lib/use-evidence-discussions';
+
 import { LoadingIndicator } from './LoadingState';
 import { stackDependencyOrder } from '../lib/stack-overview';
 import { BulkCheckRerun } from './BulkCheckRerun';
@@ -32,6 +34,7 @@ export function StackOverview({
   matchingUrls,
   onOpen,
   onChecks,
+  onFeedback,
 }: {
   now: number;
   account: string | null;
@@ -46,8 +49,10 @@ export function StackOverview({
   matchingUrls?: string[];
   onOpen: (member: ReviewMember) => void;
   onChecks: (member: ReviewMember, id?: string) => void;
+  onFeedback: (member: ReviewMember) => void;
 }) {
   const { subject } = item;
+  const discussions = useEvidenceDiscussions(subject, account, false);
   const linear = stackDependencyOrder(subject).linear;
   const plan = stackMergePlan(subject, signals, checks, now);
   const progress = useFileProgress();
@@ -96,7 +101,7 @@ export function StackOverview({
     );
   return (
     <section className="stack-overview" aria-label="Stack overview">
-      <StackMergePlan key={subject.id} plan={plan} onOpen={onOpen} account={account} onChanged={onRefresh} />
+      <StackMergePlan key={subject.id} plan={plan} onOpen={onOpen} account={account} onChanged={onRefresh} refreshing={checking || refreshBusy} />
       <div className="stack-overview-heading">
         <div>
           <h2>Pull requests <span className="stack-member-count">{subject.members.length}</span></h2>
@@ -205,6 +210,8 @@ export function StackOverview({
             onChecks={() =>
               onChecks(member, factsFor(member).required[0]?.id ?? factsFor(member).requiredRunning[0]?.id)
             }
+            onFeedback={() => onFeedback(member)}
+            feedbackCount={discussions.values[member.url]?.threads.filter(thread => !thread.isResolved).length}
             onRefresh={onRefresh}
             refreshDisabled={refreshBusy}
           />

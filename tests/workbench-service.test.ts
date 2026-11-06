@@ -1959,3 +1959,34 @@ test('a cross-repository stack spends one overall attempt and one in each reposi
     assert.equal(result.briefingBudget?.repositories['owner/second'].used, 1);
   } finally { s.cleanup(); }
 });
+
+test('response filter, saved counts, and automatic briefings share cached feedback evidence', async () => {
+  const s = setup(async () => '{"summary":"No automatic job should start."}', false);
+  s.pr.user.login = 'reviewer';
+  let discussion: import('../lib/review-threads').GitHubReviewThreads | undefined;
+  let reads = 0;
+  const service = createWorkbenchService({ ...s.deps, cachedDiscussion: () => { reads++; return discussion; } });
+  try {
+    await service.queue();
+    const { DEFAULT_QUEUE_FILTERS, matchesQueueFilters } = await import('../lib/queue-filters');
+    const filter = { ...DEFAULT_QUEUE_FILTERS, involvement: 'response' as const };
+    service.setFilters(filter);
+    const saved = service.viewAction({ type: 'create', name: 'Needs my response' });
+    const viewId = saved.savedViews!.activeId!;
+    assert.equal(saved.savedViews!.counts[viewId], 0);
+    const initial = service.snapshot().items[0];
+    assert.equal(initial.responses?.[s.pr.html_url]?.complete, false);
+    assert.equal(matchesQueueFilters(initial, filter, Date.now(), 'reviewer'), false);
+    discussion = { headSha: 'head', baseSha: 'base', threads: [], feedback: {
+      comments: [], reviews: [{ id: 'r', body: '', url: s.pr.html_url, createdAt: '2026-11-06', submittedAt: '2026-11-06', state: 'CHANGES_REQUESTED', author: { login: 'peer', avatarUrl: '' } }],
+      requestedReviewers: [], state: 'OPEN', viewerCanUpdate: true,
+    } };
+    assert.equal(service.snapshot().savedViews!.counts[viewId], 1);
+    const changed = service.snapshot().items[0];
+    assert.equal(matchesQueueFilters(changed, filter, Date.now(), 'reviewer'), true);
+    discussion.feedback!.reviews[0].state = 'APPROVED';
+    assert.equal(matchesQueueFilters(service.snapshot().items[0], filter, Date.now(), 'reviewer'), false);
+    assert.equal(service.snapshot().savedViews!.counts[viewId], 0);
+    assert.ok(reads >= 3, 'Snapshots consult the shared cache; no separate response store');
+  } finally { s.cleanup(); }
+});

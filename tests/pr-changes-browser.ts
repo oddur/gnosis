@@ -168,7 +168,15 @@ void app.whenReady().then(async () => {
       `window.treeCount=path=>window.deepAll('[role=treeitem]').find(e=>e.getAttribute('data-item-path')===path)?.querySelector('[title*="GitHub"]')?.title;void 0;`
     );
     await wait("window.treeCount('src/worker.ts')?.includes('1 GitHub comment,')");
-    assert.match(await js<string>("window.treeCount('src/new.ts')"), /0 GitHub comments/);
+    assert.equal(await js("window.treeCount('src/new.ts')"), undefined);
+    assert.equal(await js(`(()=>{
+      const part=window.deepAll('[role=treeitem]').find(e=>e.getAttribute('data-item-path')==='src/new.ts')?.querySelector('[data-item-section="decoration"] > span > span:last-child');
+      return part && getComputedStyle(part,'::before').content;
+    })()`), 'none', 'Zero-comment files must not put the comment icon on their diff stats');
+    assert.equal(await js(`(()=>{
+      const part=window.deepAll('[role=treeitem]').find(e=>e.getAttribute('data-item-path')==='src/worker.ts')?.querySelector('[data-item-section="decoration"] > span > span:last-child');
+      return part && getComputedStyle(part,'::before').content;
+    })()`), '""', 'Files with comments retain their icon');
     // All writes below use local mocks; never publish fixture feedback to GitHub.
     await js(`(async()=>{window.commentWrites=[];window.reviewWrites=[];window.failPost=false;window.discussion=await window.electronAPI.getReviewThreads();
       window.discussion.threads[0].comments[0].viewerCanUpdate=true;window.discussion.threads[0].comments[0].viewerCanDelete=true;

@@ -3,6 +3,9 @@ import { sourceForPath } from './workbench';
 import { prepareReviewHunk } from './review-diff';
 
 export interface GitHubReviewComment {
+  updatedAt?: string;
+  diffHunk?: string;
+  pullRequestReview?: { id: string };
   viewerCanUpdate?: boolean;
   viewerCanDelete?: boolean;
   id: string;
@@ -23,7 +26,22 @@ export interface GitHubReviewThread {
   viewerCanUnresolve: boolean;
   comments: GitHubReviewComment[];
 }
+export interface FeedbackReview extends GitHubReviewComment {
+  state: string;
+  submittedAt: string | null;
+}
+export interface PrFeedback {
+  comments: GitHubReviewComment[];
+  reviews: FeedbackReview[];
+  requestedReviewers: string[];
+  viewerCanUpdate: boolean;
+  state: string;
+}
+export type FeedbackAction =
+  | { prUrl: string; action: 'reply'; sourceId: string; body: string }
+  | { prUrl: string; action: 'request-review'; reviewer: string };
 export interface GitHubReviewThreads {
+  feedback?: PrFeedback;
   checkedAt?: number;
   headSha: string;
   baseSha: string;

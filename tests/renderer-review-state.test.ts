@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createAppDataStore } from '../src/app-data-store';
-import { initializeReviewState } from '../lib/renderer-review-state';
+import { initializeReviewState, readReviewState, writeReviewState } from '../lib/renderer-review-state';
 import { readReviewDrafts, updateReviewDrafts, type ChangesReviewDraft } from '../lib/changes-review-drafts';
 import { markFileViewed, markFilesViewed, isFileViewed } from '../lib/file-view-progress';
 import type { ReviewStateWrite, FileProgressPatch } from '../lib/review-state';
@@ -90,7 +90,11 @@ void test('renderer migration uses real SQLite, serializes concurrent drafts and
       readReviewDrafts('alice', url).map((d) => d.id),
       ['first', 'second', 'third']
     );
+    await writeReviewState('gnosis-feedback-options:v1:alice', false);
+    assert.equal(readReviewState('gnosis-feedback-options:v1:alice'), false);
     failed = true;
+    await assert.rejects(writeReviewState('gnosis-feedback-options:v1:alice', true), /Disk full/);
+    assert.equal(readReviewState('gnosis-feedback-options:v1:alice'), false);
     await assert.rejects(
       updateReviewDrafts('alice', url, () => []),
       /Disk full/
@@ -112,6 +116,7 @@ void test('renderer migration uses real SQLite, serializes concurrent drafts and
     store = createAppDataStore();
     await store.open(directory);
     const restored = await store.loadReviewState({});
+    assert.equal(restored['gnosis-feedback-options:v1:alice'], false, 'Feedback filter survives reopening SQLite');
     assert.equal((restored[key] as unknown[]).length, 3);
     assert.equal((restored['gnosis-file-progress:v1'] as FileProgressPatch).marks.content, false);
     assert.ok(keys.every(key => (restored['gnosis-file-progress:v1'] as FileProgressPatch).marks[key]));

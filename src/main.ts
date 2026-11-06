@@ -2332,6 +2332,7 @@ const workbench = createWorkbenchService({
   changed: () => { notifyLocalChange('workbench-changed'); notifyLocalChange('activity-changed'); },
   storage: appData,
   signals: (client, requests) => getQueueSignals(client, requests),
+  cachedDiscussion: url => { const token = getResolvedToken(); return token ? reviewThreads.cached(getGitHubClient(token), url) : undefined; },
   cachedSignals: requests => { const token = getResolvedToken(); return token ? cachedQueueSignals(getGitHubClient(token), requests) : []; },
   activities,
   directory: () => app.getPath('userData'),
@@ -2621,6 +2622,13 @@ function discussionClient() {
   if (!token) throw new Error('Sign in to GitHub to load review comments.');
   return getGitHubClient(token);
 }
+ipcMain.handle('cached-review-threads', (_event, prUrl: string) => reviewThreads.cached(discussionClient(), prUrl));
+handleInteractive('feedback-action', async (_event, req: import('../lib/review-threads').FeedbackAction) => {
+  const account = cachedLogin;
+  await reviewThreads.feedbackAction(discussionClient(), req);
+  if (account && req.action === 'reply') workbench.noteOwnReview(account, req.prUrl, 1);
+  refreshAfterGitHubWrite([req.prUrl], ['discussion', 'signals']);
+});
 handleInteractive('get-review-threads', (_event, prUrl: string, refresh: boolean) =>
   reviewThreads.list(discussionClient(), prUrl, refresh));
 handleInteractive('review-thread-action', async (_event, req: ReviewThreadAction) => {
@@ -2866,6 +2874,7 @@ function publishGitHubUpdates(updates: GitHubSyncUpdate[]) {
       if (workbench.observeReadSignals(cachedLogin, [update.value])) notifyLocalChange('workbench-changed');
     }
   }
+  if (updates.some(update => update.kind === 'signals' || update.kind === 'discussion')) notifyLocalChange('workbench-changed');
   sendSyncUpdates(updates);
 }
 const githubSync = createGitHubSyncService({

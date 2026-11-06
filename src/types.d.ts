@@ -162,6 +162,8 @@ declare global {
       getPrMetadata: (prUrl: string) => Promise<PrMetadata>;
       loadReviewImages: (reviewId: string, filePath: string, downloadLfs?: boolean) => Promise<import('../lib/review-images').ReviewImageComparison>;
       loadPrImage: (url: string) => Promise<string>;
+      getCachedReviewThreads: (prUrl: string) => Promise<import('../lib/review-threads').GitHubReviewThreads | undefined>;
+      feedbackAction: (req: import('../lib/review-threads').FeedbackAction) => Promise<void>;
       getReviewThreads: (prUrl: string, refresh?: boolean) => Promise<GitHubReviewThreads>;
       createReviewComment: (req: CreateReviewCommentRequest) => Promise<void>;
       reviewCommentAction: (req: ReviewCommentAction) => Promise<GitHubReviewThread>;

@@ -1,3 +1,5 @@
+import { feedbackCodeContext, type FeedbackRequest, type ResponseIntent } from '../lib/feedback';
+import { PrFeedbackView } from './PrFeedbackView';
 import { WorkspaceIcon, workspaceTabs } from './WorkspaceIcon';
 import { SubjectIcon } from './SubjectIcon';
 import { stackMergePlan } from '../lib/stack-merge-plan';
@@ -58,6 +60,7 @@ export interface PrReadingPosition {
 
 function PrSummaryContent({
   item,
+  feedbackRequest,
   starredUrls,
   starBusy,
   starError,
@@ -94,6 +97,7 @@ function PrSummaryContent({
   shortcutsEnabled = true,
 }: {
   item: QueueItem;
+  feedbackRequest?: FeedbackRequest;
   starredUrls: ReadonlySet<string>;
   starBusy: boolean;
   muteBusy: boolean;
@@ -143,6 +147,10 @@ function PrSummaryContent({
   const [name, setName] = useState(item.subject.name ?? '');
   const [nameBusy, setNameBusy] = useState(false);
   const [nameError, setNameError] = useState('');
+  const [feedbackPr, setFeedbackPr] = useState<string>();
+  const [feedbackThread, setFeedbackThread] = useState<string>();
+  const [feedbackIntent, setFeedbackIntent] = useState<'address' | 'request' | ResponseIntent | undefined>(feedbackRequest?.intent);
+  useEffect(() => { if (feedbackRequest) { setFeedbackPr(undefined); setFeedbackThread(undefined); setFeedbackIntent(feedbackRequest.intent); } }, [feedbackRequest?.id]);
   const [initialFile, setInitialFile] = useState<ChangesInitialFile>();
   // A jump happens once. Returning to Changes later restores where the reviewer left off.
   useEffect(() => {
@@ -303,7 +311,7 @@ function PrSummaryContent({
   useReviewBreadcrumbs('summary', []);
   const changeScope = (id: string) => { remember(); onScopeChange?.(id); };
   const evidence = (
-    <ReviewEvidence
+    <ReviewEvidence onFeedback={url => { setFeedbackPr(url); onTabChange('feedback'); }}
       compact={!stacked}
       key={`${account}:${item.subject.id}`}
       subject={item.subject}
@@ -432,21 +440,30 @@ function PrSummaryContent({
           <Tabs.Trigger value="changes" data-tour="changes"><WorkspaceIcon tab="changes" />Changes</Tabs.Trigger>
           <Tabs.Trigger value="commits"><WorkspaceIcon tab="commits" />Commits</Tabs.Trigger>
           <Tabs.Trigger value="checks"><WorkspaceIcon tab="checks" />Checks{checkTotals.attention > 0 && <span className="checks-tab-count">{checkTotals.attention}</span>}</Tabs.Trigger>
+          <Tabs.Trigger value="feedback"><WorkspaceIcon tab="feedback" />Feedback</Tabs.Trigger>
           <Tabs.Trigger value="explanation" data-tour="explanation"><WorkspaceIcon tab="explanation" />Explanation</Tabs.Trigger>
           <Tabs.Trigger value="brief"><WorkspaceIcon tab="brief" />Local notes{brief.comments.length > 0 && <span className="brief-tab-count">{brief.comments.length}</span>}</Tabs.Trigger>
         </Tabs.List>
 
         </div>
         <Tabs.Content value="changes" className="pr-changes-tab">
-          {preferences && (stacked ? <StackChangesView key={`${account}:${item.subject.id}`} subject={item.subject} preferences={preferences} account={account ?? ''} initialFile={initialFile} onOpenPr={changeScope} onOpenBrief={() => onTabChange('brief')} /> :
+          {preferences && (stacked ? <StackChangesView key={`${account}:${item.subject.id}`} subject={item.subject} preferences={preferences} account={account ?? ''} initialFile={initialFile} onOpenFeedback={(url, threadId) => { setFeedbackPr(url); setFeedbackThread(threadId); setFeedbackIntent('address'); onTabChange('feedback'); }} onOpenPr={changeScope} onOpenBrief={() => onTabChange('brief')} /> :
             <PrChangesView
               key={item.subject.id}
               subject={item.subject}
               preferences={preferences}
+              account={account ?? ''}
+              onOpenFeedback={(url, threadId) => { setFeedbackPr(url); setFeedbackThread(threadId); setFeedbackIntent('address'); onTabChange('feedback'); }}
               initialFile={initialFile}
               onOpenBrief={() => onTabChange('brief')}
             />
           )}
+        </Tabs.Content>
+        <Tabs.Content value="feedback" className="pr-changes-tab">
+          <PrFeedbackView key={`${account}:${item.subject.id}:${feedbackPr ?? ''}:${feedbackRequest?.id ?? ''}`} subject={item.subject} account={account} initialPrUrl={feedbackPr} initialThreadId={feedbackThread} preferences={preferences ?? undefined} intent={feedbackIntent} onIntentHandled={() => { setFeedbackIntent(undefined); setFeedbackThread(undefined); }} onSource={item => {
+            if (!item.thread) return;
+            setInitialFile({ url: item.member.url, headSha: item.member.headSha, path: item.thread.path, line: feedbackCodeContext(item.thread, item.headSha ? { headSha: item.headSha, baseSha: item.baseSha ?? '' } : undefined, item.member) === 'current' ? item.thread.line ?? undefined : undefined, side: item.thread.diffSide === 'LEFT' ? 'before' : 'after' }); onTabChange('changes');
+          }} />
         </Tabs.Content>
         <Tabs.Content value="brief" className="pr-changes-tab">
           <AgentBriefView key={item.subject.id} subject={item.subject} parentStack={parentStack} onOpenScope={onScopeChange ? changeScope : undefined} onOpenComment={openBriefComment} onOpenChanges={() => onTabChange('changes')} />
@@ -498,7 +515,7 @@ function PrSummaryContent({
             {stacked ? <div className="stack-summary-layout">
               <div className="stack-summary-main">
                 <StackOverview account={account} now={statusNow} checking={!signalsLoaded && !!account} onRefresh={onRetryStatus} refreshBusy={statusRefreshing || !account} item={item} signals={signals} checks={checks.values} checkErrors={checks.errors} checksBusy={checks.busy} matchingUrls={matchingUrls}
-                  onOpen={member => changeScope(member.url)} onChecks={(member, id) => { setCheckFocus({ url: member.url, id, nonce: Date.now() }); changeScope(member.url); onTabChange('checks'); }} />
+                  onFeedback={member => { setFeedbackPr(member.url); setFeedbackIntent('address'); onTabChange('feedback'); }} onOpen={member => changeScope(member.url)} onChecks={(member, id) => { setCheckFocus({ url: member.url, id, nonce: Date.now() }); changeScope(member.url); onTabChange('checks'); }} />
                 {evidence}
                 <StackBriefing briefing={item.briefing} actions={generationActions?.(item.subject.members)} onActivity={onShowActivity} onSetup={onGitHubAuth} connected={!!account} />
               </div>

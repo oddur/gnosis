@@ -93,7 +93,10 @@ export function PrChangesView({
   preferredPath,
   onActiveFile,
   onOpenBrief,
+  onOpenFeedback,
 }: {
+  account?: string;
+  onOpenFeedback?: (url?: string, threadId?: string) => void;
   subject: ReviewSubject;
   preferences: Preferences;
   commit?: CommitWorkspace;
@@ -507,10 +510,11 @@ export function PrChangesView({
             'Commits & files'
           ) : (
             <>
-              Files <span>{entries.length}</span>
+              File tree <span>{entries.length}</span>
             </>
           )}
         </Button>
+        {!commit && onOpenFeedback && <Button variant="outline" size="sm" onClick={() => onOpenFeedback()}>Address feedback</Button>}
         {(!commit || commit.snapshot) && (
           <span className="changes-progress">
             {entries.filter((e) => progress.isFileViewed(viewKey(e))).length} / {entries.length} viewed
@@ -545,7 +549,7 @@ export function PrChangesView({
           onChange={(diffAppearance) => savePreferences({ diffAppearance })}
         />
         {!commit && !combined && (
-          <Button variant="ghost" size="sm" disabled={loading} onClick={() => void load(true)}>
+          <Button variant="ghost" size="sm" disabled={loading} aria-label="Update changes" title="Update changes" onClick={() => void load(true)}>
             <RefreshCw size={14} className={loading ? 'motion-safe:animate-spin' : undefined} />
             {loading ? 'Loading…' : 'Update changes'}
           </Button>
@@ -743,6 +747,7 @@ export function PrChangesView({
                       />
                     }
                     discussion={discussion}
+                    onOpenFeedback={onOpenFeedback}
                     onOpenCurrentFile={commit?.onOpenCurrentFile}
                     onOpenSource={combined?.onOpenSource}
                     onViewedNext={next}

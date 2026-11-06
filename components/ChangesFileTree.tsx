@@ -12,8 +12,8 @@ const decorationCSS = `
   [data-item-section="decoration"] > span { display: inline-flex; align-items: center; gap: 4px; }
 `;
 const commentDecorationCSS = `
-  [data-item-section="decoration"] > span > span:last-child { display: inline-flex; align-items: center; gap: 4px; margin-inline-start: 4px; font-variant-numeric: tabular-nums; }
-  [data-item-section="decoration"] > span > span:last-child::before { content: ""; width: 12px; height: 12px; flex-shrink: 0; background: currentColor; mask: ${commentIcon} center / contain no-repeat; }
+  [data-item-section="decoration"] > span[title*="comment" i] > span:last-child { display: inline-flex; align-items: center; gap: 4px; margin-inline-start: 4px; font-variant-numeric: tabular-nums; }
+  [data-item-section="decoration"] > span[title*="comment" i] > span:last-child::before { content: ""; width: 12px; height: 12px; flex-shrink: 0; background: currentColor; mask: ${commentIcon} center / contain no-repeat; }
 `;
 export interface ChangeTreeEntry {
   key: string;
@@ -64,6 +64,7 @@ export function ChangesFileTree({
       if (!entry) return null;
       const changes = entry.viewed ? 'Viewed' : `+${entry.additions} −${entry.deletions}`;
       const count = entry.commentCount;
+      const showCommentCount = showComments && count !== 0;
       const comments =
         count === undefined
           ? entry.commentError
@@ -71,7 +72,7 @@ export function ChangesFileTree({
             : 'Loading comments…'
           : `${count} GitHub ${count === 1 ? 'comment' : 'comments'}, including replies and resolved threads`;
       return {
-        text: showComments ? `${changes} · ${count ?? '—'}` : changes,
+        text: showCommentCount ? `${changes} · ${count ?? '—'}` : changes,
         parts: [
           ...(entry.viewed
             ? [{ text: 'Viewed' }]
@@ -79,7 +80,7 @@ export function ChangesFileTree({
                 { text: `+${entry.additions}`, color: DIFF_STAT_COLORS.added },
                 { text: `−${entry.deletions}`, color: DIFF_STAT_COLORS.removed },
               ]),
-          ...(showComments
+          ...(showCommentCount
             ? [
                 {
                   text: count === undefined ? '—' : String(count),
@@ -88,7 +89,7 @@ export function ChangesFileTree({
               ]
             : []),
         ],
-        title: `${entry.viewed ? 'Viewed' : `${entry.additions} additions, ${entry.deletions} deletions`}${showComments ? `. ${comments}` : ''}`,
+        title: `${entry.viewed ? 'Viewed' : `${entry.additions} additions, ${entry.deletions} deletions`}${showCommentCount ? `. ${comments}` : ''}`,
       };
     },
   });

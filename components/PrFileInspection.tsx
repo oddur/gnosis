@@ -67,22 +67,28 @@ export function PrFileInspection({
   onOpenCurrentFile,
   classificationControl,
   sourceLine,
+  renderFeedbackThread,
+  focusThreadId,
   sourceSide = 'after',
   onOpenSource,
   briefSubject,
   onOpenBrief,
+  onOpenFeedback,
 }: {
   entry: ChangeFileEntry;
   sourceLine?: number;
+  focusThreadId?: string;
+  renderFeedbackThread?: (thread: import('../lib/review-threads').GitHubReviewThread) => ReactNode;
   sourceSide?: 'before' | 'after';
   /** The stack or PR whose agent brief collects comments made here. */
   briefSubject?: ReviewSubject;
   onOpenBrief?: () => void;
+  onOpenFeedback?: (url: string, threadId: string) => void;
   onOpenSource?: (url: string, path: string) => void;
   classificationControl?: ReactNode;
   preferences: Preferences;
   discussion: ReturnType<typeof usePrDiscussions>;
-  onViewedNext: () => void;
+  onViewedNext?: () => void;
   onAsk: (text: string) => void;
   onOpenCurrentFile?: (url: string, path: string) => void;
 }) {
@@ -93,7 +99,7 @@ export function PrFileInspection({
   const viewed = progress.isFileViewed(activeKey);
   // Jumping to a line must show it, without changing the reviewer's viewed progress.
   const [jumpedOpen, setJumpedOpen] = useState(false);
-  const collapsed = viewed && !jumpedOpen;
+  const collapsed = viewed && !jumpedOpen && !focusThreadId;
   const opened = useRef(!collapsed);
   if (!collapsed) opened.current = true;
   const appearance = useDiffAppearance(prefs.diffAppearance);
@@ -300,8 +306,8 @@ export function PrFileInspection({
     const source = combinedThreads.find((t) => t.thread.id === thread.id)?.source;
     return (
       <div key={thread.id} className="combined-thread">
-        <Button variant="link" size="sm" onClick={() => source && onOpenSource?.(source.metadata.url, thread.path)}>
-          PR #{source?.metadata.url.split('/').pop()} · Open to reply
+        <Button variant="link" size="sm" onClick={() => { if (source) { if (onOpenFeedback) onOpenFeedback(source.metadata.url, thread.id); else onOpenSource?.(source.metadata.url, thread.path); } }}>
+          PR #{source?.metadata.url.split('/').pop()} · {onOpenFeedback ? 'Address feedback' : 'Open to reply'}
         </Button>
         <GitHubReviewThread thread={thread} />
       </div>
@@ -338,7 +344,8 @@ export function PrFileInspection({
     },
     enabled: !commit && !combined,
     snapshot: commit || combined ? undefined : entry.snapshot,
-    renderThreadOverride: combined ? renderCombinedThread : undefined,
+    renderThreadOverride: combined ? renderCombinedThread : renderFeedbackThread,
+    onOpenFeedback,
     path: entry.file.path,
     activeKey,
     // Unchanged moves keep all published discussions below both source and Markdown views.
@@ -443,7 +450,7 @@ export function PrFileInspection({
   function mark(andNext: boolean) {
     setJumpedOpen(false);
     void progress.markFileViewed(activeKey, true);
-    if (andNext) onViewedNext();
+    if (andNext) onViewedNext?.();
   }
   const ask = (text = '') => onAsk(text);
   const selectedCode = () => {
@@ -469,12 +476,12 @@ export function PrFileInspection({
     }
   }
   useEffect(() => {
-    if (sourceLine) {
+    if (sourceLine || focusThreadId) {
       opened.current = true;
       setJumpedOpen(true);
-      openMarkdownSource({ side: sourceSide, start: sourceLine, end: sourceLine });
+      if (sourceLine) openMarkdownSource({ side: sourceSide, start: sourceLine, end: sourceLine });
     }
-  }, [sourceLine, sourceSide, activeKey]);
+  }, [sourceLine, sourceSide, activeKey, focusThreadId]);
   function chooseMarkdownMode(mode: 'source' | 'preview') {
     const section = sectionRef.current;
     const top = Math.max(0, section?.closest('.commit-diff-stream')?.getBoundingClientRect().top ?? 0) + 130;
@@ -593,9 +600,9 @@ export function PrFileInspection({
           />
           Viewed
         </label>
-        <Button variant="outline" size="sm" data-viewed-next onClick={() => mark(true)}>
+        {onViewedNext && <Button variant="outline" size="sm" data-viewed-next onClick={() => mark(true)}>
           Viewed & next
-        </Button>
+        </Button>}
         {!commit && !showingPreview && !compactMove && (
           <Button
             variant="ghost"
@@ -637,6 +644,9 @@ export function PrFileInspection({
       </div>
     </header>
   );
+  const unavailableFocus = focusThreadId && !preview && !files
+    ? matching.find(thread => thread.id === focusThreadId && !visibleDiscussions.includes(thread))
+    : undefined;
   const fileContent = (
     <div className="changes-code-scroll">
       {!compactMove && (
@@ -810,12 +820,18 @@ export function PrFileInspection({
           </button>
         </p>
       ))}
-      {!combined && threadError && (
+      {!combined && !renderFeedbackThread && threadError && (
         <p className="changes-notice">
           {threadError}
           <button onClick={() => void refreshThreads(entry.snapshot.url)}>Retry</button>
         </p>
       )}
+      {unavailableFocus && renderFeedbackThread && <section className="changes-other-threads">
+        <h3>Code feedback</h3>
+        <p>The file preview is unavailable. You can still address this conversation.</p>
+        {unavailableFocus.comments[0]?.diffHunk && <pre className="feedback-code" aria-label="Code when commented">{unavailableFocus.comments[0].diffHunk}</pre>}
+        {renderFeedbackThread(unavailableFocus)}
+      </section>}
       {!!visibleDiscussions.length && (
         <section className="changes-other-threads">
           <h3>{unchangedMove ? 'Discussions on this file' : 'Other discussions on this file'}</h3>

@@ -27,6 +27,7 @@ export function StackChangesView({
   initialFile,
   onOpenPr,
   onOpenBrief,
+  onOpenFeedback,
 }: {
   subject: ReviewSubject;
   preferences: Preferences;
@@ -34,6 +35,7 @@ export function StackChangesView({
   initialFile?: ChangesInitialFile;
   onOpenPr: (url: string) => void;
   onOpenBrief?: () => void;
+  onOpenFeedback?: (url?: string, threadId?: string) => void;
 }) {
   const initialMode: Mode | undefined = initialFile && (initialFile.view === 'combined' ? 'combined' : 'by-pr');
   const [mode, setMode] = useState<Mode>(
@@ -344,6 +346,8 @@ export function StackChangesView({
           key={`by-pr:${subject.id}`}
           subject={subject}
           preferences={preferences}
+          account={account}
+          onOpenFeedback={onOpenFeedback}
           toolbar={toolbar}
           initialFile={initialMode === 'by-pr' ? initialFile : undefined}
           onOpenBrief={onOpenBrief}
@@ -357,6 +361,8 @@ export function StackChangesView({
           key={`combined:${subject.id}`}
           subject={subject}
           preferences={preferences}
+          account={account}
+          onOpenFeedback={onOpenFeedback}
           toolbar={toolbar}
           combined={{ snapshot, onOpenSource: openSource }}
           initialFile={initialMode === 'combined' ? initialFile : undefined}

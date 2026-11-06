@@ -1,12 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
-import { peekDiscussion, readDiscussion, receiveDiscussion, subscribeDiscussions } from './review-discussion-cache';
+import {
+  peekDiscussion,
+  readDiscussion,
+  receiveDiscussion,
+  hydrateDiscussion,
+  subscribeDiscussions,
+} from './review-discussion-cache';
 import { watchGitHub } from './watch-github';
 import type { EvidenceUpdateIssue } from './review-evidence';
 import type { ReviewSubject } from './workbench';
 import type { GitHubReviewThreads } from './review-threads';
 
 /** Observe the shared cache while collapsed; only an expanded panel registers sync interest. */
-export function useEvidenceDiscussions(subject: ReviewSubject, account: string | null, expanded: boolean) {
+export function useEvidenceDiscussions(
+  subject: ReviewSubject,
+  account: string | null,
+  expanded: boolean,
+  includeFeedback = false
+) {
   const generation = useRef(0);
   const refreshing = useRef(false);
   const [busy, setBusy] = useState(false);
@@ -14,9 +25,20 @@ export function useEvidenceDiscussions(subject: ReviewSubject, account: string |
   const scope = `${account}:${key}`;
   const [state, setState] = useState<{
     scope: string;
-    values: Record<string, GitHubReviewThreads>;
+    values: Partial<Record<string, GitHubReviewThreads>>;
     errors: Record<string, EvidenceUpdateIssue | undefined>;
-  }>({ scope: '', values: {}, errors: {} });
+  }>(() => ({
+    scope,
+    values: account
+      ? Object.fromEntries(
+          subject.members.flatMap(({ url }) => {
+            const saved = peekDiscussion(url);
+            return saved ? [[url, saved]] : [];
+          })
+        )
+      : {},
+    errors: {},
+  }));
   useEffect(() => {
     generation.current++;
     refreshing.current = false;
@@ -47,6 +69,22 @@ export function useEvidenceDiscussions(subject: ReviewSubject, account: string |
       if (lifecycle.live)
         setState((current) => ({ ...current, errors: { ...current.errors, [url]: { message, retryAt } } }));
     };
+    if (expanded) {
+      for (const { url } of targets) {
+        void (async () => {
+          try {
+            // Browser fixtures and older hosts may not expose the cached read.
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+            const cached = await window.electronAPI.getCachedReviewThreads?.(url);
+            if (!lifecycle.live) return;
+            if (cached) hydrateDiscussion(url, cached);
+            if (includeFeedback && !peekDiscussion(url)?.feedback) await readDiscussion(url, true);
+          } catch (error) {
+            fail(url, error instanceof Error ? error.message : String(error));
+          }
+        })();
+      }
+    }
     const stop = expanded
       ? watchGitHub(
           { kind: 'discussion', priority: 'visible', targets },
@@ -75,7 +113,7 @@ export function useEvidenceDiscussions(subject: ReviewSubject, account: string |
       unsubscribe();
       stop?.();
     };
-  }, [scope, key, account, expanded]);
+  }, [scope, key, account, expanded, includeFeedback]);
   async function refresh() {
     if (!account || !expanded || refreshing.current) return;
     const version = generation.current;

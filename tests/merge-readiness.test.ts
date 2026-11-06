@@ -259,3 +259,23 @@ void test('merge plan separates actions, waiting and optional results, and order
   assert.deepEqual(stackMergePlan(single, [signals({ mergeState: 'UNSTABLE' })], { [member.url]: unknown }, now).groups.map(g => g.key), ['check-status']);
   assert.deepEqual(stackMergePlan(single, [signals({ mergeState: 'UNSTABLE' })], { [member.url]: unknown }, now + QUEUE_SIGNALS_TTL).groups.map(g => g.key), ['refresh']);
 });
+
+void test('stack summary separates missing, stale and pending status from confirmed blockers', async () => {
+  const { stackMergePlan } = await import('../lib/stack-merge-plan');
+  const child = { ...member, url: member.url + '2', number: 2 };
+  const subject = { kind: 'stack', members: [member, child], edges: [] } as unknown as ReviewSubject;
+  const missing = stackMergePlan(subject, [], {}, now);
+  assert.equal(missing.status.blocked, 0);
+  assert.equal(missing.status.unconfirmed, 2);
+  assert.match(missing.groups[0].entries[0].detail ?? '', /not been loaded/);
+  const stale = stackMergePlan(subject, [signals(), { ...signals(), url: child.url }], {}, now + QUEUE_SIGNALS_TTL);
+  assert.equal(stale.status.blocked, 0);
+  assert.match(stale.groups[0].entries[0].detail ?? '', /out of date/);
+  const pending = stackMergePlan(subject, [signals({ mergeable: 'UNKNOWN', mergeState: 'UNKNOWN' })], {}, now);
+  assert.match(pending.groups[0].entries[0].detail ?? '', /not finished evaluating/);
+  const mixed = stackMergePlan(subject, [signals({ mergeable: 'CONFLICTING', mergeState: 'DIRTY' })], {}, now);
+  assert.equal(mixed.status.blocked, 1);
+  assert.equal(mixed.status.unconfirmed, 1);
+  assert.deepEqual(mixed.groups.map(group => group.key), ['conflicts', 'refresh']);
+  assert.match(mixed.groups[0].entries[0].detail ?? '', /Conflicts with feature\/base/);
+});
