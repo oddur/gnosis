@@ -17,10 +17,10 @@ colors:
   ring: "#345fc1"
   sidebar: "#f4f5f8"
   destructive: oklch(0.55 0.16 25)
-  success: oklch(0.42 0.11 145)
-  danger: oklch(0.45 0.18 22)
-  warning: oklch(0.45 0.14 55)
-  info: oklch(0.45 0.1 300)
+  success: "#216e39"
+  danger: "#b42336"
+  warning: "#855900"
+  info: "#6941a5"
   dark-primary: "#a6bfff"
   dark-primary-foreground: "#15244a"
   dark-background: "#171a20"
@@ -36,10 +36,10 @@ colors:
   dark-ring: "#9bb8ff"
   dark-sidebar: "#1c2028"
   dark-destructive: oklch(0.66 0.16 25)
-  dark-success: oklch(0.72 0.1 145)
-  dark-danger: oklch(0.68 0.16 22)
-  dark-warning: oklch(0.72 0.12 55)
-  dark-info: oklch(0.65 0.1 300)
+  dark-success: "#85cf99"
+  dark-danger: "#ff9ba5"
+  dark-warning: "#e9c46a"
+  dark-info: "#c7adf5"
 typography:
   headline: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 30px, fontWeight: 650, lineHeight: 1.4, letterSpacing: "-0.02em"}
   title: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 24px, fontWeight: 650, lineHeight: 1.35, letterSpacing: "-0.025em"}
@@ -119,6 +119,8 @@ Unprefixed tokens describe Light. Their `dark-` counterparts describe Dark, mapp
 Status tokens map to `--color-success`, `--color-danger`, `--color-warning`, and `--color-info`.
 Paired foreground variables remain authoritative for contrast. Card, secondary, and popover text use the theme foreground.
 Sidecar tonal ramps are derived preview aids; they are not additional implementation tokens.
+
+Status badges use opaque `--status-*-bg` surfaces paired with their semantic ink. Amber distinguishes waiting from red failures; purple remains merged. Active workspace tabs and selected check rows use blue. Selected secondary text uses `--selection-muted`, a blue-derived ink. Activity uses blue for running, green for completed, amber for warnings, and red for failures. Resolved feedback keeps its checkmark and green state label while the conversation title recedes. Keep headings, feature icons, and reading surfaces neutral.
 
 **The Status Rule.** Pair status colors with text or icons. Color alone must not carry review state.
 
@@ -291,6 +293,17 @@ Reduced motion removes these transitions while preserving progress and status in
 Pair concise errors with recovery actions. Put detailed diagnostics behind disclosure controls.
 Show saved-summary freshness and fallback status explicitly. Preserve useful content while a background task runs.
 
+### Workbench copy and density
+
+Name the task or state directly: “Set up Gnosis,” “Queue filters,” “No explanation yet.”
+Do not add a promotional introduction before a control or repeat what its label already says.
+Keep visible PR actions, revision warnings, source identity, and recovery guidance.
+Show one action for each destination; identify saved explanations as previous when they cover an older revision.
+Omit empty generated sections. Keep model information below briefing content, separate from the review status.
+Group settings by the decision: queue defaults, briefing defaults, and briefing model. State inheritance once per group.
+Use spacing and headings to separate these groups, without nested cards or decorative status icons.
+Healthy automatic refresh needs no persistent visible caption; refreshing, partial data, and errors do.
+
 ### Address Feedback
 
 [PrFeedbackView](components/PrFeedbackView.tsx) extends the existing PR and stack workspace. Keep the compact All / Unread / Unresolved toolbar above divided list and detail panes. Bound the list between 260px and 360px and the reading column to 880px. Use filenames in rows, full paths in tooltips, a truncated parent path in the conversation heading, and nonshrinking single-line resolution labels. Keep revision age beside the code context. Body-less review events show one explicit action label rather than repeating the review state. Hide GitHub Actions defaults on and persists per account across PRs and restarts. Filter automation-only conversations locally before counting; preserve threads with human or unknown-author replies. In stacks, a searchable PR picker scopes the list, counts, and review-request actions together. Order conversations across the stack by latest activity, including edits. Rows retain the original excerpt and show the latest reply preview and comment count when replies exist. Pair unread emphasis with the existing dot and accessible label; distinguish unresolved code threads, resolved threads, PR comments, and review decisions with explicit text.
@@ -339,7 +352,13 @@ Stack and PR names carry a leading identity icon in headings, navigation, select
 
 Commit breadcrumbs show the first line of the commit message with GitCommitHorizontal, retaining the hash in the searchable picker. File breadcrumbs and picker options use the shared FileTypeIcon for the path, including light/dark variants. Long breadcrumb labels truncate; picker labels wrap.
 
-Workspace section icons use the shared WorkspaceIcon mapping in tabs, breadcrumbs, selectors, and related navigation: Summary = LayoutList, Changes = FileDiff, Commits = GitCommitHorizontal, Checks = ListChecks, Explanation = BookOpen, Local notes = NotebookPen. Keep visible text labels; icons are decorative and inherit text color. Check status icons continue to represent status rather than section identity.
+Workspace section icons use the shared WorkspaceIcon mapping in tabs, breadcrumbs, selectors, and related navigation: Summary = LayoutList, Changes = FileDiff, Commits = GitCommitHorizontal, Checks = ListChecks, Feedback = MessagesSquare, Explanation = BookOpen, Local notes = NotebookPen. Keep visible text labels; icons are decorative and inherit text color. Check status icons continue to represent status rather than section identity.
+
+The shared [interface icon catalog](lib/interface-icons.ts) owns entity, workspace, feature, and check-summary choices. Use Briefing = FileText, Chat/comment = MessageSquare, Submit review = MessageSquarePlus, Saved view = Bookmark, History/saved reviews = History, Settings = Settings, Insight = Lightbulb, and Interactive diagram = Network. Command results and actions reuse these choices; file results use FileTypeIcon when their path is known. Keep configured repository icons and status-aware PR icons.
+
+Use 16px icons for actions and menu rows, 12–14px for dense metadata, and 1em for entity headings. Menu icons occupy a fixed 16px slot and never shrink. Lucide keeps its standard stroke weight. Hide decorative icons from assistive technology; icon-only controls retain an accessible name. Use drawn arrows and checks for UI controls, preserving text arrows in branch/revision data and keyboard hints.
+
+Check summaries use CircleAlert for failure, Clock3 for pending, CircleCheck for success, CircleMinus for neutral, and CircleHelp for unknown. A neutral or unknown result must not show a success checkmark. Actively running job steps may use LoaderCircle; queued steps keep their pending symbol. Color and text continue to distinguish all states.
 
 
 ### Workflow job steps
@@ -354,3 +373,5 @@ Stack merge guidance separates confirmed blockers from missing or stale merge st
 Use `LoadingState` for an empty pane and its compact variant for file previews or small panels. The shared three-node signal comes from the Checks graph. Use `LoadingIndicator` for inline work and refreshes; keep cached content visible. Show the actual operation in plain text. Do not simulate completion percentages or cycle through invented phases.
 
 Motion stops for reduced-motion preferences, hidden windows, and offscreen indicators. One shared intersection observer handles visibility. Optional elapsed time appears after five seconds and is excluded from live announcements. Announce the operation once through its status region; use `announce={false}` inside an existing status region. Loading does not delay completion or trigger additional requests.
+
+Commit inspection shows the selected commit title, author, hash, and full message before its file diffs in one scroll surface. Preserve authored whitespace and plain text. Ranges show each message in chronological order; only secondary commit metadata is collapsed. The sidebar keeps compact commit titles and aligned metadata, exposes the full selected title, and fills the sidebar when Changed files is collapsed. File jumps and restored positions account for the measured message height.

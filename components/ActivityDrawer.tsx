@@ -242,8 +242,7 @@ export function ActivityDrawer({
           <div className="activity-list">
             {!tasks.length && (
               <p className="activity-empty">
-                PR preloading, GitHub updates, guided reviews, briefings, and interactive explanations appear here. You can keep
-                browsing while they run.
+                No activity yet. GitHub updates and AI generation appear here.
               </p>
             )}
             {[...tasks]

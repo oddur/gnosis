@@ -11,7 +11,8 @@ import type { ReviewGuide } from '../lib/types';
 import type { ReactNode } from 'react';
 import { useEffect, useId, useMemo, useRef, useState, useCallback } from 'react';
 import { Group as PanelGroup, Panel, Separator as PanelResizeHandle } from 'react-resizable-panels';
-import { ArrowRight, Check, Copy, CopyX, MessageCircle } from 'lucide-react';
+import { ArrowRight, Check, Copy, CopyX } from 'lucide-react';
+import { WorkbenchIcon } from './WorkbenchIcon';
 import { Button } from '@/components/ui/button';
 import { findReviewLine } from './ReviewDiff';
 import { ReviewSelectionActions } from './ReviewSelectionActions';
@@ -678,7 +679,7 @@ export function SlideView({
               isReviewed ? 'text-[var(--ring)]' : ''
             }`}
           >
-            {isReviewed ? <>✓ Topic reviewed · press r to undo</> : <>Mark topic reviewed and continue · r</>}
+            {isReviewed ? <><Check size={14} aria-hidden="true" />Topic reviewed · press r to undo</> : <>Mark topic reviewed and continue · r</>}
           </button>
         )}
         {onMarkReviewed && (
@@ -688,7 +689,7 @@ export function SlideView({
         )}
         {onAskQuestion && (
           <Button variant="outline" size="sm" onClick={onAskQuestion} className="gap-1.5 w-full">
-            <MessageCircle className="h-3.5 w-3.5" />
+            <WorkbenchIcon name="chat" />
             Ask a question
           </Button>
         )}

@@ -134,7 +134,7 @@ export function PrExplanation({
             {error ||
               loadError ||
               (running
-                ? <LoadingIndicator announce={false}>Generating explanation. Keep reviewing while it runs.</LoadingIndicator>
+                ? <LoadingIndicator announce={false}>Generating explanation…</LoadingIndicator>
                 : failed
                   ? review
                     ? 'The explanation could not be completed. Your saved version is still available.'
@@ -145,7 +145,7 @@ export function PrExplanation({
           </span>
           {running ? (
             <Button variant="outline" size="sm" onClick={onShowActivity}>
-              View Activity
+              View activity
             </Button>
           ) : loadError ? (
             <Button variant="outline" size="sm" onClick={() => (newer ? void openUpdated() : setRetry((n) => n + 1))}>
@@ -188,21 +188,16 @@ export function PrExplanation({
       ) : (
         !review && (
           <div className="explanation-empty">
-            {wanted && !loadError ? <LoadingState title="Opening saved explanation" description="Reading the explanation saved on this computer." /> : <>
+            {wanted && !loadError ? <LoadingState title="Opening saved explanation…" /> : loadError ? <>
             <h2>
-              {loadError
-                ? 'Saved explanation could not be opened'
-                : wanted
-                  ? 'Opening saved explanation'
-                  : item.subject.kind === 'stack' ? `Understand this ${item.subject.members.length}-PR stack` : 'Understand the changes, step by step'}
+              Saved explanation could not be opened
             </h2>
-            <p>
-              {loadError
-                ? 'Retry loading to read the explanation saved on this computer.'
-                : wanted
-                  ? 'Reading the explanation saved on this computer.'
-                  : 'Get a guided walkthrough of what changed, why it matters, and where to focus your review. Explore the code, ask questions, and open interactive diagrams alongside it.'}
-            </p>
+            <p>Retry loading to open the saved explanation.</p>
+            </> : !running && !failed && !error && <>
+              <h2>No explanation yet</h2>
+              <p>{item.subject.kind === 'stack'
+                ? `Generate a walkthrough of the changes across all ${item.subject.members.length} PRs.`
+                : 'Generate a walkthrough of this PR’s changes, grouped by topic.'}</p>
             </>}
             {!wanted && !running && !failed && !error && (
               <div className="explanation-empty-actions">

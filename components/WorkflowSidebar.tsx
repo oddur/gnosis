@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { CircleAlert, CircleCheck, CircleMinus, Clock3, LoaderCircle, PanelLeftClose, Search, X } from 'lucide-react';
+import { LoaderCircle, PanelLeftClose, Search, X } from 'lucide-react';
+import { checkGroupIcons } from '../lib/interface-icons';
 import type { WorkflowRunInfo } from '../lib/workflow-graph';
 import type { PrChecks } from '../lib/pr-checks';
 import type { CiCheck } from '../lib/types';
@@ -110,14 +111,7 @@ export function WorkflowSidebar({
           };
           const group = checkGroup(state),
             label = checkLabel(state);
-          const Icon =
-            group === 'attention'
-              ? CircleAlert
-              : group === 'passed'
-                ? CircleCheck
-                : group === 'running'
-                  ? Clock3
-                  : CircleMinus;
+          const Icon = checkGroupIcons[group];
           const count = workflowJobCount(run, snapshot, counts[`${run.id}:${run.attempt}`] ?? run.jobCount);
           const duplicate = runs.some((other) => other.id !== run.id && other.name === run.name);
           return (

@@ -56,14 +56,14 @@ export function GettingStarted({
     <section className="getting-started" aria-labelledby="getting-started-title">
       <div className="getting-started-heading">
         <h2 ref={heading} tabIndex={-1} id="getting-started-title">
-          Understand your first PR
+          Open your first PR
         </h2>
         <button className="workbench-icon" aria-label="Dismiss getting started" onClick={onDismiss}>
           <X size={16} />
         </button>
       </div>
       <p>
-        Read the author’s description and GitHub status first. Add an AI walkthrough when you want to dig into the code.
+        Read the description, inspect changes, and check the review status.
       </p>
       <div className="getting-started-actions">
         <Button size="sm" onClick={onOpenPr}>
@@ -108,8 +108,7 @@ export function GettingStarted({
             </span>
           </summary>
           <p>
-            Claude Code or Codex runs the AI walkthroughs. GitHub sign-in is separate; you can read PR overviews before
-            setting this up.
+            Explanations use Claude Code or Codex on this computer. Sign in to that tool separately from GitHub.
           </p>
           <p role="status">
             {check === 'checking'
@@ -127,11 +126,10 @@ export function GettingStarted({
         </details>
       </div>
       <p className="getting-started-note">
-        Explanations run in Activity below and are saved on this computer. Feedback goes to GitHub only when you submit
-        it.
+        Explanations are saved locally. Feedback goes to GitHub only when you submit it.
       </p>
       <button className="getting-started-skip" onClick={onDismiss}>
-        I’ll explore on my own
+        Dismiss setup
       </button>
     </section>
   );

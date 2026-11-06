@@ -496,7 +496,7 @@ export function SettingsDialog({
             </Tabs.List>
             <Tabs.Content forceMount value="repositories" className="settings-panel settings-repositories">
               <div className="repository-panel-heading">
-                <div><h2>Repositories</h2><p className="settings-description">Choose what appears in your queue and configure each repository.</p></div>
+                <div><h2>Repositories</h2><p className="settings-description">Add repositories to your queue and set their defaults.</p></div>
                 <Button type="button" variant="outline" size="sm" onClick={() => { setAddingRepository(v => !v); requestAnimationFrame(() => document.getElementById('watched-repos')?.focus()); }}>Add repository</Button>
               </div>
               {pendingRepository ? <div className="repository-settings-focus repository-new-editor">
@@ -577,76 +577,85 @@ export function SettingsDialog({
               </>}
             </Tabs.Content>
             <Tabs.Content value="queue" className="settings-panel">
-              <p className="settings-description">Defaults for all repositories. Customize individual repositories in Repositories.</p>
-              <SettingRow label="Ignore PRs inactive for…"
-                description="Global default. Repository overrides take precedence. Starred PRs and necessary stack context stay available.">
-                <PrInactivitySetting days={prInactivityDays} onChange={days => {
-                  setPrInactivityDays(days); saveField({ prInactivityDays: days });
-                }} />
-              </SettingRow>
-              <SettingRow
-                label="Ignore Dependabot PRs"
-                description="Hide Dependabot PRs from the queue and automatic briefings. Keep them visible when a PR by a person builds on them."
-              >
-                <Toggle
-                  checked={ignoreDependabotPrs}
-                  ariaLabel="Ignore Dependabot PRs"
-                  onChange={() => {
-                    const next = !ignoreDependabotPrs;
-                    setIgnoreDependabotPrs(next);
-                    saveField({ ignoreDependabotPrs: next });
-                  }}
-                />
-              </SettingRow>
-              <SettingRow
-                label="Automatic briefings"
-                description="Default for repositories without an override. Queue filters and automatic briefing limits also apply."
-              >
-                <Toggle
-                  checked={autoBriefings}
-                  ariaLabel="Automatic briefings"
-                  onChange={() => {
-                    const next = !autoBriefings;
-                    setAutoBriefings(next);
-                    saveField({ autoBriefings: next });
-                  }}
-                />
-              </SettingRow>
-
-              <div className="flex flex-col gap-2 ml-0.5">
-                <div className="flex items-center justify-between gap-4 mt-2"><div><label htmlFor="settings-repository-briefing-limit" className="text-sm font-medium">Default daily automatic briefings per repository</label><p className="settings-description">Repositories inherit this allowance unless overridden. The overall cap also applies.</p></div>
-                  <input id="settings-repository-briefing-limit" type="number" min={0} max={100} value={repositoryDailyLimit} className="w-20 shrink-0" onChange={e => { const value = Number(e.target.value); if (Number.isInteger(value) && value >= 0 && value <= 100) { setRepositoryDailyLimit(value); saveField({ repositoryBriefingDailyLimit: value }); } }} />
+              <section className="settings-group" aria-labelledby="queue-defaults-title">
+                <div>
+                  <h2 id="queue-defaults-title">Queue defaults</h2>
+                  <p className="settings-description">Override these settings per repository in Repositories.</p>
                 </div>
-                <div className="flex items-center justify-between gap-4 mt-2">
-                  <div className="flex flex-col gap-0.5">
-                    <label htmlFor="settings-briefing-limit" className="text-sm font-medium text-foreground">
-                      Overall daily automatic briefing cap
-                    </label>
-                    <p className="settings-description">
-                      Maximum automatic attempts across all repositories, including retries. Manual briefings and explanations do not count. Resets at midnight.
-                    </p>
-                  </div>
-                  <input
-                    id="settings-briefing-limit"
-                    type="number"
-                    min={0}
-                    max={100}
-                    value={briefingDailyLimit}
-                    onChange={(e) => {
-                      const next = Math.max(0, Math.min(100, Math.trunc(Number(e.target.value))));
-                      setBriefingDailyLimit(next);
-                      saveField({ briefingDailyLimit: next });
+                <SettingRow label="Ignore PRs inactive for…"
+                  description="Starred PRs and PRs needed for stack context stay visible.">
+                  <PrInactivitySetting days={prInactivityDays} onChange={days => {
+                    setPrInactivityDays(days); saveField({ prInactivityDays: days });
+                  }} />
+                </SettingRow>
+                <SettingRow
+                  label="Ignore Dependabot PRs"
+                  description="Hide them from the queue and automatic briefings, unless a human-authored PR depends on them."
+                >
+                  <Toggle
+                    checked={ignoreDependabotPrs}
+                    ariaLabel="Ignore Dependabot PRs"
+                    onChange={() => {
+                      const next = !ignoreDependabotPrs;
+                      setIgnoreDependabotPrs(next);
+                      saveField({ ignoreDependabotPrs: next });
                     }}
-                    className="w-20 bg-background border border-border rounded-md px-2 py-1 text-sm text-foreground"
                   />
+                </SettingRow>
+              </section>
+              <section className="settings-group" aria-labelledby="briefing-defaults-title">
+                <div>
+                  <h2 id="briefing-defaults-title">Briefing defaults</h2>
+                  <p className="settings-description">Short AI summaries. Repository overrides and queue filters apply.</p>
                 </div>
+                <SettingRow label="Automatic briefings">
+                  <Toggle
+                    checked={autoBriefings}
+                    ariaLabel="Automatic briefings"
+                    onChange={() => {
+                      const next = !autoBriefings;
+                      setAutoBriefings(next);
+                      saveField({ autoBriefings: next });
+                    }}
+                  />
+                </SettingRow>
 
-                <div className="mt-2 pt-3 border-t border-border flex items-center justify-between gap-4">
+                <div className="flex flex-col gap-2 ml-0.5">
+                  <div className="flex items-center justify-between gap-4 mt-2"><div><label htmlFor="settings-repository-briefing-limit" className="text-sm font-medium">Per repository, per day</label></div>
+                    <input id="settings-repository-briefing-limit" type="number" min={0} max={100} value={repositoryDailyLimit} className="w-20 shrink-0" onChange={e => { const value = Number(e.target.value); if (Number.isInteger(value) && value >= 0 && value <= 100) { setRepositoryDailyLimit(value); saveField({ repositoryBriefingDailyLimit: value }); } }} />
+                  </div>
+                  <div className="flex items-center justify-between gap-4 mt-2">
+                    <div className="flex flex-col gap-0.5">
+                      <label htmlFor="settings-briefing-limit" className="text-sm font-medium text-foreground">
+                        Overall daily limit
+                      </label>
+                      <p className="settings-description">
+                        Automatic attempts across all repositories, including retries. Manual briefings and explanations do not count. Resets at midnight.
+                      </p>
+                    </div>
+                    <input
+                      id="settings-briefing-limit"
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={briefingDailyLimit}
+                      onChange={(e) => {
+                        const next = Math.max(0, Math.min(100, Math.trunc(Number(e.target.value))));
+                        setBriefingDailyLimit(next);
+                        saveField({ briefingDailyLimit: next });
+                      }}
+                      className="w-20 bg-background border border-border rounded-md px-2 py-1 text-sm text-foreground"
+                    />
+                  </div>
+                </div>
+              </section>
+              <section className="settings-group" aria-labelledby="briefing-model-title">
+                <h2 id="briefing-model-title">Briefing model</h2>
+                <div className="flex items-center justify-between gap-4">
                   <div className="flex flex-col gap-0.5 min-w-0">
                     <span className="text-sm font-medium text-foreground">Use a different model for briefings</span>
                     <span className="slide-meta">
-                      Keep a separate model for briefings when you change the explanation model. Turn this off to use
-                      the explanation model for both.
+                      When off, briefings use the explanation model.
                     </span>
                   </div>
                   <div className="shrink-0">
@@ -693,11 +702,10 @@ export function SettingsDialog({
                     />
                   )}
                   <p className="settings-description">
-                    Higher effort allows more reasoning time and can take longer. Briefings keep their own effort
-                    setting.
+                    Higher effort can take longer. Briefing effort is set separately from explanation effort.
                   </p>
                 </div>
-              </div>
+              </section>
             </Tabs.Content>
             <Tabs.Content value="review" className="settings-panel">
               <SettingRow

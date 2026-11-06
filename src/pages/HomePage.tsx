@@ -45,6 +45,8 @@ import { useSessionDraft } from '../../lib/session-drafts';
 import type { VirtualItem } from '@tanstack/react-virtual';
 import { VirtualReviewQueue } from '../../components/VirtualReviewQueue';
 import { GitHubIcon } from '../../lib/constants';
+import { workbenchIcons, workspaceSections } from '../../lib/interface-icons';
+import { WorkbenchIcon } from '../../components/WorkbenchIcon';
 import { PrLabels } from '../../components/PrLabels';
 import { PrSummary, type PrReadingPosition, type PrReviewRequest } from '../../components/PrSummary';
 import { publishQueueSignals } from '../../lib/use-queue-signals';
@@ -81,7 +83,6 @@ import {
   FolderGit2,
   AlertCircle,
   Inbox,
-  Clock,
   Trash2,
   Download,
   Link2,
@@ -1036,6 +1037,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       ? [
           {
             id: 'context:briefing',
+            icon: workbenchIcons.briefing,
             label: `Create briefing · ${commandItem.subject.title}`,
             group: 'Uses your briefing model · tracked in Activity',
             perform: async () => {
@@ -1049,6 +1051,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       ? [
           {
             id: 'context:review',
+            icon: workspaceSections.explanation.icon,
             label: `Generate AI review · ${commandItem.subject.title}`,
             group: 'Uses your selected model · tracked in Activity',
             perform: async () => {
@@ -1498,10 +1501,10 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
             ['all', 'Review queue', Inbox],
             ['starred', 'Starred', Star],
             ['requested', 'Review requests', GitPullRequest],
-            ['response', 'Needs my response', MessageSquare],
+            ['response', 'Needs my response', workspaceSections.feedback.icon],
             ['updated', 'Updated PRs', RefreshCw],
             ['stacks', 'Stacks', Layers],
-            ['saved', 'Saved reviews', Clock],
+            ['saved', 'Saved reviews', workbenchIcons.history],
           ].map(([id, label, Icon]) => {
             const I = Icon as typeof Inbox;
             return (
@@ -1537,7 +1540,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                   setSelected(null);
                 }}
               >
-                <I size={16} />
+                <I size={16} aria-hidden="true" />
                 <span>{label as string}</span>
                 <span className="nav-count">
                   {id === 'saved'
@@ -1828,7 +1831,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                 />
               )}
               {loading ? (
-                <LoadingState title="Loading your workspace…" description="Opening your saved review queue." />
+                <LoadingState title="Loading review queue…" />
               ) : section === 'saved' ? (
                 saved.length ? (
                   saved.map((entry) => (
@@ -1871,7 +1874,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                   ))
                 ) : (
                   <div className="queue-empty" role={filters.involvement === 'response' ? 'status' : undefined}>
-                    <Clock size={24} />
+                    <WorkbenchIcon name="history" size={24} />
                     <h2>{query ? 'No matching saved reviews' : 'No saved reviews yet'}</h2>
                     <p>
                       {query
@@ -1966,30 +1969,11 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
             {selectedItem && items.some((i) => i.subject.id === selected) && section !== 'saved' && (
               <aside className="briefing-panel" aria-label="Change briefing">
                 <div className="briefing-top">
-                  <span>
-                    {selectedItem.subject.kind === 'stack' ? (
-                      <>
-                        <Layers size={15} />
-                        {selectedItem.subject.members.length} PR stack
-                      </>
-                    ) : (
-                      <>
-                        <GitPullRequest size={15} />
-                        Pull request
-                      </>
-                    )}
-                  </span>
+                  <h2><SubjectIcon kind={selectedItem.subject.kind === 'stack' ? 'stack' : 'pr'} />{selectedItem.subject.title}</h2>
                   <button className="workbench-icon" aria-label="Close briefing" onClick={() => setSelected(null)}>
                     <X size={16} />
                   </button>
                 </div>
-                <h2><SubjectIcon kind={selectedItem.subject.kind === 'stack' ? 'stack' : 'pr'} />{selectedItem.subject.title}</h2>
-                {briefingSelection && (
-                  <p className="text-xs text-muted-foreground mb-3" aria-label="Briefing model">
-                    Briefing model: {briefingModelLabel}
-                    {prefs?.proactiveReviewOverrides ? ' (separate model)' : ''}
-                  </p>
-                )}
                 <div className="briefing-actions">
                     <Button size="sm" onClick={() => activate(selectedItem)}>
                     {selectedItem.subject.kind === 'stack' ? 'Open stack overview' : 'Open PR overview'}
@@ -2001,13 +1985,9 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                           if (selectedItem.review) void open(selectedItem.review);
                         }}
                       >
-                        Open AI explanation
-                      </button>
-                    )}
-                  {selectedItem.review?.status === 'completed' &&
-                    selectedItem.review.snapshot?.fingerprint !== fingerprint(selectedItem.subject) && (
-                      <button onClick={() => selectedItem.review && void open(selectedItem.review)}>
-                        Open previous review
+                        {selectedItem.review.snapshot?.fingerprint !== fingerprint(selectedItem.subject)
+                          ? 'Open previous explanation'
+                          : 'Open AI explanation'}
                       </button>
                     )}
                 </div>
@@ -2036,33 +2016,41 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                 {selectedItem.briefing?.status === 'ready' ? (
                   <>
                     <Markdown className="briefing-summary">{selectedItem.briefing.summary ?? ''}</Markdown>
-                    <h3>Affected systems</h3>
-                    <div className="briefing-tags">
-                      {selectedItem.briefing.systems?.map((s) => (
-                        <span key={s}>{s}</span>
-                      ))}
-                    </div>
-                    <h3>Where to focus</h3>
-                    <ul>
-                      {selectedItem.briefing.priorities?.map((p) => (
-                        <li key={p}>{p}</li>
-                      ))}
-                    </ul>
+                    {!!selectedItem.briefing.systems?.length && (
+                      <>
+                        <h3>Affected systems</h3>
+                        <div className="briefing-tags">
+                          {selectedItem.briefing.systems.map((s) => (
+                            <span key={s}>{s}</span>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                    {!!selectedItem.briefing.priorities?.length && (
+                      <>
+                        <h3>Where to focus</h3>
+                        <ul>
+                          {selectedItem.briefing.priorities.map((p) => (
+                            <li key={p}>{p}</li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
                   </>
                 ) : (
                   <div className="briefing-status">
                     <p>
                       {selectedItem.briefing?.status === 'generating'
-                        ? 'Generating an AI briefing… Track progress in Activity; you can keep browsing.'
+                        ? 'Generating briefing…'
                         : selectedItem.briefing?.status === 'failed'
-                          ? 'The AI briefing failed. Retry below, or open the PR overview to read its description.'
+                          ? 'Briefing failed.'
                           : selectedItem.briefing?.status === 'cancelled'
                             ? 'Briefing cancelled. Retry it from Activity.'
                             : selectedItem.briefing?.status === 'paused'
                               ? selectedItem.briefing.pauseReason === 'filter'
-                                ? 'Outside your current filters. Automatic briefings are limited to matching changes.'
+                                ? 'Automatic briefing paused: outside your current filters.'
                                 : selectedItem.briefing.pauseDetail ?? 'Briefing is paused. Check Activity or briefing settings for details.'
-                              : 'Waiting to generate an AI briefing. You can open the PR overview or generate an AI explanation now.'}
+                              : selectedItem.briefing?.status === 'queued' ? 'Briefing queued.' : 'No briefing yet.'}
                     </p>
                     {selectedItem.briefing?.status === 'failed' && selectedItem.briefing.error && (
                       <details className="status-diagnostics">
@@ -2086,6 +2074,11 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                       </button>
                     )}
                   </div>
+                )}
+                {briefingSelection && (
+                  <p className="briefing-model" aria-label="Briefing model">
+                    Briefing model: {briefingModelLabel}
+                  </p>
                 )}
                 <h3>{selectedItem.subject.kind === 'stack' ? 'PRs in this stack' : 'Pull request'}</h3>
                 <div className="stack-members">
@@ -2124,8 +2117,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                                 }}
                               >
                                 #{edge.parent.split('/').at(-1)}
-                              </a>{' '}
-                              — this PR uses changes from that PR.
+                              </a>
                             </p>
                           ))}
                         {statusErrors[m.url] && (

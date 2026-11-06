@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Popover } from 'radix-ui';
 import { EntryActions } from './EntryActions';
-import { Bookmark, GripVertical, X } from 'lucide-react';
+import { GripVertical, X } from 'lucide-react';
+import { WorkbenchIcon } from './WorkbenchIcon';
 import { viewIsModified, type QueueViewAction, type QueueViewsSnapshot, type SavedQueueView } from '../lib/saved-views';
 import type { QueueFilters } from '../lib/queue-filters';
 
@@ -146,7 +147,7 @@ export function SavedViewsNav({
                   disabled={busy}
                   onClick={() => act({ type: 'activate', id: view.id })}
                 >
-                  <Bookmark size={15} />
+                  <WorkbenchIcon name="savedView" />
                   <span className="saved-view-name">{view.name}</span>
                   <span className="saved-view-count">{state.counts[view.id] ?? 0}</span>
                 </button>

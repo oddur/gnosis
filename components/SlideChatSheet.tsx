@@ -1,6 +1,6 @@
 import { useSessionDraft } from '../lib/session-drafts';
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { MessageSquare } from 'lucide-react';
+import { WorkbenchIcon } from './WorkbenchIcon';
 import { ChatPanel } from './ChatPanel';
 import { ChatConversation } from './ChatConversation';
 import { chatSuggestions } from '../lib/chat-context';
@@ -53,8 +53,7 @@ function SuggestedQuestions({
 
   return (
     <div className="flex flex-col items-start gap-3">
-      <p className="text-sm text-muted-foreground">Explore this change with a question.</p>
-      <ul className="flex flex-col gap-3 w-full">
+      <ul className="flex flex-col gap-3 w-full" aria-label="Suggested questions">
         {suggestions.map((q, i) => (
           <li key={i}>
             <button
@@ -250,7 +249,7 @@ export function SlideChatSheet({
             <div className="w-px h-1 bg-foreground" />
           </div>
         ) : (
-          <MessageSquare className="h-3.5 w-3.5 text-muted-foreground group-hover:text-foreground transition-colors" />
+          <WorkbenchIcon name="chat" className="text-muted-foreground group-hover:text-foreground transition-colors" />
         )}
       </button>
 

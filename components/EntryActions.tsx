@@ -85,7 +85,7 @@ export function EntryActions({
               })();
             }}
           >
-            {action.icon}
+            {action.icon && <span className="entry-menu-icon" aria-hidden="true">{action.icon}</span>}
             <span className="entry-menu-label">{action.displayLabel ?? action.label}</span>
             {action.detail && <span className="entry-menu-detail" aria-hidden="true">{action.detail}</span>}
           </Menu.Item>

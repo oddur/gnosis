@@ -1,3 +1,4 @@
+import { subjectIcons, workbenchIcons, workspaceSections } from '../lib/interface-icons';
 import { RepositorySettingsProvider } from '../components/RepositorySettingsProvider';
 import { ConflictWorkspaceHost } from '../components/ConflictWorkspaceHost';
 import { RecentlyViewedContext } from '../components/RecentlyViewed';
@@ -321,69 +322,69 @@ export function App() {
   }
   const commands: AppCommand[] = [
     {
-      id: 'nav:queue',
+      id: 'nav:queue', icon: workbenchIcons.queue,
       label: 'Go to review queue',
       keywords: 'home inbox all',
       perform: () => navigate({ kind: 'home', section: 'all' }),
     },
     {
-      id: 'nav:starred',
+      id: 'nav:starred', icon: workbenchIcons.starred,
       label: 'Go to starred PRs',
       keywords: 'favorites bookmarks pinned',
       perform: () => navigate({ kind: 'home', section: 'starred' }),
     },
     {
-      id: 'nav:muted',
+      id: 'nav:muted', icon: workbenchIcons.muted,
       label: 'Manage muted PRs',
       keywords: 'hidden ignored unmute restore',
       perform: () => navigate({ kind: 'home', section: 'muted' }),
     },
     {
-      id: 'nav:requested',
+      id: 'nav:requested', icon: subjectIcons.pr,
       label: 'Go to review requests',
       keywords: 'assigned me',
       perform: () => navigate({ kind: 'home', section: 'requested' }),
     },
     {
-      id: 'nav:response',
+      id: 'nav:response', icon: workspaceSections.feedback.icon,
       label: 'Go to needs my response',
       keywords: 'feedback changes requested unresolved my PRs',
       perform: () => navigate({ kind: 'home', section: 'response' }),
     },
     {
-      id: 'nav:updated',
+      id: 'nav:updated', icon: workbenchIcons.refresh,
       label: 'Go to updated PRs',
       keywords: 'changed new changes',
       perform: () => navigate({ kind: 'home', section: 'updated' }),
     },
     {
-      id: 'nav:stacks',
+      id: 'nav:stacks', icon: subjectIcons.stack,
       label: 'Go to stacks',
       keywords: 'dependencies',
       perform: () => navigate({ kind: 'home', section: 'stacks' }),
     },
     {
-      id: 'nav:saved',
+      id: 'nav:saved', icon: workbenchIcons.history,
       label: 'Go to saved reviews',
       keywords: 'history archive',
       perform: () => navigate({ kind: 'home', section: 'saved' }),
     },
     {
-      id: 'nav:activity',
+      id: 'nav:activity', icon: workbenchIcons.activity,
       label: 'Show Activity',
       keywords: 'background progress tasks jobs',
       perform: () => navigate({ kind: 'activity' }),
     },
     {
-      id: 'nav:local',
+      id: 'nav:local', icon: workbenchIcons.localChanges,
       label: 'Review local changes',
       keywords: 'git working tree branch',
       perform: () => navigate({ kind: 'home', local: true }),
     },
-    { id: 'nav:setup', label: 'Run setup again', keywords: 'onboarding tutorial first run', perform: () => navigate({ kind: 'home', onboarding: 'setup' }) },
-    { id: 'nav:walkthrough', label: 'Show walkthrough', keywords: 'tour tutorial onboarding help', perform: () => navigate({ kind: 'home', onboarding: 'tour' }) },
+    { id: 'nav:setup', icon: workbenchIcons.setup, label: 'Run setup again', keywords: 'onboarding tutorial first run', perform: () => navigate({ kind: 'home', onboarding: 'setup' }) },
+    { id: 'nav:walkthrough', icon: workbenchIcons.help, label: 'Show walkthrough', keywords: 'tour tutorial onboarding help', perform: () => navigate({ kind: 'home', onboarding: 'tour' }) },
     ...['queue', 'repositories', 'review', 'appearance', 'integrations'].map((section) => ({
-      id: `nav:settings:${section}`,
+      id: `nav:settings:${section}`, icon: workbenchIcons.settings,
       label: `Settings · ${section}`,
       keywords: 'preferences model theme account',
       perform: () => navigate({ kind: 'home', settings: section }),

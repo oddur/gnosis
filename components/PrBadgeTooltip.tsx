@@ -1,5 +1,6 @@
 import { SubjectIcon } from './SubjectIcon';
-import { GitBranch, ArrowRight, MessageSquare, CircleCheck, CircleX, Clock3 } from 'lucide-react';
+import { GitBranch, ArrowRight, MessageSquare } from 'lucide-react';
+import { checkSummaryIcons } from '../lib/interface-icons';
 import type { PrBadgePreview } from '../lib/pr-badge-preview';
 import { prReviewStatus } from '../lib/pr-review-status';
 import { mergeReadiness } from '../lib/merge-readiness';
@@ -30,7 +31,7 @@ export function PrBadgeTooltip({
   const status = prReviewStatus(member, signals, false);
   const readiness = mergeReadiness(member, signals);
   const checks = signals?.checks;
-  const CheckIcon = checks?.state === 'failure' ? CircleX : checks?.state === 'pending' ? Clock3 : CircleCheck;
+  const CheckIcon = checkSummaryIcons[checks?.state ?? 'unknown'];
   const comments = signals?.comments ?? member.commentCount;
   return (
     <div className="pr-badge-preview">

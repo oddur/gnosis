@@ -1,14 +1,11 @@
 import { RepositoryBadge, PrBadge } from './EntityBadge';
+import { checkSummaryIcons } from '../lib/interface-icons';
 import {
-  Check,
-  CircleDot,
   GitMerge,
   GitPullRequest,
   GitPullRequestClosed,
   GitPullRequestDraft,
   MessageSquare,
-  Minus,
-  X,
 } from 'lucide-react';
 import { GitHubAuthor } from './GitHubAuthor';
 import type { ReviewMember, ReviewSubject } from '../lib/workbench';
@@ -64,7 +61,7 @@ export function QueueMetadata({ subject, account, onChecks }: { subject: ReviewS
         : total
           ? 'success'
           : 'neutral';
-  const CheckIcon = state === 'failure' ? X : state === 'pending' ? CircleDot : state === 'success' ? Check : Minus;
+  const CheckIcon = checkSummaryIcons[state];
   const failed = values.reduce((n, value) => n + (value.checks.failed ?? 0), 0);
   const CheckControl = onChecks ? 'button' : 'span';
   const checkLabel = !complete

@@ -130,9 +130,21 @@ void app.whenReady().then(async () => {
     // A scrolling commit history must keep its position when the comparison changes.
     await js("(()=>{const style=document.createElement('style');style.id='commit-scroll-test';style.textContent='.commit-list{max-height:100px;flex:none}';document.head.appendChild(style);const list=document.querySelector('.commit-list');list.scrollTop=60;list.dispatchEvent(new Event('scroll',{bubbles:true}));window.commitListBefore=list;window.commitScrollBefore=list.scrollTop;const next=document.querySelectorAll('.commit-row')[1];next.focus({preventScroll:true});next.click()})()");
     await wait("document.querySelector('.commit-detail-title')?.textContent.includes('Keep retry boundaries')");
+    assert.equal(await js("document.querySelector('.commit-message-body')?.textContent"), 'Retain pending work after transient failures.');
+    assert.ok(await js(`(()=>{const message=document.querySelector('.commit-message-body');const viewport=document.querySelector('.commit-diff-stream');return !message.closest('details') && message.getBoundingClientRect().top>=viewport.getBoundingClientRect().top && message.getBoundingClientRect().bottom<=viewport.getBoundingClientRect().bottom})()`), 'The full message is visible above the diff without opening metadata');
+    await capture('message-light');
+    await js("document.documentElement.classList.add('dark')");
+    await capture('message-dark');
+    await js("document.documentElement.classList.remove('dark')");
     assert.ok(await js<number>('window.commitScrollBefore') > 0, 'The regression starts with a scrolled history');
     assert.equal(await js("document.querySelector('.commit-list').scrollTop"), await js('window.commitScrollBefore'), 'Selecting a commit must not jump the history back to the top');
     assert.equal(await js("document.activeElement===document.querySelector('.commit-row[aria-pressed=true]')"), true, 'Keyboard focus stays on the chosen commit');
+    await click('Summary');
+    await click('Commits');
+    await wait("document.querySelector('.commit-detail-title')?.textContent.includes('Keep retry boundaries')");
+    await new Promise(r => setTimeout(r, 200));
+    assert.ok(await js("Math.abs(document.querySelector('.commit-diff-stream').scrollTop)<5"), 'Returning to a message restores the top, not the first file');
+
     await js("document.querySelectorAll('.commit-row')[0].click()");
     await wait("document.querySelector('.commit-detail-title')?.textContent.includes('Merge worker')");
     await js("document.querySelector('#commit-scroll-test').remove();document.querySelector('.commit-list').scrollTop=0");
@@ -148,6 +160,7 @@ void app.whenReady().then(async () => {
       "document.querySelector('.commit-detail-title')?.textContent.includes('3 commits') && !!document.querySelector('.changes-file-header')"
     );
     assert.equal(await js('window.compareReads.at(-1).firstSha'), 'a'.repeat(40));
+    assert.equal(await js("document.querySelectorAll('.commit-messages article').length"), 3, 'Ranges expose every selected commit message');
     await js(
       "document.querySelector('.commit-range-controls input[type=checkbox]').click();document.querySelectorAll('.commit-row')[0].click()"
     );
@@ -291,7 +304,7 @@ void app.whenReady().then(async () => {
     );
     await js("document.querySelector('.commit-detail summary').click()");
     await wait(
-      "document.querySelector('.commit-detail details').open && document.querySelector('.commit-messages').textContent.includes('Committed by')"
+      "document.querySelector('.commit-detail details').open && document.querySelector('.commit-metadata').textContent.includes('Committed by')"
     );
     await capture('details');
     // Scrolling changes the current file, and headers remain sticky within their own diff.
@@ -308,13 +321,14 @@ void app.whenReady().then(async () => {
       'File header sticks while scrolling its code'
     );
     await capture('stream-scrolled');
-    const savedScroll = await js<number>("document.querySelector('.commit-diff-stream').scrollTop");
+    const readingOffset = "document.querySelector('.commit-stream-row[data-active=true]').getBoundingClientRect().top-document.querySelector('.commit-diff-stream').getBoundingClientRect().top";
+    const savedScroll = await js<number>(readingOffset);
     await click('Summary');
     await click('Commits');
     await wait("document.querySelector('.commit-stream-row[data-active=true]')?.dataset.file==='src/new.ts'");
     await new Promise((r) => setTimeout(r, 400));
     assert.ok(
-      Math.abs((await js<number>("document.querySelector('.commit-diff-stream').scrollTop")) - savedScroll) < 5,
+      Math.abs((await js<number>(readingOffset)) - savedScroll) < 5,
       'Restore reading offset in the comparison'
     );
     // Viewed collapses the body; filtering removes it from both navigation and the stream.

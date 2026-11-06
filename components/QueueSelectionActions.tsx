@@ -1,4 +1,6 @@
-import { BookOpen, Copy, FileText, Mail, MailOpen, RefreshCw, Star, VolumeX } from 'lucide-react';
+import { Copy, Mail, MailOpen, RefreshCw, Star, VolumeX } from 'lucide-react';
+import { WorkspaceIcon } from './WorkspaceIcon';
+import { WorkbenchIcon } from './WorkbenchIcon';
 import type { EntryActionGroups } from './EntryActions';
 import type { QueueItem, ReviewMember } from '../lib/workbench';
 
@@ -68,7 +70,7 @@ export function queueSelectionGroups({
         label: `Generate ${count(explanations.length, 'explanation')}`,
         displayLabel: explanations.length === 1 ? 'Generate explanation' : 'Generate explanations',
         detail: String(explanations.length),
-        icon: <BookOpen size={15} />,
+        icon: <WorkspaceIcon tab="explanation" />,
         disabled: busy || !authenticated || !explanations.length,
         run: () => onExplain(explanations),
       },
@@ -76,7 +78,7 @@ export function queueSelectionGroups({
         label: `Generate ${count(briefings.length, 'briefing')}`,
         displayLabel: briefings.length === 1 ? 'Generate briefing' : 'Generate briefings',
         detail: String(briefings.length),
-        icon: <FileText size={15} />,
+        icon: <WorkbenchIcon name="briefing" />,
         disabled: busy || !authenticated || !briefings.length,
         run: () => onBrief(briefings),
       },

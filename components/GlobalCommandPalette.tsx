@@ -1,6 +1,8 @@
 import { LoadingIndicator } from './LoadingState';
 import { SourceBadges } from './EntityBadge';
 import { GitHubAuthor } from './GitHubAuthor';
+import { subjectIcons, workbenchIcons, workspaceSections } from '../lib/interface-icons';
+import { FileTypeIcon } from './FileTypeIcon';
 import { commandRecents as recentIds, rememberCommandDestination as remember } from '../lib/command-recents';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -8,16 +10,10 @@ import {
   ChevronRight,
   Command as CommandIcon,
   FileCode2,
-  BookMarked,
-  Layers,
   GitPullRequest,
   Loader2,
   Search,
-  Settings2,
-  Sparkles,
-  MessageSquare,
   ExternalLink,
-  Clock,
 } from 'lucide-react';
 import { Command, CommandInput, CommandList, CommandGroup, CommandItem } from './ui/command';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
@@ -28,17 +24,22 @@ import type { LocalSearchResponse } from '../src/command-search-service';
 import type { PrSearchResult } from '../lib/types';
 
 const icons = {
-  pr: GitPullRequest,
-  stack: Layers,
-  briefing: Sparkles,
-  topic: Sparkles,
+  pr: subjectIcons.pr,
+  stack: subjectIcons.stack,
+  briefing: workbenchIcons.briefing,
+  topic: workspaceSections.explanation.icon,
   file: FileCode2,
-  insight: Sparkles,
-  comment: MessageSquare,
-  explainer: Sparkles,
-  view: Settings2,
-  repository: BookMarked,
-};
+  insight: workbenchIcons.insight,
+  comment: workbenchIcons.chat,
+  explainer: workbenchIcons.diagram,
+  view: workbenchIcons.savedView,
+  repository: subjectIcons.repository,
+} satisfies Record<SearchDocument['kind'], typeof GitPullRequest>;
+const HistoryIcon = workbenchIcons.history;
+function CommandActionIcon({ command, size = 16 }: { command: AppCommand; size?: number }) {
+  const Icon = command.icon ?? CommandIcon;
+  return <Icon size={size} aria-hidden="true" />;
+}
 function Highlight({ text, query }: { text: string; query: string }) {
   const tokens = query
     .trim()
@@ -347,7 +348,9 @@ export function GlobalCommandPalette({
                             disabled={busy}
                             onSelect={() => void run(() => navigate(doc.destination), doc)}
                           >
-                            <Icon size={17} />
+                            {doc.kind === 'file' && doc.destination.kind === 'review' && doc.destination.filePath
+                              ? <FileTypeIcon filePath={doc.destination.filePath} />
+                              : <Icon size={16} aria-hidden="true" />}
                             <span className="global-command-result-copy">
                               <strong>
                                 <Highlight text={doc.title} query={term} />
@@ -415,7 +418,7 @@ export function GlobalCommandPalette({
                       disabled={busy}
                       onSelect={() => void run(command.perform)}
                     >
-                      <CommandIcon size={16} />
+                      <CommandActionIcon command={command} />
                       <span className="global-command-result-copy">
                         <strong>{command.label}</strong>
                       </span>
@@ -506,7 +509,7 @@ export function GlobalCommandPalette({
                 </>
               ) : selectedCommand ? (
                 <>
-                  <CommandIcon size={22} />
+                  <CommandActionIcon command={selectedCommand} size={22} />
                   <h2>{selectedCommand.label}</h2>
                   <p className="global-command-match" tabIndex={0}>
                     {selectedCommand.group ?? 'Navigate Gnosis'}
@@ -530,7 +533,7 @@ export function GlobalCommandPalette({
                 </>
               ) : (
                 <>
-                  <Clock size={24} />
+                  <HistoryIcon size={24} aria-hidden="true" />
                   <h2>Your next destination</h2>
                   <p className="global-command-match" tabIndex={0}>
                     Find a change, understand a match, or pick up where you left off.

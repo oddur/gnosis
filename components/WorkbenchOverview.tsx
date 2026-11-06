@@ -1,4 +1,5 @@
 import { SubjectIcon } from './SubjectIcon';
+import { WorkbenchIcon } from './WorkbenchIcon';
 import { RepositoryBadge, PrBadge } from './EntityBadge';
 import { GitHubAuthor } from './GitHubAuthor';
 import { sourceForPath } from '../lib/workbench';
@@ -33,7 +34,7 @@ export function WorkbenchOverview({
         {subject?.kind === 'stack' ? (
           <>
             <Layers size={15} />
-            {subject.members.length} PRs · one review
+            {subject.members.length} PRs
           </>
         ) : (
           <>
@@ -87,7 +88,7 @@ export function WorkbenchOverview({
           </div>
           <div className="overview-columns">
             <section>
-              <h2>Review path</h2>
+              <h2>Topics</h2>
               {review.slides.map((s) => (
                 <button className="overview-topic" key={s.id} onClick={() => onNavigate(s.slideNumber)}>
                   <span className="stack-step">
@@ -95,15 +96,17 @@ export function WorkbenchOverview({
                   </span>
                   <span className="flex-1">{s.title}</span>
                   <span className="text-xs text-muted-foreground">
-                    {s.diffHunks.length} changed code {s.diffHunks.length === 1 ? 'block' : 'blocks'}
+                    {s.diffHunks.length} code {s.diffHunks.length === 1 ? 'block' : 'blocks'}
                   </span>
                   <ArrowRight size={14} />
                 </button>
               ))}
             </section>
             <aside>
-              <h2>Where to focus</h2>
-              <Markdown className="reading-prose">{review.riskRationale}</Markdown>
+              {!!review.riskRationale.trim() && <>
+                <h2>Where to focus</h2>
+                <Markdown className="reading-prose">{review.riskRationale}</Markdown>
+              </>}
               <h2>{subject?.kind === 'stack' ? 'PRs in this stack' : 'GitHub feedback'}</h2>
               {subject ? (
                 subject.members.map((m, i) => {
@@ -127,11 +130,11 @@ export function WorkbenchOverview({
                       </p>
                       <div className="flex gap-3 mt-2 text-xs">
                         <button
-                          className="text-[var(--ring)]"
+                          className="inline-flex items-center gap-1.5 text-[var(--ring)]"
                           onClick={() => onSubmit(m.url)}
                           disabled={m.merged || m.state === 'closed'}
                         >
-                          Submit to GitHub
+                          <WorkbenchIcon name="review" size={14} />Submit to GitHub
                         </button>
                         <button
                           className="inline-flex items-center gap-1 text-muted-foreground"
@@ -150,7 +153,7 @@ export function WorkbenchOverview({
                   onClick={() => onSubmit(review.prUrl)}
                   disabled={review.prUrl.startsWith('local:')}
                 >
-                  Submit to GitHub
+                  <WorkbenchIcon name="review" />Submit to GitHub
                 </Button>
               )}
               {subject?.warnings.map((w) => (

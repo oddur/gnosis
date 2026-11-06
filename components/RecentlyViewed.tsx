@@ -1,6 +1,8 @@
 import { createContext, useContext, useState, useSyncExternalStore } from 'react';
 import { DropdownMenu } from 'radix-ui';
-import { Clock, Layers, ListFilter, BookOpen } from 'lucide-react';
+import { WorkspaceIcon } from './WorkspaceIcon';
+import { SubjectIcon } from './SubjectIcon';
+import { WorkbenchIcon } from './WorkbenchIcon';
 import type { RecentlyViewedStore, RecentVisit } from '../lib/recently-viewed';
 import { PrStateIcon } from './QueueMetadata';
 
@@ -33,7 +35,7 @@ function HistoryMenu({ store, open }: HistoryContext) {
           title="Recently viewed"
           disabled={pending}
         >
-          <Clock size={17} aria-hidden="true" />
+          <WorkbenchIcon name="history" />
         </button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
@@ -70,13 +72,13 @@ function HistoryMenu({ store, open }: HistoryContext) {
                   >
                     <span className="recent-history-label">{entry.label}</span>
                     {subject?.kind === 'stack' ? (
-                      <Layers size={16} aria-label="PR stack" />
+                      <SubjectIcon kind="stack" />
                     ) : member ? (
                       <PrStateIcon member={member} />
                     ) : entry.location.page === 'review' ? (
-                      <BookOpen size={16} aria-hidden="true" />
+                      <WorkspaceIcon tab="explanation" />
                     ) : (
-                      <ListFilter size={16} aria-hidden="true" />
+                      <WorkbenchIcon name={home?.viewId ? 'savedView' : 'queue'} />
                     )}
                     <span className="recent-history-name">{entry.title}</span>
                     {entry.detail && <span className="recent-history-detail">{entry.detail}</span>}

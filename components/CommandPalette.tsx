@@ -1,8 +1,10 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import type { LucideIcon } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 
 export interface Command {
   id: string;
+  icon?: LucideIcon;
   label: string;
   hint?: string;
   group?: string;
@@ -177,7 +179,10 @@ export function CommandPalette({ open, onClose, commands, placeholder = 'Run a c
                         cmd.perform();
                       }}
                     >
-                      <span>{cmd.label}</span>
+                      <span className="inline-flex min-w-0 items-center gap-2">
+                        {cmd.icon && <cmd.icon size={16} className="shrink-0" aria-hidden="true" />}
+                        {cmd.label}
+                      </span>
                       {cmd.hint && <kbd className="kbd">{cmd.hint}</kbd>}
                     </li>
                   );

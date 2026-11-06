@@ -1,7 +1,8 @@
 import { LoadingIndicator } from './LoadingState';
 import { WorkspaceIcon } from './WorkspaceIcon';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { ClipboardCopy, Eye, MoreHorizontal, Trash2, Undo2 } from 'lucide-react';
+import { Eye, MoreHorizontal, Trash2, Undo2 } from 'lucide-react';
+import { WorkbenchIcon } from './WorkbenchIcon';
 import { DropdownMenu } from 'radix-ui';
 import {
   agentBriefMarkdown,
@@ -126,7 +127,7 @@ export function AgentBriefView({
                 )
               }
             >
-              <ClipboardCopy size={14} />
+              <WorkbenchIcon name="copy" />
               {busy === 'Copying…' ? busy : 'Copy for agent'}
             </Button>
             <Button

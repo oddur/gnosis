@@ -89,8 +89,7 @@ function FileConversation({
         onRetry={(id) => void chat.retry(context, id)}
         empty={
           <>
-            <p>Ask about this file’s changes.</p>
-            <div className="chat-suggestions">
+            <div className="chat-suggestions" role="group" aria-label="Suggested questions">
               {chatSuggestions({ path: request.path, selection: !!quote }).map((text) => (
                 <button className="chat-suggestion" key={text} onClick={() => send(text)}>
                   {text}
