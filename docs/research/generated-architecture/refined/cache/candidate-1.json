@@ -1,0 +1,147 @@
+{
+  "version": 1,
+  "title": "A cleared cache does not cancel a read",
+  "takeaway": "The caller retains the old promise. Generation and promise identity checks protect the new cache state.",
+  "assumptions": "The first read starts a load and captures epoch E. The load succeeds. The optional second read uses the same pending key and starts before the old load completes. Vertical spacing shows order, not elapsed time. All participants are current-code context.",
+  "exploration": {
+    "kind": "sequence",
+    "entities": [
+      {
+        "id": "caller",
+        "label": "Caller",
+        "summary": "Keeps the promise returned by read(). Other callers can share that promise.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/pr-file-cache.ts",
+          "startLine": 68
+        }
+      },
+      {
+        "id": "cache",
+        "label": "Revision cache",
+        "summary": "Owns epoch, saved, pending, priorities, and bytes.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/pr-file-cache.ts",
+          "startLine": 8
+        }
+      },
+      {
+        "id": "loader",
+        "label": "Asynchronous loader",
+        "summary": "The supplied load function returns a promise. clear() does not cancel it.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/pr-file-cache.ts",
+          "startLine": 5
+        }
+      }
+    ],
+    "relationships": [
+      {
+        "id": "read",
+        "from": "caller",
+        "to": "cache",
+        "label": "Read and retain P1",
+        "summary": "read() registers the promise in pending and returns it to the caller.",
+        "evidence": {
+          "filePath": "lib/pr-file-cache.ts",
+          "startLine": 67
+        }
+      },
+      {
+        "id": "load",
+        "from": "cache",
+        "to": "loader",
+        "label": "Start load",
+        "summary": "read() captures epoch before it calls load().",
+        "evidence": {
+          "filePath": "lib/pr-file-cache.ts",
+          "startLine": 32
+        }
+      },
+      {
+        "id": "clear",
+        "from": "cache",
+        "to": "cache",
+        "label": "Clear owned state",
+        "summary": "clear() advances epoch and clears the stores without cancelling the load.",
+        "evidence": {
+          "filePath": "lib/pr-file-cache.ts",
+          "startLine": 76
+        }
+      },
+      {
+        "id": "new-read",
+        "from": "caller",
+        "to": "cache",
+        "label": "Optional new read",
+        "summary": "After pending is cleared, a new read can register a distinct promise for the same key.",
+        "evidence": {
+          "filePath": "lib/pr-file-cache.ts",
+          "startLine": 67
+        }
+      },
+      {
+        "id": "complete",
+        "from": "loader",
+        "to": "cache",
+        "label": "Old load completes",
+        "summary": "The old generation does not match epoch, so this completion cannot save its value.",
+        "evidence": {
+          "filePath": "lib/pr-file-cache.ts",
+          "startLine": 48
+        }
+      },
+      {
+        "id": "deliver",
+        "from": "cache",
+        "to": "caller",
+        "label": "Deliver through P1",
+        "summary": "The completion returns value even when the generation check blocks storage.",
+        "evidence": {
+          "filePath": "lib/pr-file-cache.ts",
+          "startLine": 62
+        }
+      },
+      {
+        "id": "cleanup",
+        "from": "cache",
+        "to": "cache",
+        "label": "Check promise identity",
+        "summary": "finally() removes an entry only if it still holds this completion's promise.",
+        "evidence": {
+          "filePath": "lib/pr-file-cache.ts",
+          "startLine": 65
+        }
+      }
+    ]
+  },
+  "plan": {
+    "question": "Who receives the old result, and why can it not change cache state after clear()?",
+    "visualApproach": "Use three fixed participant lanes and ordered messages. Put clear(), the generation comparison, and pending ownership inside the cache lane.",
+    "whyThisForm": "The sequence separates the caller's retained promise from the cache's removable reference. Vertical order shows how a newer promise can exist before the old cleanup.",
+    "encodings": "Columns show responsibility. Rows show operation order. Solid arrows show calls or result delivery. The cache boundary contains its state changes. P1 and P2 identify distinct promises.",
+    "motion": "Use a static sequence. The ordered rows keep the retained promise, clear operation, and later completion visible together; motion adds no necessary information.",
+    "prediction": "Without the optional second read, the old caller still receives the value, saved stays empty, and finally() finds no pending entry to delete.",
+    "restingState": "The full sequence shows P1 retained by the caller, the epoch mismatch, and P2 retained in pending."
+  },
+  "scenarios": [
+    {
+      "id": "clear-before-completion",
+      "title": "Old completion after clear()",
+      "input": "A pending read is cleared; an optional new read starts for the same key before the old load completes.",
+      "frames": [
+        {
+          "title": "Result delivery and cache ownership are separate",
+          "caption": "Read from top to bottom. The optional new read creates P2; the old completion still delivers through P1.",
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 480\"><defs><marker id=\"arrow\" markerWidth=\"8\" markerHeight=\"8\" refX=\"7\" refY=\"4\" orient=\"auto\"><path d=\"M0 0 L8 4 L0 8\" fill=\"var(--line)\"/></marker></defs><rect x=\"185\" y=\"55\" width=\"220\" height=\"410\" rx=\"10\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><g data-entity-id=\"caller\"><rect x=\"15\" y=\"12\" width=\"135\" height=\"40\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"82\" y=\"38\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Caller</text><line x1=\"82\" y1=\"55\" x2=\"82\" y2=\"455\" stroke=\"var(--line)\"/></g><g data-entity-id=\"cache\"><text x=\"295\" y=\"38\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Revision cache</text><text x=\"295\" y=\"133\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">generation = E</text><text x=\"295\" y=\"154\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">pending = P1</text></g><g data-entity-id=\"loader\"><rect x=\"425\" y=\"12\" width=\"120\" height=\"40\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"485\" y=\"38\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Async loader</text><line x1=\"485\" y1=\"55\" x2=\"485\" y2=\"455\" stroke=\"var(--line)\"/></g><g data-relationship-id=\"read\"><path d=\"M82 80 H270\" stroke=\"var(--line)\" fill=\"none\" marker-end=\"url(#arrow)\"/><text x=\"100\" y=\"73\" font-size=\"16\" fill=\"var(--ink)\">read()</text><path d=\"M270 108 H82\" stroke=\"var(--line)\" fill=\"none\" marker-end=\"url(#arrow)\"/><text x=\"100\" y=\"129\" font-size=\"16\" fill=\"var(--ink)\">Keep P1</text></g><g data-relationship-id=\"load\"><path d=\"M315 80 H485\" stroke=\"var(--line)\" fill=\"none\" marker-end=\"url(#arrow)\"/><text x=\"407\" y=\"73\" font-size=\"16\" fill=\"var(--ink)\">load()</text></g><g data-relationship-id=\"clear\"><rect x=\"199\" y=\"175\" width=\"192\" height=\"73\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"295\" y=\"195\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">clear(): epoch = E+1</text><text x=\"295\" y=\"216\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Reset cache state</text><text x=\"295\" y=\"237\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Loader stays active</text></g><g data-relationship-id=\"new-read\"><path d=\"M82 274 H270\" stroke=\"var(--line)\" fill=\"none\" marker-end=\"url(#arrow)\"/><text x=\"92\" y=\"267\" font-size=\"16\" fill=\"var(--muted)\">Optional new read</text><text x=\"295\" y=\"296\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">pending = P2</text></g><g data-relationship-id=\"complete\"><path d=\"M485 322 H315\" stroke=\"var(--line)\" fill=\"none\" marker-end=\"url(#arrow)\"/><text x=\"416\" y=\"315\" font-size=\"16\" fill=\"var(--ink)\">value</text><text x=\"295\" y=\"345\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--warning)\">E ≠ E+1: no save</text></g><g data-relationship-id=\"deliver\"><path d=\"M270 375 H82\" stroke=\"var(--line)\" fill=\"none\" marker-end=\"url(#arrow)\"/><text x=\"93\" y=\"367\" font-size=\"16\" fill=\"var(--ink)\">P1 delivers value</text></g><g data-relationship-id=\"cleanup\"><text x=\"295\" y=\"420\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">finally(): P1 ≠ P2</text><text x=\"295\" y=\"442\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Keep pending P2</text></g></svg>",
+          "evidence": {
+            "filePath": "lib/pr-file-cache.ts",
+            "startLine": 76
+          }
+        }
+      ]
+    }
+  ]
+}

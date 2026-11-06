@@ -1,0 +1,47 @@
+{
+  "summary": "This review explains how caller scope can promote existing GitHub work without starting a second operation.\n\n- Shared reads connect callers to one work scope and manage cancellation for each reader.\n- Work scopes carry promotions across asynchronous calls and into pending scheduler entries.\n- The scheduler selects pending work by current priority. The client retries paced work outside a network slot.\n\nThis is current code, not a proposed change. Active requests are not preempted. The scheduler does not itself enforce rate limits.",
+  "riskLevel": "medium",
+  "riskRationale": "Shared mutable scopes connect request priority, concurrency, and cancellation. An incorrect connection can delay interactive work or cancel work that another reader still needs.",
+  "storyArc": "Follow an interactive caller into existing shared work. Show how the caller updates the work scope, how pending requests read that scope, and how paced work returns to scheduling. Keep reader cancellation separate from work priority.",
+  "topics": [
+    {
+      "title": "Interactive callers promote shared work through its live scope",
+      "slideType": "foundation",
+      "importance": "important",
+      "hunkIds": [
+        "hunk-0"
+      ],
+      "dependsOn": [],
+      "order": 1,
+      "narrativeBrief": "How does an interactive caller promote existing work through caller scope, shared reads, and scheduling? Connect the supplied shared-read path to mutable work scopes and client rescheduling; verify the omitted inflight lookup and pacing decision before showing their exact paths.",
+      "diagramBrief": {
+        "question": "How does an interactive caller make existing work eligible for interactive scheduling without replacing that work?",
+        "takeaway": "A joining caller raises the shared work scope. Pending tasks that retain this scope use its current effective priority at the next scheduling opportunity. Active requests continue, and paced work sleeps outside a scheduler slot before it tries again.",
+        "assumedKnowledge": [
+          "Promises and asynchronous calls",
+          "Request cancellation with AbortSignal"
+        ],
+        "essentialConcepts": [
+          "AsyncLocalStorage supplies the caller scope; the default priority is foreground.",
+          "createSharedGitHubRead starts one GitHubWork and calls joinGitHubWork before shared.read.",
+          "joinGitHubWork raises the work scope priority rather than creating another operation. An interactive promotion also makes the work non-automatic.",
+          "createGitHubWork retains a parent scope. Effective priority follows higher parent priorities, including after an await.",
+          "Shared readers have separate cancellation. The shared controller aborts only when the last reader leaves before settlement.",
+          "The scheduler retains a supplied scope object and reads effective priority when draining pending tasks.",
+          "Pending interactive work precedes foreground work; background work follows when neither is pending.",
+          "Only tasks marked parallel with current interactive priority can use parallel admission. The scheduler allows at most three active tasks; exclusive work blocks further starts.",
+          "The client schedules with githubPriorityScope(). A paced result causes a short sleep outside the slot, then another scheduling attempt.",
+          "Client code owns pacing and budget handling. The scheduler owns pending selection and concurrency, not rate-limit enforcement."
+        ],
+        "omit": [
+          "Detailed HTTP failure handling and backoff calculations",
+          "Budget persistence and GraphQL cost calculations",
+          "Cache keys and snapshot storage",
+          "A numeric queue example",
+          "Any unverified edge from the inflight map lookup to joinGitHubWork"
+        ],
+        "visualApproach": "Use a custom SVG responsibility map with an ordered walkthrough on the same fixed map. Read left to right from caller scope, through shared read and its owned GitHubWork scope, to the scheduler and client request operation. Place reader cancellation below the shared-read owner as a separate branch. Mark every existing component with exploration.change=\"context\" metadata, not visible diagram text. First show an existing operation and its retained scope. Then animate an interactive caller joining that operation: change the priority on the same scope, not on a replacement work object. Show the pending scheduler entry referring to that scope and selecting it when capacity and exclusivity permit. Keep an active request fixed to make the absence of preemption clear. Add a client-owned paced-result return path that leaves the slot, sleeps, and schedules again; do not depict the scheduler as the pacing authority. Keep the automatic flag, parent-scope resolution, parallel admission conditions, and shared-reader release details in inspection. Keep the concurrency and exclusivity conditions beside scheduler admission. This composition exposes ownership and the live reference that carries prom"
+      }
+    }
+  ]
+}

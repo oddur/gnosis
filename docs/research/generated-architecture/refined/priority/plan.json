@@ -1,0 +1,47 @@
+{
+  "summary": "This review explains how an interactive caller can promote existing shared GitHub work in the supplied code. No change is established.\n\n- Caller scope supplies priority. Joining shared work can raise its stored priority.\n- The scheduler reads effective priority when it selects pending work. It does not preempt active requests or enforce rate limits.\n- Shared reads manage caller cancellation separately from priority. The client retry loop submits paced work again without holding a scheduler slot during sleep.",
+  "riskLevel": "medium",
+  "riskRationale": "The code connects shared mutable scope, asynchronous work, cancellation, and request selection. Incorrect assumptions about these connections can affect request order. The supplied evidence establishes no change.",
+  "storyArc": "Start with caller scope, follow its promotion into shared work, and show how the scheduler reads that scope to select pending work. Keep cancellation ownership and client pacing visible as separate responsibilities.",
+  "topics": [
+    {
+      "title": "Context: Interactive callers promote shared work through its priority scope",
+      "slideType": "foundation",
+      "importance": "important",
+      "hunkIds": [
+        "hunk-0"
+      ],
+      "dependsOn": [],
+      "order": 1,
+      "narrativeBrief": "How does an interactive caller affect work that already exists? Connect caller scope, createSharedGitHubRead, joinGitHubWork, retained parent scopes, scheduler selection, and the client retry loop; verify any client inflight join path because its caller is not supplied.",
+      "diagramBrief": {
+        "question": "How does an interactive caller promote shared work without replacing the operation or interrupting an active request?",
+        "takeaway": "A join can raise the shared work scope to interactive. Pending tasks that retain that scope can then receive interactive selection priority, and later requests can inherit the promotion across await boundaries. Active requests continue.",
+        "assumedKnowledge": [
+          "Promises and asynchronous calls",
+          "Pending work differs from active work",
+          "AsyncLocalStorage carries scope through asynchronous execution"
+        ],
+        "essentialConcepts": [
+          "Context: caller priority scope",
+          "Context: createSharedGitHubRead joins GitHubWork before shared.read",
+          "Context: GitHubWork owns a mutable scope with a parent reference",
+          "Context: githubPriority reads the highest priority along the parent chain",
+          "Context: joinGitHubWork raises priority and updates automatic status",
+          "Context: createSharedRead owns one operation signal and tracks readers",
+          "Context: scheduler retains task scope and selects pending interactive work before lower priorities",
+          "Context: exclusive work blocks new starts; parallel starts require both task opt-in and effective interactive priority, with at most three active tasks",
+          "Context: client retry loop submits paced work again after sleeping outside the scheduler slot"
+        ],
+        "omit": [
+          "Detailed quota calculations, backoff persistence, and HTTP error handling",
+          "Numeric queue examples",
+          "Any claim that active requests are preempted",
+          "Any claim that the scheduler enforces rate limits",
+          "A direct client inflight join edge, because that call site is not supplied"
+        ],
+        "visualApproach": "Use a custom SVG responsibility map with a short animated sequence on fixed positions. Label every entity and relationship as context. Place caller scope beside shared GitHubWork, with the mutable scope inside its owner. Connect shared reads to that work and connect retained task scope to scheduler selection. Put active requests beyond a scheduler boundary. First show lower-priority work pending behind an active exclusive request. Then follow an interactive read through joinGitHubWork and highlight the same scope reference at selection. Keep the active request unchanged; start promoted work only after capacity and exclusivity permit it. Show the client retry loop as a connected return path through sleep outside the scheduler boundary. Keep reader cancellation on a quiet side branch: one reader leaves independently, while the last reader leaving unsettled work aborts the shared signal. This form shows ownership and timing without making the reviewer simulate scope references. Do not depict a client inflight join until its caller is verified."
+      }
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "summary": "The supplied code shows how the parallel-review path builds topic explanations from source context.\n\n- The planner sets topic order and a shared story arc.\n- Parallel topic writers receive source context and produce prose with optional SVG illustrations.\n- An isolated renderer supplies images for an educational critic to check against source context.\n- The critic can accept, repair, or omit an illustration. Omission keeps the topic prose.",
+  "riskLevel": "low",
+  "riskRationale": "This is an explanation of existing code, not a proposed change. The main review concern is to show the source handoffs and renderer isolation without claiming that visual review guarantees correctness.",
+  "storyArc": "Follow source context through planning and parallel topic writing. Then follow the optional illustration through rendering and critique, while the prose remains available for the completed slide.",
+  "topics": [
+    {
+      "title": "Parallel topic writers keep prose when visual review omits an illustration",
+      "slideType": "foundation",
+      "importance": "important",
+      "hunkIds": [
+        "hunk-0"
+      ],
+      "dependsOn": [],
+      "order": 1,
+      "narrativeBrief": "How do the planner, parallel topic writers, isolated renderer, and educational critic divide the work of producing a source-grounded explanation? Connect the supplied context builders, generateSlide, browser validation, and reviewIllustration; distinguish source-based critique from a correctness guarantee, and show that visual omission preserves prose.",
+      "diagramBrief": {
+        "question": "How does source context reach parallel topic writers and visual critique, and what reaches the final slide when the critic rejects a picture?",
+        "takeaway": "The planner supplies topic structure, writers produce topic content, and the renderer supplies images for source-based critique. A rejected illustration can become null without removing the prose from the completed slide.",
+        "assumedKnowledge": [
+          "Basic parallel task execution",
+          "SVG images",
+          "A renderer displays authored content"
+        ],
+        "essentialConcepts": [
+          "The planner receives planner context and the hunk index, then supplies ordered topics and a story arc.",
+          "Each topic writer receives topic source context, the story arc, and the topic plan.",
+          "generateSlide produces prose and an optional SVG illustration.",
+          "The isolated browser renderer validates authored SVG frames and captures images.",
+          "The renderer uses sandboxing, context isolation, disabled Node integration, and request restrictions.",
+          "The critic receives source context, the illustration, and rendered images.",
+          "The critic can accept the illustration, request repair, or omit it.",
+          "A repaired illustration returns through rendering and critique.",
+          "Visual rejection or unavailable critique returns null for the illustration; the prose remains in the writer output.",
+          "The main process assembles completed slides with topic content and resolved source hunks."
+        ],
+        "omit": [
+          "Retry deadlines and rate limits",
+          "Checkpoint storage and fingerprints",
+          "Provider options and progress events",
+          "Legacy diagram fields",
+          "Overview finalization",
+          "Individual SVG frame validation checks"
+        ],
+        "visualApproach": "Use a static custom SVG responsibility map, read left to right. Start with source context and the planner. Place parallel topic writers in a central group, with one expanded representative writer. From that writer, keep a direct prose route to the completed slide above a separate optional-illustration route. Put the browser renderer inside a clearly named isolation boundary. Connect its rendered images to the educational critic, and give the critic a separate source-context input. Show an accepted SVG route to the slide, a repair loop through the renderer, and an omit route that ends at 'No picture'. Keep the prose route connected to the slide in all cases. This layout shows ownership and handoffs without requiring the reader to simulate concurrent executions. Use no animation: the stable routes and optional visual branch teach the required relationship more directly. Put exact symbols, renderer restrictions, and source links in inspection details. Set exploration.change=\"context\" for every existing component. Verify the map against the supplied source, and do not imply that the renderer itself checks source accuracy."
+      }
+    }
+  ]
+}

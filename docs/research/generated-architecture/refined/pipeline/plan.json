@@ -1,0 +1,48 @@
+{
+  "summary": "The parallel-review path separates review planning, topic writing, browser validation, and educational visual review.\n- The planner sets topic scope and order from the supplied evidence.\n- Parallel topic writers receive source context and produce prose with optional SVG illustrations.\n- An isolated browser renderer checks illustrations and supplies images to the critic.\n- The critic can accept, request repair, or omit a visual without removing the prose.\n- The main process collects the topics, refines the text, and completes the overview.",
+  "riskLevel": "low",
+  "riskRationale": "This is an explanation of existing code at the supplied commit, not a code change.",
+  "storyArc": "Follow the source evidence through the planner and parallel topic writers. Then follow one optional illustration through browser validation and educational review. Keep the prose path visible as the main process collects the completed explanation.",
+  "topics": [
+    {
+      "title": "Parallel review combines source-based topic writing with separate visual checks",
+      "slideType": "foundation",
+      "importance": "important",
+      "hunkIds": [
+        "hunk-0"
+      ],
+      "dependsOn": [],
+      "order": 1,
+      "narrativeBrief": "How do the planner, parallel topic writers, isolated SVG renderer, and educational critic divide responsibility and exchange evidence? Connect the main-process calls with generateSlide, reviewIllustration, and browser capture; distinguish source-based instructions from a guarantee of accuracy, and show that visual omission preserves prose.",
+      "diagramBrief": {
+        "question": "How does source evidence become a completed topic explanation, and where can its optional visual be removed without losing prose?",
+        "takeaway": "The planner directs topic writers, not the browser renderer. Each writer supplies an optional SVG for browser checks and image capture; the critic uses source context and rendered images to accept, repair, or omit that visual while prose continues to topic collection.",
+        "assumedKnowledge": [
+          "Basic asynchronous function calls",
+          "SVG as a browser-rendered image format"
+        ],
+        "essentialConcepts": [
+          "The main process builds planner context from metadata, the hunk index, and available source evidence.",
+          "The planner returns ordered topics, source assignments, a story arc, and optional diagram briefs.",
+          "The main process builds source context for each topic and starts topic writers in parallel.",
+          "generateSlide produces prose and an optional SVG illustration.",
+          "The SVG validator runs in a separate sandboxed BrowserWindow with no Node integration, preload, network access, or shared app session.",
+          "Browser validation checks light and dark themes and captures authored frames plus transition midpoints.",
+          "reviewIllustration gives the educational critic source context, the illustration, and rendered contact sheets.",
+          "An accepted illustration returns to the topic output. A repair receives browser checks and another critique.",
+          "Omission or visual-review failure returns no picture without rewriting the prose. User cancellation still propagates.",
+          "The main process collects slides, refines explanation text, and reconciles the overview with completed topics."
+        ],
+        "omit": [
+          "Retry deadlines and timeout values",
+          "Checkpoint storage and reuse",
+          "Single-shot review generation",
+          "Provider configuration and local tool branches",
+          "Contact-sheet packing details",
+          "Review history, notifications, and unrelated application services"
+        ],
+        "visualApproach": "Use a custom SVG responsibility map with a short animated handoff sequence. Keep the main-process boundary around context preparation and topic collection. Place the planner above a group of parallel topic writers. Expand one writer's optional visual route into a separate sandboxed renderer and an educational critic. Show source context reaching both the writer and critic; show rendered contact sheets traveling from the renderer through reviewIllustration to the critic. Keep prose on a direct route from writer output to collection, separate from the visual route. Animate one SVG through validation and critique, then show named accept, repair, and omit outcomes. Route repair through generation, rendering, and critique again. In the omit state, remove only the SVG token while the prose token reaches collection. Keep all participants fixed so motion explains the handoffs without requiring the reader to reconstruct ownership. Mark existing components with exploration.change=\"context\" metadata, not visible labels. Do not imply that technical validation proves source accuracy or that the renderer itself makes the educational decision."
+      }
+    }
+  ]
+}

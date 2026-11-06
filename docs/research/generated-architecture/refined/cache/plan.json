@@ -1,0 +1,42 @@
+{
+  "summary": "The supplied code shows how clear() removes cache state without cancelling a pending load. The caller keeps its promise and receives the loaded value if the load succeeds. The old completion cannot save that value because clear() advances the cache epoch. This is current code at 5e0bdece6a2d61f1c96999546e6d83883cb64b62, not a supplied change.",
+  "riskLevel": "low",
+  "riskRationale": "No change is supplied. The review examines existing promise ownership and cache state guards.",
+  "storyArc": "Follow one pending read across clear(). Separate the caller's promise from the cache's tracking entry. Then show how the epoch guard blocks an old cache write and how promise identity protects a newer pending entry.",
+  "topics": [
+    {
+      "title": "clear() removes cache state but preserves the pending caller's result",
+      "slideType": "foundation",
+      "importance": "important",
+      "hunkIds": [
+        "hunk-0"
+      ],
+      "dependsOn": [],
+      "order": 1,
+      "narrativeBrief": "How can a pending read return its result after clear() without restoring old cache state? Connect the captured epoch, returned promise, clear() resets, completion guards, and identity check in finally(); label every entity as context.",
+      "diagramBrief": {
+        "question": "Who receives a successful load result after clear(), and what prevents that completion from changing the cleared cache?",
+        "takeaway": "The original caller, and any callers that share its promise, still receive the loaded value. The old generation cannot write to saved, and its cleanup cannot delete a newer pending promise.",
+        "assumedKnowledge": [
+          "A promise can remain active after a Map entry that refers to it is deleted.",
+          "Promise callbacks run after the asynchronous operation completes."
+        ],
+        "essentialConcepts": [
+          "Caller holds the promise returned by read().",
+          "The revision cache owns epoch, saved, pending, priorities, and bytes.",
+          "read() captures generation before it calls load().",
+          "clear() advances epoch and clears cache state; it does not cancel load().",
+          "The old completion fails generation === epoch and returns value without saving it.",
+          "finally() deletes a pending entry only when that entry holds the same promise."
+        ],
+        "omit": [
+          "Revision key construction",
+          "Cache-hit and background-load selection rules",
+          "LFS replacement details, except that the old generation cannot select current through that guard",
+          "Size calculation and eviction policy"
+        ],
+        "visualApproach": "Use a custom SVG sequence with fixed lanes for Caller (context), Revision cache (context), and Asynchronous loader (context). Keep epoch and the saved and pending stores inside the cache lane. Animate one read: capture generation E, start load, record its promise, and return that promise to the caller. Next show clear() changing epoch to E+1 and emptying the stores while the caller's promise and loader remain active. When the loader completes, show generation E beside epoch E+1 at the cache-write guard, block the write, and deliver value through the retained promise. Add a separate final frame for an optional new same-key read after clear(): its distinct promise occupies pending, and the old finally() leaves it there because identity differs. Preserve lane positions and causal order. Do not show cancellation or split synchronous clear() into externally observable stages."
+      }
+    }
+  ]
+}

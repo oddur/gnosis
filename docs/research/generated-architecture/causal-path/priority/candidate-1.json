@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "title": "Promotion reaches later selection",
+  "takeaway": "The caller promotes existing shared work; the scheduler later observes that priority through the client request scope.",
+  "assumptions": "An interactive caller joins background shared work after a client request is pending. Positions show causal influence, not elapsed time. Dashed links show semantic influence, not pointers, copied values, or pushed updates.",
+  "exploration": {
+    "kind": "component",
+    "entities": [
+      {
+        "id": "caller",
+        "label": "Caller scope",
+        "summary": "AsyncLocalStorage supplies the joining caller's effective priority.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 31
+        }
+      },
+      {
+        "id": "shared",
+        "label": "Shared work",
+        "summary": "Retains one GitHubWork and joins it before attaching each reader to the shared result.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 15
+        }
+      },
+      {
+        "id": "request",
+        "label": "Client request work",
+        "summary": "Retains a parent scope and submits its own scope on each scheduling attempt.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-client.ts",
+          "startLine": 559
+        }
+      },
+      {
+        "id": "scheduler",
+        "label": "Scheduler",
+        "summary": "Reads pending scopes at selection. Execution requires available capacity and permits parallel work only under its parallel-read rules.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 71
+        }
+      }
+    ],
+    "relationships": [
+      {
+        "id": "join",
+        "from": "caller",
+        "to": "shared",
+        "label": "Raise existing priority",
+        "summary": "joinGitHubWork raises the retained scope priority and returns the existing promise; it does not call drain.",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 54
+        }
+      },
+      {
+        "id": "inherit",
+        "from": "shared",
+        "to": "request",
+        "label": "Influence effective priority",
+        "summary": "createGitHubWork retains the current scope as parent. githubPriority reads higher priorities through that chain; this edge shows influence, not pointer direction.",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 51
+        }
+      },
+      {
+        "id": "submit",
+        "from": "request",
+        "to": "scheduler",
+        "label": "Submit retained request scope",
+        "summary": "The client supplies githubPriorityScope(). The scheduler retains that scope and reads its effective priority during later selection.",
+        "evidence": {
+          "filePath": "lib/github-client.ts",
+          "startLine": 561
+        }
+      }
+    ]
+  },
+  "plan": {
+    "question": "How does an interactive join affect later selection of an existing client request?",
+    "visualApproach": "Use a static behavior diagram with a left-to-right path from caller to shared work, client request, and scheduler selection. Keep the existing work identity visible. Separate local request priority from effective priority.",
+    "whyThisForm": "The path preserves the client intermediary and shows the effect without making the reader trace reference links in reverse.",
+    "encodings": "Boxes identify responsibilities. Accent text marks the promoted and effective priorities. Solid arrows show joining and scope submission. The dashed arrow shows priority influence through the parent chain. Spacing is schematic.",
+    "motion": "Static by design. The retained relationship explains the outcome without an invented dispatch step or timing sequence.",
+    "prediction": "A pending background client request can be considered interactive after its parent shared work is promoted, but active requests continue.",
+    "restingState": "The shared priority change, unchanged local request priority, effective interactive priority, and later scheduler observation remain visible."
+  },
+  "scenarios": [
+    {
+      "id": "existing-work",
+      "title": "One existing operation",
+      "input": "An interactive caller joins background shared work with a pending client request.",
+      "frames": [
+        {
+          "title": "Promotion is observed later",
+          "caption": "The scheduler retains the client request scope. Joining changes existing shared work; it does not call drain.",
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 880 360\"><defs><marker id=\"arrow\" markerWidth=\"7\" markerHeight=\"7\" refX=\"6\" refY=\"3.5\" orient=\"auto\"><path d=\"M0 0 L7 3.5 L0 7 Z\" fill=\"var(--line)\"/></marker></defs><g data-entity-id=\"caller\"><rect x=\"10\" y=\"64\" width=\"140\" height=\"184\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"80\" y=\"103\" text-anchor=\"middle\" font-size=\"24\" fill=\"var(--ink)\">Caller</text><text x=\"80\" y=\"153\" text-anchor=\"middle\" font-size=\"24\" fill=\"var(--accent)\">interactive</text></g><g data-entity-id=\"shared\"><rect x=\"176\" y=\"64\" width=\"220\" height=\"184\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"286\" y=\"103\" text-anchor=\"middle\" font-size=\"24\" fill=\"var(--ink)\">Shared work</text><text x=\"286\" y=\"145\" text-anchor=\"middle\" font-size=\"24\" fill=\"var(--muted)\">background</text><text x=\"286\" y=\"180\" text-anchor=\"middle\" font-size=\"24\" fill=\"var(--accent)\">→ interactive</text><text x=\"286\" y=\"220\" text-anchor=\"middle\" font-size=\"24\" fill=\"var(--ink)\">Same operation</text></g><g data-entity-id=\"request\"><rect x=\"422\" y=\"64\" width=\"220\" height=\"184\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"532\" y=\"103\" text-anchor=\"middle\" font-size=\"24\" fill=\"var(--ink)\">Client request</text><text x=\"532\" y=\"145\" text-anchor=\"middle\" font-size=\"24\" fill=\"var(--muted)\">Local: background</text><text x=\"532\" y=\"185\" text-anchor=\"middle\" font-size=\"24\" fill=\"var(--ink)\">Effective:</text><text x=\"532\" y=\"220\" text-anchor=\"middle\" font-size=\"24\" fill=\"var(--accent)\">interactive</text></g><g data-entity-id=\"scheduler\"><rect x=\"668\" y=\"64\" width=\"202\" height=\"184\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"769\" y=\"103\" text-anchor=\"middle\" font-size=\"24\" fill=\"var(--ink)\">Scheduler</text><text x=\"769\" y=\"145\" text-anchor=\"middle\" font-size=\"24\" fill=\"var(--ink)\">Reads effective</text><text x=\"769\" y=\"179\" text-anchor=\"middle\" font-size=\"24\" fill=\"var(--ink)\">priority later</text><text x=\"769\" y=\"220\" text-anchor=\"middle\" font-size=\"24\" fill=\"var(--accent)\">Prefers interactive</text></g><g data-relationship-id=\"join\"><path d=\"M150 156 H174\" stroke=\"var(--line)\" fill=\"none\" marker-end=\"url(#arrow)\"/><text x=\"160\" y=\"38\" text-anchor=\"middle\" font-size=\"24\" fill=\"var(--ink)\">Join: raise priority</text></g><g data-relationship-id=\"inherit\"><path d=\"M396 156 H420\" stroke=\"var(--line)\" stroke-dasharray=\"5 4\" fill=\"none\" marker-end=\"url(#arrow)\"/><text x=\"410\" y=\"284\" text-anchor=\"middle\" font-size=\"24\" fill=\"var(--ink)\">Inherits through parent chain</text></g><g data-relationship-id=\"submit\"><path d=\"M642 156 H666\" stroke=\"var(--line)\" fill=\"none\" marker-end=\"url(#arrow)\"/><text x=\"657\" y=\"38\" text-anchor=\"middle\" font-size=\"24\" fill=\"var(--ink)\">Submit request scope</text></g><text x=\"16\" y=\"332\" font-size=\"24\" fill=\"var(--muted)\">Dashed: priority influence</text><text x=\"868\" y=\"332\" text-anchor=\"end\" font-size=\"24\" fill=\"var(--ink)\">Active requests continue</text></svg>",
+          "evidence": {
+            "filePath": "lib/github-scheduler.ts",
+            "startLine": 72
+          }
+        }
+      ]
+    }
+  ]
+}
