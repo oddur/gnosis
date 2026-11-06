@@ -122,25 +122,25 @@ void app
       })()`);
       await click('Graph');
       await wait(
-        `typeof window.releaseGraphLoading==='function' && !!document.querySelector('.workflow-loading-motif')`
+        `typeof window.releaseGraphLoading==='function' && !!document.querySelector('.loading-motif')`
       );
       assert.ok(
         await js(
-          `(()=>{const state=document.querySelector('.workflow-graph-state'),copy=document.querySelector('.workflow-graph-state-content'),a=state.getBoundingClientRect(),b=copy.getBoundingClientRect();return b.left-a.left>=24 && a.right-b.right>=24 && !document.querySelector('.workflow-viewport-actions')})()`
+          `(()=>{const state=document.querySelector('.workflow-graph-state'),copy=document.querySelector('.loading-state-content'),a=state.getBoundingClientRect(),b=copy.getBoundingClientRect();return b.left-a.left>=24 && a.right-b.right>=24 && !document.querySelector('.workflow-viewport-actions')})()`
         )
       );
-      assert.ok(await js(`document.querySelector('.workflow-loading-signal').getAnimations().length===1`));
+      assert.ok(await js(`document.querySelector('.loading-signal').getAnimations().length===1`));
       await capture('loading-light');
       await js(`document.documentElement.classList.add('dark')`);
       await capture('loading-dark');
       win.setContentSize(760, 640);
-      await wait(`!!document.querySelector('.workflow-loading-elapsed')`);
+      await wait(`!!document.querySelector('.loading-elapsed')`);
       await capture('loading-compact-dark');
       await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
         features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
       });
       assert.ok(
-        await js(`getComputedStyle(document.querySelector('.workflow-loading-signal')).animationName==='none'`)
+        await js(`getComputedStyle(document.querySelector('.loading-signal')).animationName==='none'`)
       );
       await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
       win.webContents.debugger.detach();

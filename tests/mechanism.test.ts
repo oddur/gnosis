@@ -85,7 +85,7 @@ void test('reject broken references, incomplete snapshots, and oversized input w
   assert.equal(normalizeMechanism(null), null);
   assert.equal(normalizeMechanism('<script>alert(1)</script>'), null);
 });
-void test('writer and legacy generation preserve scenes and prefer them over D2', async () => {
+void test('new generation preserves prose but excludes legacy mechanism and D2 output', async () => {
   const provider = getProvider('codex');
   const original = provider.generate.bind(provider);
   try {
@@ -96,7 +96,7 @@ void test('writer and legacy generation preserve scenes and prefer them over D2'
       );
     };
     const slide = await generateSlide({ providerName: 'codex', model: DEFAULT_CODEX_MODEL, topicContext: 'fixture' });
-    assert.deepEqual(slide.mechanism, QUEUE_SCENE);
+    assert.equal(slide.mechanism, null);
     assert.equal(slide.d2Diagram, null);
     provider.generate = () =>
       Promise.resolve(
@@ -126,20 +126,19 @@ void test('writer and legacy generation preserve scenes and prefer them over D2'
       contextPackage: 'fixture',
       prUrl: 'https://github.com/example/repo/pull/1',
     });
-    assert.deepEqual(result.slides[0].mechanism, QUEUE_SCENE);
+    assert.equal(result.slides[0].mechanism, null);
   } finally {
     provider.generate = original;
   }
 });
 
-void test('writer repairs a malformed scene once without discarding an otherwise useful explanation', async () => {
+void test('writer ignores legacy scenes without spending a repair call or discarding prose', async () => {
   const provider = getProvider('codex');
   const original = provider.generate.bind(provider);
   let attempts = 0;
   try {
-    provider.generate = (opts) => {
+    provider.generate = () => {
       attempts++;
-      if (attempts === 2) assert.match(opts.content, /Repair the animated scene/);
       return Promise.resolve(
         JSON.stringify({
           narrative: 'Keep order.',
@@ -148,8 +147,8 @@ void test('writer repairs a malformed scene once without discarding an otherwise
       );
     };
     const slide = await generateSlide({ providerName: 'codex', model: DEFAULT_CODEX_MODEL, topicContext: 'fixture' });
-    assert.equal(attempts, 2);
-    assert.deepEqual(slide.mechanism, QUEUE_SCENE);
+    assert.equal(attempts, 1);
+    assert.equal(slide.mechanism, null);
     attempts = 0;
     provider.generate = () => {
       attempts++;
@@ -160,7 +159,7 @@ void test('writer repairs a malformed scene once without discarding an otherwise
       model: DEFAULT_CODEX_MODEL,
       topicContext: 'fixture',
     });
-    assert.equal(attempts, 2);
+    assert.equal(attempts, 1);
     assert.equal(fallback.mechanism, null);
     assert.equal(fallback.narrative, 'Still useful.');
   } finally {

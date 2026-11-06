@@ -1,3 +1,4 @@
+import { LoadingState } from './LoadingState';
 import { RepositoryMark } from './RepositoryAppearance';
 import { RepositorySettingsList } from './RepositorySettingsList';
 import { RepositorySettingsEditor } from './RepositorySettingsEditor';
@@ -472,7 +473,7 @@ export function SettingsDialog({
             </div>
           </div>
         )}
-        {loadState === 'loading' && <p role="status">Loading settings…</p>}
+        {loadState === 'loading' && <LoadingState title="Loading settings…" />}
         {loadState === 'error' && (
           <div className="settings-load-error" role="alert">
             <p>Could not load your settings. Retry before making changes.</p>

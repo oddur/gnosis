@@ -1,3 +1,4 @@
+import { LoadingIndicator } from './LoadingState';
 import { RepositoryMark } from './RepositoryAppearance';
 import { useRepositorySettings } from '../lib/use-repository-settings';
 import { repositoryKey } from '../lib/repository-settings';
@@ -101,7 +102,7 @@ export function RepositoryPicker({
           />
           <ComboboxEmpty>
             {state === 'loading'
-              ? 'Searching GitHub…'
+              ? <LoadingIndicator>Searching GitHub…</LoadingIndicator>
               : query.length < 2 && search
                 ? 'Type at least two characters to search.'
                 : 'No matching repositories.'}

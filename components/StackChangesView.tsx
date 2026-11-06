@@ -1,3 +1,4 @@
+import { LoadingState, LoadingIndicator } from './LoadingState';
 import { watchGitHub } from '../lib/watch-github';
 import { useEffect, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
@@ -294,10 +295,9 @@ export function StackChangesView({
           )}
           {busy && (
             <div className="changes-notice" role="status">
-              <span>
-                {snapshot ? 'Updating combined changes…' : 'Preparing combined changes…'} You can review by PR while
-                this loads.
-              </span>
+              <LoadingIndicator announce={false}>
+                {snapshot ? 'Updating combined changes…' : 'Preparing combined changes…'} You can review by PR while this loads.
+              </LoadingIndicator>
               <Button
                 size="sm"
                 variant="ghost"
@@ -376,11 +376,8 @@ export function StackChangesView({
         <>
           <div className="changes-toolbar">{toolbar}</div>
           <div className="changes-empty">
-            <p>
-              {busy
-                ? 'Verifying the stack and loading its net changes…'
-                : 'Choose By PR to inspect each change in the stack.'}
-            </p>
+            {busy ? <LoadingState title="Preparing combined changes" description="Verifying the stack and loading its net changes…" hint="You can keep browsing." /> :
+              <p>Choose By PR to inspect each change in the stack.</p>}
             <Button variant="outline" onClick={() => choose('by-pr')}>
               Review by PR
             </Button>

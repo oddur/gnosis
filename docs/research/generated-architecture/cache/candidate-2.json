@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "title": "State is cleared; the promise remains",
+  "takeaway": "The old promise delivers the value, but its generation cannot write to the cleared cache.",
+  "assumptions": "One cache miss starts a loader that later resolves. E names the captured epoch; P names the returned promise. No later read occurs in this sequence. Spacing does not show elapsed time. All participants are context. The caller implementation is not supplied.",
+  "exploration": {
+    "kind": "sequence",
+    "entities": [
+      {
+        "id": "caller",
+        "label": "Caller",
+        "summary": "Holds the promise returned by read(); its implementation is not supplied.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/pr-file-cache.ts",
+          "startLine": 68
+        }
+      },
+      {
+        "id": "cache",
+        "label": "Revision cache",
+        "summary": "Owns saved, pending, priorities, bytes, and epoch.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/pr-file-cache.ts",
+          "startLine": 8
+        }
+      },
+      {
+        "id": "loader",
+        "label": "Async loader",
+        "summary": "Supplies the load promise. clear() does not cancel this operation.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/pr-file-cache.ts",
+          "startLine": 33
+        }
+      }
+    ],
+    "relationships": [
+      {
+        "id": "read",
+        "from": "caller",
+        "to": "cache",
+        "label": "read()",
+        "summary": "Starts a read through the returned cache interface.",
+        "evidence": {
+          "filePath": "lib/pr-file-cache.ts",
+          "startLine": 72
+        }
+      },
+      {
+        "id": "load",
+        "from": "cache",
+        "to": "loader",
+        "label": "load()",
+        "summary": "Calls the supplied loader after capturing the epoch.",
+        "evidence": {
+          "filePath": "lib/pr-file-cache.ts",
+          "startLine": 33
+        }
+      },
+      {
+        "id": "promise",
+        "from": "cache",
+        "to": "caller",
+        "label": "return P",
+        "summary": "Returns the promise chain independently of its entry in pending.",
+        "evidence": {
+          "filePath": "lib/pr-file-cache.ts",
+          "startLine": 68
+        }
+      }
+    ]
+  },
+  "plan": {
+    "question": "Who receives the old result after clear(), and who controls cache storage?",
+    "visualApproach": "Use three fixed participants with downward time and a cache-owned state area below the cache lifeline. Keep the read history visible through clear() and completion.",
+    "whyThisForm": "Separate lifelines show that the caller retains P while clear() changes cache-owned state.",
+    "encodings": "Columns identify owners. Arrows show calls and result delivery. The outlined state area belongs to the cache. The captured generation appears separately because it belongs to the read closure.",
+    "motion": "Keep participants and earlier messages fixed. Show clear() while P and the load remain active. Then show loader resolution and the blocked storage operation before delivery through P.",
+    "prediction": "Another caller that already holds P also receives the resolved value. If a later read stores Q under the same pending key, cleanup for P leaves Q in place.",
+    "restingState": "The final frame retains the read, clear(), epoch mismatch, and result delivery."
+  },
+  "scenarios": [
+    {
+      "id": "clear-before-resolution",
+      "title": "The loader resolves after clear()",
+      "input": "read() starts at epoch E; clear() runs before the loader resolves.",
+      "frames": [
+        {
+          "title": "The caller holds P",
+          "caption": "The read captures generation E, starts load(), and returns P. The cache records P in pending.",
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 420\"><defs><marker id=\"a\" markerWidth=\"8\" markerHeight=\"8\" refX=\"7\" refY=\"4\" orient=\"auto\"><path d=\"M0 0 L8 4 L0 8\" fill=\"var(--ink)\"/></marker></defs><g data-entity-id=\"caller\"><rect x=\"10\" y=\"12\" width=\"125\" height=\"60\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"72\" y=\"36\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">Caller</text><text x=\"72\" y=\"59\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--muted)\">context</text></g><g data-entity-id=\"cache\"><rect x=\"185\" y=\"12\" width=\"175\" height=\"60\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"272\" y=\"36\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">Revision cache</text><text x=\"272\" y=\"59\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--muted)\">context</text></g><g data-entity-id=\"loader\"><rect x=\"405\" y=\"12\" width=\"145\" height=\"60\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"477\" y=\"36\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">Async loader</text><text x=\"477\" y=\"59\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--muted)\">context</text></g><path d=\"M72 76 V300 M272 76 V300 M477 76 V300\" stroke=\"var(--line)\" fill=\"none\"/><g data-relationship-id=\"read\"><path d=\"M72 102 H272\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"115\" y=\"95\" font-size=\"18\" fill=\"var(--ink)\">read()</text></g><g data-relationship-id=\"load\"><path d=\"M272 140 H477\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"335\" y=\"133\" font-size=\"18\" fill=\"var(--ink)\">load()</text></g><g data-relationship-id=\"promise\"><path d=\"M272 180 H72\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"120\" y=\"173\" font-size=\"18\" fill=\"var(--ink)\">return P</text></g><text x=\"15\" y=\"252\" font-size=\"18\" fill=\"var(--accent)\">Holds P</text><text x=\"422\" y=\"252\" font-size=\"18\" fill=\"var(--ink)\">Load active</text><text x=\"160\" y=\"307\" font-size=\"18\" fill=\"var(--muted)\">Read closure: generation E</text><rect x=\"145\" y=\"320\" width=\"290\" height=\"90\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"160\" y=\"343\" font-size=\"18\" fill=\"var(--muted)\">Cache-owned state</text><text x=\"160\" y=\"370\" font-size=\"18\" fill=\"var(--ink)\">epoch E</text><text x=\"160\" y=\"397\" font-size=\"18\" fill=\"var(--ink)\">pending contains P</text></svg>",
+          "evidence": {
+            "filePath": "lib/pr-file-cache.ts",
+            "startLine": 32
+          }
+        },
+        {
+          "title": "clear() removes the entries",
+          "caption": "clear() advances epoch, empties the maps, and resets bytes. The caller still holds P, and the load remains active.",
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 420\"><defs><marker id=\"a\" markerWidth=\"8\" markerHeight=\"8\" refX=\"7\" refY=\"4\" orient=\"auto\"><path d=\"M0 0 L8 4 L0 8\" fill=\"var(--ink)\"/></marker></defs><g data-entity-id=\"caller\"><rect x=\"10\" y=\"12\" width=\"125\" height=\"60\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"72\" y=\"36\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">Caller</text><text x=\"72\" y=\"59\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--muted)\">context</text></g><g data-entity-id=\"cache\"><rect x=\"185\" y=\"12\" width=\"175\" height=\"60\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"272\" y=\"36\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">Revision cache</text><text x=\"272\" y=\"59\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--muted)\">context</text></g><g data-entity-id=\"loader\"><rect x=\"405\" y=\"12\" width=\"145\" height=\"60\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"477\" y=\"36\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">Async loader</text><text x=\"477\" y=\"59\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--muted)\">context</text></g><path d=\"M72 76 V300 M272 76 V300 M477 76 V300\" stroke=\"var(--line)\" fill=\"none\"/><g data-relationship-id=\"read\"><path d=\"M72 102 H272\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"115\" y=\"95\" font-size=\"18\" fill=\"var(--ink)\">read()</text></g><g data-relationship-id=\"load\"><path d=\"M272 140 H477\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"335\" y=\"133\" font-size=\"18\" fill=\"var(--ink)\">load()</text></g><g data-relationship-id=\"promise\"><path d=\"M272 180 H72\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"120\" y=\"173\" font-size=\"18\" fill=\"var(--ink)\">return P</text></g><path d=\"M272 200 H312 V226 H272\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"325\" y=\"219\" font-size=\"18\" fill=\"var(--ink)\">clear()</text><text x=\"15\" y=\"252\" font-size=\"18\" fill=\"var(--accent)\">Holds P</text><text x=\"422\" y=\"252\" font-size=\"18\" fill=\"var(--ink)\">Load active</text><text x=\"160\" y=\"307\" font-size=\"18\" fill=\"var(--muted)\">Read closure: generation E</text><rect x=\"145\" y=\"320\" width=\"290\" height=\"90\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"160\" y=\"343\" font-size=\"18\" fill=\"var(--muted)\">Cache-owned state</text><text x=\"160\" y=\"370\" font-size=\"18\" fill=\"var(--ink)\">epoch E+1 · maps empty</text><text x=\"160\" y=\"397\" font-size=\"18\" fill=\"var(--ink)\">bytes 0</text></svg>",
+          "evidence": {
+            "filePath": "lib/pr-file-cache.ts",
+            "startLine": 77
+          }
+        },
+        {
+          "title": "Resolution cannot restore saved",
+          "caption": "The loader supplies the value. The captured generation E differs from epoch E+1, so the completion skips storage.",
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 420\"><defs><marker id=\"a\" markerWidth=\"8\" markerHeight=\"8\" refX=\"7\" refY=\"4\" orient=\"auto\"><path d=\"M0 0 L8 4 L0 8\" fill=\"var(--ink)\"/></marker></defs><g data-entity-id=\"caller\"><rect x=\"10\" y=\"12\" width=\"125\" height=\"60\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"72\" y=\"36\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">Caller</text><text x=\"72\" y=\"59\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--muted)\">context</text></g><g data-entity-id=\"cache\"><rect x=\"185\" y=\"12\" width=\"175\" height=\"60\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"272\" y=\"36\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">Revision cache</text><text x=\"272\" y=\"59\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--muted)\">context</text></g><g data-entity-id=\"loader\"><rect x=\"405\" y=\"12\" width=\"145\" height=\"60\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"477\" y=\"36\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">Async loader</text><text x=\"477\" y=\"59\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--muted)\">context</text></g><path d=\"M72 76 V300 M272 76 V300 M477 76 V300\" stroke=\"var(--line)\" fill=\"none\"/><g data-relationship-id=\"read\"><path d=\"M72 102 H272\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"115\" y=\"95\" font-size=\"18\" fill=\"var(--ink)\">read()</text></g><g data-relationship-id=\"load\"><path d=\"M272 140 H477\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"335\" y=\"133\" font-size=\"18\" fill=\"var(--ink)\">load()</text></g><g data-relationship-id=\"promise\"><path d=\"M272 180 H72\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"120\" y=\"173\" font-size=\"18\" fill=\"var(--ink)\">return P</text></g><path d=\"M272 200 H312 V226 H272\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"325\" y=\"219\" font-size=\"18\" fill=\"var(--ink)\">clear()</text><path d=\"M477 252 H272\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"340\" y=\"245\" font-size=\"18\" fill=\"var(--ink)\">resolve value</text><text x=\"160\" y=\"307\" font-size=\"18\" fill=\"var(--muted)\">Read closure: generation E</text><rect x=\"145\" y=\"320\" width=\"290\" height=\"90\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--warning)\"/><text x=\"160\" y=\"343\" font-size=\"18\" fill=\"var(--muted)\">Cache-owned state: epoch E+1</text><text x=\"160\" y=\"370\" font-size=\"18\" fill=\"var(--ink)\">E ≠ E+1: no saved write</text><text x=\"160\" y=\"397\" font-size=\"18\" fill=\"var(--ink)\">pending stays empty</text></svg>",
+          "evidence": {
+            "filePath": "lib/pr-file-cache.ts",
+            "startLine": 48
+          }
+        },
+        {
+          "title": "P delivers the value",
+          "caption": "The chain returns the value. Cleanup finds no pending P to remove. Existing holders of P receive the result.",
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 420\"><defs><marker id=\"a\" markerWidth=\"8\" markerHeight=\"8\" refX=\"7\" refY=\"4\" orient=\"auto\"><path d=\"M0 0 L8 4 L0 8\" fill=\"var(--ink)\"/></marker></defs><g data-entity-id=\"caller\"><rect x=\"10\" y=\"12\" width=\"125\" height=\"60\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"72\" y=\"36\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">Caller</text><text x=\"72\" y=\"59\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--muted)\">context</text></g><g data-entity-id=\"cache\"><rect x=\"185\" y=\"12\" width=\"175\" height=\"60\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"272\" y=\"36\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">Revision cache</text><text x=\"272\" y=\"59\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--muted)\">context</text></g><g data-entity-id=\"loader\"><rect x=\"405\" y=\"12\" width=\"145\" height=\"60\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"477\" y=\"36\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--ink)\">Async loader</text><text x=\"477\" y=\"59\" text-anchor=\"middle\" font-size=\"18\" fill=\"var(--muted)\">context</text></g><path d=\"M72 76 V300 M272 76 V300 M477 76 V300\" stroke=\"var(--line)\" fill=\"none\"/><g data-relationship-id=\"read\"><path d=\"M72 102 H272\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"115\" y=\"95\" font-size=\"18\" fill=\"var(--ink)\">read()</text></g><g data-relationship-id=\"load\"><path d=\"M272 140 H477\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"335\" y=\"133\" font-size=\"18\" fill=\"var(--ink)\">load()</text></g><g data-relationship-id=\"promise\"><path d=\"M272 180 H72\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"120\" y=\"173\" font-size=\"18\" fill=\"var(--ink)\">return P</text></g><path d=\"M272 200 H312 V226 H272\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"325\" y=\"219\" font-size=\"18\" fill=\"var(--ink)\">clear()</text><path d=\"M477 252 H272\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"340\" y=\"245\" font-size=\"18\" fill=\"var(--ink)\">resolve value</text><path d=\"M272 292 H72\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"89\" y=\"283\" font-size=\"18\" fill=\"var(--ink)\">P delivers value</text><text x=\"160\" y=\"307\" font-size=\"18\" fill=\"var(--muted)\">Read closure: generation E</text><rect x=\"145\" y=\"320\" width=\"290\" height=\"90\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--warning)\"/><text x=\"160\" y=\"343\" font-size=\"18\" fill=\"var(--muted)\">Cache-owned state: epoch E+1</text><text x=\"160\" y=\"370\" font-size=\"18\" fill=\"var(--ink)\">E ≠ E+1: no saved write</text><text x=\"160\" y=\"397\" font-size=\"18\" fill=\"var(--ink)\">pending stays empty</text></svg>",
+          "evidence": {
+            "filePath": "lib/pr-file-cache.ts",
+            "startLine": 62
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "$schema": "floorplan/architecture@1",
+  "project": { "name": "Pawprint", "summary": "Dog owners book and pay for walks with local walkers, and walkers keep track of their day. Planned from the PRD; nothing is built yet." },
+  "nodes": [
+    { "id": "web", "label": "Customer website", "kind": "ui", "summary": "Where owners find a walker, book and pay, and manage their walks.", "paths": ["web/**"] },
+    { "id": "walker", "label": "Walker app", "kind": "ui", "summary": "Where walkers see today's walks and mark them done.", "paths": ["walker/**"] },
+    { "id": "api", "label": "Main server", "kind": "service", "summary": "Answers both apps, takes payments and keeps the data.", "paths": ["api/**"] },
+    { "id": "api.routes", "parent": "api", "label": "Endpoints", "kind": "feature", "summary": "Everything the apps and Stripe can ask the server to do.", "paths": ["api/src/routes/**", "api/src/server.ts"] },
+    { "id": "api.services", "parent": "api", "label": "Payments and email", "kind": "library", "summary": "Talks to Stripe and Postmark.", "paths": ["api/src/services/**"] },
+    { "id": "api.data", "parent": "api", "label": "Saved data", "kind": "data", "summary": "Reads and saves accounts, walkers and bookings.", "paths": ["api/src/db/**"] },
+    { "id": "jobs", "label": "Reminders", "kind": "worker", "summary": "Emails owners the evening before a walk.", "paths": ["jobs/**"] },
+    { "id": "db", "label": "Database", "kind": "external", "summary": "Postgres, where accounts, walkers and bookings are kept." },
+    { "id": "stripe", "label": "Stripe", "kind": "external", "summary": "Charges and refunds cards." },
+    { "id": "postmark", "label": "Postmark", "kind": "external", "summary": "Sends emails." }
+  ],
+  "edges": [
+    { "from": "stripe", "to": "api/src/routes/webhooks.ts", "kind": "http", "label": "payment succeeded" }
+  ],
+  "flows": [
+    { "id": "book", "title": "Booking a walk", "steps": [
+      { "node": "web/app/book/[walkerId]/page.tsx", "note": "The owner picks a slot and pays" },
+      { "node": "api/src/routes/bookings.ts", "note": "The server holds the slot" },
+      { "node": "api/src/services/payments.ts", "note": "and asks Stripe to charge the card" },
+      { "node": "stripe", "note": "Stripe charges it" },
+      { "node": "api/src/routes/webhooks.ts", "note": "Stripe says it went through, so the booking is confirmed" }
+    ] }
+  ],
+  "tour": [
+    { "node": "web", "title": "Where owners book", "note": "Owners find a walker, pick a time and pay here." },
+    { "node": "api", "title": "The main server", "note": "Both apps talk to it, and it handles payments." },
+    { "node": "walker", "title": "Where walkers work", "note": "Walkers see their day and mark walks done." }
+  ]
+}

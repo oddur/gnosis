@@ -1,3 +1,4 @@
+import { LoadingState } from './LoadingState';
 import { useRef, useState } from 'react';
 import type { PrCheck, CheckDetails } from '../lib/pr-checks';
 import type { ReviewMember } from '../lib/workbench';
@@ -83,7 +84,7 @@ export function StackCheckRerun({
               Other workflows are unchanged.
             </DialogDescription>
           </DialogHeader>
-          {busy && !detail && <p role="status">Checking workflow and permissions…</p>}
+          {busy && !detail && <LoadingState compact title="Checking workflow and permissions…" />}
           {detail &&
             (!detail.job ? (
               <p>Open this check on GitHub to rerun it.</p>

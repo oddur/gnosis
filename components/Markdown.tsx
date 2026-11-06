@@ -1,3 +1,4 @@
+import { LoadingIndicator } from './LoadingState';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
@@ -50,9 +51,7 @@ export function MarkdownImage({
     );
   if (loading)
     return (
-      <span className="markdown-image-fallback" role="status">
-        Loading {alt || 'image'}…
-      </span>
+      <LoadingIndicator className="markdown-image-fallback">Loading {alt || 'image'}…</LoadingIndicator>
     );
   return (
     <img

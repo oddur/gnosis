@@ -1,3 +1,4 @@
+import { LoadingState, LoadingIndicator } from '../../components/LoadingState';
 import { SubjectIcon } from '../../components/SubjectIcon';
 import { useSettingsShortcut } from '../../lib/use-settings-shortcut';
 import { preferencesUpdated } from '../../lib/use-repository-settings';
@@ -1614,7 +1615,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                 />
               </label>
               <Button size="sm" disabled={openingPr || !url.trim()} type="submit">
-                {openingPr ? 'Opening…' : 'Open PR overview'}
+                {openingPr ? <LoadingIndicator>Opening…</LoadingIndicator> : 'Open PR overview'}
               </Button>
               <button
                 type="button"
@@ -1794,10 +1795,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                 />
               )}
               {loading ? (
-                <div className="queue-empty">
-                  <Loader2 className="animate-spin" size={22} />
-                  <p>Loading your workspace…</p>
-                </div>
+                <LoadingState title="Loading your workspace…" description="Opening your saved review queue." />
               ) : section === 'saved' ? (
                 saved.length ? (
                   saved.map((entry) => (
@@ -2078,7 +2076,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                             ? `CI ${statuses[m.url]?.ciConclusion} · ${statuses[m.url]?.reviewSummary.approved} approvals`
                             : statusErrors[m.url]
                               ? 'Status unavailable'
-                              : 'Loading status…'}
+                              : <LoadingIndicator>Loading status…</LoadingIndicator>}
                         </p>
                         {selectedItem.subject.edges
                           .filter((edge) => edge.child === m.url)

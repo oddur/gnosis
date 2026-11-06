@@ -1,3 +1,4 @@
+import { LoadingState } from './LoadingState';
 import { DIFF_HIGHLIGHTER } from '../lib/diff-highlighter';
 import { useEffect, useState, useRef } from 'react';
 import type { DiffFileInput } from '@pierre/diffs';
@@ -175,7 +176,7 @@ export function ReviewImageDiff({
         )}
       </div>
       {!reviewId && !comparison && <p role="status">Save this review to load its image revisions.</p>}
-      {busy && !result && <p role="status">Loading image revisions…</p>}
+      {busy && !result && <LoadingState compact title="Loading image revisions…" />}
       {error && (
         <p className="review-image-error" role="status">
           Could not load images. {error}

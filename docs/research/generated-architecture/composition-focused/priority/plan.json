@@ -1,0 +1,47 @@
+{
+  "summary": "This review explains how an interactive caller can promote existing GitHub work through a shared priority scope.\n\n- Shared reads connect callers to one operation and its promise.\n- Joining work can raise its priority without starting another operation.\n- The scheduler reads the current scope when it selects pending work.\n- The client can submit paced work again without holding a network slot. Rate-limit handling remains outside the scheduler.",
+  "riskLevel": "low",
+  "riskRationale": "This is an explanation of existing code, not a proposed change. The main review risk is an incorrect claim about promotion, cancellation, or scheduler control.",
+  "storyArc": "Follow an interactive caller into existing shared work. Show how the work's mutable scope carries promotion to pending tasks and later requests. End at the scheduler boundary: promotion affects pending selection, not active request execution or rate-limit enforcement.",
+  "topics": [
+    {
+      "title": "An interactive caller promotes shared work through its priority scope",
+      "slideType": "foundation",
+      "importance": "important",
+      "hunkIds": [
+        "hunk-0"
+      ],
+      "dependsOn": [],
+      "order": 1,
+      "narrativeBrief": "How does an interactive caller change the priority of existing work without starting another operation? Connect shared-read joining, mutable scope inheritance, scheduler selection, and client resubmission; verify any client deduplication join path because its caller is not in the supplied excerpts.",
+      "diagramBrief": {
+        "question": "How does an interactive caller promote existing shared work, and when does the scheduler use that promotion?",
+        "takeaway": "A shared-read caller can raise the existing work scope to interactive. Pending tasks and later requests can use that priority, but active requests continue and promotion does not itself trigger a scheduler drain.",
+        "assumedKnowledge": [
+          "Promises represent asynchronous results.",
+          "AsyncLocalStorage carries context through asynchronous operations."
+        ],
+        "essentialConcepts": [
+          "createSharedGitHubRead starts one operation through createSharedRead and retains its GitHubWork.",
+          "Each shared read calls joinGitHubWork before it registers the reader.",
+          "joinGitHubWork mutates the existing work scope when the caller has a higher priority and returns the same promise.",
+          "Work scopes retain parent references, so effective priority can follow promotion through later awaits.",
+          "The scheduler stores scope references and evaluates their current effective priority during drain.",
+          "Interactive pending work has selection priority, subject to active capacity and exclusive ordering.",
+          "Parallel execution requires both explicit permission and effective interactive priority.",
+          "The client submits paced work again after a short sleep outside the scheduler slot.",
+          "Shared-read cancellation signals the underlying operation only after its last reader leaves before settlement."
+        ],
+        "omit": [
+          "Numeric queue examples",
+          "Detailed quota, backoff, and GraphQL accounting",
+          "Full automatic-allowance rules",
+          "Error conversion and inflight cleanup",
+          "Any unsupported client deduplication join edge",
+          "Claims that active requests stop or that the scheduler enforces rate limits"
+        ],
+        "visualApproach": "Use a custom SVG responsibility map with a short animated walkthrough on the same map. Read left to right: caller scope, shared-read and GitHubWork ownership, then scheduler pending and active regions. Place the mutable work scope inside GitHubWork. Show pending tasks referencing that scope, not copying its priority. First show existing work with a lower priority. Then show an interactive read joining it and changing the same scope. Keep the operation and promise fixed to show that no duplicate operation starts. At the next drain, highlight the scheduler reading the updated scope; keep active requests fixed to show that they continue. Add a small return route from the client operation to pending submission for the paced result, with sleep outside the active region. This composition connects responsibilities without reducing the explanation to queue numbers. Keep cancellation, automatic allowance, and exact capacity guards in inspection details. Verify the scope links against the source before drawing them. Set exploration.change=\"context\" for all existing components; do not print this metadata on the diagram."
+      }
+    }
+  ]
+}

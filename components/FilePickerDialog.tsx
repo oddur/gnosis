@@ -1,6 +1,6 @@
+import { LoadingState } from './LoadingState';
 import { DiffStats } from './DiffStats';
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { Loader2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import type { ChangedFile } from '@/lib/types';
@@ -129,10 +129,7 @@ export function FilePickerDialog({ open, onOpenChange, prUrl, onConfirm }: Props
         </DialogHeader>
 
         {loading && (
-          <div className="flex items-center justify-center gap-2 py-8 slide-meta">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            <span>Loading files…</span>
-          </div>
+          <LoadingState title="Loading files…" />
         )}
 
         {error && <p className="text-sm text-destructive py-4 text-center">{error}</p>}

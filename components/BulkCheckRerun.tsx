@@ -1,3 +1,4 @@
+import { LoadingIndicator } from './LoadingState';
 import { useRef, useState } from 'react';
 import type { ReviewMember } from '../lib/workbench';
 import type { PrChecks } from '../lib/pr-checks';
@@ -96,7 +97,7 @@ export function BulkCheckRerun({
           </ul>
           <p role="status">
             {busy
-              ? `Requesting reruns… ${(plan?.length ?? 0) - remaining.length}/${plan?.length}`
+              ? <LoadingIndicator announce={false}>Requesting reruns… {(plan?.length ?? 0) - remaining.length}/{plan?.length}</LoadingIndicator>
               : !remaining.length
                 ? 'All reruns requested. Results will update automatically.'
                 : ''}

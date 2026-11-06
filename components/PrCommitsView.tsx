@@ -1,3 +1,4 @@
+import { LoadingState, LoadingIndicator } from './LoadingState';
 import { SubjectIcon } from './SubjectIcon';
 import { watchGitHub } from '../lib/watch-github';
 import { loadInspectionBatch, inspectionFailure, type InspectionFailure } from '../lib/inspection-batch';
@@ -480,7 +481,7 @@ export function PrCommitsView({
               </section>
             ))}
             {!groups.some((g) => g.commits.length) && (
-              <p className="commit-inherited">{loading ? 'Loading commits…' : 'No commits in this PR.'}</p>
+              loading ? <LoadingState compact title="Loading commits…" /> : <p className="commit-inherited">No commits in this PR.</p>
             )}
           </div>
         </div>
@@ -586,13 +587,9 @@ export function PrCommitsView({
       </button>
     </div>
   ) : !snapshot ? (
-    <p className="changes-empty" role="status">
-      {key || opening
-        ? 'Loading this comparison…'
-        : loading
-          ? 'Loading commits…'
-          : 'Select a commit to inspect its changes.'}
-    </p>
+    key || opening || loading ? <LoadingState className="commits-loading"
+      title={key || opening ? 'Loading this comparison…' : 'Loading commits…'} hint="You can keep browsing." /> :
+    <p className="changes-empty">Select a commit to inspect its changes.</p>
   ) : !snapshot.files.length ? (
     <p className="changes-empty">This comparison has no file changes.</p>
   ) : null;
@@ -600,7 +597,7 @@ export function PrCommitsView({
     <div className="pr-commits">
       {newer && <div className="changes-notice" role="status">New commits are available. Your current comparison is unchanged.</div>}
       {loading && <div className="changes-notice" role="status">
-        <span>Loading commits for {pendingMembers.length} {pendingMembers.length === 1 ? 'PR' : 'PRs'}… Available commits are ready to review.</span>
+        <LoadingIndicator announce={false}>Loading commits for {pendingMembers.length} {pendingMembers.length === 1 ? 'PR' : 'PRs'}… Available commits are ready to review.</LoadingIndicator>
         <button onClick={() => {
           loadController.current?.abort();
           setLoadErrors(errors => [...errors, ...pendingMembers.map(url => ({ url, message: 'Loading was stopped.' }))]);
@@ -689,17 +686,15 @@ export function PrCommitsView({
           fileStatus: comparisonError
             ? 'File list unavailable. Retry the comparison.'
             : key
-              ? 'Loading changed files…'
+              ? <LoadingIndicator announce={false}>Loading changed files…</LoadingIndicator>
               : 'Select a commit to load its files.',
           tools: (
             <>
               {opening && snapshot && (
-                <span className="changes-progress" role="status">
-                  Opening {short(opening.lastSha)}…
-                </span>
+                <LoadingIndicator className="changes-progress">Opening {short(opening.lastSha)}…</LoadingIndicator>
               )}
               <Button variant="ghost" size="sm" disabled={loading} onClick={() => void load(true)}>
-                <RefreshCw size={14} />
+                <RefreshCw size={14} className={loading ? 'motion-safe:animate-spin' : undefined} />
                 {loading ? 'Loading…' : 'Update commits'}
               </Button>
             </>

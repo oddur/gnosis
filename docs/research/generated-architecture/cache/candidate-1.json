@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "title": "State is cleared; the promise remains",
+  "takeaway": "The old promise delivers the value, but its generation cannot write to the cleared cache.",
+  "assumptions": "One cache miss starts a loader that later resolves. E names the captured epoch; P names the returned promise. Spacing does not show elapsed time. All participants are context.",
+  "exploration": {
+    "kind": "sequence",
+    "entities": [
+      {
+        "id": "caller",
+        "label": "Caller",
+        "summary": "Holds the promise returned by read(); its implementation is not supplied.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/pr-file-cache.ts",
+          "startLine": 68
+        }
+      },
+      {
+        "id": "cache",
+        "label": "Revision cache",
+        "summary": "Owns cache state and checks generation before storage and promise identity before cleanup.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/pr-file-cache.ts",
+          "startLine": 4
+        }
+      },
+      {
+        "id": "loader",
+        "label": "Async loader",
+        "summary": "Supplies the load promise. clear() does not cancel this operation.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/pr-file-cache.ts",
+          "startLine": 33
+        }
+      }
+    ],
+    "relationships": []
+  },
+  "plan": {
+    "question": "Who receives the old result after clear(), and who controls cache storage?",
+    "visualApproach": "Use three fixed participants with downward time and a cache-owned state area below the cache lifeline. Keep the read history visible as clear() and completion occur.",
+    "whyThisForm": "Separate lifelines show that the caller retains P while clear() changes only cache-owned state.",
+    "encodings": "Columns identify owners. Arrows show calls and result delivery. The outlined state area belongs to the revision cache. Text states the epoch comparison explicitly.",
+    "motion": "Keep participants and earlier messages fixed. First show P and the active load. Then show clear() changing cache state while both remain. Finally show loader resolution, rejected storage, and delivery through P.",
+    "prediction": "Another caller that already holds P also receives the resolved value, without restoring the old cache entry.",
+    "restingState": "The final frame retains the read, clear(), epoch mismatch, and result delivery for inspection."
+  },
+  "scenarios": [
+    {
+      "id": "clear-before-resolution",
+      "title": "The loader resolves after clear()",
+      "input": "read() starts at epoch E; clear() runs before the loader resolves.",
+      "frames": [
+        {
+          "title": "The caller holds P",
+          "caption": "read() captures E, starts load(), and returns P. The cache also records P in pending.",
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 420\"><defs><marker id=\"a\" markerWidth=\"8\" markerHeight=\"8\" refX=\"7\" refY=\"4\" orient=\"auto\"><path d=\"M0 0 L8 4 L0 8\" fill=\"var(--ink)\"/></marker></defs><g data-entity-id=\"caller\"><rect x=\"10\" y=\"12\" width=\"125\" height=\"60\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"72\" y=\"36\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Caller</text><text x=\"72\" y=\"58\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--muted)\">context</text></g><g data-entity-id=\"cache\"><rect x=\"185\" y=\"12\" width=\"175\" height=\"60\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"272\" y=\"36\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Revision cache</text><text x=\"272\" y=\"58\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--muted)\">context</text></g><g data-entity-id=\"loader\"><rect x=\"405\" y=\"12\" width=\"145\" height=\"60\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"477\" y=\"36\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Async loader</text><text x=\"477\" y=\"58\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--muted)\">context</text></g><path d=\"M72 76 V300 M272 76 V300 M477 76 V300\" stroke=\"var(--line)\" fill=\"none\"/><path d=\"M72 100 H272 M272 140 H477 M272 180 H72\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"115\" y=\"94\" font-size=\"16\" fill=\"var(--ink)\">read()</text><text x=\"335\" y=\"133\" font-size=\"16\" fill=\"var(--ink)\">load()</text><text x=\"120\" y=\"173\" font-size=\"16\" fill=\"var(--ink)\">return P</text><text x=\"15\" y=\"224\" font-size=\"16\" fill=\"var(--accent)\">Holds P</text><text x=\"417\" y=\"224\" font-size=\"16\" fill=\"var(--ink)\">Load active</text><rect x=\"160\" y=\"315\" width=\"235\" height=\"92\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"175\" y=\"338\" font-size=\"16\" fill=\"var(--muted)\">Cache-owned state</text><text x=\"175\" y=\"365\" font-size=\"16\" fill=\"var(--ink)\">epoch E · generation E</text><text x=\"175\" y=\"390\" font-size=\"16\" fill=\"var(--ink)\">pending contains P</text></svg>",
+          "evidence": {
+            "filePath": "lib/pr-file-cache.ts",
+            "startLine": 32
+          }
+        },
+        {
+          "title": "clear() removes the entries",
+          "caption": "clear() advances epoch and empties saved, pending, and priorities. It resets bytes. P and the active load remain.",
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 420\"><defs><marker id=\"a\" markerWidth=\"8\" markerHeight=\"8\" refX=\"7\" refY=\"4\" orient=\"auto\"><path d=\"M0 0 L8 4 L0 8\" fill=\"var(--ink)\"/></marker></defs><g data-entity-id=\"caller\"><rect x=\"10\" y=\"12\" width=\"125\" height=\"60\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"72\" y=\"36\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Caller</text><text x=\"72\" y=\"58\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--muted)\">context</text></g><g data-entity-id=\"cache\"><rect x=\"185\" y=\"12\" width=\"175\" height=\"60\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"272\" y=\"36\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Revision cache</text><text x=\"272\" y=\"58\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--muted)\">context</text></g><g data-entity-id=\"loader\"><rect x=\"405\" y=\"12\" width=\"145\" height=\"60\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"477\" y=\"36\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Async loader</text><text x=\"477\" y=\"58\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--muted)\">context</text></g><path d=\"M72 76 V300 M272 76 V300 M477 76 V300\" stroke=\"var(--line)\" fill=\"none\"/><path d=\"M72 100 H272 M272 140 H477 M272 180 H72\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"115\" y=\"94\" font-size=\"16\" fill=\"var(--ink)\">read()</text><text x=\"335\" y=\"133\" font-size=\"16\" fill=\"var(--ink)\">load()</text><text x=\"120\" y=\"173\" font-size=\"16\" fill=\"var(--ink)\">return P</text><text x=\"15\" y=\"224\" font-size=\"16\" fill=\"var(--accent)\">Still holds P</text><text x=\"417\" y=\"224\" font-size=\"16\" fill=\"var(--ink)\">Load active</text><path d=\"M272 236 H312 V270 H272\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"325\" y=\"258\" font-size=\"16\" fill=\"var(--ink)\">clear()</text><rect x=\"160\" y=\"315\" width=\"235\" height=\"92\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"175\" y=\"338\" font-size=\"16\" fill=\"var(--muted)\">Cache-owned state</text><text x=\"175\" y=\"365\" font-size=\"16\" fill=\"var(--ink)\">epoch E+1 · maps empty</text><text x=\"175\" y=\"390\" font-size=\"16\" fill=\"var(--ink)\">bytes 0 · generation E</text></svg>",
+          "evidence": {
+            "filePath": "lib/pr-file-cache.ts",
+            "startLine": 77
+          }
+        },
+        {
+          "title": "The value reaches P, not saved",
+          "caption": "The loader resolves. E differs from E+1, so storage is skipped. The chain returns the value; finally() finds no pending P to remove.",
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 420\"><defs><marker id=\"a\" markerWidth=\"8\" markerHeight=\"8\" refX=\"7\" refY=\"4\" orient=\"auto\"><path d=\"M0 0 L8 4 L0 8\" fill=\"var(--ink)\"/></marker></defs><g data-entity-id=\"caller\"><rect x=\"10\" y=\"12\" width=\"125\" height=\"60\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"72\" y=\"36\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Caller</text><text x=\"72\" y=\"58\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--muted)\">context</text></g><g data-entity-id=\"cache\"><rect x=\"185\" y=\"12\" width=\"175\" height=\"60\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"272\" y=\"36\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Revision cache</text><text x=\"272\" y=\"58\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--muted)\">context</text></g><g data-entity-id=\"loader\"><rect x=\"405\" y=\"12\" width=\"145\" height=\"60\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"477\" y=\"36\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--ink)\">Async loader</text><text x=\"477\" y=\"58\" text-anchor=\"middle\" font-size=\"16\" fill=\"var(--muted)\">context</text></g><path d=\"M72 76 V300 M272 76 V300 M477 76 V300\" stroke=\"var(--line)\" fill=\"none\"/><path d=\"M72 100 H272 M272 140 H477 M272 180 H72\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"115\" y=\"94\" font-size=\"16\" fill=\"var(--ink)\">read()</text><text x=\"335\" y=\"133\" font-size=\"16\" fill=\"var(--ink)\">load()</text><text x=\"120\" y=\"173\" font-size=\"16\" fill=\"var(--ink)\">return P</text><path d=\"M272 200 H312 V226 H272\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"325\" y=\"219\" font-size=\"16\" fill=\"var(--ink)\">clear()</text><path d=\"M477 252 H272\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"341\" y=\"245\" font-size=\"16\" fill=\"var(--ink)\">resolve value</text><path d=\"M272 292 H72\" stroke=\"var(--ink)\" fill=\"none\" marker-end=\"url(#a)\"/><text x=\"89\" y=\"285\" font-size=\"16\" fill=\"var(--ink)\">P delivers value</text><rect x=\"160\" y=\"315\" width=\"235\" height=\"92\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--warning)\"/><text x=\"175\" y=\"338\" font-size=\"16\" fill=\"var(--muted)\">Cache-owned state</text><text x=\"175\" y=\"365\" font-size=\"16\" fill=\"var(--ink)\">E ≠ E+1: no saved write</text><text x=\"175\" y=\"390\" font-size=\"16\" fill=\"var(--ink)\">pending stays empty</text></svg>",
+          "evidence": {
+            "filePath": "lib/pr-file-cache.ts",
+            "startLine": 48
+          }
+        }
+      ]
+    }
+  ]
+}

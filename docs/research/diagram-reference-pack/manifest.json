@@ -1,0 +1,309 @@
+{
+  "purpose": "Read-only research references; not installed skills or Gnosis runtime instructions. Upstream files copied byte-for-byte; local names may differ.",
+  "sources": [
+    {
+      "file": "floorplan/LICENSE",
+      "upstream_path": "LICENSE",
+      "repository": "https://github.com/haydenschmitty/floorplan",
+      "commit": "70be3f40f9c2e061290b76027f180d9ff892edd6",
+      "url": "https://github.com/haydenschmitty/floorplan/blob/70be3f40f9c2e061290b76027f180d9ff892edd6/LICENSE",
+      "sha256": "65a06a9dab105cd5a2b713a41a020a442bd431e6e19631182ed3889fd1672faf"
+    },
+    {
+      "file": "floorplan/instructions/authoring-workflow.md",
+      "upstream_path": "skills/floorplan/SKILL.md",
+      "repository": "https://github.com/haydenschmitty/floorplan",
+      "commit": "70be3f40f9c2e061290b76027f180d9ff892edd6",
+      "url": "https://github.com/haydenschmitty/floorplan/blob/70be3f40f9c2e061290b76027f180d9ff892edd6/skills/floorplan/SKILL.md",
+      "sha256": "2decf0e26f6e78453eee7cd06a74f9aad6e827fb456c5c0626ce0482143ed43e"
+    },
+    {
+      "file": "floorplan/instructions/choosing-boundaries.md",
+      "upstream_path": "skills/floorplan/references/choosing-boundaries.md",
+      "repository": "https://github.com/haydenschmitty/floorplan",
+      "commit": "70be3f40f9c2e061290b76027f180d9ff892edd6",
+      "url": "https://github.com/haydenschmitty/floorplan/blob/70be3f40f9c2e061290b76027f180d9ff892edd6/skills/floorplan/references/choosing-boundaries.md",
+      "sha256": "ac2460a6613956209895d970213630d9d99475745ba761fd842982e2f5ccec13"
+    },
+    {
+      "file": "floorplan/instructions/writing-descriptions.md",
+      "upstream_path": "skills/floorplan/references/writing-descriptions.md",
+      "repository": "https://github.com/haydenschmitty/floorplan",
+      "commit": "70be3f40f9c2e061290b76027f180d9ff892edd6",
+      "url": "https://github.com/haydenschmitty/floorplan/blob/70be3f40f9c2e061290b76027f180d9ff892edd6/skills/floorplan/references/writing-descriptions.md",
+      "sha256": "9805cbe487912b2995594fa3bd4fa7650fa963aee622558097d80b772965588a"
+    },
+    {
+      "file": "floorplan/instructions/schema.md",
+      "upstream_path": "skills/floorplan/references/schema.md",
+      "repository": "https://github.com/haydenschmitty/floorplan",
+      "commit": "70be3f40f9c2e061290b76027f180d9ff892edd6",
+      "url": "https://github.com/haydenschmitty/floorplan/blob/70be3f40f9c2e061290b76027f180d9ff892edd6/skills/floorplan/references/schema.md",
+      "sha256": "83db6fbd2e117ebcb2a21b115ccd38125a1d977a79fc19050dd0ca2f67a25730"
+    },
+    {
+      "file": "floorplan/examples/planned-walking-service.architecture.json",
+      "upstream_path": "tests/fixtures/blueprint/floorplan/architecture.json",
+      "repository": "https://github.com/haydenschmitty/floorplan",
+      "commit": "70be3f40f9c2e061290b76027f180d9ff892edd6",
+      "url": "https://github.com/haydenschmitty/floorplan/blob/70be3f40f9c2e061290b76027f180d9ff892edd6/tests/fixtures/blueprint/floorplan/architecture.json",
+      "sha256": "7acb75c4c7bb9cd08c15f3d93e11c0e0b91651dfece0d9f105f8107b567d624c"
+    },
+    {
+      "file": "floorplan/images/overview.png",
+      "upstream_path": "docs/images/overview.png",
+      "repository": "https://github.com/haydenschmitty/floorplan",
+      "commit": "70be3f40f9c2e061290b76027f180d9ff892edd6",
+      "url": "https://github.com/haydenschmitty/floorplan/blob/70be3f40f9c2e061290b76027f180d9ff892edd6/docs/images/overview.png",
+      "sha256": "80688cea8ec450f8c1ad72afd75cc4c204dedc3829bc1035b00c4287b3c17ef5"
+    },
+    {
+      "file": "floorplan/images/inside.png",
+      "upstream_path": "docs/images/inside.png",
+      "repository": "https://github.com/haydenschmitty/floorplan",
+      "commit": "70be3f40f9c2e061290b76027f180d9ff892edd6",
+      "url": "https://github.com/haydenschmitty/floorplan/blob/70be3f40f9c2e061290b76027f180d9ff892edd6/docs/images/inside.png",
+      "sha256": "a88ee9bb41c36a51dc35b54dfbfe8bf92e5f01f26e88d877aabf4f004f1944ec"
+    },
+    {
+      "file": "floorplan/images/flow.png",
+      "upstream_path": "docs/images/flow.png",
+      "repository": "https://github.com/haydenschmitty/floorplan",
+      "commit": "70be3f40f9c2e061290b76027f180d9ff892edd6",
+      "url": "https://github.com/haydenschmitty/floorplan/blob/70be3f40f9c2e061290b76027f180d9ff892edd6/docs/images/flow.png",
+      "sha256": "c68475d6eefdca8223bf1e0cd914e12927e102b41a7a51201681c3d62cbaf28e"
+    },
+    {
+      "file": "archify/LICENSE",
+      "upstream_path": "LICENSE",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "file": "archify/LICENSE-MIT",
+      "upstream_path": "LICENSE-MIT",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/LICENSE-MIT",
+      "sha256": "b799ab081703e7821ae5096d2c1abdf14bbdc75e8ea1c4045998c36ed6db9706"
+    },
+    {
+      "file": "archify/NOTICE",
+      "upstream_path": "NOTICE",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/NOTICE",
+      "sha256": "665eb53e6fcf09cee183c9f23c8052645dc95570d9ccbbf53dc0f5213a1b5edd"
+    },
+    {
+      "file": "archify/THIRD_PARTY_NOTICES.md",
+      "upstream_path": "THIRD_PARTY_NOTICES.md",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/THIRD_PARTY_NOTICES.md",
+      "sha256": "b5e129197f391568f7abf287c74b24f4835f10e5388f600407c8788feaeb9015"
+    },
+    {
+      "file": "archify/instructions/authoring-workflow.md",
+      "upstream_path": "archify/SKILL.md",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/archify/SKILL.md",
+      "sha256": "1382cfb7108b05e500b82af93c04fd7b694430d3908039bd92d634f01c1e7181"
+    },
+    {
+      "file": "archify/instructions/authoring-defaults.md",
+      "upstream_path": "archify/references/authoring-defaults.md",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/archify/references/authoring-defaults.md",
+      "sha256": "11a2c60b31cb8a4bc19e83ff2e8351c1b5af93cfa091512e6d053a13288eaf6c"
+    },
+    {
+      "file": "archify/instructions/authoring-contract.md",
+      "upstream_path": "archify/references/authoring-contract.md",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/archify/references/authoring-contract.md",
+      "sha256": "c7c9918ee28e213defd4cb504f0440ae366a8db4665938d2a0db0b62da565901"
+    },
+    {
+      "file": "archify/instructions/repository-authoring.md",
+      "upstream_path": "archify/references/repository-authoring.md",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/archify/references/repository-authoring.md",
+      "sha256": "c1648fc0c1b85a3a9bfbf3a8919dfa741ff0b5a55ea310d1fcacbf6ee837e139"
+    },
+    {
+      "file": "archify/instructions/explainer-authoring.md",
+      "upstream_path": "archify/references/explainer-authoring.md",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/archify/references/explainer-authoring.md",
+      "sha256": "722c126f05192da499f75468e9c1b3001daa4a844894ebf45a854b6687a4af18"
+    },
+    {
+      "file": "archify/instructions/architecture-layout-repair.md",
+      "upstream_path": "archify/references/architecture-layout-repair.md",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/archify/references/architecture-layout-repair.md",
+      "sha256": "6c90caa232c004fa43b8770c745b83672919deaf8909f2592a3ad5fcd4031953"
+    },
+    {
+      "file": "archify/instructions/sequence-renderer.md",
+      "upstream_path": "archify/renderers/sequence/README.md",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/archify/renderers/sequence/README.md",
+      "sha256": "d93cdf05140ae60f8a5df495da5cd5c9dc492f2338760c53626f3943454d00b3"
+    },
+    {
+      "file": "archify/examples/web-app.architecture.json",
+      "upstream_path": "archify/examples/web-app.architecture.json",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/archify/examples/web-app.architecture.json",
+      "sha256": "95e051b27a9e4a3307e194c0f666fca4af51470be7e2228d400ff48aea5b353b"
+    },
+    {
+      "file": "archify/examples/production-deployment.architecture.json",
+      "upstream_path": "archify/examples/production-deployment.architecture.json",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/archify/examples/production-deployment.architecture.json",
+      "sha256": "610a5614667e8f108bdcf1769c9d7af5c3ce0fb62be3ea50550b10eb752e4bda"
+    },
+    {
+      "file": "archify/examples/checkout-platform.base.architecture.json",
+      "upstream_path": "archify/examples/checkout-platform.base.architecture.json",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/archify/examples/checkout-platform.base.architecture.json",
+      "sha256": "81d55a2e86fc39f6473b32dfba986a12d3b7a705a95821844865b1dc831c9fe7"
+    },
+    {
+      "file": "archify/examples/checkout-platform.head.architecture.json",
+      "upstream_path": "archify/examples/checkout-platform.head.architecture.json",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/archify/examples/checkout-platform.head.architecture.json",
+      "sha256": "eb4ae056035dd3316414a5d7f6599525107b5d1af7bedbd905460ade77daf5c6"
+    },
+    {
+      "file": "archify/examples/cache-miss-request.sequence.json",
+      "upstream_path": "archify/examples/cache-miss-request.sequence.json",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/archify/examples/cache-miss-request.sequence.json",
+      "sha256": "f8486daa803fff6c295cecca4604c561fbbf9acb2e83326022b5a87639e8afe6"
+    },
+    {
+      "file": "archify/examples/async-job-roundtrip.sequence.json",
+      "upstream_path": "archify/examples/async-job-roundtrip.sequence.json",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/archify/examples/async-job-roundtrip.sequence.json",
+      "sha256": "b8c6c52f1763ede2933c77deb8da59b3e06917bc41d27e66df896136456b859a"
+    },
+    {
+      "file": "archify/examples/agent-tool-call.workflow.json",
+      "upstream_path": "archify/examples/agent-tool-call.workflow.json",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/archify/examples/agent-tool-call.workflow.json",
+      "sha256": "d67965d50872c97e4ff3476271e645bf19fab6b3ab44e111bdb44b063e3aa36f"
+    },
+    {
+      "file": "archify/examples/product-analytics.dataflow.json",
+      "upstream_path": "archify/examples/product-analytics.dataflow.json",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/archify/examples/product-analytics.dataflow.json",
+      "sha256": "8a635db9e51a5b1a8d2955b9d66f5b9a450e0a298432ce8f2e2f0be11f372e05"
+    },
+    {
+      "file": "archify/examples/agent-run.lifecycle.json",
+      "upstream_path": "archify/examples/agent-run.lifecycle.json",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/archify/examples/agent-run.lifecycle.json",
+      "sha256": "5ba36f5ce91ed428cb48b599e275424916d82b619b9a3231cbd1bbc3966fc54b"
+    },
+    {
+      "file": "archify/schemas/common.schema.json",
+      "upstream_path": "archify/schemas/common.schema.json",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/archify/schemas/common.schema.json",
+      "sha256": "3bb6bde1122ebc1d47f73cf12400015baa0c7e5650e5780b0e89773d7ead4def"
+    },
+    {
+      "file": "archify/schemas/architecture.schema.json",
+      "upstream_path": "archify/schemas/architecture.schema.json",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/archify/schemas/architecture.schema.json",
+      "sha256": "aef992b585a18a4016b8207254fe43a6227b0d45322a1ba95e0f69a80fc8f8c1"
+    },
+    {
+      "file": "archify/schemas/sequence.schema.json",
+      "upstream_path": "archify/schemas/sequence.schema.json",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/archify/schemas/sequence.schema.json",
+      "sha256": "97af565f8b6d8fbd4b5be40ddb52f4943accab2cf4f386d695e800d367dd4f89"
+    },
+    {
+      "file": "archify/schemas/workflow.schema.json",
+      "upstream_path": "archify/schemas/workflow.schema.json",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/archify/schemas/workflow.schema.json",
+      "sha256": "e13a1ce3b841376c8c6f6b9cb8152f8c0c7d70a77a2960fecdfe9025de83dc25"
+    },
+    {
+      "file": "archify/schemas/dataflow.schema.json",
+      "upstream_path": "archify/schemas/dataflow.schema.json",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/archify/schemas/dataflow.schema.json",
+      "sha256": "f01b2faafa5fd6e300f6b5045eeca70f70226552411180442d6e528dd45172f1"
+    },
+    {
+      "file": "archify/schemas/lifecycle.schema.json",
+      "upstream_path": "archify/schemas/lifecycle.schema.json",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/archify/schemas/lifecycle.schema.json",
+      "sha256": "151befae29a68833ba26e7848769e89ab9dc71fc5bba234a91a62307338cfa49"
+    },
+    {
+      "file": "archify/images/archify-demo-route.png",
+      "upstream_path": "docs/assets/archify-demo-route.png",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/docs/assets/archify-demo-route.png",
+      "sha256": "f6a2bf685605304302cfe79f09832b9e24f269c276361ce2aa0be663ca0a9bfb"
+    },
+    {
+      "file": "archify/images/archify-demo-lens.png",
+      "upstream_path": "docs/assets/archify-demo-lens.png",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/docs/assets/archify-demo-lens.png",
+      "sha256": "3a39489e210085113ae70818bd7e3c89588e50a3955bc1d3d8c68213770afc3a"
+    },
+    {
+      "file": "archify/images/explainer-tls-en.png",
+      "upstream_path": "docs/assets/explainer-tls-en.png",
+      "repository": "https://github.com/tt-a1i/archify",
+      "commit": "a4065941f12be7967436261d9934784e381d423c",
+      "url": "https://github.com/tt-a1i/archify/blob/a4065941f12be7967436261d9934784e381d423c/docs/assets/explainer-tls-en.png",
+      "sha256": "78a048d87f5027b0d14a163ba7d110611791c1deb654c45a545740624feea48d"
+    }
+  ]
+}

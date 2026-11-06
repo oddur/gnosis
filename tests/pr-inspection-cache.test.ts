@@ -262,8 +262,9 @@ void test('active and visible PRs precede unread work, then current view and bac
     f.cache.setTargets('one', revisions, { active: [revisions[4].url], visible: [revisions[3].url], unread: [revisions[2].url, revisions[3].url, revisions[4].url], view: [revisions[1].url] });
     await f.cache.flush();
     for (const [first, second] of [['active', 'visible'], ['visible', 'unread'], ['unread', 'view'], ['view', 'backlog']]) {
-      assert.ok(f.calls.indexOf(`file:${first}:history-commit-0.ts`) < f.calls.indexOf(`changes:${second}`));
+      assert.ok(f.calls.indexOf(`review:${first}`) < f.calls.indexOf(`changes:${second}`));
     }
+    assert.ok(f.calls.indexOf('review:backlog') < f.calls.indexOf('comparison:active:commit-1'), 'Deep history yields to ready-to-open PRs');
     assert.equal(f.calls.filter(call => call.startsWith('comparison:')).length, 15, 'Every commit, not just the newest');
     assert.equal(f.calls.filter(call => call.includes(':history-')).length, 15, 'Every commit file');
     assert.ok(f.calls.indexOf('comparison:active:commit-2') < f.calls.indexOf('comparison:active:commit-1'));
@@ -444,3 +445,32 @@ void test('a late cooldown from the previous account cannot pause new account pr
     assert.equal(cache.activity(), undefined);
   } finally { cache.stop(); }
 });
+
+void test('current changes are ready before spending requests on commit history', async () => {
+  const f = fixture({ commits: 20, comparisonFiles: true });
+  try {
+    f.cache.setTargets('one', [r]);
+    await f.cache.flush();
+    assert.ok(f.calls.indexOf('file:head:first.ts') < f.calls.indexOf('comparison:head:commit-19'),
+      'Opening Changes must not wait for historical comparisons and file downloads');
+  } finally { f.cache.stop(); }
+});
+
+for (const commits of [0, 1]) {
+  void test(`preload progress completes a PR with ${commits} commits before starting the next PR`, async () => {
+    const observed: unknown[] = [];
+    const f = fixture({ commits, onFile: (snapshot) => {
+      if (snapshot.metadata.headSha === 'next') {
+        observed.push(f.cache.activity()?.progress);
+      }
+      return Promise.resolve();
+    } });
+    try {
+      f.cache.setTargets('one', [r, { ...r, url: r.url + '2', headSha: 'next' }], { active: [r.url] });
+      await f.cache.flush();
+      assert.equal(observed.length, 3);
+      assert.deepEqual(observed, Array(3).fill({ completed: 1, total: 2, unit: 'PRs' }));
+      assert.equal(f.cache.activity(), undefined);
+    } finally { f.cache.stop(); }
+  });
+}

@@ -1,3 +1,4 @@
+import { LoadingIndicator } from './LoadingState';
 import { useEffect, useMemo, useState } from 'react';
 import type { ComponentProps } from 'react';
 import type { ReviewGuide } from '../lib/types';
@@ -97,7 +98,7 @@ export function ExplanationMarkdownPreview({ review, onSource, onAsk, ...diff }:
   if (result?.request !== request)
     return (
       <div className="markdown-preview-status" role={error ? 'alert' : 'status'}>
-        <span>{error || 'Preparing rendered view…'}</span>
+        <span>{error || <LoadingIndicator announce={false}>Preparing rendered view…</LoadingIndicator>}</span>
         {error && <button onClick={() => setAttempt((value) => value + 1)}>Retry</button>}
         <button onClick={() => onSource()}>Use source</button>
       </div>

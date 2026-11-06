@@ -1,0 +1,44 @@
+{
+  "summary": "This review explains current revision-cache behavior, not a code change. If clear() runs during a pending read, the caller still receives the loader result. clear() removes cache state but does not cancel the loader or the returned promise. An epoch check prevents the old completion from saving its result.",
+  "riskLevel": "low",
+  "riskRationale": "No change is supplied. The review examines the existing epoch guard and pending-promise ownership.",
+  "storyArc": "Follow one read from the caller through the cache to the loader. Place clear() before loader completion. Then separate result delivery from cache storage and pending-entry cleanup.",
+  "topics": [
+    {
+      "title": "clear() preserves pending result delivery but prevents old cache writes",
+      "slideType": "foundation",
+      "importance": "important",
+      "hunkIds": [
+        "hunk-0"
+      ],
+      "dependsOn": [],
+      "order": 1,
+      "narrativeBrief": "How does a pending read finish after clear()? Connect the captured epoch, the returned promise, the clear() state reset, and both completion guards; label all entities as context because no diff establishes a change.",
+      "diagramBrief": {
+        "question": "Who receives a pending read result after clear(), and what prevents that completion from restoring old cache state?",
+        "takeaway": "If the loader resolves, callers that hold the old promise still receive its value. The old generation cannot write to saved, and its cleanup cannot delete a newer pending promise.",
+        "assumedKnowledge": [
+          "JavaScript promises",
+          "Asynchronous function completion"
+        ],
+        "essentialConcepts": [
+          "Caller holds the promise returned by read()",
+          "Revision cache owns saved, pending, priorities, bytes, and epoch",
+          "read() captures epoch as generation before calling load()",
+          "clear() increments epoch and clears cache state without cancelling load()",
+          "The old completion skips cache storage because generation differs from epoch",
+          "The completion returns the loaded value to existing promise holders",
+          "finally() deletes a pending entry only if that entry still holds the same promise"
+        ],
+        "omit": [
+          "Revision-key construction",
+          "Cache-hit behavior",
+          "LFS replacement rules that require a matching epoch",
+          "Byte calculation and eviction order",
+          "Background-read selection rules"
+        ],
+        "visualApproach": "Use a custom SVG sequence with three fixed participants: Caller (context), Revision cache (context), and Asynchronous loader (context). Place cache-owned state beside its lifeline. Animate one read: capture generation E, start load(), and return promise P to the caller. Next, show clear() advancing epoch to E+1 and emptying the cache maps while P and the loader operation remain present. On loader resolution, show the epoch mismatch blocking the saved write, followed by value delivery through P. Show the cleanup identity guard beside pending: an empty entry needs no deletion; if a later read installed promise Q under the same key, P cannot remove Q. Keep this optional case after the main sequence. The fixed lifelines show ownership, and ordered frames make the distinction between clearing state and cancelling work visible."
+      }
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "summary": "This source shows how an interactive caller can promote shared GitHub work without starting a second operation.\n- Caller scope supplies the priority. Joining shared work can raise its stored priority.\n- Related work scopes retain parent links, so later requests can observe the promotion after an await.\n- The scheduler reads current scope priority when it selects pending work. Active requests continue.\n- The client retry loop releases the scheduler slot before a pacing wait. Rate-limit policy belongs to the client, not the scheduler.",
+  "riskLevel": "medium",
+  "riskRationale": "Shared mutable scope affects request order and concurrency. The supplied source does not show a code change or tests.",
+  "storyArc": "Follow one existing shared operation from its caller scope through promotion to scheduler selection. Keep the shared scope visible to explain how the promotion reaches pending work and later requests without replacing the operation.",
+  "topics": [
+    {
+      "title": "An interactive caller promotes shared work through its retained scope",
+      "slideType": "foundation",
+      "importance": "important",
+      "hunkIds": [
+        "hunk-0"
+      ],
+      "dependsOn": [],
+      "order": 1,
+      "narrativeBrief": "How does an interactive caller raise the priority of existing shared work, and when does that affect scheduling? Connect the shared read wrapper, mutable work scope, parent links, scheduler selection, and client retry loop; verify the missing inflight lookup path before showing it as another join entry point.",
+      "diagramBrief": {
+        "question": "How does an interactive caller promote an existing operation so pending and later requests use its higher priority?",
+        "takeaway": "Joining raises the existing work scope instead of creating replacement work. The scheduler observes that priority when it next selects pending work; requests already active continue.",
+        "assumedKnowledge": [
+          "Promises represent asynchronous work.",
+          "An asynchronous operation can retain caller context across an await."
+        ],
+        "essentialConcepts": [
+          "createSharedRead starts one operation. createSharedGitHubRead retains its GitHubWork, and each read calls joinGitHubWork before attaching a reader.",
+          "joinGitHubWork reads the joining caller's priority and raises work.scope.priority when that priority is higher.",
+          "createGitHubWork runs the operation inside a retained scope. Child work scopes retain parent links, and githubPriority reads those links, so promotion can affect requests created after an await.",
+          "The client passes githubPriorityScope() to schedule. The scheduler retains that scope object and reads its effective priority during drain, with interactive work selected before lower tiers.",
+          "Promotion does not interrupt active requests. Parallel execution also requires the queued task's parallel flag and an effective interactive priority; otherwise execution remains exclusive.",
+          "When the client operation returns paced, its scheduler slot is released before the retry sleep. A later scheduling attempt can observe a promotion."
+        ],
+        "omit": [
+          "A numeric queue example.",
+          "Detailed quota accounting, backoff calculations, and persistence.",
+          "Automatic allowance policy beyond a short inspection note about the join update.",
+          "Reader cancellation details and error normalization.",
+          "An inflight lookup-to-join edge unless the missing source confirms it.",
+          "Any claim that the scheduler enforces rate limits or preempts active requests."
+        ],
+        "visualApproach": "Use a custom SVG behavior walkthrough with stable lanes from left to right: caller scope, shared operation with its retained scope, and scheduler with pending and active regions. Place the client retry loop below its shared operation. Mark all existing components with exploration.change=\"context\" metadata, not visible diagram text. First establish the existing operation and its retained scope. Then animate an interactive caller joining that same operation and changing the scope's priority label. Keep the operation identity fixed. Show the scheduler consulting that scope at its next selection, while an active request remains unchanged. A second short phase follows the same operation across an await into a later scheduling attempt through a parent-scope link. This motion explains priority propagation without a numeric queue. Keep the parallel-execution condition beside the active-region boundary. Put exact symbols, cancellation, automatic allowance updates, and pacing calculations in inspection. Show the pacing wait outside the scheduler slot, without depicting rate-limit enforcement inside the scheduler."
+      }
+    }
+  ]
+}

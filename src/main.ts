@@ -94,11 +94,12 @@ import {
   DEFAULT_FAST_CLAUDE_MODEL,
   normalizeModelSelection,
 } from '../lib/models';
+import { buildExplanationSource, refineExplanationText } from '../lib/review-refinement';
 import { buildContextPackage, buildPlannerContext, buildTopicContext } from '../lib/context-builder';
 import { generateReviewGuide, planReview, generateSlide, finalizeReviewOverview } from '../lib/agent';
 import { buildArchive, parseArchive } from '../lib/review-archive';
 import { normalizeFileSummaries } from '../lib/file-summaries';
-import { normalizeInlineExplanations } from '../lib/inline-explanations';
+import { normalizeInlineExplanations, resolveGeneratedInlineExplanations } from '../lib/inline-explanations';
 import { captureExplainerContext, normalizeExplainerIdea, parseExplainer } from '../lib/explainer';
 import { createExplainerService } from './explainer-service';
 import { protectExplainerFrames, validateExplainerInBrowser, validateSvgIllustrationInBrowser } from './explainer-validation';
@@ -707,7 +708,7 @@ void app.whenReady().then(async () => {
   applyBinaryOverrides(loadPreferences());
   createWindow();
   initTrayIfEnabled();
-  setStatusFetcher(fetchPrStatus);
+  setStatusFetcher(url => withGitHubPriority('background', () => fetchPrStatus(url)));
   rebuildTrayMenu();
   setupAutoUpdater();
 
@@ -1540,7 +1541,7 @@ ipcMain.handle('get-pr-status', async (_event, prUrl: string, force: boolean = f
   if (isLocalUrl(prUrl)) {
     throw new Error('Local review — no PR status available');
   }
-  const status = await withGitHubPriority(force ? 'interactive' : 'foreground', () => fetchPrStatus(prUrl, force));
+  const status = await withGitHubPriority(force ? 'interactive' : 'foreground', () => fetchPrStatus(prUrl, force), { automatic: !force });
   if (!status) throw new Error('Not authenticated');
   return status;
 });
@@ -1964,9 +1965,9 @@ async function runBackgroundGeneration(
       // ── Two-phase: planner → parallel writers ──
       reportReviewPhase( { reviewId, phase: 'Planning review structure' });
 
-      const plannerContext = buildPlannerContext(prData, changedFiles, hunkIndex, excludedFilesSummary, projectClaudeContext);
+      const plannerContext = buildPlannerContext(prData, changedFiles, hunkIndex, excludedFilesSummary, projectClaudeContext, indexedHunks);
       checkpoint = await openReviewCheckpoint(path.join(getReviewsDir(), 'unfinished'), {
-        version: 1, account: generationAccount, provider, model, instructions, educationMode, reviewSuggestions,
+        version: 9, account: generationAccount, provider, model, instructions, educationMode, reviewSuggestions,
         thinking, effort, scope: request.prUrl, snapshot: reviewSnapshot?.fingerprint, baseSha: prData.baseSha, headSha: prData.headSha,
         localToolsOn, plannerContext, hunkIndex,
       });
@@ -2002,7 +2003,7 @@ async function runBackgroundGeneration(
               projectClaudeContext,
             );
 
-            const topicKey = reviewFingerprint({ topicCtx, topic, version: 1 });
+            const topicKey = reviewFingerprint({ topicCtx, topic, version: 8 });
             const writerOutput = checkpoint!.get(topicKey) ?? await generateSlide({
               validateIllustration: validateSvgIllustrationInBrowser,
               topicContext: topicCtx,
@@ -2053,18 +2054,6 @@ async function runBackgroundGeneration(
       );
 
       resolvedSlides = slideResults;
-      reportReviewPhase({ reviewId, phase: 'Writing overview' });
-      plan.summary = await finalizeReviewOverview({
-        providerName: provider,
-        model,
-        title: prData.title,
-        effort,
-        draft: plan.summary,
-        riskRationale: plan.riskRationale,
-        topics: slideResults,
-        instructions,
-        signal,
-      });
     } else {
       // ── Single-shot: existing approach ──
       reportReviewPhase( { reviewId, phase: 'Generating review' });
@@ -2166,6 +2155,26 @@ async function runBackgroundGeneration(
         };
       });
     }
+
+    // The editor can remove narrative detail only when its inline explanation will actually display.
+    for (const slide of resolvedSlides) {
+      slide.inlineExplanations = resolveGeneratedInlineExplanations(slide.inlineExplanations, slide.diffHunks, allChangedFiles);
+    }
+    reportReviewPhase({ reviewId, phase: 'Checking explanation text' });
+    resolvedSlides = await refineExplanationText({
+      drafts: resolvedSlides, source: contextPackage || buildExplanationSource(indexedHunks),
+      model, effort, instructions, signal,
+      generate: (options) => getProvider(provider).generate(options),
+    });
+    reportReviewPhase({ reviewId, phase: 'Writing overview' });
+    const finalSummary = await finalizeReviewOverview({
+      providerName: provider, model, effort, title: prData.title,
+      draft: aiResult?.summary ?? plan?.summary ?? '',
+      riskRationale: aiResult?.riskRationale ?? plan?.riskRationale ?? '',
+      topics: resolvedSlides, instructions, signal,
+    });
+    if (aiResult) aiResult.summary = finalSummary;
+    else if (plan) plan.summary = finalSummary;
 
     const generationDurationMs = Date.now() - generationStart;
 
@@ -2570,7 +2579,8 @@ ipcMain.handle('get-queue-signals', async (_event, requests: QueueSignalRequest[
   const token = getResolvedToken();
   if (!token) return [];
   const account = cachedLogin;
-  const values = await getQueueSignals(getGitHubClient(token), requests, options);
+  const values = await withGitHubPriority(options?.force ? 'interactive' : options?.active ? 'foreground' : 'background',
+    () => getQueueSignals(getGitHubClient(token), requests, options), { automatic: !options?.force });
   if (account && workbench.observeReadSignals(account, values)) broadcastToAllWindows('pr-read-state-changed');
   return values;
 });
@@ -2875,7 +2885,7 @@ const githubSync = createGitHubSyncService({
     const blocked = githubClients.backoff(token, background, resources);
     if (blocked) return { retryAt: blocked.retryAt, message: blocked.reason };
   },
-  read: async (kind, targets, priority) => {
+  read: async (kind, targets, priority, requestedFollowUp) => {
     const token = cachedToken;
     const client = getGitHubClient(token);
     const values = await withGitHubPriority(priority === 'active' ? 'foreground' : 'background', async (): Promise<GitHubSyncUpdate[]> => {
@@ -2911,7 +2921,7 @@ const githubSync = createGitHubSyncService({
         } else results.push({ kind, url: target.url, value: await reviewThreads.list(client, target.url) });
       }
       return results;
-    });
+    }, { automatic: !requestedFollowUp });
     return token === cachedToken ? values : [];
   },
   publish: publishGitHubUpdates,
@@ -3030,14 +3040,14 @@ ipcMain.handle('pr-checks', (_event, input: CheckTarget, options: ChecksOptions 
     const metadata = await getPrMetadata(client, owner, repo, pullNumber, !!options.force);
     const value = await readPrChecks(client, { url: input.url, headSha: metadata.headSha }, options);
     return value && withCachedCheckDetails(client, value);
-  })));
+  }), { automatic: options.background }));
 ipcMain.handle('prepare-workflow-graph', (_event, target?: CheckTarget) => {
   workflowWarmAccount = cachedToken;
   workflowGraphPreload.setTarget(target);
   void workflowGraphPreload.tick();
 });
-ipcMain.handle('workflow-runs', (_event, input: CheckTarget, options?: ChecksOptions) => withGitHubPriority(options?.background ? 'foreground' : 'interactive', () => checkAccount(client => readWorkflowRuns(client, input, options))));
-ipcMain.handle('workflow-graph', (_event, input: WorkflowGraphInput, options?: ChecksOptions) => withGitHubPriority(options?.background ? 'foreground' : 'interactive', () => checkAccount(client => readWorkflowGraph(client, input, options))));
+ipcMain.handle('workflow-runs', (_event, input: CheckTarget, options?: ChecksOptions) => withGitHubPriority(options?.background ? 'foreground' : 'interactive', () => checkAccount(client => readWorkflowRuns(client, input, options)), { automatic: options?.background }));
+ipcMain.handle('workflow-graph', (_event, input: WorkflowGraphInput, options?: ChecksOptions) => withGitHubPriority(options?.background ? 'foreground' : 'interactive', () => checkAccount(client => readWorkflowGraph(client, input, options)), { automatic: options?.background }));
 ipcMain.handle('cached-check-details', (_event, input: CheckSelection) => checkAccount(client => Promise.resolve(cachedCheckDetails(client, input))));
 handleInteractive('check-details', (_event, input: CheckSelection, options?: { force?: boolean }) => checkAccount(client => readCheckDetails(client, input, { force: options?.force === true })));
 handleInteractive('check-log', (_event, input: CheckSelection) => checkAccount(client => readCheckLog(client, input)));

@@ -1,0 +1,199 @@
+{
+  "version": 1,
+  "title": "Source, prose, and the optional visual",
+  "takeaway": "The visual has its own review route. Its removal does not remove the topic prose.",
+  "assumptions": "Positions show responsibilities and handoffs, not process count or execution time. One writer represents the parallel topic writers. Visual review includes critic and repair generation calls.",
+  "exploration": {
+    "kind": "dataflow",
+    "entities": [
+      {
+        "id": "preparation",
+        "label": "Main-process evidence preparation",
+        "summary": "Builds planner context and source context for each topic.",
+        "change": "context",
+        "evidence": {
+          "filePath": "src/main.ts",
+          "startLine": 1968
+        }
+      },
+      {
+        "id": "planner",
+        "label": "Planner",
+        "summary": "Returns ordered topics, hunk assignments, a story arc, and optional diagram briefs.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/agent.ts",
+          "startLine": 382
+        }
+      },
+      {
+        "id": "writers",
+        "label": "Parallel topic writers",
+        "summary": "Generate topic prose and optional SVG illustrations from supplied source context.",
+        "change": "context",
+        "evidence": {
+          "filePath": "src/main.ts",
+          "startLine": 1995
+        }
+      },
+      {
+        "id": "renderer",
+        "label": "Isolated SVG renderer",
+        "summary": "Uses a separate sandboxed BrowserWindow with no preload, Node integration, network access, or shared app session.",
+        "change": "context",
+        "evidence": {
+          "filePath": "src/explainer-validation.ts",
+          "startLine": 76
+        }
+      },
+      {
+        "id": "visual-review",
+        "label": "Educational visual review",
+        "summary": "Uses source and rendered images to judge the picture, with at most one repair.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/illustration-review.ts",
+          "startLine": 72
+        }
+      },
+      {
+        "id": "collection",
+        "label": "Topic collection and final text",
+        "summary": "Collects slides, refines explanation text, and reconciles the overview with completed topics.",
+        "change": "context",
+        "evidence": {
+          "filePath": "src/main.ts",
+          "startLine": 2164
+        }
+      }
+    ],
+    "relationships": [
+      {
+        "id": "plan-input",
+        "from": "preparation",
+        "to": "planner",
+        "label": "Supply planning evidence",
+        "summary": "Passes planner context and the hunk index to planReview.",
+        "evidence": {
+          "filePath": "src/main.ts",
+          "startLine": 1974
+        }
+      },
+      {
+        "id": "topic-direction",
+        "from": "planner",
+        "to": "writers",
+        "label": "Direct topic writing",
+        "summary": "The main process orders planned topics and supplies their direction through topic context.",
+        "evidence": {
+          "filePath": "src/main.ts",
+          "startLine": 2000
+        }
+      },
+      {
+        "id": "topic-source",
+        "from": "preparation",
+        "to": "writers",
+        "label": "Supply topic source",
+        "summary": "Builds topic context from assigned hunks, file contents, neighbor files, and planning direction.",
+        "evidence": {
+          "filePath": "src/main.ts",
+          "startLine": 2000
+        }
+      },
+      {
+        "id": "render-svg",
+        "from": "writers",
+        "to": "renderer",
+        "label": "Validate optional SVG",
+        "summary": "Sends the normalized illustration to the browser validator supplied by the main process.",
+        "evidence": {
+          "filePath": "lib/agent.ts",
+          "startLine": 654
+        }
+      },
+      {
+        "id": "render-images",
+        "from": "renderer",
+        "to": "visual-review",
+        "label": "Supply rendered images",
+        "summary": "Returns contact sheets that visual review supplies to the critic.",
+        "evidence": {
+          "filePath": "lib/illustration-review.ts",
+          "startLine": 79
+        }
+      },
+      {
+        "id": "review-source",
+        "from": "writers",
+        "to": "visual-review",
+        "label": "Supply source and illustration",
+        "summary": "Passes the writer's source context, illustration, and browser render to independent visual review.",
+        "evidence": {
+          "filePath": "lib/agent.ts",
+          "startLine": 656
+        }
+      },
+      {
+        "id": "repair-render",
+        "from": "visual-review",
+        "to": "renderer",
+        "label": "Render one repair",
+        "summary": "Normalizes a repair candidate and renders it before another critique.",
+        "evidence": {
+          "filePath": "lib/illustration-review.ts",
+          "startLine": 109
+        }
+      },
+      {
+        "id": "collect-prose",
+        "from": "writers",
+        "to": "collection",
+        "label": "Keep topic prose",
+        "summary": "The main process copies the writer narrative into the collected slide.",
+        "evidence": {
+          "filePath": "src/main.ts",
+          "startLine": 2036
+        }
+      },
+      {
+        "id": "collect-visual",
+        "from": "visual-review",
+        "to": "collection",
+        "label": "Return SVG or null through writer output",
+        "summary": "Visual review changes only the illustration field; the main process copies that field into the slide.",
+        "evidence": {
+          "filePath": "src/main.ts",
+          "startLine": 2045
+        }
+      }
+    ]
+  },
+  "plan": {
+    "question": "Where does source evidence go, and where can a picture be removed without losing prose?",
+    "visualApproach": "Use a connected responsibility map with a direct prose route and a separate browser-and-critic route for the optional SVG.",
+    "whyThisForm": "Separate routes make the prose boundary visible. The repair loop returns to browser checks instead of going directly to collection.",
+    "encodings": "Boxes name responsibilities. Arrows name supplied data. The dashed outline marks browser isolation. The SVG-or-null return shows that the picture is optional.",
+    "motion": "Use a static map. The question concerns ownership and handoffs; visible branches show acceptance, repair, and omission without simulating one execution.",
+    "prediction": "If visual review returns omit, collection still receives topic prose but receives no SVG.",
+    "restingState": "All responsibilities, the prose route, the visual route, and the repair loop remain visible."
+  },
+  "scenarios": [
+    {
+      "id": "handoffs",
+      "title": "Parallel review responsibilities",
+      "input": "A topic writer produces prose and an optional SVG.",
+      "frames": [
+        {
+          "title": "Prose survives visual omission",
+          "caption": "Visual review returns an accepted SVG or null. A repair must return through rendering and critique before acceptance.",
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 460\"><defs><marker id=\"arrow\" markerWidth=\"8\" markerHeight=\"8\" refX=\"7\" refY=\"4\" orient=\"auto\"><path d=\"M0 0 L8 4 L0 8\" fill=\"var(--muted)\"/></marker></defs><g fill=\"none\" stroke=\"var(--muted)\" stroke-width=\"2\" marker-end=\"url(#arrow)\"><g data-relationship-id=\"plan-input\"><path d=\"M180 57 H220\"/></g><g data-relationship-id=\"topic-direction\"><path d=\"M295 90 V140\"/><text x=\"304\" y=\"119\" fill=\"var(--ink)\" stroke=\"none\" font-size=\"16\">Topics</text></g><g data-relationship-id=\"topic-source\"><path d=\"M95 90 V175 H220\"/><text x=\"22\" y=\"139\" fill=\"var(--ink)\" stroke=\"none\" font-size=\"16\">Topic source</text></g><g data-relationship-id=\"render-svg\"><path d=\"M375 175 H395\"/></g><g data-relationship-id=\"render-images\"><path d=\"M470 240 V300\"/><text x=\"478\" y=\"278\" fill=\"var(--ink)\" stroke=\"none\" font-size=\"16\">Images</text></g><g data-relationship-id=\"review-source\"><path d=\"M295 205 V270 H420 V300\"/><text x=\"300\" y=\"253\" fill=\"var(--ink)\" stroke=\"none\" font-size=\"16\">Source + SVG</text></g><g data-relationship-id=\"repair-render\"><path d=\"M545 325 H553 V108 H470 V140\"/><text x=\"405\" y=\"103\" fill=\"var(--ink)\" stroke=\"none\" font-size=\"16\">One repair</text></g><g data-relationship-id=\"collect-prose\"><path d=\"M235 205 V310 H115 V330\"/><text x=\"177\" y=\"294\" fill=\"var(--ink)\" stroke=\"none\" font-size=\"16\">Prose</text></g><g data-relationship-id=\"collect-visual\"><path d=\"M395 355 H210\"/><text x=\"241\" y=\"341\" fill=\"var(--ink)\" stroke=\"none\" font-size=\"16\">SVG or null</text></g></g><rect x=\"389\" y=\"134\" width=\"162\" height=\"112\" rx=\"10\" fill=\"none\" stroke=\"var(--muted)\" stroke-dasharray=\"5 4\"/><g data-entity-id=\"preparation\"><rect x=\"15\" y=\"25\" width=\"165\" height=\"65\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"28\" y=\"51\" font-size=\"16\" fill=\"var(--ink)\"><tspan x=\"28\">Main process</tspan><tspan x=\"28\" dy=\"23\">Prepare evidence</tspan></text></g><g data-entity-id=\"planner\"><rect x=\"220\" y=\"25\" width=\"155\" height=\"65\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"235\" y=\"51\" font-size=\"16\" fill=\"var(--ink)\"><tspan x=\"235\">Planner</tspan><tspan x=\"235\" dy=\"23\">Assign and order</tspan></text></g><g data-entity-id=\"writers\"><rect x=\"220\" y=\"140\" width=\"155\" height=\"65\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--accent)\" stroke-width=\"2\"/><text x=\"235\" y=\"166\" font-size=\"16\" fill=\"var(--ink)\"><tspan x=\"235\">Topic writers</tspan><tspan x=\"235\" dy=\"23\">Run in parallel</tspan></text></g><g data-entity-id=\"renderer\"><rect x=\"395\" y=\"140\" width=\"150\" height=\"100\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"405\" y=\"163\" font-size=\"16\" fill=\"var(--ink)\"><tspan x=\"405\">SVG renderer</tspan><tspan x=\"405\" dy=\"22\">Check + capture</tspan><tspan x=\"405\" dy=\"22\">No Node or</tspan><tspan x=\"405\" dy=\"20\">network access</tspan></text></g><g data-entity-id=\"visual-review\"><rect x=\"395\" y=\"300\" width=\"150\" height=\"100\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"406\" y=\"324\" font-size=\"16\" fill=\"var(--ink)\"><tspan x=\"406\">Visual review</tspan><tspan x=\"406\" dy=\"22\">Critic + repair</tspan><tspan x=\"406\" dy=\"22\">Accept / repair</tspan><tspan x=\"406\" dy=\"22\">/ omit</tspan></text></g><g data-entity-id=\"collection\"><rect x=\"20\" y=\"330\" width=\"190\" height=\"85\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"33\" y=\"354\" font-size=\"16\" fill=\"var(--ink)\"><tspan x=\"33\">Main process</tspan><tspan x=\"33\" dy=\"22\">Collect + refine text</tspan><tspan x=\"33\" dy=\"22\">Write overview</tspan></text></g><text x=\"23\" y=\"445\" font-size=\"16\" fill=\"var(--muted)\">Visual omitted: prose remains in the topic output.</text></svg>",
+          "evidence": {
+            "filePath": "lib/agent.ts",
+            "startLine": 656
+          }
+        }
+      ]
+    }
+  ]
+}

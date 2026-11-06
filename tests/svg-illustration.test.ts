@@ -175,7 +175,11 @@ void test('writer preserves prose when the rendered educational review omits the
     provider.generate = () =>
       Promise.resolve(
         ++calls === 1
-          ? JSON.stringify({ narrative: 'Keep this insight.', svgIllustration: sample })
+          ? JSON.stringify({
+              narrative: 'Keep this insight.',
+              svgIllustration: sample,
+              d2Diagram: { source: 'a -> b' },
+            })
           : JSON.stringify({ verdict: 'omit', findings: ['The prose is clearer than this redundant picture.'] })
       );
     const result = await generateSlide({
@@ -187,6 +191,7 @@ void test('writer preserves prose when the rendered educational review omits the
     assert.equal(calls, 2);
     assert.equal(result.narrative, 'Keep this insight.');
     assert.equal(result.svgIllustration, null);
+    assert.equal(result.d2Diagram, null, 'an omitted SVG must not fall back to an unreviewed legacy diagram');
   } finally {
     provider.generate = original;
   }

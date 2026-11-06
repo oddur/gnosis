@@ -3967,14 +3967,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .workflow-graph-state h2 { margin:0; color:var(--foreground); font-size:var(--type-panel-title); font-weight:600; line-height:1.4; text-wrap:balance; }
 .workflow-graph-state p { margin:0; font-size:var(--type-control); line-height:1.6; text-wrap:pretty; }
 .workflow-graph-state .workflow-graph-state-hint { font-size:var(--type-caption); }
-.workflow-loading-elapsed { font-variant-numeric:tabular-nums; }
-.workflow-loading-motif { width:160px; height:64px; flex:none; }
-.workflow-loading-track { stroke:var(--border); stroke-width:2; }
-.workflow-loading-signal { stroke:var(--primary); stroke-width:2; stroke-linecap:round; stroke-dasharray:16 84; animation:workflow-loading-flow 1.8s linear infinite; }
-.workflow-loading-motif rect { fill:var(--card); stroke:var(--border); stroke-width:1.5; }
-.workflow-loading-motif circle { fill:var(--primary); }
-@keyframes workflow-loading-flow { from { stroke-dashoffset:100; } to { stroke-dashoffset:0; } }
-@media (prefers-reduced-motion:reduce) { .workflow-loading-signal { animation:none; stroke-dasharray:none; opacity:.5; } }
+
 
 .workflow-canvas .react-flow { --xy-edge-stroke-default:var(--muted-foreground); --xy-edge-stroke-width-default:1.2; --xy-background-color-default:var(--background); --xy-controls-button-background-color-default:var(--card); --xy-controls-button-background-color-hover-default:var(--accent); --xy-controls-button-color-default:var(--foreground); --xy-controls-button-border-color-default:var(--border); }
 .workflow-canvas .react-flow__controls { border:1px solid var(--border); box-shadow:none; }
@@ -4390,3 +4383,39 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
   .pr-summary-page:has(.pr-changes-tab[data-state=active] .feedback-workspace) { overflow-y:auto; }
   .pr-changes-tab[data-state=active]:has(.feedback-workspace) { flex:none;height:520px; }
 }
+
+/* Shared loading feedback: clear copy, stable space, and bounded movement. */
+.loading-state { display:grid; place-items:center; min-width:0; min-height:180px; width:100%; padding:32px 24px; color:var(--muted-foreground); }
+.loading-state-content { display:flex; flex-direction:column; align-items:center; gap:16px; width:min(100%,380px); text-align:center; }
+.loading-state-copy { display:grid; gap:8px; min-width:0; }
+.loading-state p { margin:0; }
+.loading-state .loading-state-title { color:var(--foreground); font-size:var(--type-panel-title); font-weight:600; line-height:1.4; text-wrap:balance; }
+.loading-state .loading-state-description { font-size:var(--type-control); line-height:1.6; text-wrap:pretty; }
+.loading-state .loading-state-hint { min-height:1.6em; font-size:var(--type-caption); line-height:1.6; }
+.loading-elapsed { font-variant-numeric:tabular-nums; }
+.loading-state-compact { min-height:100px; padding:24px 16px; }
+.loading-state-compact .loading-state-content { flex-direction:row; text-align:left; gap:12px; width:auto; max-width:100%; flex-wrap:wrap; }
+.loading-state-compact .loading-state-copy { flex:1; gap:4px; }
+.loading-state-compact .loading-state-title { font-size:var(--type-control); font-weight:500; }
+.loading-state-compact .loading-state-description { font-size:var(--type-caption); }
+.loading-indicator { display:inline-flex; align-items:center; gap:8px; max-width:100%; vertical-align:middle; font-size:inherit; line-height:inherit; color:var(--muted-foreground); }
+.loading-indicator>span { min-width:0; overflow-wrap:anywhere; }
+.loading-spinner { flex:none; color:var(--primary); animation:loading-spin 1.1s linear infinite; }
+.loading-motif { width:160px; height:64px; flex:none; }
+.loading-track { stroke:var(--border); stroke-width:2; }
+.loading-signal { stroke:var(--primary); stroke-width:2; stroke-linecap:round; stroke-dasharray:16 84; animation:loading-flow 1.8s linear infinite; }
+.loading-motif rect { fill:var(--card); stroke:var(--border); stroke-width:1.5; }
+.loading-motif circle { fill:var(--primary); }
+@keyframes loading-flow { from { stroke-dashoffset:100; } to { stroke-dashoffset:0; } }
+@keyframes loading-spin { to { transform:rotate(360deg); } }
+[data-loading-visible=false] .loading-spinner,[data-loading-visible=false] .loading-signal,
+[data-loading-hidden=true] .loading-spinner,[data-loading-hidden=true] .loading-signal { animation-play-state:paused; }
+@media (prefers-reduced-motion:reduce) {
+  .loading-spinner,.loading-signal { animation:none; }
+  .loading-signal { stroke-dasharray:none; opacity:.5; }
+}
+@media (max-width:600px) {
+  .loading-state { padding:24px 16px; }
+  .loading-state-compact { padding:16px; }
+}
+button .loading-indicator,button .loading-spinner { color:inherit; }

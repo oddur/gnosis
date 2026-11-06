@@ -10,6 +10,7 @@ import { parseLfsPointer } from '../lib/git-lfs';
 import { lfsResources } from './git-lfs-service';
 import { localClones } from '../lib/local-clone';
 import { imageMimeType } from '../lib/review-images';
+import { readGitHubFile } from './github-file-content';
 import type { PrChanges, PrChangeFile, PrFileRequest, PrFileContents, PrFileSide } from '../lib/pr-changes';
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export function createSnapshotFileLoader(lfs = lfsResources, clones = localClones) {
@@ -67,24 +68,7 @@ export function createSnapshotFileLoader(lfs = lfsResources, clones = localClone
             bytes = (await clones.read(`${baseOwner}/${baseRepo}`, (clone) => clone.blob(ref, path))) ?? undefined;
           }
           if (!pointer && !bytes) {
-            beforeRequest?.();
-            const { data } = await client.request('GET /repos/{owner}/{repo}/contents/{path}', {
-              owner,
-              repo,
-              path,
-              ref,
-              headers: { accept: 'application/vnd.github.raw+json' },
-              request: { responseType: 'arraybuffer', cache: 'no-store' },
-            });
-            bytes =
-              typeof data === 'string'
-                ? Buffer.from(data)
-                : data instanceof ArrayBuffer
-                  ? Buffer.from(data)
-                  : ArrayBuffer.isView(data)
-                    ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
-                    : undefined;
-            if (!bytes) throw new Error('GitHub did not return file contents. Open the file on GitHub.');
+            bytes = await readGitHubFile(client, { owner, repo, path, ref }, beforeRequest);
           }
           if (!pointer && bytes) pointer = parseLfsPointer(bytes.toString('utf8'));
           if (pointer) {

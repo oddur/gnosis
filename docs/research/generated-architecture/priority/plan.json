@@ -1,0 +1,48 @@
+{
+  "summary": "This review explains how caller scope can promote shared GitHub work in the supplied current code. No supplied diff establishes a change.\n- A joining caller can raise the shared work's priority without starting another operation.\n- Work retains its scope across awaits. The scheduler reads retained scopes when it selects pending tasks.\n- Parallel execution requires explicit task permission and interactive priority. Active tasks are not preempted.\n- Shared cancellation aborts the operation's signal only after its last reader leaves.",
+  "riskLevel": "medium",
+  "riskRationale": "The supplied code controls shared asynchronous work, task order, and cancellation. Incorrect scope handling can delay interactive work or cancel work that another reader still needs.",
+  "storyArc": "Start with the caller's scope, follow its promotion into the existing shared work, then show how the scheduler uses that scope. Keep reader cancellation separate from scheduling. Label every entity as context because no change is supplied.",
+  "topics": [
+    {
+      "title": "Caller scope promotes shared work that the scheduler can select next",
+      "slideType": "foundation",
+      "importance": "important",
+      "hunkIds": [
+        "hunk-0"
+      ],
+      "dependsOn": [],
+      "order": 1,
+      "narrativeBrief": "How does an interactive caller promote existing work without starting another operation? Connect scope inheritance, joinGitHubWork, shared reader lifetime, and scheduler selection; verify the missing enqueue call before claiming that a scheduled task retains the work's scope.",
+      "diagramBrief": {
+        "question": "How does an interactive caller's priority reach existing shared work and affect pending task selection?",
+        "takeaway": "A join updates the existing work's scope. Pending tasks that retain this scope can receive interactive priority at the next drain; active tasks continue unchanged.",
+        "assumedKnowledge": [
+          "Promises and async/await",
+          "Basic task scheduling",
+          "AbortSignal"
+        ],
+        "essentialConcepts": [
+          "Context: caller scope uses AsyncLocalStorage; effective priority includes parent scopes.",
+          "Context: createSharedRead starts one operation immediately; read adds a reader rather than starting another operation.",
+          "Context: createSharedGitHubRead creates GitHubWork inside the shared read signal context and joins it before each shared.read call.",
+          "Context: GitHubWork retains a mutable scope across awaits; a higher-priority join raises its stored priority.",
+          "Context: joinGitHubWork can clear automatic status for a non-automatic caller with sufficient priority; interactive scope is never automatic.",
+          "Context: the scheduler retains a supplied scope object, but a priority string creates a separate scope.",
+          "Context: drain selects interactive tasks before foreground tasks, then the first remaining task.",
+          "Context: parallel execution requires task.parallel and effective interactive priority; otherwise execution is exclusive, with at most three active tasks.",
+          "Context: completion releases scheduler capacity and calls drain; joining work does not itself call drain.",
+          "Context: reader cancellation releases one reader; the last reader aborts the shared signal while work remains unsettled."
+        ],
+        "omit": [
+          "Error normalization details",
+          "Numeric queue examples",
+          "Unshown scheduler callers or request transports",
+          "Any claim that the scheduler preempts active requests or enforces rate limits",
+          "Any claim that a priority join grants parallel permission or restarts cancelled work"
+        ],
+        "visualApproach": "Use a custom SVG responsibility map with a short animated sequence on fixed positions. Label every entity Context. Place caller scope beside shared GitHubWork, with readers inside a separate shared-read lifetime boundary. Place the scheduler beside the work, with pending and active regions. First show an interactive caller joining the same work and updating its scope. Then follow that same scope through a later request after an await. Show the enqueue connection as unverified because the supplied source does not show its caller; distinguish passing the retained scope from passing a priority string. At the next drain, highlight selection by effective priority. Keep active tasks fixed to show no preemption. Put the parallel guard directly at admission, including the exclusive-task barrier and three-task maximum. Keep cancellation as a quiet side connection from readers to the shared signal, not to scheduler admission. The stable map explains ownership; following the same scope reduces the need to mentally trace mutation across awaits."
+      }
+    }
+  ]
+}

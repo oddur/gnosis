@@ -341,3 +341,9 @@ Individual Checks graph nodes show a compact step list with status icons, names,
 
 
 Stack merge guidance separates confirmed blockers from missing or stale merge status. Its heading names the number of blocking PRs, or uses a neutral question icon for unconfirmed status. Show a confirmed-ready count, concrete reasons beside titled PR links, and a Refresh merge status action for incomplete evidence. List known blockers before uncertain information. If all unknown PRs share the same reason, state it once. Never present missing merge information as a confirmed blocker.
+
+### Loading feedback
+
+Use `LoadingState` for an empty pane and its compact variant for file previews or small panels. The shared three-node signal comes from the Checks graph. Use `LoadingIndicator` for inline work and refreshes; keep cached content visible. Show the actual operation in plain text. Do not simulate completion percentages or cycle through invented phases.
+
+Motion stops for reduced-motion preferences, hidden windows, and offscreen indicators. One shared intersection observer handles visibility. Optional elapsed time appears after five seconds and is excluded from live announcements. Announce the operation once through its status region; use `announce={false}` inside an existing status region. Loading does not delay completion or trigger additional requests.

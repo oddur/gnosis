@@ -1,0 +1,153 @@
+{
+  "version": 1,
+  "title": "Promotion follows the retained scope chain",
+  "takeaway": "Joining promotes the shared work. The client attempt inherits that priority, and the scheduler reads it through the pending entry’s retained scope reference.",
+  "assumptions": "The illustrative shared operation reaches the client loop in its async context, without an intervening priority scope. The client work therefore retains the shared work scope as its parent. One foreground client attempt is already pending. Routes are schematic; no admission or preemption is depicted.",
+  "exploration": {
+    "kind": "component",
+    "entities": [
+      {
+        "id": "caller",
+        "label": "Caller scope",
+        "summary": "AsyncLocalStorage supplies the joining caller’s priority; the default without a stored scope is foreground.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 26
+        }
+      },
+      {
+        "id": "shared",
+        "label": "Shared read and work scope",
+        "summary": "Starts one GitHubWork. Each read joins that work before attaching a reader. Joining can raise its mutable scope priority without replacing the operation. Reader cancellation is separate; shared cancellation occurs only after the last reader leaves before settlement.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 15
+        }
+      },
+      {
+        "id": "client",
+        "label": "Client retry loop and work scope",
+        "summary": "Creates its own GitHubWork in the current async context. Its scope retains a parent, so effective priority can rise after an await. The loop schedules using its current scope and sleeps outside the slot after a paced result.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-client.ts",
+          "startLine": 559
+        }
+      },
+      {
+        "id": "scheduler",
+        "label": "Scheduler and pending attempt",
+        "summary": "Retains the supplied scope object and resolves effective priority during drain. Interactive pending tasks precede foreground, then background. Admission permits at most three active tasks; exclusive work blocks starts. Overlap additionally requires the selected task’s parallel flag and interactive effective priority. This scheduler does not enforce rate limits.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 66
+        }
+      }
+    ],
+    "relationships": [
+      {
+        "id": "join",
+        "from": "caller",
+        "to": "shared",
+        "label": "Join existing work",
+        "summary": "read calls joinGitHubWork before shared.read. A higher caller priority raises the existing work scope; interactive promotion also makes it non-automatic.",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 54
+        }
+      },
+      {
+        "id": "parent",
+        "from": "client",
+        "to": "shared",
+        "label": "Retained parent scope",
+        "summary": "createGitHubWork captures the current scope as parent. In this illustrative invocation, that is the shared work scope. Effective priority follows the higher priority along the parent chain.",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 50
+        }
+      },
+      {
+        "id": "scope-ref",
+        "from": "scheduler",
+        "to": "client",
+        "label": "Retained supplied scope",
+        "summary": "The pending task retains the client-supplied scope object, not necessarily the outer shared-read scope. drain resolves its current effective priority, including parent promotions.",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 95
+        }
+      },
+      {
+        "id": "enqueue",
+        "from": "client",
+        "to": "scheduler",
+        "label": "Schedule an attempt",
+        "summary": "The client supplies githubPriorityScope(). Its parallel option requires read-only work and inherited parallel-read permission.",
+        "evidence": {
+          "filePath": "lib/github-client.ts",
+          "startLine": 561
+        }
+      },
+      {
+        "id": "paced",
+        "from": "scheduler",
+        "to": "client",
+        "label": "Return paced result",
+        "summary": "When the scheduled operation returns paced, the client sleeps outside the scheduler slot and then schedules another attempt. Client code owns this pacing behavior.",
+        "evidence": {
+          "filePath": "lib/github-client.ts",
+          "startLine": 562
+        }
+      }
+    ]
+  },
+  "plan": {
+    "question": "How does promotion of shared work reach an existing pending client attempt?",
+    "visualApproach": "Keep the caller and shared work above the client loop and scheduler. Draw the client scope’s parent reference back to shared work, and the pending entry’s scope reference back to the client scope. Follow these same references across three fixed views.",
+    "whyThisForm": "The two explicit references distinguish the outer shared scope from the client scope actually supplied to the scheduler. Keeping the client’s local priority unchanged while its effective priority rises makes inheritance visible.",
+    "encodings": "Boundaries identify responsibilities. The inset client scope belongs to client work; the inset pending entry belongs to the scheduler. Reference arrows point toward the referenced scope. Separate enqueue and dashed paced-result arrows show calls and results. Accent reinforces interactive priority, which is also named in text.",
+    "motion": "All geometry stays fixed. Joining changes the shared scope from foreground to interactive; the client scope keeps its foreground local priority but inherits interactive effective priority. At the next drain, the pending entry explicitly reads interactive through its retained reference. It remains pending: this consultation is not admission, and active requests are not interrupted.",
+    "prediction": "A foreground caller cannot lower interactive shared work. A promoted pending attempt still cannot start while exclusive work blocks admission.",
+    "restingState": "The promoted parent, unchanged client-local priority, inherited effective priority, pending scope reference, and admission constraints remain visible."
+  },
+  "scenarios": [
+    {
+      "id": "promote-existing",
+      "title": "Promote an existing pending attempt",
+      "input": "An interactive caller is about to join foreground shared work whose client attempt is already pending.",
+      "frames": [
+        {
+          "title": "Before the interactive caller joins",
+          "caption": "The pending entry references the client’s own scope. That scope retains the shared work scope as its parent.",
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 400\"><defs><marker id=\"arrow\" markerWidth=\"7\" markerHeight=\"7\" refX=\"6\" refY=\"3.5\" orient=\"auto\"><path d=\"M0 0 L7 3.5 L0 7\" fill=\"var(--line)\"/></marker></defs><g data-entity-id=\"caller\"><rect x=\"16\" y=\"20\" width=\"138\" height=\"76\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"28\" y=\"46\" font-size=\"16\" fill=\"var(--ink)\">Caller scope</text><text x=\"28\" y=\"75\" font-size=\"16\" fill=\"var(--accent)\">interactive</text></g><g data-entity-id=\"shared\"><rect x=\"222\" y=\"20\" width=\"322\" height=\"96\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"236\" y=\"46\" font-size=\"16\" fill=\"var(--ink)\">Shared read + GitHubWork</text><text x=\"236\" y=\"73\" font-size=\"16\" fill=\"var(--ink)\">Same operation</text><text x=\"236\" y=\"100\" font-size=\"16\" fill=\"var(--muted)\">Scope: foreground</text></g><g data-entity-id=\"client\"><rect x=\"16\" y=\"194\" width=\"228\" height=\"182\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"30\" y=\"219\" font-size=\"16\" fill=\"var(--ink)\">Client retry loop</text><rect x=\"28\" y=\"233\" width=\"204\" height=\"72\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"40\" y=\"257\" font-size=\"16\" fill=\"var(--ink)\">Local: foreground</text><text x=\"40\" y=\"282\" font-size=\"16\" fill=\"var(--muted)\">Effective: foreground</text><text x=\"30\" y=\"334\" font-size=\"16\" fill=\"var(--ink)\">If paced: sleep</text><text x=\"30\" y=\"358\" font-size=\"16\" fill=\"var(--ink)\">outside slot; retry</text></g><g data-entity-id=\"scheduler\"><rect x=\"326\" y=\"194\" width=\"218\" height=\"182\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"338\" y=\"219\" font-size=\"16\" fill=\"var(--ink)\">Scheduler</text><rect x=\"338\" y=\"233\" width=\"194\" height=\"72\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"350\" y=\"257\" font-size=\"16\" fill=\"var(--ink)\">Pending attempt</text><text x=\"350\" y=\"282\" font-size=\"16\" fill=\"var(--muted)\">Scope retained</text><text x=\"338\" y=\"329\" font-size=\"16\" fill=\"var(--muted)\">Max 3; exclusive blocks</text><text x=\"338\" y=\"350\" font-size=\"16\" fill=\"var(--muted)\">Overlap: interactive</text><text x=\"338\" y=\"371\" font-size=\"16\" fill=\"var(--muted)\">+ parallel flag only</text></g><g data-relationship-id=\"join\"><path d=\"M154 62 H222\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"161\" y=\"47\" font-size=\"16\" fill=\"var(--muted)\">join next</text></g><g data-relationship-id=\"parent\"><path d=\"M28 246 H8 V145 H380 V116\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"181\" y=\"137\" font-size=\"16\" fill=\"var(--ink)\">parent scope</text></g><g data-relationship-id=\"scope-ref\"><path d=\"M338 270 H232\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"249\" y=\"255\" font-size=\"16\" fill=\"var(--ink)\">scope ref</text></g><g data-relationship-id=\"enqueue\"><path d=\"M244 330 H326\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"250\" y=\"318\" font-size=\"16\" fill=\"var(--ink)\">enqueue</text></g><g data-relationship-id=\"paced\"><path d=\"M326 360 H282 V389 H126 V376\" fill=\"none\" stroke=\"var(--line)\" stroke-dasharray=\"5 4\" marker-end=\"url(#arrow)\"/><text x=\"294\" y=\"394\" font-size=\"16\" fill=\"var(--muted)\">paced result</text></g></svg>",
+          "evidence": {
+            "filePath": "lib/github-scheduler.ts",
+            "startLine": 51
+          }
+        },
+        {
+          "title": "Joining promotes the existing scope chain",
+          "caption": "Only the shared scope’s stored priority rises. The client scope remains locally foreground but now resolves to interactive through its parent.",
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 400\"><defs><marker id=\"arrow\" markerWidth=\"7\" markerHeight=\"7\" refX=\"6\" refY=\"3.5\" orient=\"auto\"><path d=\"M0 0 L7 3.5 L0 7\" fill=\"var(--line)\"/></marker></defs><g data-entity-id=\"caller\"><rect x=\"16\" y=\"20\" width=\"138\" height=\"76\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"28\" y=\"46\" font-size=\"16\" fill=\"var(--ink)\">Caller scope</text><text x=\"28\" y=\"75\" font-size=\"16\" fill=\"var(--accent)\">interactive</text></g><g data-entity-id=\"shared\"><rect x=\"222\" y=\"20\" width=\"322\" height=\"96\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"236\" y=\"46\" font-size=\"16\" fill=\"var(--ink)\">Shared read + GitHubWork</text><text x=\"236\" y=\"73\" font-size=\"16\" fill=\"var(--ink)\">Same operation</text><text x=\"236\" y=\"100\" font-size=\"16\" fill=\"var(--accent)\">Scope: interactive</text></g><g data-entity-id=\"client\"><rect x=\"16\" y=\"194\" width=\"228\" height=\"182\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"30\" y=\"219\" font-size=\"16\" fill=\"var(--ink)\">Client retry loop</text><rect x=\"28\" y=\"233\" width=\"204\" height=\"72\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"40\" y=\"257\" font-size=\"16\" fill=\"var(--ink)\">Local: foreground</text><text x=\"40\" y=\"282\" font-size=\"16\" fill=\"var(--accent)\">Effective: interactive</text><text x=\"30\" y=\"334\" font-size=\"16\" fill=\"var(--ink)\">If paced: sleep</text><text x=\"30\" y=\"358\" font-size=\"16\" fill=\"var(--ink)\">outside slot; retry</text></g><g data-entity-id=\"scheduler\"><rect x=\"326\" y=\"194\" width=\"218\" height=\"182\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"338\" y=\"219\" font-size=\"16\" fill=\"var(--ink)\">Scheduler</text><rect x=\"338\" y=\"233\" width=\"194\" height=\"72\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"350\" y=\"257\" font-size=\"16\" fill=\"var(--ink)\">Pending attempt</text><text x=\"350\" y=\"282\" font-size=\"16\" fill=\"var(--muted)\">Scope retained</text><text x=\"338\" y=\"329\" font-size=\"16\" fill=\"var(--muted)\">Max 3; exclusive blocks</text><text x=\"338\" y=\"350\" font-size=\"16\" fill=\"var(--muted)\">Overlap: interactive</text><text x=\"338\" y=\"371\" font-size=\"16\" fill=\"var(--muted)\">+ parallel flag only</text></g><g data-relationship-id=\"join\"><path d=\"M154 62 H222\" fill=\"none\" stroke=\"var(--accent)\" marker-end=\"url(#arrow)\"/><text x=\"173\" y=\"47\" font-size=\"16\" fill=\"var(--ink)\">join</text></g><g data-relationship-id=\"parent\"><path d=\"M28 246 H8 V145 H380 V116\" fill=\"none\" stroke=\"var(--accent)\" marker-end=\"url(#arrow)\"/><text x=\"181\" y=\"137\" font-size=\"16\" fill=\"var(--ink)\">parent scope</text></g><g data-relationship-id=\"scope-ref\"><path d=\"M338 270 H232\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"249\" y=\"255\" font-size=\"16\" fill=\"var(--ink)\">scope ref</text></g><g data-relationship-id=\"enqueue\"><path d=\"M244 330 H326\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"250\" y=\"318\" font-size=\"16\" fill=\"var(--ink)\">enqueue</text></g><g data-relationship-id=\"paced\"><path d=\"M326 360 H282 V389 H126 V376\" fill=\"none\" stroke=\"var(--line)\" stroke-dasharray=\"5 4\" marker-end=\"url(#arrow)\"/><text x=\"294\" y=\"394\" font-size=\"16\" fill=\"var(--muted)\">paced result</text></g></svg>",
+          "evidence": {
+            "filePath": "lib/github-scheduler.ts",
+            "startLine": 54
+          }
+        },
+        {
+          "title": "The next drain consults the pending entry’s scope",
+          "caption": "The same pending entry reads interactive through the retained client scope and its parent. It gets interactive selection priority, not guaranteed admission. Active requests continue.",
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 400\"><defs><marker id=\"arrow\" markerWidth=\"7\" markerHeight=\"7\" refX=\"6\" refY=\"3.5\" orient=\"auto\"><path d=\"M0 0 L7 3.5 L0 7\" fill=\"var(--line)\"/></marker></defs><g data-entity-id=\"caller\"><rect x=\"16\" y=\"20\" width=\"138\" height=\"76\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"28\" y=\"46\" font-size=\"16\" fill=\"var(--ink)\">Caller scope</text><text x=\"28\" y=\"75\" font-size=\"16\" fill=\"var(--accent)\">interactive</text></g><g data-entity-id=\"shared\"><rect x=\"222\" y=\"20\" width=\"322\" height=\"96\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"236\" y=\"46\" font-size=\"16\" fill=\"var(--ink)\">Shared read + GitHubWork</text><text x=\"236\" y=\"73\" font-size=\"16\" fill=\"var(--ink)\">Same operation</text><text x=\"236\" y=\"100\" font-size=\"16\" fill=\"var(--accent)\">Scope: interactive</text></g><g data-entity-id=\"client\"><rect x=\"16\" y=\"194\" width=\"228\" height=\"182\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"30\" y=\"219\" font-size=\"16\" fill=\"var(--ink)\">Client retry loop</text><rect x=\"28\" y=\"233\" width=\"204\" height=\"72\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"40\" y=\"257\" font-size=\"16\" fill=\"var(--ink)\">Local: foreground</text><text x=\"40\" y=\"282\" font-size=\"16\" fill=\"var(--accent)\">Effective: interactive</text><text x=\"30\" y=\"334\" font-size=\"16\" fill=\"var(--ink)\">If paced: sleep</text><text x=\"30\" y=\"358\" font-size=\"16\" fill=\"var(--ink)\">outside slot; retry</text></g><g data-entity-id=\"scheduler\"><rect x=\"326\" y=\"194\" width=\"218\" height=\"182\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"338\" y=\"219\" font-size=\"16\" fill=\"var(--ink)\">Scheduler: next drain</text><rect x=\"338\" y=\"233\" width=\"194\" height=\"72\" rx=\"6\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"350\" y=\"257\" font-size=\"16\" fill=\"var(--ink)\">Pending attempt</text><text x=\"350\" y=\"282\" font-size=\"16\" fill=\"var(--accent)\">Read: interactive</text><text x=\"338\" y=\"329\" font-size=\"16\" fill=\"var(--muted)\">Max 3; exclusive blocks</text><text x=\"338\" y=\"350\" font-size=\"16\" fill=\"var(--muted)\">Overlap: interactive</text><text x=\"338\" y=\"371\" font-size=\"16\" fill=\"var(--muted)\">+ parallel flag only</text></g><g data-relationship-id=\"join\"><path d=\"M154 62 H222\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"173\" y=\"47\" font-size=\"16\" fill=\"var(--ink)\">join</text></g><g data-relationship-id=\"parent\"><path d=\"M28 246 H8 V145 H380 V116\" fill=\"none\" stroke=\"var(--accent)\" marker-end=\"url(#arrow)\"/><text x=\"181\" y=\"137\" font-size=\"16\" fill=\"var(--ink)\">parent scope</text></g><g data-relationship-id=\"scope-ref\"><path d=\"M338 270 H232\" fill=\"none\" stroke=\"var(--accent)\" marker-end=\"url(#arrow)\"/><text x=\"249\" y=\"255\" font-size=\"16\" fill=\"var(--ink)\">read ref</text></g><g data-relationship-id=\"enqueue\"><path d=\"M244 330 H326\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"250\" y=\"318\" font-size=\"16\" fill=\"var(--ink)\">enqueue</text></g><g data-relationship-id=\"paced\"><path d=\"M326 360 H282 V389 H126 V376\" fill=\"none\" stroke=\"var(--line)\" stroke-dasharray=\"5 4\" marker-end=\"url(#arrow)\"/><text x=\"294\" y=\"394\" font-size=\"16\" fill=\"var(--muted)\">paced result</text></g></svg>",
+          "evidence": {
+            "filePath": "lib/github-scheduler.ts",
+            "startLine": 70
+          }
+        }
+      ]
+    }
+  ]
+}

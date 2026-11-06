@@ -1,3 +1,4 @@
+import { LoadingIndicator } from './LoadingState';
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { Maximize2 } from 'lucide-react';
 import { DiagramViewport } from './DiagramViewport';
@@ -84,7 +85,7 @@ export function MermaidDiagram({
         </button>
       ) : (
         <p className="text-sm text-muted-foreground" role="status">
-          {current?.failed ? 'Could not render this diagram. Its source is shown below.' : 'Rendering diagram…'}
+          {current?.failed ? 'Could not render this diagram. Its source is shown below.' : <LoadingIndicator announce={false}>Rendering diagram…</LoadingIndicator>}
         </p>
       )}
       {current?.failed ? (

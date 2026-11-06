@@ -1,4 +1,6 @@
 import { useEvidenceDiscussions } from '../lib/use-evidence-discussions';
+
+import { LoadingIndicator } from './LoadingState';
 import { stackDependencyOrder } from '../lib/stack-overview';
 import { BulkCheckRerun } from './BulkCheckRerun';
 import { useEffect, useState, useSyncExternalStore } from 'react';
@@ -173,7 +175,7 @@ export function StackOverview({
                       ? `${facts.checkLabel} · Updates delayed`
                       : 'Checks unavailable'
                     : checksBusy && !checks[member.url]
-                      ? 'Checking…'
+                      ? <LoadingIndicator>Checking…</LoadingIndicator>
                       : facts.checkLabel}
                 </button>
                 {facts.attention.length > 0 && (

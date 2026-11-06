@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "title": "Promotion follows retained scope references",
+  "takeaway": "The scheduler reads the promoted scope when it selects pending work; active requests continue.",
+  "assumptions": "All components and connections describe current code. Positions are schematic. The client path applies when the shared operation uses this client; the supplied source does not show a direct inflight join caller.",
+  "exploration": {
+    "kind": "component",
+    "entities": [
+      {
+        "id": "caller",
+        "label": "Interactive caller",
+        "summary": "Caller context supplies the priority used by joinGitHubWork.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 55
+        }
+      },
+      {
+        "id": "shared-work",
+        "label": "Shared GitHub read",
+        "summary": "Owns GitHubWork and joins it before registering each shared reader.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 15
+        }
+      },
+      {
+        "id": "client-work",
+        "label": "Client request work",
+        "summary": "Runs request attempts under a child scope and handles paced results outside scheduler slots.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-client.ts",
+          "startLine": 559
+        }
+      },
+      {
+        "id": "scheduler",
+        "label": "Scheduler",
+        "summary": "Retains task scopes and selects pending interactive tasks before lower priorities. It does not enforce rate limits.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 67
+        }
+      },
+      {
+        "id": "active",
+        "label": "Active requests",
+        "summary": "Started tasks continue until completion. Exclusive work blocks new starts; permitted parallel work can use up to three active slots.",
+        "change": "context",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 71
+        }
+      }
+    ],
+    "relationships": [
+      {
+        "id": "join",
+        "from": "caller",
+        "to": "shared-work",
+        "label": "Join existing work",
+        "summary": "The wrapper joins before shared.read; a higher caller priority raises the existing work scope.",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 22
+        }
+      },
+      {
+        "id": "inherit",
+        "from": "shared-work",
+        "to": "client-work",
+        "label": "Retain parent scope",
+        "summary": "When the operation creates client work, createGitHubWork retains the current scope as its parent; effective priority follows that chain.",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 51
+        }
+      },
+      {
+        "id": "submit",
+        "from": "client-work",
+        "to": "scheduler",
+        "label": "Submit request attempt",
+        "summary": "The client supplies its current scope and permits parallel execution only for read-only work with parallel reads enabled.",
+        "evidence": {
+          "filePath": "lib/github-client.ts",
+          "startLine": 561
+        }
+      },
+      {
+        "id": "retry",
+        "from": "scheduler",
+        "to": "client-work",
+        "label": "Return paced result",
+        "summary": "A paced result sends control back to the client loop, which sleeps before another submission.",
+        "evidence": {
+          "filePath": "lib/github-client.ts",
+          "startLine": 562
+        }
+      },
+      {
+        "id": "start",
+        "from": "scheduler",
+        "to": "active",
+        "label": "Start when permitted",
+        "summary": "Selection does not bypass exclusivity or capacity. Parallel starts require task permission and effective interactive priority.",
+        "evidence": {
+          "filePath": "lib/github-scheduler.ts",
+          "startLine": 76
+        }
+      }
+    ]
+  },
+  "plan": {
+    "question": "How can an interactive caller promote existing work without replacing it or interrupting an active request?",
+    "visualApproach": "Use a fixed responsibility map. Put the shared work scope above the child client scope, then place scheduler selection below both. Place active requests across a separate start boundary.",
+    "whyThisForm": "The important relationship is scope ownership and retained references, not movement through a numeric queue. The map separates promotion from permission to start.",
+    "encodings": "Boxes identify responsibilities. Downward connections show scope inheritance and submission. The side connection shows a join. The final boundary separates pending selection from active requests. All entities are context.",
+    "motion": "Use one static frame. Scope references and the start boundary explain the rule without implying a specific execution trace or interruption.",
+    "prediction": "If a parent work scope becomes interactive while a child task is pending, the next scheduler selection can see interactive priority, but an active exclusive request still blocks its start.",
+    "restingState": "The caller join, parent reference, retained task scope, retry path, and active-request boundary remain visible."
+  },
+  "scenarios": [
+    {
+      "id": "scope-promotion",
+      "title": "Existing work keeps its identity",
+      "input": "An interactive caller joins shared work whose operation uses the GitHub client.",
+      "frames": [
+        {
+          "title": "Scope promotion reaches pending selection",
+          "caption": "The join changes shared scope state. The scheduler reads effective priority later; it does not interrupt active requests.",
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 560 480\"><defs><marker id=\"arrow\" markerWidth=\"8\" markerHeight=\"8\" refX=\"7\" refY=\"4\" orient=\"auto\"><path d=\"M0 0 L8 4 L0 8\" fill=\"var(--line)\"/></marker></defs><g data-entity-id=\"caller\"><rect x=\"16\" y=\"24\" width=\"170\" height=\"82\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"30\" y=\"49\" font-size=\"16\" fill=\"var(--muted)\">Context</text><text x=\"30\" y=\"72\" font-size=\"16\" fill=\"var(--ink)\">Interactive caller</text><text x=\"30\" y=\"94\" font-size=\"16\" fill=\"var(--ink)\">read(signal)</text></g><g data-entity-id=\"shared-work\"><rect x=\"300\" y=\"16\" width=\"244\" height=\"108\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"314\" y=\"40\" font-size=\"16\" fill=\"var(--muted)\">Context · shared GitHub read</text><text x=\"314\" y=\"65\" font-size=\"16\" fill=\"var(--ink)\">GitHubWork: same promise</text><rect x=\"312\" y=\"77\" width=\"220\" height=\"34\" rx=\"4\" fill=\"var(--paper)\" stroke=\"var(--accent)\"/><text x=\"322\" y=\"100\" font-size=\"16\" fill=\"var(--ink)\">Mutable priority scope</text></g><g data-relationship-id=\"join\"><path d=\"M186 65 H294\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"204\" y=\"51\" font-size=\"16\" fill=\"var(--ink)\">join</text></g><g data-entity-id=\"client-work\"><rect x=\"300\" y=\"176\" width=\"244\" height=\"92\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"314\" y=\"200\" font-size=\"16\" fill=\"var(--muted)\">Context · client request work</text><text x=\"314\" y=\"225\" font-size=\"16\" fill=\"var(--ink)\">Own scope retains parent</text><text x=\"314\" y=\"249\" font-size=\"16\" fill=\"var(--ink)\">Retry loop owns pacing</text></g><g data-relationship-id=\"inherit\"><path d=\"M422 124 V170\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"32\" y=\"151\" font-size=\"16\" fill=\"var(--ink)\">Client work created under shared operation:</text><text x=\"32\" y=\"173\" font-size=\"16\" fill=\"var(--muted)\">parent priority remains visible after await</text></g><g data-entity-id=\"scheduler\"><rect x=\"300\" y=\"320\" width=\"244\" height=\"72\" rx=\"8\" fill=\"var(--paper)\" stroke=\"var(--line)\"/><text x=\"314\" y=\"344\" font-size=\"16\" fill=\"var(--muted)\">Context · scheduler</text><text x=\"314\" y=\"370\" font-size=\"16\" fill=\"var(--ink)\">Select pending by scope</text></g><g data-relationship-id=\"submit\"><path d=\"M422 268 V314\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"30\" y=\"297\" font-size=\"16\" fill=\"var(--ink)\">Submit retained scope</text></g><g data-relationship-id=\"retry\"><path d=\"M300 356 H246 V222 H294\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"22\" y=\"328\" font-size=\"16\" fill=\"var(--muted)\">If paced:</text><text x=\"22\" y=\"351\" font-size=\"16\" fill=\"var(--muted)\">sleep outside slot,</text><text x=\"22\" y=\"374\" font-size=\"16\" fill=\"var(--muted)\">then submit again</text></g><path d=\"M16 412 H544\" stroke=\"var(--line)\" stroke-dasharray=\"5 5\"/><g data-entity-id=\"active\"><text x=\"24\" y=\"440\" font-size=\"16\" fill=\"var(--muted)\">Context · active requests</text><text x=\"24\" y=\"464\" font-size=\"16\" fill=\"var(--ink)\">Continue; no interruption</text></g><g data-relationship-id=\"start\"><path d=\"M422 392 V449\" fill=\"none\" stroke=\"var(--line)\" marker-end=\"url(#arrow)\"/><text x=\"296\" y=\"437\" font-size=\"16\" fill=\"var(--ink)\">Start only</text><text x=\"296\" y=\"461\" font-size=\"16\" fill=\"var(--ink)\">when permitted</text></g></svg>",
+          "evidence": {
+            "filePath": "lib/github-scheduler.ts",
+            "startLine": 72
+          }
+        }
+      ]
+    }
+  ]
+}

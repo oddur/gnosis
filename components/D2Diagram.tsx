@@ -1,3 +1,4 @@
+import { LoadingIndicator } from './LoadingState';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Maximize2, Pause, Play } from 'lucide-react';
 import { Button } from './ui/button';
@@ -240,7 +241,7 @@ export function D2Diagram({
               </Button>
             </>
           ) : (
-            'Laying out diagram…'
+            <LoadingIndicator announce={false}>Laying out diagram…</LoadingIndicator>
           )}
         </div>
       )}
@@ -273,7 +274,7 @@ export function D2Diagram({
             <div className="d2-render-state" role="status">
               {current?.error
                 ? 'Diagram unavailable. Close this viewer to retry or inspect the source.'
-                : 'Laying out diagram…'}
+                : <LoadingIndicator announce={false}>Laying out diagram…</LoadingIndicator>}
             </div>
           )}
           {open && frame && (

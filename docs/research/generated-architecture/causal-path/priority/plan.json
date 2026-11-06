@@ -1,0 +1,41 @@
+{
+  "summary": "This review explains how an interactive caller raises the priority of existing shared GitHub work in the supplied code. It does not describe a new change.\n\n- Joining raises the priority in the existing work scope and returns the same work promise.\n- A client request inherits effective priority through its parent scope chain.\n- At a later selection opportunity, the scheduler reads that effective priority. Promotion does not preempt active requests or itself enforce rate limits.",
+  "riskLevel": "low",
+  "riskRationale": "This is a review of existing code, not a proposed modification. The main review risk is an incorrect explanation of scope inheritance or scheduler timing.",
+  "storyArc": "Follow one existing operation. An interactive caller joins it and raises its shared scope priority. The client request inherits that priority through its parent chain. The scheduler observes the effective priority when it next selects pending work.",
+  "topics": [
+    {
+      "title": "An interactive caller promotes existing work through inherited priority",
+      "slideType": "foundation",
+      "importance": "important",
+      "hunkIds": [
+        "hunk-0"
+      ],
+      "dependsOn": [],
+      "order": 1,
+      "narrativeBrief": "How does an interactive caller promote existing shared work without starting a replacement operation? Connect the join, mutable shared scope, client work scope, and later scheduler selection; use exploration.change=\"context\" for existing components, and verify the parent chain against the supplied source.",
+      "diagramBrief": {
+        "question": "How does an interactive join affect the scheduler's later selection of an existing client request?",
+        "takeaway": "The join raises the existing shared scope priority. A pending client request inherits the effective priority through its parent chain, which the scheduler reads at a later selection opportunity.",
+        "assumedKnowledge": [
+          "Promises represent asynchronous results.",
+          "A scheduler selects pending requests."
+        ],
+        "essentialConcepts": [
+          "The interactive caller joins existing shared work. The join raises that work's scope priority and returns its existing promise.",
+          "The client creates request work inside the shared operation's context. Its scope inherits effective priority through the parent chain, so a later promotion remains visible without a copied priority update.",
+          "The client submits its request scope to the scheduler. The scheduler retains that scope, not a direct reference to the outer shared scope.",
+          "At a later selection opportunity, the scheduler evaluates pending request scopes and prefers interactive work. Active requests continue; joining does not itself call drain."
+        ],
+        "omit": [
+          "Exact function names and parent-reference wiring, except in inspection.",
+          "Automatic allowance rules and parallel-read policy.",
+          "Cancellation and reader counts.",
+          "Retry timing, pacing, budget accounting, and rate-limit handling.",
+          "Numeric queue examples and claims of immediate dispatch."
+        ],
+        "visualApproach": "Use a static custom SVG behavior diagram with one left-to-right causal path: Caller → Shared work → Client request → Scheduler selection. Keep the same existing operation identity across Shared work and Client request; do not draw a replacement operation. Inside Shared work, show its priority changing from background to interactive. Inside Client request, distinguish its unchanged local priority from its effective interactive priority. Connect these responsibilities with a dashed arrow labeled 'inherits through parent chain'; the legend must identify this as semantic influence, not a literal pointer, copied value, or pushed update. Connect Client request to Scheduler selection with 'effective priority read later'. Put 'active requests continue' beside the selection responsibility. This composition makes cause and later observation readable in one direction while retaining the client intermediary. A static view avoids invented timing steps and shows the decisive state relationship without animation. Keep exact symbols, scope wiring, and policy details in inspection."
+      }
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+import { LoadingState } from './LoadingState';
 import { useEffect, useRef, useState } from 'react';
 import { Copy, ExternalLink, Loader2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
@@ -166,7 +167,7 @@ export function GitHubAuthDialog({
           </p>
         )}
         {web === undefined ? (
-          <p role="status">Checking sign-in options…</p>
+          <LoadingState compact title="Checking sign-in options…" />
         ) : (
           <>
             {method !== 'token' && (

@@ -1,3 +1,4 @@
+import { LoadingIndicator } from './LoadingState';
 import { useEffect, useId, useState } from 'react';
 import { Eye, EyeOff, Plus, Trash2 } from 'lucide-react';
 import { Button } from './ui/button';
@@ -68,9 +69,7 @@ function ProviderEnvironment({ provider, label }: { provider: Provider; label: s
     <fieldset className="min-w-0 space-y-3" disabled={saving} data-environment-provider={provider}>
       <legend className="text-sm font-medium mb-2">{label}</legend>
       {state === 'loading' && (
-        <p role="status" className="settings-description">
-          Loading variables…
-        </p>
+        <LoadingIndicator className="settings-description">Loading variables…</LoadingIndicator>
       )}
       {state === 'ready' && (
         <>

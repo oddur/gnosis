@@ -588,7 +588,7 @@ void test('preloads pace early without blocking cached or interactive reads', as
   await client.request('GET /user-request');
   assert.equal(calls.length, 2, 'The scheduler is free for interactive work during pacing');
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- the pending request changes this flag
-  for (let i = 0; i < 30 && !completed; i++) {
+  for (let i = 0; i < 60 && !completed; i++) {
     release();
     await new Promise(resolve => setImmediate(resolve));
   }
@@ -636,4 +636,119 @@ void test('background work preserves ten percent of the standard REST allowance'
   await assert.rejects(withGitHubPriority('background', () => client.request('GET /background')), GitHubBackoffError);
   await client.request('GET /user-request');
   assert.equal(h.calls.length, 2);
+});
+
+void test('automatic downloads cannot spend more than a fifth of an hourly allowance', async () => {
+  let now = 1_000_000;
+  let requests = 0;
+  const pool = createGitHubClientPool({ now: () => now, minSpacingMs: 0,
+    sleep: ms => { now += ms; return Promise.resolve(); },
+    fetch: (() => {
+      requests++;
+      return Promise.resolve(json({}, 200, { 'x-ratelimit-resource': 'core', 'x-ratelimit-remaining': String(5000 - requests),
+        'x-ratelimit-limit': '5000', 'x-ratelimit-reset': '4600' }));
+    }) as typeof fetch,
+  });
+  const start = now;
+  const client = pool.client('one');
+  for (let i = 0; i < 1000; i++) {
+    await withGitHubPriority('background', () => client.request(`GET /preload/${i}`));
+  }
+  assert.ok(now - start >= 3_500_000, `Preloading spent 1000 requests in just ${now - start}ms`);
+  await assert.rejects(withGitHubPriority('background', () => client.request('GET /preload/over-budget')), GitHubBackoffError);
+  assert.equal(requests, 1000);
+  await withGitHubPriority('interactive', () => client.request('GET /opened'));
+  assert.equal(requests, 1001, 'User work is not subject to the speculative cap');
+});
+
+void test('immutable Git file contents survive navigation past HTTP freshness without another request', async () => {
+  const h = harness(() => json({ content: 'saved code' }, 200, { etag: '"source"' }));
+  const client = h.pool.client('one');
+  const route = `/repos/o/r/contents/src/file.ts?ref=${'a'.repeat(40)}`;
+  await client.request(`GET ${route}`);
+  h.advance(120_000);
+  await client.request(`GET ${route}`);
+  assert.equal(h.calls.length, 1, 'The same immutable source must not be downloaded or revalidated again');
+  await client.request(`GET ${route}`, { headers: { 'cache-control': 'no-cache' } });
+  assert.equal(h.calls.length, 2, 'Explicit refresh still revalidates');
+});
+
+void test('automatic allowance survives restart, resets by time, and is isolated by resource and account', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-auto-budget-'));
+  const file = path.join(dir, 'budget.json');
+  const response = () => json({ saved: true }, 200, {
+    'x-ratelimit-resource': 'search', 'x-ratelimit-limit': '5', 'x-ratelimit-remaining': '4', 'x-ratelimit-reset': '1100',
+  });
+  try {
+    const first = harness(response);
+    await first.pool.setStorage(file);
+    await withGitHubPriority('background', () => first.pool.client('secret').request('GET /search/issues'));
+    assert.ok(first.pool.backoff('secret', true, ['search']));
+    assert.equal(first.pool.backoff('secret', true, ['core']), undefined);
+    await flushCaches();
+    const restart = harness(response);
+    await restart.pool.setStorage(file);
+    const read = () => withGitHubPriority('background', () => restart.pool.client('secret').request('GET /search/new'));
+    await assert.rejects(read(), GitHubBackoffError);
+    await withGitHubPriority('background', () => restart.pool.client('secret').request('GET /search/issues'));
+    assert.equal(restart.calls.length, 0, 'Cached data remains instant at the automatic limit');
+    await withGitHubPriority('interactive', () => restart.pool.client('secret').request('GET /search/clicked'));
+    await withGitHubPriority('background', () => restart.pool.client('other').request('GET /search/new'));
+    assert.equal(restart.calls.length, 2);
+    restart.advance(60_001);
+    await read();
+    assert.equal(restart.calls.length, 3);
+    assert.equal(fs.readFileSync(file, 'utf8').includes('secret'), false);
+  } finally { await closeCaches(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+void test('automatic foreground refreshes share the budget; requested foreground generation does not', async () => {
+  const h = harness(() => json({}, 200, {
+    'x-ratelimit-resource': 'core', 'x-ratelimit-limit': '5', 'x-ratelimit-remaining': '4', 'x-ratelimit-reset': '1100',
+  }));
+  const client = h.pool.client('one');
+  await withGitHubPriority('foreground', () => client.request('GET /refresh'), { automatic: true });
+  await assert.rejects(withGitHubPriority('foreground', () => client.request('GET /automatic'), { automatic: true }), GitHubBackoffError);
+  await withGitHubPriority('foreground', () => client.request('GET /explanation'));
+  assert.equal(h.calls.length, 2);
+});
+
+void test('GraphQL automatic usage accounts for observed point cost, not just request count', async () => {
+  let remaining = 1000;
+  const h = harness(() => json({ data: {} }, 200, {
+    'x-ratelimit-resource': 'graphql', 'x-ratelimit-limit': '1000', 'x-ratelimit-remaining': String(remaining), 'x-ratelimit-reset': '1100',
+  }));
+  const client = h.pool.client('one');
+  const read = () => client.request('POST /graphql', { query: 'query { viewer { login } }' });
+  await read();
+  remaining = 800;
+  await withGitHubPriority('background', read);
+  await assert.rejects(withGitHubPriority('background', read), GitHubBackoffError);
+  assert.equal(h.calls.length, 2);
+  await withGitHubPriority('interactive', read);
+  assert.equal(h.calls.length, 3);
+});
+
+void test('immutable caching never freezes branches, commit status, or explicit no-cache responses', async () => {
+  const h = harness(() => json({ value: 'data' }));
+  const client = h.pool.client('one');
+  const paths = ['/repos/o/r/contents/file.ts?ref=main', `/repos/o/r/commits/${'a'.repeat(40)}/check-runs`];
+  for (const path of paths) await client.request(`GET ${path}`);
+  h.advance(120_000);
+  for (const path of paths) await client.request(`GET ${path}`);
+  assert.equal(h.calls.length, 4);
+  const noCache = harness(() => json({}, 200, { 'cache-control': 'no-cache' }));
+  const read = () => noCache.pool.client('one').request(`GET /repos/o/r/contents/file.ts?ref=${'a'.repeat(40)}`);
+  await read(); await read();
+  assert.equal(noCache.calls.length, 2);
+});
+
+void test('the first automatic GraphQL query charges its reported cost', async () => {
+  const h = harness(() => json({ data: { rateLimit: { cost: 200 } } }, 200, {
+    'x-ratelimit-resource': 'graphql', 'x-ratelimit-limit': '1000', 'x-ratelimit-remaining': '800', 'x-ratelimit-reset': '1100',
+  }));
+  const read = () => h.pool.client('one').request('POST /graphql', { query: 'query { rateLimit { cost } }' });
+  await withGitHubPriority('foreground', () => withGitHubPriority('foreground', read), { automatic: true });
+  await assert.rejects(withGitHubPriority('foreground', () => withGitHubPriority('foreground', read), { automatic: true }), GitHubBackoffError);
+  assert.equal(h.calls.length, 1, 'Nested service priorities must not discard automatic accounting');
 });

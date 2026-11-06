@@ -1,3 +1,4 @@
+import { LoadingIndicator } from './LoadingState';
 import { DiffStats } from './DiffStats';
 import { useState } from 'react';
 import type { ReactNode } from 'react';
@@ -100,7 +101,7 @@ interface Props {
 // text — color as punctuation, not category shorthand.
 function StatusLine({ status }: { status: PrStatus | null }) {
   if (!status) {
-    return <div className="slide-meta animate-pulse opacity-60 max-w-6xl mx-auto w-full mb-6">loading PR status…</div>;
+    return <div className="slide-meta max-w-6xl mx-auto w-full mb-6"><LoadingIndicator>Loading PR status…</LoadingIndicator></div>;
   }
 
   const {
