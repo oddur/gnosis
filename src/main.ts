@@ -94,11 +94,12 @@ import {
   DEFAULT_FAST_CLAUDE_MODEL,
   normalizeModelSelection,
 } from '../lib/models';
+import { buildExplanationSource, refineExplanationText } from '../lib/review-refinement';
 import { buildContextPackage, buildPlannerContext, buildTopicContext } from '../lib/context-builder';
 import { generateReviewGuide, planReview, generateSlide, finalizeReviewOverview } from '../lib/agent';
 import { buildArchive, parseArchive } from '../lib/review-archive';
 import { normalizeFileSummaries } from '../lib/file-summaries';
-import { normalizeInlineExplanations } from '../lib/inline-explanations';
+import { normalizeInlineExplanations, resolveGeneratedInlineExplanations } from '../lib/inline-explanations';
 import { captureExplainerContext, normalizeExplainerIdea, parseExplainer } from '../lib/explainer';
 import { createExplainerService } from './explainer-service';
 import { protectExplainerFrames, validateExplainerInBrowser, validateSvgIllustrationInBrowser } from './explainer-validation';
@@ -1964,9 +1965,9 @@ async function runBackgroundGeneration(
       // ── Two-phase: planner → parallel writers ──
       reportReviewPhase( { reviewId, phase: 'Planning review structure' });
 
-      const plannerContext = buildPlannerContext(prData, changedFiles, hunkIndex, excludedFilesSummary, projectClaudeContext);
+      const plannerContext = buildPlannerContext(prData, changedFiles, hunkIndex, excludedFilesSummary, projectClaudeContext, indexedHunks);
       checkpoint = await openReviewCheckpoint(path.join(getReviewsDir(), 'unfinished'), {
-        version: 1, account: generationAccount, provider, model, instructions, educationMode, reviewSuggestions,
+        version: 6, account: generationAccount, provider, model, instructions, educationMode, reviewSuggestions,
         thinking, effort, scope: request.prUrl, snapshot: reviewSnapshot?.fingerprint, baseSha: prData.baseSha, headSha: prData.headSha,
         localToolsOn, plannerContext, hunkIndex,
       });
@@ -2002,7 +2003,7 @@ async function runBackgroundGeneration(
               projectClaudeContext,
             );
 
-            const topicKey = reviewFingerprint({ topicCtx, topic, version: 1 });
+            const topicKey = reviewFingerprint({ topicCtx, topic, version: 5 });
             const writerOutput = checkpoint!.get(topicKey) ?? await generateSlide({
               validateIllustration: validateSvgIllustrationInBrowser,
               topicContext: topicCtx,
@@ -2053,18 +2054,6 @@ async function runBackgroundGeneration(
       );
 
       resolvedSlides = slideResults;
-      reportReviewPhase({ reviewId, phase: 'Writing overview' });
-      plan.summary = await finalizeReviewOverview({
-        providerName: provider,
-        model,
-        title: prData.title,
-        effort,
-        draft: plan.summary,
-        riskRationale: plan.riskRationale,
-        topics: slideResults,
-        instructions,
-        signal,
-      });
     } else {
       // ── Single-shot: existing approach ──
       reportReviewPhase( { reviewId, phase: 'Generating review' });
@@ -2166,6 +2155,26 @@ async function runBackgroundGeneration(
         };
       });
     }
+
+    // The editor can remove narrative detail only when its inline explanation will actually display.
+    for (const slide of resolvedSlides) {
+      slide.inlineExplanations = resolveGeneratedInlineExplanations(slide.inlineExplanations, slide.diffHunks, allChangedFiles);
+    }
+    reportReviewPhase({ reviewId, phase: 'Checking explanation text' });
+    resolvedSlides = await refineExplanationText({
+      drafts: resolvedSlides, source: contextPackage || buildExplanationSource(indexedHunks),
+      model, effort, instructions, signal,
+      generate: (options) => getProvider(provider).generate(options),
+    });
+    reportReviewPhase({ reviewId, phase: 'Writing overview' });
+    const finalSummary = await finalizeReviewOverview({
+      providerName: provider, model, effort, title: prData.title,
+      draft: aiResult?.summary ?? plan?.summary ?? '',
+      riskRationale: aiResult?.riskRationale ?? plan?.riskRationale ?? '',
+      topics: resolvedSlides, instructions, signal,
+    });
+    if (aiResult) aiResult.summary = finalSummary;
+    else if (plan) plan.summary = finalSummary;
 
     const generationDurationMs = Date.now() - generationStart;
 

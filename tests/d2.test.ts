@@ -236,7 +236,7 @@ void test('diagram resources stay local', () => {
   assert.match(resolveD2Icons('api.icon: gnosis:server', false), /api\.icon\.near: center-left; api\.label\.near/);
 });
 
-void test('planner, whole-review and topic writer share the diagram contract and retain usable output', async (t) => {
+void test('planner keeps teaching goals while fresh generation excludes legacy D2 output', async (t) => {
   const diagram = { source: 'a -> b', caption: 'A hands work to B.', steps: [] };
   const teachingGoal = {
     question: 'Why must C wait when both slots are occupied?',
@@ -342,16 +342,16 @@ void test('planner, whole-review and topic writer share the diagram contract and
   });
   const slide = await generateSlide({ providerName: 'codex', model: DEFAULT_CODEX_MODEL, topicContext: context });
   const invalid = await generateSlide({ providerName: 'codex', model: DEFAULT_CODEX_MODEL, topicContext: context });
-  assert.equal(whole.slides[0].d2Diagram?.source, diagram.source);
-  assert.equal(slide.d2Diagram?.source, diagram.source);
+  assert.equal(whole.slides[0].d2Diagram, null);
+  assert.equal(slide.d2Diagram, null);
   assert.equal(invalid.d2Diagram, null);
   assert.equal(invalid.narrative, 'Still readable.');
   assert.equal(calls.length, 4, 'invalid optional diagram does not retry the whole paid generation');
   for (const call of calls.slice(1)) {
-    assert.match(call.systemPrompt, /COMPILER-CHECKED SYNTAX RECIPES/);
-    assert.match(call.systemPrompt, /exactly-once/);
-    assert.match(call.systemPrompt, /HOW THE CHANGE WORKS/);
-    assert.match(call.content, /"focus"/);
+    assert.doesNotMatch(call.systemPrompt, /COMPILER-CHECKED SYNTAX RECIPES/);
+    assert.match(call.systemPrompt, /PURPOSE-DESIGNED SVG ILLUSTRATIONS/);
+    assert.match(call.content, /"svgIllustration"/);
+    assert.match(call.content, /"d2Diagram": null/);
     assert.match(call.content, /"d2Diagram"/);
     assert.doesNotMatch(call.content, /"mermaidDiagram"/);
   }
