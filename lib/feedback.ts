@@ -1,3 +1,4 @@
+import { changesRequestedReviews, isResponseThread } from './response-needed';
 import type { GitHubReviewComment, GitHubReviewThread, GitHubReviewThreads } from './review-threads';
 import type { ReviewMember } from './workbench';
 export interface FeedbackItem {
@@ -51,13 +52,7 @@ export function feedbackFingerprint(item: FeedbackItem, account: string): string
   return comments.length ? JSON.stringify(comments.map((c) => [c.id, c.updatedAt ?? c.createdAt])) : '';
 }
 export function feedbackReviewers(snapshot: GitHubReviewThreads) {
-  const latest = new Map<string, NonNullable<typeof snapshot.feedback>['reviews'][number]>();
-  for (const review of [...(snapshot.feedback?.reviews ?? [])].sort((a, b) =>
-    (a.submittedAt ?? a.createdAt).localeCompare(b.submittedAt ?? b.createdAt)
-  )) {
-    if (review.author && review.state !== 'PENDING') latest.set(review.author.login.toLowerCase(), review);
-  }
-  return [...latest.values()].flatMap((r) => {
+  return changesRequestedReviews(snapshot).flatMap((r) => {
     if (r.state !== 'CHANGES_REQUESTED' || !r.author) return [];
     const login = r.author.login;
     return [
@@ -102,6 +97,55 @@ export function feedbackCodeContext(
 ): 'current' | 'earlier' | 'unavailable' {
   if (thread.isOutdated) return 'earlier';
   if (!discussion || !displayed) return 'unavailable';
-  if (discussion.headSha !== displayed.headSha || (thread.diffSide === 'LEFT' && discussion.baseSha !== displayed.baseSha)) return 'earlier';
+  if (
+    discussion.headSha !== displayed.headSha ||
+    (thread.diffSide === 'LEFT' && discussion.baseSha !== displayed.baseSha)
+  )
+    return 'earlier';
   return thread.line === null ? 'unavailable' : 'current';
+}
+
+export type ResponseIntent = 'response' | 'response-threads' | 'response-review';
+export interface FeedbackRequest {
+  id: string;
+  subjectId: string;
+  intent: ResponseIntent;
+}
+/** Preserve the queue reason when entering Feedback, rather than restoring an unrelated conversation. */
+export function responseFeedbackTarget(
+  items: FeedbackItem[],
+  account: string,
+  intent: ResponseIntent
+): FeedbackItem | undefined {
+  const threads = items.filter((item) => item.thread && isResponseThread(item.thread, account));
+  const byPr = new Map<string, FeedbackItem[]>();
+  for (const item of items)
+    if (item.kind === 'review') byPr.set(item.member.url, [...(byPr.get(item.member.url) ?? []), item]);
+  const reviews = [...byPr.values()].flatMap((group) => {
+    const current = changesRequestedReviews(
+      {
+        headSha: '',
+        baseSha: '',
+        threads: [],
+        feedback: {
+          comments: [],
+          requestedReviewers: [],
+          viewerCanUpdate: false,
+          state: 'OPEN',
+          reviews: group.map((item) => ({
+            ...item.comments[0],
+            state: item.state ?? '',
+            submittedAt: item.comments[0].createdAt,
+          })),
+        },
+      },
+      account
+    );
+    return group.filter((item) => current.some((review) => review.id === item.id));
+  });
+  return intent === 'response-threads'
+    ? threads[0]
+    : intent === 'response-review'
+      ? reviews[0]
+      : (reviews[0] ?? threads[0]);
 }

@@ -32,6 +32,7 @@ export function locationKey(location: AppLocation): string {
     h.filters.attention,
     h.filters.kind,
     h.filters.starredOnly,
+    h.filters.involvement === 'response',
   ]);
 }
 

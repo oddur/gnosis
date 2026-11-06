@@ -1,3 +1,4 @@
+import { isResponseThread } from '../lib/response-needed';
 import { createPortal } from 'react-dom';
 import { FeedbackCodeContext } from './FeedbackCodeContext';
 import type { Preferences } from '../lib/types';
@@ -15,6 +16,8 @@ import { CommentMarkdown } from './CommentMarkdown';
 import { MarkdownCommentEditor } from './MarkdownCommentEditor';
 import { useEvidenceDiscussions } from '../lib/use-evidence-discussions';
 import {
+  responseFeedbackTarget,
+  type ResponseIntent,
   feedbackOptionsKey,
   isGitHubActionsFeedback,
   feedbackItems,
@@ -66,7 +69,7 @@ export function PrFeedbackView({
   initialPrUrl?: string;
   initialThreadId?: string;
   preferences?: Preferences;
-  intent?: 'address' | 'request';
+  intent?: 'address' | 'request' | ResponseIntent;
   onIntentHandled?: () => void;
   onSource: (item: FeedbackItem) => void;
 }) {
@@ -79,6 +82,7 @@ export function PrFeedbackView({
   const undoLock = useRef(false);
   const [requestsOpen, setRequestsOpen] = useState(intent === 'request');
   const initialSelection = useRef(false);
+  const [responseOnly, setResponseOnly] = useState(intent === 'response-threads');
   useEffect(() => {
     if (intent === 'request') onIntentHandled?.();
   }, [intent]);
@@ -122,14 +126,26 @@ export function PrFeedbackView({
     return !!fingerprint && readReviewState(feedbackReadKey(account, item)) !== fingerprint;
   };
   const unread = scoped.filter(isUnread).length;
-  const unresolved = scoped.filter((item) => item.thread && !item.thread.isResolved).length;
+  const unresolved = scoped.filter((item) => item.thread && (responseOnly && account ? isResponseThread(item.thread, account) : !item.thread.isResolved)).length;
   const shown = scoped.filter(
     (item) =>
       (!prUrl || item.member.url === prUrl) &&
       (filter === 'all' ||
         feedbackKey(item) === selectedKey ||
-        (filter === 'unread' ? isUnread(item) : item.thread && !item.thread.isResolved))
+        (filter === 'unread' ? isUnread(item) : item.thread && (responseOnly && account ? isResponseThread(item.thread, account) : !item.thread.isResolved)))
   );
+  useEffect(() => {
+    if (!intent?.startsWith('response') || initialSelection.current || !account) return;
+    if (!subject.members.filter(member => !prUrl || member.url === prUrl).every(member => discussions.values[member.url]?.feedback)) return;
+    initialSelection.current = true;
+    const first = responseFeedbackTarget(scoped, account, intent as ResponseIntent);
+    const threadsOnly = intent === 'response-threads' || (intent === 'response' && !!first?.thread);
+    setResponseOnly(threadsOnly);
+    setFilter(threadsOnly ? 'unresolved' : 'all');
+    setSelectedKey(first ? feedbackKey(first) : undefined);
+    setCompleted(!first);
+    onIntentHandled?.();
+  }, [intent, scoped, account, subject, prUrl, discussions.values]);
   useEffect(() => {
     if ((!initialThreadId && intent !== 'address') || initialSelection.current || !scoped.length) return;
     const target = initialThreadId ? scoped.find((item) => item.id === initialThreadId) : undefined;
@@ -155,7 +171,7 @@ export function PrFeedbackView({
     const items = latestScoped.current;
     const at = items.findIndex((item) => feedbackKey(item) === feedbackKey(selected));
     const next = [...items.slice(at + 1), ...items.slice(0, at)].find(
-      (item) => item.thread && !item.thread.isResolved && feedbackKey(item) !== feedbackKey(selected)
+      (item) => item.thread && (responseOnly && account ? isResponseThread(item.thread, account) : !item.thread.isResolved) && feedbackKey(item) !== feedbackKey(selected)
     );
     if (next) select(next);
     else {
@@ -326,6 +342,7 @@ export function PrFeedbackView({
                 aria-pressed={filter === value}
                 onClick={() => {
                   setCompleted(false);
+                  setResponseOnly(false);
                   setFilter(value);
                   setSelectedKey(undefined);
                 }}
@@ -456,6 +473,10 @@ export function PrFeedbackView({
                   : 'Updates automatically'}
           </span>
         </div>
+        {!completed && !unresolved && reviewers.length > 0 && !snapshotMissing.length && !failures.length && <div className="feedback-follow-up" role="status">
+          <div><strong>No unresolved feedback from others. Review approval is still pending.</strong><p>Resolving threads does not dismiss a changes-requested review. Ask the reviewer to check your updates.</p></div>
+          <Button size="sm" variant="outline" onClick={() => setRequestsOpen(true)}><Send size={14} aria-hidden="true" />Re-request review</Button>
+        </div>}
         {readError && (
           <p className="feedback-notice" role="alert">
             {readError}
@@ -814,11 +835,10 @@ export function PrFeedbackView({
                     ? 'Feedback could not be confirmed'
                     : unresolved
                       ? 'More feedback needs attention'
-                      : 'No unresolved code threads'}
+                      : responseOnly ? 'No unresolved feedback from others' : 'No unresolved code threads'}
                 </h2>
                 <p>
-                  {prUrl ? 'In this PR. ' : ''}Resolving threads does not approve a PR. Review decisions and general
-                  comments may still need a response.
+                  {reviewers.length > 0 ? 'Review approval is still pending. Resolving threads does not approve a PR. Ask the reviewer to check your updates.' : 'Resolving threads does not approve a PR. Review decisions and general comments may still need a response.'}
                 </p>
                 {(snapshotMissing.length > 0 || failures.length > 0) && (
                   <p>Some PR feedback is unavailable. Refresh feedback to check for remaining threads.</p>
@@ -827,7 +847,7 @@ export function PrFeedbackView({
                   <Button
                     size="sm"
                     onClick={() => {
-                      const next = scoped.find((item) => item.thread && !item.thread.isResolved);
+                      const next = scoped.find((item) => item.thread && (responseOnly && account ? isResponseThread(item.thread, account) : !item.thread.isResolved));
                       if (next) select(next);
                     }}
                   >
@@ -836,10 +856,10 @@ export function PrFeedbackView({
                 )}
                 {reviewers.length > 0 && (
                   <Button variant="outline" size="sm" onClick={() => setRequestsOpen(true)}>
-                    Review feedback & request review
+                    Re-request review
                   </Button>
                 )}
-                <Button variant="ghost" size="sm" onClick={backToList}>
+                <Button variant="ghost" size="sm" onClick={() => { setFilter('all'); setResponseOnly(false); backToList(); }}>
                   All conversations
                 </Button>
               </div>

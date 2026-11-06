@@ -325,7 +325,7 @@ void app.whenReady().then(async () => {
     assert.match(await js<string>("document.querySelector('.feedback-complete').textContent"),/does not approve a PR/);
     assert.ok(await js("document.querySelector('.feedback-complete').checkVisibility()"));
     await capture('feedback-complete-dark');
-    await click('Review feedback & request review');
+    await click('Re-request review');
     await wait("!!document.querySelector('.feedback-reviewers')");
     assert.match(await js<string>("document.querySelector('.feedback-reviewers').textContent"), /No unresolved threads/);
     await js("document.querySelector('[aria-label=\"Close review requests\"]').click()");

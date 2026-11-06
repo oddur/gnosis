@@ -7,7 +7,7 @@ import type { GitHubReviewThreads } from './review-threads';
 export type SearchDestination =
   | {
       kind: 'home';
-      section?: 'all' | 'requested' | 'updated' | 'stacks' | 'saved' | 'starred' | 'muted';
+      section?: 'response' | 'all' | 'requested' | 'updated' | 'stacks' | 'saved' | 'starred' | 'muted';
       repo?: string;
       viewId?: string;
       settings?: string;

@@ -18,6 +18,7 @@ export function homeVisit(home: HomeLocation): RecentVisit {
     ? 'Saved reviews'
     : home.muted
       ? 'Muted PRs'
+      : home.filters.involvement === 'response' ? 'Needs my response'
       : home.filters.starredOnly
         ? 'Starred'
         : home.filters.kind === 'stack'

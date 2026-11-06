@@ -71,3 +71,13 @@ void test('account switches preserve pending writes, bounded history and recover
   await settle();
   assert.equal(store.snapshot().error, '');
 });
+
+void test('Needs my response has its own history and recent destination', async () => {
+  const { locationKey } = await import('../lib/navigation-history');
+  const home: HomeLocation = { ...location(''), viewId: null, viewName: undefined };
+  const response: HomeLocation = { ...home, filters: { ...home.filters, involvement: 'response' } };
+  assert.notEqual(locationKey({ page: 'home', home }), locationKey({ page: 'home', home: response }));
+  assert.equal(homeVisit(response).title, 'Needs my response');
+  assert.notEqual(homeVisit(home).id, homeVisit(response).id);
+  assert.equal(locationKey({ page: 'home', home: response }), locationKey({ page: 'home', home: { ...response, filters: { ...response.filters, repo: 'o/r' } } }));
+});

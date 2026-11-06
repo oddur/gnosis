@@ -1,4 +1,4 @@
-import { feedbackCodeContext } from '../lib/feedback';
+import { feedbackCodeContext, type FeedbackRequest, type ResponseIntent } from '../lib/feedback';
 import { PrFeedbackView } from './PrFeedbackView';
 import { WorkspaceIcon, workspaceTabs } from './WorkspaceIcon';
 import { SubjectIcon } from './SubjectIcon';
@@ -60,6 +60,7 @@ export interface PrReadingPosition {
 
 function PrSummaryContent({
   item,
+  feedbackRequest,
   starredUrls,
   starBusy,
   starError,
@@ -96,6 +97,7 @@ function PrSummaryContent({
   shortcutsEnabled = true,
 }: {
   item: QueueItem;
+  feedbackRequest?: FeedbackRequest;
   starredUrls: ReadonlySet<string>;
   starBusy: boolean;
   muteBusy: boolean;
@@ -147,7 +149,8 @@ function PrSummaryContent({
   const [nameError, setNameError] = useState('');
   const [feedbackPr, setFeedbackPr] = useState<string>();
   const [feedbackThread, setFeedbackThread] = useState<string>();
-  const [feedbackIntent, setFeedbackIntent] = useState<'address' | 'request'>();
+  const [feedbackIntent, setFeedbackIntent] = useState<'address' | 'request' | ResponseIntent | undefined>(feedbackRequest?.intent);
+  useEffect(() => { if (feedbackRequest) { setFeedbackPr(undefined); setFeedbackThread(undefined); setFeedbackIntent(feedbackRequest.intent); } }, [feedbackRequest?.id]);
   const [initialFile, setInitialFile] = useState<ChangesInitialFile>();
   // A jump happens once. Returning to Changes later restores where the reviewer left off.
   useEffect(() => {
@@ -457,7 +460,7 @@ function PrSummaryContent({
           )}
         </Tabs.Content>
         <Tabs.Content value="feedback" className="pr-changes-tab">
-          <PrFeedbackView key={`${account}:${item.subject.id}:${feedbackPr ?? ''}`} subject={item.subject} account={account} initialPrUrl={feedbackPr} initialThreadId={feedbackThread} preferences={preferences ?? undefined} intent={feedbackIntent} onIntentHandled={() => { setFeedbackIntent(undefined); setFeedbackThread(undefined); }} onSource={item => {
+          <PrFeedbackView key={`${account}:${item.subject.id}:${feedbackPr ?? ''}:${feedbackRequest?.id ?? ''}`} subject={item.subject} account={account} initialPrUrl={feedbackPr} initialThreadId={feedbackThread} preferences={preferences ?? undefined} intent={feedbackIntent} onIntentHandled={() => { setFeedbackIntent(undefined); setFeedbackThread(undefined); }} onSource={item => {
             if (!item.thread) return;
             setInitialFile({ url: item.member.url, headSha: item.member.headSha, path: item.thread.path, line: feedbackCodeContext(item.thread, item.headSha ? { headSha: item.headSha, baseSha: item.baseSha ?? '' } : undefined, item.member) === 'current' ? item.thread.line ?? undefined : undefined, side: item.thread.diffSide === 'LEFT' ? 'before' : 'after' }); onTabChange('changes');
           }} />

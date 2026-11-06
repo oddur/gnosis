@@ -284,3 +284,20 @@ void test('response decisions use current revision signals and newer review evid
   data.checkedAt = 10;
   assert.equal(responseNeeded(own, 'oddur', signals, data).changesRequested, true, 'Fresh signals supersede old review evidence');
 });
+
+void test('response links select the exact kind of outstanding feedback, ignoring own and superseded reviews', async () => {
+  const { responseFeedbackTarget } = await import('../lib/feedback');
+  const data = structuredClone(snapshot);
+  data.threads.unshift({ ...thread, id: 'own', comments: [{ ...comment, author: { login: 'oddur', avatarUrl: '' } }] });
+  const items = feedbackItems(member, data);
+  assert.equal(responseFeedbackTarget(items, 'oddur', 'response-threads')?.id, 'T1');
+  assert.equal(responseFeedbackTarget(items, 'oddur', 'response-review')?.id, 'R1');
+  assert.equal(responseFeedbackTarget(items, 'oddur', 'response')?.id, 'R1');
+  data.feedback!.reviews.push({ ...review, id: 'new-comment', state: 'COMMENTED', submittedAt: '2026-11-02T10:00:00Z' });
+  assert.equal(feedbackReviewers(data).length, 1, 'A comment does not withdraw changes requested');
+  data.feedback!.reviews.push({ ...review, id: 'approved', state: 'APPROVED', submittedAt: '2026-11-03T10:00:00Z' });
+  assert.equal(responseFeedbackTarget(feedbackItems(member, data), 'oddur', 'response-review'), undefined);
+  assert.equal(responseFeedbackTarget(feedbackItems(member, data), 'oddur', 'response')?.id, 'T1');
+  data.threads = data.threads.map(thread => ({ ...thread, isResolved: true }));
+  assert.equal(responseFeedbackTarget(feedbackItems(member, data), 'oddur', 'response'), undefined);
+});

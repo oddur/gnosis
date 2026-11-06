@@ -345,6 +345,12 @@ export function App() {
       perform: () => navigate({ kind: 'home', section: 'requested' }),
     },
     {
+      id: 'nav:response',
+      label: 'Go to needs my response',
+      keywords: 'feedback changes requested unresolved my PRs',
+      perform: () => navigate({ kind: 'home', section: 'response' }),
+    },
+    {
       id: 'nav:updated',
       label: 'Go to updated PRs',
       keywords: 'changed new changes',
