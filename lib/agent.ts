@@ -5,6 +5,7 @@ import {
   SVG_ILLUSTRATION_DIRECTIVE,
   ILLUSTRATION_PLANNER_DIRECTIVE,
   normalizeSvgIllustration,
+  SVG_EXPLORATION_DIRECTIVE,
   type SvgIllustration,
 } from './svg-illustration';
 import { REVIEW_OVERVIEW_DIRECTIVE, REVIEW_PROSE_DIRECTIVE, SLIDE_NARRATIVE_DIRECTIVE } from './review-overview';
@@ -55,6 +56,7 @@ Anchor each check to a location when you honestly can:
 REVIEW FOCUS: The Markdown rendering of the same checks as a bullet list, or null when there are none. Same items, same standard — just formatted for reading.
 
 ${SVG_ILLUSTRATION_DIRECTIVE}
+${SVG_EXPLORATION_DIRECTIVE}
 
 RISK: Assess overall risk based on:
 - Changes to auth, payments, data models, or public APIs = high risk
@@ -496,6 +498,7 @@ Anchor when you can:
 REVIEW FOCUS: Markdown-bullet-list rendering of the same checks, or null when there are none. Same items, same standard.
 
 ${SVG_ILLUSTRATION_DIRECTIVE}
+${SVG_EXPLORATION_DIRECTIVE}
 
 Respond with valid JSON only. No explanation outside the JSON.`;
 

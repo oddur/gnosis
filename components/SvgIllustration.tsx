@@ -5,6 +5,8 @@ import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
 import type { MechanismEvidence } from '../lib/mechanism';
 import { normalizeSvgIllustration, type SvgIllustration as Illustration } from '../lib/svg-illustration';
 import { buildSvgIllustrationDocument } from '../lib/svg-illustration-document';
+import { DiagramExplorer, DiagramInspector } from './DiagramExplorer';
+import { diagramFocus, type DiagramEntityBounds } from '../lib/diagram-exploration';
 import './mechanism-diagram.css';
 import './svg-illustration.css';
 
@@ -61,6 +63,9 @@ function IllustrationPlayer({
     [error, setError] = useState(''),
     [ratio, setRatio] = useState(560 / 300),
     [reload, setReload] = useState(0);
+  const [selection, setSelection] = useState<string | null>(null);
+  const [entityBounds, setEntityBounds] = useState<DiagramEntityBounds[]>([]);
+  const [extent, setExtent] = useState({ width: 560, height: 300 });
   const frameRef = useRef<HTMLIFrameElement>(null),
     expandButton = useRef<HTMLButtonElement>(null),
     inline = useRef<HTMLDivElement>(null),
@@ -93,11 +98,36 @@ function IllustrationPlayer({
       if (event.source !== frameRef.current?.contentWindow || !raw || typeof raw !== 'object') return;
       const data = raw as Record<string, unknown>;
       if (data.type !== 'gnosis-illustration' || data.token !== documentState.token) return;
+      if (
+        data.event === 'select' &&
+        illustration.exploration &&
+        typeof data.id === 'string' &&
+        [...illustration.exploration.entities, ...illustration.exploration.relationships].some(
+          (item) => item.id === data.id
+        )
+      ) {
+        setSelection(data.id);
+        setPlaying(false);
+      }
+      if ((data.event === 'frame' || data.event === 'ready') && Array.isArray(data.bounds)) {
+        setEntityBounds(
+          data.bounds.filter(
+            (b: unknown): b is DiagramEntityBounds =>
+              !!b &&
+              typeof b === 'object' &&
+              'id' in b &&
+              typeof b.id === 'string' &&
+              ['x', 'y', 'width', 'height'].every((key) => Number.isFinite((b as Record<string, unknown>)[key]))
+          )
+        );
+      }
       if (data.event === 'ready') {
         clearTimeout(timeout);
         setReady(true);
-        if (typeof data.width === 'number' && typeof data.height === 'number' && data.height > 0)
+        if (typeof data.width === 'number' && typeof data.height === 'number' && data.height > 0) {
           setRatio(data.width / data.height);
+          setExtent({ width: data.width, height: data.height });
+        }
         send('theme', { dark: dark.current });
         send('show', { ...current.current, animate: false });
       }
@@ -114,6 +144,9 @@ function IllustrationPlayer({
       window.removeEventListener('message', receive);
     };
   }, [documentState, open]);
+  useEffect(() => {
+    if (illustration.exploration && ready) send('focus', { ids: diagramFocus(illustration.exploration, selection) });
+  }, [selection, illustration, ready, documentState, open]);
   useEffect(() => {
     const observer = new MutationObserver(() => {
       dark.current = document.documentElement.classList.contains('dark');
@@ -245,7 +278,7 @@ function IllustrationPlayer({
   const caption = (
     <div className="mechanism-caption" aria-live={playing ? 'off' : 'polite'}>
       <div className="mechanism-event-heading">
-        <span className="mechanism-event-count">
+        <span className="mechanism-event-count" hidden={last === 0}>
           {index + 1} / {last + 1}
         </span>
         <strong>{frame.title}</strong>
@@ -293,6 +326,25 @@ function IllustrationPlayer({
       )}
     </div>
   );
+  const inspector = (compact: boolean) =>
+    illustration.exploration && (
+      <DiagramInspector
+        exploration={illustration.exploration}
+        selected={selection}
+        onSelect={setSelection}
+        compact={compact}
+        canShowCode={canShowCode}
+        onShowCode={
+          onShowCode
+            ? (evidence) => {
+                setPlaying(false);
+                setOpen(false);
+                requestAnimationFrame(() => onShowCode(evidence));
+              }
+            : undefined
+        }
+      />
+    );
   return (
     <figure className="mechanism-diagram svg-illustration" aria-label={illustration.title}>
       <div className="mechanism-intro">
@@ -300,8 +352,8 @@ function IllustrationPlayer({
         <Button
           ref={expandButton}
           variant="ghost"
-          size="icon"
-          aria-label="Expand illustration"
+          size={illustration.exploration ? 'sm' : 'icon'}
+          aria-label={illustration.exploration ? 'Explore diagram' : 'Expand illustration'}
           aria-expanded={open}
           aria-haspopup="dialog"
           onClick={() => {
@@ -311,6 +363,7 @@ function IllustrationPlayer({
           }}
         >
           <Maximize2 size={16} />
+          {illustration.exploration && 'Explore'}
         </Button>
       </div>
       {open ? (
@@ -320,6 +373,7 @@ function IllustrationPlayer({
           {scenarios}
           {controls}
           {drawing}
+          {inspector(true)}
           {caption}
         </div>
       )}
@@ -350,7 +404,23 @@ function IllustrationPlayer({
               <p className="mechanism-takeaway">{illustration.takeaway}</p>
               {scenarios}
               {controls}
-              {drawing}
+              {illustration.exploration && !error ? (
+                <div className="diagram-explorer-workspace">
+                  <DiagramExplorer
+                    key={`${extent.width}x${extent.height}`}
+                    drawing={drawing}
+                    width={extent.width}
+                    height={extent.height}
+                    bounds={entityBounds}
+                    exploration={illustration.exploration}
+                    selected={selection}
+                    onSelect={setSelection}
+                  />
+                  {inspector(false)}
+                </div>
+              ) : (
+                drawing
+              )}
               {caption}
             </>
           )}
