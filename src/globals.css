@@ -69,9 +69,18 @@
   --leading-prose: 1.65;
   --weight-prose: 400;
   --tracking-prose: 0;
-  --type-panel-title: 1.125rem;
-  --type-page-title: 1.375rem;
-  --type-overview-title: 1.5625rem;
+  --type-section-title: 1.125rem;
+  --type-panel-title: 1.25rem;
+  --type-page-title: 1.5rem;
+  --type-overview-title: 1.875rem;
+
+  /* Reading headings, relative to the surrounding prose size. */
+  --type-reading-title: 1.75em;
+  --type-reading-section: 1.5em;
+  --type-reading-subsection: 1.3125em;
+  --type-reading-detail: 1.1875em;
+  --type-reading-minor: 1.0625em;
+  --type-reading-label: 1em;
 
   /* Bounded reading columns for explanations, descriptions, and chat. */
   --measure-prose: 68ch;
@@ -1668,7 +1677,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .briefing-actions { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-bottom:22px; }
 .briefing-actions>button:not([data-slot]) { font-size:var(--type-control); color:var(--ring); }
 .briefing-summary { font-size:var(--type-body); line-height:1.7; }
-.briefing-panel h3 { font-size:var(--type-control); font-weight:650; margin:24px 0 10px; }
+.briefing-panel h3 { font-size:var(--type-body); font-weight:650; margin:24px 0 10px; }
 .briefing-panel ul { padding-left:16px; list-style:disc; font-size:var(--type-body); line-height:1.7; }
 .briefing-panel li+li { margin-top:8px; }
 .briefing-tags { display:flex; gap:6px; flex-wrap:wrap; }
@@ -1705,7 +1714,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .workbench-connect form { display:flex; gap:8px; margin-top:10px; }
 .workbench-connect input { border:1px solid var(--border);padding:6px; }
 /* Keep existing review affordances while replacing their editorial scale. */
-.slide-title { font-family:var(--font-sans); font-size:var(--type-page-title); font-weight:650; line-height:1.35; letter-spacing:-.025em; font-variation-settings:normal; }
+.slide-title { font-family:var(--font-sans); font-size:var(--type-overview-title); font-weight:650; line-height:1.35; letter-spacing:-.025em; font-variation-settings:normal; }
 .slide-prose { font-family:var(--font-sans); font-size:var(--type-prose); line-height:1.65; }
 .slide-meta,.slide-chapter { font-family:var(--font-sans); font-size:var(--type-caption); letter-spacing:0; text-transform:none; }
 .editorial-label { font-family:var(--font-sans); font-weight:650; font-style:normal; }
@@ -1721,7 +1730,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .source-attribution { display:flex;align-items:center;gap:7px;padding:7px 10px;background:var(--muted);font-size:var(--type-caption);border-bottom:1px solid var(--border); }
 .workbench-overview { padding:24px; max-width:1100px; margin:0 auto; width:100%; overflow:auto; }
 .workbench-overview h1 { font-size:var(--type-overview-title);line-height:1.4;font-weight:650;letter-spacing:-.02em;max-width:65ch; }
-.workbench-overview h2 { font-size:var(--type-body);font-weight:650;margin:24px 0 12px; }
+.workbench-overview h2 { font-size:var(--type-section-title);font-weight:650;margin:24px 0 12px; }
 .overview-summary { max-width:75ch; font-size:var(--type-prose); line-height:1.7; margin-top:16px; }
 .overview-columns { display:grid;grid-template-columns:minmax(0,1.4fr) minmax(240px,1fr);gap:32px; }
 /* PR overview: readiness first, bounded reading, shared queue navigation. */
@@ -1770,10 +1779,9 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .pr-status-error button { color:var(--ring); text-decoration:underline; margin-top:4px; }
 .pr-details-columns { display:grid; grid-template-columns:minmax(0,1fr) 200px; gap:28px; align-items:start; }
 .pr-description,.pr-metadata { min-width:0; }
-.pr-description>h2,.pr-description>h3,.pr-metadata>h2,.pr-metadata>h3 { font-size:var(--type-control); font-weight:650; margin:0 0 12px; }
+.pr-description>h2,.pr-description>h3,.pr-metadata>h2,.pr-metadata>h3 { font-size:var(--type-body); font-weight:650; margin:0 0 12px; }
 .pr-markdown { font-size:var(--type-prose); line-height:var(--leading-prose); width:100%; max-width:none; overflow-wrap:anywhere; text-wrap:pretty; }
 .pr-markdown>:first-child { margin-top:0; }
-.pr-author-heading { font-size:1em; font-weight:600; margin:16px 0 8px; text-wrap:balance; }
 .pr-markdown pre { max-width:100%; white-space:pre; overflow-x:auto; padding:12px; border:1px solid var(--border); border-radius:5px; background:var(--muted); margin:12px 0; }
 .pr-markdown code { font-family:var(--font-mono); font-size:.9em; }
 .pr-markdown :not(pre)>code { background:var(--muted); border:1px solid var(--border); border-radius:3px; padding:.05em .35em; }
@@ -2026,9 +2034,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .reading-prose,.slide-prose,.overview-summary,.briefing-summary,.pr-markdown,.github-comment-body,.inline-code-explanation {
   font-weight:var(--weight-prose); letter-spacing:var(--tracking-prose); line-height:var(--leading-prose); text-wrap:pretty; overflow-wrap:anywhere;
 }
-.markdown-body { min-width:0; }
+.markdown-body { min-width:0; font-size:var(--type-prose); line-height:var(--leading-prose); }
 .markdown-body>:first-child { margin-top:0; }
-.markdown-subheading { font-size:1em; font-weight:650; line-height:1.5; margin:1.25em 0 .5em; text-wrap:balance; }
 .markdown-code-block { max-width:100%; overflow:auto; white-space:pre; margin:1em 0; padding:12px; background:var(--muted); border:1px solid var(--border); border-radius:5px; font-family:var(--font-mono); font-size:var(--type-code); line-height:var(--leading-code); }
 .markdown-code-block>code { display:block; font:inherit; white-space:pre; text-wrap:nowrap; background:none; border:0; padding:0; }
 .chat-suggestion { font-size:var(--type-body); line-height:1.6; color:var(--foreground); text-align:left; text-wrap:pretty; }
@@ -2255,7 +2262,7 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 }
 
 /* Full-width explanations keep a comfortable reading measure on narrow-pane layouts. */
-.review-narrative > .slide-prose,.review-narrative .markdown-body { max-width:75ch; }
+.review-narrative > .slide-prose,.review-narrative .markdown-body { max-width:var(--measure-prose); }
 
 /* App-wide command center: dense results, a steady preview, and one keyboard path. */
 .workbench-command-trigger { display:inline-flex;align-items:center;gap:8px;padding:5px 9px;border:1px solid var(--border);border-radius:5px;font-size:var(--type-control);color:var(--muted-foreground); }
@@ -3062,10 +3069,6 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .markdown-review-navigation button { padding:0 6px; height:26px; }
 .markdown-selection-actions { display:flex; gap:6px; flex-wrap:wrap; width:100%; }
 .markdown-review-document { max-width:78ch; margin-inline:auto; padding:20px 28px 32px; font-size:var(--type-prose); line-height:var(--leading-prose); overflow-wrap:anywhere; }
-.markdown-review-document :is(h1,h2,h3,h4,h5,h6) { font-family:var(--font-sans); font-weight:600; line-height:1.35; margin:1.25em 0 .5em; text-wrap:balance; }
-.markdown-review-document h1 { font-size:1.5em; }
-.markdown-review-document h2 { font-size:1.25em; }
-.markdown-review-document h3 { font-size:1.1em; }
 .markdown-review-document :is(p,ul,ol,blockquote,table,pre) { margin:.65em 0; }
 .markdown-review-document ul { list-style:disc; padding-left:1.5em; }
 .markdown-review-document ol { list-style:decimal; padding-left:1.5em; }
@@ -3277,7 +3280,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .stack-overview-heading .stack-overview-actions { align-items:center; justify-content:flex-end; gap:8px; }
 .stack-member-count { margin-left:6px; color:var(--muted-foreground); font-size:var(--type-control); font-weight:400; }
 .stack-chain-direction { color:var(--muted-foreground); font-size:var(--type-caption); }
-.stack-overview h2 { font-size:var(--type-body); font-weight:650; }
+.stack-overview h2 { font-size:var(--type-section-title); font-weight:650; }
 .stack-filter-context { color:var(--muted-foreground); font-size:var(--type-caption); }
 .stack-overview-members { list-style:none; padding:0; margin:0; border-top:1px solid var(--border); }
 .stack-overview-member { display:flex; gap:12px; align-items:flex-start; padding:8px 0; border-bottom:1px solid var(--border); }
@@ -3353,10 +3356,6 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .github-comment-body .comment-suggestion pre { margin:0;border-radius:0; }
 
 .github-comment-body { overflow-wrap:anywhere; }
-.github-comment-body>h1,.github-comment-body>h2,.github-comment-body>h3,.github-comment-body>h4,.github-comment-body>h5,.github-comment-body>h6 { font-weight:600;line-height:1.4;margin-block:12px 8px; }
-.github-comment-body>h1 { font-size:1.25em; }
-.github-comment-body>h2 { font-size:1.15em; }
-.github-comment-body>h3 { font-size:1.05em; }
 .github-comment-body>:first-child { margin-top:0; }
 .github-comment-body .task-list-item { list-style:none; }
 .github-comment-body .task-list-item input { margin-right:6px;accent-color:var(--primary); }
@@ -3806,7 +3805,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .settings-panel { padding: 0 8px 8px 0; min-width: 0; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .settings-repositories { overflow: hidden; gap: 16px; }
 .repository-panel-heading { display: flex; align-items: flex-start; gap: 16px; justify-content: space-between; }
-.repository-panel-heading h2 { font-size: 18px; font-weight: 650; margin-bottom: 4px; }
+.repository-panel-heading h2 { font-size: var(--type-section-title); font-weight: 650; margin-bottom: 4px; }
 .repository-panel-heading > button { flex-shrink: 0; }
 .repository-add { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
 .repository-list-focused { display: flex; flex-direction: column; min-height: 0; flex: 1; }
@@ -3829,7 +3828,7 @@ button.queue-checks:hover { text-decoration:underline; text-underline-offset:3px
 .repository-settings-focus .repository-editor-body { overflow-y: auto; min-height: 0; padding-right: 12px; scrollbar-gutter: stable; overscroll-behavior: contain; flex: 1; }
 .repository-settings-focus .repository-editor-actions { flex-shrink: 0; background: var(--card); padding-block: 12px 0; margin-top: 8px; }
 .repository-editor { container-type: inline-size; }
-.repository-editor-heading h3 { font-size: 18px; overflow-wrap: anywhere; outline: none; }
+.repository-editor-heading h3 { font-size: var(--type-section-title); overflow-wrap: anywhere; outline: none; }
 .repository-editor-heading { margin-bottom: 16px; }
 .settings-repositories:has(.repository-settings-focus) > .repository-panel-heading,
 .settings-repositories:has(.repository-settings-focus) > .repository-add,
@@ -4434,3 +4433,40 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .feedback-follow-up { display:flex; align-items:center; flex-wrap:wrap; gap:8px 16px; padding:12px 16px; border-bottom:1px solid var(--border); font-size:var(--type-control); }
 .feedback-follow-up > div { flex:1; min-width:200px; }
 .feedback-follow-up p { margin:4px 0 0; color:var(--muted-foreground); line-height:1.5; }
+
+/* One reading hierarchy for explanations, PR descriptions, chat, comments and Markdown diffs.
+   Use visual source levels even when semantic headings are nested under the app's sections. */
+:is(.markdown-body, .github-comment-body, .markdown-review-document) .markdown-heading {
+  font-family:var(--font-sans);
+  font-weight:650;
+  line-height:1.3;
+  letter-spacing:-.015em;
+  color:var(--foreground);
+  margin-block:1.6em .55em;
+  text-wrap:balance;
+  overflow-wrap:anywhere;
+}
+:is(.markdown-body, .github-comment-body, .markdown-review-document) .markdown-heading[data-reading-level="1"] { font-size:var(--type-reading-title); }
+:is(.markdown-body, .github-comment-body, .markdown-review-document) .markdown-heading[data-reading-level="2"] { font-size:var(--type-reading-section); }
+:is(.markdown-body, .github-comment-body, .markdown-review-document) .markdown-heading[data-reading-level="3"] { font-size:var(--type-reading-subsection); }
+:is(.markdown-body, .github-comment-body, .markdown-review-document) .markdown-heading[data-reading-level="4"] { font-size:var(--type-reading-detail); }
+:is(.markdown-body, .github-comment-body, .markdown-review-document) .markdown-heading[data-reading-level="5"] { font-size:var(--type-reading-minor); }
+:is(.markdown-body, .github-comment-body, .markdown-review-document) .markdown-heading[data-reading-level="6"] { font-size:var(--type-reading-label); }
+:is(.markdown-body, .github-comment-body) > .markdown-heading:first-child { margin-top:0; }
+:is(.markdown-body, .github-comment-body, .markdown-review-document) .markdown-heading + .markdown-heading { margin-top:.85em; }
+:is(.markdown-body, .github-comment-body) :where(p, ul, ol, blockquote) { margin-block:0 .85em; }
+:is(.markdown-body, .github-comment-body) :where(li) { margin-block:.35em; }
+:is(.markdown-body, .github-comment-body) li > :where(ul, ol) { margin-block:.35em 0; }
+:is(.markdown-body, .github-comment-body) li > p { margin-bottom:.4em; }
+:is(.markdown-body, .github-comment-body) > :last-child { margin-bottom:0; }
+:is(.markdown-body, .github-comment-body) :where(strong) { font-weight:650; }
+.github-comment-body blockquote { color:var(--foreground); }
+.github-comment-body pre { font-size:var(--type-code); line-height:var(--leading-code); }
+.github-comment-body pre code { font-size:inherit; }
+.markdown-review-document { font-weight:var(--weight-prose); letter-spacing:var(--tracking-prose); }
+.markdown-review-document .markdown-review-block:has(> .markdown-heading) { margin-top:24px; }
+.markdown-review-document .markdown-review-block > .markdown-heading { margin-top:0; }
+.markdown-review-document .markdown-review-block:first-child { margin-top:0; }
+
+.markdown-body.briefing-summary { font-size:var(--type-body); }
+.markdown-body table { font-size:.9375em; line-height:1.55; }

@@ -661,7 +661,7 @@ export function SlideView({
           </summary>
           <div className="mt-3 ml-4 flex flex-col gap-3 border-l border-border pl-4">
             {slide.contextSnippets.map((snippet, i) => (
-              <Markdown key={i} className="text-sm text-muted-foreground leading-relaxed">
+              <Markdown key={i} className="reading-prose">
                 {snippet}
               </Markdown>
             ))}

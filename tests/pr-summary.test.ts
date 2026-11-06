@@ -16,6 +16,7 @@ void test('author headings are scoped beneath single-PR and stack sections witho
     }));
     const tree: Root = { type: 'root', children: nodes };
     scopeMarkdownHeadings({ startLevel })(tree);
+    assert.deepEqual(nodes.map(node => node.properties.dataReadingLevel), [2, 4, 1, 6], 'Keep the source visual hierarchy when semantic levels are scoped');
     assert.deepEqual(
       nodes.map((node) => node.tagName),
       [`h${startLevel}`, `h${startLevel + 1}`, `h${startLevel}`, `h${startLevel + 1}`]

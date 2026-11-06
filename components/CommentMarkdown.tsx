@@ -1,3 +1,4 @@
+import { markdownHeadings } from './MarkdownHeadings';
 import { Children, isValidElement } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -5,6 +6,7 @@ import { MarkdownImage } from './Markdown';
 import { nameMarkdownTasks } from '../lib/markdown-tasks';
 
 const commentComponents: Components = {
+  ...markdownHeadings,
   a: ({ href, children }) => (
     <a
       href={href}

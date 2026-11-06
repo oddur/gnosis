@@ -41,9 +41,9 @@ colors:
   dark-warning: oklch(0.72 0.12 55)
   dark-info: oklch(0.65 0.1 300)
 typography:
-  headline: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 25px, fontWeight: 650, lineHeight: 1.4, letterSpacing: "-0.02em"}
-  title: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 22px, fontWeight: 650, lineHeight: 1.35, letterSpacing: "-0.025em"}
-  title-compact: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 18px, fontWeight: 650, lineHeight: 1.4, letterSpacing: "-0.02em"}
+  headline: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 30px, fontWeight: 650, lineHeight: 1.4, letterSpacing: "-0.02em"}
+  title: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 24px, fontWeight: 650, lineHeight: 1.35, letterSpacing: "-0.025em"}
+  title-compact: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 20px, fontWeight: 650, lineHeight: 1.4, letterSpacing: "-0.02em"}
   body: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 15px, fontWeight: 400, lineHeight: 1.55}
   prose: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 16px, fontWeight: 400, lineHeight: 1.65}
   label-row: {fontFamily: "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif", fontSize: 15px, fontWeight: 600, lineHeight: 1.5}
@@ -127,9 +127,10 @@ Sidecar tonal ramps are derived preview aids; they are not additional implementa
 Plus Jakarta Sans supplies interface text, headings, and explanations. Display and serif aliases also resolve to this sans-serif family.
 JetBrains Mono is the default code family; settings offer other code fonts. Default variable fonts are bundled through [src/fonts.css](src/fonts.css). Optional code families load when selected.
 
-- **Headline:** overview titles use the headline role.
-- **Title:** review and queue titles use the title role at 22px with 1.35 line-height.
-- **Compact title:** briefing, dialog, chat, and explainer headings use the 18px compact title role with comfortable multiline leading.
+- **Headline:** overview and explanation-slide titles use 30px.
+- **Title:** page and queue titles use 24px with 1.35 line-height; inspection headers retain their compact treatment.
+- **Panel title:** briefing, dialog, chat, and explainer headings use 20px with comfortable multiline leading.
+- **Section title:** application sections use 18px, distinct from 15px row titles and 13px controls.
 - **Body and prose:** interface text uses body; explanations use prose with a usual maximum width of 68ch.
 - **Labels:** queue titles use label-row. Metadata uses 12px; compact controls use 13px.
 - **Code:** preserve selectable monospace text. Code themes are independent of the interface theme.
@@ -139,7 +140,11 @@ Semantic `--type-*` tokens use rem units. Dense controls stay smaller than readi
 Shared reading roles use 1.65 line-height. Dark prose uses weight 425, slightly wider tracking, and 1.7 line-height across narratives, PR descriptions, chat, discussions, and inline notes. Use upright, full-contrast text for chat questions and answers; role labels identify the speaker.
 Code uses the selected monospace family. Pierre diffs and Markdown blocks share a 13px size and 20px line-height through rem tokens, so text scaling works in both renderers. Fenced code remains a scrollable block even without a language label. Inline code follows its surrounding prose.
 
-**The Reading Rule.** Keep explanations readable within their pane. Use restrained headings and bounded prose widths.
+Rendered Markdown shares one heading system across explanations, descriptions, chat, GitHub comments, and Markdown diffs. At a 16px body size, H1–H6 use **28 / 24 / 21 / 19 / 17 / 16px**, weight 650, and 1.3 leading. Heading sizes scale with the reading container; 15px comments retain a proportional hierarchy. Give a new section more space above than below, while consecutive headings stay grouped. Scope author headings to the accessible page outline without flattening their source-level visual hierarchy, even when multiple levels map to H6. Keep authored heading text and nesting intact.
+
+Use 16px full-contrast prose for narrative context and review guidance. Lists have consistent item spacing and a smaller gap around nested lists. Quotes retain readable foreground contrast. First and last content blocks do not add outer space. Tables use 15px text in a 16px reading context; code scrolls within its own block. Preserve the existing bundled font subsets and swap behavior; this pass adds no font assets.
+
+**The Reading Rule.** Make titles, sections, subsections, and body text distinguishable before the user reads the words. Keep explanations within a 68ch column and preserve reflow at 200% zoom.
 
 ## Layout
 

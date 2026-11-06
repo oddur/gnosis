@@ -540,15 +540,15 @@
     "typographyMeta": {
       "headline": {
         "displayName": "headline",
-        "purpose": "Overview title."
+        "purpose": "30px overview and explanation-slide titles."
       },
       "title": {
         "displayName": "title",
-        "purpose": "Review title."
+        "purpose": "24px page titles; compact inspection headers retain their dense role."
       },
       "title-compact": {
         "displayName": "title-compact",
-        "purpose": "Briefing, dialog, chat, and explainer headings; 18px with multiline leading."
+        "purpose": "20px briefing, dialog, chat, and explainer headings with multiline leading."
       },
       "body": {
         "displayName": "body",
@@ -577,6 +577,10 @@
       "entity-code": {
         "displayName": "Entity code",
         "purpose": "Copyable branch names and commit SHAs."
+      },
+      "reading-heading": {
+        "displayName": "Reading headings",
+        "purpose": "At 16px prose, H1\u2013H6 use 28/24/21/19/17/16px, weight 650, 1.3 leading. Preserve source visual levels when semantic headings are scoped."
       }
     },
     "shadows": [
