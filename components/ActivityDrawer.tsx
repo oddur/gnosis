@@ -1,3 +1,4 @@
+import { GitHubSyncStatus, type GitHubSyncStatusProps } from './GitHubSyncStatus';
 import { inspectionData } from '../lib/inspection-cache';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Activity, ChevronUp, X, Loader2, Check, AlertCircle } from 'lucide-react';
@@ -50,10 +51,12 @@ function Progress({ task }: { task: ActivityTask }) {
   );
 }
 export function ActivityDrawer({
+  syncStatus,
   onOpen,
   open,
   onOpenChange: setOpen,
 }: {
+  syncStatus?: GitHubSyncStatusProps;
   onOpen: (task: ActivityTask) => Promise<void>;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -234,6 +237,7 @@ export function ActivityDrawer({
               <X size={15} />
             </button>
           </header>
+          {syncStatus && <GitHubSyncStatus {...syncStatus} />}
           {(error || refreshError) && (
             <p className="activity-error" role="alert">
               {error || refreshError}

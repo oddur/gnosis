@@ -3,7 +3,12 @@ import type { WorkbenchQueue } from '../lib/workbench';
 import { timeAgo } from '../lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip';
 
-export function GitHubSyncStatus({ sync, onRefresh }: { sync: WorkbenchQueue['sync']; onRefresh: () => void }) {
+export interface GitHubSyncStatusProps {
+  sync: WorkbenchQueue['sync'];
+  onRefresh: () => void;
+}
+
+export function GitHubSyncStatus({ sync, onRefresh }: GitHubSyncStatusProps) {
   if (!sync) return null;
   const checked = sync.checkedAt
     ? `Last checked ${timeAgo(new Date(sync.checkedAt).toISOString())}.`
@@ -33,15 +38,16 @@ export function GitHubSyncStatus({ sync, onRefresh }: { sync: WorkbenchQueue['sy
         <TooltipTrigger asChild>
           <button
             type="button"
+            className="github-sync-status"
+            aria-label={`${label}. ${detail} ${checked}`}
+            aria-disabled={sync.status === 'checking'}
             onClick={() => {
               if (sync.status !== 'checking') onRefresh();
             }}
-            aria-disabled={sync.status === 'checking'}
-            className={`github-sync-status ${paused || error ? 'text-warning' : 'text-muted-foreground'}`}
-            aria-label={`${label}. ${detail} ${checked}`}
           >
-            <Icon size={14} aria-hidden="true" />
-            <span>{label}</span>
+            <Icon size={16} aria-hidden="true" />
+            <strong>GitHub sync</strong>
+            <span className="github-sync-label">{label}</span>
           </button>
         </TooltipTrigger>
         <TooltipContent className="max-w-72">

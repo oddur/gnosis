@@ -24,7 +24,17 @@ void app.whenReady().then(async () => {
     throw Error(code);
   };
   const click = async (selector: string) => {
+    const desktopToggle =
+      (selector.includes('Collapse sidebar') || selector.includes('Expand sidebar')) &&
+      (await js("!matchMedia('(max-width:850px)').matches"));
     await js(`document.querySelector(${JSON.stringify(selector)}).click()`);
+    if (desktopToggle)
+      await wait(
+        `document.querySelector('.workbench-sidebar').dataset.collapsed === '${selector.includes('Collapse') ? 'true' : 'false'}'`
+      );
+    await wait(
+      "document.querySelector('.workbench-sidebar').getAnimations({subtree:true}).every(a=>a.playState==='finished')"
+    );
   };
   const capture = async (name: string) => {
     await js('document.fonts.ready');
@@ -39,6 +49,20 @@ void app.whenReady().then(async () => {
     win.webContents.setZoomFactor(1);
     await waitForWorkbenchQueue(win.webContents);
     await capture('expanded-light');
+    const shortcut = () =>
+      js(
+        `window.dispatchEvent(new KeyboardEvent('keydown', { key: '\\\\', metaKey: window.electronAPI.platform === 'darwin', ctrlKey: window.electronAPI.platform !== 'darwin', bubbles: true }))`
+      );
+    await shortcut();
+    await wait("document.querySelector('.workbench-sidebar').dataset.collapsed==='true'");
+    await wait(
+      "document.querySelector('.workbench-sidebar').getAnimations({subtree:true}).every(a=>a.playState==='finished')"
+    );
+    await shortcut();
+    await wait("document.querySelector('.workbench-sidebar').dataset.collapsed==='false'");
+    await wait(
+      "document.querySelector('.workbench-sidebar').getAnimations({subtree:true}).every(a=>a.playState==='finished')"
+    );
     await click('.sidebar-group-reviews .sidebar-group-toggle');
     assert.equal(
       await js("document.querySelector('.sidebar-group-reviews [aria-expanded]').getAttribute('aria-expanded')"),

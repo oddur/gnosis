@@ -1,3 +1,4 @@
+import type { GitHubSyncStatusProps } from '../components/GitHubSyncStatus';
 import { subjectIcons, workbenchIcons, workspaceSections } from '../lib/interface-icons';
 import { RepositorySettingsProvider } from '../components/RepositorySettingsProvider';
 import { ConflictWorkspaceHost } from '../components/ConflictWorkspaceHost';
@@ -82,6 +83,7 @@ export function App() {
   const [reviewOrigin, setReviewOrigin] = useState<{ name: string; reviews: { id: string; title: string }[] }>({ name: 'Review queue', reviews: [] });
   const navigationVersion = useRef(0);
   const [activityOpen, setActivityOpen] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<GitHubSyncStatusProps>();
   const [destination, setDestination] = useState<{
     subjectId?: string;
     slideId?: string;
@@ -409,6 +411,7 @@ export function App() {
       <div id="main-content" tabIndex={-1}>
         {page === 'home' && (
           <HomePage
+            onSyncStatus={setSyncStatus}
             onReviewReady={handleReviewReady}
             onReviewOriginChange={setReviewOrigin}
             prefillPrUrl={prefillPrUrl}
@@ -439,7 +442,7 @@ export function App() {
           </ReviewDraftScope.Provider>
         )}
       </div>
-      <ActivityDrawer onOpen={openActivity} open={activityOpen} onOpenChange={setActivityOpen} />
+      <ActivityDrawer syncStatus={syncStatus} onOpen={openActivity} open={activityOpen} onOpenChange={setActivityOpen} />
       <ConflictWorkspaceHost />
       <Toaster />
     </CommandCenter>

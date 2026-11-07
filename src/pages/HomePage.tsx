@@ -28,7 +28,7 @@ import { UnreadPrMarker } from '../../components/UnreadPrMarker';
 import { SearchableSelect } from '../../components/SearchableSelect';
 import { applyTheme } from '../../lib/theme';
 import { normalizePrInactivityDays } from '../../lib/pr-inactivity';
-import { GitHubSyncStatus } from '../../components/GitHubSyncStatus';
+import type { GitHubSyncStatusProps } from '../../components/GitHubSyncStatus';
 import { inspectionData } from '../../lib/inspection-cache';
 import { EntryActions } from '../../components/EntryActions';
 import { PrEntryActions, PrStarMarker, prEntryActionGroups, type PrGenerationActionsFor } from '../../components/PrEntryActions';
@@ -119,6 +119,7 @@ interface Props {
   onReviewOriginChange?: (origin: { name: string; reviews: { id: string; title: string }[] }) => void;
   explanationDestination?: ExplanationDestination;
   onShowActivity?: () => void;
+  onSyncStatus?: (status: GitHubSyncStatusProps | undefined) => void;
   prefillPrUrl?: string;
   initialSubjectId?: string;
   commandDestination?: { destination: Extract<SearchDestination, { kind: 'home' }>; nonce: number };
@@ -130,7 +131,7 @@ const labels = {
   other: 'Other changes',
 };
 
-export function HomePage({ navigationRestoration, onNavigationChange, onReviewOriginChange, onReviewReady, prefillPrUrl, initialSubjectId, commandDestination, explanationDestination, onShowActivity }: Props) {
+export function HomePage({ navigationRestoration, onNavigationChange, onReviewOriginChange, onReviewReady, prefillPrUrl, initialSubjectId, commandDestination, explanationDestination, onShowActivity, onSyncStatus }: Props) {
   const [feedbackRequest, setFeedbackRequest] = useState<FeedbackRequest>();
   const [responseUnavailable, setResponseUnavailable] = useState(0);
   const [overviewTab,setOverviewTab] = useState<WorkspaceTab>('summary');
@@ -474,6 +475,10 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
     queueRefresh.current = request;
     return request;
   }, []);
+  useEffect(() => {
+    onSyncStatus?.({ sync: queue.sync, onRefresh: () => void refresh(true) });
+  }, [queue.sync, refresh, onSyncStatus]);
+  useEffect(() => () => onSyncStatus?.(undefined), [onSyncStatus]);
   const initialize = useCallback(async () => {
     if (initializationPending.current) return;
     initializationPending.current = true;
@@ -1396,7 +1401,6 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
               effort={normalizeEffort(prefs.provider, prefs.model, prefs.effort, prefs.thinking)}
               onChange={selection => { void savePrefs({ ...prefs, ...selection }); }} />
           )}
-          <GitHubSyncStatus sync={queue.sync} onRefresh={() => void refresh(true)} />
           <button
             className="workbench-command-trigger"
             onClick={() => commandCenter?.open()}

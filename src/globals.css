@@ -2621,29 +2621,12 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .pr-inactivity-setting input[type="checkbox"] { accent-color: var(--primary); }
 .queue-inactivity-link { font-size: 12px; line-height: 1.5; color: var(--primary); text-align: left; text-decoration: underline; text-underline-offset: 3px; }
 
-/* Routine GitHub checks stay secondary to review actions. */
-.github-sync-status {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-start;
-  inline-size: 140px;
-  min-block-size: 28px;
-  flex-shrink: 0;
-  gap: 6px;
-  font-size: 12px;
-  white-space: nowrap;
-  border-radius: var(--radius);
-}
-.github-sync-status > svg { flex-shrink: 0; }
-.github-sync-status > span { overflow: hidden; text-overflow: ellipsis; }
-.github-sync-status:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 4px;
-}
-@media (max-width: 760px) {
-  .github-sync-status { inline-size: 28px; justify-content: center; }
-  .github-sync-status > span { display: none; }
-}
+/* GitHub synchronization belongs with background activity. */
+.github-sync-status { display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:12px 16px;border-bottom:1px solid var(--border);font-size:var(--type-control); }
+.github-sync-status > svg { flex-shrink:0; }
+.github-sync-status strong { font-weight:600; }
+.github-sync-label { margin-left:auto;color:var(--muted-foreground); }
+.github-sync-status:focus-visible { outline:2px solid var(--ring);outline-offset:-4px; }
 
 /* Searchable selections: Shadcn Base UI behavior, compact workbench controls. */
 .selection-trigger { display:inline-flex; align-items:center; justify-content:space-between; gap:8px; min-width:0; max-width:100%; min-height:32px; padding:6px 9px; border:1px solid var(--input); border-radius:5px; background:var(--background); color:var(--foreground); font-size:var(--type-control); font-weight:400; text-align:left; }
@@ -4498,7 +4481,7 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .workbench-sidebar { width:232px;min-width:232px;padding:8px;gap:0; }
 .workbench-sidebar[data-collapsed=true] { width:52px;min-width:52px;padding:8px; }
 .sidebar-toolbar { display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 4px 12px 8px;flex-shrink:0;color:var(--foreground);font-size:var(--type-control);font-weight:600; }
-.workbench-sidebar .sidebar-toggle { display:flex;width:28px;height:28px;padding:6px;justify-content:center; }
+.workbench-sidebar .sidebar-toggle { flex-shrink:0;display:flex;width:28px;height:28px;padding:6px;justify-content:center; }
 .sidebar-scroll { display:flex;flex-direction:column;gap:20px;min-height:0;overflow-y:auto;overflow-x:hidden;flex:1;overscroll-behavior:contain; }
 .sidebar-group { min-width:0;flex-shrink:0; }
 .workbench-sidebar .sidebar-group-toggle,.sidebar-popup .sidebar-group-toggle { width:100%;display:flex;align-items:center;flex-wrap:wrap;justify-content:flex-start;gap:6px;padding:6px 8px;margin-bottom:4px;color:var(--muted-foreground);font-size:var(--type-caption);font-weight:500; }
@@ -4535,3 +4518,22 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .sidebar-destination-tooltip { max-width:260px;display:flex;flex-direction:column;gap:4px;z-index:60; }
 .sidebar-destination-tooltip strong { font-weight:600; }
 [data-sidebar-destination][data-sidebar-group-start] { margin-top:10px; }
+
+/* One model/effort control, with a searchable model and direct effort choices. */
+.model-picker-trigger { display:flex;align-items:center;gap:10px;max-width:100%;min-width:0;min-height:34px;padding:6px 10px;border:1px solid var(--input);border-radius:5px;font-size:var(--type-control);background:var(--background); }
+.model-picker-trigger:hover { background:var(--muted); }
+.model-picker-name { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.model-picker-effort { white-space:nowrap;font-size:var(--type-caption);padding:2px 6px;border-radius:4px;background:var(--secondary);color:var(--foreground); }
+.model-picker-trigger > svg { flex-shrink:0; }
+.model-picker-popup { width:320px;max-width:calc(100vw - 24px);max-height:var(--radix-popover-content-available-height);overflow:auto;border:1px solid var(--border);border-radius:var(--radius);background:var(--popover);color:var(--popover-foreground);font-size:var(--type-control);z-index:60; }
+.model-picker-field { display:grid;gap:8px;padding:12px; }
+.model-picker-reasoning { border:0;border-top:1px solid var(--border);padding:12px;margin:0; }
+.model-picker-reasoning legend { float:left;width:100%;font-weight:500;margin-bottom:8px; }
+.model-picker-reasoning > div { clear:both;display:flex;flex-wrap:wrap;gap:4px; }
+.model-picker-reasoning label { position:relative;cursor:pointer; }
+.model-picker-reasoning input { position:absolute;opacity:0;width:1px;height:1px; }
+.model-picker-reasoning span { display:block;padding:6px 9px;border:1px solid var(--border);border-radius:4px;font-size:var(--type-caption); }
+.model-picker-reasoning input:checked + span { color:var(--accent-foreground);background:var(--accent);border-color:var(--ring); }
+.model-picker-reasoning input:focus-visible + span { outline:2px solid var(--ring);outline-offset:2px; }
+.model-picker-footer { display:flex;justify-content:flex-end;padding:0 12px 12px; }
+.model-picker-footer button { padding:6px 12px;border-radius:4px;background:var(--secondary); }

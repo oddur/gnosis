@@ -188,6 +188,7 @@ export function WorkbenchHelp({ onGettingStarted, onWalkthrough }: { onGettingSt
               <kbd>Esc</kbd> returns to it. Generate an AI explanation for a walkthrough alongside the code.
             </p>
             <p>
+              <kbd>{window.electronAPI.platform === 'darwin' ? '⌘\\' : 'Ctrl+\\'}</kbd> shows or hides the queue sidebar.
               In a review, press <kbd>?</kbd> for its keyboard shortcuts.
             </p>
           </details>

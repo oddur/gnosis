@@ -9,6 +9,7 @@ import {
   type ReactNode,
   type MouseEvent,
 } from 'react';
+import { useKeyboardShortcuts } from '../lib/use-keyboard-shortcuts';
 import { Popover } from 'radix-ui';
 import { Bookmark, ChevronRight, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip';
@@ -98,10 +99,40 @@ export function QueueSidebar({
   currentTool?: string;
 }) {
   const [layout, setLayout] = useState(restore);
+  const latestLayout = useRef(layout);
+  latestLayout.current = layout;
   const [narrow, setNarrow] = useState(() => window.matchMedia('(max-width: 850px)').matches);
   const toggle = useRef<HTMLButtonElement>(null);
+  const sidebar = useRef<HTMLElement>(null);
+  const mac = window.electronAPI.platform === 'darwin';
+  const shortcut = mac ? '⌘\\' : 'Ctrl+\\';
+  useKeyboardShortcuts(
+    {
+      [mac ? 'cmd+\\' : 'ctrl+\\']: (event) => {
+        if (event.repeat) return;
+        if (sidebar.current?.contains(document.activeElement)) toggle.current?.focus();
+        toggleSidebar();
+      },
+    },
+    { scope: sidebar }
+  );
   const [mobileOpen, setMobileOpen] = useState(false);
   const [viewsOpen, setViewsOpen] = useState(false);
+  const motion = useRef<{ animations: Animation[]; frame: number; pending: boolean | null }>({
+    animations: [],
+    frame: 0,
+    pending: null,
+  });
+  function cancelMotion() {
+    motion.current.animations.forEach((animation) => animation.cancel());
+    cancelAnimationFrame(motion.current.frame);
+    motion.current.animations = [];
+    motion.current.pending = null;
+  }
+  useEffect(() => {
+    cancelMotion();
+    return cancelMotion;
+  }, [narrow]);
   useEffect(() => {
     const query = window.matchMedia('(max-width: 850px)');
     const update = () => {
@@ -113,12 +144,67 @@ export function QueueSidebar({
     return () => query.removeEventListener('change', update);
   }, []);
   function save(next: Layout) {
+    latestLayout.current = next;
     setLayout(next);
     try {
       localStorage.setItem(storageKey, JSON.stringify(next));
     } catch {
       /* Optional layout preference. */
     }
+  }
+  function toggleSidebar() {
+    if (narrow) {
+      setMobileOpen((value) => !value);
+      return;
+    }
+    const next = !(motion.current.pending ?? layout.collapsed);
+    const nav = toggle.current?.closest('nav');
+    const width = nav?.getBoundingClientRect().width ?? 232;
+    cancelMotion();
+    if (!nav || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      save({ ...latestLayout.current, collapsed: next });
+      return;
+    }
+    motion.current.pending = next;
+    const move = () => {
+      motion.current.pending = null;
+      save({ ...latestLayout.current, collapsed: next });
+      motion.current.animations.push(
+        nav.animate(
+          [
+            { width: `${width}px`, minWidth: `${width}px`, overflow: 'hidden' },
+            { width: `${next ? 52 : 232}px`, minWidth: `${next ? 52 : 232}px`, overflow: 'hidden' },
+          ],
+          { duration: 220, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' }
+        )
+      );
+      motion.current.frame = requestAnimationFrame(() => {
+        const contents = nav.querySelector('.sidebar-scroll');
+        if (contents)
+          motion.current.animations.push(
+            contents.animate(
+              [
+                { opacity: 0.35, transform: 'translateX(-6px)' },
+                { opacity: 1, transform: 'translateX(0)' },
+              ],
+              { duration: 200, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' }
+            )
+          );
+      });
+    };
+    const contents = nav.querySelector('.sidebar-scroll');
+    if (!contents) {
+      move();
+      return;
+    }
+    const fade = contents.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 90, fill: 'forwards' });
+    motion.current.animations.push(fade);
+    void fade.finished
+      .then(() => {
+        fade.cancel();
+        move();
+      })
+      .catch(() => {});
   }
   function toggleSection(section: Section) {
     save({
@@ -170,7 +256,7 @@ export function QueueSidebar({
   );
   return (
     <TooltipProvider delayDuration={350}>
-      <nav className="workbench-sidebar" aria-label="Workspace" data-collapsed={collapsed}>
+      <nav ref={sidebar} className="workbench-sidebar" aria-label="Workspace" data-collapsed={collapsed}>
         <Popover.Root open={mobileOpen} onOpenChange={setMobileOpen} modal>
           <div className="sidebar-toolbar">
             {!collapsed && <span>Workspace</span>}
@@ -183,12 +269,15 @@ export function QueueSidebar({
                       className="sidebar-toggle"
                       aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
                       aria-expanded={!collapsed || mobileOpen}
-                      onClick={() => (narrow ? setMobileOpen(true) : save({ ...layout, collapsed: !layout.collapsed }))}
+                      aria-keyshortcuts={mac ? 'Meta+\\' : 'Control+\\'}
+                      onClick={toggleSidebar}
                     >
                       {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
                     </button>
                   </TooltipTrigger>
-                  <TooltipContent side="right">{collapsed ? 'Expand sidebar' : 'Collapse sidebar'}</TooltipContent>
+                  <TooltipContent side="right">
+                    {collapsed ? 'Expand sidebar' : 'Collapse sidebar'} <kbd>{shortcut}</kbd>
+                  </TooltipContent>
                 </Tooltip>
               </span>
             </Popover.Anchor>
@@ -207,6 +296,12 @@ export function QueueSidebar({
               }}
               onClickCapture={closeAfterNavigation}
               onKeyDownCapture={(event) => {
+                if (event.key === '\\' && (mac ? event.metaKey : event.ctrlKey) && !event.altKey && !event.shiftKey) {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (!event.repeat) setMobileOpen(false);
+                  return;
+                }
                 if (event.key === 'Escape' && event.currentTarget.contains(event.target as Node)) {
                   event.preventDefault();
                   event.stopPropagation();

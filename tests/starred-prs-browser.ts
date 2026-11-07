@@ -58,7 +58,7 @@ void app.whenReady().then(async () => {
     await wait('window.electronAPI.workbenchQueue().then(q=>q.filters.starredOnly)');
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
     await wait(
-      "document.querySelector('[title=Starred]')?.getAttribute('aria-current')==='page' && document.querySelectorAll('.queue-item').length===1"
+      "document.querySelector('.workbench-sidebar [aria-label=Starred]')?.getAttribute('aria-current')==='page' && document.querySelectorAll('.queue-item').length===1"
     );
     assert.ok(await js('!!document.querySelector(\'.queue-item:has([aria-label="Actions for PR #152"]) .entry-star-marker\')'), 'Bookmark survives reload');
     await click('Review queue');
