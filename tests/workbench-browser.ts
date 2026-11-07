@@ -487,10 +487,10 @@ void app.whenReady().then(async () => {
     await click('Clear filters');
     await wait("document.querySelector('[aria-label=\"Search PRs and stacks\"]').value === ''");
     await wait("document.body.textContent.includes('Could not save queue filters')");
-    await js('document.querySelector(\'[title="Saved reviews"]\').click()');
+    await js('document.querySelector(\'[aria-label="Saved reviews"]\').click()');
     await wait("document.body.textContent.includes('No saved reviews yet')");
     await js('void (window.previousFailedSaves = window.failedFilterSaves)');
-    await js('document.querySelector(\'[title="Review queue"]\').click()');
+    await js('document.querySelector(\'[aria-label="Review queue"]\').click()');
     await wait('window.failedFilterSaves > window.previousFailedSaves');
     await js('document.querySelector(\'[aria-label="Refresh queue"]\').click()');
     await wait("document.body.textContent.includes('Queue could not be loaded')");
@@ -509,6 +509,7 @@ void app.whenReady().then(async () => {
     // At 200% zoom, help remains bounded and internally scrollable.
     window.webContents.setZoomFactor(2);
     await capture('help-zoom');
+    assert.ok(await js("[...document.querySelectorAll('.workbench-header button')].filter(b=>b.checkVisibility()).every(b=>b.getBoundingClientRect().right<=innerWidth)"), 'Header controls remain reachable at 200% zoom');
     assert.ok(await js("document.querySelector('.workbench-help').getBoundingClientRect().right <= innerWidth"));
     assert.ok(await js("document.querySelector('.workbench-help').getBoundingClientRect().bottom <= innerHeight"));
     window.webContents.setZoomFactor(1);
@@ -749,6 +750,10 @@ void app.whenReady().then(async () => {
       await wait(`document.querySelector('.queue-toolbar h1').textContent === ${JSON.stringify(name)}`);
     };
     const manageView = async (name: string, action: string) => {
+      if (await js("!!document.querySelector('.sidebar-views-trigger') && !document.querySelector('.sidebar-views-popup')")) {
+        await js("document.querySelector('.sidebar-views-trigger').click()");
+        await wait("!!document.querySelector('.sidebar-views-popup .saved-view-link')");
+      }
       await js(
         `(() => { const trigger = document.querySelector('[aria-label="Manage '+${JSON.stringify(name)}+'"]'); trigger.focus(); trigger.dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowDown', bubbles:true})); })()`
       );

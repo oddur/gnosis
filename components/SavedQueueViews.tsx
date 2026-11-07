@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Popover } from 'radix-ui';
 import { EntryActions } from './EntryActions';
 import { GripVertical, X } from 'lucide-react';
+import { SidebarDestination } from './QueueSidebar';
 import { WorkbenchIcon } from './WorkbenchIcon';
 import { viewIsModified, type QueueViewAction, type QueueViewsSnapshot, type SavedQueueView } from '../lib/saved-views';
 import type { QueueFilters } from '../lib/queue-filters';
@@ -61,7 +62,9 @@ export function SavedViewsNav({
   active,
   busy,
   onAction,
+  heading = true,
 }: {
+  heading?: boolean;
   state: QueueViewsSnapshot;
   active: boolean;
   busy: boolean;
@@ -74,8 +77,10 @@ export function SavedViewsNav({
   };
   return (
     <section className="saved-views-nav" aria-label="Saved views">
-      <p className="workbench-nav-heading">Saved views</p>
-      {!state.views.length && <p className="saved-views-empty">Choose “Save view…” to reuse your filters and sort order.</p>}
+      {heading && <p className="workbench-nav-heading">Saved views</p>}
+      {!state.views.length && (
+        <p className="saved-views-empty">Choose “Save view…” to reuse your filters and sort order.</p>
+      )}
       {state.views.map((view, index) => (
         <Popover.Root
           key={view.id}
@@ -140,17 +145,20 @@ export function SavedViewsNav({
                 >
                   <GripVertical size={12} />
                 </button>
-                <button
-                  className={`saved-view-link${active && state.activeId === view.id ? ' active' : ''}`}
-                  aria-current={active && state.activeId === view.id ? 'page' : undefined}
-                  title={`${view.name} — ${state.counts[view.id] ?? 0} PRs and stacks matching the saved filters, using cached GitHub data`}
-                  disabled={busy}
-                  onClick={() => act({ type: 'activate', id: view.id })}
-                >
-                  <WorkbenchIcon name="savedView" />
-                  <span className="saved-view-name">{view.name}</span>
-                  <span className="saved-view-count">{state.counts[view.id] ?? 0}</span>
-                </button>
+                <SidebarDestination>
+                  <button
+                    aria-label={view.name}
+                    className={`saved-view-link${active && state.activeId === view.id ? ' active' : ''}`}
+                    aria-current={active && state.activeId === view.id ? 'page' : undefined}
+                    title={`${state.counts[view.id] ?? 0} PRs and stacks match these filters`}
+                    disabled={busy}
+                    onClick={() => act({ type: 'activate', id: view.id })}
+                  >
+                    <WorkbenchIcon name="savedView" />
+                    <span className="saved-view-name">{view.name}</span>
+                    <span className="saved-view-count">{state.counts[view.id] ?? 0}</span>
+                  </button>
+                </SidebarDestination>
                 <Popover.Anchor asChild>
                   <span className="saved-view-actions">{actions}</span>
                 </Popover.Anchor>

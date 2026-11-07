@@ -103,8 +103,10 @@ void app.whenReady().then(async () => {
     assert.match(await js<string>("document.querySelector('[aria-label=\"Briefing model\"]').textContent"), /Sonnet 5.5/);
     await capture('ai-claude');
     await click('Explanation model');
+    await click('Explanation model selection');
     assert.equal(await js("[...document.querySelectorAll('[role=option]')].some(e=>e.textContent.includes('GPT'))"), false);
-    await js("document.querySelector('[aria-label=\"Search explanation model\"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))");
+    await js("document.querySelector('[aria-label=\"Search explanation model selection\"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))");
+    await wait("!document.querySelector('.model-picker-popup')");
     await js("sessionStorage.setItem('ftue-tools', JSON.stringify({codex:'found'}))");
     await click('Check again');
     await wait("document.querySelector('[aria-label=\"Explanation model\"]')?.textContent.includes('GPT-6.1 Sol')");
@@ -118,11 +120,13 @@ void app.whenReady().then(async () => {
     await click('Check again');
     await wait("document.querySelector('.setup-cli')?.textContent.includes('Claude Code and Codex found')");
     await click('Explanation model');
-    await fill('[aria-label="Search explanation model"]', 'Opus');
+    await click('Explanation model selection');
+    await fill('[aria-label="Search explanation model selection"]', 'Opus');
     await wait("[...document.querySelectorAll('[role=option]')].some(e=>e.textContent.includes('Opus 5.5'))");
     await js("[...document.querySelectorAll('[role=option]')].find(e=>e.textContent.includes('Opus 5.5')).click()");
-    await js("window.selectOption('[aria-label=\"Explanation model effort\"]', 'xhigh')");
-    await js("window.selectOption('[aria-label=\"Briefing model effort\"]', 'medium')");
+    await click('Done');
+    await js("window.selectEffort('Explanation model', 'xhigh')");
+    await js("window.selectEffort('Briefing model', 'medium')");
     await capture('ai-light');
     assert.equal(
       await js("document.querySelector('.setup-body > fieldset:not([hidden]) input[type=checkbox]').checked"),
@@ -137,8 +141,8 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.setup-cli')?.textContent.includes('Claude Code and Codex found')");
     assert.match(await js<string>("document.querySelector('[aria-label=\"Explanation model\"]').textContent"), /Opus 5.5/);
     assert.match(await js<string>("document.querySelector('[aria-label=\"Briefing model\"]').textContent"), /GPT-6.1 Terra/);
-    assert.equal(await js("document.querySelector('[aria-label=\"Explanation model effort\"]').value"), 'xhigh');
-    assert.equal(await js("document.querySelector('[aria-label=\"Briefing model effort\"]').value"), 'medium');
+    assert.equal(await js("document.querySelector('[aria-label=\"Explanation model\"]').querySelector('.model-picker-effort').textContent"), 'Extra high');
+    assert.equal(await js("document.querySelector('[aria-label=\"Briefing model\"]').querySelector('.model-picker-effort').textContent"), 'Medium');
     await js("document.documentElement.classList.add('dark')");
     win.setSize(640, 700);
     await capture('ai-narrow-dark');

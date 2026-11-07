@@ -48,6 +48,9 @@ void app.whenReady().then(async () => {
       void 0;
     }`);
     await state('idle');
+    assert.equal(await js("!!document.querySelector('.workbench-header .github-sync-status')"), false);
+    await js("document.querySelector('.activity-trigger').click()");
+    await wait("!!document.querySelector('.activity-drawer .github-sync-status')");
     await wait("document.querySelector('.github-sync-status')?.textContent.includes('Checked 1m ago')");
     const position = await js<{ x: number; width: number }>(
       '(()=>{const b=document.querySelector(\'[aria-label="Refresh queue"]\').getBoundingClientRect();return{x:b.x,width:b.width}})()'

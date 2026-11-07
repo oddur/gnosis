@@ -23,8 +23,42 @@ Object.assign(window, {
     }
     throw Error('Label picker did not close');
   },
+  selectEffort: async (label: string, value: string) => {
+    const trigger = [...document.querySelectorAll<HTMLButtonElement>('.model-picker-trigger')].find(el => el.getAttribute('aria-label') === label);
+    if (!trigger) throw Error(`Missing model picker: ${label}`);
+    if (trigger.getAttribute('aria-expanded') !== 'true') trigger.click();
+    const root = trigger.closest('.model-effort-select');
+    for (let i = 0; i < 160; i++) {
+      const input = root?.querySelector<HTMLInputElement>(`.model-picker-reasoning input[value="${value}"]`);
+      if (input) {
+        input.click();
+        await new Promise(resolve => setTimeout(resolve, 50));
+        if (!input.checked) throw Error(`Effort did not commit: ${value}`);
+        root?.querySelector<HTMLButtonElement>('.model-picker-footer button')?.click();
+        await new Promise(resolve => setTimeout(resolve, 50));
+        return;
+      }
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    throw Error(`Missing effort: ${value}`);
+  },
   selectOption: async (selector: string, value: string) => {
     const control = document.querySelector(selector);
+    if (control instanceof HTMLButtonElement && control.classList.contains('model-picker-trigger')) {
+      if (control.getAttribute('aria-expanded') !== 'true') control.click();
+      const root = control.closest('.model-effort-select');
+      for (let i = 0; i < 160; i++) {
+        const inner = root?.querySelector<HTMLButtonElement>('.model-picker-field .selection-trigger');
+        if (inner) {
+          await (window as unknown as {selectOption: (s: string, v: string) => Promise<void>}).selectOption(`#${CSS.escape(inner.id)}`, value);
+          root?.querySelector<HTMLButtonElement>('.model-picker-footer button')?.click();
+          await new Promise(resolve => setTimeout(resolve, 50));
+          return;
+        }
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      throw Error('Model picker did not open');
+    }
     if (control instanceof HTMLSelectElement) {
       control.value = value;
       control.dispatchEvent(new Event('change', { bubbles: true }));
