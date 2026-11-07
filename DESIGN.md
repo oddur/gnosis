@@ -155,7 +155,7 @@ The shared header has a minimum height of 56px with 10px vertical and 20px horiz
 
 | Surface | Wide layout | Narrow behavior |
 | --- | --- | --- |
-| Queue sidebar | 190px | 160px at ≤1100px; 52px icon rail at ≤850px |
+| Queue sidebar | 232px; collapsible to a 52px icon rail | At ≤850px, use the rail with an expandable navigation popover |
 | Briefing pane | 360px, maximum 44% | 320px at ≤1100px; maximum 50% at ≤850px; replaces the queue at ≤620px |
 | Review panes | Resizable 40/60 split, minimums 25/30 | Explicit pane tabs at ≤1000px |
 | Overview | Maximum 1100px; 1.4fr/1fr columns; 32px gap | One column at ≤850px |
@@ -375,3 +375,5 @@ Use `LoadingState` for an empty pane and its compact variant for file previews o
 Motion stops for reduced-motion preferences, hidden windows, and offscreen indicators. One shared intersection observer handles visibility. Optional elapsed time appears after five seconds and is excluded from live announcements. Announce the operation once through its status region; use `announce={false}` inside an existing status region. Loading does not delay completion or trigger additional requests.
 
 Commit inspection shows the selected commit title, author, hash, and full message before its file diffs in one scroll surface. Preserve authored whitespace and plain text. Ranges show each message in chronological order; only secondary commit metadata is collapsed. The sidebar keeps compact commit titles and aligned metadata, exposes the full selected title, and fills the sidebar when Changed files is collapsed. File jumps and restored positions account for the measured message height.
+
+Queue navigation groups Reviews, Saved views, and Tools with independent disclosure controls. Remember section and desktop collapse preferences locally. A folded group retains the current destination label. The icon rail keeps direct review/tool destinations with hover and focus labels; saved views open one named list. One scroll surface accommodates long view lists, with tools at the bottom when space permits. Narrow windows use an anchored navigation panel with Escape dismissal and focus restoration. Folding never refreshes GitHub data.

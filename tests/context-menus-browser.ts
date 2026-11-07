@@ -134,6 +134,8 @@ void app.whenReady().then(async () => {
       await wait("!document.querySelector('.view-name-form')");
     };
     await nameView('My work');
+    // Narrow layouts expose saved views through the rail picker.
+    await js("document.querySelector('.sidebar-views-trigger')?.click()");
     await wait("!!document.querySelector('.saved-view-row')");
     assert.equal(await js("(()=>{const e=document.querySelector('.saved-views-nav');return e.scrollWidth<=e.clientWidth})()"), true);
     await rightClick('.saved-view-row');
@@ -156,7 +158,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelector('.saved-view-name').textContent==='Focus copy'");
     await menuAction(js, 'Manage Focus copy', 'Delete view');
     await wait("document.querySelectorAll('.saved-view-row').length===1");
-    await js("[...document.querySelectorAll('button')].find(b=>b.title==='Saved reviews').click()");
+    await js("[...document.querySelectorAll('button')].find(b=>b.getAttribute('aria-label')==='Saved reviews').click()");
     await wait("!!document.querySelector('.saved-row')");
     await rightClick('.saved-row');
     await wait("!!document.querySelector('[role=menu]')");

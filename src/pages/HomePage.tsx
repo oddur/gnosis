@@ -50,6 +50,7 @@ import { WorkbenchIcon } from '../../components/WorkbenchIcon';
 import { PrLabels } from '../../components/PrLabels';
 import { PrSummary, type PrReadingPosition, type PrReviewRequest } from '../../components/PrSummary';
 import { publishQueueSignals } from '../../lib/use-queue-signals';
+import { QueueSidebar, SidebarDestination } from '../../components/QueueSidebar';
 import { SavedViewsNav, SaveViewControls } from '../../components/SavedQueueViews';
 import type { QueueViewAction } from '../../lib/saved-views';
 import { Popover } from 'radix-ui';
@@ -1495,98 +1496,169 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
         />
       ) : (
         <div className="workbench-body">
-        <nav className="workbench-sidebar" aria-label="Workspace">
-          <p className="workbench-nav-heading">Reviews</p>
-          {[
-            ['all', 'Review queue', Inbox],
-            ['starred', 'Starred', Star],
-            ['requested', 'Review requests', GitPullRequest],
-            ['response', 'Needs my response', workspaceSections.feedback.icon],
-            ['updated', 'Updated PRs', RefreshCw],
-            ['stacks', 'Stacks', Layers],
-            ['saved', 'Saved reviews', workbenchIcons.history],
-          ].map(([id, label, Icon]) => {
-            const I = Icon as typeof Inbox;
-            return (
-              <button
-                key={id as string}
-                data-tour={id === 'all' ? 'queue-fallback' : undefined}
-                title={
-                  id === 'stacks'
-                    ? 'Stacks of PRs that build on each other'
-                    : id === 'requested'
-                      ? 'Your review requests; changes since a saved AI explanation appear under Updated PRs'
-                      : id === 'updated'
-                        ? 'PR content or stack changes since a saved AI explanation'
-                        : (label as string)
-                }
-                aria-current={!mutedOpen && section === id && (id === 'saved' || !activeQueueView) ? 'page' : undefined}
-                className={!mutedOpen && section === id && (id === 'saved' || !activeQueueView) ? 'active' : ''}
-                disabled={viewBusy}
-                onClick={() => {
-                  setMutedOpen(false);
-                  setSavedView(id === 'saved');
-                  if (id !== 'saved') {
-                    const patch: Partial<QueueFilters> = {
-                      starredOnly: id === 'starred',
-                      attention: id === 'stacks' || id === 'starred' || id === 'response' ? 'all' : (id as QueueFilters['attention']),
-                      involvement: id === 'response' ? 'response' : filters.involvement === 'response' ? 'all' : filters.involvement,
-                      kind: id === 'stacks' ? 'stack' : 'all',
-                    };
-                    if (activeQueueView)
-                      void viewAction({ type: 'activate', id: null, filters: patch }).catch(() => {});
-                    else updateFilters(patch);
+        <QueueSidebar
+          currentReview={
+            !mutedOpen && (savedView || !activeQueueView)
+              ? section === 'saved'
+                ? 'Saved reviews'
+                : section === 'all'
+                  ? 'Review queue'
+                  : section === 'response'
+                    ? 'Needs my response'
+                    : section === 'stacks'
+                      ? 'Stacks'
+                      : labels[section]
+              : undefined
+          }
+          currentView={!savedView && !mutedOpen ? activeQueueView?.name : undefined}
+          currentTool={mutedOpen ? 'Muted PRs' : undefined}
+          reviews={
+            <>
+              {[
+                ['all', 'Review queue', Inbox],
+                ['starred', 'Starred', Star],
+                ['requested', 'Review requests', GitPullRequest],
+                ['response', 'Needs my response', workspaceSections.feedback.icon],
+                ['updated', 'Updated PRs', RefreshCw],
+                ['stacks', 'Stacks', Layers],
+                ['saved', 'Saved reviews', workbenchIcons.history],
+              ].map(([id, label, Icon]) => {
+                const I = Icon as typeof Inbox;
+                return (
+                  <SidebarDestination key={id as string}>
+                    <button
+                      data-sidebar-group-start={id === 'stacks' || undefined}
+                      data-sidebar-destination
+                      aria-label={label as string}
+                      data-tour={id === 'all' ? 'queue-fallback' : undefined}
+                      title={
+                        id === 'stacks'
+                          ? 'Stacks of PRs that build on each other'
+                          : id === 'requested'
+                            ? 'Your review requests; changes since a saved AI explanation appear under Updated PRs'
+                            : id === 'updated'
+                              ? 'PR content or stack changes since a saved AI explanation'
+                              : (label as string)
+                      }
+                      aria-current={!mutedOpen && section === id && (id === 'saved' || !activeQueueView) ? 'page' : undefined}
+                      className={!mutedOpen && section === id && (id === 'saved' || !activeQueueView) ? 'active' : ''}
+                      disabled={viewBusy}
+                      onClick={() => {
+                        setMutedOpen(false);
+                        setSavedView(id === 'saved');
+                        if (id !== 'saved') {
+                          const patch: Partial<QueueFilters> = {
+                            starredOnly: id === 'starred',
+                            attention:
+                              id === 'stacks' || id === 'starred' || id === 'response'
+                                ? 'all'
+                                : (id as QueueFilters['attention']),
+                            involvement:
+                              id === 'response' ? 'response' : filters.involvement === 'response' ? 'all' : filters.involvement,
+                            kind: id === 'stacks' ? 'stack' : 'all',
+                          };
+                          if (activeQueueView) void viewAction({ type: 'activate', id: null, filters: patch }).catch(() => {});
+                          else updateFilters(patch);
+                        }
+                        setSelected(null);
+                      }}
+                    >
+                      <I size={16} aria-hidden="true" />
+                      <span className="sidebar-label">{label as string}</span>
+                      <span className="nav-count">
+                        {id === 'saved'
+                          ? visibleHistory.length
+                          : id === 'starred'
+                            ? (queue.starredItems?.length ?? 0)
+                            : id === 'response'
+                              ? queue.items.filter((item) =>
+                                  matchesQueueFilters(
+                                    item,
+                                    { ...DEFAULT_QUEUE_FILTERS, involvement: 'response' },
+                                    Date.now(),
+                                    auth?.login
+                                  )
+                                ).length
+                              : id === 'all'
+                                ? queue.items.length
+                                : id === 'stacks'
+                                  ? queue.items.filter((i) => i.subject.kind === 'stack').length
+                                  : queue.items.filter((i) => i.attention === id).length}
+                      </span>
+                    </button>
+                  </SidebarDestination>
+                );
+              })}
+            </>
+          }
+          views={
+            auth?.authenticated && queue.savedViews ? (
+              <div data-tour="queue">
+                <SavedViewsNav
+                  heading={false}
+                  state={queue.savedViews}
+                  active={!savedView && !mutedOpen}
+                  busy={viewBusy}
+                  onAction={viewAction}
+                />
+              </div>
+            ) : undefined
+          }
+          tools={
+            <>
+              <SidebarDestination>
+                <button
+                  data-sidebar-destination
+                  aria-label="Muted PRs"
+                  title="Muted PRs"
+                  className={mutedOpen ? 'active' : ''}
+                  aria-current={mutedOpen ? 'page' : undefined}
+                  onClick={() => {
+                    setMutedOpen(true);
+                    setSelected(null);
+                    setOpenedItem(null);
+                    setError('');
+                  }}
+                >
+                  <VolumeX size={16} />
+                  <span className="sidebar-label">Muted PRs</span>
+                  <span className="nav-count">{queue.mutedPrs?.length ?? 0}</span>
+                </button>
+              </SidebarDestination>
+              <SidebarDestination>
+                <button
+                  data-sidebar-destination
+                  aria-label="Local changes"
+                  data-tour="local"
+                  title="Local changes"
+                  onClick={() => setLocalOpen(true)}
+                >
+                  <FolderGit2 size={16} />
+                  <span className="sidebar-label">Local changes</span>
+                </button>
+              </SidebarDestination>
+              <SidebarDestination>
+                <button
+                  data-sidebar-destination
+                  aria-label="Import review"
+                  title="Import review"
+                  onClick={() =>
+                    void window.electronAPI
+                      .importReview()
+                      .then((entry) => {
+                        if (entry) void open(entry);
+                        void refresh();
+                      })
+                      .catch((e: unknown) => setError(String(e)))
                   }
-                  setSelected(null);
-                }}
-              >
-                <I size={16} aria-hidden="true" />
-                <span>{label as string}</span>
-                <span className="nav-count">
-                  {id === 'saved'
-                    ? visibleHistory.length
-                    : id === 'starred' ? queue.starredItems?.length ?? 0
-                    : id === 'response' ? queue.items.filter(item => matchesQueueFilters(item, { ...DEFAULT_QUEUE_FILTERS, involvement: 'response' }, Date.now(), auth?.login)).length
-                    : id === 'all'
-                      ? queue.items.length
-                      : id === 'stacks'
-                        ? queue.items.filter((i) => i.subject.kind === 'stack').length
-                        : queue.items.filter((i) => i.attention === id).length}
-                </span>
-              </button>
-            );
-          })}
-          <div data-tour="queue">
-          {auth?.authenticated && queue.savedViews && (
-            <SavedViewsNav state={queue.savedViews} active={!savedView && !mutedOpen} busy={viewBusy} onAction={viewAction} />
-          )}
-          </div>
-          <div className="mt-auto flex flex-col gap-1">
-            <button title="Muted PRs" className={mutedOpen ? 'active' : ''} aria-current={mutedOpen ? 'page' : undefined}
-              onClick={() => { setMutedOpen(true); setSelected(null); setOpenedItem(null); setError(''); }}>
-              <VolumeX size={16} /><span>Muted PRs</span><span className="nav-count">{queue.mutedPrs?.length ?? 0}</span>
-            </button>
-            <button data-tour="local" title="Local changes" onClick={() => setLocalOpen(true)}>
-              <FolderGit2 size={16} />
-              Local changes
-            </button>
-            <button
-              title="Import review"
-              onClick={() =>
-                void window.electronAPI
-                  .importReview()
-                  .then((entry) => {
-                    if (entry) void open(entry);
-                    void refresh();
-                  })
-                  .catch((e: unknown) => setError(String(e)))
-              }
-            >
-              <Upload size={16} />
-              Import review
-            </button>
-          </div>
-        </nav>
+                >
+                  <Upload size={16} />
+                  <span className="sidebar-label">Import review</span>
+                </button>
+              </SidebarDestination>
+            </>
+          }
+        />
         <main className="workbench-main">
           {mutedOpen ? <MutedPrs entries={queue.mutedPrs ?? []} busy={muteBusy} error={muteError} onUnmute={members => void changeMutes(members, false)} /> : <>
           <div className="queue-toolbar">

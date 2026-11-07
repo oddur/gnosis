@@ -95,7 +95,7 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('[role=menu]')");
     await wait("[...document.querySelectorAll('.queue-list [role=listitem][data-queue-id]')].at(-1)?.dataset.queueId===window.sortTarget");
 
-    await js("document.querySelector('[title=\"Saved reviews\"]').click()");
+    await js("document.querySelector('[aria-label=\"Saved reviews\"]').click()");
     await wait("document.querySelector('.queue-toolbar h1')?.textContent==='Saved reviews'");
     await sort('generated');
     await wait("window.electronAPI.loadPreferences().then(p=>p.savedReviewSort?.key==='generated')");
