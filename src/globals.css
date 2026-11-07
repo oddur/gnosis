@@ -4537,3 +4537,9 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .model-picker-reasoning input:focus-visible + span { outline:2px solid var(--ring);outline-offset:2px; }
 .model-picker-footer { display:flex;justify-content:flex-end;padding:0 12px 12px; }
 .model-picker-footer button { padding:6px 12px;border-radius:4px;background:var(--secondary); }
+.workbench-header-controls { min-width:0; }
+@media(max-width:620px) {
+  .workbench-header { flex-wrap:wrap;gap:8px 12px; }
+  .workbench-header-controls { flex-basis:100%;margin-left:0; }
+  .workbench-header-controls .model-effort-select { flex:1; }
+}

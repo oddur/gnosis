@@ -1395,7 +1395,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
           Gnosis
         </a>
         <RecentlyViewed />
-        <div className="ml-auto flex items-center gap-2">
+        <div className="workbench-header-controls ml-auto flex items-center gap-2">
           {prefs && (
             <ModelEffortSelect provider={prefs.provider} model={prefs.model}
               effort={normalizeEffort(prefs.provider, prefs.model, prefs.effort, prefs.thinking)}
