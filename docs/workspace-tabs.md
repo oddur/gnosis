@@ -21,7 +21,7 @@ Supported destinations include queue PR and stack titles, completed saved review
 | Click a tab                                     | Activate that tab       |
 | Middle-click a tab or click its close button    | Close that tab          |
 
-Queue selection gestures remain separate from title navigation. Shift-click alone does not open a foreground tab.
+Queue selection gestures remain separate from title navigation. Cmd/Ctrl-click a row body to add or remove it from the selection; Cmd/Ctrl-click its title to open a tab. Shift-click selects a range and does not open a foreground tab.
 
 The strip scrolls horizontally. Vertical wheel movement also scrolls the strip, and the active tab moves into view.
 Each tab shows an identity icon, its title, and a close button. PR tabs also show the PR number.
