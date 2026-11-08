@@ -112,7 +112,7 @@ export function PrChangesView({
   const workspace = useRef<HTMLElement>(null);
   const [chatFocusRequest, setChatFocusRequest] = useState(0);
   const [chatEntry, setChatEntry] = useState<Entry>();
-  const [position] = useState<Position>(() => loadPosition(positionId));
+  const [position] = useState<Position>(() => structuredClone(loadPosition(positionId)));
   const [loadedSnapshots, setSnapshots] = useState<PrChanges[]>(() =>
     combined ? [] : subject.members.flatMap((member) => inspectionData.peekChanges(member) ?? [])
   );
@@ -170,6 +170,7 @@ export function PrChangesView({
   const alive = useRef(true),
     generation = useRef(0);
   const persist = () => {
+    positions.set(positionId, structuredClone(position));
     try {
       localStorage.setItem(`gnosis-changes-position:${positionId}`, JSON.stringify(position));
     } catch {

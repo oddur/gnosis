@@ -215,7 +215,7 @@ void app.whenReady().then(async () => {
       "[...document.querySelectorAll('.commit-stream-row[data-active=true] button')].find(b=>b.textContent.trim()==='Comment in Changes').click()"
     );
     await wait(
-      "document.querySelector('[role=tab][data-state=active]')?.textContent==='Changes' && (document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2') ?? document.querySelector('.changes-file-header h2'))?.textContent==='src/worker.ts'"
+      "document.querySelector('[role=tab]:not(.workspace-tab-select)[data-state=active]')?.textContent==='Changes' && (document.querySelector('.commit-stream-row[data-active=true] .changes-file-header h2') ?? document.querySelector('.changes-file-header h2'))?.textContent==='src/worker.ts'"
     );
     assert.equal(
       await js(

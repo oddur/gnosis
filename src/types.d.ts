@@ -127,6 +127,7 @@ declare global {
       getFileClassifications: (request:PrFileRequest) => Promise<Record<string,FileKinds>>;
       onFileFiltersChanged: (callback:(state:FileFilterState)=>void) => () => void;
       onFileClassificationsChanged: (callback:(key:string,kinds:Record<string,FileKinds>)=>void) => () => void;
+      onWorkspaceShortcut: (callback: (action: NonNullable<ReturnType<typeof import('../lib/workspace-tabs').workspaceShortcut>>) => void) => () => void;
       onHistoryNavigate: (callback: (direction: -1 | 1) => void) => () => void;
       offReviewNavigate: () => void;
       sendSlideChat: (req: SendSlideChatRequest) => Promise<string>;

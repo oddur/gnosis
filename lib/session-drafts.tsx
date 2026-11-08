@@ -1,7 +1,35 @@
-import { useCallback, createContext, useContext, useState, type Dispatch, type SetStateAction } from 'react';
+import {
+  useCallback,
+  createContext,
+  useContext,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+  type ReactNode,
+} from 'react';
 // Session-only draft storage survives route changes without writing private text to disk.
 const values = new Map<string, unknown>();
 export const ReviewDraftScope = createContext('');
+const WorkspaceDraftScope = createContext('');
+/** Closed-tab recovery is bounded; release drafts once a destination leaves that history. */
+export function retainWorkspaceDrafts(account: string, ids: readonly string[]) {
+  const prefix = `workspace:${account}:`;
+  const keep = ids.map((id) => `${prefix}${id}:`);
+  for (const key of values.keys())
+    if (key.startsWith(prefix) && !keep.some((scope) => key.startsWith(scope))) values.delete(key);
+}
+export function WorkspaceDraftBoundary({ value, children }: { value: string; children: ReactNode }) {
+  return (
+    <WorkspaceDraftScope.Provider value={value}>
+      <ReviewDraftScope.Provider value={value}>{children}</ReviewDraftScope.Provider>
+    </WorkspaceDraftScope.Provider>
+  );
+}
+/** Keep subject scopes shared across review surfaces, but isolated across tabs. */
+export function ReviewDraftBoundary({ value, children }: { value: string; children: ReactNode }) {
+  const workspace = useContext(WorkspaceDraftScope);
+  return <ReviewDraftScope.Provider value={`${workspace}:${value}`}>{children}</ReviewDraftScope.Provider>;
+}
 export function useSessionDraft<T>(key: string, initial: T | (() => T)): [T, Dispatch<SetStateAction<T>>] {
   const scope = useContext(ReviewDraftScope),
     id = `${scope}:${key}`;

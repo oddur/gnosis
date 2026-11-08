@@ -12,7 +12,7 @@ void app.whenReady().then(async () => {
     webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false },
   });
   win.webContents.on('console-message', (_e, _l, message) => console.log('renderer:', message));
-  const js = <T = unknown>(code: string) => (win.webContents.executeJavaScript(code) as Promise<T>).catch(error => { console.error('Failed browser expression:', code); throw error; });
+  const js = <T = unknown>(code: string) => (win.webContents.executeJavaScript(code) as Promise<T>).catch((error: unknown) => { console.error('Failed browser expression:', code); throw error; });
   const wait = async (expression: string) => {
     for (let i = 0; i < 160; i++) {
       if (await js(expression)) return;
@@ -61,11 +61,8 @@ void app.whenReady().then(async () => {
     );
     // Reopening the review restores its viewed files collapsed, including after a renderer reload.
     await loadWorkbenchPage(win, url + '?threads&keep-progress');
-    await wait("document.querySelectorAll('.queue-item').length===7");
-    await js(
-      "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
-    );
-    await click('Open AI explanation');
+    // Workspace restoration reopens the explanation directly after a renderer reload.
+    await wait("!!document.querySelector('.explanation-reader')");
     await wait("document.querySelectorAll('.github-thread').length===5");
     assert.equal(await js("document.querySelector('.review-file-viewed input').checked"), true);
     assert.equal(await js("document.querySelector('.review-file-content').hidden"), true);

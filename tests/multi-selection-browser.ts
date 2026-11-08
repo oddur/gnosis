@@ -31,7 +31,8 @@ void app.whenReady().then(async () => {
   const row = (name: string) =>
     `[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes(${JSON.stringify(name)}))`;
   const select = async (name: string, modifiers = {}) => {
-    await js(`${row(name)}.dispatchEvent(new MouseEvent('click',{bubbles:true,...${JSON.stringify(modifiers)}}))`);
+    // Modified title clicks open tabs; row-body clicks retain additive selection.
+    await js(`${row(name)}.closest('.queue-row-content').dispatchEvent(new MouseEvent('click',{bubbles:true,...${JSON.stringify(modifiers)}}))`);
   };
   const context = async (expression: string) => {
     // The tree closes its menu while it scrolls, and focusing a clipped row scrolls it into view.
@@ -125,6 +126,7 @@ void app.whenReady().then(async () => {
     await select('Fix reconnect');
     await select('Reduce allocations', { metaKey: true });
     await wait("document.querySelector('.queue-selection-summary')?.textContent.includes('2 selected')");
+    assert.equal(await js("document.querySelectorAll('.workspace-tab').length"), 1, 'Additive row selection does not open tabs');
     await select('Reduce allocations', { ctrlKey: true });
     await wait("!document.querySelector('.queue-selection-summary')");
     await js(

@@ -1,6 +1,7 @@
 import { setEntryMenuOpen } from '../lib/entry-menu-state';
 import { useId, useRef, useState, useLayoutEffect, type ReactElement, type ReactNode } from 'react';
 import { Menu } from '@base-ui/react/menu';
+import { flushSync } from 'react-dom';
 import { MoreHorizontal } from 'lucide-react';
 import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from './ui/context-menu';
 import { toast } from './ui/toast';
@@ -12,6 +13,8 @@ export interface EntryAction {
   icon?: ReactNode;
   disabled?: boolean;
   destructive?: boolean;
+  /** Remove the popup before an action hides its workspace. */
+  dismissBeforeRun?: boolean;
   run: () => unknown;
 }
 export type EntryActionGroups = EntryAction[][];
@@ -25,6 +28,10 @@ export function EntryActions({
   buttonClassName = '',
   description,
   onBeforeOpen,
+  contextOnly = false,
+  triggerIcon,
+  triggerTitle,
+  popupClassName = '',
 }: {
   label: string;
   groups: EntryActionGroups;
@@ -33,6 +40,10 @@ export function EntryActions({
   buttonClassName?: string;
   description?: ReactNode;
   onBeforeOpen?: () => void;
+  contextOnly?: boolean;
+  triggerIcon?: ReactNode;
+  triggerTitle?: string;
+  popupClassName?: string;
 }) {
   const descriptionId = useId();
   const explanation = description ? (
@@ -41,12 +52,15 @@ export function EntryActions({
     </div>
   ) : null;
   const trigger = useRef<HTMLButtonElement>(null);
+  const contextOrigin = useRef<HTMLElement | null>(null);
   const restoreFocusRef = useRef(restoreFocus);
   restoreFocusRef.current = restoreFocus;
   const [pending, setPending] = useState(false);
   const busy = useRef(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const contextActions = useRef<Menu.Root.Actions | null>(null);
+  const menuActions = useRef<Menu.Root.Actions | null>(null);
   const menuId = useRef(Symbol('entry-menu'));
   useLayoutEffect(() => {
     const id = menuId.current;
@@ -68,6 +82,19 @@ export function EntryActions({
             onClick={() => {
               if (busy.current) return;
               busy.current = true;
+              // Navigation can hide this workspace and pause menu cleanup effects.
+              // Commit dismissal while the source workspace is still active.
+              if (action.dismissBeforeRun) {
+                flushSync(() => {
+                  setContextOpen(false);
+                  setMenuOpen(false);
+                });
+                // Base UI must observe closed state before completing the closing phase.
+                flushSync(() => {
+                  contextActions.current?.unmount();
+                  menuActions.current?.unmount();
+                });
+              }
               setPending(true);
               void (async () => {
                 try {
@@ -85,37 +112,56 @@ export function EntryActions({
               })();
             }}
           >
-            {action.icon && <span className="entry-menu-icon" aria-hidden="true">{action.icon}</span>}
+            {action.icon && (
+              <span className="entry-menu-icon" aria-hidden="true">
+                {action.icon}
+              </span>
+            )}
             <span className="entry-menu-label">{action.displayLabel ?? action.label}</span>
-            {action.detail && <span className="entry-menu-detail" aria-hidden="true">{action.detail}</span>}
+            {action.detail && (
+              <span className="entry-menu-detail" aria-hidden="true">
+                {action.detail}
+              </span>
+            )}
           </Menu.Item>
         ))}
       </Menu.Group>
     ));
   const popupProps = {
+    className: `entry-menu ${popupClassName}`,
     'aria-label': label,
     'aria-describedby': description ? descriptionId : undefined,
     'data-queue-id': trigger.current?.closest<HTMLElement>('[data-queue-id]')?.dataset.queueId,
-    finalFocus: () => (restoreFocusRef.current ? trigger.current : false),
+    finalFocus: () => {
+      const origin = trigger.current ?? contextOrigin.current;
+      return restoreFocusRef.current && origin?.isConnected ? origin : false;
+    },
     onClick: (event: React.MouseEvent) => event.stopPropagation(),
     onDoubleClick: (event: React.MouseEvent) => event.stopPropagation(),
     onContextMenu: (event: React.MouseEvent) => event.stopPropagation(),
     onKeyDown: (event: React.KeyboardEvent) => event.stopPropagation(),
   };
   const button = (
-    <Menu.Root open={menuOpen} onOpenChange={open => { if (open) onBeforeOpen?.(); setMenuOpen(open); }}>
+    <Menu.Root
+      actionsRef={menuActions}
+      open={menuOpen}
+      onOpenChange={(open) => {
+        if (open) onBeforeOpen?.();
+        setMenuOpen(open);
+      }}
+    >
       <Menu.Trigger
         ref={trigger}
         className={`pr-star-button entry-menu-trigger ${buttonClassName}`}
         aria-label={label}
-        title="More actions · right-click an entry"
+        title={triggerTitle ?? 'More actions · right-click an entry'}
         onClick={(event) => event.stopPropagation()}
       >
-        <MoreHorizontal size={16} aria-hidden="true" />
+        {triggerIcon ?? <MoreHorizontal size={16} aria-hidden="true" />}
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Positioner className="entry-menu-positioner" sideOffset={4} align="end" collisionPadding={12}>
-          <Menu.Popup className="entry-menu" {...popupProps}>
+          <Menu.Popup {...popupProps}>
             {explanation}
             {items}
           </Menu.Popup>
@@ -125,14 +171,38 @@ export function EntryActions({
   );
   if (!children) return button;
   return (
-    <ContextMenu open={contextOpen} onOpenChange={open => { if (open) onBeforeOpen?.(); setContextOpen(open); }}>
+    <ContextMenu
+      actionsRef={contextActions}
+      open={contextOpen}
+      onOpenChange={(open) => {
+        if (open) onBeforeOpen?.();
+        setContextOpen(open);
+      }}
+    >
       <ContextMenuTrigger
         render={children(button)}
-        onContextMenu={(event) => event.stopPropagation()}
+        onContextMenu={(event) => {
+          contextOrigin.current = event.currentTarget.querySelector<HTMLElement>('[role="tab"]') ?? event.currentTarget;
+          event.stopPropagation();
+        }}
         onKeyDown={(event) => {
           if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
             event.preventDefault();
             event.stopPropagation();
+            if (contextOnly) {
+              const origin = event.target as HTMLElement;
+              const rect = origin.getBoundingClientRect();
+              origin.dispatchEvent(
+                new MouseEvent('contextmenu', {
+                  bubbles: true,
+                  cancelable: true,
+                  button: 2,
+                  clientX: rect.left + 12,
+                  clientY: rect.bottom,
+                })
+              );
+              return;
+            }
             onBeforeOpen?.();
             setContextOpen(false);
             setMenuOpen(true);

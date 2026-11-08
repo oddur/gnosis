@@ -1,3 +1,4 @@
+import { normalizeSetup } from '../lib/onboarding';
 import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import { contrastRatio } from '../lib/code-contrast';
 import assert from 'node:assert/strict';
@@ -296,16 +297,16 @@ void app.whenReady().then(async () => {
     await capture('fallback-light');
 
     await click('Manage briefings');
-    await wait("!!document.querySelector('[role=tab][aria-selected=true]')");
-    match(await js("document.querySelector('[role=tab][aria-selected=true]').textContent"), /Queue/);
+    await wait("!!document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')");
+    match(await js("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]').textContent"), /Queue/);
     await js('document.querySelector(\'[aria-label="Automatic briefings"]\').click()');
     await js("document.querySelector('[data-slot=dialog-close]').click()");
     await wait("document.querySelector('.briefing-status')?.textContent.includes('Automatic briefings are off')");
     await click('Manage briefings');
-    await wait("!!document.querySelector('[role=tab][aria-selected=true]')");
+    await wait("!!document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')");
     await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
     await js(
-      "[...document.querySelectorAll('[role=tab]')].find(b=>b.textContent==='Appearance').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}))"
+      "[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(b=>b.textContent==='Appearance').dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}))"
     );
     await wait("document.querySelector('[role=tabpanel][data-state=active]')?.textContent.includes('Code font')");
     assert.deepEqual(
@@ -316,9 +317,9 @@ void app.whenReady().then(async () => {
     window.setSize(800, 700);
     await capture('settings-appearance-narrow');
     await js(
-      "[...document.querySelectorAll('[role=tab]')].find(b=>b.textContent.includes('Queue')).dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}))"
+      "[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(b=>b.textContent.includes('Queue')).dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}))"
     );
-    await wait("document.querySelector('[role=tab][aria-selected=true]')?.textContent.includes('Queue')");
+    await wait("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent.includes('Queue')");
     await capture('settings-queue-narrow');
     assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
     await js("document.querySelector('[data-slot=dialog-close]').click()");
@@ -345,7 +346,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.activeElement?.getAttribute('aria-pressed')"), 'true');
     await press('Enter');
     await wait("!!document.querySelector('.stack-overview')");
-    await js("(()=>{const tab=[...document.querySelectorAll('[role=tab]')].find(t=>t.textContent==='Explanation');tab.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));tab.click()})()");
+    await js("(()=>{const tab=[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(t=>t.textContent==='Explanation');tab.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));tab.click()})()");
     await wait("!!document.querySelector('.explanation-reader')");
     await js(`window.selectOption('[aria-label="Explanation section"]', '1')`);
     await wait("document.querySelectorAll('[data-explanation-section=\"1\"] .review-file-context').length === 2");
@@ -421,7 +422,7 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('.getting-started-setup summary').click()");
     await click('AI setup');
     await wait("!!document.querySelector('#ai-setup-title')");
-    assert.equal(await js("document.querySelector('[data-state=active][role=tab]').textContent"), 'Integrations');
+    assert.equal(await js("document.querySelector('[data-state=active][role=tab]:not(.workspace-tab-select)').textContent"), 'Integrations');
     await js("void (window.electronAPI.checkCliInstalled = () => Promise.reject(new Error('fixture check failed')))");
     await js("document.querySelector('[data-slot=dialog-close]').click()");
     await wait("document.querySelector('.getting-started')?.textContent.includes('Could not check')");
@@ -461,8 +462,10 @@ void app.whenReady().then(async () => {
     await click('Next');
     await click('Connect GitHub');
     await wait("!!document.querySelector('.github-auth-dialog')");
+    await js("(async()=>{window.setupBeforeConnect = structuredClone((await window.electronAPI.loadOnboarding()).draft)})()");
     await click('Sign in through browser');
     await wait("document.querySelector('.setup-connected')?.textContent.includes('oddur') && !document.querySelector('.github-auth-dialog')");
+    assert.deepEqual(normalizeSetup(await js("window.electronAPI.loadOnboarding().then(state=>state.draft)")), normalizeSetup(await js('window.setupBeforeConnect')), 'Signing in preserves the in-progress setup choices');
     await click('Finish later');
     await wait("!document.querySelector('.setup-dialog') && !document.querySelector('.workbench-connect')");
     await js(`(() => {
@@ -520,7 +523,7 @@ void app.whenReady().then(async () => {
     })()`);
     await click('Open PR overview');
     await wait("!!document.querySelector('.pr-summary-page')");
-    await js("(()=>{const tab=[...document.querySelectorAll('[role=tab]')].find(tab => tab.textContent === 'Explanation');tab.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));tab.click()})()");
+    await js("(()=>{const tab=[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(tab => tab.textContent === 'Explanation');tab.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));tab.click()})()");
     await wait("!!document.querySelector('.explanation-empty')");
     await click('Generate explanation');
     await wait("!!document.querySelector('.explanation-setup-footer')");

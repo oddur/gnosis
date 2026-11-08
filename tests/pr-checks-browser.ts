@@ -79,7 +79,7 @@ void app.whenReady().then(async () => {
     await js("[...document.querySelectorAll('.check-row')].find(b=>b.textContent.includes('Lint')).click()");
     await wait("!!document.querySelector('.check-steps')");
     assert.equal(
-      await js("document.querySelector('[role=tab][aria-selected=true]')?.getAttribute('data-state')"),
+      await js("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.getAttribute('data-state')"),
       'active'
     );
     assert.equal(await js("document.body.dataset.checkLogCalls ?? '0'"), '0');
@@ -126,12 +126,12 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelectorAll('.check-row').length"), 1);
     await click('All checks');
     await js("document.querySelector('.check-annotations button').click()");
-    await wait("document.querySelector('[role=tab][aria-selected=true]')?.textContent==='Changes'");
+    await wait("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent==='Changes'");
     await wait(
       "Array.from(document.querySelectorAll('[data-diff-host]')).some(n=>n.getAttribute('aria-label')==='Source at new line 35') || document.querySelector('[aria-label=\"Source at new line 35\"]') !== null"
     );
     await js(
-      "(()=>{const b=[...document.querySelectorAll('[role=tab]')].find(b=>b.textContent.startsWith('Checks'));b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()"
+      "(()=>{const b=[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(b=>b.textContent.startsWith('Checks'));b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()"
     );
     await wait("document.querySelectorAll('.check-row').length===6");
     await js("[...document.querySelectorAll('.check-row')].find(b=>b.textContent.includes('Tests / macOS')).click()");
@@ -308,7 +308,7 @@ void app.whenReady().then(async () => {
     );
 
     await js(
-      "(()=>{const b=[...document.querySelectorAll('[role=tab]')].find(b=>b.textContent==='Summary');b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()"
+      "(()=>{const b=[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(b=>b.textContent==='Summary');b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()"
     );
     await wait("[...window.syncFixture.subscriptions.values()].some(s=>s.kind==='checks' && s.priority==='visible')");
     // Bulk reruns include cancellations, deduplicate workflows, and preserve partial success.

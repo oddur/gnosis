@@ -110,7 +110,7 @@ void app.whenReady().then(async () => {
     await js(
       'void (window.electronAPI.searchRepos=(query)=>new Promise((resolve,reject)=>{(window.searches??={})[query]={resolve,reject}}))'
     );
-    await js("[...document.querySelectorAll('[role=tab]')].find(t=>t.textContent==='Repositories').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
+    await js("[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(t=>t.textContent==='Repositories').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
     await click('Add repository');
     await fill('#watched-repos', 'old');
     await wait('!!window.searches?.old');

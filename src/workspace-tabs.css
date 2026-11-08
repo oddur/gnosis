@@ -1,0 +1,324 @@
+.workspace-shell {
+  height: calc(100dvh - 34px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.workspace-shell #main-content {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+.workspace-panel,
+.workspace-content {
+  height: 100%;
+  min-height: 0;
+}
+.workspace-panel[hidden] {
+  display: none;
+}
+.workspace-tabs {
+  height: 39px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  background: var(--sidebar);
+  border-bottom: 1px solid var(--border);
+  -webkit-app-region: no-drag;
+}
+.workspace-tabs-list {
+  display: flex;
+  min-width: 0;
+  overflow: auto;
+  scrollbar-width: none;
+  gap: 4px;
+  padding: 3px 8px 0;
+}
+.workspace-tab {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  width: 240px;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+  color: var(--muted-foreground);
+}
+.workspace-tab:hover {
+  background: var(--accent);
+}
+.workspace-tab[data-active='true'] {
+  background: var(--background);
+  color: var(--foreground);
+  border-color: var(--border);
+  box-shadow: inset 0 2px var(--ring);
+}
+.workspace-tab > [role='tab'] {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+  height: 35px;
+  padding: 0 8px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+}
+.workspace-tab svg {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+}
+.workspace-tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-tab-number {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+.workspace-tab-close {
+  padding: 5px;
+  margin-right: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.workspace-tab-close:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+.workspace-new-tab {
+  min-width: 36px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.workspace-tab-menu {
+  align-self: center;
+  flex-shrink: 0;
+  margin: 0 8px 0 auto;
+}
+.workspace-tabs button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.workspace-tabs button:hover {
+  color: var(--foreground);
+}
+@media (max-width: 1000px) {
+  .workspace-tab {
+    width: 210px;
+  }
+}
+/* Keep code and conversation space useful on short laptop windows. */
+@media (max-height: 750px) {
+  .workspace-shell .workbench-header {
+    min-height: 48px;
+    padding-block: 6px;
+  }
+  .workspace-shell .feedback-conversation-header {
+    padding-block: 6px;
+  }
+  .workspace-shell .feedback-conversation-header > div {
+    display: grid;
+    grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+    gap: 4px 8px;
+    align-items: center;
+  }
+  .workspace-shell .feedback-conversation-header .feedback-source {
+    grid-column: 1 / -1;
+  }
+  .workspace-shell .feedback-conversation-header h2,
+  .workspace-shell .feedback-file-directory {
+    margin-top: 0;
+  }
+}
+
+.workspace-tabs-tip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-inline-start: 12px;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.workspace-tabs-tip kbd {
+  font: inherit;
+  color: var(--foreground);
+}
+.workspace-tabs-tip button {
+  padding: 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.workspace-tabs-tip button:hover {
+  background: var(--accent);
+}
+.entry-menu.workspace-open-tabs-menu:has(.entry-menu-description) {
+  width: min(420px, var(--available-width), calc(100vw - 24px));
+  max-width: min(420px, var(--available-width));
+  max-height: min(540px, calc(100dvh - 70px));
+  overflow-y: auto;
+}
+.workspace-open-tabs-menu .entry-menu-item {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: 8px;
+  row-gap: 3px;
+}
+.workspace-open-tabs-menu .entry-menu-icon {
+  grid-row: 1 / 3;
+}
+.workspace-open-tabs-menu .entry-menu-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-open-tabs-menu .entry-menu-detail {
+  grid-column: 2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
+  margin: 0;
+}
+.workspace-tab-close {
+  min-width: 26px;
+  min-height: 26px;
+}
+.workspace-tab-error {
+  color: var(--danger);
+}
+.workspace-tab-spinner {
+  animation: workspace-tab-spin 1s linear infinite;
+}
+@keyframes workspace-tab-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspace-tab-spinner {
+    animation: none;
+  }
+}
+@media (max-width: 1000px) {
+  .workspace-tabs-tip {
+    display: none;
+  }
+}
+.workspace-recovery {
+  padding: 24px;
+  max-width: 640px;
+}
+.workspace-recovery h1 {
+  font-size: var(--type-panel-title);
+  font-weight: 600;
+}
+.workspace-recovery p {
+  margin-block: 8px 16px;
+  color: var(--muted-foreground);
+}
+.workspace-recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.workspace-recovery details {
+  margin-top: 16px;
+  color: var(--muted-foreground);
+  font-size: var(--type-caption);
+}
+.workspace-recovery summary {
+  cursor: pointer;
+}
+.workspace-recovery pre {
+  margin-top: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.workspace-open-error {
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.workspace-open-error p {
+  flex: 1;
+  min-width: 180px;
+  font-size: var(--type-control);
+}
+.workspace-open-error details {
+  width: 100%;
+  font-size: var(--type-caption);
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+
+.workspace-content:has(> .workspace-open-error) {
+  display: flex;
+  flex-direction: column;
+}
+.workspace-content > .workspace-open-error {
+  flex-shrink: 0;
+}
+.workspace-content:has(> .workspace-open-error) > .workbench-home {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+
+/* An insertion marker keeps the intended order clear without moving live workspaces mid-drag. */
+.workspace-tab {
+  position: relative;
+}
+.workspace-tab[data-dragging='true'] {
+  opacity: 0.55;
+}
+.workspace-tab[data-drop-before='true']::before,
+.workspace-tab[data-drop-after='true']::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--ring);
+  pointer-events: none;
+  z-index: 1;
+}
+.workspace-tab[data-drop-before='true']::before {
+  left: -3px;
+}
+.workspace-tab[data-drop-after='true']::after {
+  right: -3px;
+}
+.workspace-tab-select[draggable='true'] {
+  user-select: none;
+}
+
+.workspace-tab-count {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.workspace-tab[data-unread='true'] .workspace-tab-title,
+.workspace-tab[data-unread='true'] .workspace-tab-count {
+  font-weight: 700;
+}
+
+/* The tab strip uses a row of space; keep dependency lists dense without shrinking type. */
+.workspace-shell .stack-status-table .stack-overview-member {
+  padding-block: 5px;
+}

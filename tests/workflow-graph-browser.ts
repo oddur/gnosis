@@ -796,7 +796,7 @@ void app
         await click('Open PR overview');
         await wait(`document.querySelectorAll('.review-evidence-summary > button').length===3`);
         await js(
-          `(()=>{const tab=[...document.querySelectorAll('[role="tab"]')].find(b=>b.textContent.startsWith('Checks'));tab.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));tab.click()})()`
+          `(()=>{const tab=[...document.querySelectorAll('[role="tab"]:not(.workspace-tab-select)')].find(b=>b.textContent.startsWith('Checks'));tab.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));tab.click()})()`
         );
         await wait(
           `document.querySelector('.checks-view-switch [aria-pressed="true"]')?.textContent.trim()===${JSON.stringify(expected === 'graph' ? 'Graph' : 'List')}`

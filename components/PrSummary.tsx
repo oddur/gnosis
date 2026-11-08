@@ -1,3 +1,4 @@
+import { hasVisibleNavigationOverlay } from '../lib/workspace-navigation';
 import { feedbackCodeContext, type FeedbackRequest, type ResponseIntent } from '../lib/feedback';
 import { PrFeedbackView } from './PrFeedbackView';
 import { WorkspaceIcon, workspaceTabs } from './WorkspaceIcon';
@@ -291,7 +292,7 @@ function PrSummaryContent({
         )
       )
         return;
-      if (document.querySelector('[role="dialog"], [role="menu"], .workbench-help')) return;
+      if (hasVisibleNavigationOverlay()) return;
       if (event.key === 'j' && navigation.next) {
         event.preventDefault();
         move(1);

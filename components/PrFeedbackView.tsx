@@ -31,7 +31,7 @@ import {
 } from '../lib/feedback';
 import { readReviewState, writeReviewState } from '../lib/renderer-review-state';
 import { replaceDiscussionThread, refreshDiscussion } from '../lib/review-discussion-cache';
-import { useSessionDraft, ReviewDraftScope } from '../lib/session-drafts';
+import { useSessionDraft, ReviewDraftBoundary } from '../lib/session-drafts';
 import type { ReviewSubject } from '../lib/workbench';
 import { timeAgo } from '../lib/utils';
 
@@ -325,7 +325,7 @@ export function PrFeedbackView({
       </div>
     );
   return (
-    <ReviewDraftScope.Provider value={`feedback:${account}`}>
+    <ReviewDraftBoundary value={`feedback:${account}`}>
       <div className="feedback-workspace" ref={root} data-conversation-open={!!selected || completed}>
         {optionsError && (
           <div className="feedback-notice" role="alert">
@@ -873,7 +873,7 @@ export function PrFeedbackView({
           </section>
         </div>
       </div>
-    </ReviewDraftScope.Provider>
+    </ReviewDraftBoundary>
   );
 }
 function FeedbackMessage({

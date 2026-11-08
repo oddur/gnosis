@@ -31,6 +31,9 @@ void app.whenReady().then(async () => {
     await new Promise((resolve) => setTimeout(resolve, 60));
   };
   const context = async (path: string, keyboard = false) => {
+    await js(`window.deepAll('[role=treeitem]').find(e=>e.dataset.itemPath===${JSON.stringify(path)}).scrollIntoView({block:'nearest'})`);
+    await js('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    await wait("!window.deepAll('[data-is-scrolling]').length");
     await js(
       `(()=>{const row=window.deepAll('[data-item-path]').find(e=>e.dataset.itemPath===${JSON.stringify(path)}&&e.getAttribute('role')==='treeitem');if(!row)throw Error('Missing row '+${JSON.stringify(path)});row.focus();const r=row.getBoundingClientRect();row.dispatchEvent(${keyboard ? "new KeyboardEvent('keydown',{key:'F10',shiftKey:true,bubbles:true,composed:true})" : "new MouseEvent('contextmenu',{button:2,bubbles:true,composed:true,clientX:r.x+40,clientY:r.y+10})"})})()`
     );
@@ -45,11 +48,16 @@ void app.whenReady().then(async () => {
     await new Promise((resolve) => setTimeout(resolve, 80));
   };
   const openPr = async () => {
-    await waitForWorkbenchQueue(win.webContents);
+    await wait("!!document.querySelector('.queue-item,.pr-summary-page')");
     await js(
-      "window.deepAll=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].flatMap(e=>e.shadowRoot?window.deepAll(selector,e.shadowRoot):[])]; [...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click(); void 0"
+      "window.deepAll=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].flatMap(e=>e.shadowRoot?window.deepAll(selector,e.shadowRoot):[])]; void 0"
     );
-    await click('Open PR overview');
+    // A reload now restores the open PR. The first visit still starts in the queue.
+    if (!(await js("!!document.querySelector('.pr-summary-page')"))) {
+      await waitForWorkbenchQueue(win.webContents);
+      await js("[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()");
+      await click('Open PR overview');
+    }
     await click('Changes');
     await wait("!!document.querySelector('.changes-file-tree')");
   };

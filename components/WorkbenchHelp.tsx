@@ -151,6 +151,27 @@ export function WorkbenchHelp({ onGettingStarted, onWalkthrough }: { onGettingSt
               <strong>Activity</strong> tracks generation. Results are saved when complete.
             </p>
           </details>
+          <details className="workbench-help-shortcuts">
+            <summary>Keep reviews open in tabs</summary>
+            <p>
+              <kbd>{window.electronAPI.platform === 'darwin' ? '⌘' : 'Ctrl'}-click</kbd> a PR title to open it in the
+              background. Add Shift to switch to it immediately.
+            </p>
+            <p>
+              Each tab keeps its reading position and Back/Forward history. Comments and Viewed progress are shared.
+            </p>
+            <p>
+              <kbd>{window.electronAPI.platform === 'darwin' ? '⌘T' : 'Ctrl+T'}</kbd> opens a tab;{' '}
+              <kbd>{window.electronAPI.platform === 'darwin' ? '⌘W' : 'Ctrl+W'}</kbd> closes it.{' '}
+              <kbd>{window.electronAPI.platform === 'darwin' ? '⌘⇧T' : 'Ctrl+Shift+T'}</kbd> reopens the last closed
+              tab.
+            </p>
+            <p>
+              <kbd>Ctrl+Tab</kbd> switches tabs. Use{' '}
+              <kbd>{window.electronAPI.platform === 'darwin' ? '⌘1–9' : 'Ctrl+1–9'}</kbd> to jump to a tab. Right-click
+              a tab to move it or close other tabs. You can also drag tabs to reorder them.
+            </p>
+          </details>
           <h3>Terms you’ll see</h3>
           <div className="workbench-glossary">
             {terms.map(([term, definition]) => (

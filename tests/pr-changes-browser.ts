@@ -491,12 +491,8 @@ void app.whenReady().then(async () => {
     await click('Add to review');
     await wait("!!document.querySelector('.changes-pending-comment')");
     await loadWorkbenchPage(window, `${process.env.GNOSIS_WORKBENCH_URL ?? ''}?pr-summary&keep-progress`);
-    await wait("document.querySelectorAll('.queue-item').length===7");
-    await js(
-      "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
-    );
-    await click('Open stack overview');
-    await click('Changes');
+    // The restored workspace reopens Changes with the same file and review drafts.
+    await wait("!!document.querySelector('.pr-summary-page .changes-file-tree')");
     await wait(
       "document.querySelector('.commit-stream-row[data-active=true] .changes-code')?.textContent.includes('Persist this draft across restarts.')"
     );

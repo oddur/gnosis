@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Popover } from 'radix-ui';
 import { EntryActions } from './EntryActions';
-import { GripVertical, X } from 'lucide-react';
+import { GripVertical, Plus, X } from 'lucide-react';
+import { useWorkspaceNavigation } from '../lib/workspace-navigation';
 import { SidebarDestination } from './QueueSidebar';
 import { WorkbenchIcon } from './WorkbenchIcon';
 import { viewIsModified, type QueueViewAction, type QueueViewsSnapshot, type SavedQueueView } from '../lib/saved-views';
@@ -70,6 +71,7 @@ export function SavedViewsNav({
   busy: boolean;
   onAction: Action;
 }) {
+  const tabs = useWorkspaceNavigation();
   const [renaming, setRenaming] = useState<string | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const act = (action: QueueViewAction) => {
@@ -94,6 +96,12 @@ export function SavedViewsNav({
             buttonClassName="saved-view-menu-trigger"
             restoreFocus={renaming !== view.id}
             groups={[
+              ...(tabs ? [[{
+                label: 'Open in new tab',
+                icon: <Plus size={15} />,
+                dismissBeforeRun: true,
+                run: () => tabs.open({ kind: 'home', viewId: view.id }, false, view.name),
+              }]] : []),
               [
                 { label: 'Rename', disabled: busy, run: () => setRenaming(view.id) },
                 { label: 'Duplicate', disabled: busy, run: () => onAction({ type: 'duplicate', id: view.id }) },
@@ -145,7 +153,7 @@ export function SavedViewsNav({
                 >
                   <GripVertical size={12} />
                 </button>
-                <SidebarDestination>
+                <SidebarDestination destination={{kind:'home',viewId:view.id}}>
                   <button
                     aria-label={view.name}
                     className={`saved-view-link${active && state.activeId === view.id ? ' active' : ''}`}

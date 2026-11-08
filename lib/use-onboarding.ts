@@ -11,6 +11,7 @@ export function useOnboarding(
   firstUse = true
 ) {
   const [state, setState] = useState<OnboardingState>({});
+  const [loadedFor, setLoadedFor] = useState<string | null | undefined>(undefined);
   const current = useRef(state);
   const [open, setOpen] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
@@ -31,6 +32,7 @@ export function useOnboarding(
         saved = { ...saved, draft: saved.draft ? normalizeSetup(saved.draft) : undefined };
         current.current = saved;
         setState(saved);
+        setLoadedFor(login);
         const preferences = latest.current.prefs;
         if (firstUse && preferences && !preferences.firstRunSeen && !saved.paused && !saved.completed) {
           const next = { ...saved, draft: saved.draft ?? initialSetup(preferences, latest.current.views) };
@@ -132,6 +134,7 @@ export function useOnboarding(
     }).catch(() => setError('Could not save walkthrough progress.'));
   };
   return {
+    ready: ready && loadedFor === login,
     state,
     open,
     tourOpen,

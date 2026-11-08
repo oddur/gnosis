@@ -112,7 +112,7 @@ void app.whenReady().then(async () => {
     await click('[aria-label="Settings"]');
     await wait("!!document.querySelector('[role=dialog]')");
     await js(
-      "[...document.querySelectorAll('[role=tab]')].find(t=>t.textContent==='Appearance').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))"
+      "[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(t=>t.textContent==='Appearance').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))"
     );
     await wait('!!document.querySelector(\'[aria-label="Code theme"]\')');
     await click('[aria-label="Code theme"]');
@@ -142,7 +142,7 @@ void app.whenReady().then(async () => {
     await click('[aria-label="Settings"]');
     await wait("!!document.querySelector('[aria-label=\"Use a different model for briefings\"]')");
     await js("window.selectEffort('Briefing model', 'medium')");
-    await js("[...document.querySelectorAll('[role=tab]')].find(e=>e.textContent==='Review').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
+    await js("[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(e=>e.textContent==='Review').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
     await wait("!!document.querySelector('[aria-label=\"Explanation model\"]')");
     assert.equal(await js("document.querySelector('[aria-label=\"Explanation model\"]').querySelector('.model-picker-effort').textContent"), 'Max');
     await js("window.selectEffort('Explanation model', 'xhigh')");

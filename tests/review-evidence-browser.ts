@@ -154,7 +154,7 @@ void app.whenReady().then(async () => {
     await wait('!document.querySelector(\'[aria-label="Refresh GitHub information"]\').disabled');
     assert.equal(await js('window.refreshReads'), 1, 'Manual refresh respects the discussion retry deadline');
     await js("document.querySelector('.review-evidence-row button').click()");
-    await wait("document.querySelector('[role=tab][aria-selected=true]')?.textContent.startsWith('Checks')");
+    await wait("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent.startsWith('Checks')");
     await wait("![...window.evidenceSubscriptions.values()].some(v=>v.kind==='discussion')");
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary&checks`);
     await waitForWorkbenchQueue(win.webContents);
@@ -186,7 +186,7 @@ void app.whenReady().then(async () => {
     await click('Show details');
     await wait("document.querySelectorAll('.review-evidence-details > section').length===3");
     await js("document.querySelector('.review-evidence-row button').click()");
-    await wait("document.querySelector('[role=tab][aria-selected=true]')?.textContent.startsWith('Checks')");
+    await wait("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent.startsWith('Checks')");
     assert.equal(errors.length, 0, errors.join('\n'));
     console.log(
       'Review evidence browser checks passed: live updates, lazy discussion sync, revision links, errors, light/dark, narrow layout, navigation.'

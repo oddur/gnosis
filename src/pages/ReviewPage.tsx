@@ -1,3 +1,4 @@
+import { activeWorkspaceRoot } from '../../lib/workspace-navigation';
 import { useSettingsShortcut } from '../../lib/use-settings-shortcut';
 import { watchGitHub } from '../../lib/watch-github';
 import { usePrDiscussions } from '../../lib/use-pr-discussions';
@@ -106,7 +107,13 @@ function ReviewPageContent({
 }: Props) {
   const commandCenter = useCommandCenter();
   const [review, setReview] = useState(initialReview);
-  useEffect(() => setReview(initialReview), [initialReview]);
+  const appliedReview = useRef(initialReview);
+  useEffect(() => {
+    if (appliedReview.current !== initialReview) {
+      appliedReview.current = initialReview;
+      setReview(initialReview);
+    }
+  }, [initialReview]);
   useEffect(() => rememberExplanation(review), [review]);
   const [consumedCommand, setConsumedCommand] = useSessionDraft('review-command', 0);
   const { viewedFiles, setFileViewed } = useViewedFiles(review);
@@ -424,11 +431,12 @@ function ReviewPageContent({
     setCodeTarget({ section, filePath, line, nonce: Date.now() });
   }
   const [codeTarget, setCodeTarget] = useState<{ section: number; filePath: string; line?: number; nonce: number }>();
+  const inspectedTarget = useRef<number | undefined>(undefined);
   useEffect(() => {
-    if (!codeTarget) return;
+    if (!codeTarget || inspectedTarget.current === codeTarget.nonce) return;
     let tries = 0;
     const timer = setInterval(() => {
-      const file = document.querySelector<HTMLElement>(
+      const file = activeWorkspaceRoot().querySelector<HTMLElement>(
         `[data-explanation-section="${codeTarget.section}"] .review-file-group[data-file-path="${CSS.escape(codeTarget.filePath)}"]`
       );
       if (file) {
@@ -441,6 +449,7 @@ function ReviewPageContent({
         }
         const target = codeTarget.line ? findReviewLine(file, codeTarget.filePath, codeTarget.line) : file;
         if (target) {
+          inspectedTarget.current = codeTarget.nonce;
           target.scrollIntoView({ block: 'center' });
           target.classList.remove('check-highlight');
           void target.offsetWidth;
@@ -557,8 +566,10 @@ function ReviewPageContent({
     }
   );
 
+  const appliedSlide = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (initialSlideId && initialSlideId !== 'overview') {
+    if (initialSlideId && initialSlideId !== 'overview' && appliedSlide.current !== initialSlideId) {
+      appliedSlide.current = initialSlideId;
       const index = review.slides.findIndex((s) => s.id === initialSlideId);
       if (index >= 0) reader.current?.navigate(index + 1);
     }
@@ -723,7 +734,7 @@ function ReviewPageContent({
     let tries = 0;
     const timer = setInterval(() => {
       const file = [
-        ...document.querySelectorAll<HTMLElement>(
+        ...activeWorkspaceRoot().querySelectorAll<HTMLElement>(
           `[data-explanation-section="${matchedSection || 1}"] .review-file-group[data-file-path]`
         ),
       ].find((el) => el.dataset.filePath === filePath);
@@ -745,7 +756,7 @@ function ReviewPageContent({
         }
         if (!match && ++tries < 30) return;
         match ??= file;
-        document.querySelectorAll('.search-arrival').forEach((el) => el.classList.remove('search-arrival'));
+        activeWorkspaceRoot().querySelectorAll('.search-arrival').forEach((el) => el.classList.remove('search-arrival'));
         match.scrollIntoView({ block: 'center' });
         match.classList.add('search-arrival');
         match.tabIndex = -1;

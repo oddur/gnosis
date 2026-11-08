@@ -21,8 +21,8 @@ void app.whenReady().then(async () => {
     await waitForWorkbenchQueue(win.webContents);
     await js("(()=>{const snapshot=window.electronAPI.workbenchSnapshot;window.electronAPI.workbenchSnapshot=async()=>({...await snapshot(),briefingBudget:{limit:10,used:3,remaining:7,resetsAt:new Date().toISOString(),repositories:{'klang/engine':{limit:10,used:2,remaining:8,automatic:true}}}})})()");
     await js("document.body.dispatchEvent(new KeyboardEvent('keydown',{key:',',metaKey:true,bubbles:true,cancelable:true}))");
-    await wait("!!document.querySelector('[role=tab][data-state=active]')");
-    await js("[...document.querySelectorAll('[role=tab]')].find(t=>t.textContent==='Repositories').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
+    await wait("!!document.querySelector('[role=tab]:not(.workspace-tab-select)[data-state=active]')");
+    await js("[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(t=>t.textContent==='Repositories').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
     await js("[...document.querySelectorAll('button')].find(t=>t.textContent==='Add repository').click()");
     await wait("!!document.querySelector('#watched-repos')");
     await fill('#watched-repos', 'org/new');
@@ -90,7 +90,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js("document.querySelector('[aria-label=\"Copy repository: klang/engine\"]').classList.contains('repository-color-blue')"), true);
     await capture('queue-light');
     await click('[aria-label="Settings"]');
-    await js("[...document.querySelectorAll('[role=tab]')].find(t=>t.textContent==='Repositories').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
+    await js("[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(t=>t.textContent==='Repositories').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
     await click('[aria-label="Configure klang/engine"]');
     await js("document.documentElement.classList.add('dark')");
     win.setSize(640, 750);
@@ -111,7 +111,7 @@ void app.whenReady().then(async () => {
     await js("(async()=>{const p=await window.electronAPI.loadPreferences();await window.electronAPI.savePreferences({...p,watchedRepos:Array.from({length:60},(_,i)=>'team/repository-'+String(i).padStart(2,'0'))})})()");
     win.setSize(1280,850);
     await click('[aria-label="Settings"]');
-    await js("[...document.querySelectorAll('[role=tab]')].find(t=>t.textContent==='Repositories').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
+    await js("[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(t=>t.textContent==='Repositories').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
     await wait("document.querySelectorAll('.settings-repositories > .repository-settings-list .repository-settings-row').length===60");
     await capture('many-repositories-dark');
     await fill('[aria-label="Filter watched repositories"]', 'repository-5');

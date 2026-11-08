@@ -25,7 +25,7 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('[aria-label=Settings]').click()");
     await wait("!!document.querySelector('[role=dialog]')");
     await js(
-      "[...document.querySelectorAll('[role=tab]')].find(t=>t.textContent==='Appearance').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))"
+      "[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(t=>t.textContent==='Appearance').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))"
     );
     await wait("!!document.querySelector('#settings-diff-highlighter')");
   };
