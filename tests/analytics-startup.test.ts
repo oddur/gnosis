@@ -151,6 +151,7 @@ async function launch(stored: string | undefined, packaged = true, platform: Nod
     DEFAULT_CLAUDE_MODEL: 'opus',
     DEFAULT_FAST_CLAUDE_MODEL: 'sonnet',
     normalizeRepositorySettings: () => ({}),
+    normalizeLocalExplanationPreferences: () => ({}),
     normalizeBriefingLimit: () => 10,
     normalizeGitHubCacheMB: () => 512,
     normalizePrInactivityDays: () => 30,

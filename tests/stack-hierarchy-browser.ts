@@ -41,6 +41,9 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.explanation-empty')");
     assert.equal(await js('window.starts.length'), 0, 'Entering a member explanation never generates');
     await click('Generate explanation');
+    await wait("!!document.querySelector('.explanation-setup-footer')");
+    await js("[...document.querySelectorAll('.explanation-setup-dialog button')].find(b=>b.textContent.trim()==='Generate explanation').click()");
+    await wait("!document.querySelector('.explanation-setup-dialog')");
     await wait('window.starts.length===1');
     const request = await js<{ prUrl: string; standalone: boolean }>('window.starts[0]');
     assert.equal(request.prUrl, pr); assert.equal(request.standalone, true);

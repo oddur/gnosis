@@ -125,6 +125,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   workbenchFreshness: (snapshot: ReviewSnapshot): Promise<FreshnessResult> => ipcRenderer.invoke('workbench-freshness', snapshot),
   generateExplainer: (req: GenerateExplainerRequest): Promise<InteractiveExplainer> => ipcRenderer.invoke('generate-explainer', req),
   cancelExplainer: (req: GenerateExplainerRequest): Promise<void> => ipcRenderer.invoke('cancel-explainer', req),
+  getExplanationSetup: (req: GenerateReviewRequest): Promise<import('../lib/explanation-options').ExplanationSetup> => ipcRenderer.invoke('explanation-setup', req),
   startReview: (req: GenerateReviewRequest): Promise<StartReviewResult> => ipcRenderer.invoke('start-review', req),
   cancelReview: (reviewId: string): Promise<void> => ipcRenderer.invoke('cancel-review', reviewId),
   getConfig: (): Promise<{ githubToken: string | null }> => ipcRenderer.invoke('get-config'),

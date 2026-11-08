@@ -1,3 +1,5 @@
+import { explanationFile, normalizeExplanationOptions } from '../../lib/explanation-options';
+import type { GenerateReviewRequest } from '../../lib/types';
 import { initializeChecksView } from '../../lib/checks-view';
 import { automaticBriefingBlock } from '../../lib/repository-settings';
 import { setupViews, setupPreferences, type OnboardingState, type SetupDraft } from '../../lib/onboarding';
@@ -565,6 +567,14 @@ const mocks = {
     fixtureAuthenticated = true;
     sessionStorage.setItem('ftue-auth', 'true');
     return Promise.resolve();
+  },
+  getExplanationSetup: async (request:GenerateReviewRequest) => {
+    const item=items.find(item=>request.subjectId?item.subject.id===request.subjectId:item.subject.members.some(m=>m.url===request.prUrl));
+    const selected=request.standalone?item?.subject.members.filter(m=>m.url===request.prUrl):item?.subject.members;
+    const targets=selected?.length?selected:[members[0]];
+    const repository=request.prUrl.startsWith('local:')?request.prUrl.split('#')[0]:targets[0].repo;
+    const saved=request.previousReviewId?history.find(entry=>entry.id===request.previousReviewId)?.explanationOptions:undefined;
+    return {title:item?.subject.title??'Local changes',repository,restored:!!saved,options:normalizeExplanationOptions(saved??prefs.repositorySettings?.[repository]?.explanation),files:targets.flatMap(member=>['src/command-queue.ts','src/queue.test.ts','generated/schema.ts','CHANGELOG.md'].map(displayPath=>explanationFile({filename:(targets.length>1?memberPrefix(member):'')+displayPath,status:'modified',additions:4,deletions:1},displayPath,`#${member.number} ${member.title}`)))};
   },
   startReview: () => {
     fixtureStarted = true;

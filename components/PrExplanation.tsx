@@ -37,7 +37,7 @@ export function PrExplanation({
   active: boolean;
   starting: boolean;
   error: string;
-  onGenerate: () => void;
+  onGenerate: (previousReviewId?: string) => void;
   onAiSetup?: () => void;
   onGitHubAuth?: () => void;
   onShowActivity: () => void;
@@ -55,7 +55,7 @@ export function PrExplanation({
     );
   });
   const generate = () => {
-    if (!limited.length && !starting && item.review?.status !== 'generating') onGenerate();
+    if (!limited.length && !starting && item.review?.status !== 'generating') onGenerate(review?.reviewId ?? item.review?.id);
   };
   const completed =
     entries.find((e) => !e.status || e.status === 'completed') ??

@@ -32,3 +32,11 @@ No generation or network fetch just to read saved sections. Existing diff excerp
 The persistent toolbar holds Previous/Next section navigation beside the section picker and one Ask a question action. Inline explanations and Diff appearance also live here, rather than in each section. Navigation and actions share one row when space allows and wrap at narrower widths. Sections do not repeat the chat action. Navigation does not mark files Viewed or submit review decisions.
 
 Hardening: optional reading guidance belongs in the overview. No-topic results preserve the summary and offer direct retry/Changes actions. Live generation stages are scoped to the current review, coalesce bursts, pause in hidden tabs, and provide Retry progress on activity failure. Keep navigation focus with any newly opened control; closing chat must not scroll back to its trigger. Batch sticky measurements before style writes and locate sections with logarithmic geometry reads.
+
+## Explanation setup
+
+Generate first opens a compact setup dialog. Choose Concise, In Depth, Educational, or Custom, with generated files excluded and tests included by default. All styles retain structured, concise prose. Global review instructions apply alongside style and custom instructions. Remove the separate educational-mode toggle.
+
+Choose files opens a searchable, virtualized folder list with source PR groups, extension exclusions, and inclusion counts. Individual choices override rules. Excluded files are omitted from the main model inputs and explanation topics; agents can consult them as supporting context. This does not restrict file access.
+
+Remember for this repository is opt-in and saves only style, custom instructions, and rules when Generate is pressed. Local defaults use the repository path. File choices belong to the saved explanation; regeneration restores the displayed explanation's choices and applies rules to new files. Repository settings expose saved defaults. Bulk generation uses one dialog, with repository defaults or common rules and partial retries that skip successful starts. Briefings and raw Changes/Commits filters remain independent.

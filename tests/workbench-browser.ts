@@ -523,6 +523,9 @@ void app.whenReady().then(async () => {
     await js("(()=>{const tab=[...document.querySelectorAll('[role=tab]')].find(tab => tab.textContent === 'Explanation');tab.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));tab.click()})()");
     await wait("!!document.querySelector('.explanation-empty')");
     await click('Generate explanation');
+    await wait("!!document.querySelector('.explanation-setup-footer')");
+    await js("[...document.querySelectorAll('.explanation-setup-dialog button')].find(b=>b.textContent.trim()==='Generate explanation').click()");
+    await wait("!document.querySelector('.explanation-setup-dialog')");
     await wait('window.electronAPI.loadPreferences().then(p => p.firstRunSeen)');
     await click('Review queue');
     await wait("document.querySelectorAll('.queue-item').length === 7 && !document.querySelector('.getting-started')");

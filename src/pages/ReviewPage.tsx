@@ -54,7 +54,7 @@ interface Props {
   initialPreferences?: Preferences;
   onOpenChanges?: () => void;
   onBack: () => void;
-  onReReview: (prUrl: string) => void;
+  onReReview: (prUrl: string, previousReviewId?: string) => void;
   regenerating?: boolean;
   initialSlideId?: string;
   commandDestination?: { destination: Extract<SearchDestination, { kind: 'review' }>; nonce: number };
@@ -767,7 +767,7 @@ function ReviewPageContent({
             : 'Try generating again to create explanation sections.'}
         </p>
         <div className="explanation-empty-actions">
-          <Button disabled={regenerating} onClick={() => onReReview(review.prUrl)}>
+          <Button disabled={regenerating} onClick={() => onReReview(review.prUrl, review.reviewId)}>
             {regenerating ? 'Generating…' : 'Generate again'}
           </Button>
           {onOpenChanges && (
@@ -913,7 +913,7 @@ function ReviewPageContent({
       )}
       {!embedded && <PRSummaryBanner review={review} onOpenSettings={() => setSettingsOpen(true)} />}
 
-      {!embedded && freshness && <StaleBanner freshness={freshness} onReReview={() => onReReview(review.prUrl)} />}
+      {!embedded && freshness && <StaleBanner freshness={freshness} onReReview={() => onReReview(review.prUrl, review.reviewId)} />}
 
       {preferenceError && (
         <div className="changes-notice" role="alert">

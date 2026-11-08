@@ -1,3 +1,5 @@
+import { ExplanationPreferencesFields } from './ExplanationPreferencesFields';
+import { DEFAULT_EXPLANATION_PREFERENCES } from '../lib/explanation-options';
 import { useEffect, useId, useState } from 'react';
 import { LocalCloneSettings } from './LocalCloneSettings';
 import { Button } from './ui/button';
@@ -13,6 +15,7 @@ import {
   type BriefingBudget,
 } from '../lib/repository-settings';
 export const REPOSITORY_SETTING_KEYS = [
+  'explanation',
   'prInactivityDays',
   'ignoreDependabotPrs',
   'autoBriefings',
@@ -22,6 +25,7 @@ export const REPOSITORY_SETTING_KEYS = [
 ] as const;
 type Key = keyof RepositorySettings;
 const settingNames = {
+  explanation: 'explanation settings',
   prInactivityDays: 'inactivity',
   ignoreDependabotPrs: 'Dependabot',
   autoBriefings: 'automatic briefings',
@@ -92,6 +96,7 @@ export function RepositorySettingsEditor({
     </label>
   );
   const usage = budget?.repositories[repo.toLowerCase()];
+  const invalidExplanation = draft.explanation?.style === 'custom' && !draft.explanation.customInstructions.trim();
   const invalidEmoji = emojiMode && !validRepositoryIcon(`emoji:${emoji}`);
   return (
     <section
@@ -118,6 +123,27 @@ export function RepositorySettingsEditor({
                 ? 'Only settings you change here are applied. Other overrides and appearance choices stay as they are.'
                 : 'Overrides apply to this repository in every view. Settings stay on this computer.'}
             </p>
+          </div>
+          <div className="repository-explanation-settings">
+            <h4>Explanations</h4>
+            <p>Defaults for new explanations. PR-specific file choices are not saved here.</p>
+            <label className="repository-inherit">
+              <input
+                type="checkbox"
+                checked={draft.explanation === undefined}
+                onChange={(event) =>
+                  patch({ explanation: event.target.checked ? undefined : { ...DEFAULT_EXPLANATION_PREFERENCES } })
+                }
+              />
+              Use default explanation settings
+            </label>
+            {draft.explanation && (
+              <ExplanationPreferencesFields
+                value={draft.explanation}
+                extensions
+                onChange={(explanation) => patch({ explanation })}
+              />
+            )}
           </div>
           <div className="repository-setting-row">
             <div>
@@ -279,7 +305,12 @@ export function RepositorySettingsEditor({
           <Button type="button" variant="outline" size="sm" disabled={saving} onClick={onCancel}>
             Cancel
           </Button>
-          <Button type="button" size="sm" disabled={saving || invalidEmoji} onClick={() => onApply(draft, changed)}>
+          <Button
+            type="button"
+            size="sm"
+            disabled={saving || invalidEmoji || invalidExplanation}
+            onClick={() => onApply(draft, changed)}
+          >
             {saving ? 'Saving…' : action}
           </Button>
         </div>

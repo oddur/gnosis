@@ -1,3 +1,4 @@
+import { normalizeExplanationPreferences, type ExplanationPreferences } from './explanation-options';
 import lucideIconNames from './lucide-icon-names.json';
 import type { Preferences } from './types';
 import type { ReviewSubject } from './workbench';
@@ -16,6 +17,7 @@ export function repositoryLucideName(icon: string): string | undefined {
 }
 export const REPOSITORY_COLORS = ['blue', 'purple', 'cyan', 'teal', 'green', 'amber', 'orange', 'rose'] as const;
 export interface RepositorySettings {
+  explanation?: ExplanationPreferences;
   prInactivityDays?: number;
   ignoreDependabotPrs?: boolean;
   autoBriefings?: boolean;
@@ -65,6 +67,7 @@ export function normalizeRepositorySettings(input: unknown): RepositorySettingsM
       if (typeof v.autoBriefings === 'boolean') settings.autoBriefings = v.autoBriefings;
       if (typeof v.briefingDailyLimit === 'number' && normalizeBriefingLimit(v.briefingDailyLimit, -1) !== -1)
         settings.briefingDailyLimit = v.briefingDailyLimit;
+      if (v.explanation && typeof v.explanation === 'object') settings.explanation = normalizeExplanationPreferences(v.explanation);
       if (typeof v.icon === 'string' && validRepositoryIcon(v.icon)) settings.icon = v.icon;
       if (typeof v.color === 'string' && (REPOSITORY_COLORS as readonly string[]).includes(v.color))
         settings.color = v.color as RepositorySettings['color'];

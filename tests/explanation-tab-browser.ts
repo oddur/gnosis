@@ -454,12 +454,18 @@ void app.whenReady().then(async () => {
       'Drafts still belong to the displayed revision'
     );
     await click('Update explanation');
+    await wait("!!document.querySelector('.explanation-setup-footer')");
+    await js("[...document.querySelectorAll('.explanation-setup-dialog button')].find(b=>b.textContent.trim()==='Generate explanation').click()");
+    await wait("!document.querySelector('.explanation-setup-dialog')");
     await wait("document.querySelector('.explanation-status')?.textContent.includes('Generating explanation')");
     assert.equal(await js("!!document.querySelector('.review-narrative')"), true);
     await js("window.reviewHistory[0].status='failed'");
     await wait("document.querySelector('.explanation-status')?.textContent.includes('could not be completed')");
     await capture('failed-update');
     await click('Retry generation');
+    await wait("!!document.querySelector('.explanation-setup-footer')");
+    await js("[...document.querySelectorAll('.explanation-setup-dialog button')].find(b=>b.textContent.trim()==='Generate explanation').click()");
+    await wait("!document.querySelector('.explanation-setup-dialog')");
     await wait("document.querySelector('.explanation-status')?.textContent.includes('Generating explanation')");
     await js(
       `window.nextReview=structuredClone(window.savedReview);window.nextReview.reviewId='updated-review';window.nextReview.summary='Updated explanation includes cancellation changes.';window.nextReview.snapshot.subject=window.queue.items.find(i=>i.subject.kind==='stack').subject;window.nextReview.snapshot.fingerprint=JSON.stringify({members:window.nextReview.snapshot.subject.members.map(m=>[m.url,m.baseRepo,m.baseBranch,m.baseSha,m.headRepo,m.headBranch,m.headSha,m.title,m.description,m.state,m.merged]),edges:window.nextReview.snapshot.subject.edges});window.reviewHistory[0]={...window.reviewHistory[0],status:'completed',snapshot:window.nextReview.snapshot};window.electronAPI.loadReview=async id=>{window.loads++;return id==='updated-review'?window.nextReview:window.savedReview};void 0;`

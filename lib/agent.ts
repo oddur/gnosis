@@ -75,7 +75,7 @@ You are given:
 - <file_contents_before>: full file contents at base ref (before the PR)
 - <file_contents_after>: full file contents at head ref (after the PR)
 - <neighbor_files>: files imported by the changed files
-- <excluded_files> (if present): files that were changed but excluded from the diff because they are generated or low-value (e.g. lock files, minified assets). Mention these in the relevant slide's narrative — for example, if a lock file was excluded, note it alongside the dependency manifest changes. Include excluded files in the "affectedFiles" array of the relevant slide. Do NOT create a separate slide just for excluded files.
+- <excluded_files> (if present): changed files outside the requested explanation scope. Their diffs and contents are omitted. Do not create topics, code excerpts, review suggestions, or affectedFiles entries for them. You may consult an excluded file only as supporting context when necessary to explain included code. Do not add excluded files merely to make the explanation exhaustive.
 
 Use file_contents_before and file_contents_after to understand the full shape of each changed file, not just the lines in the diff. Reference surrounding functions, types, and patterns when writing narratives to give the reviewer genuine codebase context.
 
