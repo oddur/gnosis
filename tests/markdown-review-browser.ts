@@ -203,7 +203,7 @@ void app.whenReady().then(async () => {
     );
     await js("window.dispatchEvent(new CustomEvent('fixture-review-navigate',{detail:'workbench-review'}))");
     await wait("!!document.querySelector('.pr-overview-tabs') || !!document.querySelector('.review-workspace')");
-    await js("window.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}))");
+    await js("window.selectOption('[aria-label=\"Explanation section\"]', '1')");
     await wait("!!document.querySelector('.review-file-group .markdown-review ins')");
     assert.ok(
       await js("document.querySelector('.review-file-group').textContent.includes('four retries')"),
@@ -247,17 +247,17 @@ void app.whenReady().then(async () => {
     assert.ok(await js("!document.querySelector('.review-file-group del')"));
     win.setSize(900, 760);
     await js("document.documentElement.classList.add('dark')");
-    // The Code tab appears only after the responsive layout processes the resize.
-    await wait("[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='Code'&&b.checkVisibility({visibilityProperty:true}))");
-    await click('Code');
+    await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    assert.ok(await js("!!document.querySelector('.explanation-section-code .markdown-review')"), 'The preview stays in the reading document at laptop widths');
+    assert.equal(await js('document.documentElement.scrollWidth > innerWidth'), false);
     await capture('explanation-laptop');
     await js("document.querySelector('.review-file-group .markdown-review h2').scrollIntoView({block:'center'})");
     await capture('explanation-laptop-content');
     await js("document.querySelector('.review-file-viewed input').click()");
     await wait("document.querySelector('.review-file-content')?.hidden === true");
     assert.ok(
-      await js("!!document.querySelector('.review-files-complete')"),
-      'Viewed collapse retains next-topic action'
+      await js("!!document.querySelector('.explanation-viewed-code') && !!document.querySelector('.explanation-next-section')"),
+      'Viewed collapse retains a clear status and persistent section navigation'
     );
     assert.ok(renders > 0, 'Comparison runs through the real backend worker');
     console.log(
