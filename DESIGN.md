@@ -150,20 +150,20 @@ Use 16px full-contrast prose for narrative context and review guidance. Lists ha
 
 ## Layout
 
-Use a viewport workspace with separately scrolling content panes. Reserve 34px at the bottom for Activity.
+Use a viewport workspace with scrolling appropriate to each surface. Explanation uses one scrolling document; Changes, Feedback, and other inspection workspaces retain their own pane layouts. Reserve 34px at the bottom for Activity.
 The shared header has a minimum height of 56px with 10px vertical and 20px horizontal padding.
 
 | Surface | Wide layout | Narrow behavior |
 | --- | --- | --- |
 | Queue sidebar | 232px; collapsible to a 52px icon rail | At ≤850px, use the rail with an expandable navigation popover |
 | Briefing pane | 360px, maximum 44% | 320px at ≤1100px; maximum 50% at ≤850px; replaces the queue at ≤620px |
-| Review panes | Resizable 40/60 split, minimums 25/30 | Explicit pane tabs at ≤1000px |
+| Explanation reader | One scrolling document; each section pairs prose and code in 2:3 columns with a 32px gap | At ≤850px of reader width, including beside chat, stack prose then code with a 24px gap; no pane tabs |
 | Overview | Maximum 1100px; 1.4fr/1fr columns; 32px gap | One column at ≤850px |
 | Settings | Maximum 672px wide and 80dvh high; internal scrolling | Tabs form two columns at ≤620px |
 | Address Feedback | Independently scrolling conversation list (32%, minimum 260px) and detail pane | At ≤760px of available content width, show list or detail with a Conversations return action |
 | Checks graph | Canvas with a 260px workflow sidebar; selected job opens the existing detail pane beside it | At ≤1000px viewport width, workflows use an overlay drawer; at ≤1050px workspace width, details overlay the right side, covering the canvas at ≤700px |
 
-Review prose has 20px vertical and 22px horizontal padding; code panes use 16px.
+Explanation sections have 28px vertical and 24px horizontal padding, reduced to 24px and 20px in the stacked layout. Other review prose retains 20px vertical and 22px horizontal padding; code panes use 16px.
 Queue rows use 13px vertical padding, 14px on the left, and 20px on the right.
 The spacing tokens cover common intervals. Existing optical adjustments mean this is not a strict grid.
 
@@ -322,11 +322,25 @@ Compact the shared header in Feedback while keeping PR actions visible. Keep Rep
 
 **Needs my response** is a first-class queue destination and command-palette action for authored PRs with external unresolved threads or changes requested. Keep stacks grouped; separate reason links open the source PR’s matching review or unresolved thread. Preserve cached matches while shared sync is paused, name the affected PRs, show the retry time and offer recovery when eligible. Empty states distinguish confirmed completion from incomplete feedback. Thread completion never implies approval; offer an explicit review request when a changes-requested decision remains.
 
+### Explanation reader
+
+Generate opens a compact explanation setup dialog before starting the model. Styles and independent generated/test exclusions are visible first; file and folder choices, search, and hidden-extension tags are disclosed on demand. Explicit file choices override rules. Remember repository defaults only on explicit opt-in at generation; regeneration restores choices from the displayed explanation. Keep setup, loading, and error states keyboard accessible with a stable footer and a scrollable body. Bulk starts share one setup dialog and retry only unfinished targets.
+
+While an explanation is being generated, use the shared animated loading state in an empty pane. Show its live Activity stage and actual completed-topic count. Regeneration keeps the saved explanation visible with a compact status above it. Coalesce activity notifications into one in-flight read plus a catch-up read, suspend reads in hidden tabs, and recover with Retry progress when local activity is unavailable. A generated result with no sections retains its overview and offers Generate again and Changes.
+
+[ExplanationReader](components/ExplanationReader.tsx) presents the overview, paired sections, and ending in one vertical scroll surface. Keep the compact section picker, Previous/Next section controls, shared Viewed count, and review actions above it. Inline explanations, Diff appearance, and Ask a question are global toolbar controls; do not repeat them in each section. Keep navigation and actions on one row when space allows, wrapping only in narrower containers. Next section stops at the last section and never changes Viewed state or submits a review. Explicit section jumps scroll smoothly unless reduced motion is enabled; restoring a saved position remains immediate. Code is directly available beside its explanation, without an Inspect code gate. Each section owns its prose and evidence; file and line links target that section even when a path recurs elsewhere.
+
+Within a wide section, the shorter column remains visible while its companion continues scrolling. Sticky positioning ends at the section boundary. A column taller than the reader uses a negative top offset so its lower content remains reachable. Disable column stickiness when the reader stacks prose above code. Use the reader's available width for this transition, including when chat is open.
+
+Retain one saved reading position per explanation and revision. Section navigation moves the complete pair. Code mounts before entering view and remains mounted to preserve draft comments and context expansion. Track the current section with logarithmic layout reads and batch sticky-column measurements before style writes. Explicit navigation cannot steal focus from a newly opened control. Optional How to use this explanation guidance lives in the overview, not in a blocking tour. Viewed progress is shared with the existing review workspace and is independent of reading position; neither reading nor marking Viewed submits a review. Keep source PR attribution distinct from the submission destination. The ending identifies files outside the explanation and provides explicit Changes and review actions.
+
+Draft comments within the Explanation document use opaque `card` surfaces and `card-foreground` text with existing borders, preserving contrast in both themes. This treatment is scoped to the reader and adds no palette tokens. Chat retains the shared dock, and an interactive explanation temporarily occupies its section's code column while the underlying code remains mounted.
+
 ### Explanation diagrams
 
-D2 diagrams use a fitted, bordered preview within the explanation pane. Named navigation and the active explanation support manual inspection. The existing dialog expands the diagram into the shared pan-and-zoom viewer. Its active explanation sits beside the canvas and moves below it at narrow widths. Additional notes start collapsed. Focus changes highlight exact entities on a stable board while preserving layout and zoom. Explicit walkthroughs offer optional auto-play. Maps, comparisons, and older diagrams without a declared kind use named views without auto-play. Surrounding controls, surfaces, and text use the workbench system. SVG typography and diagram colors stay scoped to the diagram. Reduced motion removes animation and transitions. Source disclosure and a local retry keep errors recoverable. Saved Mermaid diagrams retain their renderer and share the inspection viewer. See [D2 explanation behavior](docs/d2-explanations.md).
+D2 diagrams use a fitted, bordered preview within their explanation section. Named navigation and the active explanation support manual inspection. The existing dialog expands the diagram into the shared pan-and-zoom viewer. Its active explanation sits beside the canvas and moves below it at narrow widths. Additional notes start collapsed. Focus changes highlight exact entities on a stable board while preserving layout and zoom. Explicit walkthroughs offer optional auto-play. Maps, comparisons, and older diagrams without a declared kind use named views without auto-play. Surrounding controls, surfaces, and text use the workbench system. SVG typography and diagram colors stay scoped to the diagram. Reduced motion removes animation and transitions. Source disclosure and a local retry keep errors recoverable. Saved Mermaid diagrams retain their renderer and share the inspection viewer. See [D2 explanation behavior](docs/d2-explanations.md).
 
-Implementation references: [global styles](src/globals.css), [review panes](components/SlideView.tsx), and [code highlighting](lib/highlight.ts).
+Implementation references: [global styles](src/globals.css), [Explanation reader](components/ExplanationReader.tsx), [shared narrative and code](components/SlideView.tsx), and [code highlighting](lib/highlight.ts).
 Sidecar snippets illustrate the primitives without a React or Tailwind runtime; application components remain the implementation source.
 
 ## Do's and Don'ts

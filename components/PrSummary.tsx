@@ -118,7 +118,7 @@ function PrSummaryContent({
   onScopeChange?: (id: string) => void;
   onRenameStack?: (name: string) => Promise<void>;
   matchingUrls?: string[];
-  onGenerate: () => void;
+  onGenerate: (previousReviewId?: string) => void;
   generationActions?: PrGenerationActionsFor;
   onReview?: (member: ReviewMember) => void;
   reviewRequest?: PrReviewRequest;

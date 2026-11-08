@@ -33,8 +33,8 @@ void app.whenReady().then(async () => {
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
     await click('Open AI explanation');
-    await wait("!!document.querySelector('.workbench-overview')");
-    await click('Continue review');
+    await wait("!!document.querySelector('.explanation-reader')");
+    await js(`window.selectOption('[aria-label="Explanation section"]', '1')`);
     await wait(
       "document.querySelectorAll('.review-image-stage img').length===7 && [...document.querySelectorAll('.review-image-stage img')].every(i=>i.naturalWidth>0)"
     );
@@ -68,7 +68,6 @@ void app.whenReady().then(async () => {
     for (const width of [1280, 900]) {
       win.setSize(width, 800);
       await new Promise((r) => setTimeout(r, 250));
-      if (width < 1000) await click('Code');
       const g = await js<{ aligned: boolean; separated: boolean; width: number; overflow: boolean }>(geometry);
       assert.ok(g.aligned && g.separated && g.width > 80 && !g.overflow, JSON.stringify(g));
     }

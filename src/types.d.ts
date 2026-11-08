@@ -89,6 +89,7 @@ declare global {
       workbenchFreshness: (snapshot: ReviewSnapshot) => Promise<FreshnessResult>;
       generateExplainer: (req: GenerateExplainerRequest) => Promise<InteractiveExplainer>;
       cancelExplainer: (req: GenerateExplainerRequest) => Promise<void>;
+      getExplanationSetup: (req: GenerateReviewRequest) => Promise<import('../lib/explanation-options').ExplanationSetup>;
       startReview: (req: GenerateReviewRequest) => Promise<StartReviewResult>;
       cancelReview: (reviewId: string) => Promise<void>;
       getConfig: () => Promise<{ githubToken: string | null }>;

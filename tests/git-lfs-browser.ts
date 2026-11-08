@@ -125,7 +125,7 @@ void app.whenReady().then(async () => {
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
     await click('Open AI explanation');
-    await click('Continue review');
+    await js(`window.selectOption('[aria-label="Explanation section"]', '1')`);
     await wait("document.body.textContent.includes('Git LFS resource')");
     assert.equal(await js('window.imageDownloads'), 0);
     await js("document.querySelector('.review-image-diff').scrollIntoView({block:'start'})");
@@ -134,14 +134,11 @@ void app.whenReady().then(async () => {
     await wait("document.body.textContent.includes('Download interrupted')");
     await js("document.documentElement.classList.add('dark')");
     win.setContentSize(640, 800);
-    await wait(
-      "[...document.querySelectorAll('button')].some(b=>b.getBoundingClientRect().width && b.textContent.trim()==='Code')"
-    );
-    await click('Code');
+    await wait('innerWidth===640');
     await js("document.querySelector('.review-image-diff').scrollIntoView({block:'start'})");
     await capture('explanation-narrow-dark');
     assert.equal(await js('document.documentElement.scrollWidth>innerWidth'), false);
-    // The responsive pane remount can re-read the pointer and clear the transient error.
+    // The same in-document preview keeps its download state across responsive changes.
     await click(
       (await js<boolean>(
         "[...document.querySelectorAll('button')].some(b=>b.getBoundingClientRect().width && b.textContent.trim()==='Retry download')"
@@ -174,7 +171,7 @@ void app.whenReady().then(async () => {
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
     await click('Open AI explanation');
-    await click('Continue review');
+    await js(`window.selectOption('[aria-label="Explanation section"]', '1')`);
     await wait("document.body.textContent.includes('Git LFS resource')");
     assert.equal(await js('window.textDownloads'), 0);
     await click('Download');

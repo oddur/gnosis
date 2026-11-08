@@ -1,3 +1,16 @@
+import {
+  explanationFile,
+  explanationExclusion,
+  explanationInstructions,
+  normalizeLocalExplanationPreferences,
+  normalizeExplanationOptions,
+  normalizeExplanationPreferences,
+  type ExplanationOptions,
+  type ExplanationSetup,
+} from '../lib/explanation-options';
+
+import { fileOverrideKey } from '../lib/file-kinds';
+import { memberPrefix } from '../lib/workbench';
 import { prepareReviewSource } from './review-start-source';
 import { createWorkflowGraphPreloader } from './workflow-graph-preloader';
 import { readWorkflowRuns, readWorkflowGraph } from './workflow-graph-service';
@@ -110,7 +123,7 @@ import { setBinaryOverride, detectBinaryPath, checkCliInstalled } from '../lib/p
 import { getProvider } from '../lib/provider';
 import { buildSlideChatSystemPrompt, buildSlideChatUserMessage } from '../lib/chat-agent';
 import { buildIndexedHunks, expandFullDiff, formatHunkIndexForPrompt, sortDiffHunks } from '../lib/diff-parse';
-import { classifyFiles, filterDiff, buildExcludedFilesSummary } from '../lib/file-filter';
+import { filterDiff } from '../lib/file-filter';
 import { writeMcpConfig, cleanupMcpConfig } from '../lib/mcp-config';
 import { initialize as initAptabase, trackEvent } from '@aptabase/electron/main';
 import { createTray, updateTrayMenu, destroyTray, setStatusFetcher } from './tray';
@@ -470,10 +483,11 @@ async function triggerProactiveReview(
       effort: useOverrides ? prefs.proactiveEffort : prefs.effort,
       smartImports: prefs.smartImports,
       reviewSuggestions: prefs.reviewSuggestions,
-      educationMode: prefs.educationMode,
+      explanationOptions: explanationDefaults(source),
       claudeContext: prefs.claudeContext,
     };
 
+    updateHistoryEntry(reviewId, {explanationOptions:request.explanationOptions});
     await runBackgroundGeneration(reviewId, request, source, prData, abortController.signal);
 
     broadcastToAllWindows('new-review-in-history');
@@ -1049,6 +1063,7 @@ function loadPreferences(): Preferences {
     // Preserve the existing choice about automatic generation during migration.
     if (!('autoBriefings' in stored)) stored.autoBriefings = stored.proactiveMode === true;
     stored.repositorySettings = normalizeRepositorySettings(stored.repositorySettings);
+    stored.localExplanationPreferences = normalizeLocalExplanationPreferences(stored.localExplanationPreferences);
     stored.repositoryBriefingDailyLimit = normalizeBriefingLimit(stored.repositoryBriefingDailyLimit);
     stored.githubCacheSizeMB = normalizeGitHubCacheMB(stored.githubCacheSizeMB);
     stored.prInactivityDays = normalizePrInactivityDays(stored.prInactivityDays);
@@ -1070,7 +1085,7 @@ function loadPreferences(): Preferences {
 function savePreferences(prefs: Preferences): void {
   const file = getPreferencesPath(), temporary = file + '.tmp';
   try {
-  fs.writeFileSync(temporary, JSON.stringify({ ...prefs, repositorySettings: normalizeRepositorySettings(prefs.repositorySettings), repositoryBriefingDailyLimit: normalizeBriefingLimit(prefs.repositoryBriefingDailyLimit), githubCacheSizeMB: normalizeGitHubCacheMB(prefs.githubCacheSizeMB), prInactivityDays: normalizePrInactivityDays(prefs.prInactivityDays) }, null, 2));
+  fs.writeFileSync(temporary, JSON.stringify({ ...prefs, localExplanationPreferences: normalizeLocalExplanationPreferences(prefs.localExplanationPreferences), repositorySettings: normalizeRepositorySettings(prefs.repositorySettings), repositoryBriefingDailyLimit: normalizeBriefingLimit(prefs.repositoryBriefingDailyLimit), githubCacheSizeMB: normalizeGitHubCacheMB(prefs.githubCacheSizeMB), prInactivityDays: normalizePrInactivityDays(prefs.prInactivityDays) }, null, 2));
     fs.renameSync(temporary, file);
   } finally { fs.rmSync(temporary, { force: true }); }
 }
@@ -1797,6 +1812,83 @@ function resolveDiffHunks(
     });
 }
 
+function explanationRepository(source: DiffSource): string {
+  if (source.kind === 'local') return `local:${source.cwd ?? source.key.split('#')[0].slice(6)}`;
+  return new URL(source.key).pathname.split('/').slice(1, 3).join('/').toLowerCase();
+}
+function explanationDefaults(source: DiffSource): ExplanationOptions {
+  const prefs = loadPreferences(),
+    repo = explanationRepository(source);
+  return normalizeExplanationOptions(
+    repo.startsWith('local:')
+      ? prefs.localExplanationPreferences?.[repo]
+      : prefs.repositorySettings?.[repo]?.explanation,
+  );
+}
+async function explanationFiles(source: DiffSource, files: ChangedFile[], snapshot?: ReviewSnapshot) {
+  const overrides = rawFileFilters.read().overrides;
+  const members = snapshot?.subject.members ?? [];
+  const sources =
+    source.kind === 'local'
+      ? []
+      : members.length
+        ? members.map((m) => ({
+            url: m.url,
+            repo: m.repo,
+            prefix: members.length > 1 ? memberPrefix(m) : '',
+            revision: m,
+          }))
+        : [{ url: source.key, repo: explanationRepository(source), prefix: '', revision: undefined }];
+  const classifications = await Promise.all(
+    sources.map(async (entry) => {
+      const client = changesClient();
+      const manifest = await prChanges.manifest(client, entry.url, false, { revision: entry.revision });
+      return { ...entry, kinds: await fileClassifications.read(client, manifest) };
+    }),
+  );
+  return files.map((file) => {
+    const origin = classifications.find((entry) => file.filename.startsWith(entry.prefix));
+    const displayPath = origin ? file.filename.slice(origin.prefix.length) : file.filename;
+    const repo = origin?.repo ?? explanationRepository(source);
+    const member = members.find((m) => m.url === origin?.url);
+    const group = member ? `#${member.number} ${member.title}` : repo;
+    return explanationFile(
+      file,
+      displayPath,
+      group,
+      origin?.kinds[displayPath],
+      overrides[fileOverrideKey(repo, displayPath)],
+    );
+  });
+}
+handleInteractive('explanation-setup', async (_event, request: GenerateReviewRequest): Promise<ExplanationSetup> => {
+  const token = getResolvedToken();
+  const { source, prData, reviewSnapshot } = await prepareReviewSource(request, {
+    token,
+    workbench,
+    checkAccess: (url) => checkGitHubPrAccess(getGitHubClient(token), url),
+  });
+  const previous =
+    request.previousReviewId &&
+    readReviewsIndex().find(
+      (entry) =>
+        entry.id === request.previousReviewId &&
+        entry.prUrl === request.prUrl &&
+        (!entry.snapshot || entry.snapshot.subject.id === reviewSnapshot?.subject.id),
+    );
+  const options =
+    previous && previous.explanationOptions
+      ? normalizeExplanationOptions(previous.explanationOptions)
+      : explanationDefaults(source);
+  return {
+    title: prData.title,
+    repository: explanationRepository(source),
+    files: await explanationFiles(source, await source.getChangedFiles(), reviewSnapshot),
+    options,
+    restored: !!(previous && previous.explanationOptions),
+  };
+});
+
 async function runBackgroundGeneration(
   reviewId: string,
   request: GenerateReviewRequest,
@@ -1805,6 +1897,9 @@ async function runBackgroundGeneration(
   signal: AbortSignal,
   reviewSnapshot?: ReviewSnapshot
 ): Promise<void> {
+  const options = request.explanationOptions ?? explanationDefaults(source);
+  const instructions = explanationInstructions(options, request.instructions);
+  const educationMode = options.style === 'educational';
   const generationAccount = cachedLogin;
   activities.start({id:`review:${reviewId}`,kind:'review',title:prData.title,detail:'Preparing review',model:request.model,reviewId}, {
     cancel:()=>activeGenerations.get(reviewId)?.abortController?.abort('User cancelled'),
@@ -1814,13 +1909,11 @@ async function runBackgroundGeneration(
     prUrl,
     provider,
     model,
-    instructions,
     thinking,
     effort,
     smartImports,
     reviewSuggestions,
     webResearch,
-    educationMode,
     claudeContext,
   } = request;
 
@@ -1847,28 +1940,20 @@ async function runBackgroundGeneration(
     const allChangedFiles = await source.getChangedFiles();
     const diff = await source.getDiff(allChangedFiles);
 
-    // Apply user exclusions before any other processing
-    const userExcludedSet = new Set(request.excludedFiles ?? []);
-    const changedFiles =
-      userExcludedSet.size > 0 ? allChangedFiles.filter((f) => !userExcludedSet.has(f.filename)) : allChangedFiles;
-    const userFilteredDiff = userExcludedSet.size > 0 ? filterDiff(diff, userExcludedSet) : diff;
-
-    if (changedFiles.length === 0) {
-      throw new Error('PR has no changed files');
-    }
-
-    // Filter out generated/lock files early to avoid token budget blowup
-    const { normalFiles, generatedFiles } = classifyFiles(changedFiles);
-    const generatedFilenames = new Set(generatedFiles.map((f) => f.filename));
-    const filteredDiff = filterDiff(userFilteredDiff, generatedFilenames);
-    const excludedFilesSummary = buildExcludedFilesSummary(generatedFiles);
-
-    if (generatedFiles.length > 0) {
-      console.log(
-        `[main] Filtered ${generatedFiles.length} generated file(s):`,
-        generatedFiles.map((f) => f.filename)
-      );
-    }
+    const inventory = await explanationFiles(source, allChangedFiles, reviewSnapshot);
+    const legacyExcluded = new Set(request.excludedFiles ?? []);
+    const excluded = inventory.filter((file) => legacyExcluded.has(file.path) || explanationExclusion(file, options));
+    const excludedPaths = new Set(excluded.map((file) => file.path));
+    const normalFiles = allChangedFiles.filter((file) => !excludedPaths.has(file.filename));
+    const changedFiles = normalFiles;
+    if (!normalFiles.length) throw new Error('No files are included. Change the explanation file filters and try again.');
+    const filteredDiff = filterDiff(diff, excludedPaths);
+    const excludedFilesSummary = excluded.length
+      ? `<excluded_files count="${excluded.length}">
+    These files are outside the requested review scope. Do not create topics, code excerpts, or review suggestions about them. Their diffs and contents were omitted. Consult them only as supporting context when necessary to explain included code.
+    ${excluded.map((file) => `- ${file.path} (${explanationExclusion(file, options) ?? 'Excluded by you'})`).join('\n')}
+    </excluded_files>`
+      : '';
 
     const textFiles = normalFiles.filter(
       (f) => !imageMimeType(f.filename) || imageMimeType(f.filename) === 'image/svg+xml'
@@ -1965,7 +2050,7 @@ async function runBackgroundGeneration(
       // ── Two-phase: planner → parallel writers ──
       reportReviewPhase( { reviewId, phase: 'Planning review structure' });
 
-      const plannerContext = buildPlannerContext(prData, changedFiles, hunkIndex, excludedFilesSummary, projectClaudeContext, indexedHunks);
+      const plannerContext = buildPlannerContext(prData, changedFiles, hunkIndex, excludedFilesSummary, projectClaudeContext, indexedHunks) + `\n\n<explanation_instructions>\n${instructions}\n</explanation_instructions>`;
       checkpoint = await openReviewCheckpoint(path.join(getReviewsDir(), 'unfinished'), {
         version: 9, account: generationAccount, provider, model, instructions, educationMode, reviewSuggestions,
         thinking, effort, scope: request.prUrl, snapshot: reviewSnapshot?.fingerprint, baseSha: prData.baseSha, headSha: prData.headSha,
@@ -2241,10 +2326,11 @@ async function runBackgroundGeneration(
       summary: aiResult?.summary || plan?.summary || '',
       riskLevel: aiResult?.riskLevel || plan?.riskLevel || 'low',
       riskRationale: aiResult?.riskRationale || plan?.riskRationale || '',
-      totalFilesChanged: changedFiles.length,
-      totalLinesChanged: changedFiles.reduce((sum, f) => sum + f.additions + f.deletions, 0),
+      totalFilesChanged: allChangedFiles.length,
+      totalLinesChanged: allChangedFiles.reduce((sum, f) => sum + f.additions + f.deletions, 0),
       neighborFileCount: Object.keys(neighborFiles).length,
-      excludedFiles: generatedFiles.length > 0 ? generatedFiles.map((f) => f.filename) : undefined,
+      excludedFiles: [...excludedPaths],
+      explanationOptions: options,
       generationDurationMs,
       slides: resolvedSlides,
       headSha: prData.headSha,
@@ -2282,6 +2368,7 @@ async function runBackgroundGeneration(
     fs.writeFileSync(path.join(getReviewsDir(), `${reviewId}.json`), JSON.stringify(reviewGuide));
     updateHistoryEntry(reviewId, {
       status: 'completed',
+      explanationOptions: options,
       riskLevel: reviewGuide.riskLevel,
       generationDurationMs,
       summary: reviewGuide.summary,
@@ -2413,6 +2500,7 @@ ipcMain.handle('workbench-freshness', async (_event, old: ReviewSnapshot) => {
 });
 
 async function startReview(request: GenerateReviewRequest): Promise<StartReviewResult> {
+  const rememberOptions = request.rememberExplanationOptions === true;
   const token = getResolvedToken();
   workbench.interrupt();
   const { source, prData, reviewSnapshot } = await prepareReviewSource(request, {
@@ -2420,6 +2508,30 @@ async function startReview(request: GenerateReviewRequest): Promise<StartReviewR
     workbench,
     checkAccess: (url) => checkGitHubPrAccess(getGitHubClient(token), url),
   });
+
+  const options = request.explanationOptions
+    ? normalizeExplanationOptions(request.explanationOptions)
+    : explanationDefaults(source);
+  if (options.style === 'custom' && !options.customInstructions.trim())
+    throw new Error('Add instructions for the Custom explanation style.');
+  request = { ...request, explanationOptions: options, rememberExplanationOptions: false };
+  const inventory = await explanationFiles(source, await source.getChangedFiles(), reviewSnapshot);
+  if (!inventory.some((file) => !explanationExclusion(file, options)))
+    throw new Error('Include at least one file before generating an explanation.');
+  if (rememberOptions) {
+    const prefs = loadPreferences(),
+      repo = explanationRepository(source),
+      value = normalizeExplanationPreferences(options);
+    if (repo.startsWith('local:'))
+      prefs.localExplanationPreferences = { ...prefs.localExplanationPreferences, [repo]: value };
+    else
+      prefs.repositorySettings = {
+        ...prefs.repositorySettings,
+        [repo]: { ...prefs.repositorySettings?.[repo], explanation: value },
+      };
+    savePreferences(prefs);
+    broadcastToAllWindows('preferences-changed', prefs);
+  }
 
   const reviewId = crypto.randomUUID();
   const prState = prData.merged ? 'merged' : prData.state === 'open' ? 'open' : 'closed';
@@ -2435,7 +2547,7 @@ async function startReview(request: GenerateReviewRequest): Promise<StartReviewR
     prData.headSha
   );
 
-  if (reviewSnapshot) updateHistoryEntry(reviewId, {snapshot:reviewSnapshot});
+  updateHistoryEntry(reviewId, {snapshot:reviewSnapshot, explanationOptions:options});
 
   // Cancel any in-flight generation for this PR
   cancelExistingGenerationForPr(request.prUrl);

@@ -53,7 +53,7 @@ const generatedNames = new Set([
   'packages.lock.json',
   'pubspec.lock',
 ]);
-/** A conservative raw-diff classifier. Deliberately separate from AI input filtering. */
+/** Shared conservative path signals; callers choose their own filtering defaults. */
 export function pathFileKinds(path: string): FileKinds {
   const parts = path.split('/'),
     name = parts.at(-1) ?? '',

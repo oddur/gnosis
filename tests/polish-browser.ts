@@ -22,7 +22,7 @@ void app.whenReady().then(async () => {
   };
   const click = (text: string) =>
     js(
-      `(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(text)});if(!b)throw Error('Missing button');b.click()})()`
+      `(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(text)});if(!b)throw Error('Missing button');b.scrollIntoView({block:'nearest'});b.click()})()`
     );
   const key = async (value: string) => {
     win.webContents.sendInputEvent({ type: 'keyDown', keyCode: value });
@@ -57,8 +57,8 @@ void app.whenReady().then(async () => {
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
     await click('Open AI explanation');
-    await wait("!!document.querySelector('.workbench-overview')");
-    await click('Continue review');
+    await wait("!!document.querySelector('.explanation-reader')");
+    await js(`window.selectOption('[aria-label="Explanation section"]', '1')`);
     await wait("!!document.querySelector('.review-narrative')");
     assert.ok(await js(`Array.from(document.querySelectorAll('.file-path-link')).every(el=>el.getBoundingClientRect().height>=24)`), 'File links have a 24px pointer target');
     const topic = await js("document.querySelector('.review-narrative h1,.review-narrative h2')?.textContent");
@@ -140,6 +140,7 @@ void app.whenReady().then(async () => {
     }
     await key('Escape');
     await wait("!document.querySelector('[role=dialog]')");
+    await wait("document.querySelector('.review-code').getBoundingClientRect().width>0");
     await click('Diff appearance');
     await wait("!!document.querySelector('[role=dialog]')");
     await capture('appearance-zoom');

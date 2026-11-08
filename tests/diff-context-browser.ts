@@ -70,8 +70,8 @@ void app.whenReady().then(async () => {
     await click('Review queue');
     await js("document.querySelector('.queue-item:has(.queue-disclosure) .queue-row-main').click()");
     await click('Open AI explanation');
-    await wait("!!document.querySelector('.workbench-overview')");
-    await click('Continue review');
+    await wait("!!document.querySelector('.explanation-reader')");
+    await js(`window.selectOption('[aria-label="Explanation section"]', '1')`);
     await click('Diff appearance');
     assert.equal(await js('document.querySelector(\'[aria-label="Show surrounding lines"]\').value'), '5');
     const dir = path.resolve('.impeccable/review/diff-context');

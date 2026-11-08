@@ -44,8 +44,10 @@ Short briefings run automatically within configurable usage limits.
 Detailed walkthroughs and interactive explorations run on demand.
 GitHub comments and approvals remain attached to individual PRs.
 
-Explanation and code occupy the two main review panes.
-Navigation can collapse. Chat and diagrams temporarily occupy a pane.
+Explanation is one scrolling document that pairs each section with its source code.
+Wide readers show prose beside code; narrow readers stack prose and code in reading order.
+Navigation can collapse. Chat docks beside the reader, and interactive explanations open within their section.
+Shared Viewed progress, comments, and explicit review submission remain available.
 The application preserves review progress where source changes permit reliable matching.
 
 ## Brand Commitments

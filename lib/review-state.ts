@@ -2,7 +2,7 @@ export const FILE_PROGRESS_KEY = 'gnosis-file-progress:v1';
 export const isReviewStateKey = (key: string) =>
   key === 'gnosis-markdown-view:v1' ||
   key === FILE_PROGRESS_KEY ||
-  /^gnosis-(?:feedback-read|feedback-options|agent-brief|changes-drafts|drafts|viewed-files|recently-viewed):/.test(
+  /^gnosis-(?:explanation-position|feedback-read|feedback-options|agent-brief|changes-drafts|drafts|viewed-files|recently-viewed):/.test(
     key
   );
 export interface ReviewStateWrite {

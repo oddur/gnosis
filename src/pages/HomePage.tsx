@@ -1,3 +1,5 @@
+import { ExplanationSetupDialog } from '../../components/ExplanationSetupDialog';
+import type { GenerateReviewRequest } from '../../lib/types';
 import type { FeedbackRequest, ResponseIntent } from '../../lib/feedback';
 import { ResponseFilterStatus } from '../../components/ResponseFilterStatus';
 import { needsResponse } from '../../lib/response-needed';
@@ -121,6 +123,7 @@ interface Props {
   onShowActivity?: () => void;
   onSyncStatus?: (status: GitHubSyncStatusProps | undefined) => void;
   prefillPrUrl?: string;
+  prefillReviewId?: string;
   initialSubjectId?: string;
   commandDestination?: { destination: Extract<SearchDestination, { kind: 'home' }>; nonce: number };
 }
@@ -131,7 +134,7 @@ const labels = {
   other: 'Other changes',
 };
 
-export function HomePage({ navigationRestoration, onNavigationChange, onReviewOriginChange, onReviewReady, prefillPrUrl, initialSubjectId, commandDestination, explanationDestination, onShowActivity, onSyncStatus }: Props) {
+export function HomePage({ navigationRestoration, onNavigationChange, onReviewOriginChange, onReviewReady, prefillPrUrl, prefillReviewId, initialSubjectId, commandDestination, explanationDestination, onShowActivity, onSyncStatus }: Props) {
   const [feedbackRequest, setFeedbackRequest] = useState<FeedbackRequest>();
   const [responseUnavailable, setResponseUnavailable] = useState(0);
   const [overviewTab,setOverviewTab] = useState<WorkspaceTab>('summary');
@@ -708,34 +711,80 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
     setPrefs(next);
     void refresh();
   };
-  const start = async (target: string, subject?: ReviewSubject, localTools?: boolean, standalone = false) => {
+  const [explanationSetup, setExplanationSetup] = useState<{
+    requests: GenerateReviewRequest[];
+    resolve: (started: boolean) => void;
+  }>();
+  const setupOpen = useRef(false);
+  const setupResolver = useRef<((started: boolean) => void) | undefined>(undefined);
+  useEffect(() => () => setupResolver.current?.(false), []);
+  const explanationRequest = (
+    target: string,
+    subject?: ReviewSubject,
+    localTools?: boolean,
+    standalone = false,
+    restore = true,
+  ): GenerateReviewRequest | undefined => {
     if (!prefs) return;
-    const requestKey = subject?.id ?? (standalone ? target : openedItem?.subject.id) ?? target;
-    if (startingReviews.current.has(requestKey)) return;
+    const previous = restore
+      ? visibleHistory.find((entry) =>
+          subject
+            ? entry.snapshot?.subject.id === subject.id ||
+              (!entry.snapshot && subject.members.length === 1 && entry.prUrl === target)
+            : entry.prUrl === target,
+        )
+      : undefined;
+    return {
+      prUrl: target,
+      subjectId: subject?.id,
+      standalone,
+      provider: prefs.provider,
+      model: prefs.model,
+      instructions: prefs.instructions,
+      thinking: prefs.thinking,
+      effort: prefs.effort,
+      smartImports: prefs.smartImports,
+      reviewSuggestions: prefs.reviewSuggestions,
+      webResearch: prefs.enableWebResearch,
+      claudeContext: prefs.claudeContext,
+      localTools,
+      previousReviewId: restore && target === prefillPrUrl && prefillReviewId ? prefillReviewId : previous?.id,
+    };
+  };
+  const configureExplanations = (requests: GenerateReviewRequest[]): Promise<boolean> => {
+    if (!requests.length || setupOpen.current) return Promise.resolve(false);
+    setupOpen.current = true;
+    return new Promise((resolve) => {
+      setupResolver.current = resolve;
+      setExplanationSetup({ requests, resolve });
+    });
+  };
+  const start = (
+    target: string,
+    subject?: ReviewSubject,
+    localTools?: boolean,
+    standalone = false,
+    previousReviewId?: string,
+  ) => {
+    const request = explanationRequest(target, subject, localTools, standalone);
+    if (request && previousReviewId) request.previousReviewId = previousReviewId;
+    return request ? configureExplanations([request]) : Promise.resolve(false);
+  };
+
+  const runExplanation = async (request: GenerateReviewRequest) => {
+    const target = request.prUrl;
+    if (!prefs) throw new Error('Settings are still loading. Try again.');
+    const requestKey = request.subjectId ?? target;
+    if (startingReviews.current.has(requestKey)) throw new Error('An explanation is already starting for this PR.');
     startingReviews.current.add(requestKey);
     setError('');
     setSummaryErrors((previous) => ({ ...previous, [requestKey]: '' }));
     setPendingStarts((previous) => new Set(previous).add(requestKey));
     try {
-      const cli = await window.electronAPI.checkCliInstalled(prefs.provider);
+      const cli = await window.electronAPI.checkCliInstalled(request.provider);
       if (!cli.installed)
-        throw new Error(`${PROVIDERS[prefs.provider].label} was not found. Open Settings → Integrations for AI setup.`);
-      const result = await window.electronAPI.startReview({
-        prUrl: target,
-        subjectId: subject?.id,
-        standalone,
-        provider: prefs.provider,
-        model: prefs.model,
-        instructions: prefs.instructions,
-        thinking: prefs.thinking,
-        effort: prefs.effort,
-        smartImports: prefs.smartImports,
-        reviewSuggestions: prefs.reviewSuggestions,
-        webResearch: prefs.enableWebResearch,
-        educationMode: prefs.educationMode,
-        claudeContext: prefs.claudeContext,
-        localTools,
-      });
+        throw new Error(`${PROVIDERS[request.provider].label} was not found. Open Settings → Integrations for AI setup.`);
+      const result = await window.electronAPI.startReview(request);
       if (openedItem) setRequestedReviews((previous) => ({ ...previous, [requestKey]: result.reviewId }));
       if (!prefs.firstRunSeen || showGettingStarted) void dismissGettingStarted();
       setShowUrl(false);
@@ -746,7 +795,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       const message = e instanceof Error ? e.message : String(e);
       if (openedItem?.subject.id === requestKey) setSummaryErrors((previous) => ({ ...previous, [requestKey]: message }));
       else setError(message);
-      return false;
+      throw e;
     } finally {
       startingReviews.current.delete(requestKey);
       setPendingStarts((previous) => {
@@ -756,6 +805,17 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       });
     }
   };
+  const restoredSetup = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!prefillReviewId || !prefillPrUrl || !prefs || loading || setupOpen.current) return;
+    const key = `${prefillReviewId}:${prefillPrUrl}`;
+    if (restoredSetup.current === key) return;
+    restoredSetup.current = key;
+    const previous = visibleHistory.find(entry => entry.id === prefillReviewId);
+    const subject = previous?.snapshot?.subject;
+    setShowUrl(false);
+    void start(prefillPrUrl, subject, undefined, subject?.scope === 'single', prefillReviewId);
+  }, [prefillReviewId, prefillPrUrl, prefs, loading, visibleHistory]);
   const open = async (entry: ReviewHistoryEntry) => {
     try {
       await window.electronAPI.markReviewRead(entry.id);
@@ -1207,10 +1267,10 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
     busy: batchBusy || readBusy || starBusy || muteBusy, authenticated: !!auth?.authenticated,
     onRead: changeRead, onStar: changeStars, onMute: members => changeMutes(members, true),
     onRefresh: members => runBatch(members, member => entryActions([member]).onRefresh(), member => `#${member.number}`, 'PR statuses refreshed'),
-    onExplain: targets => runBatch(targets, async item => {
-      if (!await start(item.subject.members[0].url, item.subject, undefined, item.subject.scope === 'single'))
-        throw new Error('Explanation could not start');
-    }, item => item.subject.title, 'explanations requested'),
+    onExplain: targets => configureExplanations(
+      targets.map(item => explanationRequest(item.subject.members[0].url, item.subject, undefined, item.subject.scope === 'single', false))
+        .filter((request): request is GenerateReviewRequest => !!request)
+    ),
     onBrief: targets => runBatch(targets, async item => {
       await window.electronAPI.workbenchBriefing(item.subject.id);
       await refresh();
@@ -1464,7 +1524,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
         explanationDestination={explanationDestination}
         explanations={visibleHistory.filter(entry => matchesExplanation(entry, summaryItem.subject))}
         onShowActivity={onShowActivity ?? (() => {})}
-        shortcutsEnabled={!settings && !localOpen && !authOpen && !connectionRequired && !onboarding.open && !onboarding.tourOpen}
+        shortcutsEnabled={!explanationSetup && !settings && !localOpen && !authOpen && !connectionRequired && !onboarding.open && !onboarding.tourOpen}
           navigation={{
             index: summaryIndex,
             total: summaryChoices.length,
@@ -1486,12 +1546,13 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
           setOpenedItem(null);
           requestAnimationFrame(() => rowButtons.current.get(selected ?? '')?.focus({ preventScroll: true }));
         }}
-          onGenerate={() =>
+          onGenerate={previousReviewId =>
             void start(
               summaryItem.subject.members[0].url,
               summaryItem.subject,
               undefined,
-              summaryItem.subject.scope === 'single'
+              summaryItem.subject.scope === 'single',
+              previousReviewId
             )
           }
         onRetryStatus={() => { if (!statusRefreshing) setStatusAttempt((n) => n + 1); }}
@@ -2348,6 +2409,18 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
             });
         }}
       />
+      {explanationSetup && (
+        <ExplanationSetupDialog
+          requests={explanationSetup.requests}
+          onGenerate={async request => { await runExplanation(request); }}
+          onClose={started => {
+            setupOpen.current = false;
+            setupResolver.current = undefined;
+            setExplanationSetup(undefined);
+            explanationSetup.resolve(started);
+          }}
+        />
+      )}
       <LocalRepoDialog
         open={localOpen}
         onOpenChange={setLocalOpen}

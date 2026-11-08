@@ -17,17 +17,21 @@ import type { SearchDestination } from '../../lib/command-search';
 import { useSessionDraft } from '../../lib/session-drafts';
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { type DiffAppearance } from '../../lib/review-diff';
-import { ArrowLeft, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react';
+import { ArrowLeft, X } from 'lucide-react';
+import { Button } from '../../components/ui/button';
+import { Markdown } from '../../components/Markdown';
+import { DiffAppearanceMenu } from '../../components/DiffAppearanceMenu';
+import { WorkbenchIcon } from '../../components/WorkbenchIcon';
 import { workbenchIcons, workspaceSections } from '../../lib/interface-icons';
 import { PRSummaryBanner } from '../../components/PRSummaryBanner';
 import { StaleBanner } from '../../components/StaleBanner';
-import { WorkbenchOverview } from '../../components/WorkbenchOverview';
-import { coverageKey, subjectForReview } from '../../lib/workbench';
+import { ExplanationReader, type ExplanationReaderHandle } from '../../components/ExplanationReader';
+import { readReviewState, writeReviewState } from '../../lib/renderer-review-state';
+import { explanationPositionKey } from '../../lib/use-explanation-scroll';
+import { subjectForReview } from '../../lib/workbench';
 import { SlideView } from '../../components/SlideView';
 import { ExplainerView } from '../../components/ExplainerView';
 import { toast } from '../../components/ui/toast';
-import { SlideNav } from '../../components/SlideNav';
-import { TocRail } from '../../components/TocRail';
 import { SlideChatSheet } from '../../components/SlideChatSheet';
 import { WorkbenchHelp } from '../../components/WorkbenchHelp';
 import { SettingsDialog } from '../../components/SettingsDialog';
@@ -50,42 +54,12 @@ interface Props {
   initialPreferences?: Preferences;
   onOpenChanges?: () => void;
   onBack: () => void;
-  onReReview: (prUrl: string) => void;
+  onReReview: (prUrl: string, previousReviewId?: string) => void;
+  regenerating?: boolean;
   initialSlideId?: string;
   commandDestination?: { destination: Extract<SearchDestination, { kind: 'review' }>; nonce: number };
   exploreInitially?: boolean;
   onShowActivity: () => void;
-}
-
-// localStorage key for review progress. Keyed by prUrl + headSha so
-// each review generation gets its own progress state.
-function progressKey(review: ReviewGuide): string {
-  return review.snapshot
-    ? `gnosis-progress:${subjectForReview(review)}`
-    : `gnosis-progress:${review.prUrl}:${review.headSha ?? 'unknown'}`;
-}
-
-function loadProgress(review: ReviewGuide): Set<number> {
-  try {
-    const stored = JSON.parse(localStorage.getItem(progressKey(review)) ?? '[]') as (string | number)[];
-    return new Set(
-      review.slides
-        .filter((s) => stored.includes(coverageKey(review, s)) || (!review.snapshot && stored.includes(s.slideNumber)))
-        .map((s) => s.slideNumber)
-    );
-  } catch {
-    return new Set();
-  }
-}
-function saveProgress(review: ReviewGuide, reviewed: Set<number>) {
-  try {
-    localStorage.setItem(
-      progressKey(review),
-      JSON.stringify(review.slides.filter((s) => reviewed.has(s.slideNumber)).map((s) => coverageKey(review, s)))
-    );
-  } catch {
-    /* storage is optional */
-  }
 }
 
 // Per-check "done" marks inside the "What to check" callout. Same
@@ -118,6 +92,7 @@ function ReviewPageContent({
   review: initialReview,
   onBack,
   onReReview,
+  regenerating = false,
   initialSlideId,
   commandDestination,
   exploreInitially,
@@ -135,18 +110,29 @@ function ReviewPageContent({
   useEffect(() => rememberExplanation(review), [review]);
   const [consumedCommand, setConsumedCommand] = useSessionDraft('review-command', 0);
   const { viewedFiles, setFileViewed } = useViewedFiles(review);
+  const reader = useRef<ExplanationReaderHandle>(null);
+  const reviewRoot = useRef<HTMLDivElement>(null);
+  const [inlineExplanationNotice, setInlineExplanationNotice] = useState('');
+  const readingSection = useRef(0);
+  const positionId = `${review.reviewId ?? review.prUrl}:${review.snapshot?.fingerprint ?? review.headSha ?? ''}`;
   const [currentSlide, setCurrentSlide] = useState(() => {
-    if (initialSlideId) return initialReview.slides.find((s) => s.id === initialSlideId)?.slideNumber ?? 0;
+    try {
+      const saved = readReviewState(explanationPositionKey(positionId, 'inspected'));
+      if (!initialSlideId && typeof saved === 'number' && saved > 0 && saved <= initialReview.slides.length)
+        return saved;
+    } catch {
+      /* Older reviews use their previous topic position. */
+    }
+    if (initialSlideId) return initialReview.slides.find((s) => s.id === initialSlideId)?.slideNumber ?? 1;
     try {
       const saved = Number(
         localStorage.getItem(`gnosis-position:${subjectForReview(initialReview)}:${initialReview.reviewId}`) ?? 0
       );
-      return Number.isInteger(saved) && saved >= 0 && saved <= initialReview.slides.length ? saved : 0;
+      return Number.isInteger(saved) && saved >= 0 && saved <= initialReview.slides.length ? Math.max(1, saved) : 1;
     } catch {
-      return 0;
+      return 1;
     }
   });
-  const [navOpen, setNavOpen] = useSessionDraft('topics-open', false);
   const [submitUrl, setSubmitUrl] = useState(
     initialReview.snapshot?.subject.members.find((m) => !m.merged && m.state === 'open')?.url ?? initialReview.prUrl
   );
@@ -178,7 +164,6 @@ function ReviewPageContent({
   const [chatProvider, setChatProvider] = useState<Provider>(initialPreferences?.provider ?? 'claude');
   const [chatModel, setChatModel] = useState<ModelId>(initialPreferences?.model ?? DEFAULT_FAST_CLAUDE_MODEL);
   const [diffLayout, setDiffLayout] = useState<Preferences['diffLayout']>(initialPreferences?.diffLayout ?? 'unified');
-  const [slideViewMode, setSlideViewMode] = useSessionDraft<'split' | 'focus'>('slide-view', 'split');
   const [prefs, setPrefs] = useState<Preferences | null>(initialPreferences ?? null);
   const preferenceWrites = useRef(Promise.resolve());
   const pendingPreferences = useRef<Partial<Preferences>>({});
@@ -189,9 +174,10 @@ function ReviewPageContent({
   const [exploreOpen, setExploreOpen] = useSessionDraft('explore-open', exploreInitially ?? false);
   const generatingExplainers = useRef(new Set<string>());
 
-  function openExplainer() {
-    if (currentSlide < 1) return;
-    const slide = review.slides.at(currentSlide - 1);
+  function openExplainer(section = Math.max(1, currentSlide)) {
+    setCurrentSlide(section);
+    reader.current?.showCode(section);
+    const slide = review.slides.at(section - 1);
     if (!review.reviewId || !slide) return;
     if (slide.explainer) {
       setChatOpen(false);
@@ -240,14 +226,6 @@ function ReviewPageContent({
       .finally(() => generatingExplainers.current.delete(slide.id));
   }
 
-  // Per-section "mark reviewed" progress. Persisted to localStorage
-  // keyed by prUrl + headSha so each review generation is tracked
-  // independently. Restored on mount so interrupted reviews resume
-  // exactly where the user left off.
-  const [reviewed, setReviewed] = useState<Set<number>>(() => loadProgress(initialReview));
-
-  // Per-check done marks (the "What to check" checkboxes). Same
-  // keying scheme as reviewed, but keyed by `slideId:hash(check.text)`.
   const [checkedChecks, setCheckedChecks] = useState<Set<string>>(() => loadChecks(initialReview));
   const toggleCheck = useCallback(
     (key: string) => {
@@ -262,90 +240,6 @@ function ReviewPageContent({
     [review]
   );
 
-  // "Hide reviewed" toggle — when active, the TocRail collapses
-  // reviewed entries and slide navigation skips them.
-  const [hideReviewed, setHideReviewed] = useState(false);
-
-  const reviewedCount = reviewed.size;
-
-  const toggleReviewed = useCallback(
-    (slideNumber: number) => {
-      setReviewed((prev) => {
-        const next = new Set(prev);
-        if (next.has(slideNumber)) {
-          next.delete(slideNumber);
-        } else {
-          next.add(slideNumber);
-        }
-        saveProgress(review, next);
-        return next;
-      });
-    },
-    [review]
-  );
-
-  // Mark the current section as reviewed and auto-advance to the
-  // next unreviewed section (or to submit if everything is reviewed).
-  const markReviewedAndAdvance = useCallback(
-    (slideNumber: number) => {
-      setReviewed((prev) => {
-        const next = new Set(prev);
-        next.add(slideNumber);
-        saveProgress(review, next);
-
-        // Find the next unreviewed section after the current one.
-        // Wraps to the beginning if needed; opens submit dialog if all done.
-        let target: number | null = null;
-        for (let i = slideNumber + 1; i <= review.slides.length; i++) {
-          if (!next.has(i)) {
-            target = i;
-            break;
-          }
-        }
-        if (target === null) {
-          // Wrap from the start
-          for (let i = 1; i < slideNumber; i++) {
-            if (!next.has(i)) {
-              target = i;
-              break;
-            }
-          }
-        }
-
-        if (target !== null) {
-          setCurrentSlide(target);
-        } else if (next.size >= review.slides.length) {
-          // All sections reviewed — open submit dialog
-          setShowSubmitDialog(true);
-        }
-
-        return next;
-      });
-    },
-    [review]
-  );
-
-  // Jump to the next unreviewed section from wherever the user is.
-  // Used by the `n` keyboard shortcut.
-  const jumpToNextUnreviewed = useCallback(() => {
-    const start = currentSlide + 1;
-    // Forward from current
-    for (let i = start; i <= review.slides.length; i++) {
-      if (!reviewed.has(i)) {
-        setCurrentSlide(i);
-        return;
-      }
-    }
-    // Wrap from the beginning
-    for (let i = 1; i < start; i++) {
-      if (!reviewed.has(i)) {
-        setCurrentSlide(i);
-        return;
-      }
-    }
-    // Everything is reviewed — go to overview
-    setCurrentSlide(0);
-  }, [currentSlide, review.slides.length, reviewed]);
   const { comments, addComment, removeComment, editComment } = useExplanationComments(review, currentLogin ?? '');
   const sharedReview = useChangesComments({
     enabled: !isLocalUrl(review.prUrl),
@@ -458,28 +352,32 @@ function ReviewPageContent({
 
   const isLocal = isLocalUrl(review.prUrl);
   const syncMembers = explanationSubject(review).members;
-  usePrDiscussions(active && !isLocal ? syncMembers.map(member => member.url) : []);
+  usePrDiscussions(active && !isLocal ? syncMembers.map((member) => member.url) : []);
   useEffect(() => {
     if (!active || isLocal) return;
-    return watchGitHub({ kind: 'metadata', priority: 'active', targets: syncMembers.map(member => ({ url: member.url })) }, update => {
-      if (update.kind !== 'metadata') return;
-      const shown = syncMembers.find(member => member.url === update.url);
-      if (shown && (shown.headSha !== update.value.headSha || shown.baseSha !== update.value.baseSha))
-        setFreshness({ status: 'stale', aheadBy: 0, commits: [], reason: 'New commits are available. This explanation still shows its saved revision.' });
-    });
+    return watchGitHub(
+      { kind: 'metadata', priority: 'active', targets: syncMembers.map((member) => ({ url: member.url })) },
+      (update) => {
+        if (update.kind !== 'metadata') return;
+        const shown = syncMembers.find((member) => member.url === update.url);
+        if (shown && (shown.headSha !== update.value.headSha || shown.baseSha !== update.value.baseSha))
+          setFreshness({
+            status: 'stale',
+            aheadBy: 0,
+            commits: [],
+            reason: 'New commits are available. This explanation still shows its saved revision.',
+          });
+      }
+    );
   }, [active, isLocal, review.reviewId]);
   useEffect(() => {
-    try {
-      localStorage.setItem(`gnosis-position:${subjectForReview(review)}:${review.reviewId}`, String(currentSlide));
-    } catch {
-      /* optional */
-    }
-  }, [currentSlide, review]);
+    void writeReviewState(explanationPositionKey(positionId, 'inspected'), currentSlide).catch(() => {});
+  }, [positionId, currentSlide]);
   useEffect(() => {
     if (chatOpen || exploreOpen) {
       if (!focusBeforeTool.current) focusBeforeTool.current = document.activeElement as HTMLElement;
     } else {
-      focusBeforeTool.current?.focus();
+      focusBeforeTool.current?.focus({ preventScroll: true });
       focusBeforeTool.current = null;
     }
   }, [chatOpen, exploreOpen]);
@@ -508,30 +406,54 @@ function ReviewPageContent({
     };
   }, [review.prUrl, review.headSha, isLocal]);
 
-  const handlePrev = useCallback(() => {
-    setCurrentSlide((n) => Math.max(0, n - 1));
-  }, []);
-
-  const handleNext = useCallback(() => {
-    setCurrentSlide((n) => Math.min(review.slides.length, n + 1));
-  }, [review.slides.length]);
-
-  // Jump directly to a specific slide number, clamped to range.
-  // Slide 0 is the overview, slides 1..N are the real chapters.
   const handleJumpTo = useCallback(
     (n: number) => {
-      setExploreOpen(false);
-      setCurrentSlide(Math.max(0, Math.min(review.slides.length, n)));
+      const section = Math.max(0, Math.min(review.slides.length, n));
+      reader.current?.navigate(section);
     },
     [review.slides.length]
   );
-
-  useReviewBreadcrumbs('explanation', [{ id: 'topic',
-    label: currentSlide === 0 ? 'Overview' : review.slides[currentSlide - 1]?.title ?? 'Overview',
-    pickerLabel: 'Review topic', value: String(currentSlide),
-    options: [{ value: '0', label: 'Overview' }, ...review.slides.map(s => ({ value: String(s.slideNumber), label: s.title }))],
-    select: value => handleJumpTo(Number(value)),
-  }]);
+  const handlePrev = useCallback(() => handleJumpTo(readingSection.current - 1), [handleJumpTo]);
+  const handleNext = useCallback(() => handleJumpTo(readingSection.current + 1), [handleJumpTo]);
+  useReviewBreadcrumbs('explanation', []);
+  function inspectCode(section: number, filePath?: string, line?: number) {
+    setCurrentSlide(section);
+    setExploreOpen(false);
+    reader.current?.showCode(section);
+    if (!filePath) return;
+    setCodeTarget({ section, filePath, line, nonce: Date.now() });
+  }
+  const [codeTarget, setCodeTarget] = useState<{ section: number; filePath: string; line?: number; nonce: number }>();
+  useEffect(() => {
+    if (!codeTarget) return;
+    let tries = 0;
+    const timer = setInterval(() => {
+      const file = document.querySelector<HTMLElement>(
+        `[data-explanation-section="${codeTarget.section}"] .review-file-group[data-file-path="${CSS.escape(codeTarget.filePath)}"]`
+      );
+      if (file) {
+        const collapsed = file.querySelector<HTMLButtonElement>(
+          '.review-file-context[data-collapsed=true] .review-file-expand'
+        );
+        if (collapsed) {
+          collapsed.click();
+          return;
+        }
+        const target = codeTarget.line ? findReviewLine(file, codeTarget.filePath, codeTarget.line) : file;
+        if (target) {
+          target.scrollIntoView({ block: 'center' });
+          target.classList.remove('check-highlight');
+          void target.offsetWidth;
+          target.classList.add('check-highlight');
+          target.tabIndex = -1;
+          target.focus({ preventScroll: true });
+          clearInterval(timer);
+        }
+      }
+      if (++tries > 40) clearInterval(timer);
+    }, 50);
+    return () => clearInterval(timer);
+  }, [codeTarget]);
   const commentCallbacks = useMemo(
     () => ({ onAddComment: addComment, onRemoveComment: removeComment, onEditComment: editComment }),
     [addComment, removeComment, editComment]
@@ -572,6 +494,16 @@ function ReviewPageContent({
 
   const handleShowInlineExplanationsChange = useCallback(
     (show: boolean) => {
+      const draft = reviewRoot.current?.querySelector<HTMLTextAreaElement>(
+        '.explanation-document .review-code textarea'
+      );
+      if (draft) {
+        draft.scrollIntoView({ block: 'center' });
+        draft.focus({ preventScroll: true });
+        setInlineExplanationNotice('Finish or cancel your comment before changing inline explanations.');
+        return;
+      }
+      setInlineExplanationNotice('');
       savePreferencePatch({ showInlineExplanations: show });
     },
     [savePreferencePatch]
@@ -598,16 +530,6 @@ function ReviewPageContent({
       s: () => {
         if (currentSlide > 0) handleDiffLayoutChange('split');
       },
-      // View mode toggle — split (narrative + diff side by side)
-      // vs focus (narrative stacked above diff, full-width)
-      f: () => {
-        if (currentSlide > 0) setSlideViewMode((v) => (v === 'split' ? 'focus' : 'split'));
-      },
-      // Review progress
-      r: () => {
-        if (currentSlide > 0) markReviewedAndAdvance(currentSlide);
-      },
-      n: () => jumpToNextUnreviewed(),
       // Global
       'cmd+k': () => (commandCenter ? commandCenter.open() : setPaletteOpen(true)),
       'ctrl+k': () => (commandCenter ? commandCenter.open() : setPaletteOpen(true)),
@@ -618,22 +540,29 @@ function ReviewPageContent({
       map[String(n)] = () => handleJumpTo(n);
     }
     return map;
-  }, [
-    handlePrev,
-    handleNext,
-    handleJumpTo,
-    handleDiffLayoutChange,
-    markReviewedAndAdvance,
-    jumpToNextUnreviewed,
-    currentSlide,
-    review.slides.length,
-  ]);
+  }, [handlePrev, handleNext, handleJumpTo, handleDiffLayoutChange, currentSlide, review.slides.length]);
 
   useKeyboardShortcuts(shortcutMap, { enabled: active && !exploreOpen });
-  useKeyboardShortcuts({ c: openChat }, {
-    enabled: active && !exploreOpen && currentSlide > 0,
-    capture: true,
-  });
+  useKeyboardShortcuts(
+    {
+      c: () => {
+        const focusedSection = document.activeElement?.closest<HTMLElement>('[data-explanation-section]');
+        setCurrentSlide(Number(focusedSection?.dataset.explanationSection) || readingSection.current || 1);
+        openChat();
+      },
+    },
+    {
+      enabled: active && !exploreOpen && review.slides.length > 0,
+      capture: true,
+    }
+  );
+
+  useEffect(() => {
+    if (initialSlideId && initialSlideId !== 'overview') {
+      const index = review.slides.findIndex((s) => s.id === initialSlideId);
+      if (index >= 0) reader.current?.navigate(index + 1);
+    }
+  }, [initialSlideId]);
 
   // Build the command palette commands. The slide jump entries
   // are generated dynamically from the review so they read like a
@@ -778,19 +707,26 @@ function ReviewPageContent({
         : target.slideId
           ? review.slides.find((s) => s.id === target.slideId)?.slideNumber
           : undefined;
-    if (index !== undefined) setCurrentSlide(index);
+    if (index !== undefined) {
+      setCurrentSlide(Math.max(1, index));
+      handleJumpTo(index);
+    }
     if (target.slideId || target.filePath || target.explore !== undefined) {
       setExploreOpen(!!target.explore);
       setChatOpen(false);
     }
     if (!target.filePath) return;
-    setSlideViewMode('focus');
+    const matchedSection =
+      index || review.slides.findIndex((s) => s.diffHunks.some((h) => h.filePath === target.filePath)) + 1;
+    reader.current?.showCode(matchedSection || 1);
     const filePath = target.filePath;
     let tries = 0;
     const timer = setInterval(() => {
-      const file = [...document.querySelectorAll<HTMLElement>('.review-file-group[data-file-path]')].find(
-        (el) => el.dataset.filePath === filePath
-      );
+      const file = [
+        ...document.querySelectorAll<HTMLElement>(
+          `[data-explanation-section="${matchedSection || 1}"] .review-file-group[data-file-path]`
+        ),
+      ].find((el) => el.dataset.filePath === filePath);
       if (file) {
         const collapsed = file.querySelector<HTMLButtonElement>(
           '.review-file-context[data-collapsed=true] .review-file-expand'
@@ -822,77 +758,162 @@ function ReviewPageContent({
 
   if (review.slides.length === 0) {
     return (
-      <main className="flex min-h-full items-start justify-center px-10 lg:px-12 pt-[18vh]">
-        <div className="w-full max-w-2xl flex flex-col gap-6">
-          <div className="slide-chapter">
-            <span>Empty review</span>
-          </div>
-          <h1 className="slide-title">No review topics were generated for this PR.</h1>
-          <p className="slide-prose">
-            This happens when the diff is empty, every file was filtered as boilerplate, or the model couldn't parse the
-            change structure. Try re-running with different settings or a different model.
-          </p>
-          <button onClick={onBack} className="slide-meta hover:text-foreground flex items-center gap-1.5 self-start">
-            <ArrowLeft className="h-3 w-3" />
-            Back to home
-          </button>
+      <div className="explanation-empty explanation-no-topics">
+        <h2>No explanation sections were generated</h2>
+        {review.summary.trim() && <Markdown className="reading-prose">{review.summary}</Markdown>}
+        <p>
+          {onOpenChanges
+            ? 'Try generating again, or inspect the files in Changes.'
+            : 'Try generating again to create explanation sections.'}
+        </p>
+        <div className="explanation-empty-actions">
+          <Button disabled={regenerating} onClick={() => onReReview(review.prUrl, review.reviewId)}>
+            {regenerating ? 'Generating…' : 'Generate again'}
+          </Button>
+          {onOpenChanges && (
+            <Button variant="outline" onClick={onOpenChanges}>
+              Open Changes
+            </Button>
+          )}
+          {!embedded && (
+            <Button variant="ghost" onClick={onBack}>
+              Back to review queue
+            </Button>
+          )}
         </div>
-      </main>
+      </div>
     );
   }
 
-  // Reading progress fills a 1px hairline at the very top of the page
-  // as the user advances through the deck. The previous version of
-  // this lived above the bottom nav, but pulling it to the top is a
-  // more honest "you are here in the book" cue and frees the bottom
-  // bar to carry more visual weight.
-  //
-  // Formula is `currentSlide / total` rather than `(current - 1) /
-  // (total - 1)` so the very first slide already shows a visible
-  // sliver of progress — a small but meaningful "you've started"
-  // signal. Slide 1 of 10 = 10%, slide 5 = 50%, slide 10 = 100%.
-  const progress = review.slides.length ? Math.min(100, Math.max(0, (currentSlide / review.slides.length) * 100)) : 0;
-
-  // Surface the previous and next slide titles to the bottom nav so
-  // it can render them as labels — much more informative than
-  // generic "Previous" / "Next" copy.
-  const prevTitle =
-    currentSlide === 0 ? null : currentSlide === 1 ? 'Overview' : (review.slides[currentSlide - 2]?.title ?? null);
-  const nextTitle = currentSlide >= review.slides.length ? null : (review.slides[currentSlide]?.title ?? null);
-
-  return (
-    <div className="workbench-review flex flex-col h-full overflow-hidden">
-      {/* Top-of-page reading progress hairline. 1px tall, fills in
-          the brand claret as the reader moves through the deck.
-          Honors prefers-reduced-motion via .loading-progress-fill. */}
-      <div
-        className="relative h-px w-full bg-transparent shrink-0"
-        role="progressbar"
-        aria-label="Review position"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={progress}
-        aria-valuetext={currentSlide === 0 ? 'Overview' : `Topic ${currentSlide} of ${review.slides.length}`}
-      >
-        <div
-          className="absolute left-0 top-0 h-px bg-[var(--ring)] loading-progress-fill"
-          style={{ width: `${progress}%` }}
+  const inspected = Math.min(review.slides.length, Math.max(1, currentSlide));
+  const inspectedSlide = review.slides[inspected - 1];
+  const sharedSlideProps = {
+    review,
+    showDiffControls: false,
+    viewedFiles,
+    onFileViewedChange: setFileViewed,
+    showReviewSuggestions: prefs?.reviewSuggestions !== false,
+    showInlineExplanations: prefs?.showInlineExplanations !== false,
+    onShowInlineExplanationsChange: handleShowInlineExplanationsChange,
+    totalSlides: review.slides.length,
+    prUrl: review.prUrl,
+    checkedChecks,
+    onToggleCheck: toggleCheck,
+    pendingComments: comments,
+    commentCallbacks,
+    diffLayout,
+    diffAppearance,
+    onDiffAppearanceChange: handleDiffAppearanceChange,
+    onDiffLayoutChange: handleDiffLayoutChange,
+    fileMetadataMap,
+    gitFileUrlBase,
+    excludedFiles: excludedFilesSet,
+  };
+  const readerActions = (
+    <div className="review-toolbar">
+      <div className="explanation-diff-controls" role="group" aria-label="Diff display">
+        <label className="inline-explanations-toggle">
+          <input
+            type="checkbox"
+            checked={prefs?.showInlineExplanations !== false}
+            onChange={(event) => handleShowInlineExplanationsChange(event.target.checked)}
+          />
+          Inline explanations
+        </label>
+        <DiffAppearanceMenu
+          layout={diffLayout}
+          onLayoutChange={handleDiffLayoutChange}
+          value={diffAppearance}
+          onChange={handleDiffAppearanceChange}
         />
       </div>
-
-      {!embedded && <div className="pr-summary-toolbar"><div className="pr-summary-toolbar-inner">
-        <RecentlyViewed />
-        <ReviewBreadcrumbs scope="explanation" base={[
-          { id: 'origin', label: origin?.name ?? 'Review queue', navigate: onBack },
-          ...(isLocal ? [{ id: 'repository', kind: 'repository' as const, label: review.prUrl.slice(6).split('#')[0].split('/').filter(Boolean).pop() ?? 'Local repository', title: review.prUrl }] : []),
-          { id: 'review', kind: isLocal ? undefined : review.snapshot?.subject.kind === 'stack' ? 'stack' : 'pr', label: review.prTitle, navigate: () => handleJumpTo(0),
-            pickerLabel: 'Saved review', value: review.reviewId, options: origin?.reviews.map(r => ({ value: r.id, label: r.title })), select: onSelectReview },
-          { id: 'tab', workspaceTab: 'explanation', label: 'Explanation' },
-        ]} />
-      </div></div>}
+      {!embedded && (
+        <>
+          <button
+            onClick={() => (commandCenter ? commandCenter.open() : setPaletteOpen(true))}
+            title="Search and navigate (⌘K / Ctrl K)"
+          >
+            Search <kbd className="kbd">{window.electronAPI.platform === 'darwin' ? '⌘ K' : 'Ctrl K'}</kbd>
+          </button>
+          <WorkbenchHelp />
+        </>
+      )}
+      <Button
+        variant="outline"
+        size="sm"
+        title="Ask a question (C)"
+        onClick={() => {
+          if (!chatOpen) {
+            setCurrentSlide(readingSection.current || 1);
+            setExploreOpen(false);
+          }
+          openChat();
+        }}
+      >
+        <WorkbenchIcon name="chat" /> Ask a question
+      </Button>
+      {exploreOpen && (
+        <button onClick={() => setExploreOpen(false)}>
+          <X size={13} />
+          Close interactive explanation
+        </button>
+      )}
+      {review.snapshot?.subject.kind === 'stack' && (
+        <div className="review-submit-target ml-auto flex items-center gap-2 text-xs">
+          <SearchableSelect
+            label="PR for review submission"
+            value={submitUrl}
+            onValueChange={setSubmitUrl}
+            options={review.snapshot.subject.members.map((m) => ({
+              value: m.url,
+              label: `#${m.number} ${m.repo} · ${m.title}${m.merged ? ' (merged)' : ''}`,
+            }))}
+          />
+        </div>
+      )}
+      {!isLocal && sharedReview.controls}
+    </div>
+  );
+  return (
+    <div ref={reviewRoot} className="workbench-review flex flex-col h-full overflow-hidden">
+      {!embedded && (
+        <div className="pr-summary-toolbar">
+          <div className="pr-summary-toolbar-inner">
+            <RecentlyViewed />
+            <ReviewBreadcrumbs
+              scope="explanation"
+              base={[
+                { id: 'origin', label: origin?.name ?? 'Review queue', navigate: onBack },
+                ...(isLocal
+                  ? [
+                      {
+                        id: 'repository',
+                        kind: 'repository' as const,
+                        label:
+                          review.prUrl.slice(6).split('#')[0].split('/').filter(Boolean).pop() ?? 'Local repository',
+                        title: review.prUrl,
+                      },
+                    ]
+                  : []),
+                {
+                  id: 'review',
+                  kind: isLocal ? undefined : review.snapshot?.subject.kind === 'stack' ? 'stack' : 'pr',
+                  label: review.prTitle,
+                  navigate: () => handleJumpTo(0),
+                  pickerLabel: 'Saved review',
+                  value: review.reviewId,
+                  options: origin?.reviews.map((r) => ({ value: r.id, label: r.title })),
+                  select: onSelectReview,
+                },
+                { id: 'tab', workspaceTab: 'explanation', label: 'Explanation' },
+              ]}
+            />
+          </div>
+        </div>
+      )}
       {!embedded && <PRSummaryBanner review={review} onOpenSettings={() => setSettingsOpen(true)} />}
 
-      {!embedded && freshness && <StaleBanner freshness={freshness} onReReview={() => onReReview(review.prUrl)} />}
+      {!embedded && freshness && <StaleBanner freshness={freshness} onReReview={() => onReReview(review.prUrl, review.reviewId)} />}
 
       {preferenceError && (
         <div className="changes-notice" role="alert">
@@ -900,124 +921,73 @@ function ReviewPageContent({
         </div>
       )}
 
-      <div className="review-toolbar">
-        {!embedded && (
-          <>
-            <button
-              onClick={() => (commandCenter ? commandCenter.open() : setPaletteOpen(true))}
-              title="Search and navigate (⌘K / Ctrl K)"
-            >
-              Search <kbd className="kbd">{window.electronAPI.platform === 'darwin' ? '⌘ K' : 'Ctrl K'}</kbd>
-            </button>
-            <WorkbenchHelp />
-          </>
-        )}
-        <button onClick={() => setNavOpen((v) => !v)} aria-pressed={navOpen} title="Toggle topic navigation">
-          {navOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}Topics
-        </button>
-        {exploreOpen && (
-          <button onClick={() => setExploreOpen(false)}>
-            <X size={13} />
-            Close interactive explanation
-          </button>
-        )}
-        {review.snapshot?.subject.kind === 'stack' && (
-          <div className="review-submit-target ml-auto flex items-center gap-2 text-xs">
-            Send feedback to
-            <SearchableSelect label="PR for review submission" value={submitUrl} onValueChange={setSubmitUrl}
-              options={review.snapshot.subject.members.map(m => ({ value: m.url,
-                label: `#${m.number} ${m.repo} · ${m.title}${m.merged ? ' (merged)' : ''}` }))}
-            />
-          </div>
-        )}
-        {!isLocal && sharedReview.controls}
-      </div>
+      {inlineExplanationNotice && (
+        <p className="changes-notice" role="status">
+          {inlineExplanationNotice}
+        </p>
+      )}
       {!isLocal && active && sharedReview.panel}
 
-      <div className={`review-chat-workspace flex-1 overflow-hidden flex flex-row min-h-0${chatOpen && currentSlide > 0 ? ' chat-open' : ''}`}>
-        {navOpen && (
-          <TocRail
-            slides={review.slides}
-            currentSlide={currentSlide}
-            reviewed={reviewed}
-            hideReviewed={hideReviewed}
-            onToggleHideReviewed={() => setHideReviewed((v) => !v)}
-            onNavigate={handleJumpTo}
+      <div
+        className={`review-chat-workspace flex-1 overflow-hidden flex flex-row min-h-0${chatOpen && currentSlide > 0 ? ' chat-open' : ''}`}
+      >
+        <div className="review-chat-content flex-1 min-w-0 overflow-hidden flex flex-col">
+          <ExplanationReader
+            ref={reader}
+            active={active}
+            review={review}
+            inspected={inspected}
+            chatOpen={chatOpen}
+            actions={readerActions}
+            viewedFiles={viewedFiles}
+            onReadingSection={(index) => {
+              readingSection.current = index;
+              if (!chatOpen && !exploreOpen) setCurrentSlide(index || 1);
+            }}
+            onOpenChanges={onOpenChanges}
+            onReview={isLocal ? undefined : () => setShowSubmitDialog(true)}
+            renderSection={(slide, index) => (
+              <SlideView
+                {...sharedSlideProps}
+                presentation="narrative"
+                slide={slide}
+                slideNumber={index}
+                onInspectCode={(path, line) => inspectCode(index, path, line)}
+                onExplore={review.reviewId ? () => openExplainer(index) : undefined}
+              />
+            )}
+            renderCode={(slide, index) => (
+              <SlideView
+                {...sharedSlideProps}
+                presentation="code"
+                slide={slide}
+                slideNumber={index}
+                onAskAboutSelection={(code) => {
+                  setCurrentSlide(index);
+                  setExploreOpen(false);
+                  setChatQuotedCode(code);
+                  openChat();
+                }}
+              />
+            )}
+            tool={
+              exploreOpen && review.reviewId ? (
+                <ExplainerView
+                  key={`${review.reviewId}:${inspectedSlide.id}`}
+                  reviewId={review.reviewId}
+                  slide={inspectedSlide}
+                  onClose={() => setExploreOpen(false)}
+                  onShowActivity={onShowActivity}
+                  onSaved={(artifact) =>
+                    setReview((prev) => ({
+                      ...prev,
+                      slides: prev.slides.map((s) => (s.id === inspectedSlide.id ? { ...s, explainer: artifact } : s)),
+                    }))
+                  }
+                />
+              ) : undefined
+            }
           />
-        )}
-        <div key={currentSlide} className="review-chat-content flex-1 min-w-0 overflow-hidden flex flex-col">
-          {currentSlide === 0 ? (
-            <WorkbenchOverview
-              review={review}
-              embedded={embedded}
-              reviewed={reviewed}
-              onNavigate={handleJumpTo}
-              submissions={submissions}
-              onSubmit={(url) => {
-                setSubmitUrl(url);
-                setShowSubmitDialog(true);
-              }}
-            />
-          ) : (
-            <SlideView
-              key={review.snapshot?.fingerprint ?? review.headSha ?? review.reviewId}
-              review={review}
-              chatOpen={chatOpen}
-              viewedFiles={viewedFiles}
-              onFileViewedChange={setFileViewed}
-              onContinue={() => handleJumpTo(currentSlide < review.slides.length ? currentSlide + 1 : 0)}
-              nextTopicTitle={nextTitle}
-              showReviewSuggestions={prefs?.reviewSuggestions !== false}
-              showInlineExplanations={prefs?.showInlineExplanations !== false}
-              onShowInlineExplanationsChange={handleShowInlineExplanationsChange}
-              slide={review.slides[currentSlide - 1]}
-              slideNumber={currentSlide}
-              totalSlides={review.slides.length}
-              prUrl={review.prUrl}
-              checkedChecks={checkedChecks}
-              onToggleCheck={toggleCheck}
-              pendingComments={comments}
-              commentCallbacks={commentCallbacks}
-              diffLayout={diffLayout}
-              diffAppearance={diffAppearance}
-              onDiffAppearanceChange={handleDiffAppearanceChange}
-              onDiffLayoutChange={handleDiffLayoutChange}
-              onAskQuestion={() => {
-                setExploreOpen(false);
-                openChat();
-              }}
-              onExplore={review.reviewId ? openExplainer : undefined}
-              onAskAboutSelection={(code) => {
-                setExploreOpen(false);
-                setChatQuotedCode(code);
-                openChat();
-              }}
-              viewMode={slideViewMode}
-              fileMetadataMap={fileMetadataMap}
-              gitFileUrlBase={gitFileUrlBase}
-              excludedFiles={excludedFilesSet}
-              isReviewed={reviewed.has(currentSlide)}
-              onMarkReviewed={() => markReviewedAndAdvance(currentSlide)}
-              onToggleReviewed={() => toggleReviewed(currentSlide)}
-              rightSlot={
-                exploreOpen && review.reviewId ? (
-                  <ExplainerView
-                    key={`${review.reviewId}:${review.slides[currentSlide - 1].id}`}
-                    reviewId={review.reviewId}
-                    slide={review.slides[currentSlide - 1]}
-                    onClose={() => setExploreOpen(false)}
-                    onShowActivity={onShowActivity}
-                    onSaved={(artifact) =>
-                      setReview((prev) => ({
-                        ...prev,
-                        slides: prev.slides.map((s, i) => (i === currentSlide - 1 ? { ...s, explainer: artifact } : s)),
-                      }))
-                    }
-                  />
-                ) : undefined
-              }
-            />
-          )}
         </div>
         {chatOpen && currentSlide > 0 && (
           <SlideChatSheet
@@ -1033,27 +1003,12 @@ function ReviewPageContent({
             onSend={(text, selection) => void slideChat.send(currentSlide, text, selection)}
             onRetry={(id) => void slideChat.retry(currentSlide, id)}
             onStop={() => slideChat.stop(currentSlide)}
-            modelLabel={PROVIDERS[chatProvider].models.find(model => model.id === chatModel)?.label ?? chatModel}
+            modelLabel={PROVIDERS[chatProvider].models.find((model) => model.id === chatModel)?.label ?? chatModel}
             quotedCode={chatQuotedCode}
             onQuotedCodeConsumed={() => setChatQuotedCode(null)}
           />
         )}
       </div>
-
-      {
-        <SlideNav
-          compact={chatOpen}
-          current={currentSlide}
-          total={review.slides.length}
-          reviewedCount={reviewedCount}
-          prevTitle={prevTitle}
-          nextTitle={nextTitle}
-          onPrev={handlePrev}
-          onNext={handleNext}
-          commentCount={sharedReview.draftCount}
-          onSubmitReview={isLocal || embedded ? undefined : () => setShowSubmitDialog(true)}
-        />
-      }
 
       <SettingsDialog
         initialSection="review"
@@ -1074,6 +1029,11 @@ function ReviewPageContent({
 }
 
 export function ReviewPage(props: Props) {
-  return props.embedded ? <ReviewPageContent {...props} />
-    : <ReviewBreadcrumbProvider><ReviewPageContent {...props} /></ReviewBreadcrumbProvider>;
+  return props.embedded ? (
+    <ReviewPageContent {...props} />
+  ) : (
+    <ReviewBreadcrumbProvider>
+      <ReviewPageContent {...props} />
+    </ReviewBreadcrumbProvider>
+  );
 }

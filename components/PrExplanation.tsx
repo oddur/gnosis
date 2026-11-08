@@ -11,6 +11,9 @@ import { fingerprint, subjectForReview, type QueueItem } from '../lib/workbench'
 import { PROVIDERS } from '../lib/models';
 import type { Preferences, ReviewGuide, ReviewHistoryEntry } from '../lib/types';
 import { Button } from './ui/button';
+import { readReviewState } from '../lib/renderer-review-state';
+import { explanationPositionKey } from '../lib/use-explanation-scroll';
+import { isActiveTask, type ActivityTask } from '../lib/activity';
 
 export function PrExplanation({
   item,
@@ -34,7 +37,7 @@ export function PrExplanation({
   active: boolean;
   starting: boolean;
   error: string;
-  onGenerate: () => void;
+  onGenerate: (previousReviewId?: string) => void;
   onAiSetup?: () => void;
   onGitHubAuth?: () => void;
   onShowActivity: () => void;
@@ -42,12 +45,18 @@ export function PrExplanation({
   onOpenChanges: () => void;
 }) {
   useSyncExternalStore(inspectionData.subscribe, inspectionData.getVersion);
-  const limited = item.subject.members.filter(member => {
+  const limited = item.subject.members.filter((member) => {
     const snapshot = inspectionData.peekChanges(member);
-    return (member.changedFileCount ?? 0) > GITHUB_PR_FILE_LIMIT ||
-      (snapshot?.metadata.headSha === member.headSha && snapshot.metadata.baseSha === member.baseSha && snapshot.filesTruncated);
+    return (
+      (member.changedFileCount ?? 0) > GITHUB_PR_FILE_LIMIT ||
+      (snapshot?.metadata.headSha === member.headSha &&
+        snapshot.metadata.baseSha === member.baseSha &&
+        snapshot.filesTruncated)
+    );
   });
-  const generate = () => { if (!limited.length) onGenerate(); };
+  const generate = () => {
+    if (!limited.length && !starting && item.review?.status !== 'generating') onGenerate(review?.reviewId ?? item.review?.id);
+  };
   const completed =
     entries.find((e) => !e.status || e.status === 'completed') ??
     (item.review?.status === 'completed' ? item.review : undefined);
@@ -94,8 +103,89 @@ export function PrExplanation({
       cancelled = true;
     };
   }, [wanted, retry]);
-  usePrReadVisit(review ? (review.snapshot?.subject.members ?? [{ url: review.prUrl, headSha: review.headSha ?? '' }]) : !wanted ? item.subject.members : [], active, !review && !wanted ? 'empty-explanation' : undefined);
+  usePrReadVisit(
+    review
+      ? (review.snapshot?.subject.members ?? [{ url: review.prUrl, headSha: review.headSha ?? '' }])
+      : !wanted
+        ? item.subject.members
+        : [],
+    active,
+    !review && !wanted ? 'empty-explanation' : undefined
+  );
   const running = starting || item.review?.status === 'generating';
+  const [generationTask, setGenerationTask] = useState<ActivityTask>();
+  const [progressUnavailable, setProgressUnavailable] = useState(false);
+  const [progressRetry, setProgressRetry] = useState(0);
+  const generatingId = item.review?.status === 'generating' ? item.review.id : undefined;
+  useEffect(() => {
+    setGenerationTask(undefined);
+    setProgressUnavailable(false);
+    if (!running || !active || !generatingId) return;
+    let alive = true;
+    let inFlight = false;
+    let dirty = false;
+    const refresh = () => {
+      if (!alive || document.hidden) return;
+      if (inFlight) {
+        dirty = true;
+        return;
+      }
+      inFlight = true;
+      dirty = false;
+      void window.electronAPI
+        .listActivity()
+        .then((tasks) => {
+          if (!alive || dirty) return;
+          const next = tasks.find(
+            (task) => task.kind === 'review' && task.reviewId === generatingId && isActiveTask(task)
+          );
+          setGenerationTask((previous) =>
+            previous?.reviewId === next?.reviewId &&
+            previous?.detail === next?.detail &&
+            previous?.status === next?.status &&
+            previous?.progress?.completed === next?.progress?.completed &&
+            previous?.progress?.total === next?.progress?.total
+              ? previous
+              : next
+          );
+          setProgressUnavailable(false);
+        })
+        .catch(() => {
+          if (alive) setProgressUnavailable(true);
+        })
+        .finally(() => {
+          inFlight = false;
+          if (dirty) refresh();
+        });
+    };
+    const subscription = window.electronAPI.onActivityChanged?.(() => refresh());
+    const stop = typeof subscription === 'function' ? subscription : undefined;
+    const resume = () => {
+      if (!document.hidden) refresh();
+    };
+    document.addEventListener('visibilitychange', resume);
+    refresh();
+    const timer = setInterval(() => refresh(), stop ? 30_000 : 2000);
+    return () => {
+      alive = false;
+      stop?.();
+      document.removeEventListener('visibilitychange', resume);
+      clearInterval(timer);
+    };
+  }, [running, active, generatingId, progressRetry]);
+  const currentTask = generationTask?.reviewId === generatingId ? generationTask : undefined;
+  const generationStage = progressUnavailable
+    ? 'Progress unavailable'
+    : currentTask?.detail || 'Generating explanation…';
+  const topicProgress =
+    !progressUnavailable &&
+    currentTask?.detail === 'Writing topics' &&
+    currentTask.progress &&
+    currentTask.progress.total > 0
+      ? `${currentTask.progress.completed} of ${currentTask.progress.total} ${currentTask.progress.total === 1 ? 'topic' : 'topics'} complete`
+      : undefined;
+  const generationStatus = [generationStage, topicProgress].filter(Boolean).join(' · ');
+  const emptyGeneration = running && !review && !error && !loadError;
   const failed = item.review?.status === 'failed';
   const newer = completed && review && completed.id !== review.reviewId;
   const changed = review && (!review.snapshot || review.snapshot.fingerprint !== fingerprint(item.subject));
@@ -105,7 +195,16 @@ export function PrExplanation({
       const next = await loadExplanation(completed.id);
       let previousPosition = 0;
       try {
-        previousPosition = Number(localStorage.getItem(`gnosis-position:${item.subject.id}:${review?.reviewId}`) ?? 0);
+        previousPosition = Number(
+          readReviewState(
+            explanationPositionKey(
+              `${review?.reviewId ?? review?.prUrl}:${review?.snapshot?.fingerprint ?? review?.headSha ?? ''}`,
+              'inspected'
+            )
+          ) ??
+            localStorage.getItem(`gnosis-position:${item.subject.id}:${review?.reviewId}`) ??
+            0
+        );
       } catch {
         // Optional reading position must not prevent opening a successfully loaded explanation.
       }
@@ -123,26 +222,42 @@ export function PrExplanation({
   const model = provider?.models.find((m) => m.id === preferences?.model)?.label ?? preferences?.model;
   return (
     <div className="pr-explanation-workspace">
-      {limited.length > 0 && <div className="explanation-status" role="status">
-        <span>A complete explanation is unavailable: {limited.map(m => `PR #${m.number}`).join(', ')} exceeds GitHub’s 3,000-file limit.
-          {' '}Inspect the available files in Changes, open a smaller PR, or review a local checkout.</span>
-        <Button variant="outline" size="sm" onClick={onOpenChanges}><WorkspaceIcon tab="changes" />Open Changes</Button>
-      </div>}
-      {(running || newer || changed || failed || error || loadError) && (
+      {limited.length > 0 && (
+        <div className="explanation-status" role="status">
+          <span>
+            A complete explanation is unavailable: {limited.map((m) => `PR #${m.number}`).join(', ')} exceeds GitHub’s
+            3,000-file limit. Inspect the available files in Changes, open a smaller PR, or review a local checkout.
+          </span>
+          <Button variant="outline" size="sm" onClick={onOpenChanges}>
+            <WorkspaceIcon tab="changes" />
+            Open Changes
+          </Button>
+        </div>
+      )}
+      {!emptyGeneration && (running || newer || changed || failed || error || loadError) && (
         <div className="explanation-status" role={error || loadError ? 'alert' : 'status'}>
           <span>
             {error ||
               loadError ||
-              (running
-                ? <LoadingIndicator announce={false}>Generating explanation…</LoadingIndicator>
-                : failed
-                  ? review
-                    ? 'The explanation could not be completed. Your saved version is still available.'
-                    : 'The explanation could not be completed. Try generating it again.'
-                  : newer
-                    ? 'Updated explanation ready.'
-                    : 'This explanation covers an earlier version of the PR.')}
+              (running ? (
+                <LoadingIndicator announce={false}>{generationStatus}</LoadingIndicator>
+              ) : failed ? (
+                review ? (
+                  'The explanation could not be completed. Your saved version is still available.'
+                ) : (
+                  'The explanation could not be completed. Try generating it again.'
+                )
+              ) : newer ? (
+                'Updated explanation ready.'
+              ) : (
+                'This explanation covers an earlier version of the PR.'
+              ))}
           </span>
+          {running && progressUnavailable && (
+            <Button size="sm" onClick={() => setProgressRetry((n) => n + 1)}>
+              Retry progress
+            </Button>
+          )}
           {running ? (
             <Button variant="outline" size="sm" onClick={onShowActivity}>
               View activity
@@ -167,7 +282,24 @@ export function PrExplanation({
           )}
         </div>
       )}
-      {review && visited ? (
+      {emptyGeneration ? (
+        <div className="explanation-generating">
+          <LoadingState
+            title={generationStage}
+            description={
+              progressUnavailable ? 'Generation may still be running. Retry to check its progress.' : topicProgress
+            }
+          />
+          {progressUnavailable && (
+            <Button size="sm" onClick={() => setProgressRetry((n) => n + 1)}>
+              Retry progress
+            </Button>
+          )}
+          <Button variant="outline" size="sm" onClick={onShowActivity}>
+            View activity
+          </Button>
+        </div>
+      ) : review && visited ? (
         <ReviewDraftScope.Provider
           value={`${review.reviewId ?? review.prUrl}:${review.snapshot?.fingerprint ?? review.headSha ?? ''}`}
         >
@@ -179,6 +311,7 @@ export function PrExplanation({
             initialPreferences={preferences ?? undefined}
             onBack={onBack}
             onReReview={generate}
+            regenerating={running}
             onShowActivity={onShowActivity}
             onOpenChanges={onOpenChanges}
             initialSlideId={initialSlideId}
@@ -188,17 +321,27 @@ export function PrExplanation({
       ) : (
         !review && (
           <div className="explanation-empty">
-            {wanted && !loadError ? <LoadingState title="Opening saved explanation…" /> : loadError ? <>
-            <h2>
-              Saved explanation could not be opened
-            </h2>
-            <p>Retry loading to open the saved explanation.</p>
-            </> : !running && !failed && !error && <>
-              <h2>No explanation yet</h2>
-              <p>{item.subject.kind === 'stack'
-                ? `Generate a walkthrough of the changes across all ${item.subject.members.length} PRs.`
-                : 'Generate a walkthrough of this PR’s changes, grouped by topic.'}</p>
-            </>}
+            {wanted && !loadError ? (
+              <LoadingState title="Opening saved explanation…" />
+            ) : loadError ? (
+              <>
+                <h2>Saved explanation could not be opened</h2>
+                <p>Retry loading to open the saved explanation.</p>
+              </>
+            ) : (
+              !running &&
+              !failed &&
+              !error && (
+                <>
+                  <h2>No explanation yet</h2>
+                  <p>
+                    {item.subject.kind === 'stack'
+                      ? `Read the changes across all ${item.subject.members.length} PRs, with each topic beside its code.`
+                      : 'Read the changes by topic, with the relevant code beside each explanation.'}
+                  </p>
+                </>
+              )
+            )}
             {!wanted && !running && !failed && !error && (
               <div className="explanation-empty-actions">
                 <Button onClick={generate} disabled={!preferences || limited.length > 0}>
@@ -209,7 +352,7 @@ export function PrExplanation({
                 </span>
               </div>
             )}
-            {!wanted && onAiSetup && (
+            {!wanted && !running && onAiSetup && (
               <button className="workbench-help-link" onClick={onAiSetup}>
                 AI setup
               </button>

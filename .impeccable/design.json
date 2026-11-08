@@ -623,8 +623,9 @@
         "value": "1100px"
       },
       {
-        "name": "review-pane-tabs",
-        "value": "1000px"
+        "name": "explanation-reader-stacked",
+        "value": "850px",
+        "purpose": "Reader container width, including beside chat; stack section prose then code and disable column stickiness."
       },
       {
         "name": "queue-icon-rail",
@@ -743,7 +744,7 @@
       },
       {
         "name": "The Reading Rule",
-        "body": "Keep explanations readable within their pane. Use restrained headings and bounded prose widths.",
+        "body": "Make titles, sections, subsections, and body text distinguishable before the user reads the words. Keep explanations within a 68ch column and preserve reflow at 200% zoom.",
         "section": "typography"
       },
       {

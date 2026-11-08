@@ -63,6 +63,9 @@ void app.whenReady().then(async () => {
     assert.ok((await js<string[]>('window.__refreshed'))[0].endsWith('/152'));
     assert.equal(await js("document.querySelector('.queue-item.is-selected .queue-title')?.textContent"), selection);
     await menuAction(js, 'Actions for PR #152', 'Generate explanation');
+    await wait("!!document.querySelector('.explanation-setup-footer')");
+    await js("[...document.querySelectorAll('.explanation-setup-dialog button')].find(b=>b.textContent.trim()==='Generate explanation').click()");
+    await wait("!document.querySelector('.explanation-setup-dialog')");
     await wait('window.__generationRequests.length===1');
     assert.equal(await js('window.__generationRequests[0].prUrl.endsWith("/152")'), true);
     assert.equal(await js('window.electronAPI.loadPreferences().then(p=>window.__generationRequests[0].model===p.model&&window.__generationRequests[0].provider===p.provider)'), true);
@@ -70,10 +73,16 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.electronAPI.workbenchQueue().then(q=>window.__briefingRequests[0]===q.items.find(i=>i.subject.members.some(m=>m.number===152)).subject.id)'), true);
     assert.equal(await js("document.querySelector('.queue-item.is-selected .queue-title')?.textContent"), selection);
     await menuAction(js, 'Stack actions', 'Generate explanation');
+    await wait("!!document.querySelector('.explanation-setup-footer')");
+    await js("[...document.querySelectorAll('.explanation-setup-dialog button')].find(b=>b.textContent.trim()==='Generate explanation').click()");
+    await wait("!document.querySelector('.explanation-setup-dialog')");
     await wait('window.__generationRequests.length===2');
     assert.equal(await js('window.electronAPI.workbenchQueue().then(q=>window.__generationRequests[1].subjectId===q.items.find(i=>i.subject.kind==="stack").subject.id)'), true);
     await js("document.querySelector('.queue-disclosure').click()");
     await menuAction(js, 'Actions for PR #121', 'Generate explanation');
+    await wait("!!document.querySelector('.explanation-setup-footer')");
+    await js("[...document.querySelectorAll('.explanation-setup-dialog button')].find(b=>b.textContent.trim()==='Generate explanation').click()");
+    await wait("!document.querySelector('.explanation-setup-dialog')");
     await wait('window.__generationRequests.length===3');
     assert.equal(await js('window.__generationRequests[2].prUrl.endsWith("/121")&&window.__generationRequests[2].standalone===true&&!window.__generationRequests[2].subjectId'), true);
     await menuAction(js, 'Actions for PR #121', 'Generate stack briefing');

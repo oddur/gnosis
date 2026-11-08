@@ -71,7 +71,10 @@ void test('renderer migration uses real SQLite, serializes concurrent drafts and
         loadReviewState: (legacy: Record<string, string>) => store.loadReviewState(legacy),
         saveReviewState: (value: ReviewStateWrite) =>
           failed ? Promise.reject(new Error('Disk full')) : store.saveReviewState(value),
-        saveFileProgress: (value: FileProgressPatch) => { progressWrites.push(value); return store.saveFileProgress(value); },
+        saveFileProgress: (value: FileProgressPatch) => {
+          progressWrites.push(value);
+          return store.saveFileProgress(value);
+        },
       },
     },
   });
@@ -90,6 +93,8 @@ void test('renderer migration uses real SQLite, serializes concurrent drafts and
       readReviewDrafts('alice', url).map((d) => d.id),
       ['first', 'second', 'third']
     );
+    await writeReviewState('gnosis-explanation-position:review-a:reading', { top: 840, left: 0 });
+    await writeReviewState('gnosis-explanation-position:review-a:code:section-b', { top: 320, left: 48 });
     await writeReviewState('gnosis-feedback-options:v1:alice', false);
     assert.equal(readReviewState('gnosis-feedback-options:v1:alice'), false);
     failed = true;
@@ -108,7 +113,11 @@ void test('renderer migration uses real SQLite, serializes concurrent drafts and
     await markFilesViewed([...keys, 'revision', 'revision'], true);
     assert.equal(progressWrites.length, writesBefore + 1, 'one IPC/database patch for a whole folder');
     assert.equal(Object.keys((progressWrites.at(-1) as FileProgressPatch).marks).length, 3001);
-    assert.equal((progressWrites.at(-1) as FileProgressPatch).marks.content, true, 'revision aliases remain shared with explanations');
+    assert.equal(
+      (progressWrites.at(-1) as FileProgressPatch).marks.content,
+      true,
+      'revision aliases remain shared with explanations'
+    );
     await markFilesViewed(keys, true);
     assert.equal(progressWrites.length, writesBefore + 1, 'already viewed files do not need another write');
     await markFilesViewed(['revision'], false);
@@ -116,10 +125,12 @@ void test('renderer migration uses real SQLite, serializes concurrent drafts and
     store = createAppDataStore();
     await store.open(directory);
     const restored = await store.loadReviewState({});
+    assert.deepEqual(restored['gnosis-explanation-position:review-a:reading'], { top: 840, left: 0 });
+    assert.deepEqual(restored['gnosis-explanation-position:review-a:code:section-b'], { top: 320, left: 48 });
     assert.equal(restored['gnosis-feedback-options:v1:alice'], false, 'Feedback filter survives reopening SQLite');
     assert.equal((restored[key] as unknown[]).length, 3);
     assert.equal((restored['gnosis-file-progress:v1'] as FileProgressPatch).marks.content, false);
-    assert.ok(keys.every(key => (restored['gnosis-file-progress:v1'] as FileProgressPatch).marks[key]));
+    assert.ok(keys.every((key) => (restored['gnosis-file-progress:v1'] as FileProgressPatch).marks[key]));
   } finally {
     await store.close();
     fs.rmSync(directory, { recursive: true, force: true });

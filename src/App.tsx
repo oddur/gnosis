@@ -114,6 +114,7 @@ export function App() {
   // via the new-review-in-history event — handled in HomePage.
   const [review, setReview] = useState<ReviewGuide | null>(null);
   const [prefillPrUrl, setPrefillPrUrl] = useState<string | undefined>();
+  const [prefillReviewId, setPrefillReviewId] = useState<string>();
   useEffect(() => {
     if (page !== 'review' || !review?.reviewId) return;
     const location: AppLocation = { page: 'review', reviewId: review.reviewId };
@@ -221,7 +222,8 @@ export function App() {
     setPage('home');
   }
 
-  function handleReReview(prUrl: string) {
+  function handleReReview(prUrl: string, previousReviewId?: string) {
+    setPrefillReviewId(previousReviewId);
     navigationVersion.current++;
     cancelHistoryLoad();
     setHomeRestoration(undefined);
@@ -415,6 +417,7 @@ export function App() {
             onReviewReady={handleReviewReady}
             onReviewOriginChange={setReviewOrigin}
             prefillPrUrl={prefillPrUrl}
+            prefillReviewId={prefillReviewId}
             initialSubjectId={destination.subjectId}
             commandDestination={homeCommand}
             explanationDestination={explanationDestination}

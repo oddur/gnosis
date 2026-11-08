@@ -50,10 +50,16 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('.repository-editor').scrollIntoView({block:'start'})");
     assert.equal(await js("document.querySelector('.repository-editor').textContent.includes('3 of 3 left here · 7 left overall')"), true);
     await capture('add-light');
+    await click('.repository-explanation-settings .repository-inherit input');
+    await click('.repository-explanation-settings input[value="educational"]');
+    await js("document.querySelector('.repository-explanation-settings input[placeholder]').focus()");
+    await fill('.repository-explanation-settings input[placeholder]', '.snap, .lock');
+    await js("document.querySelector('.repository-explanation-settings input[placeholder]').blur()");
     await button('Watch repository');
     await wait("window.electronAPI.loadPreferences().then(p=>p.repositorySettings?.['org/new']?.color==='purple')");
     assert.equal(await js("window.electronAPI.loadPreferences().then(p=>p.repositorySettings['org/new'].prInactivityDays)"), 90);
     assert.equal(await js("window.electronAPI.loadPreferences().then(p=>p.repositorySettings['org/new'].ignoreDependabotPrs)"), false);
+    assert.deepEqual(await js("window.electronAPI.loadPreferences().then(p=>p.repositorySettings['org/new'].explanation)"), {style:'educational',customInstructions:'',excludeGenerated:true,excludeTests:false,hiddenExtensions:['.snap','.lock']});
     await click('[aria-label="Configure org/new"]');
     await wait("!!document.querySelector('.repository-editor')");
     assert.equal(await js("document.querySelector('[aria-label=\"Repository daily automatic briefings\"]').value"), '3');

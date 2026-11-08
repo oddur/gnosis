@@ -223,7 +223,10 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.metadataReads'), 0, 'Moving through cached summaries adds no metadata reads');
     await click('Explanation');
     await click('Generate explanation');
-    await wait("document.querySelector('.explanation-status')?.textContent.includes('Generating explanation')");
+    await wait("!!document.querySelector('.explanation-setup-footer')");
+    await js("[...document.querySelectorAll('.explanation-setup-dialog button')].find(b=>b.textContent.trim()==='Generate explanation').click()");
+    await wait("!document.querySelector('.explanation-setup-dialog')");
+    await wait("document.querySelector('.explanation-generating')?.textContent.includes('Generating explanation')");
     assert.equal(await js('window.generationCalls.length'), 1);
     await click('Summary');
     assert.equal(await js("!!document.querySelector('.pr-description')"), true, 'Description remains readable while generating');
@@ -258,11 +261,11 @@ void app.whenReady().then(async () => {
     await click('Explanation');
     await wait("!!document.querySelector('.explanation-empty')");
     await click('Back to stack');
-    await wait("!!document.querySelector('.workbench-overview')");
+    await wait("!!document.querySelector('.explanation-reader')");
     await click('Summary');
     assert.equal(await js("document.querySelectorAll('.stack-overview-member').length"), 3);
     await click('Explanation');
-    await wait("!!document.querySelector('.overview-topic')");
+    await wait("!!document.querySelector('.explanation-section')");
     await click('Review queue');
     await wait("!!document.querySelector('.queue-list')");
     await click('Open PR');

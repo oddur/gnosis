@@ -216,7 +216,6 @@ export function SettingsDialog({
   const [trayEnabled, setTrayEnabled] = useState(true);
   const [briefingDailyLimit, setBriefingDailyLimit] = useState(10);
   const [parallelReview, setParallelReview] = useState(false);
-  const [educationMode, setEducationMode] = useState(true);
   const [claudeContext, setClaudeContext] = useState(true);
   const [analytics, setAnalytics] = useState(true);
   const [proactiveReviewOverrides, setProactiveReviewOverrides] = useState(false);
@@ -276,7 +275,6 @@ export function SettingsDialog({
         setTrayEnabled(prefs.trayEnabled);
         setBriefingDailyLimit(prefs.briefingDailyLimit ?? 10);
         setParallelReview(prefs.parallelReview);
-        setEducationMode(prefs.educationMode);
         setClaudeContext(prefs.claudeContext);
         setAnalytics(prefs.analytics);
         setProactiveReviewOverrides(prefs.proactiveReviewOverrides);
@@ -734,21 +732,6 @@ export function SettingsDialog({
                     const next = !parallelReview;
                     setParallelReview(next);
                     saveField({ parallelReview: next });
-                  }}
-                />
-              </SettingRow>
-
-              <SettingRow
-                label="Explain background concepts"
-                description="Include short notes about concepts used by the code, alongside the relevant review topic."
-              >
-                <Toggle
-                  checked={educationMode}
-                  ariaLabel="Explain background concepts"
-                  onChange={() => {
-                    const next = !educationMode;
-                    setEducationMode(next);
-                    saveField({ educationMode: next });
                   }}
                 />
               </SettingRow>

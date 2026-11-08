@@ -20,20 +20,17 @@ const groups: ShortcutGroup[] = [
   {
     heading: 'Reading',
     shortcuts: [
-      { keys: '←  →', label: 'Previous / next topic' },
-      { keys: 'j  k', label: 'Next / previous topic (vim)' },
-      { keys: 'g g', label: 'Jump to overview' },
-      { keys: 'G', label: 'Jump to last topic' },
-      { keys: '1 – 9', label: 'Jump to topic by number' },
+      { keys: '←  →', label: 'Previous / next section' },
+      { keys: 'j  k', label: 'Next / previous section (vim)' },
+      { keys: 'g g', label: 'Jump to change overview' },
+      { keys: 'G', label: 'Jump to last section' },
+      { keys: '1 – 9', label: 'Jump to section by number' },
     ],
   },
   {
     heading: 'Reviewing',
     shortcuts: [
-      { keys: 'r', label: 'Mark topic reviewed and advance' },
-      { keys: 'n', label: 'Jump to next unreviewed' },
-      { keys: 'c', label: 'Open or focus chat for current topic or file' },
-      { keys: 'f', label: 'Toggle focus / split view' },
+      { keys: 'c', label: 'Open or focus chat for current section or file' },
       { keys: 'u', label: 'Switch to unified diff' },
       { keys: 's', label: 'Switch to split diff' },
     ],

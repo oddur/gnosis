@@ -240,6 +240,7 @@ export interface FileMetadata {
 }
 
 export interface ReviewGuide {
+  explanationOptions?: import('./explanation-options').ExplanationOptions;
   /** Immutable revisions and eligible image paths for on-demand previews. */
   baseSha?: string;
   baseRepo?: string;
@@ -315,6 +316,7 @@ export interface SubmitReviewRequest {
 }
 
 export interface ReviewHistoryEntry {
+  explanationOptions?: import('./explanation-options').ExplanationOptions;
   snapshot?: ReviewSnapshot;
   id: string;
   prTitle: string;
@@ -347,6 +349,7 @@ export interface StartReviewResult {
 export type { ClaudeModel, CodexModel, ModelId, Provider } from './models';
 
 export interface Preferences {
+  localExplanationPreferences?: Record<string, import('./explanation-options').ExplanationPreferences>;
   checksView?: import('./checks-view').ChecksView;
   workflowGrouping?: import('./workflow-graph').WorkflowGrouping;
   repositorySettings?: import('./repository-settings').RepositorySettingsMap;
@@ -426,6 +429,9 @@ export interface SendSlideChatRequest {
 }
 
 export interface GenerateReviewRequest {
+  explanationOptions?: import('./explanation-options').ExplanationOptions;
+  rememberExplanationOptions?: boolean;
+  previousReviewId?: string;
   standalone?: boolean;
   subjectId?: string;
   memberUrls?: string[];

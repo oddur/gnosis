@@ -169,8 +169,8 @@ void app.whenReady().then(async () => {
     );
     await js("document.querySelector('.queue-item:has(.queue-disclosure) .queue-row-main').click()");
     await click('Open AI explanation');
-    await wait("!!document.querySelector('.workbench-overview')");
-    await click('Continue review');
+    await wait("!!document.querySelector('.explanation-reader')");
+    await js(`window.selectOption('[aria-label="Explanation section"]', '1')`);
     await wait("!!document.querySelector('.review-narrative .svg-illustration iframe')");
     assert.equal(await js("!!document.querySelector('.review-code .review-file-group')"), true);
     await js("document.querySelector('.svg-illustration').scrollIntoView({block:'start'})");

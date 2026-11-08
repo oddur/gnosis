@@ -129,14 +129,14 @@ void app.whenReady().then(async () => {
     await js("document.documentElement.classList.add('dark')");
     await capture('queue-dark');
     await click('Open AI explanation');
-    await wait("!!document.querySelector('.workbench-overview')");
+    await wait("!!document.querySelector('.explanation-reader')");
     await capture('overview-dark');
     assert.ok(await js("document.querySelector('.activity-summary')?.textContent.includes('2 running')"));
-    await click('Continue review');
+    await js(`window.selectOption('[aria-label="Explanation section"]', '1')`);
     await wait("!!document.querySelector('.review-narrative')");
     assert.equal(await js("document.querySelectorAll('.source-attribution').length"), 1);
     assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
-    assert.equal(await js("document.querySelectorAll('.review-file-context').length"), 1);
+    assert.equal(await js("document.querySelectorAll('[data-explanation-section=\"1\"] .review-file-context').length"), 1);
     match(await js("document.querySelector('.review-file-summary').textContent"), /Limits pending commands/);
     match(await js("document.querySelector('.review-file-details').textContent"), /Modified/);
     match(
@@ -165,7 +165,7 @@ void app.whenReady().then(async () => {
 
     await click('Ask a question');
     await wait("!!document.querySelector('.review-chat-workspace > .chat-sheet')");
-    assert.equal(await js("document.querySelector('.review-code').getBoundingClientRect().width > 350"), true);
+    assert.equal(await js("document.querySelector('.explanation-document').getBoundingClientRect().width > 350"), true);
     await capture('chat-dark');
     // Chat must preserve fenced code in both questions and answers, including fences without a language.
     await js(
@@ -228,36 +228,34 @@ void app.whenReady().then(async () => {
     window.setSize(1280, 800);
     await js("document.documentElement.classList.remove('dark')");
     // Unsaved topics offer generation; saved topics offer reopening.
-    await js(`window.selectOption('[aria-label="Review topic"]', '2')`);
+    await js(`window.selectOption('[aria-label="Explanation section"]', '2')`);
     await wait(
-      "document.querySelector('.interactive-explanation-prompt')?.textContent.includes('Create interactive explanation')"
+      "document.querySelector('[data-explanation-section=\"2\"] .interactive-explanation-prompt')?.textContent.includes('Create interactive explanation')"
     );
     await click('Create interactive explanation');
     assert.equal(await js("!!document.querySelector('.review-tool-slot iframe')"), false);
     assert.equal(await js('Number(document.body.dataset.explainerCalls)'), 1);
     await wait(
-      "document.querySelector('.interactive-explanation-prompt')?.textContent.includes('Open interactive explanation')"
+      "document.querySelector('[data-explanation-section=\"2\"] .interactive-explanation-prompt')?.textContent.includes('Open interactive explanation')"
     );
-    await click('Open interactive explanation');
+    await js("document.querySelector('[data-explanation-section=\"2\"] .interactive-explanation-prompt button').click()");
     await wait("!!document.querySelector('.review-tool-slot iframe')");
     assert.equal(await js('Number(document.body.dataset.explainerCalls)'), 1);
     await click('Close interactive explanation');
-    await js(`window.selectOption('[aria-label="Review topic"]', '1')`);
+    await js(`window.selectOption('[aria-label="Explanation section"]', '1')`);
 
     window.setSize(1440, 900);
     await capture('review-large');
     window.setSize(800, 700);
     await wait('innerWidth <= 800');
     assert.equal(await js('document.documentElement.scrollWidth <= innerWidth'), true);
-    await wait('!!document.querySelector(\'[aria-label="Review pane"]\')');
-    await click('Code');
+    await wait("document.querySelector('.review-code').getBoundingClientRect().width > 600");
     assert.equal(await js("document.querySelector('.review-code').getBoundingClientRect().width > 600"), true);
     assert.equal(
-      await js("[...document.querySelectorAll('.review-file-context')].every(h=>h.scrollWidth <= h.clientWidth)"),
+      await js("[...document.querySelectorAll('[data-explanation-section=\"1\"] .review-file-context')].every(h=>h.scrollWidth <= h.clientWidth)"),
       true
     );
     await capture('review-narrow');
-    await js("[...document.querySelectorAll('[aria-label=\"Review pane\"] button')].find(b=>b.textContent.trim()==='Explanation').click()");
     await click('Open interactive explanation');
     await wait("!!document.querySelector('.review-tool-slot iframe')");
     assert.equal(
@@ -348,9 +346,9 @@ void app.whenReady().then(async () => {
     await press('Enter');
     await wait("!!document.querySelector('.stack-overview')");
     await js("(()=>{const tab=[...document.querySelectorAll('[role=tab]')].find(t=>t.textContent==='Explanation');tab.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));tab.click()})()");
-    await wait("!!document.querySelector('.workbench-overview')");
-    await click('Continue review');
-    await wait("document.querySelectorAll('.review-file-context').length === 2");
+    await wait("!!document.querySelector('.explanation-reader')");
+    await js(`window.selectOption('[aria-label="Explanation section"]', '1')`);
+    await wait("document.querySelectorAll('[data-explanation-section=\"1\"] .review-file-context').length === 2");
     assert.equal(
       await js("document.querySelector('.staleBanner-unknown')"),
       null,
@@ -362,9 +360,10 @@ void app.whenReady().then(async () => {
       "[...document.querySelectorAll('.review-context-hunk button')].filter(b=>b.getAttribute('aria-label')?.startsWith('Show all')).forEach(b=>b.click())"
     );
     await wait("document.querySelector('diffs-container')?.shadowRoot?.querySelectorAll('[data-line]').length > 60");
-    await js("document.querySelector('.review-code').parentElement.scrollTop = 300");
+    await js("(()=>{const pane=document.querySelector('.explanation-document');const header=document.querySelector('.review-file-context');pane.scrollTop+=header.getBoundingClientRect().top-pane.getBoundingClientRect().top+100})()");
+    await new Promise(r=>setTimeout(r,100));
     const sticky = await js<{ offset: number; text: string }>(`(() => {
-      const pane = document.querySelector('.review-code').parentElement;
+      const pane = document.querySelector('.explanation-document');
       const header = document.querySelector('.review-file-context');
       return { offset: header.getBoundingClientRect().top - pane.getBoundingClientRect().top, text: header.textContent };
     })()`);
@@ -373,7 +372,7 @@ void app.whenReady().then(async () => {
     assert.match(sticky.text, /command-queue.ts/);
     assert.match(sticky.text, /Limits pending commands/);
     assert.equal(
-      await js("document.querySelectorAll('.review-file-context')[1].querySelector('.review-file-summary') === null"),
+      await js("document.querySelectorAll('[data-explanation-section=\"1\"] .review-file-context')[1].querySelector('.review-file-summary') === null"),
       true
     );
     const commentColors = await js<{ foreground: string; background: string }>(`(() => {
@@ -388,14 +387,14 @@ void app.whenReady().then(async () => {
     assert.ok(contrastRatio(commentColors.foreground, commentColors.background) >= 4.5, 'Rendered code comments remain readable');
     await capture('sticky-source-dark');
     await js(`(() => {
-      const pane = document.querySelector('.review-code').parentElement;
-      const next = document.querySelectorAll('.review-file-context')[1];
+      const pane = document.querySelector('.explanation-document');
+      const next = document.querySelectorAll('[data-explanation-section=\"1\"] .review-file-context')[1];
       pane.scrollTop += next.getBoundingClientRect().top - pane.getBoundingClientRect().top + 100;
     })()`);
     assert.ok(
       await js(`(() => {
-      const pane = document.querySelector('.review-code').parentElement;
-      const header = document.querySelectorAll('.review-file-context')[1];
+      const pane = document.querySelector('.explanation-document');
+      const header = document.querySelectorAll('[data-explanation-section=\"1\"] .review-file-context')[1];
       return Math.abs(header.getBoundingClientRect().top - pane.getBoundingClientRect().top) < 2 && header.querySelector('.source-attribution .entity-badge')?.textContent === '#122';
     })()`),
       'Pinned source must follow the next stack member'
@@ -403,13 +402,8 @@ void app.whenReady().then(async () => {
     await capture('sticky-next-source-dark');
     window.setSize(800, 700);
     await capture('review-polished-narrow');
-    assert.ok(
-      await js(`(() => {
-      const [previous, center, next] = document.querySelector('.review-bottom-nav').children;
-      return previous.getBoundingClientRect().right <= center.getBoundingClientRect().left && center.getBoundingClientRect().right <= next.getBoundingClientRect().left;
-    })()`),
-      'Long navigation labels must not overlap submission'
-    );
+    assert.equal(await js("!!document.querySelector('.review-bottom-nav')"), false);
+    assert.equal(await js("document.querySelector('.explanation-reading-toolbar').getBoundingClientRect().right<=innerWidth"), true);
     // First use: optional setup, terminology, recovery, and a real review entry point.
     window.setSize(1280, 800);
     await loadWorkbenchPage(window, fixtureUrl + '?onboarding');
@@ -529,6 +523,9 @@ void app.whenReady().then(async () => {
     await js("(()=>{const tab=[...document.querySelectorAll('[role=tab]')].find(tab => tab.textContent === 'Explanation');tab.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));tab.click()})()");
     await wait("!!document.querySelector('.explanation-empty')");
     await click('Generate explanation');
+    await wait("!!document.querySelector('.explanation-setup-footer')");
+    await js("[...document.querySelectorAll('.explanation-setup-dialog button')].find(b=>b.textContent.trim()==='Generate explanation').click()");
+    await wait("!document.querySelector('.explanation-setup-dialog')");
     await wait('window.electronAPI.loadPreferences().then(p => p.firstRunSeen)');
     await click('Review queue');
     await wait("document.querySelectorAll('.queue-item').length === 7 && !document.querySelector('.getting-started')");
@@ -890,8 +887,8 @@ void app.whenReady().then(async () => {
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
     await click('Open AI explanation');
-    await wait("!!document.querySelector('.workbench-overview')");
-    await click('Continue review');
+    await wait("!!document.querySelector('.explanation-reader')");
+    await js(`window.selectOption('[aria-label="Explanation section"]', '1')`);
     await wait("!!document.querySelector('.review-narrative')");
     await click('Create interactive explanation');
     await wait("document.querySelector('[data-slot=toast]')?.textContent.includes('Building interactive explanation')");
@@ -928,7 +925,7 @@ void app.whenReady().then(async () => {
     );
     await js("document.querySelector('[data-slot=toast] .app-toast-action').click()");
     await wait("!!document.querySelector('.review-tool-slot iframe')");
-    assert.equal(await js("document.querySelector('[aria-label=\"Review topic\"]').value"), '1');
+    assert.equal(await js("document.querySelector('[aria-label=\"Explanation section\"]').value"), '1');
     assert.equal(
       await js('Number(document.body.dataset.explainerCalls)'),
       1,

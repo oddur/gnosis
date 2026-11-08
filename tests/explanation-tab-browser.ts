@@ -65,7 +65,10 @@ void app.whenReady().then(async () => {
       window.largeExplanationMember.changedFileCount=3237;
     })()`);
     await wait("document.querySelector('.explanation-status')?.textContent.includes('3,000-file limit')");
-    assert.equal(await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Generate explanation').disabled"), true);
+    assert.equal(
+      await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Generate explanation').disabled"),
+      true
+    );
     assert.equal(await js('window.starts'), 0, 'Explain the limit before starting a job');
     await capture('large-pr-limit');
     await js('window.largeExplanationMember.changedFileCount=window.originalFileCount');
@@ -79,6 +82,68 @@ void app.whenReady().then(async () => {
       false
     );
     await capture('failed-first-generation');
+    // Generation uses the same animated empty state as Checks and live, review-scoped activity.
+    await js(`(async()=>{
+      window.originalListActivity=window.electronAPI.listActivity;
+      window.originalActivityListener=window.electronAPI.onActivityChanged;
+      window.generationListeners=new Set();
+      window.electronAPI.onActivityChanged=callback=>{window.generationListeners.add(callback);return ()=>window.generationListeners.delete(callback)};
+      window.generationTask={id:'review:first-generation',kind:'review',reviewId:'first-generation',status:'running',detail:'Writing topics',progress:{completed:1,total:3}};
+      window.electronAPI.listActivity=async()=>[{...window.generationTask,reviewId:'different-review',detail:'Wrong review'},window.generationTask];
+      const q=await window.electronAPI.workbenchQueue();
+      q.items.find(i=>i.subject.title.includes('Fix reconnect')).review={id:'first-generation',prUrl:'https://github.com/klang/engine/pull/150',prTitle:'Fix reconnect',author:'lena',status:'generating',savedAt:new Date().toISOString()};
+    })()`);
+    await wait("document.querySelector('.explanation-generating')?.textContent.includes('1 of 3 topics complete')");
+    assert.equal(await js("!!document.querySelector('.explanation-generating .loading-motif')"), true);
+    assert.equal(
+      await js("document.querySelector('.explanation-generating').textContent.includes('Wrong review')"),
+      false
+    );
+    assert.equal(await js("!!document.querySelector('.explanation-empty')"), false);
+    await capture('generating-topics');
+    await js(`window.activityReads=0;window.activityWaiters=[];
+      window.electronAPI.listActivity=()=>{window.activityReads++;return new Promise(resolve=>window.activityWaiters.push(()=>resolve([window.generationTask])))};
+      for(let i=0;i<100;i++)window.generationListeners.forEach(f=>f());void 0;`);
+    const burstReads = await js<number>('window.activityReads');
+    console.log('Generation activity requests for 100 synchronous updates:', burstReads);
+    await js(
+      `window.electronAPI.listActivity=async()=>{window.activityReads++;return [window.generationTask]};window.activityWaiters.forEach(resolve=>resolve());void 0;`
+    );
+    const settledReads = await js<number>('window.activityReads');
+    console.log('Generation activity requests including catch-up:', settledReads);
+    if (process.env.GNOSIS_GENERATION_BENCH_ONLY) {
+      app.exit(0);
+      return;
+    }
+
+    assert.equal(burstReads, 1, 'Coalesce bursts while an activity request is in flight');
+    assert.equal(settledReads, 2, 'One catch-up fetch receives the latest activity after a burst');
+    await js('window.generationTask.progress.completed=2;window.generationListeners.forEach(f=>f())');
+    await wait("document.querySelector('.explanation-generating')?.textContent.includes('2 of 3 topics complete')");
+    await js(
+      "window.generationTask.detail='Writing overview';delete window.generationTask.progress;window.generationListeners.forEach(f=>f())"
+    );
+    await wait("document.querySelector('.explanation-generating')?.textContent.includes('Writing overview')");
+    assert.equal(
+      await js("document.querySelector('.explanation-generating').textContent.includes('topics complete')"),
+      false
+    );
+    await js(
+      "window.electronAPI.listActivity=async()=>{throw Error('Activity unavailable')};window.generationListeners.forEach(f=>f())"
+    );
+    await wait("document.querySelector('.explanation-generating')?.textContent.includes('Progress unavailable')");
+    await capture('generation-progress-unavailable');
+    await js('window.electronAPI.listActivity=async()=>[window.generationTask];void 0;');
+    await click('Retry progress');
+    await wait("document.querySelector('.explanation-generating')?.textContent.includes('Writing overview')");
+    await js(`(async()=>{
+      const q=await window.electronAPI.workbenchQueue();
+      q.items.find(i=>i.subject.title.includes('Fix reconnect')).review.status='failed';
+    })()`);
+    await wait("!document.querySelector('.explanation-generating')");
+    await js(
+      'window.electronAPI.listActivity=window.originalListActivity;window.electronAPI.onActivityChanged=window.originalActivityListener;void 0;'
+    );
     // Existing viewer drafts migrate to the shared per-PR store, with revision and source intact.
     await js(`(async()=>{
       window.savedReview=await window.electronAPI.loadReview('workbench-review');
@@ -100,13 +165,39 @@ void app.whenReady().then(async () => {
     await wait("[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='Open AI explanation')");
     await click('Open AI explanation');
     await wait(
-      "document.querySelector('.pr-overview-tabs [data-state=active]')?.textContent==='Explanation' && !!document.querySelector('.workbench-overview')"
+      "document.querySelector('.pr-overview-tabs [data-state=active]')?.textContent==='Explanation' && !!document.querySelector('.explanation-reader')"
     );
     assert.equal(await js("document.querySelectorAll('.pr-overview-switch').length"), 0);
     assert.equal(await js("document.querySelectorAll('h1').length"), 1);
     assert.equal(await js('window.starts'), 0);
     await capture('overview');
-    await click('Continue review');
+    assert.equal(await js("document.querySelector('.explanation-reading-help').open"), false);
+    await js("document.querySelector('.explanation-reading-help summary').click()");
+    assert.match(
+      await js<string>("document.querySelector('.explanation-reading-help').textContent"),
+      /shared with Changes/
+    );
+    await capture('reading-help');
+    await js("document.querySelector('.explanation-reading-help summary').click()");
+    assert.equal(
+      await js(
+        "[...document.querySelectorAll('.explanation-reader button')].filter(b=>b.textContent.trim()==='Ask a question').length"
+      ),
+      1
+    );
+    assert.equal(
+      await js(
+        "[...document.querySelectorAll('.explanation-section button')].some(b=>b.textContent.trim()==='Ask a question')"
+      ),
+      false
+    );
+    assert.equal(await js('document.querySelector(\'[aria-label="Previous section"]\').disabled'), true);
+    await click('Next section');
+    await wait("document.querySelector('[aria-label=\"Explanation section\"]').value==='1'");
+    await click('Next section');
+    await wait("document.querySelector('[aria-label=\"Explanation section\"]').value==='2'");
+    await click('Previous section');
+    await wait("document.querySelector('[aria-label=\"Explanation section\"]').value==='1'");
     await wait("!!document.querySelector('.review-narrative')");
     await wait("document.querySelector('.pending-comment-block')?.textContent.includes('Keep the queue slot')");
     // Interrupted output remains visibly incomplete and can retry without duplicating the question.
@@ -191,75 +282,124 @@ void app.whenReady().then(async () => {
     assert.match(await js<string>("document.querySelector('[role=dialog]').textContent"), /cancellation throws/);
     await capture('shared-review');
     if (await js("!!document.querySelector('[role=tooltip]')")) {
-      await js("document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))");
+      await js(
+        "document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))"
+      );
       await wait("!document.querySelector('[role=tooltip]')");
     }
     await js(
       "document.querySelector('[role=dialog]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
     );
     await wait("!document.querySelector('[role=dialog]')");
-    // Viewing files offers navigation without approving a topic or submitting feedback.
-    assert.equal(await js("!!document.querySelector('.review-files-complete')"), false);
-    await js("document.querySelector('.review-file-viewed input').click()");
-    await wait("!!document.querySelector('.review-files-complete')");
-    assert.match(await js<string>("document.querySelector('.review-files-complete').textContent"), /Adapt batches/);
+    // Each section pairs its explanation and evidence in one scrolling document.
+    assert.equal(await js("document.querySelectorAll('.explanation-section').length"), 3);
+    assert.equal(
+      await js(
+        '!!document.querySelector(\'.review-bottom-nav,.explanation-inspect,.explanation-code-scroll,[aria-label="Review pane"]\')'
+      ),
+      false
+    );
+    assert.equal(await js("document.body.textContent.includes('Mark topic reviewed')"), false);
+    await js(`window.selectOption('[aria-label="Explanation section"]','2')`);
+    await wait('!!document.querySelector(\'[data-explanation-section="2"] .review-code\')');
+    assert.equal(
+      await js(
+        `(()=>{const row=document.querySelector('[data-explanation-section="2"]');const text=row.querySelector('.explanation-section-text').getBoundingClientRect();const code=row.querySelector('.explanation-section-code').getBoundingClientRect();return code.left>=text.right&&Math.abs(code.top-text.top)<2})()`
+      ),
+      true
+    );
+    await js('document.querySelector(\'[data-explanation-section="2"] .review-file-viewed input\').click()');
+    await wait("document.querySelector('.explanation-file-progress')?.textContent.startsWith('1/')");
+    assert.equal(await js("document.querySelectorAll('.explanation-section').length"), 3);
     await capture('files-viewed');
     win.setSize(640, 800);
-    await wait('!!document.querySelector(\'[aria-label="Review pane"]\')');
-    await click('Code');
+    await js(`window.selectOption('[aria-label="Explanation section"]','2')`);
+    await wait(
+      `(()=>{const row=document.querySelector('[data-explanation-section="2"]');return row.querySelector('.explanation-section-code').getBoundingClientRect().top>=row.querySelector('.explanation-section-text').getBoundingClientRect().bottom})()`
+    );
     await capture('files-viewed-narrow');
     assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
     win.setSize(1280, 800);
-    await wait('!document.querySelector(\'[aria-label="Review pane"]\')');
-    await js("document.querySelector('.review-file-viewed input').click()");
-    await wait("!document.querySelector('.review-files-complete')");
-    await js("document.querySelector('.review-file-viewed input').click()");
-    await click('Next topic');
-    await wait("document.querySelector('[aria-label=\"Review topic\"]').value==='2'");
-    await js(
-      `(async()=>{await window.selectOption('[aria-label="Review topic"]','3');})()`
-    );
-    await wait("document.querySelector('[aria-label=\"Review topic\"]').value==='3'");
-    await js("document.querySelectorAll('.review-file-viewed input:not(:checked)').forEach(el=>el.click())");
-    await wait("!!document.querySelector('.review-files-complete')");
+    await js(`window.selectOption('[aria-label="Explanation section"]','3')`);
+    await wait('!!document.querySelector(\'[data-explanation-section="3"] .review-code\')');
+    await wait("document.querySelector('.explanation-next-section').disabled");
+    await js("document.querySelector('.explanation-document').scrollTop=99999");
     await capture('files-viewed-final');
-    await click('Back to overview');
-    await wait("!!document.querySelector('.workbench-overview')");
+    assert.match(await js<string>("document.querySelector('.explanation-ending').textContent"), /files still unviewed/);
     assert.deepEqual(await js('window.reviewWrites'), []);
     assert.equal(await js('window.starts'), 0);
-    await click('Continue review');
-    await wait("document.querySelector('[aria-label=\"Review topic\"]').value==='1'");
+    await js(`window.selectOption('[aria-label="Explanation section"]','1')`);
     // A focused picker owns typing and navigation; underlying review shortcuts stay idle.
     for (const key of ['j', 'k', 'ArrowLeft', 'ArrowRight']) {
-      const original = await js(`document.querySelector('[aria-label="Review topic"]').value`);
-      await js(`(()=>{const trigger=document.querySelector('[aria-label="Review topic"]');trigger.focus();trigger.dispatchEvent(new KeyboardEvent('keydown',{key:${JSON.stringify(key)},bubbles:true,cancelable:true}))})()`);
+      const original = await js(`document.querySelector('[aria-label="Explanation section"]').value`);
+      await js(
+        `(()=>{const trigger=document.querySelector('[aria-label="Explanation section"]');trigger.focus();trigger.dispatchEvent(new KeyboardEvent('keydown',{key:${JSON.stringify(key)},bubbles:true,cancelable:true}))})()`
+      );
       if (key.length === 1) {
         await wait("document.activeElement?.getAttribute('data-slot')==='combobox-input'");
         assert.equal(await js("document.querySelector('[data-slot=combobox-input]').value"), key);
-        await js("document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))");
+        await js(
+          "document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))"
+        );
         await wait("!document.querySelector('[data-slot=combobox-content]')");
       }
-      assert.equal(await js(`document.querySelector('[aria-label="Review topic"]').value`), original, key);
+      assert.equal(await js(`document.querySelector('[aria-label="Explanation section"]').value`), original, key);
     }
     const loads = await js('window.loads');
-    const topic = await js('document.querySelector(\'[aria-label="Review topic"]\').value');
+    const topic = await js('document.querySelector(\'[aria-label="Explanation section"]\').value');
+    // Let the explicit smooth jump settle before testing an unchanged reading position.
+    await js(`(async()=>{const element=document.querySelector('.explanation-document');let previous=-1,stable=0;
+      for(let n=0;n<40&&stable<3;n++){await new Promise(r=>setTimeout(r,50));const top=element.scrollTop;stable=Math.abs(top-previous)<1?stable+1:0;previous=top;}})()`);
+    const readingPosition = await js<number>("document.querySelector('.explanation-document').scrollTop");
     await click('Summary');
     const header = await js("document.querySelector('.pr-overview-heading h1').textContent");
     // Hidden walkthrough shortcuts must not consume navigation in another tab.
     await click('Explanation');
-    assert.equal(await js('document.querySelector(\'[aria-label="Review topic"]\').value'), topic);
+    assert.equal(await js('document.querySelector(\'[aria-label="Explanation section"]\').value'), topic);
     assert.equal(await js('window.loads'), loads);
+    await wait(`Math.abs(document.querySelector('.explanation-document').scrollTop-${readingPosition})<2`);
     await js("document.activeElement.blur();window.dispatchEvent(new KeyboardEvent('keydown',{key:'j',bubbles:true}))");
     assert.equal(await js("document.querySelector('.pr-overview-heading h1').textContent"), header);
+    await js(`window.selectOption('[aria-label="Explanation section"]','1')`);
     await capture('desktop');
+    win.setSize(1920, 900);
+    await wait('innerWidth===1920');
+    await capture('wide-toolbar');
+    assert.equal(
+      await js(`(()=>{
+      const toolbar=document.querySelector('.explanation-reading-toolbar');
+      const nav=toolbar.querySelector('.explanation-section-navigation').getBoundingClientRect();
+      const controls=toolbar.querySelector('.explanation-diff-controls').getBoundingClientRect();
+      return Math.abs((nav.top+nav.bottom)/2-(controls.top+controls.bottom)/2)<2;
+    })()`),
+      true,
+      'Navigation and diff controls share a row at desktop width'
+    );
+    assert.equal(
+      await js("document.querySelectorAll('.explanation-reading-toolbar .inline-explanations-toggle').length"),
+      1
+    );
+    assert.equal(await js("document.querySelectorAll('.explanation-section .inline-explanations-toggle').length"), 0);
+    win.setSize(1280, 800);
+    await wait('innerWidth===1280');
     await js("document.documentElement.classList.add('dark')");
     await capture('dark');
     win.setSize(1024, 800);
+    await wait('innerWidth===1024');
+    await js(`window.selectOption('[aria-label="Explanation section"]','1')`);
     await capture('laptop');
     win.setSize(640, 800);
+    await wait('innerWidth===640');
+    await js(`window.selectOption('[aria-label="Explanation section"]','1')`);
     await capture('narrow');
     assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
     win.setSize(1280, 800);
+    win.webContents.setZoomFactor(2);
+    await wait('innerWidth===640');
+    await capture('zoomed');
+    assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
+    win.webContents.setZoomFactor(1);
+    await wait('innerWidth===1280');
     // New commits never replace the saved walkthrough or silently re-anchor drafts.
     await js(`(async()=>{
       window.queue=structuredClone(await window.electronAPI.workbenchQueue());
@@ -294,7 +434,9 @@ void app.whenReady().then(async () => {
     );
     await wait("document.querySelector('[role=dialog]')?.textContent.includes('This PR changed')");
     if (await js("!!document.querySelector('[role=tooltip]')")) {
-      await js("document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))");
+      await js(
+        "document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}))"
+      );
       await wait("!document.querySelector('[role=tooltip]')");
     }
     await js(
@@ -305,23 +447,31 @@ void app.whenReady().then(async () => {
       `(async()=>{await window.selectOption('[aria-label="PR for review submission"]',window.savedReview.snapshot.subject.members[1].url);})()`
     );
     assert.equal(
-      await js("[...document.querySelectorAll('button')].filter(b=>b.checkVisibility({visibilityProperty:true})).find(b=>b.textContent.includes('Review PR #121')).disabled"),
+      await js(
+        "[...document.querySelectorAll('button')].filter(b=>b.checkVisibility({visibilityProperty:true})).find(b=>b.textContent.includes('Review PR #121')).disabled"
+      ),
       false,
       'Drafts still belong to the displayed revision'
     );
     await click('Update explanation');
+    await wait("!!document.querySelector('.explanation-setup-footer')");
+    await js("[...document.querySelectorAll('.explanation-setup-dialog button')].find(b=>b.textContent.trim()==='Generate explanation').click()");
+    await wait("!document.querySelector('.explanation-setup-dialog')");
     await wait("document.querySelector('.explanation-status')?.textContent.includes('Generating explanation')");
     assert.equal(await js("!!document.querySelector('.review-narrative')"), true);
     await js("window.reviewHistory[0].status='failed'");
     await wait("document.querySelector('.explanation-status')?.textContent.includes('could not be completed')");
     await capture('failed-update');
     await click('Retry generation');
+    await wait("!!document.querySelector('.explanation-setup-footer')");
+    await js("[...document.querySelectorAll('.explanation-setup-dialog button')].find(b=>b.textContent.trim()==='Generate explanation').click()");
+    await wait("!document.querySelector('.explanation-setup-dialog')");
     await wait("document.querySelector('.explanation-status')?.textContent.includes('Generating explanation')");
     await js(
       `window.nextReview=structuredClone(window.savedReview);window.nextReview.reviewId='updated-review';window.nextReview.summary='Updated explanation includes cancellation changes.';window.nextReview.snapshot.subject=window.queue.items.find(i=>i.subject.kind==='stack').subject;window.nextReview.snapshot.fingerprint=JSON.stringify({members:window.nextReview.snapshot.subject.members.map(m=>[m.url,m.baseRepo,m.baseBranch,m.baseSha,m.headRepo,m.headBranch,m.headSha,m.title,m.description,m.state,m.merged]),edges:window.nextReview.snapshot.subject.edges});window.reviewHistory[0]={...window.reviewHistory[0],status:'completed',snapshot:window.nextReview.snapshot};window.electronAPI.loadReview=async id=>{window.loads++;return id==='updated-review'?window.nextReview:window.savedReview};void 0;`
     );
     await wait("document.querySelector('.explanation-status')?.textContent.includes('Updated explanation ready')");
-    const priorTopic = await js(`document.querySelector('[aria-label="Review topic"]').value`);
+    const priorTopic = await js('document.querySelector(\'[aria-label="Explanation section"]\').value');
     await capture('update-ready');
     await click('Open updated explanation');
     await wait("!document.querySelector('.explanation-status')");
@@ -330,11 +480,13 @@ void app.whenReady().then(async () => {
     );
     await wait("document.querySelector('.changes-notice')?.textContent.includes('earlier version')");
     assert.equal(
-      await js("[...document.querySelectorAll('button')].filter(b=>b.checkVisibility({visibilityProperty:true})).find(b=>b.textContent.includes('Review PR #121')).disabled"),
+      await js(
+        "[...document.querySelectorAll('button')].filter(b=>b.checkVisibility({visibilityProperty:true})).find(b=>b.textContent.includes('Review PR #121')).disabled"
+      ),
       true,
       'Old drafts block submission after explicitly opening the new revision'
     );
-    assert.equal(await js(`document.querySelector('[aria-label="Review topic"]').value`), priorTopic);
+    assert.equal(await js(`document.querySelector('[aria-label="Explanation section"]').value`), priorTopic);
     await click('Review queue');
     // Notification destinations also work for historical PRs outside the queue.
     await js(
@@ -351,9 +503,29 @@ void app.whenReady().then(async () => {
       "document.activeElement.blur();window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
     );
     await wait("!!document.querySelector('.queue-list')");
+    // Empty generated explanations retain their overview and offer direct recovery.
+    await js(`window.emptyReview=structuredClone(window.archived);window.emptyReview.reviewId='empty-review';window.emptyReview.slides=[];
+      window.electronAPI.loadReview=async()=>window.emptyReview;
+      window.dispatchEvent(new CustomEvent('fixture-review-navigate',{detail:'empty-review'}));void 0;`);
+    await wait("!!document.querySelector('.explanation-no-topics')");
+    assert.equal(await js("document.querySelectorAll('h1').length"), 1);
+    assert.match(await js<string>("document.querySelector('.explanation-no-topics').textContent"), /Generate again/);
+    assert.equal(await js("document.querySelectorAll('.explanation-no-topics .reading-prose').length"), 1);
+    win.setSize(640, 800);
+    await wait('innerWidth===640');
+    await capture('no-topics-narrow');
+    assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
+    await click('Open Changes');
+    await wait("document.querySelector('.pr-overview-tabs [data-state=active]')?.textContent==='Changes'");
     console.log('Explanation tab browser checks passed');
   } catch (e) {
     console.error(e);
+    console.log(
+      await js(
+        "JSON.stringify({focus:document.activeElement?.outerHTML.slice(0,800),scroll:document.querySelector('.explanation-document')?.scrollTop,popup:document.querySelector('[data-slot=combobox-content]')?.outerHTML})"
+      )
+    );
+    await capture('failure');
     process.exitCode = 1;
   } finally {
     win.destroy();

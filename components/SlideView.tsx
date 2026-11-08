@@ -21,6 +21,7 @@ import { DiffAppearanceMenu } from './DiffAppearanceMenu';
 import { DEFAULT_DIFF_APPEARANCE, type DiffAppearance } from '@/lib/review-diff';
 import { ReviewFileHeader } from './ReviewFileHeader';
 import { normalizeInlineExplanations } from '@/lib/inline-explanations';
+import { FileTypeIcon } from './FileTypeIcon';
 import { FilePathLink } from '@/components/FilePathLink';
 import { Markdown } from '@/components/Markdown';
 import { MermaidDiagram } from '@/components/MermaidDiagram';
@@ -37,7 +38,10 @@ import { useCopyToClipboard } from '@/lib/use-copy';
 import { extractShikiStyles, type CommentCallbacks } from '@/components/shared-diff-utils';
 import type { Slide, DiffHunk, FileMetadata, PendingReviewComment, Preferences, ReviewCheck } from '@/lib/types';
 
-interface Props {
+export interface SlideViewProps {
+  presentation?: 'narrative' | 'code';
+  showDiffControls?: boolean;
+  onInspectCode?: (filePath?: string, line?: number) => void;
   review?: ReviewGuide;
   chatOpen?: boolean;
   rightSlot?: ReactNode;
@@ -70,6 +74,32 @@ interface Props {
   showReviewSuggestions?: boolean;
   showInlineExplanations?: boolean;
   onShowInlineExplanationsChange?: (show: boolean) => void;
+}
+
+/** Mount expensive diagram frames before they enter the reading viewport, once per section. */
+function DeferredDiagram({ enabled, children }: { enabled: boolean; children: ReactNode }) {
+  const host = useRef<HTMLDivElement>(null);
+  const [ready, setReady] = useState(!enabled);
+  useEffect(() => {
+    const element = host.current;
+    if (ready || !element) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setReady(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '900px' }
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [ready]);
+  return (
+    <div ref={host} className="explanation-diagram" style={!ready ? { minHeight: 220 } : undefined}>
+      {ready ? children : null}
+    </div>
+  );
 }
 
 // Format a file's last-modified date as a human-readable age badge.
@@ -374,6 +404,9 @@ function groupHunksByFile(hunks: DiffHunk[]): { filePath: string; hunks: DiffHun
 }
 
 export function SlideView({
+  presentation,
+  showDiffControls = true,
+  onInspectCode,
   review,
   chatOpen = false,
   rightSlot,
@@ -406,7 +439,7 @@ export function SlideView({
   showReviewSuggestions = true,
   showInlineExplanations = true,
   onShowInlineExplanationsChange,
-}: Props) {
+}: SlideViewProps) {
   const [diagramOpen, setDiagramOpen] = useState(false);
   useEffect(() => setDiagramOpen(false), [slide.id]);
   const narrativeScroll = useSessionScroll(`${slide.id}:narrative`);
@@ -478,31 +511,38 @@ export function SlideView({
   // never render a clickable-looking check that will silently fail.
   const anchorable = useMemo(() => buildAnchorableSet(slide.diffHunks), [slide.diffHunks]);
 
-  const handleCheckClick = useCallback((check: ReviewCheck) => {
-    if (!check.filePath || !check.startLine) return;
-    const filePath = check.filePath;
-    const container = rightPanelRef.current;
-    if (!container) return;
+  const handleCheckClick = useCallback(
+    (check: ReviewCheck) => {
+      if (!check.filePath || !check.startLine) return;
+      if (onInspectCode) {
+        onInspectCode(check.filePath, check.startLine);
+        return;
+      }
+      const filePath = check.filePath;
+      const container = rightPanelRef.current;
+      if (!container) return;
 
-    const target = findReviewLine(container, check.filePath, check.startLine);
+      const target = findReviewLine(container, check.filePath, check.startLine);
 
-    if (!target) {
-      setAnchorMiss({ filePath: check.filePath, line: check.startLine, at: Date.now() });
-      return;
-    }
+      if (!target) {
+        setAnchorMiss({ filePath: check.filePath, line: check.startLine, at: Date.now() });
+        return;
+      }
 
-    setNarrowPane('code');
-    setFileExpansion((current) => ({ ...current, [filePath]: true }));
-    requestAnimationFrame(() => {
-      // Expanding a file can replace the diff's line nodes. Resolve after that render.
-      const line = findReviewLine(container, filePath, check.startLine as number);
-      if (!line?.isConnected) return;
-      line.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      line.classList.remove('check-highlight');
-      void line.offsetWidth;
-      line.classList.add('check-highlight');
-    });
-  }, []);
+      setNarrowPane('code');
+      setFileExpansion((current) => ({ ...current, [filePath]: true }));
+      requestAnimationFrame(() => {
+        // Expanding a file can replace the diff's line nodes. Resolve after that render.
+        const line = findReviewLine(container, filePath, check.startLine as number);
+        if (!line?.isConnected) return;
+        line.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        line.classList.remove('check-highlight');
+        void line.offsetWidth;
+        line.classList.add('check-highlight');
+      });
+    },
+    [onInspectCode]
+  );
 
   // ── Shared content blocks ── Extracted so both split and focus
   // modes can render the same narrative and diff content without
@@ -510,58 +550,64 @@ export function SlideView({
 
   const narrativeContent = (
     <div className="review-narrative px-8 py-10 flex flex-col gap-6">
-      <div className="slide-chapter select-text">
-        <span>Topic {chapterNumber}</span>
-        <span aria-hidden="true">·</span>
-        <span>{fileCountLabel}</span>
-        <span aria-hidden="true">·</span>
-        <span className={typeConfig.className}>
-          <Icon className="inline h-3 w-3 -translate-y-px mr-1" aria-hidden="true" />
-          {typeConfig.label}
-        </span>
-      </div>
+      {!presentation && (
+        <div className="slide-chapter select-text">
+          <span>Topic {chapterNumber}</span>
+          <span aria-hidden="true">·</span>
+          <span>{fileCountLabel}</span>
+          <span aria-hidden="true">·</span>
+          <span className={typeConfig.className}>
+            <Icon className="inline h-3 w-3 -translate-y-px mr-1" aria-hidden="true" />
+            {typeConfig.label}
+          </span>
+        </div>
+      )}
 
       <h2 className="slide-title select-text">{slide.title}</h2>
 
       <Markdown className="slide-prose select-text">{slide.narrative}</Markdown>
 
-      {slide.svgIllustration ? (
-        <SvgIllustration
-          key={slide.id}
-          illustration={slide.svgIllustration}
-          expanded={diagramOpen}
-          onExpandedChange={setDiagramOpen}
-          canShowCode={(source) => isAnchorable({ ...source, text: '' }, anchorable)}
-          onShowCode={(source) => handleCheckClick({ ...source, text: '' })}
-        />
-      ) : slide.mechanism ? (
-        <MechanismDiagram
-          key={slide.id}
-          scene={slide.mechanism}
-          expanded={diagramOpen}
-          onExpandedChange={setDiagramOpen}
-          canShowCode={(source) => isAnchorable({ ...source, text: '' }, anchorable)}
-          onShowCode={(source) => handleCheckClick({ ...source, text: '' })}
-        />
-      ) : slide.d2Diagram?.source ? (
-        <D2Diagram
-          key={slide.id}
-          diagram={slide.d2Diagram}
-          title={slide.title}
-          expanded={diagramOpen}
-          onExpandedChange={setDiagramOpen}
-          canShowCode={(source) => isAnchorable({ ...source, text: '' }, anchorable)}
-          onShowCode={(source) => handleCheckClick({ ...source, text: '' })}
-        />
-      ) : (
-        slide.mermaidDiagram && (
-          <MermaidDiagram
-            chart={slide.mermaidDiagram}
-            title={slide.title}
-            expanded={diagramOpen}
-            onExpandedChange={setDiagramOpen}
-          />
-        )
+      {(slide.svgIllustration || slide.mechanism || slide.d2Diagram?.source || slide.mermaidDiagram) && (
+        <DeferredDiagram enabled={presentation === 'narrative'}>
+          {slide.svgIllustration ? (
+            <SvgIllustration
+              key={slide.id}
+              illustration={slide.svgIllustration}
+              expanded={diagramOpen}
+              onExpandedChange={setDiagramOpen}
+              canShowCode={(source) => isAnchorable({ ...source, text: '' }, anchorable)}
+              onShowCode={(source) => handleCheckClick({ ...source, text: '' })}
+            />
+          ) : slide.mechanism ? (
+            <MechanismDiagram
+              key={slide.id}
+              scene={slide.mechanism}
+              expanded={diagramOpen}
+              onExpandedChange={setDiagramOpen}
+              canShowCode={(source) => isAnchorable({ ...source, text: '' }, anchorable)}
+              onShowCode={(source) => handleCheckClick({ ...source, text: '' })}
+            />
+          ) : slide.d2Diagram?.source ? (
+            <D2Diagram
+              key={slide.id}
+              diagram={slide.d2Diagram}
+              title={slide.title}
+              expanded={diagramOpen}
+              onExpandedChange={setDiagramOpen}
+              canShowCode={(source) => isAnchorable({ ...source, text: '' }, anchorable)}
+              onShowCode={(source) => handleCheckClick({ ...source, text: '' })}
+            />
+          ) : (
+            slide.mermaidDiagram && (
+              <MermaidDiagram
+                chart={slide.mermaidDiagram}
+                title={slide.title}
+                expanded={diagramOpen}
+                onExpandedChange={setDiagramOpen}
+              />
+            )
+          )}
+        </DeferredDiagram>
       )}
 
       {onExplore &&
@@ -619,6 +665,12 @@ export function SlideView({
               <li key={f} className="truncate">
                 {excludedFiles?.has(f) ? (
                   <span className="italic opacity-70">{f} (excluded)</span>
+                ) : onInspectCode ? (
+                  <button className="explanation-code-link" onClick={() => onInspectCode(f)}>
+                    <FileTypeIcon filePath={f} />
+                    {origin ? `#${origin.number} · ` : ''}
+                    {f}
+                  </button>
                 ) : (
                   <FilePathLink
                     filePath={f}
@@ -631,7 +683,7 @@ export function SlideView({
         </ul>
       )}
 
-      {showReviewSuggestions && (
+      {showReviewSuggestions && (!!slide.reviewChecks?.length || !!slide.reviewFocus?.trim()) && (
         <div className="editorial-callout select-text">
           {renderReviewChecks(
             slide.reviewChecks,
@@ -670,30 +722,39 @@ export function SlideView({
         </details>
       )}
 
-      <div className="flex flex-col gap-2 mt-2">
-        {onMarkReviewed && (
-          <button
-            aria-describedby="topic-progress-help"
-            onClick={isReviewed ? onToggleReviewed : onMarkReviewed}
-            className={`slide-meta flex items-center gap-1.5 hover:text-foreground transition-colors self-start ${
-              isReviewed ? 'text-[var(--ring)]' : ''
-            }`}
-          >
-            {isReviewed ? <><Check size={14} aria-hidden="true" />Topic reviewed · press r to undo</> : <>Mark topic reviewed and continue · r</>}
-          </button>
-        )}
-        {onMarkReviewed && (
-          <p id="topic-progress-help" className="text-xs text-muted-foreground">
-            Tracks your progress in Gnosis. Does not approve or submit feedback to GitHub.
-          </p>
-        )}
-        {onAskQuestion && (
-          <Button variant="outline" size="sm" onClick={onAskQuestion} className="gap-1.5 w-full">
-            <WorkbenchIcon name="chat" />
-            Ask a question
-          </Button>
-        )}
-      </div>
+      {(onMarkReviewed || onAskQuestion) && (
+        <div className="flex flex-col gap-2 mt-2">
+          {onMarkReviewed && (
+            <button
+              aria-describedby="topic-progress-help"
+              onClick={isReviewed ? onToggleReviewed : onMarkReviewed}
+              className={`slide-meta flex items-center gap-1.5 hover:text-foreground transition-colors self-start ${
+                isReviewed ? 'text-[var(--ring)]' : ''
+              }`}
+            >
+              {isReviewed ? (
+                <>
+                  <Check size={14} aria-hidden="true" />
+                  Topic reviewed · press r to undo
+                </>
+              ) : (
+                <>Mark topic reviewed and continue · r</>
+              )}
+            </button>
+          )}
+          {onMarkReviewed && (
+            <p id="topic-progress-help" className="text-xs text-muted-foreground">
+              Tracks your progress in Gnosis. Does not approve or submit feedback to GitHub.
+            </p>
+          )}
+          {onAskQuestion && (
+            <Button variant="outline" size="sm" onClick={onAskQuestion} className="gap-1.5 w-full">
+              <WorkbenchIcon name="chat" />
+              Ask a question
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 
@@ -706,35 +767,37 @@ export function SlideView({
           resetKey={JSON.stringify([slideNumber, diffLayout, fileExpansion, narrowPane, hasRightSlot])}
         />
       )}
-      <div className="flex items-center justify-end">
-        <div className="flex items-center gap-3 flex-wrap">
-          {inlineExplanations.length > 0 && onShowInlineExplanationsChange && (
-            <label className="inline-explanations-toggle">
-              <input
-                type="checkbox"
-                checked={showInlineExplanations}
-                onChange={(event) => {
-                  const draft = rightPanelRef.current?.querySelector('textarea');
-                  if (draft) {
-                    draft.focus();
-                    setExplanationNotice('Finish or cancel your comment before changing inline explanations.');
-                    return;
-                  }
-                  setExplanationNotice('');
-                  onShowInlineExplanationsChange(event.target.checked);
-                }}
-              />
-              Inline explanations
-            </label>
-          )}
-          <DiffAppearanceMenu
-            layout={diffLayout}
-            onLayoutChange={onDiffLayoutChange}
-            value={diffAppearance}
-            onChange={onDiffAppearanceChange}
-          />
+      {showDiffControls && (
+        <div className="flex items-center justify-end">
+          <div className="flex items-center gap-3 flex-wrap">
+            {inlineExplanations.length > 0 && onShowInlineExplanationsChange && (
+              <label className="inline-explanations-toggle">
+                <input
+                  type="checkbox"
+                  checked={showInlineExplanations}
+                  onChange={(event) => {
+                    const draft = rightPanelRef.current?.querySelector('textarea');
+                    if (draft) {
+                      draft.focus();
+                      setExplanationNotice('Finish or cancel your comment before changing inline explanations.');
+                      return;
+                    }
+                    setExplanationNotice('');
+                    onShowInlineExplanationsChange(event.target.checked);
+                  }}
+                />
+                Inline explanations
+              </label>
+            )}
+            <DiffAppearanceMenu
+              layout={diffLayout}
+              onLayoutChange={onDiffLayoutChange}
+              value={diffAppearance}
+              onChange={onDiffAppearanceChange}
+            />
+          </div>
         </div>
-      </div>
+      )}
 
       {explanationNotice && (
         <p className="text-xs text-muted-foreground" role="status">
@@ -836,6 +899,23 @@ export function SlideView({
           </div>
         );
       })}
+      {presentation === 'code' && allFilesViewed && groupedHunks.every(({ filePath }) => !fileExpansion[filePath]) && (
+        <div className="explanation-viewed-code">
+          <span>
+            <Check size={14} /> These files are marked Viewed.
+          </span>
+          <button
+            onClick={() =>
+              setFileExpansion((current) => ({
+                ...current,
+                ...Object.fromEntries(groupedHunks.map(({ filePath }) => [filePath, true])),
+              }))
+            }
+          >
+            Expand viewed files
+          </button>
+        </div>
+      )}
       {allFilesViewed && onContinue && (
         <div className="review-files-complete flex flex-col items-start gap-3 border-t border-border pt-6">
           <div className="space-y-1" role="status">
@@ -859,6 +939,9 @@ export function SlideView({
       )}
     </div>
   );
+
+  if (presentation === 'narrative') return narrativeContent;
+  if (presentation === 'code') return diffContent;
 
   if (narrow || chatOpen)
     return (
