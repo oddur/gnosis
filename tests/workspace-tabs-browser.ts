@@ -209,6 +209,39 @@ void app.whenReady().then(async () => {
     await wait('document.querySelectorAll(".workspace-tab").length===1');
     await wait(`${root}.querySelector('.queue-list')!==null`);
     assert.ok(await js(`localStorage.getItem('gnosis-workspace-tabs:v1:oddur')!==null`));
+    // Saved views retain their name and filters through menus and modified clicks.
+    await js(
+      `(()=>{const input=${root}.querySelector('.queue-search input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'reconnect');input.dispatchEvent(new Event('input',{bubbles:true}));})()`
+    );
+    await click('Save view…');
+    await wait(`!!document.querySelector('.view-name-form input')`);
+    await js(
+      `(()=>{const input=document.querySelector('.view-name-form input');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Reconnect work');input.dispatchEvent(new Event('input',{bubbles:true}));})()`
+    );
+    await js(`document.querySelector('.view-name-form').requestSubmit()`);
+    await wait(
+      `!!${root}.querySelector('.saved-view-link[aria-label="Reconnect work"]') && !document.querySelector('.view-name-form')`
+    );
+    for (const mode of ['context', 'overflow', 'command', 'middle']) {
+      const source = await js(`${root}.id`);
+      await js(`(()=>{const row=${root}.querySelector('.saved-view-row');const link=row.querySelector('.saved-view-link');
+        if (${JSON.stringify(mode)}==='context') {const r=row.getBoundingClientRect();row.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,button:2,clientX:r.left+40,clientY:r.top+20}));}
+        else if (${JSON.stringify(mode)}==='overflow') row.querySelector('.entry-menu-trigger').click();
+        else link.dispatchEvent(new MouseEvent(${JSON.stringify(mode === 'middle' ? 'auxclick' : 'click')},{bubbles:true,cancelable:true,button:${mode === 'middle' ? 1 : 0},metaKey:${mode === 'command'}}));
+      })()`);
+      if (mode === 'context' || mode === 'overflow') {
+        await wait(`!!document.querySelector('[role=menuitem][aria-label="Open in new tab"]')`);
+        await js(`document.querySelector('[role=menuitem][aria-label="Open in new tab"]').click()`);
+      } else assert.equal(await js(`${root}.id`), source, `${mode} keeps the saved view in the background`);
+      await wait(`document.querySelectorAll('.workspace-tab').length===2`);
+      await js(`document.querySelectorAll('.workspace-tab-select')[1].click()`);
+      await wait(`!!${root}.querySelector('.saved-view-link.active[aria-label="Reconnect work"]')`);
+      await wait(`${root}.querySelector('.queue-search input')?.value==='reconnect'`);
+      await wait(`document.querySelectorAll('.workspace-tab-title')[1].textContent==='Reconnect work'`);
+      assert.equal(await js(`document.querySelectorAll('[role=menu]').length`), 0);
+      await js(`document.querySelectorAll('.workspace-tab-close')[1].click()`);
+      await wait(`document.querySelectorAll('.workspace-tab').length===1 && ${root}.id===${JSON.stringify(source)}`);
+    }
     console.log(
       'Workspace tabs: background opening, retained Changes, local resume, shared Activity, six tabs, shortcuts, reopen and restore passed'
     );
