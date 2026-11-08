@@ -104,9 +104,12 @@ void app.whenReady().then(async () => {
     await js('window.failStar=false');
     await click('Selected entry actions');
     await click('Generate 3 explanations');
+    await wait("!!document.querySelector('.explanation-setup-footer')");
+    assert.equal(await js('window.selectionCalls.explanations.length'), 0, 'Bulk generation waits for the file and style choices');
+    await js("[...document.querySelectorAll('.explanation-setup-dialog button')].find(b=>b.textContent.trim()==='Generate 3 explanations').click()");
     await wait('window.selectionCalls.explanations.length===3');
     assert.equal(await js('new Set(window.selectionCalls.explanations.map(r=>r.subjectId)).size'), 3);
-    await wait("document.querySelector('.app-toast-title')?.textContent.includes('3 of 3')");
+    await wait("!document.querySelector('.explanation-setup-dialog')");
     await click('Selected entry actions');
     await click('Generate 3 briefings');
     await wait('window.selectionCalls.briefings.length===3');
