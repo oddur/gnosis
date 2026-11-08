@@ -95,6 +95,7 @@ try {
   if (markdownReview) await build({ entryPoints: ['src/markdown-review-worker.ts'], outfile: path.join(dir, 'markdown-review-worker.cjs'), bundle: true, platform: 'node', format: 'cjs' });
   const env = {
     ...process.env,
+    GNOSIS_BROWSER_TEST_PROFILE: path.join(dir, 'profile'),
     GNOSIS_NATIVE_SWIPE: process.argv.includes('--navigation-swipe') ? '1' : process.env.GNOSIS_NATIVE_SWIPE,
     GNOSIS_WORKBENCH_URL: `http://127.0.0.1:${address.port}/tests/fixtures/${splitDiff ? 'split-diff' : 'workbench'}.html`,
   };
