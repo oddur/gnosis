@@ -242,6 +242,44 @@ void app.whenReady().then(async () => {
       await js(`document.querySelectorAll('.workspace-tab-close')[1].click()`);
       await wait(`document.querySelectorAll('.workspace-tab').length===1 && ${root}.id===${JSON.stringify(source)}`);
     }
+    // Listing titles update from local notifications while their workspace is hidden.
+    await wait(`document.querySelector('.workspace-tab-count')?.textContent==='(1)'`);
+    await js(
+      `${root}.querySelector('.queue-row-main').dispatchEvent(new MouseEvent('click',{bubbles:true,metaKey:true}));`
+    );
+    await wait(`document.querySelectorAll('.workspace-tab').length===2`);
+    await js(`document.querySelectorAll('.workspace-tab-select')[1].click()`);
+    await wait(`!!${root}.querySelector('.pr-summary-page')`);
+    assert.equal(await js(`${root}.id===document.querySelectorAll('.workspace-panel')[0].id`), false);
+    await js(`window.listingOriginalSnapshot=window.electronAPI.workbenchSnapshot;window.listingUnread=true;window.listingExtra=true;window.listingSnapshots=0;
+      window.electronAPI.workbenchSnapshot=async()=>{window.listingSnapshots++;const q=structuredClone(await window.listingOriginalSnapshot());
+        for (const state of Object.values(q.readStates??{})) state.unread=[];
+        for (const item of q.items) item.unreadUrls=[];
+        if(window.listingExtra){const pr={...q.items[0].subject.members[0],url:'https://github.com/klang/engine/pull/9999',number:9999,title:'Reconnect live update'};
+          q.items.push({attention:'other',unreadUrls:window.listingUnread?[pr.url]:[],subject:{id:pr.url,kind:'pr',title:pr.title,members:[pr],edges:[],warnings:[]}});}
+        return q;};window.listingDiscoveryBefore=window.tabRefreshes;
+      for(let i=0;i<20;i++)window.dispatchEvent(new Event('fixture-workbench-change'));`);
+    await wait(
+      `document.querySelector('.workspace-tab-count')?.textContent==='(2)' && document.querySelector('.workspace-tab').dataset.unread==='true'`
+    );
+    assert.ok(await js(`Number(getComputedStyle(document.querySelector('.workspace-tab-title')).fontWeight)>=650`));
+    assert.equal(
+      await js(`document.querySelectorAll('.workspace-tab')[1].querySelector('.workspace-tab-count')`),
+      null,
+      'PR detail tabs have no listing count'
+    );
+    assert.equal(await js('window.listingSnapshots'), 1, 'bursts share one local snapshot for all listing tabs');
+    assert.equal(
+      await js('window.tabRefreshes'),
+      await js('window.listingDiscoveryBefore'),
+      'tab counts do not request GitHub discovery'
+    );
+    await capture('listing-counts');
+    await js(`window.listingUnread=false;window.dispatchEvent(new Event('fixture-pr-read-change'));`);
+    await wait(`!document.querySelector('.workspace-tab').dataset.unread`);
+    await js(`window.listingExtra=false;window.dispatchEvent(new Event('fixture-workbench-change'));`);
+    await wait(`document.querySelector('.workspace-tab-count')?.textContent==='(1)'`);
+    await js(`window.electronAPI.workbenchSnapshot=window.listingOriginalSnapshot;true;`);
     console.log(
       'Workspace tabs: background opening, retained Changes, local resume, shared Activity, six tabs, shortcuts, reopen and restore passed'
     );

@@ -29,6 +29,12 @@ Long titles truncate. A native tooltip contains the full title, destination meta
 The Open tabs menu shows a second line with the repository, PR number, and section to distinguish similar titles.
 A dismissible hint introduces modified-click opening. It disappears after opening a second tab. Help keeps the full shortcut reference available.
 
+## Listing counts and unread PRs
+
+Queue and saved-view tabs show the number of unique matching PRs in parentheses, including matching members of stacks. Unmatched stack context does not increase the count. A bold title and count indicate at least one unread matching PR. Opening a listing does not mark its PRs read.
+
+Counts update in background tabs from shared local workbench and read-state notifications. One cache-only subscription serves all tabs; it does not add GitHub polling. Counts appear after the first snapshot and retain their last known value if a cache read fails. PR and explanation detail tabs do not show listing counts.
+
 ## Keyboard and menus
 
 Cmd and Ctrl shortcuts both work. Electron intercepts these shortcuts before native window actions.

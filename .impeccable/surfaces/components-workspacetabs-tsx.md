@@ -94,3 +94,9 @@ Pass captures (review evidence only):
 Tabs can be dragged by their title area. A narrow `ring` insertion marker shows the drop position; the source tab dims while dragging. The strip keeps its 39px height. Holding the drag near an edge scrolls overflowing tabs. The active workspace stays mounted, and the saved order updates on drop. Move tab left/right remain keyboard-accessible menu alternatives.
 
 The Docker hardening fixture uses synthesized Chromium drag events to verify moves in both directions, stored order, active-workspace retention, immediate Escape, window blur, drag end, and edge scrolling with 40 tabs. The insertion marker was visually inspected in [the drag capture](../review/tabs-hardening/drag-insertion.png). Physical macOS drag input was not exercised in this pass.
+
+## Live listing status
+
+Listing tabs retain the compact strip geometry and show a non-truncating `(N)` count next to the title. The title and count use bold text while any matching PR is unread. The accessible tab name states “Unread PRs.” Detail tabs retain their existing titles. Background changes use shared cache notifications rather than per-tab GitHub requests.
+
+The Docker workspace-tabs check verifies hidden-tab counts, bold unread state, read-state updates, and notification coalescing without GitHub discovery. [Listing count capture](../review/tabs-counts/listing-counts.png).

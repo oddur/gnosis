@@ -292,3 +292,12 @@
 .workspace-tab-select[draggable='true'] {
   user-select: none;
 }
+
+.workspace-tab-count {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.workspace-tab[data-unread='true'] .workspace-tab-title,
+.workspace-tab[data-unread='true'] .workspace-tab-count {
+  font-weight: 700;
+}

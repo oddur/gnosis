@@ -37,6 +37,7 @@ const saveViews = () => {
   sessionStorage.setItem(viewsStorageKey, JSON.stringify(savedViews));
   queueFilters = activeViewFilters(savedViews);
   sessionStorage.setItem(filterStorageKey, JSON.stringify(queueFilters));
+  window.dispatchEvent(new Event('fixture-workbench-change'));
 };
 if (new URLSearchParams(location.search).has('navigation-history') && !savedViews.views.length) {
   savedViews = applyViewAction(savedViews, { type: 'create', name: 'History view' }, () => 'history-view');
@@ -597,7 +598,14 @@ const mocks = {
   loadHarnessEnvironment: async () => ({ claude: [], codex: [] }),
   saveHarnessEnvironment: async () => {},
   onPreferencesChanged: () => () => {},
-  onWorkbenchChanged: () => () => {},
+  onActivityChanged: (callback: () => void) => {
+    window.addEventListener('fixture-activity-change', callback);
+    return () => window.removeEventListener('fixture-activity-change', callback);
+  },
+  onWorkbenchChanged: (callback: () => void) => {
+    window.addEventListener('fixture-workbench-change', callback);
+    return () => window.removeEventListener('fixture-workbench-change', callback);
+  },
   getLocalClones: async () => [],
   connectLocalClone: () => Promise.resolve([]),
   disconnectLocalClone: () => Promise.resolve([]),

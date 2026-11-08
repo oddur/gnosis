@@ -15,12 +15,14 @@ import { SubjectIcon } from './SubjectIcon';
 import { EntryActions } from './EntryActions';
 import { sameTabChrome, workspaceTabDescription, type WorkspaceTabsState } from '../lib/workspace-tabs';
 
+import { workspaceTabTitle, type WorkspaceListingCount } from '../lib/workspace-listings';
 import { useWorkspaceTabDrag } from '../lib/use-workspace-tab-drag';
 import { readReviewState, writeReviewState } from '../lib/renderer-review-state';
 
 export const WorkspaceTabs = memo(
   function WorkspaceTabs({
     state,
+    listings,
     activate,
     close,
     open,
@@ -29,6 +31,7 @@ export const WorkspaceTabs = memo(
     closeOthers,
   }: {
     state: WorkspaceTabsState;
+    listings: Record<string, WorkspaceListingCount | undefined>;
     activate: (id: string) => void;
     close: (id: string) => void;
     open: () => void;
@@ -114,6 +117,7 @@ export const WorkspaceTabs = memo(
                   className="workspace-tab"
                   data-active={state.active === tab.id}
                   data-tab-id={tab.id}
+                  data-unread={listings[tab.id]?.unread || undefined}
                   data-dragging={drag.dragging === tab.id || undefined}
                   data-drop-before={drag.before === tab.id || undefined}
                   data-drop-after={(drag.before === null && index === state.tabs.length - 1) || undefined}
@@ -134,7 +138,7 @@ export const WorkspaceTabs = memo(
                     aria-controls={`workspace-panel-${tab.id}`}
                     aria-selected={state.active === tab.id}
                     aria-busy={tab.status === 'opening' || undefined}
-                    aria-label={`${tab.title} · ${workspaceTabDescription(tab)}${tab.status === 'error' ? ' · Could not open' : ''}`}
+                    aria-label={`${workspaceTabTitle(tab, listings[tab.id])}${listings[tab.id]?.unread ? ' · Unread PRs' : ''} · ${workspaceTabDescription(tab)}${tab.status === 'error' ? ' · Could not open' : ''}`}
                     aria-keyshortcuts={
                       index < 8
                         ? `${window.electronAPI.platform === 'darwin' ? 'Meta' : 'Control'}+${index + 1}`
@@ -157,7 +161,7 @@ export const WorkspaceTabs = memo(
                         );
                       }
                     }}
-                    title={`${tab.title}\n${workspaceTabDescription(tab)}${tab.status === 'error' ? '\nCould not open. Select this tab to retry.' : ''}`}
+                    title={`${workspaceTabTitle(tab, listings[tab.id])}\n${workspaceTabDescription(tab)}${tab.status === 'error' ? '\nCould not open. Select this tab to retry.' : ''}`}
                   >
                     {tab.status === 'opening' ? (
                       <LoaderCircle className="workspace-tab-spinner" aria-hidden="true" />
@@ -174,6 +178,7 @@ export const WorkspaceTabs = memo(
                     <span className="workspace-tab-title" dir="auto">
                       {tab.title}
                     </span>
+                    {listings[tab.id] && <span className="workspace-tab-count">({listings[tab.id]?.count})</span>}
                   </button>
                   <button
                     className="workspace-tab-close"
@@ -218,8 +223,8 @@ export const WorkspaceTabs = memo(
           buttonClassName="workspace-tab-menu"
           groups={[
             state.tabs.map((tab, index) => ({
-              label: `Tab ${index + 1}: ${tab.title}`,
-              displayLabel: tab.title,
+              label: `Tab ${index + 1}: ${workspaceTabTitle(tab, listings[tab.id])}`,
+              displayLabel: workspaceTabTitle(tab, listings[tab.id]),
               detail: workspaceTabDescription(tab),
               icon: state.active === tab.id ? <Check size={15} /> : <span className="size-4" />,
               run: () => activate(tab.id),
@@ -239,6 +244,7 @@ export const WorkspaceTabs = memo(
   },
   (previous, next) =>
     sameTabChrome(previous.state, next.state) &&
+    previous.listings === next.listings &&
     previous.activate === next.activate &&
     previous.close === next.close &&
     previous.open === next.open &&

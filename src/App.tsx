@@ -29,6 +29,8 @@ import {
 import type { AppLocation } from '../lib/navigation-history';
 import { ReviewWorkspace, type WorkspaceController } from './ReviewWorkspace';
 import './workspace-tabs.css';
+import { useWorkspaceListings } from '../lib/use-workspace-listings';
+import { workspaceTabTitle } from '../lib/workspace-listings';
 
 const newTab = (target?: WorkspaceTarget) => newWorkspaceTab(crypto.randomUUID(), target);
 const storageKey = (account: string) => `gnosis-workspace-tabs:v1:${account}`;
@@ -52,6 +54,7 @@ export function App() {
   const [recentlyViewed] = useState(() => createRecentlyViewed(readReviewState, writeReviewState));
   const [state, setState] = useState<WorkspaceTabsState>(() => initialWorkspaceTabs(newTab()));
   const [account, setAccount] = useState<string>();
+  const listings = useWorkspaceListings(state.tabs, account);
   const [visited, setVisited] = useState<Set<string>>(() => new Set());
   const [activityOpen, setActivityOpen] = useState(false);
   const [syncStatus, setSyncStatus] = useState<GitHubSyncStatusProps>();
@@ -274,7 +277,7 @@ export function App() {
               { id: 'tabs:reopen', label: 'Reopen closed tab', perform: reopen },
               ...state.tabs.map((tab) => ({
                 id: `tabs:${tab.id}`,
-                label: `Switch to ${tab.title}`,
+                label: `Switch to ${workspaceTabTitle(tab, listings[tab.id])}`,
                 keywords: `open tab ${tab.label} ${tab.detail}`,
                 perform: () => activate(tab.id),
               })),
@@ -289,6 +292,7 @@ export function App() {
             <div className="workspace-shell">
               <WorkspaceTabs
                 state={state}
+                listings={listings}
                 activate={activate}
                 close={close}
                 open={openQueue}
