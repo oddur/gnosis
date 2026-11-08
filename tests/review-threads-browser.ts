@@ -42,8 +42,8 @@ void app.whenReady().then(async () => {
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Introduce a bounded')).click()"
     );
     await click('Open AI explanation');
-    await wait("!!document.querySelector('.workbench-overview')");
-    await click('Continue review');
+    await wait("!!document.querySelector('.explanation-reader')");
+    await js(`window.selectOption('[aria-label="Explanation section"]', '1')`);
     await wait("document.querySelectorAll('.github-thread').length===5");
     const toggleViewed = () => js("document.querySelector('.review-file-viewed input').click()");
     const toggleFile = () => js("document.querySelector('.review-file-expand').click()");
@@ -189,7 +189,6 @@ void app.whenReady().then(async () => {
     await wait("document.querySelectorAll('.review-diff .github-thread[open]').length===2");
     win.setSize(800, 700);
     await wait('innerWidth<=800');
-    await click('Code');
     await capture('threads-narrow');
     assert.equal(await js('document.documentElement.scrollWidth<=innerWidth'), true);
     await js("document.body.dataset.discussionFail='true'");
@@ -246,16 +245,16 @@ void app.whenReady().then(async () => {
       }));
     })()`);
     const selectTopic = (number: number) =>
-      js(`window.selectOption('[aria-label="Review topic"]', '${number}')`);
+      js(`window.selectOption('[aria-label="Explanation section"]', '${number}')`);
     await selectTopic(2);
     assert.equal(
-      await js("document.querySelector('.review-file-viewed input').checked"),
+      await js("document.querySelector('[data-explanation-section=\"2\"] .review-file-viewed input').checked"),
       true,
       'The same source file stays viewed in another topic'
     );
     await selectTopic(3);
     assert.equal(
-      await js("document.querySelector('.review-file-viewed input').checked"),
+      await js("document.querySelector('[data-explanation-section=\"3\"] .review-file-viewed input').checked"),
       false,
       'A matching filename from another PR in the stack remains unviewed'
     );

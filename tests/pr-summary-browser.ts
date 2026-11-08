@@ -258,7 +258,7 @@ void app.whenReady().then(async () => {
     await click('Explanation');
     await wait("!!document.querySelector('.explanation-empty')");
     await click('Back to stack');
-    await wait("!!document.querySelector('.workbench-overview')");
+    await wait("!!document.querySelector('.explanation-reader')");
     await click('Summary');
     assert.equal(await js("document.querySelectorAll('.stack-overview-member').length"), 3);
     await click('Explanation');

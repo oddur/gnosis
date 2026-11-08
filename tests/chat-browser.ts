@@ -181,7 +181,7 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.queue-item .queue-disclosure:not(:disabled)')");
     await js("document.querySelector('.queue-item:has(.queue-disclosure:not(:disabled)) .queue-row-main').click()");
     await click('Open AI explanation');
-    await click('Continue review');
+    await js(`window.selectOption('[aria-label="Explanation section"]', '1')`);
     await js(
       "document.activeElement?.blur();window.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true}))"
     );
@@ -226,15 +226,11 @@ void app.whenReady().then(async () => {
     await fullCapture('integrated-topic-narrow-dark');
     await assertDock();
     assert.ok((await transcriptHeight()) >= 240, 'Narrow topic conversation needs240px of reading space');
-    await js(
-      "[...document.querySelectorAll('[aria-label=\"Review pane\"] button')].find(b=>b.textContent==='Explanation').click()"
-    );
     assert.equal(
       await js("document.querySelector('.chat-sheet textarea').checkVisibility()"),
       true,
       'Explanation stays available beside chat'
     );
-    await click('Code');
     await js(
       "document.activeElement?.blur();window.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true}))"
     );
@@ -255,7 +251,7 @@ void app.whenReady().then(async () => {
     );
     await wait("!document.querySelector('.chat-sheet')");
     await js(
-      "window.topicOrigin=document.querySelector('[title=\"Toggle topic navigation\"]');window.topicOrigin.focus();window.topicOrigin.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true}))"
+      "window.topicOrigin=document.querySelector('[data-explanation-section=\"1\"] h2');window.topicOrigin.focus();window.topicOrigin.dispatchEvent(new KeyboardEvent('keydown',{key:'c',bubbles:true}))"
     );
     await wait("document.activeElement===document.querySelector('.chat-sheet textarea')");
     assert.equal(await js("document.querySelector('.chat-sheet textarea').value"), 'Keep my topic draft');

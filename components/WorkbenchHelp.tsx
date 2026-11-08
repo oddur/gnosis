@@ -116,7 +116,7 @@ export function WorkbenchHelp({ onGettingStarted, onWalkthrough }: { onGettingSt
               Open a PR to read its description, inspect changes, and check GitHub status. AI setup is optional.
             </li>
             <li>
-              Generate an explanation for a walkthrough beside the code. Use Chat for questions.
+              Generate an explanation, then scroll through each section beside its code. Use Next section to skip ahead and Ask a question for help.
             </li>
             <li>
               Mark files Viewed to track progress. Use Review PR to send comments, approve, or request changes.

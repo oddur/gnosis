@@ -11,8 +11,10 @@ void app.whenReady().then(async () => {
     show: true,
     webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false },
   });
+  let section = 1;
   const js = <T = unknown>(code: string) =>
-    win.webContents.executeJavaScript(code).catch((e: unknown) => {
+    win.webContents.executeJavaScript(code.replace(/document\.querySelector\('([.]mermaid-(?:diagram|preview|expand)[^']*)'\)/g,
+      (_, selector) => `document.querySelector('[data-explanation-section="${section}"] ${selector}')`)).catch((e: unknown) => {
       throw new Error(`${code}: ${String(e)}`);
     }) as Promise<T>;
   const wait = async (expression: string) => {
@@ -24,7 +26,7 @@ void app.whenReady().then(async () => {
   };
   const click = async (name: string) => {
     await js(
-      `(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.getBoundingClientRect().width && (b.textContent.trim()===${JSON.stringify(name)} || b.getAttribute('aria-label')===${JSON.stringify(name)} || b.title===${JSON.stringify(name)}));if(!b)throw Error('Missing button');b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
+      `(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.getBoundingClientRect().width && (!b.closest('[data-explanation-section]') || b.closest('[data-explanation-section]').dataset.explanationSection===${JSON.stringify(String(section))}) && (b.textContent.trim()===${JSON.stringify(name)} || b.getAttribute('aria-label')===${JSON.stringify(name)} || b.title===${JSON.stringify(name)}));if(!b)throw Error('Missing button');b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
     );
   };
   const shots = path.resolve('.impeccable/review/mermaid');
@@ -74,8 +76,8 @@ void app.whenReady().then(async () => {
     };})()`);
     await js("document.querySelector('.queue-item:has(.queue-disclosure) .queue-row-main').click()");
     await click('Open AI explanation');
-    await wait("!!document.querySelector('.workbench-overview')");
-    await click('Continue review');
+    await wait("!!document.querySelector('.explanation-reader')");
+    await js(`window.selectOption('[aria-label="Explanation section"]', '1')`);
     await wait("!!document.querySelector('.review-narrative .mermaid-preview svg')");
     assert.equal(await js("!!document.querySelector('.review-code .mermaid-diagram')"), false);
     assert.equal(await js("!!document.querySelector('.review-code .review-file-group')"), true);
@@ -89,6 +91,7 @@ void app.whenReady().then(async () => {
       [640, 740, 'mobile'],
     ] as const) {
       win.setSize(width, height);
+      await wait("!!document.querySelector('.mermaid-preview svg')");
       await js("document.querySelector('.mermaid-diagram').scrollIntoView({block:'center'})");
       await capture(name);
       assert.equal(await previewFits(), true, `${width}px preview contains the complete graph`);
@@ -144,7 +147,8 @@ void app.whenReady().then(async () => {
     await js("document.documentElement.classList.add('dark')");
     await wait("!!document.querySelector('.mermaid-diagram[data-theme=dark] svg')");
     await capture('dark');
-    await click('Next (→)');
+    section++;
+    await js(`window.selectOption('[aria-label="Explanation section"]', '${section}')`);
     await wait("document.querySelector('.mermaid-preview')?.textContent.includes('Wake waiting producers')");
     assert.equal(await previewFits(), true, 'A wide graph also fits without inner scrolling');
     await capture('wide');
@@ -161,7 +165,8 @@ void app.whenReady().then(async () => {
     await capture('wide-expanded');
     await click('Close');
     await wait("!document.querySelector('[role=dialog]')");
-    await click('Next (→)');
+    section++;
+    await js(`window.selectOption('[aria-label="Explanation section"]', '${section}')`);
     await wait("document.querySelector('.mermaid-diagram')?.textContent.includes('Could not render this diagram')");
     assert.match(await js<string>("document.querySelector('.mermaid-diagram pre').textContent"), /A\[broken/);
     await capture('invalid');

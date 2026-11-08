@@ -135,15 +135,15 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('.breadcrumb-overflow-menu')");
     win.setSize(1280, 800);
     await click('Explanation');
-    await wait('!!document.querySelector(\'[aria-label="Review topic"]\')');
-    await choose('Review topic', '2');
-    await wait("document.querySelector('[aria-label=\"Review topic\"]').value==='2'");
-    assert.equal(await js('!!document.querySelector(\'.review-toolbar [aria-label="Review topic"]\')'), false);
+    await wait('!!document.querySelector(\'[aria-label="Explanation section"]\')');
+    await choose('Explanation section', '2');
+    await wait("document.querySelector('[aria-label=\"Explanation section\"]').value==='2'");
+    assert.equal(await js('!!document.querySelector(\'.review-toolbar [aria-label="Explanation section"]\')'), false);
     await capture('stack-explanation-1280');
     await click('Changes');
     await wait('!!document.querySelector(\'[aria-label="File in comparison"]\')');
     assert.equal(
-      await js('!!document.querySelector(\'[aria-label="Review topic"]\')'),
+      await js('!!document.querySelector(\'.review-breadcrumbs [aria-label="Explanation section"]\')'),
       false,
       'Hidden explanation must not own Changes trail'
     );
@@ -170,7 +170,7 @@ void app.whenReady().then(async () => {
     );
     await wait("!!document.querySelector('.saved-row')");
     await js("document.querySelector('.saved-row .queue-row-main').click()");
-    await wait('!!document.querySelector(\'[aria-label="Review topic"]\')');
+    await wait('!!document.querySelector(\'[aria-label="Explanation section"]\')');
     assert.equal(await rootLabel(), 'Saved reviews');
     await click('Saved reviews');
     await wait("!!document.querySelector('.saved-row')");
@@ -184,7 +184,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelectorAll('.saved-row').length===2");
     await js("document.querySelector('.saved-row .queue-row-main').click()");
     await wait(
-      "!!document.querySelector('[aria-label=\"Review topic\"]') && !document.querySelector('.pr-overview-tabs')"
+      "!!document.querySelector('[aria-label=\"Explanation section\"]') && !document.querySelector('.pr-overview-tabs')"
     );
     assert.equal(await rootLabel(), 'Saved reviews');
     assert.match(await js<string>("document.querySelector('[data-slot=breadcrumb-list]').textContent"), /worker/);
