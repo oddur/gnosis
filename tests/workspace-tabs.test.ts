@@ -172,3 +172,24 @@ void test('recovery replaces only the failed tab without creating another queue'
   assert.equal(next.tabs.length, 1);
   assert.equal(next.active, 'queue');
 });
+
+void test('moving a tab across the strip preserves its workspace, selection and saved order', () => {
+  let state = initialWorkspaceTabs(newWorkspaceTab('a'));
+  for (const id of ['b', 'c', 'd']) state = reduce(state, { type: 'open', tab: newWorkspaceTab(id), background: true });
+  const original = state.tabs[0];
+  const moved = reduce(state, { type: 'move', id: 'a', offset: 3 });
+  assert.deepEqual(
+    moved.tabs.map((tab) => tab.id),
+    ['b', 'c', 'd', 'a']
+  );
+  assert.equal(moved.active, 'a');
+  assert.equal(moved.tabs[3], original);
+  assert.deepEqual(
+    restoreWorkspaceTabs(saveWorkspaceTabs(moved), 'maya')?.tabs.map((tab) => tab.id),
+    ['b', 'c', 'd', 'a']
+  );
+  assert.deepEqual(
+    reduce(moved, { type: 'move', id: 'a', offset: -3 }).tabs.map((tab) => tab.id),
+    ['a', 'b', 'c', 'd']
+  );
+});

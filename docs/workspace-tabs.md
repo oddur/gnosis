@@ -50,7 +50,7 @@ Tab shortcuts pause while a visible modal dialog is open. Repeated keys, composi
 Each tab has a context menu with Close tab, Close other tabs, Move tab left, Move tab right, and Reopen closed tab.
 Shift+F10 or the Context Menu key opens this menu from a focused tab. Closing the menu restores focus; closing a tab focuses the surviving active tab.
 Close other tabs keeps the chosen tab, even when that tab was inactive.
-The Open tabs menu also offers Reopen closed tab. Reordering uses these menu actions.
+The Open tabs menu also offers Reopen closed tab. Drag a tab to reorder it; an insertion marker shows where it will land. Holding near either edge scrolls an overflowing strip. Escape, dropping outside the strip, or losing window focus cancels the drag. The current review stays active, and the new order is saved. The Move tab left/right menu actions provide the keyboard alternative.
 
 Closing the active tab selects the most recently active remaining tab. Closing the final tab opens a fresh queue tab.
 The session retains up to 20 closed destinations. Reopening restores the destination, but does not retain the closed component tree or its navigation history.

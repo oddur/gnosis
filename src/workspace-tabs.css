@@ -263,3 +263,32 @@
   min-height: 0;
   height: auto;
 }
+
+/* An insertion marker keeps the intended order clear without moving live workspaces mid-drag. */
+.workspace-tab {
+  position: relative;
+}
+.workspace-tab[data-dragging='true'] {
+  opacity: 0.55;
+}
+.workspace-tab[data-drop-before='true']::before,
+.workspace-tab[data-drop-after='true']::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--ring);
+  pointer-events: none;
+  z-index: 1;
+}
+.workspace-tab[data-drop-before='true']::before {
+  left: -3px;
+}
+.workspace-tab[data-drop-after='true']::after {
+  right: -3px;
+}
+.workspace-tab-select[draggable='true'] {
+  user-select: none;
+}

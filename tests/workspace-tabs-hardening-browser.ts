@@ -61,6 +61,39 @@ void app.whenReady().then(async () => {
       app.exit(0);
       return;
     }
+    await js(
+      `window.tabDragTransfer=new DataTransfer();window.startTabDrag=id=>{const node=document.querySelector('[data-tab-id="'+id+'"] .workspace-tab-select');const r=node.getBoundingClientRect();node.dispatchEvent(new DragEvent('dragstart',{bubbles:true,cancelable:true,dataTransfer:window.tabDragTransfer,clientX:r.left+30,clientY:r.top+15}));};window.overTabDrag=(id,after=false)=>{const node=document.querySelector('[data-tab-id="'+id+'"]');const r=node.getBoundingClientRect();const list=document.querySelector('.workspace-tabs-list');window.tabDropX=r.left+(after?r.width-5:5);list.dispatchEvent(new DragEvent('dragover',{bubbles:true,cancelable:true,dataTransfer:window.tabDragTransfer,clientX:window.tabDropX,clientY:r.top+15}));};window.dropTabDrag=()=>document.querySelector('.workspace-tabs-list').dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:window.tabDragTransfer,clientX:window.tabDropX,clientY:20}));window.tabOrder=()=>[...document.querySelectorAll('.workspace-tab')].map(n=>n.dataset.tabId);true;`
+    );
+    await js(`${root}.dataset.dragRetention='kept';window.startTabDrag('tab-0');window.overTabDrag('tab-3');`);
+    await wait(`!!document.querySelector('[data-drop-before=true]')`);
+    await capture('drag-insertion');
+    await js(`window.dropTabDrag()`);
+    await wait(`window.tabOrder().slice(0,4).join(',')==='tab-1,tab-2,tab-0,tab-3'`);
+    assert.equal(await js(`${root}.dataset.dragRetention`), 'kept', 'reordering retains the active workspace');
+    await wait(`JSON.parse(localStorage.getItem('gnosis-workspace-tabs:v1:oddur')).tabs[0].id==='tab-1'`);
+    await js(`window.startTabDrag('tab-0');window.overTabDrag('tab-1');window.dropTabDrag();`);
+    await wait(`window.tabOrder()[0]==='tab-0'`);
+    // Cancel, ignore external drops, then scroll overflowing tabs while holding near the edge.
+    await js(
+      `window.dragEscapeLeaks=0;window.dragEscapeListener=()=>window.dragEscapeLeaks++;window.addEventListener('keydown',window.dragEscapeListener);window.startTabDrag('tab-0');window.overTabDrag('tab-3');window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));window.removeEventListener('keydown',window.dragEscapeListener);window.dropTabDrag();`
+    );
+    await wait(`!document.querySelector('[data-dragging=true],[data-drop-before=true]')`);
+    assert.equal(await js('window.dragEscapeLeaks'), 0, 'Escape cancels dragging without reaching review shortcuts');
+    assert.equal(await js(`window.tabOrder()[0]`), 'tab-0');
+    await js(
+      `{window.startTabDrag('tab-0');const list=document.querySelector('.workspace-tabs-list');const r=list.getBoundingClientRect();list.dispatchEvent(new DragEvent('dragover',{bubbles:true,cancelable:true,dataTransfer:window.tabDragTransfer,clientX:r.right-5,clientY:r.top+15}));}`
+    );
+    await wait(`document.querySelector('.workspace-tabs-list').scrollLeft>200`);
+    await js(
+      `window.dispatchEvent(new Event('blur'));document.querySelector('.workspace-tabs-list').scrollLeft=0;window.dropTabDrag();`
+    );
+    await wait(`!document.querySelector('[data-dragging=true],[data-drop-before=true]')`);
+    assert.equal(await js(`window.tabOrder()[0]`), 'tab-0');
+    await js(
+      `window.startTabDrag('tab-0');window.overTabDrag('tab-2',true);document.querySelector('[data-tab-id="tab-0"] .workspace-tab-select').dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:window.tabDragTransfer}));`
+    );
+    await wait(`!document.querySelector('[data-dragging=true],[data-drop-before=true]')`);
+    assert.equal(await js(`window.tabOrder()[0]`), 'tab-0');
     await capture('many-tabs');
     await js(`document.querySelector('[aria-label="Open tabs"]').click()`);
     await wait(`document.querySelector('.workspace-open-tabs-menu [role=menuitem]')!==null`);

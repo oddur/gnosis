@@ -88,3 +88,9 @@ Pass captures (review evidence only):
 - [Failed destination](../review/tabs-hardening/retry.png)
 - [Workspace recovery](../review/tabs-hardening/tab-recovery.png)
 - [Narrow window at 150% zoom](../review/tabs-hardening/narrow-zoom.png)
+
+## Drag reordering
+
+Tabs can be dragged by their title area. A narrow `ring` insertion marker shows the drop position; the source tab dims while dragging. The strip keeps its 39px height. Holding the drag near an edge scrolls overflowing tabs. The active workspace stays mounted, and the saved order updates on drop. Move tab left/right remain keyboard-accessible menu alternatives.
+
+The Docker hardening fixture uses synthesized Chromium drag events to verify moves in both directions, stored order, active-workspace retention, immediate Escape, window blur, drag end, and edge scrolling with 40 tabs. The insertion marker was visually inspected in [the drag capture](../review/tabs-hardening/drag-insertion.png). Physical macOS drag input was not exercised in this pass.

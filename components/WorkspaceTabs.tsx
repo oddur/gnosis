@@ -15,6 +15,7 @@ import { SubjectIcon } from './SubjectIcon';
 import { EntryActions } from './EntryActions';
 import { sameTabChrome, workspaceTabDescription, type WorkspaceTabsState } from '../lib/workspace-tabs';
 
+import { useWorkspaceTabDrag } from '../lib/use-workspace-tab-drag';
 import { readReviewState, writeReviewState } from '../lib/renderer-review-state';
 
 export const WorkspaceTabs = memo(
@@ -36,6 +37,7 @@ export const WorkspaceTabs = memo(
     closeOthers: (id: string) => void;
   }) {
     const list = useRef<HTMLDivElement>(null);
+    const drag = useWorkspaceTabDrag(list, state.tabs, move);
     const modifier = window.electronAPI.platform === 'darwin' ? '⌘' : 'Ctrl+';
     const [showTip, setShowTip] = useState(() => {
       try {
@@ -61,6 +63,9 @@ export const WorkspaceTabs = memo(
           className="workspace-tabs-list"
           role="tablist"
           aria-label="Open reviews"
+          onDragOver={drag.over}
+          onDragLeave={drag.leave}
+          onDrop={drag.drop}
           onWheel={(event) => {
             if (list.current && Math.abs(event.deltaY) > Math.abs(event.deltaX))
               list.current.scrollLeft += event.deltaY;
@@ -108,6 +113,10 @@ export const WorkspaceTabs = memo(
                 <div
                   className="workspace-tab"
                   data-active={state.active === tab.id}
+                  data-tab-id={tab.id}
+                  data-dragging={drag.dragging === tab.id || undefined}
+                  data-drop-before={drag.before === tab.id || undefined}
+                  data-drop-after={(drag.before === null && index === state.tabs.length - 1) || undefined}
                   onAuxClick={(event) => {
                     if (event.button === 1) {
                       event.preventDefault();
@@ -118,6 +127,9 @@ export const WorkspaceTabs = memo(
                   <button
                     className="workspace-tab-select"
                     role="tab"
+                    draggable
+                    onDragStart={(event) => drag.start(event, tab.id)}
+                    onDragEnd={drag.end}
                     id={`workspace-tab-${tab.id}`}
                     aria-controls={`workspace-panel-${tab.id}`}
                     aria-selected={state.active === tab.id}
@@ -177,6 +189,9 @@ export const WorkspaceTabs = memo(
             </EntryActions>
           ))}
         </div>
+        <span className="sr-only" role="status">
+          {drag.announcement}
+        </span>
         <button className="workspace-new-tab" aria-label="New tab" title={`New tab (${modifier}T)`} onClick={open}>
           <Plus size={16} />
         </button>
@@ -197,7 +212,7 @@ export const WorkspaceTabs = memo(
           popupClassName="workspace-open-tabs-menu"
           description={
             <span>
-              Switch tabs with <kbd>Ctrl+Tab</kbd>. Right-click a tab for more actions.
+              Switch tabs with <kbd>Ctrl+Tab</kbd>. Drag tabs to reorder. Right-click for more actions.
             </span>
           }
           buttonClassName="workspace-tab-menu"

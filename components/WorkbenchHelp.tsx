@@ -169,7 +169,7 @@ export function WorkbenchHelp({ onGettingStarted, onWalkthrough }: { onGettingSt
             <p>
               <kbd>Ctrl+Tab</kbd> switches tabs. Use{' '}
               <kbd>{window.electronAPI.platform === 'darwin' ? '⌘1–9' : 'Ctrl+1–9'}</kbd> to jump to a tab. Right-click
-              a tab to move it or close other tabs.
+              a tab to move it or close other tabs. You can also drag tabs to reorder them.
             </p>
           </details>
           <h3>Terms you’ll see</h3>
