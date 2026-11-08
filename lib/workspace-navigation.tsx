@@ -13,3 +13,10 @@ export function hasVisibleModal() {
 export function activeWorkspaceRoot(): ParentNode {
   return document.querySelector('[data-workspace-active="true"]') ?? document;
 }
+
+/** Popovers and menus own Escape and review-navigation keys, even when they are not modal. */
+export function hasVisibleNavigationOverlay() {
+  return [
+    ...document.querySelectorAll<HTMLElement>('[role="dialog"], [role="alertdialog"], [role="menu"], .workbench-help'),
+  ].some((el) => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden');
+}

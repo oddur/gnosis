@@ -43,7 +43,7 @@ interface Props {
   register: (id: string, controller: WorkspaceController) => () => void;
   onLocation: (id: string, location: AppLocation, title?: string) => void;
   onStatus: (id: string, status?: 'opening' | 'error') => void;
-  onAccount: (account: string) => void;
+  onAccount: (account: string, resumeSetup?: boolean) => void;
   setActivityOpen: (open: boolean) => void;
   onSyncStatus: (status: GitHubSyncStatusProps | undefined) => void;
 }

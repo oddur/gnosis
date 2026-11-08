@@ -182,12 +182,8 @@ void app.whenReady().then(async () => {
     await js(`${first}.querySelector('.markdown-review-toolbar input').click()`);
     await wait("localStorage.getItem('gnosis-markdown-view:v1')?.includes('false')");
     win.reload();
-    await wait("document.querySelectorAll('.queue-item').length===7");
-    await js(
-      "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()"
-    );
-    await click('Open PR overview');
-    await wait("!!document.querySelector('.pr-description')");
+    // Workspace restoration keeps this PR open on Commits, including Markdown preferences.
+    await wait("!!document.querySelector('.pr-summary-page .commit-stream-row')");
     await click('Changes');
     await wait("!!document.querySelector('.markdown-review')");
     assert.equal(

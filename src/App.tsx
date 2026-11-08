@@ -92,7 +92,7 @@ export function App() {
       });
   }, []);
   const scopeAccount = useCallback(
-    (key: string) => {
+    (key: string, resumeSetup = false) => {
       if (currentAccount.current === key) return;
       if (currentAccount.current) persist(currentAccount.current, latest.current);
       currentAccount.current = key;
@@ -102,6 +102,13 @@ export function App() {
         next = restoreWorkspaceTabs(readReviewState(storageKey(key)), key) ?? initialWorkspaceTabs(newTab());
       } catch {
         next = initialWorkspaceTabs(newTab());
+      }
+      if (resumeSetup) {
+        const setup = newTab({ kind: 'home', onboarding: 'setup' });
+        next =
+          next.tabs.length === 1 && !next.tabs[0].initial
+            ? initialWorkspaceTabs(setup)
+            : reduceWorkspaceTabs(next, { type: 'open', tab: setup });
       }
       latest.current = next;
       setState(next);

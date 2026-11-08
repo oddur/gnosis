@@ -1,3 +1,4 @@
+import { normalizeSetup } from '../lib/onboarding';
 import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
 import { contrastRatio } from '../lib/code-contrast';
 import assert from 'node:assert/strict';
@@ -461,8 +462,10 @@ void app.whenReady().then(async () => {
     await click('Next');
     await click('Connect GitHub');
     await wait("!!document.querySelector('.github-auth-dialog')");
+    await js("(async()=>{window.setupBeforeConnect = structuredClone((await window.electronAPI.loadOnboarding()).draft)})()");
     await click('Sign in through browser');
     await wait("document.querySelector('.setup-connected')?.textContent.includes('oddur') && !document.querySelector('.github-auth-dialog')");
+    assert.deepEqual(normalizeSetup(await js("window.electronAPI.loadOnboarding().then(state=>state.draft)")), normalizeSetup(await js('window.setupBeforeConnect')), 'Signing in preserves the in-progress setup choices');
     await click('Finish later');
     await wait("!document.querySelector('.setup-dialog') && !document.querySelector('.workbench-connect')");
     await js(`(() => {

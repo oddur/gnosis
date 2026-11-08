@@ -317,3 +317,8 @@
 .workspace-tab[data-unread='true'] .workspace-tab-count {
   font-weight: 700;
 }
+
+/* The tab strip uses a row of space; keep dependency lists dense without shrinking type. */
+.workspace-shell .stack-status-table .stack-overview-member {
+  padding-block: 5px;
+}

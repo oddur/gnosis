@@ -117,7 +117,7 @@ import {
 import type { Preferences, PrStatus, ReviewGuide, ReviewHistoryEntry } from '../../lib/types';
 
 interface Props {
-  onAccount?: (account: string) => void;
+  onAccount?: (account: string, resumeSetup?: boolean) => void;
   navigationRestoration?: { location: HomeLocation; nonce: number };
   onNavigationChange?: (location: HomeLocation, mutedUrls?: Set<string>) => void;
   onReviewReady: (review: ReviewGuide) => void;
@@ -857,7 +857,11 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const syncAuth = async () => {
     const nextAuth = await window.electronAPI.getAuthState();
     setAuth(nextAuth);
-    onAccount?.(nextAuth.authenticated ? nextAuth.login ?? 'local' : 'local');
+    const resumeSetup = nextAuth.authenticated && onboarding.open;
+    if (resumeSetup && onboarding.state.draft) {
+      await window.electronAPI.saveOnboarding({ ...onboarding.state, paused: false, completed: false }, nextAuth.login);
+    }
+    onAccount?.(nextAuth.authenticated ? nextAuth.login ?? 'local' : 'local', resumeSetup);
     if (nextAuth.authenticated) {
       const current = await window.electronAPI.loadPreferences();
       await savePrefs({ ...current, guestMode: false });
@@ -1085,6 +1089,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   };
   useEffect(() => {
     if (!commandDestination || !prefs || loading || handledCommand.current === commandDestination.nonce) return;
+    if (commandDestination.destination.onboarding === 'setup' && !onboarding.ready) return;
     handledCommand.current = commandDestination.nonce;
     const target = commandDestination.destination;
     setMutedOpen(target.section === 'muted');
@@ -1094,7 +1099,6 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       setSelected(target.subject.subject.id);
       return;
     }
-    setOpenedItem(null);
     if (target.onboarding) {
       if (target.onboarding === 'setup') onboarding.start(); else onboarding.startTour();
       return;
@@ -1107,6 +1111,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       setLocalOpen(true);
       return;
     }
+    setOpenedItem(null);
     if (target.viewId) {
       setSavedView(false);
       void viewAction({ type: 'activate', id: target.viewId }).catch(() => {});
@@ -1128,7 +1133,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
           kind: target.section === 'stacks' ? 'stack' : 'all',
         });
     }
-  }, [commandDestination, prefs, loading]);
+  }, [commandDestination, prefs, loading, onboarding.ready]);
   const commandItem = summaryItem ?? selectedItem;
   useCommandScope('home', [
     ...(commandItem && queue.items.some((item) => item.subject.id === commandItem.subject.id)
