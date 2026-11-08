@@ -11,6 +11,7 @@ import type { ActivityTask } from '../lib/activity';
 import { memo, useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { HomePage } from './pages/HomePage';
 import { ReviewPage } from './pages/ReviewPage';
+import { Button } from '../components/ui/button';
 import { UpdateBanner } from '../components/UpdateBanner';
 import type { ReviewGuide } from '../lib/types';
 import { toast } from '../components/ui/toast';
@@ -41,6 +42,7 @@ interface Props {
   recentlyViewed: ReturnType<typeof import('../lib/recently-viewed').createRecentlyViewed>;
   register: (id: string, controller: WorkspaceController) => () => void;
   onLocation: (id: string, location: AppLocation, title?: string) => void;
+  onStatus: (id: string, status?: 'opening' | 'error') => void;
   onAccount: (account: string) => void;
   setActivityOpen: (open: boolean) => void;
   onSyncStatus: (status: GitHubSyncStatusProps | undefined) => void;
@@ -51,6 +53,7 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
   recentlyViewed,
   register,
   onLocation,
+  onStatus,
   onAccount,
   setActivityOpen,
   onSyncStatus,
@@ -67,6 +70,10 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
     pendingHistory.current = undefined;
   }, [navigationHistory]);
   const initialRecorded = useRef(false);
+  const [initialError, setInitialError] = useState('');
+  const initialAttempt = useRef(0);
+  const openingInitial = useRef(false);
+  const failedInitial = useRef(false);
   const recordHome = useCallback(
     (home: HomeLocation, mutedUrls?: Set<string>) => {
       if (initial && !initialRecorded.current) {
@@ -78,6 +85,14 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
           (initial.kind === 'location' && initial.location.page === 'home' && initial.location.home.item);
         if (expectsSubject && !home.item) return;
         initialRecorded.current = true;
+      }
+      if ((openingInitial.current || failedInitial.current) && home.item) {
+        initialAttempt.current++;
+        navigationVersion.current++;
+        openingInitial.current = false;
+        failedInitial.current = false;
+        setInitialError('');
+        onStatus(id);
       }
       const location: AppLocation = { page: 'home', home };
       onLocation(id, location);
@@ -290,7 +305,15 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
     };
   }, [handleReviewReady]);
 
-  async function navigate(target: SearchDestination) {
+  async function navigate(target: SearchDestination, restoring = false) {
+    if (!restoring) {
+      initialAttempt.current++;
+      openingInitial.current = false;
+      initialRecorded.current = true;
+      failedInitial.current = false;
+      setInitialError('');
+      onStatus(id);
+    }
     const version = ++navigationVersion.current;
     cancelHistoryLoad();
     setHomeRestoration(undefined);
@@ -350,33 +373,57 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
   }
   useLayoutEffect(() => register(id, { navigate, openRecent, openActivity }));
   const started = useRef(false);
+  const restoreInitial = async (attempt: number) => {
+    if (!initial) return;
+    if (initial.kind === 'location') return openHistoryLocation(initial.location, false);
+    if (initial.kind !== 'restore') return navigate(initial, true);
+    const saved = initial.saved;
+    if (saved.reviewId) return navigate({ kind: 'review', reviewId: saved.reviewId }, true);
+    if (!saved.home) return saved.destination ? navigate(saved.destination, true) : undefined;
+    const queue = await window.electronAPI.workbenchSnapshot();
+    if (attempt !== initialAttempt.current) return;
+    const { subjectId, url, ...home } = saved.home;
+    const items = [...queue.items, ...(queue.starredItems ?? [])];
+    for (const stack of queue.stacks ?? [])
+      if (!items.some((item) => item.subject.id === stack.id)) items.push({ subject: stack, attention: 'other' });
+    let item = items.find((i) => i.subject.id === subjectId);
+    if (!item && subjectId) {
+      const parent = items.find((i) => i.subject.members.some((m) => m.url === subjectId));
+      const member = parent?.subject.members.find((m) => m.url === subjectId);
+      if (parent && member) item = focusStackPr(parent, member);
+    }
+    if (subjectId && !item && url) return navigate({ kind: 'home', url }, true);
+    return openHistoryLocation(
+      {
+        page: 'home',
+        home: { ...home, account: initial.account, filters: normalizeQueueFilters(home.filters), item: item ?? null },
+      },
+      false
+    );
+  };
+  const retryInitial = async () => {
+    if (openingInitial.current) return;
+    const attempt = ++initialAttempt.current;
+    openingInitial.current = true;
+    setInitialError('');
+    onStatus(id, 'opening');
+    try {
+      await restoreInitial(attempt);
+      if (attempt === initialAttempt.current) onStatus(id);
+    } catch (error) {
+      if (attempt === initialAttempt.current) {
+        failedInitial.current = true;
+        setInitialError(error instanceof Error ? error.message : String(error));
+        onStatus(id, 'error');
+      }
+    } finally {
+      if (attempt === initialAttempt.current) openingInitial.current = false;
+    }
+  };
   useEffect(() => {
     if (started.current || !initial) return;
     started.current = true;
-    const restore = async () => {
-      if (initial.kind === 'location') return openHistoryLocation(initial.location);
-      if (initial.kind !== 'restore') return navigate(initial);
-      const saved = initial.saved;
-      if (saved.reviewId) return navigate({ kind: 'review', reviewId: saved.reviewId });
-      if (!saved.home) return saved.destination ? navigate(saved.destination) : undefined;
-      const queue = await window.electronAPI.workbenchSnapshot();
-      const { subjectId, url, ...home } = saved.home;
-      const items = [...queue.items, ...(queue.starredItems ?? [])];
-      let item = items.find((i) => i.subject.id === subjectId);
-      if (!item && subjectId) {
-        const parent = items.find((i) => i.subject.members.some((m) => m.url === subjectId));
-        const member = parent?.subject.members.find((m) => m.url === subjectId);
-        if (parent && member) item = focusStackPr(parent, member);
-      }
-      if (subjectId && !item && url) return navigate({ kind: 'home', url });
-      return openHistoryLocation({
-        page: 'home',
-        home: { ...home, account: initial.account, filters: normalizeQueueFilters(home.filters), item: item ?? null },
-      });
-    };
-    void restore().catch((error: unknown) =>
-      toast.add({ type: 'error', title: 'Could not open tab', description: String(error) })
-    );
+    void retryInitial();
   }, [initial]);
   const commands: AppCommand[] = [
     {
@@ -479,6 +526,21 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
           the newspaper "Extra" notice handles it instead. */}
       {page !== 'home' && <UpdateBanner />}
       <div className="workspace-content">
+        {initialError && (
+          <div className="workspace-open-error" role="alert">
+            <p>Could not open this review.</p>
+            <Button size="sm" onClick={() => void retryInitial()}>
+              Retry
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => void navigate({ kind: 'home', section: 'all' })}>
+              Review queue
+            </Button>
+            <details>
+              <summary>Error details</summary>
+              {initialError}
+            </details>
+          </div>
+        )}
         {page === 'home' && (
           <HomePage
             onSyncStatus={onSyncStatus}

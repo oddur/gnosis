@@ -387,7 +387,11 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   }, []);
   const [queueScrollOffset] = useSessionDraft('queue-scroll', () => ({ current: 0 }));
   const pendingRowFocus = useRef<string | null>(null);
+  const attachedQueue = useRef<HTMLElement | null>(null);
   const attachQueueScroll = useCallback((element: HTMLElement | null) => {
+    // Activity detaches refs before hiding a tab. Capture even a pending scroll event.
+    if (!element && attachedQueue.current) queueScrollOffset.current = attachedQueue.current.scrollTop;
+    attachedQueue.current = element;
     setQueueScrollElement(element);
     if (element) element.scrollTop = queueScrollOffset.current;
   }, []);
@@ -1976,6 +1980,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                 aria-label="Review queue"
                 ref={attachQueueScroll}
                 onScroll={(event) => {
+                  if (!attachedQueue.current) return;
                   queueScrollOffset.current = event.currentTarget.scrollTop;
                   if (historyLocation.current) {
                     historyLocation.current = { ...historyLocation.current, scroll: event.currentTarget.scrollTop };

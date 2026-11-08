@@ -67,3 +67,24 @@ These captures are review evidence, not shipping raster assets.
 The extension preserves [DESIGN.md](../../DESIGN.md), [PRODUCT.md](../../PRODUCT.md), and the global design sidecar.
 DESIGN.md retains its older baseline commit marker and later component additions after Do's and Don'ts. This pre-existing documentation drift remains outside this extension.
 The new tab geometry and compact-header exception remain local here. They do not redefine the incumbent system.
+
+## Harden, onboard, optimize, polish pass
+
+The strip remains 39px tall. Close targets are at least 26px. The overflow list separates each title from its repository, PR number, and section. Long titles truncate without widening the workbench. Opening indicators respect reduced motion; a warning icon identifies a failed destination.
+
+A single-tab hint teaches modified-click opening. It can be dismissed and disappears after a second tab opens. Help retains the complete instructions. No tour or blocking onboarding is added.
+
+Keyboard context menus restore focus. Closing other tabs is atomic and retains the requested tab. Failed loads offer Retry or Review queue; a render error stays inside its workspace. Queue scrolling survives an immediate tab switch, including browser scroll events dispatched after the workspace becomes hidden.
+
+Docker checks pass for workspace tabs, tab hardening, shared context menus, navigation history, and shell hardening. Captures cover light/dark overflow, long multilingual titles, network retry, render recovery, and a 700px window at 150% zoom. Native macOS pointer behavior and screen-reader announcements were not tested in this pass.
+
+In a 40-tab fixture with 50 queue scroll updates, a test-only React Profiler around the strip measured 50 strip commits / 305ms before, and 0 strip commits / 0ms after. Whole-App rendering in that paired run was 469ms before and 227ms after. Broader timings varied across runs; these are fixture measurements, not a general app speed claim. The optimization skips unchanged chrome and releases draft scopes after they leave the closed-tab history.
+
+Pass captures (review evidence only):
+
+- [First-tab hint](../review/tabs-hardening/first-tab.png)
+- [Overflow menu](../review/tabs-hardening/overflow-menu.png)
+- [Dark overflow](../review/tabs-hardening/overflow-dark.png)
+- [Failed destination](../review/tabs-hardening/retry.png)
+- [Workspace recovery](../review/tabs-hardening/tab-recovery.png)
+- [Narrow window at 150% zoom](../review/tabs-hardening/narrow-zoom.png)

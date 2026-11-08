@@ -9,6 +9,7 @@ import {
   workspaceShortcut,
   saveWorkspaceTabs,
   restoreWorkspaceTabs,
+  sameTabChrome,
 } from '../lib/workspace-tabs';
 import { DEFAULT_QUEUE_FILTERS } from '../lib/queue-filters';
 import type { AppLocation } from '../lib/navigation-history';
@@ -127,4 +128,47 @@ void test('native tab accelerators suppress Close Window and forward exactly onc
   contents.emit('before-input-event', event, { ...input, type: 'keyUp' });
   assert.equal(prevented, 1);
   assert.deepEqual(actions, [['workspace-shortcut', 'close']]);
+});
+
+void test('close others is atomic, bounded and keeps the requested inactive tab', () => {
+  let state = initialWorkspaceTabs(newWorkspaceTab('a'));
+  for (let i = 0; i < 30; i++)
+    state = reduce(state, { type: 'open', tab: newWorkspaceTab(`other-${i}`), background: true });
+  state = reduce(state, { type: 'close-others', id: 'other-7' });
+  assert.equal(state.active, 'other-7');
+  assert.equal(state.tabs.length, 1);
+  assert.equal(state.closed.length, 20);
+  assert.equal(reduce(state, { type: 'reopen' }).tabs.length, 2);
+});
+void test('scroll metadata does not invalidate tab chrome; title, status and order do', () => {
+  const state = reduce(initialWorkspaceTabs(newWorkspaceTab('a')), { type: 'record', id: 'a', location: home });
+  const scrolled = reduce(state, {
+    type: 'record',
+    id: 'a',
+    location: { page: 'home', home: { ...home.home, scroll: 900 } },
+  });
+  assert.equal(sameTabChrome(state, scrolled), true);
+  assert.equal(sameTabChrome(state, reduce(state, { type: 'status', id: 'a', status: 'error' })), false);
+});
+void test('invalid saved entries do not discard valid neighbouring tabs', () => {
+  const valid = saveWorkspaceTabs(initialWorkspaceTabs(newWorkspaceTab('good'))).tabs[0];
+  const state = restoreWorkspaceTabs(
+    {
+      version: 1,
+      tabs: [{ ...valid, id: 'bad', home: 'broken' }, valid, { ...valid, id: 'bad2', destination: [] }],
+      active: 'bad',
+    },
+    'maya'
+  );
+  assert.deepEqual(
+    state?.tabs.map((tab) => tab.id),
+    ['good']
+  );
+  assert.equal(state.active, 'good');
+});
+void test('recovery replaces only the failed tab without creating another queue', () => {
+  const state = initialWorkspaceTabs(newWorkspaceTab('failed'));
+  const next = reduce(state, { type: 'replace', id: 'failed', tab: newWorkspaceTab('queue') });
+  assert.equal(next.tabs.length, 1);
+  assert.equal(next.active, 'queue');
 });

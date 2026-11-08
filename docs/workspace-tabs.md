@@ -26,6 +26,8 @@ Queue selection gestures remain separate from title navigation. Shift-click alon
 The strip scrolls horizontally. Vertical wheel movement also scrolls the strip, and the active tab moves into view.
 Each tab shows an identity icon, its title, and a close button. PR tabs also show the PR number.
 Long titles truncate. A native tooltip contains the full title, destination metadata, and section.
+The Open tabs menu shows a second line with the repository, PR number, and section to distinguish similar titles.
+A dismissible hint introduces modified-click opening. It disappears after opening a second tab. Help keeps the full shortcut reference available.
 
 ## Keyboard and menus
 
@@ -46,6 +48,8 @@ Cmd and Ctrl shortcuts both work. Electron intercepts these shortcuts before nat
 Tab shortcuts pause while a visible modal dialog is open. Repeated keys, composition input, and Alt combinations do not trigger tab actions.
 
 Each tab has a context menu with Close tab, Close other tabs, Move tab left, Move tab right, and Reopen closed tab.
+Shift+F10 or the Context Menu key opens this menu from a focused tab. Closing the menu restores focus; closing a tab focuses the surviving active tab.
+Close other tabs keeps the chosen tab, even when that tab was inactive.
 The Open tabs menu also offers Reopen closed tab. Reordering uses these menu actions.
 
 Closing the active tab selects the most recently active remaining tab. Closing the final tab opens a fresh queue tab.
@@ -66,7 +70,11 @@ Live position and composer retention during tab switches does not imply complete
 
 Account changes save the outgoing destinations, discard mounted workspaces, and restore the incoming account's tabs.
 Invalid saved records fall back to a queue tab. Failed saves retain live tabs and show “Could not save open tabs.”
-Failed destination loads show “Could not open tab.”
+Invalid entries do not discard valid neighboring entries. Failed saves offer Retry and do not repeat the toast on every scroll.
+Failed destination loads stay in the affected tab, show a warning icon, and offer Retry or Review queue.
+Each workspace has a render error boundary. Retry tab remounts that workspace; the tab strip and other workspaces remain usable.
+Session drafts are released after their tab leaves both the open tabs and the 20-entry closed-tab history.
+Queue scroll position is captured before a workspace becomes hidden, including scroll events still pending in the browser.
 
 ## Implementation and checks
 
@@ -77,6 +85,8 @@ Failed destination loads show “Could not open tab.”
 
 [Unit tests](../tests/workspace-tabs.test.ts) cover tab transitions, shortcuts, and saved records.
 [Browser checks](../tests/workspace-tabs-browser.ts) cover background opening, retained Changes, explanation positions, independent composers, restoration, and account reset.
+[Hardening checks](../tests/workspace-tabs-hardening-browser.ts) cover 40 tabs, long multilingual titles, keyboard menus, focus recovery, close others, network retry, renderer recovery, hint dismissal, and a narrow window at 150% zoom.
+The strip skips rerenders when only reading-position metadata changes. The hardening fixture includes a React Profiler benchmark; set `GNOSIS_TABS_BENCH=1` to run only the measurement.
 Browser checks run through Docker, as required by [AGENTS.md](../AGENTS.md).
 
 The [surface brief](../.impeccable/surfaces/components-workspacetabs-tsx.md) records the visual treatment and finish evidence.

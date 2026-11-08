@@ -11,6 +11,13 @@ import {
 const values = new Map<string, unknown>();
 export const ReviewDraftScope = createContext('');
 const WorkspaceDraftScope = createContext('');
+/** Closed-tab recovery is bounded; release drafts once a destination leaves that history. */
+export function retainWorkspaceDrafts(account: string, ids: readonly string[]) {
+  const prefix = `workspace:${account}:`;
+  const keep = ids.map((id) => `${prefix}${id}:`);
+  for (const key of values.keys())
+    if (key.startsWith(prefix) && !keep.some((scope) => key.startsWith(scope))) values.delete(key);
+}
 export function WorkspaceDraftBoundary({ value, children }: { value: string; children: ReactNode }) {
   return (
     <WorkspaceDraftScope.Provider value={value}>

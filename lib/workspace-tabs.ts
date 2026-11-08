@@ -13,6 +13,7 @@ export interface WorkspaceTabEntry {
   label: string;
   detail: string;
   section: string;
+  status?: 'opening' | 'error';
   initial?: WorkspaceTarget;
   location?: AppLocation;
 }
@@ -24,6 +25,8 @@ export interface WorkspaceTabsState {
 }
 export function newWorkspaceTab(id: string, initial?: WorkspaceTarget): WorkspaceTabEntry {
   const subject = initial?.kind === 'home' ? initial.subject?.subject : undefined;
+  const url =
+    initial?.kind === 'home' && initial.url ? /github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/.exec(initial.url) : null;
   return {
     id,
     initial,
@@ -32,17 +35,21 @@ export function newWorkspaceTab(id: string, initial?: WorkspaceTarget): Workspac
       (initial?.kind === 'review'
         ? 'Explanation'
         : initial?.kind === 'home' && initial.url
-          ? 'Opening PR…'
+          ? `PR #${url?.[2] ?? ''}`
           : 'Review queue'),
-    label: subject?.kind === 'stack' ? 'Stack' : subject ? `#${subject.members[0].number}` : 'Queue',
-    detail: subject?.members[0].repo ?? '',
-    section: subject ? 'summary' : 'queue',
+    label:
+      subject?.kind === 'stack' ? 'Stack' : subject ? `#${subject.members[0].number}` : url ? `#${url[2]}` : 'Queue',
+    detail: subject?.members[0].repo ?? url?.[1] ?? '',
+    section: subject || url ? 'summary' : 'queue',
   };
 }
 export function initialWorkspaceTabs(tab: WorkspaceTabEntry): WorkspaceTabsState {
   return { tabs: [tab], active: tab.id, recent: [tab.id], closed: [] };
 }
 export type WorkspaceTabsAction =
+  | { type: 'status'; id: string; status?: 'opening' | 'error' }
+  | { type: 'close-others'; id: string }
+  | { type: 'replace'; id: string; tab: WorkspaceTabEntry }
   | { type: 'open'; tab: WorkspaceTabEntry; background?: boolean }
   | { type: 'activate'; id: string }
   | { type: 'record'; id: string; location: AppLocation; title?: string }
@@ -50,6 +57,42 @@ export type WorkspaceTabsAction =
   | { type: 'reopen' }
   | { type: 'move'; id: string; offset: number };
 export function reduceWorkspaceTabs(state: WorkspaceTabsState, action: WorkspaceTabsAction): WorkspaceTabsState {
+  if (action.type === 'replace') {
+    if (!state.tabs.some((tab) => tab.id === action.id)) return state;
+    return {
+      ...state,
+      tabs: state.tabs.map((tab) => (tab.id === action.id ? action.tab : tab)),
+      active: state.active === action.id ? action.tab.id : state.active,
+      recent: state.recent.map((id) => (id === action.id ? action.tab.id : id)),
+    };
+  }
+  if (action.type === 'status') {
+    if (!state.tabs.some((tab) => tab.id === action.id && tab.status !== action.status)) return state;
+    return {
+      ...state,
+      tabs: state.tabs.map((tab) => (tab.id === action.id ? { ...tab, status: action.status } : tab)),
+    };
+  }
+  if (action.type === 'close-others') {
+    const keep = state.tabs.find((tab) => tab.id === action.id);
+    if (!keep || state.tabs.length === 1) return state;
+    return {
+      ...state,
+      tabs: [keep],
+      active: keep.id,
+      recent: [keep.id],
+      closed: [
+        ...state.closed,
+        ...state.tabs
+          .filter((tab) => tab !== keep)
+          .map((tab) => ({
+            ...tab,
+            status: undefined,
+            initial: tab.location ? { kind: 'location' as const, location: tab.location } : tab.initial,
+          })),
+      ].slice(-20),
+    };
+  }
   if (action.type === 'open')
     return {
       ...state,
@@ -96,7 +139,11 @@ export function reduceWorkspaceTabs(state: WorkspaceTabsState, action: Workspace
     const recent = state.recent.filter((id) => id !== action.id);
     const closed = [
       ...state.closed,
-      { ...tab, initial: tab.location ? { kind: 'location' as const, location: tab.location } : tab.initial },
+      {
+        ...tab,
+        status: undefined,
+        initial: tab.location ? { kind: 'location' as const, location: tab.location } : tab.initial,
+      },
     ].slice(-20);
     if (!tabs.length) return { ...initialWorkspaceTabs(action.replacement), closed };
     return {
@@ -215,6 +262,7 @@ export function restoreWorkspaceTabs(value: unknown, account: string): Workspace
       return [];
     if (tab.reviewId !== undefined && typeof tab.reviewId !== 'string') return [];
     if (tab.home) {
+      if (typeof tab.home !== 'object' || Array.isArray(tab.home)) return [];
       const h = tab.home;
       if (
         typeof h.savedQuery !== 'string' ||
@@ -246,6 +294,7 @@ export function restoreWorkspaceTabs(value: unknown, account: string): Workspace
       };
     }
     if (tab.destination) {
+      if (typeof tab.destination !== 'object' || Array.isArray(tab.destination)) return [];
       const d = tab.destination;
       if (
         (d as { kind: unknown }).kind !== 'home' ||
@@ -281,4 +330,40 @@ export function restoreWorkspaceTabs(value: unknown, account: string): Workspace
   const active =
     typeof saved.active === 'string' && tabs.some((t) => t.id === saved.active) ? saved.active : tabs[0].id;
   return { tabs, active, recent: [active, ...tabs.filter((t) => t.id !== active).map((t) => t.id)], closed: [] };
+}
+
+/** Location reports can change on every scroll; the strip only needs its visible metadata. */
+export function sameTabChrome(a: WorkspaceTabsState, b: WorkspaceTabsState): boolean {
+  return (
+    a.active === b.active &&
+    a.closed.length === b.closed.length &&
+    a.tabs.length === b.tabs.length &&
+    a.tabs.every((tab, i) => {
+      const next = b.tabs[i];
+      return (
+        tab.id === next.id &&
+        tab.title === next.title &&
+        tab.label === next.label &&
+        tab.detail === next.detail &&
+        tab.section === next.section &&
+        tab.status === next.status
+      );
+    })
+  );
+}
+export function workspaceTabDescription(tab: WorkspaceTabEntry) {
+  const section =
+    (
+      {
+        queue: 'Review queue',
+        summary: 'Summary',
+        changes: 'Changes',
+        commits: 'Commits',
+        explanation: 'Explanation',
+        checks: 'Checks',
+        brief: 'Local notes',
+        feedback: 'Feedback',
+      } as Record<string, string>
+    )[tab.section] ?? tab.section;
+  return [tab.label, tab.detail, section].filter(Boolean).join(' · ');
 }

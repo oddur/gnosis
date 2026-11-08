@@ -49,7 +49,7 @@ void app.whenReady().then(async () => {
     await wait(`${root}.querySelector('.pr-summary-page')!==null`);
     await click('Changes');
     await wait(`${root}.querySelector('.pr-changes')!==null`);
-    await wait(`document.querySelectorAll('.workspace-tab-select')[1].title.includes('changes')`);
+    await wait(`document.querySelectorAll('.workspace-tab-select')[1].title.includes('Changes')`);
     await js(`${root}.dataset.marker='retained';window.beforeSwitch=window.tabRefreshes;`);
     await js(`document.querySelectorAll('.workspace-tab-select')[0].click()`);
     await wait(`${root}.querySelector('.queue-list')!==null`);
@@ -158,7 +158,9 @@ void app.whenReady().then(async () => {
       'same explanation keeps independent reading positions'
     );
     await capture('explanation-tabs');
-    await js(`const loadPrefs=window.electronAPI.loadPreferences;window.electronAPI.loadPreferences=async()=>({...await loadPrefs(),theme:'dark'});document.documentElement.classList.add('dark');true;`);
+    await js(
+      `const loadPrefs=window.electronAPI.loadPreferences;window.electronAPI.loadPreferences=async()=>({...await loadPrefs(),theme:'dark'});document.documentElement.classList.add('dark');true;`
+    );
     await capture('dark-tabs');
     // Authentication changes discard the old account's mounted views and history.
     await js(`window.electronAPI.getAuthState=()=>Promise.resolve({authenticated:true,login:'someone-else'});true;`);

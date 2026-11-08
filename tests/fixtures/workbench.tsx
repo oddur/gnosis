@@ -16,6 +16,7 @@ import { normalizeViews, editViewFilters, applyViewAction, activeViewFilters, ty
 import { matchesQueueFilters } from '../../lib/queue-filters';
 import { normalizeQueueFilters, type QueueFilters } from '../../lib/queue-filters';
 import type { ActivityTask, ActivityAction } from '../../lib/activity';
+import { Profiler } from 'react';
 import { createRoot } from 'react-dom/client';
 import { imageMocks } from './review-images';
 import { threadMocks } from './review-threads';
@@ -769,6 +770,11 @@ Object.defineProperty(window, 'electronAPI', {
   }),
 });
 if (!new URLSearchParams(location.search).has('keep-progress')) localStorage.clear();
+const tabSession = sessionStorage.getItem('fixture-workspace-tabs');
+if (tabSession) {
+  localStorage.setItem('gnosis-workspace-tabs:v1:oddur', tabSession);
+  sessionStorage.removeItem('fixture-workspace-tabs');
+}
 const { renderDiffHunk } = await import('../../lib/highlight');
 for (const topic of review.slides)
   for (const hunk of topic.diffHunks)
@@ -787,6 +793,20 @@ if (root) {
   if (new URLSearchParams(location.search).has('hardening')) {
     const { HardeningFixture } = await import('./hardening');
     createRoot(root).render(<HardeningFixture />);
+  } else if (new URLSearchParams(location.search).has('workspace-benchmark')) {
+    const metrics = { commits: 0, duration: 0 };
+    Object.assign(window, { tabProfile: metrics });
+    createRoot(root).render(
+      <Profiler
+        id="tabs"
+        onRender={(_id, _phase, duration) => {
+          metrics.commits++;
+          metrics.duration += duration;
+        }}
+      >
+        <App />
+      </Profiler>
+    );
   } else createRoot(root).render(<App />);
 }
 

@@ -6,13 +6,14 @@ import { RecentlyViewedContext } from '../components/RecentlyViewed';
 import { ConflictWorkspaceHost } from '../components/ConflictWorkspaceHost';
 import { ActivityDrawer } from '../components/ActivityDrawer';
 import type { GitHubSyncStatusProps } from '../components/GitHubSyncStatus';
+import { WorkspaceErrorBoundary } from '../components/WorkspaceErrorBoundary';
 import { WorkspaceTabs } from '../components/WorkspaceTabs';
 import { LoadingState } from '../components/LoadingState';
 import { toast, Toaster } from '../components/ui/toast';
 import { createRecentlyViewed, type RecentVisit } from '../lib/recently-viewed';
 import { readReviewState, writeReviewState } from '../lib/renderer-review-state';
 import { useFileFilterSync } from '../lib/use-raw-file-filters';
-import { WorkspaceDraftBoundary } from '../lib/session-drafts';
+import { WorkspaceDraftBoundary, retainWorkspaceDrafts } from '../lib/session-drafts';
 import { CommandCenter } from '../lib/command-center';
 import { hasVisibleModal, WorkspaceNavigation } from '../lib/workspace-navigation';
 import {
@@ -60,15 +61,30 @@ export function App() {
   const currentAccount = useRef(account);
   currentAccount.current = account;
   const writes = useRef(Promise.resolve());
+  const storageError = useRef(false);
+  const focusTab = useRef(false);
   const persist = useCallback((key: string, value: WorkspaceTabsState) => {
     const saved = saveWorkspaceTabs(value);
     writes.current = writes.current
-      .then(() => writeReviewState(storageKey(key), saved))
+      .then(async () => {
+        await writeReviewState(storageKey(key), saved);
+        storageError.current = false;
+      })
       .catch(() => {
+        if (storageError.current) return;
+        storageError.current = true;
         toast.add({
           type: 'error',
           title: 'Could not save open tabs',
           description: 'Your current tabs remain open. They may not restore after a restart.',
+          actionProps: {
+            children: 'Retry',
+            onClick: () => {
+              storageError.current = false;
+              // A toast can outlive an account switch; never retry an old snapshot over a newer save.
+              if (currentAccount.current) persist(currentAccount.current, latest.current);
+            },
+          },
         });
       });
   }, []);
@@ -124,6 +140,7 @@ export function App() {
   );
   const activate = useCallback(
     (id: string) => {
+      focusTab.current = true;
       setVisited((old) => new Set([...old, id]));
       change({ type: 'activate', id });
     },
@@ -133,6 +150,7 @@ export function App() {
     (target?: WorkspaceTarget, background = false, title?: string) => {
       const tab = newTab(target);
       if (title) tab.title = title;
+      if (!background) focusTab.current = true;
       if (!background) setVisited((old) => new Set([...old, tab.id]));
       change({ type: 'open', tab, background });
     },
@@ -140,16 +158,45 @@ export function App() {
   );
   const close = useCallback(
     (id: string) => {
+      focusTab.current =
+        latest.current.active === id ||
+        document.activeElement?.closest('.workspace-tab')?.querySelector('[role=tab]')?.id === `workspace-tab-${id}`;
       change({ type: 'close', id, replacement: newTab() });
     },
     [change]
   );
   const reopen = useCallback(() => {
+    focusTab.current = true;
     change({ type: 'reopen' });
   }, [change]);
+  const tabIds = state.tabs.map((tab) => tab.id).join(',');
+  const retainedIds = [...state.tabs, ...state.closed].map((tab) => tab.id).join(',');
+  useEffect(() => {
+    if (account) retainWorkspaceDrafts(account, retainedIds.split(','));
+  }, [account, retainedIds]);
   useLayoutEffect(() => {
-    setVisited((old) => (old.has(state.active) ? old : new Set([...old, state.active])));
-  }, [state.active]);
+    setVisited((old) => new Set([...old].filter((id) => state.tabs.some((tab) => tab.id === id)).concat(state.active)));
+    if (focusTab.current) {
+      focusTab.current = false;
+      const frame = requestAnimationFrame(() =>
+        document.getElementById(`workspace-tab-${state.active}`)?.focus({ preventScroll: true })
+      );
+      return () => cancelAnimationFrame(frame);
+    }
+  }, [state.active, tabIds]);
+  const openQueue = useCallback(() => open(), [open]);
+  const move = useCallback((id: string, offset: number) => change({ type: 'move', id, offset }), [change]);
+  const closeOthers = useCallback(
+    (id: string) => {
+      focusTab.current = true;
+      change({ type: 'close-others', id });
+    },
+    [change]
+  );
+  const reportStatus = useCallback(
+    (id: string, status?: 'opening' | 'error') => change({ type: 'status', id, status }),
+    [change]
+  );
   const register = useCallback((id: string, controller: WorkspaceController) => {
     controllers.current.set(id, controller);
     return () => {
@@ -244,9 +291,10 @@ export function App() {
                 state={state}
                 activate={activate}
                 close={close}
-                open={() => open()}
+                open={openQueue}
                 reopen={reopen}
-                move={(id, offset) => change({ type: 'move', id, offset })}
+                move={move}
+                closeOthers={closeOthers}
               />
               <div id="main-content" tabIndex={-1}>
                 {!account ? (
@@ -266,16 +314,23 @@ export function App() {
                       {visited.has(tab.id) && (
                         <Activity mode={state.active === tab.id ? 'visible' : 'hidden'}>
                           <WorkspaceDraftBoundary value={`workspace:${account}:${tab.id}`}>
-                            <ReviewWorkspace
-                              id={tab.id}
-                              initial={tab.initial}
-                              recentlyViewed={recentlyViewed}
-                              register={register}
-                              onLocation={record}
-                              onAccount={scopeAccount}
-                              setActivityOpen={setActivityOpen}
-                              onSyncStatus={setSyncStatus}
-                            />
+                            <WorkspaceErrorBoundary
+                              onQueue={() => {
+                                change({ type: 'replace', id: tab.id, tab: newTab() });
+                              }}
+                            >
+                              <ReviewWorkspace
+                                id={tab.id}
+                                initial={tab.initial}
+                                recentlyViewed={recentlyViewed}
+                                register={register}
+                                onLocation={record}
+                                onStatus={reportStatus}
+                                onAccount={scopeAccount}
+                                setActivityOpen={setActivityOpen}
+                                onSyncStatus={setSyncStatus}
+                              />
+                            </WorkspaceErrorBoundary>
                           </WorkspaceDraftBoundary>
                         </Activity>
                       )}
