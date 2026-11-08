@@ -55,7 +55,7 @@ export function prEntryActionGroups({
   const starred = members.some((m) => starredUrls.has(m.url));
   const stack = members.length > 1;
   return [
-    onOpenTab ? [{label:'Open in new tab',icon:<ExternalLink size={15}/>,run:onOpenTab}] : [],
+    onOpenTab ? [{label:'Open in new tab',dismissBeforeRun:true,icon:<ExternalLink size={15}/>,run:onOpenTab}] : [],
     onReadChange ? [{ label: unread ? 'Mark as read' : 'Mark as unread', icon: unread ? <MailOpen size={15} /> : <Mail size={15} />, disabled: busy, run: () => onReadChange(!!unread) }] : [],
     onReview ? members.filter(member => !isLocalUrl(member.url)).map(member => ({
       label: `Review PR #${member.number}…`,

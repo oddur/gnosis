@@ -1318,7 +1318,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         <EntryActions
           label={bulkTarget ? `Actions for ${selectedItems.length} selected entries` : s.kind === 'stack' ? 'Stack actions' : `Actions for PR #${s.members[0].number}`}
           groups={bulkTarget ? selectionGroups : [
-            ...(tabs ? [[{label:'Open in new tab',icon:<Plus size={15}/>,run:()=>tabs.open({kind:'home',subject:item})}]] : []),
+            ...(tabs ? [[{label:'Open in new tab',dismissBeforeRun:true,icon:<Plus size={15}/>,run:()=>tabs.open({kind:'home',subject:item})}]] : []),
             ...prEntryActionGroups(entryActions(s.members)),
           ]}
           description={bulkTarget ? selectionDescription : undefined}
@@ -2013,7 +2013,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                 saved.length ? (
                   saved.map((entry) => (
                     <EntryActions key={entry.id} label={`Actions for ${entry.prTitle}`} groups={[
-                      ...(tabs && entry.status==='completed' ? [[{label:'Open in new tab',icon:<Plus size={15}/>,run:()=>tabs.open({kind:'review',reviewId:entry.id})}]]:[]),
+                      ...(tabs && entry.status==='completed' ? [[{label:'Open in new tab',dismissBeforeRun:true,icon:<Plus size={15}/>,run:()=>tabs.open({kind:'review',reviewId:entry.id})}]]:[]),
                       ...prEntryActionGroups(entryActions(entry.snapshot?.subject.members ?? [])),
                       [{ label: 'Export review', icon: <Download size={15} />, disabled: entry.status === 'generating',
                         run: () => window.electronAPI.exportReview(entry.id) }],

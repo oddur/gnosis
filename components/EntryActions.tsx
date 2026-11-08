@@ -1,6 +1,7 @@
 import { setEntryMenuOpen } from '../lib/entry-menu-state';
 import { useId, useRef, useState, useLayoutEffect, type ReactElement, type ReactNode } from 'react';
 import { Menu } from '@base-ui/react/menu';
+import { flushSync } from 'react-dom';
 import { MoreHorizontal } from 'lucide-react';
 import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from './ui/context-menu';
 import { toast } from './ui/toast';
@@ -12,6 +13,8 @@ export interface EntryAction {
   icon?: ReactNode;
   disabled?: boolean;
   destructive?: boolean;
+  /** Remove the popup before an action hides its workspace. */
+  dismissBeforeRun?: boolean;
   run: () => unknown;
 }
 export type EntryActionGroups = EntryAction[][];
@@ -56,6 +59,8 @@ export function EntryActions({
   const busy = useRef(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const contextActions = useRef<Menu.Root.Actions | null>(null);
+  const menuActions = useRef<Menu.Root.Actions | null>(null);
   const menuId = useRef(Symbol('entry-menu'));
   useLayoutEffect(() => {
     const id = menuId.current;
@@ -77,6 +82,19 @@ export function EntryActions({
             onClick={() => {
               if (busy.current) return;
               busy.current = true;
+              // Navigation can hide this workspace and pause menu cleanup effects.
+              // Commit dismissal while the source workspace is still active.
+              if (action.dismissBeforeRun) {
+                flushSync(() => {
+                  setContextOpen(false);
+                  setMenuOpen(false);
+                });
+                // Base UI must observe closed state before completing the closing phase.
+                flushSync(() => {
+                  contextActions.current?.unmount();
+                  menuActions.current?.unmount();
+                });
+              }
               setPending(true);
               void (async () => {
                 try {
@@ -125,6 +143,7 @@ export function EntryActions({
   };
   const button = (
     <Menu.Root
+      actionsRef={menuActions}
       open={menuOpen}
       onOpenChange={(open) => {
         if (open) onBeforeOpen?.();
@@ -153,6 +172,7 @@ export function EntryActions({
   if (!children) return button;
   return (
     <ContextMenu
+      actionsRef={contextActions}
       open={contextOpen}
       onOpenChange={(open) => {
         if (open) onBeforeOpen?.();

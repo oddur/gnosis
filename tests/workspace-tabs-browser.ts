@@ -36,6 +36,47 @@ void app.whenReady().then(async () => {
     await loadWorkbenchPage(win, url + '?pr-summary&workspace-tabs&keep-progress');
     await waitForWorkbenchQueue(win.webContents);
     assert.equal(await js('document.querySelectorAll(".workspace-tab").length'), 1);
+    // A menu action must dismiss its portal before the source workspace is hidden.
+    for (const mode of ['context', 'overflow']) {
+      await js(`(()=>{const row=${root}.querySelector('.queue-row');
+        if (${JSON.stringify(mode)}==='context') { const r=row.getBoundingClientRect();row.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,button:2,clientX:r.left+40,clientY:r.top+20})); }
+        else row.querySelector('.entry-menu-trigger').click();
+      })()`);
+      await wait(`!!document.querySelector('[role=menuitem][aria-label="Open in new tab"]')`);
+      await js(`document.querySelector('[role=menuitem][aria-label="Open in new tab"]').click()`);
+      await wait(
+        `document.querySelectorAll('.workspace-tab').length===2 && !!${root}.querySelector('.pr-summary-page')`
+      );
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      assert.equal(
+        await js(
+          `[...document.querySelectorAll('[role=menu]')].some(menu=>menu.getClientRects().length>0 && getComputedStyle(menu).visibility!=='hidden')`
+        ),
+        false,
+        `${mode} menu is not visible over the new tab`
+      );
+      assert.equal(
+        await js(`document.querySelectorAll('[role=menu]').length`),
+        0,
+        `${mode} menu closes after opening a foreground tab`
+      );
+      await js(`document.querySelectorAll('.workspace-tab-select')[0].click()`);
+      await wait(`!!${root}.querySelector('.queue-list')`);
+      assert.equal(
+        await js(`document.querySelectorAll('[role=menu]').length`),
+        0,
+        `${mode} menu stays closed when returning to its tab`
+      );
+      await js(
+        `(()=>{const trigger=${root}.querySelector('.queue-row .entry-menu-trigger');trigger.focus();trigger.dispatchEvent(new KeyboardEvent('keydown',{key:'F10',shiftKey:true,bubbles:true,cancelable:true}));})()`
+      );
+      await wait(`!!document.querySelector('[role=menuitem][aria-label="Open in new tab"]')`);
+      win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+      win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+      await wait(`!document.querySelector('[role=menu]')`);
+      await js(`document.querySelectorAll('.workspace-tab-close')[1].click()`);
+      await wait(`document.querySelectorAll('.workspace-tab').length===1`);
+    }
     await js(
       `window.tabReads=0;const mark=window.electronAPI.workbenchMarkPrRead;window.electronAPI.workbenchMarkPrRead=(...args)=>{window.tabReads++;return mark(...args)};window.tabRefreshes=0;window.inSnapshot=false;const snapshot=window.electronAPI.workbenchSnapshot;window.electronAPI.workbenchSnapshot=(...args)=>{window.inSnapshot=true;try{return snapshot(...args)}finally{window.inSnapshot=false}};const refresh=window.electronAPI.workbenchQueue;window.electronAPI.workbenchQueue=(...args)=>{if(!window.inSnapshot)window.tabRefreshes++;return refresh(...args)};true;`
     );
