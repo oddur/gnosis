@@ -110,9 +110,9 @@ void app.whenReady().then(async () => {
     await js("Date.now=window.realNow;window.dispatchEvent(new Event('fixture-pr-read-change'));void 0");
     await viewport(1280,850);
     await js(`${row(122)}.querySelector('.stack-check-result').click()`);
-    await wait("document.querySelector('[role=tab][aria-selected=true]')?.textContent.includes('Checks') || document.querySelector('[role=tab][data-active]')?.textContent.includes('Checks')");
+    await wait("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent.includes('Checks') || document.querySelector('[role=tab]:not(.workspace-tab-select)[data-active]')?.textContent.includes('Checks')");
     assert.ok(await js("document.querySelector('.pr-overview-heading').textContent.includes('Enable adaptive')"));
-    await js("(()=>{const b=[...document.querySelectorAll('[role=tab]')].find(b=>b.textContent==='Summary');b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()");
+    await js("(()=>{const b=[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(b=>b.textContent==='Summary');b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()");
     await wait("!!document.querySelector('.stack-context')");
     await js("document.querySelector('.stack-context').open=true;document.querySelector('.stack-context-heading button').click()");
     await wait("!!document.querySelector('.stack-overview')");

@@ -5,7 +5,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { inspectionData } from '../lib/inspection-cache';
 import { GITHUB_PR_FILE_LIMIT } from '../lib/inspection-limits';
 import { ReviewPage } from '../src/pages/ReviewPage';
-import { ReviewDraftScope, useSessionDraft } from '../lib/session-drafts';
+import { ReviewDraftBoundary, useSessionDraft } from '../lib/session-drafts';
 import { loadExplanation, peekExplanation, type ExplanationDestination } from '../lib/explanation-workspace';
 import { fingerprint, subjectForReview, type QueueItem } from '../lib/workbench';
 import { PROVIDERS } from '../lib/models';
@@ -300,7 +300,7 @@ export function PrExplanation({
           </Button>
         </div>
       ) : review && visited ? (
-        <ReviewDraftScope.Provider
+        <ReviewDraftBoundary
           value={`${review.reviewId ?? review.prUrl}:${review.snapshot?.fingerprint ?? review.headSha ?? ''}`}
         >
           <ReviewPage
@@ -317,7 +317,7 @@ export function PrExplanation({
             initialSlideId={initialSlideId}
             commandDestination={incoming?.review.reviewId === review.reviewId ? incoming?.command : undefined}
           />
-        </ReviewDraftScope.Provider>
+        </ReviewDraftBoundary>
       ) : (
         !review && (
           <div className="explanation-empty">

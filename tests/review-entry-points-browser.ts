@@ -37,7 +37,7 @@ void app.whenReady().then(async () => {
     const selected = await js("document.querySelector('.queue-item.is-selected .queue-title')?.textContent");
     await menuAction(js, 'Actions for PR #152', 'Review PR #152…');
     await wait("document.querySelector('.review-submit-header')?.textContent.includes('#152')");
-    assert.equal(await js("document.querySelector('[role=tab][aria-selected=true]').textContent"), 'Summary');
+    assert.equal(await js("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]').textContent"), 'Summary');
     assert.notEqual(await js("document.querySelector('h1').textContent"), selected);
     assert.equal(await js('window.reviewSubmissions.length'), 0, 'Opening a menu action never submits');
     await click('Close');

@@ -1,3 +1,4 @@
+import { useWorkspaceNavigation } from '../lib/workspace-navigation';
 import { WorkspaceIcon } from './WorkspaceIcon';
 import { WorkbenchIcon } from './WorkbenchIcon';
 import { useContext } from 'react';
@@ -35,6 +36,7 @@ export function prEntryActionGroups({
   onReview,
   reviewDisabled,
   onReadChange,
+  onOpenTab,
   unread,
 }: Partial<PrGenerationActions> & {
   members: ReviewMember[];
@@ -47,11 +49,13 @@ export function prEntryActionGroups({
   reviewDisabled?: boolean;
   unread?: boolean;
   onReadChange?: (read: boolean) => unknown;
+  onOpenTab?: () => unknown;
 }): EntryActionGroups {
   if (!members.length) return [];
   const starred = members.some((m) => starredUrls.has(m.url));
   const stack = members.length > 1;
   return [
+    onOpenTab ? [{label:'Open in new tab',icon:<ExternalLink size={15}/>,run:onOpenTab}] : [],
     onReadChange ? [{ label: unread ? 'Mark as read' : 'Mark as unread', icon: unread ? <MailOpen size={15} /> : <Mail size={15} />, disabled: busy, run: () => onReadChange(!!unread) }] : [],
     onReview ? members.filter(member => !isLocalUrl(member.url)).map(member => ({
       label: `Review PR #${member.number}…`,
@@ -133,13 +137,14 @@ export function PrEntryActions(
     onBeforeOpen?: () => void;
   }
 ) {
+  const tabs=useWorkspaceNavigation();
   const read = useContext(PrReadContext);
   const canMark = read && props.members.some(member => read.states[member.url]);
   return (
     <EntryActions
       onBeforeOpen={props.onBeforeOpen}
       label={props.members.length > 1 ? 'Stack actions' : `Actions for PR #${props.members[0]?.number}`}
-      groups={prEntryActionGroups({ ...props, ...(canMark ? {
+      groups={prEntryActionGroups({ ...props, onOpenTab: props.onOpenTab ?? (tabs && props.members.length===1 && !isLocalUrl(props.members[0].url) ? ()=>tabs.open({kind:'home',url:props.members[0].url}) : undefined), ...(canMark ? {
         unread: props.members.some(member => read.states[member.url]?.unread.length),
         busy: props.busy || read.busy,
         onReadChange: value => read.change(props.members.map(member => member.url), value),

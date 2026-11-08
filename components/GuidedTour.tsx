@@ -1,3 +1,4 @@
+import { activeWorkspaceRoot } from '../lib/workspace-navigation';
 import { useEffect, useRef } from 'react';
 import { driver } from 'driver.js';
 import 'driver.js/dist/driver.css';
@@ -88,9 +89,9 @@ export function GuidedTour({
       },
     });
     const show = () => {
-      let element = document.querySelector(entry.target);
+      let element = activeWorkspaceRoot().querySelector(entry.target);
       if (!local && index === 0 && (!element || !element.getBoundingClientRect().height)) {
-        element = document.querySelector('[data-tour="queue-fallback"]');
+        element = activeWorkspaceRoot().querySelector('[data-tour="queue-fallback"]');
       }
       if (!element && available) return false;
       tour.highlight({

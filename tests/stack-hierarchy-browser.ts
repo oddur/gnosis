@@ -54,7 +54,7 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('.commit-stream-row[data-active=true] .changes-file-header input[type=checkbox]').click()");
     await click('Back to stack');
     await wait("!!document.querySelector('.pr-summary-page.is-stack .changes-file-header')");
-    assert.equal(await js("document.querySelector('[role=tab][data-state=active]').textContent"), 'Changes');
+    assert.equal(await js("document.querySelector('[role=tab]:not(.workspace-tab-select)[data-state=active]').textContent"), 'Changes');
     await choose(pr);
     await wait("!!document.querySelector('.changes-file-header') && !document.querySelector('.pr-summary-page.is-stack')");
     await click('Commits');

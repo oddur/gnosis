@@ -76,7 +76,7 @@ void app.whenReady().then(async () => {
 
     const navigationTop = await js<number>("document.querySelector('.pr-workspace-navigation').getBoundingClientRect().top");
     // The empty brief says how to start.
-    await js(`(()=>{const t=[...document.querySelectorAll('[role=tab]')].find(e=>e.textContent.startsWith('Local notes'));t.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));t.click()})()`);
+    await js(`(()=>{const t=[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(e=>e.textContent.startsWith('Local notes'));t.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));t.click()})()`);
     await wait("document.querySelector('.agent-brief-empty')?.textContent.includes('Add local note')");
     assert.equal(await js("document.querySelector('.pr-workspace-navigation').getBoundingClientRect().top"), navigationTop, 'Local notes must not move the workspace tabs');
     assert.equal(await tabCount(), null);
@@ -192,7 +192,7 @@ void app.whenReady().then(async () => {
     // Jumping to a viewed file opens it without changing the reviewer's progress.
     await js(`(()=>{const c=window.workerRow().querySelector('.changes-file-actions label input');if(!c.checked)c.click()})()`);
     await wait("window.workerRow().querySelector('.commit-stream-file-body')?.hidden===true");
-    await js(`(()=>{const t=[...document.querySelectorAll('[role=tab]')].find(e=>e.textContent.startsWith('Local notes'));t.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));t.click()})()`);
+    await js(`(()=>{const t=[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(e=>e.textContent.startsWith('Local notes'));t.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));t.click()})()`);
     await wait("document.querySelectorAll('.agent-brief-comment').length===3");
     await js("[...document.querySelectorAll('.agent-brief-comment')].find(c=>c.textContent.includes('Rename these')).querySelector('.agent-brief-location').click()");
     await wait("window.workerRow().querySelector('.commit-stream-file-body')?.hidden===false");
@@ -201,7 +201,7 @@ void app.whenReady().then(async () => {
     await js("window.workerRow().querySelector('.changes-file-actions label input').click()");
 
     // Editing and removing one comment.
-    await js(`(()=>{const t=[...document.querySelectorAll('[role=tab]')].find(e=>e.textContent.startsWith('Local notes'));t.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));t.click()})()`);
+    await js(`(()=>{const t=[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(e=>e.textContent.startsWith('Local notes'));t.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));t.click()})()`);
     await wait("document.querySelectorAll('.agent-brief-comment').length===3");
     await js("[...document.querySelectorAll('.agent-brief-comment')].find(c=>c.textContent.includes('Rename these')).querySelector('.changes-draft-comment button').click()");
     await wait("!!document.querySelector('.agent-brief-comment textarea')");
@@ -234,7 +234,7 @@ void app.whenReady().then(async () => {
     await setup();
     await openStack();
     await wait("document.querySelector('.brief-tab-count')?.textContent==='3'");
-    await js(`(()=>{const t=[...document.querySelectorAll('[role=tab]')].find(e=>e.textContent.startsWith('Local notes'));t.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));t.click()})()`);
+    await js(`(()=>{const t=[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(e=>e.textContent.startsWith('Local notes'));t.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));t.click()})()`);
     await wait("document.querySelectorAll('.agent-brief-comment').length===3");
 
     // A single PR has its own brief, separate from the stack it belongs to.
@@ -248,9 +248,9 @@ void app.whenReady().then(async () => {
     for (const width of [1280, 980]) {
       win.setContentSize(width, 800);
       await click('Explanation');
-      await wait("document.querySelector('[role=tab][aria-selected=true]')?.textContent==='Explanation'");
+      await wait("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent==='Explanation'");
       const top = await js<number>("document.querySelector('.pr-workspace-navigation').getBoundingClientRect().top");
-      await js(`(()=>{const t=[...document.querySelectorAll('[role=tab]')].find(e=>e.textContent.startsWith('Local notes'));t.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));t.click()})()`);
+      await js(`(()=>{const t=[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(e=>e.textContent.startsWith('Local notes'));t.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));t.click()})()`);
       await wait("!!document.querySelector('.agent-brief-empty')");
       assert.equal(await js("document.querySelector('.pr-workspace-navigation').getBoundingClientRect().top"), top, 'A PR keeps the same navigation position between Explanation and Local notes');
       await capture('stable-notes-header-'+width);
@@ -266,7 +266,7 @@ void app.whenReady().then(async () => {
     await js("window.fill('.changes-comment-composer textarea','Only about this PR.')");
     await click('Add local note');
     await wait("document.querySelector('.brief-tab-count')?.textContent==='1'");
-    await js(`(()=>{const t=[...document.querySelectorAll('[role=tab]')].find(e=>e.textContent.startsWith('Local notes'));t.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));t.click()})()`);
+    await js(`(()=>{const t=[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(e=>e.textContent.startsWith('Local notes'));t.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));t.click()})()`);
     await wait("document.querySelector('.agent-brief-group h3')?.textContent.startsWith('Single PR')");
     await click('Copy for agent');
     await wait('window.copied.length===1');

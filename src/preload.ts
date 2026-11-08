@@ -72,6 +72,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler=(_event:Electron.IpcRendererEvent,value:{key:string;kinds:Record<string,FileKinds>})=>callback(value.key,value.kinds);
     ipcRenderer.on('file-classifications-changed',handler);return ()=>ipcRenderer.removeListener('file-classifications-changed',handler);
   },
+  onWorkspaceShortcut: (callback: (action: NonNullable<ReturnType<typeof import('../lib/workspace-tabs').workspaceShortcut>>) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, action: unknown) => {
+      if (['new','close','reopen','next','previous'].includes(String(action)) || typeof action === 'number' && action >= 1 && action <= 9)
+        callback(action as NonNullable<ReturnType<typeof import('../lib/workspace-tabs').workspaceShortcut>>);
+    };
+    ipcRenderer.on('workspace-shortcut', handler);
+    return () => ipcRenderer.removeListener('workspace-shortcut', handler);
+  },
   onHistoryNavigate: (callback: (direction: -1 | 1) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, direction: unknown) => {
       if (direction === -1 || direction === 1) callback(direction);

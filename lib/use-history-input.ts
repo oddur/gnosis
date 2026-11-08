@@ -1,3 +1,4 @@
+import { hasVisibleModal } from './workspace-navigation';
 import { useEffect, useRef } from 'react';
 import { historyKeyDirection, type HistoryDirection } from './navigation-history';
 
@@ -8,7 +9,7 @@ export function useHistoryInput(navigate: (direction: HistoryDirection) => void)
   useEffect(() => {
     const move = (direction: HistoryDirection) => {
       // Do not leave a review submission or another modal with unsaved input.
-      if (document.querySelector('[role="dialog"][aria-modal="true"], [role="alertdialog"], [role="menu"]')) return;
+      if (hasVisibleModal()) return;
       latest.current(direction);
     };
     const mouse = (event: MouseEvent) => {

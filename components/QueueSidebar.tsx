@@ -1,3 +1,5 @@
+import { useWorkspaceNavigation } from '../lib/workspace-navigation';
+import type { WorkspaceTarget } from '../lib/workspace-tabs';
 import {
   cloneElement,
   type ReactElement,
@@ -68,12 +70,35 @@ function Group({
 }
 
 /** The same destination label is available on hover and keyboard focus. */
-export function SidebarDestination({ children }: { children: ReactElement<ComponentProps<'button'>> }) {
+export function SidebarDestination({
+  children,
+  destination,
+}: {
+  children: ReactElement<ComponentProps<'button'>>;
+  destination?: WorkspaceTarget;
+}) {
+  const tabs = useWorkspaceNavigation();
   const label = children.props['aria-label'];
   const detail = children.props.title;
   return (
     <Tooltip>
-      <TooltipTrigger asChild>{cloneElement(children, { title: undefined })}</TooltipTrigger>
+      <TooltipTrigger asChild>
+        {cloneElement(children, {
+          title: undefined,
+          onClick: (event) => {
+            if (destination && tabs && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault();
+              tabs.open(destination, !event.shiftKey, typeof label === 'string' ? label : undefined);
+            } else children.props.onClick?.(event);
+          },
+          onAuxClick: (event) => {
+            if (event.button === 1 && destination && tabs) {
+              event.preventDefault();
+              tabs.open(destination, true, typeof label === 'string' ? label : undefined);
+            } else children.props.onAuxClick?.(event);
+          },
+        })}
+      </TooltipTrigger>
       <TooltipContent side="right" sideOffset={8} className="sidebar-destination-tooltip">
         <strong>{label}</strong>
         {detail && detail !== label && <span>{detail}</span>}

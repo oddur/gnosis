@@ -99,6 +99,10 @@ void app.whenReady().then(async () => {
       `(async()=>{for(let i=0;i<24;i++)await window.electronAPI.workbenchViewAction({type:'create',name:i===0?'Release work needing my review':'Saved view '+(i+1)});document.querySelector('[aria-label="Refresh queue"]').click()})()`
     );
     await wait("document.querySelectorAll('.saved-view-row').length===24");
+    // Views added elsewhere do not replace this tab's current destination.
+    // Select one here before checking that the picker focuses its active entry.
+    await click('.saved-view-link');
+    await wait("document.querySelector('.saved-view-link').getAttribute('aria-current')==='page'");
     await capture('many-views');
     assert.equal(await js('document.documentElement.scrollWidth>innerWidth'), false);
     await click('[aria-label="Collapse sidebar"]');

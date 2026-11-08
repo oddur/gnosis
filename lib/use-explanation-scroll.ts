@@ -10,6 +10,7 @@ const positions = new Map<string, { top: number; left: number }>();
 /** Small position records use the existing in-memory mirror and backend SQLite store. */
 export function useExplanationScroll(key: string, active = true) {
   const node = useRef<HTMLDivElement | null>(null);
+  const restoredKey = useRef<string | undefined>(undefined);
   const position = useRef({ top: 0, left: 0 });
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const pending = useRef(Promise.resolve());
@@ -26,11 +27,14 @@ export function useExplanationScroll(key: string, active = true) {
       node.current = element;
       if (!element) return;
       try {
-        const saved = (positions.get(key) ?? readReviewState(key)) as { top?: number; left?: number } | undefined;
-        position.current = {
-          top: Number.isFinite(saved?.top) ? Math.max(0, saved?.top ?? 0) : 0,
-          left: Number.isFinite(saved?.left) ? Math.max(0, saved?.left ?? 0) : 0,
-        };
+        if (restoredKey.current !== key) {
+          const saved = (positions.get(key) ?? readReviewState(key)) as { top?: number; left?: number } | undefined;
+          position.current = {
+            top: Number.isFinite(saved?.top) ? Math.max(0, saved?.top ?? 0) : 0,
+            left: Number.isFinite(saved?.left) ? Math.max(0, saved?.left ?? 0) : 0,
+          };
+          restoredKey.current = key;
+        }
       } catch {
         /* Position is optional. */
       }

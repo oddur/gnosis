@@ -26,7 +26,7 @@ void app.whenReady().then(async () => {
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
     await wait("document.querySelectorAll('.queue-item').length>0");
     await click('Settings');
-    await wait("!!document.querySelector('[role=dialog] [role=tab]')");
+    await wait("!!document.querySelector('[role=dialog] [role=tab]:not(.workspace-tab-select)')");
     await click('Integrations');
     await wait("!!document.querySelector('#github-cache-title')");
     assert.match(await js<string>("document.querySelector('#github-cache-size').textContent"), /512 MB/);

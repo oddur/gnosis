@@ -1,3 +1,4 @@
+import { attachWorkspaceShortcuts } from './window-workspace-navigation';
 import {
   explanationFile,
   explanationExclusion,
@@ -315,6 +316,7 @@ function createWindow() {
   });
 
   protectExplainerFrames(mainWindow);
+  attachWorkspaceShortcuts(mainWindow);
   attachWindowHistoryNavigation(mainWindow, direction => mainWindow.webContents.send('history-navigate', direction));
   const ownerId = mainWindow.webContents.id;
   mainWindow.on('closed', () => explainerService.cancelOwner(ownerId));

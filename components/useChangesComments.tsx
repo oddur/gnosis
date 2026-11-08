@@ -5,7 +5,7 @@ import type { GitHubReviewThread as Thread } from '../lib/review-threads';
 import { useChangesReviewDrafts, type ChangesReviewDraft } from '../lib/changes-review-drafts';
 import { briefAppliesTo, briefLines, useAgentBrief, type AgentBriefComment, type AgentBriefPin } from '../lib/agent-brief';
 import { toast } from './ui/toast';
-import { ReviewDraftScope, useSessionDraft } from '../lib/session-drafts';
+import { ReviewDraftBoundary, useSessionDraft } from '../lib/session-drafts';
 import { GitHubReviewThread } from './GitHubReviewThread';
 import { ChangesCommentComposer } from './ChangesCommentComposer';
 import { ChangesDraftComment } from './ChangesDraftComment';
@@ -116,7 +116,7 @@ export function useChangesComments({
     }
   };
   const renderThread = (thread: Thread) => renderThreadOverride ? renderThreadOverride(thread) : (
-    <ReviewDraftScope.Provider key={thread.id} value={`feedback:${account}`}>
+    <ReviewDraftBoundary key={thread.id} value={`feedback:${account}`}>
       <GitHubReviewThread
         onOpenFeedback={onOpenFeedback ? () => onOpenFeedback(url, thread.id) : undefined}
         thread={thread}
@@ -148,7 +148,7 @@ export function useChangesComments({
             : undefined
         }
       />
-    </ReviewDraftScope.Provider>
+    </ReviewDraftBoundary>
   );
   const annotations: DiffLineAnnotation<Annotation>[] = [];
   const location = (line: number, side: Location['side']) => {
@@ -377,7 +377,7 @@ export function useChangesComments({
           </section>
         )}
         {reviewOpen && target && target.url === url && (
-          <ReviewDraftScope.Provider value={`pending-review:${account}:${url}`}>
+          <ReviewDraftBoundary value={`pending-review:${account}:${url}`}>
             <SubmitReviewDialog
               key={`${url}:${target.metadata.headSha}:${target.metadata.baseSha}`}
               open
@@ -433,7 +433,7 @@ export function useChangesComments({
                 }
               }}
             />
-          </ReviewDraftScope.Provider>
+          </ReviewDraftBoundary>
         )}
       </>
     ),

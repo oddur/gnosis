@@ -1,0 +1,128 @@
+.workspace-shell {
+  height: calc(100dvh - 34px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.workspace-shell #main-content {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+.workspace-panel,
+.workspace-content {
+  height: 100%;
+  min-height: 0;
+}
+.workspace-panel[hidden] {
+  display: none;
+}
+.workspace-tabs {
+  height: 39px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  background: var(--sidebar);
+  border-bottom: 1px solid var(--border);
+  -webkit-app-region: no-drag;
+}
+.workspace-tabs-list {
+  display: flex;
+  min-width: 0;
+  overflow: auto;
+  scrollbar-width: none;
+  gap: 4px;
+  padding: 3px 8px 0;
+}
+.workspace-tab {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  width: 240px;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+  color: var(--muted-foreground);
+}
+.workspace-tab:hover {
+  background: var(--accent);
+}
+.workspace-tab[data-active='true'] {
+  background: var(--background);
+  color: var(--foreground);
+  border-color: var(--border);
+  box-shadow: inset 0 2px var(--ring);
+}
+.workspace-tab > [role='tab'] {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+  height: 35px;
+  padding: 0 8px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+}
+.workspace-tab svg {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+}
+.workspace-tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-tab-number {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted-foreground);
+}
+.workspace-tab-close {
+  padding: 5px;
+  margin-right: 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.workspace-tab-close:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+.workspace-new-tab {
+  min-width: 36px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.workspace-tab-menu {
+  align-self: center;
+  flex-shrink: 0;
+  margin: 0 8px 0 auto;
+}
+.workspace-tabs button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.workspace-tabs button:hover {
+  color: var(--foreground);
+}
+@media (max-width: 1000px) {
+  .workspace-tab {
+    width: 210px;
+  }
+}
+/* Keep code and conversation space useful on short laptop windows. */
+@media (max-height: 750px) {
+  .workspace-shell .workbench-header {
+    min-height: 48px;
+    padding-block: 6px;
+  }
+}

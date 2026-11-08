@@ -1,3 +1,4 @@
+import { useWorkspaceNavigation, activeWorkspaceRoot } from '../../lib/workspace-navigation';
 import { ExplanationSetupDialog } from '../../components/ExplanationSetupDialog';
 import type { GenerateReviewRequest } from '../../lib/types';
 import type { FeedbackRequest, ResponseIntent } from '../../lib/feedback';
@@ -69,6 +70,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { HomeLocation, WorkspaceTab } from '../../lib/navigation-history';
 import {
   ArrowRight,
+  Plus,
   Check,
   Square,
   SquareCheck,
@@ -115,6 +117,7 @@ import {
 import type { Preferences, PrStatus, ReviewGuide, ReviewHistoryEntry } from '../../lib/types';
 
 interface Props {
+  onAccount?: (account: string) => void;
   navigationRestoration?: { location: HomeLocation; nonce: number };
   onNavigationChange?: (location: HomeLocation, mutedUrls?: Set<string>) => void;
   onReviewReady: (review: ReviewGuide) => void;
@@ -134,7 +137,8 @@ const labels = {
   other: 'Other changes',
 };
 
-export function HomePage({ navigationRestoration, onNavigationChange, onReviewOriginChange, onReviewReady, prefillPrUrl, prefillReviewId, initialSubjectId, commandDestination, explanationDestination, onShowActivity, onSyncStatus }: Props) {
+export function HomePage({ onAccount, navigationRestoration, onNavigationChange, onReviewOriginChange, onReviewReady, prefillPrUrl, prefillReviewId, initialSubjectId, commandDestination, explanationDestination, onShowActivity, onSyncStatus }: Props) {
+  const tabs = useWorkspaceNavigation();
   const [feedbackRequest, setFeedbackRequest] = useState<FeedbackRequest>();
   const [responseUnavailable, setResponseUnavailable] = useState(0);
   const [overviewTab,setOverviewTab] = useState<WorkspaceTab>('summary');
@@ -144,7 +148,19 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
   const [auth, setAuth] = useState<{ authenticated: boolean; login: string | null } | null>(null);
   useEffect(() => { if (auth) setDiscussionAccount(auth.authenticated ? auth.login ?? '' : ''); }, [auth]);
   const [prefs, setPrefs] = useState<Preferences | null>(null);
-  const [queue, setQueue] = useState<WorkbenchQueue>({ items: [], warnings: [], remaining: 0 });
+  const ownViewId = useRef<string | null | undefined>(undefined);
+  const [queue, setQueueState] = useState<WorkbenchQueue>({ items: [], warnings: [], remaining: 0 });
+  const setQueue = useCallback((value: WorkbenchQueue | ((previous: WorkbenchQueue) => WorkbenchQueue)) => {
+    setQueueState(previous => {
+      const next = typeof value === 'function' ? value(previous) : value;
+      if (next.savedViews) {
+        if (ownViewId.current === undefined) ownViewId.current = next.savedViews.activeId;
+        const id = next.savedViews.views.some(view => view.id === ownViewId.current) ? ownViewId.current : null;
+        return { ...next, savedViews: { ...next.savedViews, activeId: id ?? null } };
+      }
+      return next;
+    });
+  }, []);
   const [history, setHistory] = useState<ReviewHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -214,7 +230,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       setQueue(next); setError('');
       if (muted) {
         setOpenedItem(null); setSelected(null);
-        requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('[title="Muted PRs"]')?.focus());
+        requestAnimationFrame(() => activeWorkspaceRoot().querySelector<HTMLButtonElement>('[title="Muted PRs"]')?.focus());
       } else {
         void window.electronAPI.listReviews().then(setHistory).catch(() => {});
       }
@@ -258,6 +274,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
         if (pending) await window.electronAPI.workbenchSetFilters(pending);
         return window.electronAPI.workbenchViewAction(action);
       });
+      ownViewId.current = result.savedViews?.activeId ?? null;
       setQueue(result);
       setFilters(normalizeQueueFilters(result.filters));
       filtersLoaded.current = true;
@@ -293,8 +310,9 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       try { return localStorage.getItem('gnosis-queue-selection'); } catch { return null; }
     }
   );
+  const appliedInitialSubject = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (initialSubjectId) { setSelected(initialSubjectId); setOpenedItem(null); }
+    if (initialSubjectId && appliedInitialSubject.current !== initialSubjectId) { appliedInitialSubject.current = initialSubjectId; setSelected(initialSubjectId); setOpenedItem(null); }
   }, [initialSubjectId]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [settings, setSettings] = useState(false);
@@ -399,8 +417,10 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       ) ??
       (summarySource.review && matchesExplanation(summarySource.review, summarySource.subject) ? summarySource.review : undefined),
   };
+  const appliedExplanation = useRef<ExplanationDestination | undefined>(undefined);
   useEffect(() => {
-    if (!explanationDestination) return;
+    if (!explanationDestination || appliedExplanation.current === explanationDestination) return;
+    appliedExplanation.current = explanationDestination;
     const item = explanationItem(explanationDestination.review);
     setOpenedItem(item);
     setSelected(item.subject.id);
@@ -485,18 +505,20 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
   const initialize = useCallback(async () => {
     if (initializationPending.current) return;
     initializationPending.current = true;
-    setInitializing(true);
+    const resuming = initialized.current;
+    if (!resuming) setInitializing(true);
     try {
       const [a, p] = await Promise.all([window.electronAPI.getAuthState(), window.electronAPI.loadPreferences()]);
       if (!alive.current) return;
       setAuth(a);
+      onAccount?.(a.authenticated ? a.login ?? 'local' : 'local');
       setPrefs(p);
       if (p.codeFont) applyCodeFont(p.codeFont);
       applyTheme(p.theme);
       initialized.current = true;
       setInitializationFailed(false);
       setError('');
-      void refresh();
+      void refresh(false, resuming);
     } catch (e) {
       if (alive.current) {
         setError(`Could not load your account and settings. ${e instanceof Error ? e.message : String(e)}`);
@@ -507,7 +529,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       initializationPending.current = false;
       if (alive.current) setInitializing(false);
     }
-  }, [refresh]);
+  }, [refresh, onAccount]);
   useEffect(() => {
     alive.current = true;
     void initialize();
@@ -697,7 +719,11 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
     };
   }, [fallbackReview?.id, fallbackReview?.savedAt]);
   const selectionFilterKey = JSON.stringify({ ...filters, sort: undefined });
+  const lastSelectionScroll = useRef<string | undefined>(undefined);
   useEffect(() => {
+    const key = JSON.stringify([selected, loading, section, selectionFilterKey]);
+    if (lastSelectionScroll.current === key) return;
+    lastSelectionScroll.current = key;
     rowButtons.current.get(selected ?? '')?.scrollIntoView({ block: 'nearest' });
   }, [selected, loading, section, selectionFilterKey]);
   useEffect(() => {
@@ -827,6 +853,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
   const syncAuth = async () => {
     const nextAuth = await window.electronAPI.getAuthState();
     setAuth(nextAuth);
+    onAccount?.(nextAuth.authenticated ? nextAuth.login ?? 'local' : 'local');
     if (nextAuth.authenticated) {
       const current = await window.electronAPI.loadPreferences();
       await savePrefs({ ...current, guestMode: false });
@@ -917,6 +944,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       summaryNavigation.current++;
       const viewId = queue.savedViews?.views.some(view => view.id === next.viewId) ? next.viewId : null;
       const viewChanged = viewId !== (queue.savedViews?.activeId ?? null);
+      ownViewId.current = viewId;
       // Tab/PR history must not leave a pending filter write when filters did not change.
       if (viewChanged || JSON.stringify(filters) !== JSON.stringify(next.filters)) {
         filterVersion.current++;
@@ -1285,7 +1313,10 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
       <div key={s.id} className={`queue-item ${active ? 'is-selected' : ''} ${item.unreadUrls?.length ? 'is-unread' : ''}`}>
         <EntryActions
           label={bulkTarget ? `Actions for ${selectedItems.length} selected entries` : s.kind === 'stack' ? 'Stack actions' : `Actions for PR #${s.members[0].number}`}
-          groups={bulkTarget ? selectionGroups : prEntryActionGroups(entryActions(s.members))}
+          groups={bulkTarget ? selectionGroups : [
+            ...(tabs ? [[{label:'Open in new tab',icon:<Plus size={15}/>,run:()=>tabs.open({kind:'home',subject:item})}]] : []),
+            ...prEntryActionGroups(entryActions(s.members)),
+          ]}
           description={bulkTarget ? selectionDescription : undefined}
           onBeforeOpen={() => selection.context(s.id)}
         >{actions => <div className="queue-row">
@@ -1340,7 +1371,11 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                 activate(item);
               }
             }}
-            onClick={event => selectQueueEntry(s.id, event)}
+            onClick={event => {
+              if (tabs && (event.metaKey || event.ctrlKey) && !event.altKey) { event.preventDefault(); tabs.open({kind:'home',subject:item}, !event.shiftKey); return; }
+              selectQueueEntry(s.id,event);
+            }}
+            onAuxClick={event=>{if(event.button===1&&tabs){event.preventDefault();tabs.open({kind:'home',subject:item},true);}}}
             onDoubleClick={event => {
               if (event.shiftKey || event.metaKey || event.ctrlKey) return;
               activate(item);
@@ -1590,7 +1625,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
               ].map(([id, label, Icon]) => {
                 const I = Icon as typeof Inbox;
                 return (
-                  <SidebarDestination key={id as string}>
+                  <SidebarDestination key={id as string} destination={{kind:'home',section:id as Extract<SearchDestination,{kind:'home'}>['section']}}>
                     <button
                       data-sidebar-group-start={id === 'stacks' || undefined}
                       data-sidebar-destination
@@ -1932,7 +1967,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
           {section !== 'saved' && (
             <p className="sr-only" id="queue-keyboard-help">
                 <kbd>↑</kbd> <kbd>↓</kbd> or <kbd>j</kbd> <kbd>k</kbd> select · <kbd>Enter</kbd> open · <kbd>/</kbd>{' '}
-                search · Shift-click or Shift+arrows select a range · Command/Control-click toggles · Command/Control+A selects all · Escape clears selection
+                search · Shift-click or Shift+arrows select a range · Command/Control-click titles opens tabs; click row backgrounds to toggle selection · Command/Control+A selects all · Escape clears selection
             </p>
           )}
           <div className="queue-content">
@@ -1973,6 +2008,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                 saved.length ? (
                   saved.map((entry) => (
                     <EntryActions key={entry.id} label={`Actions for ${entry.prTitle}`} groups={[
+                      ...(tabs && entry.status==='completed' ? [[{label:'Open in new tab',icon:<Plus size={15}/>,run:()=>tabs.open({kind:'review',reviewId:entry.id})}]]:[]),
                       ...prEntryActionGroups(entryActions(entry.snapshot?.subject.members ?? [])),
                       [{ label: 'Export review', icon: <Download size={15} />, disabled: entry.status === 'generating',
                         run: () => window.electronAPI.exportReview(entry.id) }],
@@ -1988,7 +2024,8 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
                       <button
                         className="queue-row-main"
                         disabled={entry.status === 'generating'}
-                        onClick={() => (entry.status === 'failed' ? void start(entry.prUrl) : void open(entry))}
+                        onClick={event => { if(tabs && entry.status==='completed' && (event.metaKey||event.ctrlKey))tabs.open({kind:'review',reviewId:entry.id},!event.shiftKey);else if(entry.status==='failed')void start(entry.prUrl);else void open(entry); }}
+                        onAuxClick={event=>{if(event.button===1&&tabs&&entry.status==='completed'){event.preventDefault();tabs.open({kind:'review',reviewId:entry.id},true);}}}
                       >
                         <span className="queue-title">{!entry.prUrl.startsWith('local:') && <SubjectIcon kind={entry.snapshot?.subject.kind === 'stack' ? 'stack' : 'pr'} />}{entry.prTitle}</span>
                       </button>
@@ -2375,6 +2412,7 @@ export function HomePage({ navigationRestoration, onNavigationChange, onReviewOr
         onOpenChange={setAuthOpen}
         onConnected={syncAuth}
         onSignedOut={async () => {
+          onAccount?.('local');
           setAuth({ authenticated: false, login: null });
           setOpenedItem(null);
           setSelected(null);

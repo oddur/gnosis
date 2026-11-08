@@ -145,7 +145,7 @@ export function SavedViewsNav({
                 >
                   <GripVertical size={12} />
                 </button>
-                <SidebarDestination>
+                <SidebarDestination destination={{kind:'home',viewId:view.id}}>
                   <button
                     aria-label={view.name}
                     className={`saved-view-link${active && state.activeId === view.id ? ' active' : ''}`}

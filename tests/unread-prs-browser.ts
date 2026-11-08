@@ -23,7 +23,7 @@ void app.whenReady().then(async () => {
   };
   const click = async (text: string) => {
     await js(
-      `(()=>{const b=[...document.querySelectorAll('button,[role=tab]')].find(b=>b.getBoundingClientRect().width&&(b.textContent.trim()===${JSON.stringify(text)}||b.getAttribute('aria-label')===${JSON.stringify(text)}));if(!b)throw Error('Missing '+${JSON.stringify(text)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
+      `(()=>{const b=[...document.querySelectorAll('button,[role=tab]:not(.workspace-tab-select)')].find(b=>b.getBoundingClientRect().width&&(b.textContent.trim()===${JSON.stringify(text)}||b.getAttribute('aria-label')===${JSON.stringify(text)}));if(!b)throw Error('Missing '+${JSON.stringify(text)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
     );
   };
   const menuAction: typeof performMenuAction = async (js, target, action) => {
