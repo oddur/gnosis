@@ -125,6 +125,22 @@
     min-height: 48px;
     padding-block: 6px;
   }
+  .workspace-shell .feedback-conversation-header {
+    padding-block: 6px;
+  }
+  .workspace-shell .feedback-conversation-header > div {
+    display: grid;
+    grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+    gap: 4px 8px;
+    align-items: center;
+  }
+  .workspace-shell .feedback-conversation-header .feedback-source {
+    grid-column: 1 / -1;
+  }
+  .workspace-shell .feedback-conversation-header h2,
+  .workspace-shell .feedback-file-directory {
+    margin-top: 0;
+  }
 }
 
 .workspace-tabs-tip {
