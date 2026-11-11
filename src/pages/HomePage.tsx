@@ -21,13 +21,11 @@ import { OnboardingSetup } from '../../components/OnboardingSetup';
 import { GuidedTour } from '../../components/GuidedTour';
 import { focusStackPr, resolveWorkspace, matchingStackMembers } from '../../lib/stack-workspace';
 import { RecentlyViewed } from '../../components/RecentlyViewed';
-import { PrBadge } from '../../components/EntityBadge';
 import { PrListSortControl } from '../../components/PrListSortControl';
 import { normalizePrListSort, sortQueueItems, sortSavedReviews, type PrListSort } from '../../lib/pr-list-sort';
 import { useListOrder, useListScrollAnchor } from '../../lib/use-list-order';
 import { useCachedQueueSignals } from '../../lib/use-queue-signals';
 import { PrReadContext, type ViewedPr } from '../../lib/pr-read-context';
-import { UnreadPrMarker } from '../../components/UnreadPrMarker';
 import { SearchableSelect } from '../../components/SearchableSelect';
 import { applyTheme } from '../../lib/theme';
 import { normalizePrInactivityDays } from '../../lib/pr-inactivity';
@@ -36,19 +34,18 @@ import { inspectionData } from '../../lib/inspection-cache';
 import { createRowIntent, type RowIntent } from '../../lib/row-intent';
 import { openRows, type OpenTarget } from '../../lib/pr-open-targets';
 import { EntryActions } from '../../components/EntryActions';
-import { PrEntryActions, PrStarMarker, prEntryActionGroups, type PrGenerationActionsFor } from '../../components/PrEntryActions';
+import { prEntryActionGroups, type PrGenerationActionsFor } from '../../components/PrEntryActions';
 import { MutedPrs } from '../../components/MutedPrs';
 import { isMutedReview } from '../../lib/muted-prs';
 import { setDiscussionAccount } from '../../lib/review-discussion-cache';
 import { explanationItem, matchesExplanation, type ExplanationDestination } from '../../lib/explanation-workspace';
-import { GitHubAuthor } from '../../components/GitHubAuthor';
-import { QueueMetadata, PrStateIcon } from '../../components/QueueMetadata';
 import { rememberCommandDestination } from '../../lib/command-recents';
 import { useCommandCenter, useCommandScope } from '../../lib/command-center';
 import type { SearchDestination } from '../../lib/command-search';
 import { useSessionDraft } from '../../lib/session-drafts';
 import type { VirtualItem } from '@tanstack/react-virtual';
-import { VirtualReviewQueue } from '../../components/VirtualReviewQueue';
+import { VirtualReviewQueue, VirtualSavedReviews, SavedRow, type SavedRowActions } from '../../components/VirtualReviewQueue';
+import { QueueRow, type QueueRowActions } from '../../components/QueueRow';
 import { useReviewHistory, useWorkbenchQueue, useWorkbenchStatus, workbenchStore } from '../../lib/workbench-store';
 import { GitHubIcon } from '../../lib/constants';
 import { workbenchIcons, workspaceSections } from '../../lib/interface-icons';
@@ -74,15 +71,8 @@ import type { HomeLocation, WorkspaceTab } from '../../lib/navigation-history';
 import {
   ArrowRight,
   Plus,
-  Check,
-  Square,
-  SquareCheck,
-  ChevronDown,
-  ChevronRight,
   GitPullRequest,
-  MessageSquare,
   Layers,
-  Loader2,
   RefreshCw,
   Search,
   Settings,
@@ -139,6 +129,7 @@ function withOwnView(queue: WorkbenchQueue, own: string | null | undefined): Wor
   const id = queue.savedViews.views.some(view => view.id === own) ? own : null;
   return id === (queue.savedViews.activeId ?? null) ? queue : { ...queue, savedViews: { ...queue.savedViews, activeId: id } };
 }
+const NO_READ_STATES: NonNullable<WorkbenchQueue['readStates']> = {};
 const labels = {
   starred: 'Starred',
   updated: 'Changed since AI explanation',
@@ -411,26 +402,47 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const lastStatusAttempt = useRef(0);
   const [statusRefreshing, setStatusRefreshing] = useState(false);
   const alive = useRef(true);
-  const selectedItem = [...queue.items, ...(queue.starredItems ?? [])].find(
-    (i) => i.subject.id === selected && matchesQueueFilters(i, filters, Date.now(), auth?.login)
-  );
-  const workspaceItems: QueueItem[] = [...queue.items, ...(queue.starredItems ?? [])];
-  for (const stack of queue.stacks ?? []) if (!workspaceItems.some(item => item.subject.id === stack.id))
-    workspaceItems.push({ subject: stack, attention: 'other' });
-  for (const entry of visibleHistory) if (entry.snapshot?.subject.kind === 'stack' && !workspaceItems.some(item => item.subject.id === entry.snapshot!.subject.id))
-    workspaceItems.push({ subject: entry.snapshot.subject, attention: 'other', review: entry });
-  const summarySource = openedItem && resolveWorkspace(openedItem, workspaceItems);
-  const summaryItem = summarySource && {
-    ...summarySource,
-    review:
-      visibleHistory.find((entry) => entry.id === requestedReviews[summarySource.subject.id]) ??
-      visibleHistory.find(
-        (entry) =>
-          entry.snapshot?.subject.id === summarySource.subject.id ||
-          (!entry.snapshot && entry.prUrl === summarySource.subject.members[0].url)
-      ) ??
-      (summarySource.review && matchesExplanation(summarySource.review, summarySource.subject) ? summarySource.review : undefined),
-  };
+  // Filters that depend on age use one clock per minute, so memoized lists stay stable between ticks.
+  const [clock, setClock] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setClock(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  const login = auth?.login;
+  const allItems = useMemo(() => [...queue.items, ...(queue.starredItems ?? [])], [queue.items, queue.starredItems]);
+  const itemsById = useMemo(() => {
+    const byId = new Map<string, QueueItem>();
+    for (const item of allItems) if (!byId.has(item.subject.id)) byId.set(item.subject.id, item);
+    return byId;
+  }, [allItems]);
+  const selectedItem = useMemo(() => {
+    const item = selected ? itemsById.get(selected) : undefined;
+    return item && matchesQueueFilters(item, filters, clock, login) ? item : undefined;
+  }, [itemsById, selected, filters, login, clock]);
+  const workspaceItems = useMemo(() => {
+    const result = [...allItems];
+    const ids = new Set(result.map(item => item.subject.id));
+    for (const stack of queue.stacks ?? []) if (!ids.has(stack.id)) { ids.add(stack.id); result.push({ subject: stack, attention: 'other' }); }
+    for (const entry of visibleHistory) if (entry.snapshot?.subject.kind === 'stack' && !ids.has(entry.snapshot.subject.id)) {
+      ids.add(entry.snapshot.subject.id);
+      result.push({ subject: entry.snapshot.subject, attention: 'other', review: entry });
+    }
+    return result;
+  }, [allItems, queue.stacks, visibleHistory]);
+  const summaryItem = useMemo(() => {
+    const summarySource = openedItem && resolveWorkspace(openedItem, workspaceItems);
+    return summarySource && {
+      ...summarySource,
+      review:
+        visibleHistory.find((entry) => entry.id === requestedReviews[summarySource.subject.id]) ??
+        visibleHistory.find(
+          (entry) =>
+            entry.snapshot?.subject.id === summarySource.subject.id ||
+            (!entry.snapshot && entry.prUrl === summarySource.subject.members[0].url)
+        ) ??
+        (summarySource.review && matchesExplanation(summarySource.review, summarySource.subject) ? summarySource.review : undefined),
+    };
+  }, [openedItem, workspaceItems, visibleHistory, requestedReviews]);
   const appliedExplanation = useRef<ExplanationDestination | undefined>(undefined);
   useEffect(() => {
     if (!explanationDestination || appliedExplanation.current === explanationDestination) return;
@@ -471,9 +483,11 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       }
     }
   }, []);
+  const forceRefresh = useCallback(() => void refresh(true), [refresh]);
+  const syncStatus = queue.sync?.status, syncCheckedAt = queue.sync?.checkedAt, syncRetryAt = queue.sync?.retryAt;
   useEffect(() => {
-    onSyncStatus?.({ sync: queue.sync, onRefresh: () => void refresh(true) });
-  }, [queue.sync, refresh, onSyncStatus]);
+    onSyncStatus?.({ sync: syncStatus && { status: syncStatus, checkedAt: syncCheckedAt, retryAt: syncRetryAt }, onRefresh: forceRefresh });
+  }, [syncStatus, syncCheckedAt, syncRetryAt, forceRefresh, onSyncStatus]);
   useEffect(() => () => onSyncStatus?.(undefined), [onSyncStatus]);
   const initialize = useCallback(async () => {
     if (initializationPending.current) return;
@@ -553,9 +567,16 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     []
   );
   useEffect(() => {
-    try {
-      if (selected) localStorage.setItem('gnosis-queue-selection', selected);
-    } catch { /* Remembering selection is optional; keep the queue usable if storage is unavailable. */ }
+    if (!selected) return;
+    const write = () => {
+      try { localStorage.setItem('gnosis-queue-selection', selected); } catch { /* Remembering selection is optional; keep the queue usable if storage is unavailable. */ }
+    };
+    // Holding an arrow key must not write storage on every row; write once it settles.
+    const timer = setTimeout(write, 300);
+    window.addEventListener('pagehide', write);
+    return () => { clearTimeout(timer); window.removeEventListener('pagehide', write); write(); };
+  }, [selected]);
+  useEffect(() => {
     let cancelled = false;
     const cacheKey = (url: string, sha: string) => `${auth?.login}:${url}@${sha}`;
     setStatuses(
@@ -706,7 +727,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       cancelled = true;
     };
   }, [fallbackReview?.id, fallbackReview?.savedAt]);
-  const selectionFilterKey = JSON.stringify({ ...filters, sort: undefined });
+  const selectionFilterKey = useMemo(() => JSON.stringify({ ...filters, sort: undefined }), [filters]);
   const lastSelectionScroll = useRef<string | undefined>(undefined);
   useEffect(() => {
     const key = JSON.stringify([selected, loading, section, selectionFilterKey]);
@@ -854,29 +875,42 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     setError('');
     void refresh(true);
   };
-  const queueItems = filters.starredOnly ? (queue.starredItems ?? []) : queue.items;
-  const responseCandidates = filters.involvement === 'response' ? queueItems.flatMap(item => item.subject.members
-    .filter(member => member.state === 'open' && !member.merged && matchesQueueFilters({ ...item, subject: { ...item.subject, members: [member] } }, { ...filters, involvement: 'authored' }, Date.now(), auth?.login))
-    .map(member => ({ member, response: item.responses?.[member.url] }))) : [];
-  const responseMembers = responseCandidates.map(candidate => candidate.member);
-  const responseIncomplete = responseCandidates.filter(candidate => !candidate.response?.complete).length;
+  const queueItems = useMemo(() => filters.starredOnly ? (queue.starredItems ?? []) : queue.items, [filters.starredOnly, queue.items, queue.starredItems]);
+  const { responseMembers, responseIncomplete } = useMemo(() => {
+    const candidates = filters.involvement === 'response' ? queueItems.flatMap(item => item.subject.members
+      .filter(member => member.state === 'open' && !member.merged && matchesQueueFilters({ ...item, subject: { ...item.subject, members: [member] } }, { ...filters, involvement: 'authored' }, clock, login))
+      .map(member => ({ member, response: item.responses?.[member.url] }))) : [];
+    return { responseMembers: candidates.map(candidate => candidate.member), responseIncomplete: candidates.filter(candidate => !candidate.response?.complete).length };
+  }, [queueItems, filters, clock, login]);
   const refreshResponseQueue = useCallback(() => { void refresh(false, true); }, [refresh]);
-  const items = queueItems.filter((item) => matchesQueueFilters(item,
-    filters.readStatus !== 'all' && openedItem?.subject.id === item.subject.id ? { ...filters, readStatus: 'all' } : filters,
-    Date.now(), auth?.login));
-  const repos = [
+  const openedId = openedItem?.subject.id;
+  const items = useMemo(() => queueItems.filter((item) => matchesQueueFilters(item,
+    filters.readStatus !== 'all' && openedId === item.subject.id ? { ...filters, readStatus: 'all' } : filters,
+    clock, login)), [queueItems, filters, openedId, login, clock]);
+  const itemIds = useMemo(() => new Set(items.map(item => item.subject.id)), [items]);
+  const repos = useMemo(() => [
     ...new Set([...queueItems.flatMap((i) => i.subject.members.map((m) => m.repo)), ...(repo === 'all' ? [] : [repo])]),
-  ].sort();
+  ].sort(), [queueItems, repo]);
   const savedSort = savedSortOverride ?? normalizePrListSort(prefs?.savedReviewSort, true);
-  const sortSignals = useCachedQueueSignals(auth?.login ?? null,
-    [...queueItems.flatMap(item => item.subject.members), ...(savedView ? visibleHistory.flatMap(entry => entry.snapshot?.subject.members ?? []) : [])],
-    (savedView ? savedSort : filters.sort).key === 'status');
-  const saved = useListOrder(sortSavedReviews(
-    visibleHistory.filter(h => `${h.prTitle} ${h.prUrl}`.toLowerCase().includes(query.toLowerCase())), savedSort, starredUrls, sortSignals), entry => entry.id);
-  const orderedItems = useListOrder(sortQueueItems(items, filters.sort, sortSignals), item => item.subject.id);
-  const selection = useEntrySelection(orderedItems.map(item => item.subject.id),
-    JSON.stringify([auth?.login, section, mutedOpen, openedItem?.subject.id, filters, queue.savedViews?.activeId]), selected);
-  const selectedItems = orderedItems.filter(item => selection.keys.has(item.subject.id));
+  const statusSort = (savedView ? savedSort : filters.sort).key === 'status';
+  const signalMembers = useMemo(() => statusSort
+    ? [...queueItems.flatMap(item => item.subject.members), ...(savedView ? visibleHistory.flatMap(entry => entry.snapshot?.subject.members ?? []) : [])]
+    : [], [statusSort, queueItems, savedView, visibleHistory]);
+  const sortSignals = useCachedQueueSignals(auth?.login ?? null, signalMembers, statusSort);
+  const sortedSaved = useMemo(() => sortSavedReviews(
+    visibleHistory.filter(h => `${h.prTitle} ${h.prUrl}`.toLowerCase().includes(query.toLowerCase())), savedSort, starredUrls, sortSignals),
+  [visibleHistory, query, savedSort, starredUrls, sortSignals]);
+  const saved = useListOrder(sortedSaved, entry => entry.id);
+  const sortedItems = useMemo(() => sortQueueItems(items, filters.sort, sortSignals), [items, filters.sort, sortSignals]);
+  const orderedItems = useListOrder(sortedItems, item => item.subject.id);
+  const orderedIds = useMemo(() => orderedItems.map(item => item.subject.id), [orderedItems]);
+  const selectionScope = useMemo(() => JSON.stringify([auth?.login, section, mutedOpen, openedId, filters, queue.savedViews?.activeId]),
+    [auth?.login, section, mutedOpen, openedId, filters, queue.savedViews?.activeId]);
+  const selection = useEntrySelection(orderedIds, selectionScope, selected);
+  const selectionSignature = [...selection.keys].join('\n');
+  const selectedItems = useMemo(() => orderedItems.filter(item => selection.keys.has(item.subject.id)),
+    // The selection hook returns a new Set every render; its content is the signature.
+    [orderedItems, selectionSignature]);
   const multiple = selectedItems.length > 1;
   const [batchBusy, setBatchBusy] = useState(false);
   const batchRunning = useRef(false);
@@ -892,22 +926,27 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   };
   // Active and visible PRs, unread work, current view, then the remaining queue. Revision identity
   // prevents routine metadata/CI updates from repeating content downloads.
-  const orderedBacklog = sortQueueItems(queue.items, filters.sort, sortSignals);
-  const inspectionTargets = [...(statusSubject?.members ?? []),
-    ...orderedItems.flatMap(item => item.subject.members), ...orderedBacklog.flatMap(item => item.subject.members)];
-  const inspectionKey = JSON.stringify({
-    targets: inspectionTargets.map(member => ({ url: member.url, baseSha: member.baseSha, headSha: member.headSha })),
-    intent: {
-      active: statusSubject?.members.map(member => member.url) ?? [],
-      visible: orderedItems.filter(item => visibleQueueIds.includes(item.subject.id)).flatMap(item => item.subject.members.map(member => member.url)),
-      unread: [...new Set([...orderedItems, ...orderedBacklog].flatMap(item => item.unreadUrls ?? []))],
-      view: orderedItems.flatMap(item => item.subject.members.map(member => member.url)),
-    },
-    rows: [...new Map([...(statusSubject ? [statusSubject] : []), ...[...orderedItems, ...orderedBacklog].map(item => item.subject)]
-      .map(subject => [subject.id, { id: subject.id, members: subject.members.map(({ url, headSha, baseSha, updatedAt }) => ({ url, headSha, baseSha, updatedAt })) }])).values()],
-  });
+  const orderedBacklog = useMemo(() => sortQueueItems(queue.items, filters.sort, sortSignals), [queue.items, filters.sort, sortSignals]);
+  const inspectionKey = useMemo(() => {
+    const visible = new Set(visibleQueueIds);
+    const targets = [...(statusSubject?.members ?? []),
+      ...orderedItems.flatMap(item => item.subject.members), ...orderedBacklog.flatMap(item => item.subject.members)];
+    return JSON.stringify({
+      targets: targets.map(member => ({ url: member.url, baseSha: member.baseSha, headSha: member.headSha })),
+      intent: {
+        active: statusSubject?.members.map(member => member.url) ?? [],
+        visible: orderedItems.filter(item => visible.has(item.subject.id)).flatMap(item => item.subject.members.map(member => member.url)),
+        unread: [...new Set([...orderedItems, ...orderedBacklog].flatMap(item => item.unreadUrls ?? []))],
+        view: orderedItems.flatMap(item => item.subject.members.map(member => member.url)),
+      },
+      rows: [...new Map([...(statusSubject ? [statusSubject] : []), ...[...orderedItems, ...orderedBacklog].map(item => item.subject)]
+        .map(subject => [subject.id, { id: subject.id, members: subject.members.map(({ url, headSha, baseSha, updatedAt }) => ({ url, headSha, baseSha, updatedAt })) }])).values()],
+    });
+  }, [statusSubject, orderedItems, orderedBacklog, visibleQueueIds]);
   // Status, checks and discussions are saved ahead of opening. Hover and focus intent lives in a ref, so it never re-renders.
   const openIntent = useRef<{ rows: Map<string, OpenTarget[]>; intent: RowIntent } | null>(null);
+  // Stable, so the memoized queue list does not re-render for hover wiring.
+  const onQueueIntent = useCallback((id: string | null) => { if (id) openIntent.current?.intent.enter(id); else openIntent.current?.intent.leave(); }, []);
   useEffect(() => {
     if (!auth) return;
     const preload = () => {
@@ -933,13 +972,13 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
 
   const originName = savedView ? 'Saved reviews' : activeQueueView?.name ??
     ({ saved: 'Saved reviews', all: 'Review queue', starred: 'Starred', requested: 'Review requests', updated: 'Updated PRs', stacks: 'Stacks', other: 'Other changes', response: 'Needs my response' }[section]);
-  const originSignature = JSON.stringify({ name: originName, reviews: savedView ? saved.map(entry => ({ id: entry.id, title: entry.prTitle })) : [] });
+  const originSignature = useMemo(() => JSON.stringify({ name: originName, reviews: savedView ? saved.map(entry => ({ id: entry.id, title: entry.prTitle })) : [] }), [originName, savedView, saved]);
   useEffect(() => { onReviewOriginChange?.(JSON.parse(originSignature) as { name: string; reviews: { id: string; title: string }[] }); }, [originSignature, onReviewOriginChange]);
-  const summaryChoices = savedView
+  const summaryChoices = useMemo(() => savedView
     ? [...new Map(saved.map(entry => [entry.snapshot?.subject.id ?? entry.prUrl,
       { value: entry.snapshot?.subject.id ?? entry.prUrl, label: entry.prTitle, kind: entry.snapshot?.subject.kind === 'stack' ? 'stack' as const : entry.prUrl.startsWith('local:') ? undefined : 'pr' as const }])).values()]
     : orderedItems.map(item => ({ value: item.subject.id, kind: item.subject.kind === 'stack' ? 'stack' as const : 'pr' as const, label: item.subject.kind === 'stack'
-      ? `Stack · ${item.subject.title}` : `${item.subject.members[0].repo} #${item.subject.members[0].number} · ${item.subject.title}` }));
+      ? `Stack · ${item.subject.title}` : `${item.subject.members[0].repo} #${item.subject.members[0].number} · ${item.subject.title}` })), [savedView, saved, orderedItems]);
   const summaryNavigation = useRef(0);
   const restoredNavigation = useRef(0);
   const historyLocation = useRef<HomeLocation | undefined>(undefined);
@@ -1313,151 +1352,107 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       await refresh();
     }, item => item.subject.title, 'briefings requested'),
   });
-  function row(item: QueueItem) {
-    const s = item.subject,
-      focused = selected === s.id,
-      active = selection.keys.size ? selection.keys.has(s.id) : focused;
-    const bulkTarget = multiple && active;
-    return (
-      <div key={s.id} className={`queue-item ${active ? 'is-selected' : ''} ${item.unreadUrls?.length ? 'is-unread' : ''}`}>
-        <EntryActions
-          label={bulkTarget ? `Actions for ${selectedItems.length} selected entries` : s.kind === 'stack' ? 'Stack actions' : `Actions for PR #${s.members[0].number}`}
-          groups={bulkTarget ? selectionGroups : [
-            ...(tabs ? [[{label:'Open in new tab',dismissBeforeRun:true,icon:<Plus size={15}/>,run:()=>tabs.open({kind:'home',subject:item})}]] : []),
-            ...prEntryActionGroups(entryActions(s.members)),
-          ]}
-          description={bulkTarget ? selectionDescription : undefined}
-          onBeforeOpen={() => selection.context(s.id)}
-        >{actions => <div className="queue-row">
-          {s.kind !== 'stack' ? <span className="queue-pr-gutter"><PrStateIcon member={s.members[0]} /></span> : <button
-            className="queue-disclosure"
-            aria-label={`${expanded.has(s.id) ? 'Collapse' : 'Expand'} ${s.title}`}
-            aria-expanded={expanded.has(s.id)}
-            aria-controls={`members-${s.id}`}
-            onClick={() =>
-              setExpanded((prev) => {
-                const n = new Set(prev);
-                if (n.has(s.id)) n.delete(s.id);
-                else n.add(s.id);
-                return n;
-              })
+  const latestSaved = useRef({ open, start, entryActions, tabs });
+  // Rows receive one stable action object. Each call reads this render's state.
+  const latest = useRef({ selectQueueEntry, moveSelection, activate, openResponse, selection, setOpenedItem, setOverviewTab, entryActions, tabs });
+  latest.current = { selectQueueEntry, moveSelection, activate, openResponse, selection, setOpenedItem, setOverviewTab, entryActions, tabs };
+  const rowActions = useMemo<QueueRowActions>(() => ({
+    select: (id, modifiers) => latest.current.selectQueueEntry(id, modifiers),
+    move: (direction, modifiers) => latest.current.moveSelection(direction, modifiers),
+    activate: item => latest.current.activate(item),
+    openMember: (item, member, modifiers) => {
+      if (modifiers.shiftKey || modifiers.metaKey || modifiers.ctrlKey) { latest.current.selectQueueEntry(item.subject.id, modifiers); return; }
+      setSelected(item.subject.id);
+      latest.current.activate(focusStackPr(item, member));
+    },
+    openChecks: item => { setOpenedItem(item); setOverviewTab('checks'); },
+    openResponse: (item, intent) => latest.current.openResponse(item, intent),
+    toggleExpanded: id => setExpanded(previous => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    }),
+    selectAll: () => latest.current.selection.all(),
+    toggleSelect: (id, modifiers) => latest.current.selection.select(id, modifiers),
+    clearSelection: () => {
+      if (!latest.current.selection.keys.size) return false;
+      latest.current.selection.clear();
+      return true;
+    },
+    contextSelect: id => latest.current.selection.context(id),
+    menuGroups: item => {
+      const { tabs: navigation, entryActions: actionsFor } = latest.current;
+      return [
+        ...(navigation ? [[{ label: 'Open in new tab', dismissBeforeRun: true, icon: <Plus size={15} />, run: () => navigation.open({ kind: 'home', subject: item }) }]] : []),
+        ...prEntryActionGroups(actionsFor(item.subject.members)),
+      ];
+    },
+    memberMenu: member => ({ ...latest.current.entryActions([member]), onBeforeOpen: () => latest.current.selection.clear() }),
+    registerButton: (id, node) => {
+      if (node) {
+        rowButtons.current.set(id, node);
+        if (pendingRowFocus.current === id) {
+          pendingRowFocus.current = null;
+          node.focus({ preventScroll: true });
+        }
+      } else rowButtons.current.delete(id);
+    },
+  }), []);
+  // Inputs to menu content that are not row props. Changing them re-renders rows with open menus correct.
+  const menuKey = JSON.stringify([starBusy, muteBusy, readBusy, batchBusy, auth?.authenticated, auth?.login, !!prefs, pendingStarts.size]);
+  const readStates = queue.readStates ?? NO_READ_STATES;
+  const fallbackTabStop = selected && itemIds.has(selected) ? undefined : orderedItems[0]?.subject.id;
+  const bulkMenu = multiple ? { groups: selectionGroups, description: selectionDescription } : undefined;
+  const row = useCallback((item: QueueItem) => {
+    const id = item.subject.id, focused = selected === id;
+    const active = selection.keys.size ? selection.keys.has(id) : focused;
+    const bulk = multiple && active;
+    return <QueueRow key={id} item={item} focused={focused} active={active} multiple={multiple} bulk={bulk}
+      tabStop={focused || fallbackTabStop === id} expanded={expanded.has(id)} selectedCount={selectedItems.length}
+      account={auth?.login ?? null} filters={filters} starredUrls={starredUrls} readStates={readStates}
+      menuKey={menuKey} bulkMenu={bulk ? bulkMenu : undefined} actions={rowActions} />;
+  // Selection keys are compared by content.
+  }, [selected, selectionSignature, multiple, fallbackTabStop, expanded, selectedItems.length, auth?.login, filters, starredUrls, readStates, menuKey, bulkMenu, rowActions]);
+  const sidebarCounts = useMemo(() => ({
+    response: queue.items.filter(item => matchesQueueFilters(item, { ...DEFAULT_QUEUE_FILTERS, involvement: 'response' }, clock, login)).length,
+    stacks: queue.items.filter(item => item.subject.kind === 'stack').length,
+    updated: queue.items.filter(item => item.attention === 'updated').length,
+    requested: queue.items.filter(item => item.attention === 'requested').length,
+    other: queue.items.filter(item => item.attention === 'other').length,
+  }), [queue.items, clock, login]);
+  latestSaved.current = { open, start, entryActions, tabs };
+  const savedActions = useMemo<SavedRowActions>(() => ({
+    open: entry => void latestSaved.current.open(entry),
+    retry: entry => void latestSaved.current.start(entry.prUrl),
+    menuGroups: entry => {
+      const { tabs: navigation, entryActions: actionsFor } = latestSaved.current;
+      return [
+        ...(navigation && entry.status === 'completed' ? [[{ label: 'Open in new tab', dismissBeforeRun: true, icon: <Plus size={15} />, run: () => navigation.open({ kind: 'review', reviewId: entry.id }) }]] : []),
+        ...prEntryActionGroups(actionsFor(entry.snapshot?.subject.members ?? [])),
+        [{ label: 'Export review', icon: <Download size={15} />, disabled: entry.status === 'generating',
+          run: () => window.electronAPI.exportReview(entry.id) }],
+        [{ label: 'Delete saved review', icon: <Trash2 size={15} />, destructive: true,
+          disabled: entry.status === 'generating', run: async () => {
+            if (confirm('Delete this saved review?')) {
+              await window.electronAPI.deleteReview(entry.id);
+              await workbenchStore.refresh({ history: true });
             }
-          >
-            {expanded.has(s.id) ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-          </button>}
-          <div className="queue-row-content"
-            onClick={event=>{if((event.target as HTMLElement).closest('a,button'))return;selectQueueEntry(s.id,event);}}
-            onDoubleClick={event=>{if(event.shiftKey||event.metaKey||event.ctrlKey||(event.target as HTMLElement).closest('a,button'))return;activate(item);}}>
-          <div className="queue-row-heading">
-          <button
-            className="queue-row-main"
-            ref={(node) => {
-              if (node) {
-                rowButtons.current.set(s.id, node);
-                if (pendingRowFocus.current === s.id) {
-                  pendingRowFocus.current = null;
-                  node.focus({ preventScroll: true });
-                }
-              } else rowButtons.current.delete(s.id);
-            }}
-            aria-pressed={active}
-            tabIndex={
-              focused || (!items.some((i) => i.subject.id === selected) && orderedItems[0]?.subject.id === s.id) ? 0 : -1
-            }
-            aria-describedby="queue-keyboard-help"
-            onKeyDown={(e) => {
-              if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-                e.preventDefault();
-                moveSelection(e.key === 'ArrowDown' ? 1 : -1, e);
-              } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
-                e.preventDefault(); selection.all();
-              } else if ((e.metaKey || e.ctrlKey) && e.key === ' ') {
-                e.preventDefault(); selection.select(s.id, e);
-              } else if (e.key === 'Escape' && selection.keys.size) {
-                e.preventDefault(); e.stopPropagation(); selection.clear();
-              } else if (e.key === 'Enter' && active && !e.repeat) {
-                e.preventDefault();
-                activate(item);
-              }
-            }}
-            onClick={event => {
-              if (tabs && (event.metaKey || event.ctrlKey) && !event.altKey) { event.preventDefault(); tabs.open({kind:'home',subject:item}, !event.shiftKey); return; }
-              selectQueueEntry(s.id,event);
-            }}
-            onAuxClick={event=>{if(event.button===1&&tabs){event.preventDefault();tabs.open({kind:'home',subject:item},true);}}}
-            onDoubleClick={event => {
-              if (event.shiftKey || event.metaKey || event.ctrlKey) return;
-              activate(item);
-            }}
-          >
-            <span className="queue-title-line">
-              {multiple && (active ? <SquareCheck size={16} className="queue-selection-check" aria-hidden="true" /> : <Square size={16} className="queue-selection-check" aria-hidden="true" />)}
-              {s.kind === 'stack' && <Layers size={16} aria-label="PR stack" className="queue-stack-icon" />}
-              <span className="queue-title">{s.title}</span>
-              <PrLabels members={s.members} limit={3} />
-            </span>
-          </button>
-          <UnreadPrMarker urls={s.members.map(member => member.url)} />
-          <PrStarMarker members={s.members} starredUrls={starredUrls} />
-          {actions}
-          {(item.review?.status === 'generating' ||
-            item.review?.status === 'completed' ||
-            item.briefing?.status === 'generating') && (
-            <span className={`queue-state ${item.attention === 'updated' ? 'needs-attention' : ''}`}>
-              {item.review?.status === 'generating' ? (
-                <>
-                  <Loader2 size={13} className="animate-spin" />
-                  Generating explanation
-                </>
-              ) : item.review?.status === 'completed' ? (
-                <>
-                  <Check size={13} />
-                  Explanation ready
-                </>
-              ) : item.briefing?.status === 'generating' ? (
-                <>
-                  <Loader2 size={13} className="animate-spin" />
-                  Generating briefing
-                </>
-              ) : null}
-            </span>
-          )}
-          </div>
-            <QueueMetadata onChecks={() => { setOpenedItem(item); setOverviewTab('checks'); }} subject={s} account={auth?.login ?? null} />
-            {s.kind === 'stack' && matchingStackMembers(item, filters, auth?.login).length < s.members.length && <span className="queue-stack-matches">{matchingStackMembers(item, filters, auth?.login).length} of {s.members.length} PRs match</span>}
-            {filters.involvement === 'response' && <div className="queue-response-reasons">{s.members.flatMap(member => {
-              const response = item.responses?.[member.url];
-              if (!response || !needsResponse(response) || !matchingStackMembers(item, filters, auth?.login).includes(member.url)) return [];
-              return [<span key={member.url} className="queue-response-pr">
-                {s.kind === 'stack' && <span className="queue-response-source"><GitPullRequest size={12} aria-hidden="true" />#{member.number}</span>}
-                {response.changesRequested && <button onClick={() => openResponse(focusStackPr(item, member), 'response-review')} aria-label={`Read changes requested on PR #${member.number}: ${member.title}`}><MessageSquare size={14} aria-hidden="true" />Changes requested<ArrowRight size={12} aria-hidden="true" /></button>}
-                {response.unresolvedThreads > 0 && <button onClick={() => openResponse(focusStackPr(item, member), 'response-threads')} aria-label={`Address ${response.unresolvedThreads} unresolved threads on PR #${member.number}: ${member.title}`}>{response.unresolvedThreads} unresolved {response.unresolvedThreads === 1 ? 'thread' : 'threads'}<ArrowRight size={12} aria-hidden="true" /></button>}
-              </span>];
-            })}</div>}
-            {item.briefing?.summary && <span className="queue-summary">{item.briefing.summary}</span>}
-          </div>
-        </div>}</EntryActions>
-        {expanded.has(s.id) && (
-          <div id={`members-${s.id}`}>
-            {s.members.map((m) => (
-              <PrEntryActions key={m.url} {...entryActions([m])} onBeforeOpen={selection.clear}>{actions => <div className={`queue-member ${queue.readStates?.[m.url]?.unread.length ? 'is-unread' : ''}`}>
-                <PrStateIcon member={m} />
-                <div className="queue-member-content">
-                  <button className="queue-member-title" onClick={event => { if (event.shiftKey || event.metaKey || event.ctrlKey) { selectQueueEntry(s.id, event); return; } setSelected(s.id); activate(focusStackPr(item, m)); }}>
-                    <span className="truncate">{m.title}</span>
-                    <PrLabels members={[m]} />
-                  </button>
-                  <QueueMetadata onChecks={() => { setOpenedItem(focusStackPr(item, m)); setOverviewTab('checks'); }} subject={{ id: m.url, kind: 'pr', title: m.title, members: [m], edges: [], warnings: [] }} account={auth?.login ?? null} />
-                </div>
-                <UnreadPrMarker urls={[m.url]} />
-                <PrStarMarker members={[m]} starredUrls={starredUrls} />{actions}
-              </div>}</PrEntryActions>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  }
+          } }],
+      ];
+    },
+  }), []);
+  const savedRow = useCallback((entry: ReviewHistoryEntry) =>
+    <SavedRow key={entry.id} entry={entry} starredUrls={starredUrls} menuKey={menuKey} actions={savedActions} />,
+  [starredUrls, menuKey, savedActions]);
+  const changeReadRef = useRef(changeRead);
+  changeReadRef.current = changeRead;
+  // Every unread marker reads this context; keep its identity until read state changes.
+  const readContext = useMemo(() => ({
+    states: readStates, busy: readBusy,
+    change: (urls: string[], read: boolean, displayed?: ViewedPr[]) => changeReadRef.current(urls, read, displayed),
+    viewed: (revisions: ViewedPr[]) => { const eligible = revisions.filter(pr => !readVisit.current.manual.has(pr.url)); void changeReadRef.current(eligible.map(pr => pr.url), true, eligible); },
+  }), [readStates, readBusy]);
   const replayGettingStarted = () => {
     setSettings(false);
     onboarding.start();
@@ -1481,9 +1476,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     ) : null;
 
   return (
-    <PrReadContext.Provider value={{ states: queue.readStates ?? {}, busy: readBusy, change: changeRead,
-      viewed: revisions => { const eligible = revisions.filter(pr => !readVisit.current.manual.has(pr.url)); void changeRead(eligible.map(pr => pr.url), true, eligible); },
-    }}>
+    <PrReadContext.Provider value={readContext}>
     <div className="workbench-home">
       <header className="workbench-header">
         <a
@@ -1680,19 +1673,12 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                           : id === 'starred'
                             ? (queue.starredItems?.length ?? 0)
                             : id === 'response'
-                              ? queue.items.filter((item) =>
-                                  matchesQueueFilters(
-                                    item,
-                                    { ...DEFAULT_QUEUE_FILTERS, involvement: 'response' },
-                                    Date.now(),
-                                    auth?.login
-                                  )
-                                ).length
+                              ? sidebarCounts.response
                               : id === 'all'
                                 ? queue.items.length
                                 : id === 'stacks'
-                                  ? queue.items.filter((i) => i.subject.kind === 'stack').length
-                                  : queue.items.filter((i) => i.attention === id).length}
+                                  ? sidebarCounts.stacks
+                                  : sidebarCounts[id as QueueItem['attention']]}
                       </span>
                     </button>
                   </SidebarDestination>
@@ -2016,46 +2002,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                 <LoadingState title="Loading review queue…" />
               ) : section === 'saved' ? (
                 saved.length ? (
-                  saved.map((entry) => (
-                    <EntryActions key={entry.id} label={`Actions for ${entry.prTitle}`} groups={[
-                      ...(tabs && entry.status==='completed' ? [[{label:'Open in new tab',dismissBeforeRun:true,icon:<Plus size={15}/>,run:()=>tabs.open({kind:'review',reviewId:entry.id})}]]:[]),
-                      ...prEntryActionGroups(entryActions(entry.snapshot?.subject.members ?? [])),
-                      [{ label: 'Export review', icon: <Download size={15} />, disabled: entry.status === 'generating',
-                        run: () => window.electronAPI.exportReview(entry.id) }],
-                      [{ label: 'Delete saved review', icon: <Trash2 size={15} />, destructive: true,
-                        disabled: entry.status === 'generating', run: async () => {
-                          if (confirm('Delete this saved review?')) {
-                            await window.electronAPI.deleteReview(entry.id);
-                            await workbenchStore.refresh({ history: true });
-                          }
-                        } }],
-                    ]}>{actions => <div className="saved-row" data-queue-id={entry.id}>
-                      <div className="queue-row-content" onClick={event=>{if((event.target as HTMLElement).closest('a,button')||entry.status==='generating')return;void (entry.status==='failed' ? start(entry.prUrl) : open(entry));}}>
-                      <button
-                        className="queue-row-main"
-                        disabled={entry.status === 'generating'}
-                        onClick={event => { if(tabs && entry.status==='completed' && (event.metaKey||event.ctrlKey))tabs.open({kind:'review',reviewId:entry.id},!event.shiftKey);else if(entry.status==='failed')void start(entry.prUrl);else void open(entry); }}
-                        onAuxClick={event=>{if(event.button===1&&tabs&&entry.status==='completed'){event.preventDefault();tabs.open({kind:'review',reviewId:entry.id},true);}}}
-                      >
-                        <span className="queue-title">{!entry.prUrl.startsWith('local:') && <SubjectIcon kind={entry.snapshot?.subject.kind === 'stack' ? 'stack' : 'pr'} />}{entry.prTitle}</span>
-                      </button>
-                        <span className="queue-meta">
-                          {entry.snapshot?.subject.kind === 'stack'
-                            ? `${entry.snapshot.subject.members.length} PR stack · `
-                            : ''}
-                          <PrBadge url={entry.prUrl} title={entry.prTitle} /> <GitHubAuthor login={entry.author}/> · {timeAgo(entry.savedAt)} ·{' '}
-                          {entry.status === 'generating'
-                            ? 'Generating explanation'
-                            : entry.status === 'failed'
-                              ? 'Generation failed'
-                              : 'Explanation ready'}
-                        </span>
-                        {entry.error && <span className="text-xs text-destructive">{entry.error}</span>}
-                      </div>
-                      <PrStarMarker members={entry.snapshot?.subject.members ?? []} starredUrls={starredUrls} />
-                      {actions}
-                    </div>}</EntryActions>
-                  ))
+                  <VirtualSavedReviews entries={saved} scrollElement={queueScrollElement} renderRow={savedRow} />
                 ) : (
                   <div className="queue-empty" role={filters.involvement === 'response' ? 'status' : undefined}>
                     <WorkbenchIcon name="history" size={24} />
@@ -2079,7 +2026,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                     selected={selected}
                     scrollElement={queueScrollElement}
                     onVisibleItemsChange={updateVisibleQueueIds}
-                    onIntent={id => { if (id) openIntent.current?.intent.enter(id); else openIntent.current?.intent.leave(); }}
+                    onIntent={onQueueIntent}
                     measurements={queueMeasurements}
                     initialOffset={queueScrollOffset.current}
                     renderRow={row}

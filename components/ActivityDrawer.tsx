@@ -1,6 +1,6 @@
 import { GitHubSyncStatus, type GitHubSyncStatusProps } from './GitHubSyncStatus';
 import { inspectionData } from '../lib/inspection-cache';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { Activity, ChevronUp, X, Loader2, Check, AlertCircle } from 'lucide-react';
 import { isActiveTask, type ActivityAction, type ActivityTask } from '../lib/activity';
 import { PROVIDERS } from '../lib/models';
@@ -27,6 +27,15 @@ const openLabels = {
   briefing: 'Open briefing',
   exploration: 'Open interactive explanation',
 };
+/** Task fields the drawer shows. Equal tasks keep their previous objects, so idle updates render nothing. */
+function sameTask(a: ActivityTask | undefined, b: ActivityTask | undefined) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.id === b.id && a.status === b.status && a.title === b.title && a.detail === b.detail && a.updatedAt === b.updatedAt &&
+    a.progress?.completed === b.progress?.completed && a.progress?.total === b.progress?.total && a.progress?.unit === b.progress?.unit &&
+    JSON.stringify(a) === JSON.stringify(b);
+}
+const sameTasks = (a: ActivityTask[], b: ActivityTask[]) => a.length === b.length && a.every((task, index) => sameTask(task, b[index]));
 const order = { running: 0, failed: 1, paused: 2, queued: 3, completed: 4, cancelled: 5 };
 function Progress({ task }: { task: ActivityTask }) {
   const progress = task.progress;
@@ -50,7 +59,7 @@ function Progress({ task }: { task: ActivityTask }) {
     </div>
   );
 }
-export function ActivityDrawer({
+export const ActivityDrawer = memo(function ActivityDrawer({
   syncStatus,
   onOpen,
   open,
@@ -61,8 +70,12 @@ export function ActivityDrawer({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [remoteTasks, setTasks] = useState<ActivityTask[]>([]);
-  const [preloadTask, setPreloadTask] = useState<ActivityTask>();
+  const [remoteTasks, setRemoteTasks] = useState<ActivityTask[]>([]);
+  const [preloadTask, setPreloadState] = useState<ActivityTask>();
+  const setTasks = useCallback((next: ActivityTask[]) => setRemoteTasks(previous => sameTasks(previous, next) ? previous : next), []);
+  const setPreloadTask = useCallback((next: ActivityTask | undefined) => setPreloadState(previous => sameTask(previous, next) ? previous : next), []);
+  const openRef = useRef(open);
+  openRef.current = open;
   const tasks = preloadTask ? [...remoteTasks, preloadTask] : remoteTasks;
   const [newCompletions] = useState(createActivityCompletionTracker);
   const onOpenRef = useRef(onOpen);
@@ -131,12 +144,19 @@ export function ActivityDrawer({
       refreshRequest.current = request;
       return request;
     },
-    [newCompletions]
+    [newCompletions, setTasks, setPreloadTask]
   );
   useEffect(() => {
     alive.current = true;
     void refresh();
-    const stopPreload = inspectionData.subscribe(() => setPreloadTask(inspectionData.activity()));
+    // Preload progress arrives often. Show it at most four times a second while open, once a second while closed.
+    let preloadTimer: ReturnType<typeof setTimeout> | undefined;
+    const stopPreload = inspectionData.subscribe(() => {
+      preloadTimer ??= setTimeout(() => {
+        preloadTimer = undefined;
+        setPreloadTask(inspectionData.activity());
+      }, openRef.current ? 250 : 1000);
+    });
     const stop = window.electronAPI.githubSyncVersion === 1 ? window.electronAPI.onActivityChanged?.(() => void refresh()) : undefined;
     const timer = setInterval(() => void refresh(), stop ? 60_000 : 2000);
     return () => {
@@ -144,10 +164,11 @@ export function ActivityDrawer({
       refreshVersion.current++;
       refreshRequest.current = null;
       clearInterval(timer);
+      clearTimeout(preloadTimer);
       stop?.();
       stopPreload();
     };
-  }, [refresh]);
+  }, [refresh, setPreloadTask]);
   const close = () => {
     setOpen(false);
     trigger.current?.focus();
@@ -344,4 +365,4 @@ export function ActivityDrawer({
       )}
     </div>
   );
-}
+});
