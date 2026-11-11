@@ -246,15 +246,15 @@ void app.whenReady().then(async () => {
       window.setContentSize(width, height);
       await wait(`innerWidth === ${width} && innerHeight === ${height}`);
       await js('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
-      if (width === 640) await js("document.querySelector('.changes-toolbar button').click()");
+      if (width === 640) await js("document.querySelector('.pr-changes-tab[data-state=active] .changes-toolbar button').click()");
       if (width === 1024)
         assert.ok(
-          (await js<number>("document.querySelector('.changes-code-scroll').getBoundingClientRect().height")) >= 230,
+          (await js<number>("document.querySelector('.pr-changes-tab[data-state=active] .changes-code-scroll').getBoundingClientRect().height")) >= 230,
           'Laptop diff keeps a useful code viewport'
         );
       assert.equal(await js('document.documentElement.scrollWidth>window.innerWidth'), false, 'No viewport overflow');
       await capture(width === 1280 ? 'desktop' : width === 640 ? 'mobile' : `user-${width}`);
-      if (width === 640) await js("document.querySelector('.changes-toolbar button').click()");
+      if (width === 640) await js("document.querySelector('.pr-changes-tab[data-state=active] .changes-toolbar button').click()");
     }
     window.setContentSize(1280, 800);
     await js("document.documentElement.classList.add('dark')");

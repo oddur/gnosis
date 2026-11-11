@@ -23,6 +23,7 @@ void app.whenReady().then(async () => {
       const setTargets=cache.setTargets;
       cache.setTargets=(...args)=>{window.preloadIntent=args[2];return setTargets(...args)};
       const originalQueue=window.electronAPI.workbenchQueue;
+      window.originalQueue=originalQueue;
       const original=await originalQueue();
       const pr=original.items.find(i=>i.subject.kind==='pr');
       const stack=original.items.find(i=>i.subject.kind==='stack');
@@ -123,7 +124,97 @@ void app.whenReady().then(async () => {
     await wait("document.querySelectorAll('.queue-item').length===1");
     assert.match(await js<string>("document.querySelector('.queue-item').textContent"), /Synthetic PR 999/);
     assert.equal(await js("document.querySelector('.queue-row-main').tabIndex"), 0, 'Filtered queue retains an entry tab stop');
-    console.log('Large queue passed: bounded DOM, dynamic stacks, offscreen keyboard navigation, refresh/return scroll restoration, resize, filtering.');
+    // Sync pushes: unchanged content must cost no rows and no reads; one changed entry costs one row.
+    await js(`(()=>{const e=document.querySelector('[aria-label="Search PRs and stacks"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'');e.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+    await wait("document.querySelectorAll('.queue-item').length>5");
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    await js(`(()=>{
+      window.counts={snapshots:0,reviews:0};
+      const snapshot=window.electronAPI.workbenchSnapshot;
+      window.electronAPI.workbenchSnapshot=(...args)=>{window.counts.snapshots++;return snapshot(...args)};
+      const reviews=window.electronAPI.listReviews;
+      window.electronAPI.listReviews=(...args)=>{if(!window.fixtureInternalRead)window.counts.reviews++;return reviews(...args)};
+      window.resetCounts=()=>{window.counts.snapshots=0;window.counts.reviews=0;window.__queueRowRenders=0};
+      window.__countRenders=true;window.resetCounts();
+    })()`);
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 400));
+    type Counts = { snapshots: number; reviews: number; rows: number };
+    const counts = () => js<Counts>('({...window.counts,rows:window.__queueRowRenders})');
+    const revisions = await js<{ revision: string; historyRevision: string }>(
+      `window.electronAPI.workbenchQueue().then(q=>({revision:q.revision,historyRevision:q.historyRevision}))`
+    );
+    await js('window.resetCounts()');
+    for (let i = 0; i < 5; i++)
+      await js(`window.dispatchEvent(new CustomEvent('fixture-workbench-change',{detail:${JSON.stringify(revisions)}}))`);
+    await settle();
+    const withRevisions = await counts();
+    assert.deepEqual(withRevisions, { snapshots: 0, reviews: 0, rows: 0 }, 'An unchanged push with revisions reads and renders nothing');
+    await js('window.resetCounts()');
+    for (let i = 0; i < 5; i++) await js("window.dispatchEvent(new Event('fixture-workbench-change'))");
+    await settle();
+    const withoutRevisions = await counts();
+    assert.ok(withoutRevisions.snapshots <= 1 && withoutRevisions.reviews === 0 && withoutRevisions.rows === 0,
+      'An unchanged push without revisions reads one snapshot and renders nothing: ' + JSON.stringify(withoutRevisions));
+    const changedId = await js<string>("document.querySelector('[data-queue-id] .queue-item').closest('[data-queue-id]').dataset.queueId");
+    await js(`(()=>{window.resetCounts();const item=window.syntheticQueue.find(i=>i.subject.id===${JSON.stringify(changedId)});
+      item.briefing={key:'fresh',status:'ready',summary:'Fresh briefing from sync',updatedAt:new Date().toISOString()};
+      window.dispatchEvent(new Event('fixture-workbench-change'));})()`);
+    await wait(`document.querySelector('[data-queue-id=${JSON.stringify(changedId)}]')?.textContent.includes('Fresh briefing from sync')`);
+    await settle();
+    const oneChanged = await counts();
+    assert.equal(oneChanged.rows, 1, 'Only the changed row renders: ' + JSON.stringify(oneChanged));
+    assert.ok(oneChanged.snapshots <= 1 && oneChanged.reviews === 0, 'One changed entry reads one snapshot: ' + JSON.stringify(oneChanged));
+    // Opening a PR and returning reveals the same queue: same row node, same scroll, no reload.
+    await js(`window.keptRow=document.querySelector('[data-queue-id="synthetic-525"] .queue-row-main');window.keptScroll=document.querySelector('.queue-list').scrollTop;window.resetCounts();`);
+    await click('Open PR overview');
+    await wait("!!document.querySelector('.pr-summary-page')");
+    await js("document.querySelector('.pr-summary-page button').click()");
+    await wait("!document.querySelector('.pr-summary-page')&&!!document.querySelector('.queue-list')?.checkVisibility()");
+    await settle();
+
+    assert.equal(await js('window.keptRow.isConnected&&document.querySelector(\'[data-queue-id="synthetic-525"] .queue-row-main\')===window.keptRow'), true, 'Returning keeps the same row element');
+    assert.ok(Math.abs(await js<number>("document.querySelector('.queue-list').scrollTop-window.keptScroll")) < 2, 'Returning keeps the queue scroll position');
+    const returned = await counts();
+    assert.ok(returned.snapshots <= 1 && returned.reviews === 0, 'Returning does not reload the queue: ' + JSON.stringify(returned));
+    console.log('Sync push counts (snapshots, saved-review reads, row renders):', JSON.stringify({ withRevisions, withoutRevisions, oneChanged, returned }));
+    // A portaled popover opened from the queue must hide with the queue when a PR opens.
+    await js("document.querySelector('.queue-filter-toggle').click()");
+    await wait("!!document.querySelector('.queue-filter-popover')?.checkVisibility()");
+    await js("document.querySelector('[data-queue-id=\\'synthetic-525\\'] .queue-row-main').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))");
+    await wait("!!document.querySelector('.pr-summary-page')");
+    // Activity does not hide portaled content; the queue must hide its own popover.
+    assert.equal(await js("!!document.querySelector('.queue-filter-popover')?.checkVisibility()"), false, 'A popover from the hidden queue is hidden');
+    await js("document.querySelector('.pr-summary-page button').click()");
+    await wait("!!document.querySelector('.queue-list')?.checkVisibility()");
+    await js("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
+    await js("document.querySelector('.queue-filter-popover [aria-label=\\'Close filters\\']')?.click()");
+    await wait("!document.querySelector('.queue-filter-popover')?.checkVisibility()");
+    // Kept PR tabs: Changes keeps its element and scroll position across a visit to Feedback.
+    await js('window.__countRenders=false;window.electronAPI.workbenchQueue=window.originalQueue;document.querySelector(\'.queue-toolbar button[aria-label]\').click()');
+    await wait(`!document.querySelector('[data-queue-id^="synthetic-"]')&&!!document.querySelector('.queue-row-main')`);
+    await js("[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()");
+    await click('Open PR overview');
+    await wait("!!document.querySelector('.pr-summary-page')");
+    const tab = (name: string) =>
+      js(`(()=>{const t=[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(t=>t.textContent.trim().startsWith(${JSON.stringify(name)}));t.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));t.click()})()`);
+    await tab('Changes');
+    // The diff stream is the reading position. A wheel event marks the scroll as the reader's own.
+    const scroller = `document.querySelector('.pr-changes .commit-diff-stream')`;
+    await wait(`(()=>{const e=${scroller};return !!e&&e.scrollHeight>e.clientHeight+200})()`);
+    await js(`(()=>{window.keptChanges=document.querySelector('.pr-changes');window.keptScroller=${scroller};window.keptScroller.dispatchEvent(new WheelEvent('wheel',{deltaY:120,bubbles:true}));window.keptScroller.scrollTop=120;})()`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const changesScroll = await js<number>('window.keptScroller.scrollTop');
+    assert.ok(changesScroll > 0, 'The changes pane scrolled');
+    await tab('Feedback');
+    await wait("!!document.querySelector('.pr-changes-tab[data-state=active]')&&!window.keptChanges.checkVisibility()");
+    // Hidden content has no layout. Record what Chromium reports, which is why kept tabs restore scroll.
+    console.log('Hidden Changes pane scrollTop:', await js<number>('window.keptScroller.scrollTop'));
+    await tab('Changes');
+    await wait('window.keptChanges.checkVisibility()');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(await js("document.querySelector('.pr-changes')===window.keptChanges"), true, 'Changes stays mounted across tabs');
+    assert.equal(await js<number>('window.keptScroller.scrollTop'), changesScroll, 'Changes keeps its scroll position');
+    console.log('Large queue passed: bounded DOM, dynamic stacks, offscreen keyboard navigation, refresh/return scroll restoration, resize, filtering, sync push render counts, kept queue and PR tabs.');
     win.destroy(); app.exit(0);
   } catch (error) {
     console.error(error); win.destroy(); app.exit(1);

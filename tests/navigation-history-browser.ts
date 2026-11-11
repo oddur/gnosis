@@ -53,7 +53,7 @@ void app.whenReady().then(async () => {
     win.webContents.debugger.attach('1.3');
     await waitForWorkbenchQueue(win.webContents);
     await mouse(3);
-    assert.ok(await js("!!document.querySelector('.queue-list')"), 'Back at start does nothing');
+    assert.ok(await js("!!document.querySelector('.queue-list')?.checkVisibility()"), 'Back at start does nothing');
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Fix reconnect')).click()"
     );
@@ -72,7 +72,7 @@ void app.whenReady().then(async () => {
     await mouse(3);
     await wait("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent==='Summary'");
     await mouse(3);
-    await wait("!!document.querySelector('.queue-list')");
+    await wait("!!document.querySelector('.queue-list')?.checkVisibility()");
     assert.ok(
       await js("document.querySelector('.queue-row-main[aria-pressed=true]')?.textContent.includes('Fix reconnect')"),
       'Queue selection survives Back'
@@ -101,7 +101,7 @@ void app.whenReady().then(async () => {
     );
     await wait("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent==='Summary'");
     await mouse(3);
-    await wait("!!document.querySelector('.queue-list')");
+    await wait("!!document.querySelector('.queue-list')?.checkVisibility()");
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('Reduce allocations')).click()"
     );
@@ -112,7 +112,7 @@ void app.whenReady().then(async () => {
     await mouse(4);
     assert.equal(await title(), another, 'New navigation clears Forward');
     await mouse(3);
-    await wait("!!document.querySelector('.queue-list')");
+    await wait("!!document.querySelector('.queue-list')?.checkVisibility()");
     await js(
       "[...document.querySelectorAll('.workbench-sidebar button')].find(b=>b.textContent.includes('Saved reviews')).click()"
     );
@@ -122,11 +122,11 @@ void app.whenReady().then(async () => {
     await js(
       "[...document.querySelectorAll('.saved-row .queue-row-main')].find(b=>b.textContent.includes('Local history fixture')).click()"
     );
-    await wait("!document.querySelector('.queue-list') && !!document.querySelector('.workbench-review')");
+    await wait("!document.querySelector('.queue-list')?.checkVisibility() && !!document.querySelector('.workbench-review')");
     await mouse(3);
     await wait("!!document.querySelector('.saved-row')");
     await js("window.dispatchEvent(new CustomEvent('fixture-history-navigate',{detail:1}))");
-    await wait("!document.querySelector('.queue-list') && !!document.querySelector('.workbench-review')");
+    await wait("!document.querySelector('.queue-list')?.checkVisibility() && !!document.querySelector('.workbench-review')");
     await mouse(3);
     await wait("!!document.querySelector('.saved-row')");
     await mouse(3);
@@ -172,6 +172,7 @@ void app.whenReady().then(async () => {
     await js("[...document.querySelectorAll('.recent-history-item')].find(e=>e.textContent.includes('Fix reconnect')).click()");
     await wait("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent==='Changes'");
     win.reload();
+    // After a reload the restored tab may show a PR; the queue only has to exist.
     await wait("!!document.querySelector('.queue-list')");
     await js("document.querySelector('[aria-label=\"Recently viewed\"]').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerType:'mouse'}))");
     await wait("!!document.querySelector('.recent-history-menu')");

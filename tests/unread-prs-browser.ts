@@ -43,7 +43,8 @@ void app.whenReady().then(async () => {
   };
   const back = async () => {
     await click('Review queue');
-    await wait("!!document.querySelector('.queue-item')");
+    // The queue stays mounted behind the PR; wait until it is shown again.
+    await wait("!!document.querySelector('.queue-item')?.checkVisibility()");
   };
   const capture = async (name: string) => {
     win.show();
