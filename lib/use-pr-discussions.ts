@@ -5,6 +5,7 @@ import {
   refreshDiscussion,
   peekDiscussion,
   subscribeDiscussions,
+  subscribeDiscussionFailures,
   replaceDiscussionThread,
 } from './review-discussion-cache';
 import { useEffect, useRef, useState } from 'react';
@@ -43,9 +44,13 @@ export function usePrDiscussions(urls: string[]) {
   }
   useEffect(() => {
     alive.current = true;
+    const showSaved = (url: string) => setDiscussions(old => ({ ...old, [url]: { ...old[url], error: 'Could not update comments. Showing saved comments; retrying automatically.' } }));
     const stop = watchGitHub({ kind: 'discussion', priority: 'active', targets: urls.map(url => ({ url })) }, update => {
       if (update.kind === 'discussion') receiveDiscussion(update.url, update.value);
-    }, failure => setDiscussions(old => ({ ...old, [failure.url]: { ...old[failure.url], error: 'Could not update comments. Showing saved comments; retrying automatically.' } })));
+    }, failure => showSaved(failure.url));
+    const stopFailures = subscribeDiscussionFailures(url => {
+      if (alive.current && urls.includes(url)) showSaved(url);
+    });
     const controller = new AbortController();
     void (async () => {
       for (const url of urls) {
@@ -55,6 +60,7 @@ export function usePrDiscussions(urls: string[]) {
     })();
     return () => {
       stop?.();
+      stopFailures();
       controller.abort();
       alive.current = false;
       versions.current.clear();

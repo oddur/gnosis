@@ -5,6 +5,7 @@ import {
   receiveDiscussion,
   hydrateDiscussion,
   subscribeDiscussions,
+  subscribeDiscussionFailures,
 } from './review-discussion-cache';
 import { watchGitHub } from './watch-github';
 import type { EvidenceUpdateIssue } from './review-evidence';
@@ -69,6 +70,10 @@ export function useEvidenceDiscussions(
       if (lifecycle.live)
         setState((current) => ({ ...current, errors: { ...current.errors, [url]: { message, retryAt } } }));
     };
+    // A saved discussion stays displayed when its background refresh fails.
+    const stopFailures = subscribeDiscussionFailures((url, error) => {
+      if (urls.has(url)) fail(url, error instanceof Error ? error.message : String(error));
+    });
     if (expanded) {
       for (const { url } of targets) {
         void (async () => {
@@ -111,6 +116,7 @@ export function useEvidenceDiscussions(
       lifecycle.live = false;
       generation.current++;
       unsubscribe();
+      stopFailures();
       stop?.();
     };
   }, [scope, key, account, expanded, includeFeedback]);

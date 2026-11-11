@@ -30,6 +30,7 @@ import type {
   Preferences,
   PrSearchResult,
   PrStatus,
+  PrStatusOptions,
   PrMetadata,
   ReviewGuide,
   ReviewHistoryEntry,
@@ -160,13 +161,18 @@ declare global {
       getCheckDetails: (target: CheckSelection, options?: { force?: boolean }) => Promise<CheckDetails>;
       getCheckLog: (target: CheckSelection) => Promise<CheckLog>;
       rerunChecks: (target: CheckSelection & { mode: 'failed' | 'all' }) => Promise<void>;
-      getPrStatus: (prUrl: string, force?: boolean) => Promise<PrStatus>;
+      getPrStatus: {
+        /** The saved status for this head revision, or null. Never contacts GitHub. */
+        (prUrl: string, force: boolean, options: PrStatusOptions & { cachedOnly: true; headSha: string }): Promise<PrStatus | null>;
+        (prUrl: string, force?: boolean, options?: Omit<PrStatusOptions, 'cachedOnly'>): Promise<PrStatus>;
+      };
       getPrMetadata: (prUrl: string) => Promise<PrMetadata>;
       loadReviewImages: (reviewId: string, filePath: string, downloadLfs?: boolean) => Promise<import('../lib/review-images').ReviewImageComparison>;
       loadPrImage: (url: string) => Promise<string>;
       getCachedReviewThreads: (prUrl: string) => Promise<import('../lib/review-threads').GitHubReviewThreads | undefined>;
       feedbackAction: (req: import('../lib/review-threads').FeedbackAction) => Promise<void>;
-      getReviewThreads: (prUrl: string, refresh?: boolean) => Promise<GitHubReviewThreads>;
+      /** `revalidate` refreshes a displayed saved copy at foreground priority. */
+      getReviewThreads: (prUrl: string, refresh?: boolean, options?: { revalidate?: boolean }) => Promise<GitHubReviewThreads>;
       createReviewComment: (req: CreateReviewCommentRequest) => Promise<void>;
       reviewCommentAction: (req: ReviewCommentAction) => Promise<GitHubReviewThread>;
       reviewThreadAction: (req: ReviewThreadAction) => Promise<GitHubReviewThread>;

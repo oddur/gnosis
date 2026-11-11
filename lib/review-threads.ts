@@ -43,6 +43,8 @@ export type FeedbackAction =
 export interface GitHubReviewThreads {
   feedback?: PrFeedback;
   checkedAt?: number;
+  /** A saved copy shown while GitHub is read again. */
+  stale?: boolean;
   headSha: string;
   baseSha: string;
   threads: GitHubReviewThread[];

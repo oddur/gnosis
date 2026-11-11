@@ -288,6 +288,20 @@ export interface PrStatus {
   mergeableState: string | null;
   autoMerge: { method: string } | null;
   milestone: { title: string; dueOn: string | null } | null;
+  /** The head revision this status describes. */
+  headSha?: string;
+  /** When GitHub last confirmed the status core: labels, reviewers and review summary. */
+  checkedAt?: number;
+  /** A saved copy shown while GitHub is read again. It never reports mergeability. */
+  stale?: boolean;
+}
+
+/** `cachedOnly` returns the saved status for `headSha`, or null, without a GitHub request. */
+export interface PrStatusOptions {
+  cachedOnly?: boolean;
+  headSha?: string;
+  /** The user opened this PR. Its first read is exempt from automatic pacing. */
+  opened?: boolean;
 }
 
 export type DiffSide = 'LEFT' | 'RIGHT';

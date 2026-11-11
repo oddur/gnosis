@@ -28,7 +28,8 @@ export function ReadinessBadge({ readiness, reviewStatusShown = false, staleLabe
   );
 }
 
-export function ReadinessCheckedAt({ readiness, label = 'Checked' }: { readiness: MergeReadiness; label?: string }) {
+/** `updating` marks a saved status that GitHub is confirming. */
+export function ReadinessCheckedAt({ readiness, label = 'Checked', updating = false }: { readiness: MergeReadiness; label?: string; updating?: boolean }) {
   return (
     <span className="merge-readiness-checked">
       {readiness.checkedAt ? (
@@ -44,6 +45,7 @@ export function ReadinessCheckedAt({ readiness, label = 'Checked' }: { readiness
       ) : (
         'Not checked for this revision'
       )}
+      {updating && ' · updating'}
     </span>
   );
 }

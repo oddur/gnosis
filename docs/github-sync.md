@@ -38,6 +38,8 @@ Queued requests and later requests in that operation inherit the promotion. File
 Promoted requests can use the allowance reserved for interaction. They cannot bypass primary exhaustion, secondary limits, or server retry deadlines.
 Fresh HTTP cache hits bypass this scheduler and remain available during network delays and backoff.
 
+PR status and review discussions open from the last saved copy when one exists for the same head revision and is less than 24 hours old. Gnosis then refreshes it at foreground priority, outside the automatic budget, and replaces it in place. Saved copies never report mergeability, and merge readiness older than two minutes is shown as out of date. Writes, explicit refreshes and "Update changes" always read GitHub first. If the refresh fails or GitHub is rate limited, the saved copy stays with its last-checked time and an error.
+
 Explanation preparation reports completed files, including both required sides, as “Loading files: N/M”. Cached contents use the same progress path. A rate-limited file read retains its completed work, shows the retry time in Activity, and resumes after the deadline. Cancellation remains available while waiting.
 
 Optional file age and churn start only after the explanation inputs are ready, at background priority. They do not delay delivery: the review includes available history or its known file inventory, and cancels unfinished history requests. These requests also stop on generation failure or cancellation.

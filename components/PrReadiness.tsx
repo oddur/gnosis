@@ -79,7 +79,7 @@ export function PrReadiness({
           <div className="pr-merge-detail">
             <div className="pr-summary-decision-heading">
               <ReadinessBadge readiness={readiness} />
-              <ReadinessCheckedAt readiness={readiness} />
+              <ReadinessCheckedAt readiness={readiness} updating={!!status?.stale && !error} />
             </div>
             {summaryDetails.length > 0 && (
               <ul>
@@ -121,7 +121,7 @@ export function PrReadiness({
           ))}
         </ul>
         <div className="pr-merge-detail-actions">
-          <ReadinessCheckedAt readiness={readiness} />
+          <ReadinessCheckedAt readiness={readiness} updating={!!status?.stale && !error} />
           <a href={member.url} target="_blank" rel="noopener noreferrer">
             View merge requirements on GitHub
           </a>

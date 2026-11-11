@@ -39,7 +39,6 @@ import { setHarnessEnvironmentLoader } from '../lib/providers/environment';
 import type { EnvironmentVariable } from '../lib/harness-environment';
 import { createChatRuns, waitForChatContext } from './chat-runs';
 import { readPrChecks, readPrChecksBatch, readCheckDetails, cachedCheckDetails, withCachedCheckDetails, readCheckLog, rerunChecks } from './pr-checks-service';
-import { checkCounts } from '../lib/pr-checks';
 import type { CheckTarget, CheckSelection, ChecksOptions } from '../lib/pr-checks';
 import { createMarkdownReviewService } from './markdown-review-service';
 import type { MarkdownReviewRequest } from '../lib/markdown-review';
@@ -102,7 +101,8 @@ import {
 import { createDiffSource } from '../lib/diffSource';
 import type { DiffSource } from '../lib/diffSource';
 import { isLocalUrl } from '../lib/local-url';
-import type { PrMetadata, PrSearchResult, PrStatus } from '../lib/types';
+import type { PrMetadata, PrSearchResult, PrStatus, PrStatusOptions } from '../lib/types';
+import { createPrStatusService } from './pr-status-service';
 import {
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_FAST_CLAUDE_MODEL,
@@ -1489,55 +1489,29 @@ ipcMain.handle(
   }
 );
 
+// Signals are created further down this module; resolve them at call time.
+const prStatus = createPrStatusService({
+  metadata: getPrMetadata,
+  reviews: getReviewStatus,
+  checks: readPrChecks,
+  signals: (client, requests, options) => getQueueSignals(client, requests, options),
+});
+
 async function fetchPrStatus(prUrl: string, force = false): Promise<PrStatus | null> {
   // Local reviews have no CI, no reviewers, no mergeability — return null so
   // callers that render PR status chrome simply show nothing.
   if (isLocalUrl(prUrl)) return null;
   const token = getResolvedToken();
   if (!token) return null;
-  const octokit = getGitHubClient(token);
-  const { owner, repo, pullNumber } = parsePrUrl(prUrl);
-
-  const [prData, reviewSummary] = await Promise.all([
-    getPrMetadata(octokit, owner, repo, pullNumber, force),
-    getReviewStatus(octokit, owner, repo, pullNumber),
-  ]);
-
-  let ciError: string | undefined;
-  const [checkSnapshot, signals] = await Promise.all([
-    readPrChecks(octokit, { url: prUrl, headSha: prData.headSha }, { force }).catch((error: unknown) => {
-      ciError = error instanceof Error ? error.message : String(error);
-      return undefined;
-    }),
-    getQueueSignals(octokit, [{ url: prUrl, headSha: prData.headSha }], { force, active: true }).then(
-      ([value]): QueueSignals | undefined => value
-    ),
-  ]);
+  const { status, metadata } = await prStatus.read(getGitHubClient(token), prUrl, force);
   try {
     if (getResolvedToken() !== token) return null;
-    workbench.updatePrMetadata(prData);
-    if (cachedLogin && signals && workbench.observeReadSignals(cachedLogin, [signals])) broadcastToAllWindows('pr-read-state-changed');
+    workbench.updatePrMetadata(metadata);
+    if (cachedLogin && status.signals && workbench.observeReadSignals(cachedLogin, [status.signals])) broadcastToAllWindows('pr-read-state-changed');
   } catch (error) {
     console.warn('Could not update the saved starred PR metadata:', error);
   }
-
-  return {
-    signals,
-    labels: prData.labels,
-    mergeable: prData.mergeable,
-    isDraft: prData.isDraft,
-    checkSnapshot: checkSnapshot && withCachedCheckDetails(octokit, checkSnapshot), ciError,
-    ciChecks: checkSnapshot?.checks ?? [],
-    ciConclusion: signals?.checks.state ?? (checkSnapshot ? checkCounts(checkSnapshot.checks).attention ? 'failure' : checkCounts(checkSnapshot.checks).running ? 'pending' : checkSnapshot.checks.length ? 'success' : 'neutral' : 'neutral'),
-    reviewSummary,
-    baseBranch: prData.baseBranch,
-    commitCount: prData.commitCount,
-    requestedReviewers: prData.requestedReviewers,
-    requestedTeams: prData.requestedTeams,
-    mergeableState: prData.mergeableState,
-    autoMerge: prData.autoMerge,
-    milestone: prData.milestone,
-  };
+  return status;
 }
 
 handleInteractive('get-pr-metadata', async (_event, prUrl: string): Promise<PrMetadata> => {
@@ -1554,11 +1528,18 @@ handleInteractive('load-pr-image', (_event, url: string) => {
   return loadPrImage(getGitHubClient(token), url);
 });
 
-ipcMain.handle('get-pr-status', async (_event, prUrl: string, force: boolean = false): Promise<PrStatus> => {
+ipcMain.handle('get-pr-status', async (_event, prUrl: string, force: boolean = false, options?: PrStatusOptions): Promise<PrStatus | null> => {
   if (isLocalUrl(prUrl)) {
     throw new Error('Local review — no PR status available');
   }
-  const status = await withGitHubPriority(force ? 'interactive' : 'foreground', () => fetchPrStatus(prUrl, force), { automatic: !force });
+  if (options?.cachedOnly) {
+    // Local data only: no scheduler and no request. The renderer then asks GitHub.
+    const token = getResolvedToken();
+    if (!token || typeof options.headSha !== 'string') return null;
+    return (await prStatus.cached(getGitHubClient(token), prUrl, options.headSha)) ?? null;
+  }
+  // Opening a PR is user-driven, so its read is exempt from automatic pacing.
+  const status = await withGitHubPriority(force ? 'interactive' : 'foreground', () => fetchPrStatus(prUrl, force), { automatic: !(force || options?.opened) });
   if (!status) throw new Error('Not authenticated');
   return status;
 });
@@ -2717,15 +2698,18 @@ function discussionClient() {
   if (!token) throw new Error('Sign in to GitHub to load review comments.');
   return getGitHubClient(token);
 }
-ipcMain.handle('cached-review-threads', (_event, prUrl: string) => reviewThreads.cached(discussionClient(), prUrl));
+ipcMain.handle('cached-review-threads', (_event, prUrl: string) => reviewThreads.stale(discussionClient(), prUrl));
 handleInteractive('feedback-action', async (_event, req: import('../lib/review-threads').FeedbackAction) => {
   const account = cachedLogin;
   await reviewThreads.feedbackAction(discussionClient(), req);
   if (account && req.action === 'reply') workbench.noteOwnReview(account, req.prUrl, 1);
   refreshAfterGitHubWrite([req.prUrl], ['discussion', 'signals']);
 });
-handleInteractive('get-review-threads', (_event, prUrl: string, refresh: boolean) =>
-  reviewThreads.list(discussionClient(), prUrl, refresh));
+ipcMain.handle('get-review-threads', (_event, prUrl: string, refresh: boolean, options?: { revalidate?: boolean }) =>
+  // Refreshing a displayed saved copy runs ahead of background work but leaves the interactive slots free.
+  options?.revalidate
+    ? withGitHubPriority('foreground', () => reviewThreads.list(discussionClient(), prUrl, false), { automatic: false })
+    : withGitHubPriority('interactive', () => reviewThreads.list(discussionClient(), prUrl, refresh)));
 handleInteractive('review-thread-action', async (_event, req: ReviewThreadAction) => {
   const account = cachedLogin;
   const result = await reviewThreads.act(discussionClient(), req);

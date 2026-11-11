@@ -37,3 +37,10 @@ void test('never carry checks across head revisions', () => {
   assert.equal(merged.signals?.headSha, 'b');
   assert.equal(merged.checkSnapshot?.headSha, 'b');
 });
+void test('a stale status never replaces a fresh one', () => {
+  const fresh = status('a', 200, 'failure');
+  const saved = { ...status('a', 300, 'success'), mergeable: null, stale: true };
+  assert.equal(mergePrStatus(fresh, saved), fresh);
+  assert.equal(mergePrStatus(undefined, saved), saved);
+  assert.equal(mergePrStatus(saved, fresh).stale, undefined, 'A fresh status replaces a saved copy');
+});

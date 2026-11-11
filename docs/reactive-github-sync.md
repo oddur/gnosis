@@ -39,6 +39,8 @@ A head mismatch in a batched status response requests metadata for that PR. It n
 
 Review submissions, comments, PR actions, and check reruns invalidate the affected status or discussion data. Review activity can prompt an earlier discussion refresh; changed check counts can prompt an earlier detailed-check refresh. These updates do not require a queue-wide refresh.
 
+A screen can show a saved discussion or status before its first refresh completes. The refresh result goes to the requesting screen; later changes arrive through the subscriptions above.
+
 Subscriptions are scoped to a window and credential. Closing a window removes its subscriptions. Account changes discard old in-flight results and re-register visible subscriptions. IPC validates the resource type, URLs, revisions, and batch size.
 
 ## Validation

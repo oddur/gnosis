@@ -2,6 +2,8 @@ import type { PrStatus } from './types';
 /** A slow summary read must not overwrite a newer pushed snapshot of the same revision. */
 export function mergePrStatus(previous: PrStatus | undefined, next: PrStatus): PrStatus {
   if (!previous) return next;
+  // A saved copy that arrives late never replaces a status GitHub already confirmed.
+  if (next.stale && !previous.stale) return previous;
   const signals =
     previous.signals &&
     next.signals &&
