@@ -66,7 +66,7 @@ import {
   describeQueueFilters,
   type QueueFilters,
 } from '../../lib/queue-filters';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Activity, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { HomeLocation, WorkspaceTab } from '../../lib/navigation-history';
 import {
   ArrowRight,
@@ -332,6 +332,13 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const [localOpen, setLocalOpen] = useState(false);
   const [url, setUrl] = useState(prefillPrUrl ?? '');
   const [showUrl, setShowUrl] = useState(!!prefillPrUrl);
+  // The page stays mounted behind saved reviews, so a later re-review must apply its URL here.
+  const appliedPrefill = useRef(prefillPrUrl);
+  useEffect(() => {
+    if (appliedPrefill.current === prefillPrUrl) return;
+    appliedPrefill.current = prefillPrUrl;
+    if (prefillPrUrl) { setUrl(prefillPrUrl); setShowUrl(true); }
+  }, [prefillPrUrl]);
   const [pendingStarts, setPendingStarts] = useState<Set<string>>(new Set());
   const startingReviews = useRef(new Set<string>());
   const [summaryErrors, setSummaryErrors] = useState<Record<string, string>>({});
@@ -1524,7 +1531,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         </div>
       </header>
       <UpdateBanner />
-      {summaryItem ? (
+      {summaryItem && (
         <PrSummary
         key={summaryItem.subject.id}
         item={summaryItem}
@@ -1596,7 +1603,9 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         onAiSetup={() => openSettings('integrations')}
         onGitHubAuth={() => setAuthOpen(true)}
         />
-      ) : (
+      )}
+      {/* The queue stays mounted behind a PR, so returning keeps its rows, scroll and focus target. */}
+      <Activity mode={summaryItem ? 'hidden' : 'visible'}>
         <div className="workbench-body">
         <QueueSidebar
           currentReview={
@@ -2346,7 +2355,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
           </>}
         </main>
         </div>
-      )}
+      </Activity>
       {onboarding.open && onboarding.state.draft && <OnboardingSetup draft={onboarding.state.draft} onChange={onboarding.change}
         onPause={() => void onboarding.pause()} onApply={() => { void onboarding.apply().then(next => {
           if (!next) return;
