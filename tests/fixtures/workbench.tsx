@@ -700,8 +700,9 @@ const mocks = {
   loadReview: (id: string) => Promise.resolve(id === 'local-history-review' ? { ...review, reviewId: id, prUrl: 'local:/fixture/repo', prTitle: 'Local history fixture', snapshot: undefined } : review),
   reRenderHunks: (r: ReviewGuide) => Promise.resolve(r),
   getReviewThreads: () => Promise.resolve({ headSha: 'fixture-head', baseSha: 'fixture-base', threads: [] }),
-  getPrStatus: async (url: string) =>
-    statusFailures-- > 0
+  // Fixtures keep no saved status, so the cached-first read finds nothing and does not consume a failure.
+  getPrStatus: async (url: string, _force?: boolean, options?: { cachedOnly?: boolean }) =>
+    options?.cachedOnly ? null : statusFailures-- > 0
       ? Promise.reject(new Error('API rate limit exceeded. Request ID fixture-request. Retry after the limit resets.'))
       : Promise.resolve({
           signals: (await mocks.getQueueSignals([{url, headSha: items.flatMap(i=>i.subject.members).find(m=>m.url===url)?.headSha ?? ''}]))[0],

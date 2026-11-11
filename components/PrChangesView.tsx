@@ -534,7 +534,16 @@ export function PrChangesView({
             title={`Refresh comments for PR #${entry.snapshot.url.split('/').pop()}`}
             onClick={() => void refreshThreads(entry.snapshot.url)}
           >
-            <RefreshCw size={14} />
+            {/* Saved comments are showing while GitHub is read again. */}
+            <RefreshCw
+              size={14}
+              className={
+                discussion.discussions[entry.snapshot.url]?.data?.stale &&
+                !discussion.discussions[entry.snapshot.url]?.error
+                  ? 'animate-spin'
+                  : undefined
+              }
+            />
           </Button>
         )}
         <RawFileFilters

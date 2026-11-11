@@ -600,17 +600,32 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     setStatusErrors({});
     let force = lastStatusAttempt.current !== statusAttempt;
     let refreshingStatus = false;
+    let opened = true;
     lastStatusAttempt.current = statusAttempt;
     const refreshStatuses = () => {
       if (statusSubject && !refreshingStatus && document.visibilityState !== 'hidden') {
         refreshingStatus = true;
         if (force || !statusSubject.members.every(member => cachedStatuses.current.has(cacheKey(member.url, member.headSha)))) setStatusRefreshing(true);
         const refreshNow = force;
+        const firstRead = opened;
         force = false;
+        opened = false;
+        // Show the saved status for this head revision while GitHub is read again.
+        if (firstRead && window.electronAPI.githubSyncVersion === 1)
+          for (const m of statusSubject.members) {
+            if (cachedStatuses.current.has(cacheKey(m.url, m.headSha))) continue;
+            void window.electronAPI.getPrStatus(m.url, false, { cachedOnly: true, headSha: m.headSha })
+              .then(status => {
+                if (!cancelled && status) setStatuses(previous => ({ ...previous, [m.url]: mergePrStatus(previous[m.url], status) }));
+              })
+              .catch(() => { /* A missing saved copy just means waiting for GitHub. */ });
+          }
         void Promise.allSettled(
           statusSubject.members.map(async (m) => ({
             url: m.url,
-            status: await window.electronAPI.getPrStatus(m.url, refreshNow),
+            status: await (firstRead
+              ? window.electronAPI.getPrStatus(m.url, refreshNow, { opened: true })
+              : window.electronAPI.getPrStatus(m.url, refreshNow)),
           }))
         ).then((results) => {
           refreshingStatus = false;
@@ -619,7 +634,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
             results.forEach((r, i) => {
               if (r.status !== 'fulfilled') return;
               const m = statusSubject.members[i];
-              cachedStatuses.current.set(cacheKey(m.url, m.headSha), r.value.status);
+              if (!r.value.status.stale) cachedStatuses.current.set(cacheKey(m.url, m.headSha), r.value.status);
               if (auth?.login && r.value.status.signals) publishQueueSignals(auth.login, [r.value.status.signals]);
             });
             setStatusErrors(

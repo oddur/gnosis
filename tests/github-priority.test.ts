@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   createGitHubScheduler,
   createGitHubWork,
+  githubAutomatic,
   githubPriority,
   githubPriorityScope,
   joinGitHubWork,
@@ -10,6 +11,7 @@ import {
 } from '../lib/github-scheduler';
 import { createGitHubClientPool, GitHubBackoffError } from '../lib/github-client';
 import { createPrChangesService } from '../src/pr-changes-service';
+import { createReviewThreadService } from '../src/review-thread-service';
 import { createSnapshotFileLoader } from '../src/snapshot-file-loader';
 import { createPrFileCache } from '../lib/pr-file-cache';
 import type { PrChanges } from '../lib/pr-changes';
@@ -506,4 +508,44 @@ void test('concurrent reads keep the lowest observed budget', async () => {
   await old;
   assert.equal(times.length, 2);
   assert.ok(pool.backoff('budget', true, ['core']), 'Late response must not restore the background reserve');
+});
+
+void test('revalidation runs foreground, unpaced, and is promoted by an interactive join', async () => {
+  const gate = deferred(),
+    starts: string[] = [];
+  const page = (cursor: string | null) => ({
+    data: {
+      repository: {
+        pullRequest: {
+          headRefOid: 'head',
+          baseRefOid: 'base',
+          reviewThreads: { nodes: [], pageInfo: { hasNextPage: !!cursor, endCursor: cursor } },
+        },
+      },
+    },
+  });
+  const pool = createGitHubClientPool({
+    fetch: (async (_input: string, init: RequestInit) => {
+      starts.push(`${githubPriority()}${githubAutomatic() ? ' automatic' : ''}`);
+      const body = JSON.parse(typeof init.body === 'string' ? init.body : '{}') as { variables: { cursor: string | null } };
+      if (!body.variables.cursor) {
+        await gate.promise;
+        return json(page('next'));
+      }
+      return json(page(null));
+    }) as typeof fetch,
+  });
+  const client = pool.client('account'),
+    service = createReviewThreadService(),
+    url = 'https://github.com/o/r/pull/1';
+  // The renderer refreshes a displayed saved copy this way.
+  const revalidation = withGitHubPriority('foreground', () => service.list(client, url), { automatic: false });
+  await settle(() => starts.length === 1);
+  assert.deepEqual(starts, ['foreground'], 'Ahead of background work, outside automatic pacing');
+  const refresh = withGitHubPriority('interactive', () => service.list(client, url, true));
+  await turn();
+  gate.resolve();
+  const [a, b] = await Promise.all([revalidation, refresh]);
+  assert.deepEqual(a, b);
+  assert.deepEqual(starts, ['foreground', 'interactive'], 'One shared read; later pages run at the joined priority');
 });

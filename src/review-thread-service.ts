@@ -1,6 +1,7 @@
 import type { Octokit } from '@octokit/rest';
 import { githubCacheFor } from '../lib/github-client';
 import { isCacheRecord } from '../lib/github-cache';
+import { createGitHubWork, joinGitHubWork, type GitHubWork } from '../lib/github-scheduler';
 import type {
   GitHubReviewComment,
   PrFeedback,
@@ -35,19 +36,25 @@ interface Pull extends FeedbackPage {
   baseRefOid: string;
   reviewThreads: Page<ThreadNode>;
 }
+/** A saved discussion older than this is never shown; the PR waits for GitHub instead. */
+export const REVIEW_THREADS_MAX_STALE_MS = 24 * 60 * 60_000;
 interface Entry {
   value?: GitHubReviewThreads;
   expires: number;
-  pending?: Promise<GitHubReviewThreads>;
+  /** Shared by revalidation, explicit refresh and sync, so an interactive caller promotes it. */
+  pending?: GitHubWork<GitHubReviewThreads>;
   version?: number;
 }
+/** The top-level `url` lets a scoped GitHub write mark this record stale. Older records have none. */
 interface SavedThreads {
+  url?: string;
   value: GitHubReviewThreads;
   expires: number;
 }
 function isSavedThreads(value: unknown): value is SavedThreads {
   return (
     isCacheRecord(value) &&
+    (value.url === undefined || typeof value.url === 'string') &&
     typeof value.expires === 'number' &&
     Number.isFinite(value.expires) &&
     isCacheRecord(value.value) &&
@@ -217,6 +224,22 @@ export function createReviewThreadService(now = Date.now) {
       service.invalidate(client, req.prUrl);
       return thread;
     },
+    /**
+     * Local data only. The last discussion, past its 60-second freshness, while no write has
+     * marked it stale and it is under 24 hours old. Writes never use this.
+     */
+    stale(client: Octokit, prUrl: string): GitHubReviewThreads | undefined {
+      const persistent = githubCacheFor(client);
+      const servable = (value: GitHubReviewThreads) => {
+        const age = now() - (value.checkedAt ?? Number.NaN);
+        return age >= 0 && age < REVIEW_THREADS_MAX_STALE_MS;
+      };
+      const saved = persistent?.get(`review-threads:${prUrl}`, isSavedThreads);
+      if (saved && !saved.revalidate && servable(saved.value.value)) return saved.value.value;
+      const entry = cacheFor(client).get(prUrl);
+      if (entry?.value && (!persistent || entry.version === persistent.version()) && servable(entry.value))
+        return structuredClone(entry.value);
+    },
     cached(client: Octokit, prUrl: string): GitHubReviewThreads | undefined {
       return (
         githubCacheFor(client)?.get(`review-threads:${prUrl}`, isSavedThreads)?.value.value ??
@@ -227,7 +250,7 @@ export function createReviewThreadService(now = Date.now) {
       parseUrl(prUrl);
       const cache = cacheFor(client);
       let entry = cache.get(prUrl);
-      if (entry?.pending) return structuredClone(await entry.pending);
+      if (entry?.pending) return structuredClone(await joinGitHubWork(entry.pending));
       const persistent = githubCacheFor(client);
       const version = persistent?.version();
       const key = `review-threads:${prUrl}`;
@@ -245,14 +268,14 @@ export function createReviewThreadService(now = Date.now) {
       entry = { expires: 0 };
       cache.set(prUrl, entry);
       const current = entry;
-      current.pending = fetchThreads(client, prUrl);
+      current.pending = createGitHubWork(() => fetchThreads(client, prUrl));
       try {
-        const result = await current.pending;
+        const result = await current.pending.promise;
         if (cache.get(prUrl) === current) {
           current.value = result;
           current.expires = now() + 60_000;
           current.version = version;
-          if (persistent?.version() === version) persistent?.set(key, { value: result, expires: current.expires });
+          if (persistent?.version() === version) persistent?.set(key, { url: prUrl, value: result, expires: current.expires } satisfies SavedThreads);
           while (cache.size > 50) {
             const oldest = cache.keys().next().value;
             if (oldest === undefined) break;

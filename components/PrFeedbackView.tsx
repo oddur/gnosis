@@ -211,6 +211,7 @@ export function PrFeedbackView({
   });
   const snapshotMissing = subject.members.filter((m) => !discussions.values[m.url]?.feedback);
   const failures = subject.members.filter((m) => discussions.errors[m.url]);
+  const showingSaved = subject.members.some((m) => discussions.values[m.url]?.stale);
   const fingerprint = selected && account ? feedbackFingerprint(selected, account) : '';
   useEffect(() => {
     if (!selected || !account || document.visibilityState === 'hidden') return;
@@ -463,10 +464,10 @@ export function PrFeedbackView({
           >
             <RefreshCw size={15} className={discussions.busy ? 'animate-spin' : ''} />
           </Button>
-          <span className={`feedback-sync${!discussions.busy && !failures.length && !snapshotMissing.length ? ' sr-only' : ''}`} role="status">
+          <span className={`feedback-sync${!discussions.busy && !failures.length && !showingSaved && !snapshotMissing.length ? ' sr-only' : ''}`} role="status">
             {discussions.busy
               ? 'Refreshing…'
-              : failures.length
+              : failures.length || showingSaved
                 ? 'Showing saved feedback'
                 : snapshotMissing.length
                   ? `${subject.members.length - snapshotMissing.length}/${subject.members.length} PRs loaded`

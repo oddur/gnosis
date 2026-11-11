@@ -4,8 +4,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createGitHubClientPool } from './cache-test-pool';
-import { createReviewThreadService } from '../src/review-thread-service';
+import { createGitHubClientPool, githubCacheFor } from './cache-test-pool';
+import { withGitHubPriority } from '../lib/github-scheduler';
+import { createReviewThreadService, REVIEW_THREADS_MAX_STALE_MS } from '../src/review-thread-service';
 import { threadPlacementReason, threadSource, type GitHubReviewThread } from '../lib/review-threads';
 import { memberPrefix, type ReviewMember } from '../lib/workbench';
 import { review, slide } from './fixtures/explainer';
@@ -264,6 +265,17 @@ void test('complete discussion snapshots survive restart, expire, and respect ex
     await afterLogout.pool.setStorage(file);
     await createReviewThreadService(() => now).list(afterLogout.pool.client('one'), review.prUrl);
     assert.equal(afterLogout.calls.length, 1);
+    // Records saved before the URL field was added still load.
+    const legacy = harness(handler);
+    const legacyClient = legacy.pool.client('legacy');
+    const value = { headSha: 'head', baseSha: 'base', checkedAt: now, threads: [{ ...thread, comments: [comment] }] };
+    const legacyCache = githubCacheFor(legacyClient);
+    assert.ok(legacyCache);
+    legacyCache.set(`review-threads:${review.prUrl}`, { value, expires: now + 60_000 });
+    const legacyService = createReviewThreadService(() => now);
+    assert.equal((await legacyService.list(legacyClient, review.prUrl)).threads.length, 1);
+    assert.equal(legacyService.stale(legacyClient, review.prUrl)?.threads.length, 1);
+    assert.equal(legacy.calls.length, 0);
   } finally {
     await closeCaches();
     fs.rmSync(dir, { recursive: true, force: true });
@@ -334,4 +346,74 @@ void test('editing and deleting enforce PR membership and comment permissions be
   const deleted = await service.comment(client, { ...req, action: 'delete' });
   assert.equal(deleted.comments.length, 1);
   assert.equal(deleted.comments[0].id, 'other');
+});
+
+void test('stale threads are returned after expiry without a request', async () => {
+  const h = harness(() => response(pr(page([{ ...thread, comments: page([comment]) }]))));
+  let now = 1_000;
+  const service = createReviewThreadService(() => now);
+  const client = h.pool.client('one');
+  assert.equal(service.stale(client, review.prUrl), undefined, 'Nothing saved yet');
+  await service.list(client, review.prUrl);
+  assert.equal(h.calls.length, 1);
+  now += 60_001;
+  const saved = service.stale(client, review.prUrl);
+  assert.ok(saved);
+  assert.equal(saved.threads.length, 1);
+  assert.equal(saved.checkedAt, 1_000);
+  assert.equal(h.calls.length, 1);
+  now = 1_000 + REVIEW_THREADS_MAX_STALE_MS;
+  assert.equal(service.stale(client, review.prUrl), undefined, 'Saved discussions expire after 24 hours');
+  assert.equal(service.stale(h.pool.client('two'), review.prUrl), undefined, 'Another credential has its own cache');
+});
+
+void test('REST comment writes and mutations make threads unservable', async () => {
+  const h = harness((query) =>
+    query.startsWith('mutation')
+      ? response({ data: { resolveReviewThread: { thread: { isResolved: true } } } })
+      : query
+        ? response(pr(page([{ ...thread, comments: page([comment]) }])))
+        : response({ id: 1 }, 201)
+  );
+  const service = createReviewThreadService(() => 1_000);
+  const client = h.pool.client('one');
+  await service.list(client, review.prUrl);
+  assert.ok(service.stale(client, review.prUrl));
+  await client.request('POST /repos/{owner}/{repo}/issues/{issue_number}/comments', {
+    owner: 'oddur',
+    repo: 'gnosis',
+    issue_number: 1,
+    body: 'Done',
+  });
+  assert.equal(service.stale(client, review.prUrl), undefined, 'A REST comment write marks the record stale');
+  await service.list(client, review.prUrl);
+  assert.ok(service.stale(client, review.prUrl));
+  await client.request('POST /graphql', {
+    query: 'mutation ResolveThread($id:ID!) { resolveReviewThread(input:{threadId:$id}) { thread { isResolved } } }',
+    variables: { id: 'T1' },
+  });
+  assert.equal(service.stale(client, review.prUrl), undefined, 'A GraphQL mutation marks the record stale');
+});
+
+void test('a revalidation and an explicit refresh share one fetch', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const calls: string[] = [];
+  const pool = createGitHubClientPool({
+    fetch: (async (url: string) => {
+      calls.push(url);
+      await gate;
+      return response(pr(page([{ ...thread, comments: page([comment]) }])));
+    }) as typeof fetch,
+  });
+  const service = createReviewThreadService();
+  const client = pool.client('one');
+  const revalidation = withGitHubPriority('foreground', () => service.list(client, review.prUrl), { automatic: false });
+  const refresh = withGitHubPriority('interactive', () => service.list(client, review.prUrl, true));
+  release();
+  const [a, b] = await Promise.all([revalidation, refresh]);
+  assert.deepEqual(a, b);
+  assert.equal(calls.length, 1);
 });
