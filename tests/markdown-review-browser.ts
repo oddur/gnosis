@@ -170,11 +170,11 @@ void app.whenReady().then(async () => {
     );
     await capture('deleted');
     await click('Commits');
-    await wait("!!document.querySelector('.commit-stream-row .markdown-review')");
+    await wait("[...document.querySelectorAll('.commit-stream-row .markdown-review')].some(e=>e.getClientRects().length)");
     await capture('commits');
     assert.ok(
       await js(
-        "(()=>{const h=document.querySelector('.commit-stream-row .changes-file-header h2');const r=h.getBoundingClientRect();return r.width>=100 && r.height>=16})()"
+        "(()=>{const h=[...document.querySelectorAll('.commit-stream-row .changes-file-header h2')].find(e=>e.getClientRects().length);const r=h.getBoundingClientRect();return r.width>=100 && r.height>=16})()"
       ),
       'Markdown commit header preserves file identity'
     );
