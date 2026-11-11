@@ -41,6 +41,9 @@ jobs:
       - run: npm run prepare:mergiraf
       - run: npx tsc --noEmit
       - run: npm test
+      - name: Startup bundle
+        if: runner.os == 'Linux'
+        run: npm run check:startup-bundle
       - name: Configure Electron sandbox
         if: runner.os == 'Linux'
         run: |

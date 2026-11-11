@@ -1,5 +1,3 @@
-import { applyCodeFont } from '../components/SettingsDialog';
-import { applyTheme } from '../lib/theme';
 import { Activity, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { RepositorySettingsProvider } from '../components/RepositorySettingsProvider';
 import { RecentlyViewedContext } from '../components/RecentlyViewed';
@@ -29,6 +27,7 @@ import {
 import type { AppLocation } from '../lib/navigation-history';
 import type { ActivityTask } from '../lib/activity';
 import { ReviewWorkspace, type WorkspaceController } from './ReviewWorkspace';
+import { PrSummary } from './lazy-screens';
 import './workspace-tabs.css';
 import { useWorkspaceListings } from '../lib/use-workspace-listings';
 import { workbenchStore } from '../lib/workbench-store';
@@ -40,21 +39,8 @@ export function App() {
   useFileFilterSync();
   useEffect(() => {
     window.electronAPI.perfMark?.('first-render');
-  }, []);
-  useEffect(() => {
-    let live = true;
-    void window.electronAPI
-      .loadPreferences()
-      .then((p) => {
-        if (live) {
-          if (p.codeFont) applyCodeFont(p.codeFont);
-          applyTheme(p.theme);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
+    // A restored PR tab opens its summary first.
+    void PrSummary.preload();
   }, []);
   const [recentlyViewed] = useState(() => createRecentlyViewed(readReviewState, writeReviewState));
   const [state, setState] = useState<WorkspaceTabsState>(() => initialWorkspaceTabs(newTab()));

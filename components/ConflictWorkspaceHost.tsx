@@ -1,7 +1,8 @@
 import { LoadingState } from './LoadingState';
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
-const Workspace = lazy(() => import('./ConflictWorkspace').then((module) => ({ default: module.ConflictWorkspace })));
+import { lazyScreen } from '../lib/lazy-screen';
+const Workspace = lazyScreen(() => import('./ConflictWorkspace').then((module) => module.ConflictWorkspace));
 export function ConflictWorkspaceHost() {
   const [url, setUrl] = useState<string>();
   useEffect(() => {

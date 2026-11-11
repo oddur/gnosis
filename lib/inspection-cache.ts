@@ -1,7 +1,6 @@
 import { clearStackChanges } from './stack-inspection-cache';
 import { clearMarkdownReviews } from './markdown-review-cache';
 import { createPrFileCache } from './pr-file-cache';
-import { prChangePreview } from './pr-change-preview';
 import { commitSelectionKey, type CommitSelection } from './pr-commits';
 import { fileRevisionKey, type PrChanges, type PrChangeFile } from './pr-changes';
 import type { FileDiffMetadata } from '@pierre/diffs';
@@ -77,11 +76,25 @@ export const inspectionFileRequest = (snapshot: PrChanges, file: PrChangeFile) =
 });
 export const commitPositionId = (subjectId: string, snapshot?: PrChanges) =>
   `commit:${subjectId}:${snapshot?.url ?? ''}:${snapshot?.comparisonBase ?? ''}:${snapshot?.metadata.headSha ?? ''}`;
+// Previews parse with @pierre/diffs, which stays out of the startup bundle until an inspection needs it.
+let changePreview: typeof import('./pr-change-preview') | undefined;
+let changePreviewLoad: Promise<void> | undefined;
+export function loadChangePreview(): Promise<void> {
+  changePreviewLoad ??= import('./pr-change-preview').then(
+    (module) => { changePreview = module; },
+    (error: unknown) => { changePreviewLoad = undefined; throw error; }
+  );
+  return changePreviewLoad;
+}
 const previews = new Map<string, FileDiffMetadata | null>();
 export function previewFor(key: string, file: PrChangeFile, contextLines = 3) {
+  if (!changePreview) {
+    void loadChangePreview().catch(() => {});
+    return;
+  }
   key = `${key}:context:${contextLines}`;
   if (!previews.has(key)) {
-    previews.set(key, prChangePreview(file, contextLines) ?? null);
+    previews.set(key, changePreview.prChangePreview(file, contextLines) ?? null);
     while (previews.size > 64) {
       const oldest = previews.keys().next().value;
       if (oldest === undefined) break;
@@ -100,6 +113,8 @@ export function fileIsReady(snapshot: PrChanges, file: PrChangeFile) {
   );
 }
 export async function prepareFile(snapshot: PrChanges, file: PrChangeFile, background = false) {
+  // Without a preview parser the file itself is read, as for a file without a patch.
+  await loadChangePreview().catch(() => {});
   if (!fileIsReady(snapshot, file)) await inspectionFiles.read(inspectionFileRequest(snapshot, file), background);
 }
 let inspectionEpoch = 0;

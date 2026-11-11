@@ -1,6 +1,5 @@
 import { BookMarked, type LucideIcon } from 'lucide-react';
 import { lazy, Suspense, useMemo, type LazyExoticComponent } from 'react';
-import dynamicIconImports from 'lucide-react/dynamicIconImports.mjs';
 import { repositoryLucideName, type RepositorySettings } from '../lib/repository-settings';
 
 // Load only icons that are shown, and retain the component across badge renders.
@@ -8,7 +7,11 @@ const loadedIcons = new Map<string, LazyExoticComponent<LucideIcon>>();
 function lucideIcon(name: string) {
   let component = loadedIcons.get(name);
   if (!component) {
-    component = lazy(dynamicIconImports[name as keyof typeof dynamicIconImports]);
+    // The name-to-loader map is large, so it loads with the first custom icon.
+    component = lazy(async () => {
+      const { default: icons } = await import('lucide-react/dynamicIconImports.mjs');
+      return icons[name as keyof typeof icons]();
+    });
     loadedIcons.set(name, component);
   }
   return component;
