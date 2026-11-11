@@ -7,6 +7,7 @@ import { createQueueSignalsService } from '../src/queue-signals-service';
 import type { PrChecks } from '../lib/pr-checks';
 import type { QueueSignals } from '../lib/queue-signals';
 import type { PrMetadata } from '../lib/types';
+import { getReviewStatus, summarizeReviews } from '../lib/github';
 
 const url = 'https://github.com/o/r/pull/1';
 const head = 'a'.repeat(40);
@@ -173,4 +174,169 @@ void test('concurrent status reads share one fetch and an account change discard
   assert.equal(reads, 2);
   assert.equal(h.cache.get(`pr-status:v1:${url}`, (v): v is unknown => true), undefined);
   assert.equal(await status.cached(h.client, url, head), undefined);
+});
+
+const pullUrl = (n: number) => `https://github.com/o/r/pull/${n}`;
+const pull = (overrides: Record<string, unknown> = {}) => ({
+  headRefOid: head,
+  baseRefOid: 'c'.repeat(40),
+  isDraft: true,
+  baseRefName: 'release',
+  commits: { totalCount: 7 },
+  labels: { nodes: [{ name: 'bug' }, { name: 'ui' }] },
+  reviewRequests: {
+    nodes: [
+      { requestedReviewer: { __typename: 'User', login: 'maya' } },
+      { requestedReviewer: { __typename: 'Bot', login: 'helper' } },
+      { requestedReviewer: { __typename: 'Team', name: 'Platform' } },
+    ],
+  },
+  autoMergeRequest: { mergeMethod: 'SQUASH' },
+  milestone: { title: 'v2', dueOn: null },
+  reviews: {
+    nodes: [
+      { state: 'CHANGES_REQUESTED', author: { login: 'ana' } },
+      { state: 'APPROVED', author: { login: 'ana' } },
+      { state: 'COMMENTED', author: { login: 'li' } },
+    ],
+  },
+  ...overrides,
+});
+/** Answers each aliased PR from `respond`, optionally after `gate`. */
+function preloadHarness(respond: (alias: number) => unknown, gate?: Promise<void>) {
+  const queries: string[] = [];
+  const pool = createGitHubClientPool({
+    fetch: (async (_input: string, init: RequestInit) => {
+      const body = JSON.parse(typeof init.body === 'string' ? init.body : '{}') as { query: string };
+      queries.push(body.query);
+      if (gate) await gate;
+      const aliases = [...body.query.matchAll(/\bp(\d+): repository/g)].map((match) => Number(match[1]));
+      const data = Object.fromEntries(aliases.map((i) => [`p${i}`, { pullRequest: respond(i) }]));
+      return new Response(JSON.stringify({ data: { rateLimit: { cost: 1 }, ...data } }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch,
+  });
+  const client = pool.client('one');
+  const cache = githubCacheFor(client);
+  assert.ok(cache);
+  return { queries, client, cache };
+}
+
+void test('preload saves cores from one query for 25 PRs', async () => {
+  const h = preloadHarness(() => pull());
+  const status = service(() => savedAt);
+  const targets = Array.from({ length: 25 }, (_, i) => ({ url: pullUrl(i + 1), headSha: head }));
+  assert.equal((await status.preload(h.client, targets)).length, 25);
+  assert.equal(h.queries.length, 1);
+  assert.match(h.queries[0], /commits \{ totalCount \}/);
+  await assert.rejects(status.preload(h.client, [...targets, { url: pullUrl(26), headSha: head }]));
+  h.cache.set(`pr-checks:v1:${pullUrl(25)}@${head}`, { ...checks(head), url: pullUrl(25) });
+  h.cache.set(`queue-signals:v3:${pullUrl(25)}@${head}`, { ...signals(head), url: pullUrl(25) });
+  const saved = await status.cached(h.client, pullUrl(25), head);
+  assert.ok(saved);
+  assert.deepEqual(
+    {
+      labels: saved.labels,
+      isDraft: saved.isDraft,
+      baseBranch: saved.baseBranch,
+      commitCount: saved.commitCount,
+      requestedReviewers: saved.requestedReviewers,
+      requestedTeams: saved.requestedTeams,
+      autoMerge: saved.autoMerge,
+      milestone: saved.milestone,
+      reviewSummary: saved.reviewSummary,
+    },
+    {
+      labels: ['bug', 'ui'],
+      isDraft: true,
+      baseBranch: 'release',
+      commitCount: 7,
+      requestedReviewers: ['maya', 'helper'],
+      requestedTeams: ['Platform'],
+      autoMerge: { method: 'squash' },
+      milestone: { title: 'v2', dueOn: null },
+      reviewSummary: { approved: 1, changesRequested: 0, commented: 1 },
+    }
+  );
+  assert.equal(saved.mergeable, null, 'A preloaded copy never reports mergeability');
+  assert.equal(saved.ciConclusion, 'failure');
+  assert.deepEqual(status.saved(h.client, pullUrl(25)), {
+    headSha: head,
+    baseSha: 'c'.repeat(40),
+    checkedAt: savedAt,
+    revalidate: false,
+  });
+});
+
+void test('preload skips a head mismatch', async () => {
+  const h = preloadHarness((i) => (i === 0 ? pull({ headRefOid: otherHead }) : i === 1 ? null : pull()));
+  const status = service(() => savedAt);
+  const saved = await status.preload(h.client, [1, 2, 3].map((n) => ({ url: pullUrl(n), headSha: head })));
+  assert.deepEqual(saved, [pullUrl(3)]);
+  assert.equal(status.saved(h.client, pullUrl(1)), undefined, 'A copy for another head is never saved');
+  assert.equal(status.saved(h.client, pullUrl(2)), undefined);
+});
+
+void test('preload never overwrites a newer copy or saves after a write', async () => {
+  const h = preloadHarness(() => pull());
+  h.cache.set(`pr-status:v1:${pullUrl(1)}`, { ...saved(), url: pullUrl(1), checkedAt: savedAt + 1 });
+  assert.deepEqual(await service(() => savedAt).preload(h.client, [{ url: pullUrl(1), headSha: head }]), []);
+  assert.equal(service(() => savedAt).saved(h.client, pullUrl(1))?.checkedAt, savedAt + 1);
+
+  let release!: () => void;
+  const gated = preloadHarness(
+    () => pull(),
+    new Promise<void>((resolve) => (release = resolve))
+  );
+  const status = service(() => savedAt);
+  const loading = status.preload(gated.client, [{ url: pullUrl(1), headSha: head }]);
+  await new Promise((resolve) => setImmediate(resolve));
+  // A write invalidates the account's cache while the query is in flight.
+  gated.cache.invalidate(() => false);
+  release();
+  assert.deepEqual(await loading, []);
+  assert.equal(status.saved(gated.client, pullUrl(1)), undefined);
+});
+
+void test('cached waits briefly for an in-flight preload', async () => {
+  let release!: () => void;
+  const h = preloadHarness(
+    () => pull(),
+    new Promise<void>((resolve) => (release = resolve))
+  );
+  const status = service(() => savedAt);
+  const loading = status.preload(h.client, [{ url: pullUrl(1), headSha: head }]);
+  const opened = status.cached(h.client, pullUrl(1), head);
+  setTimeout(release, 20);
+  assert.ok(await opened, 'A click during a hover prefetch opens from the new saved copy');
+  await loading;
+
+  const stuck = preloadHarness(() => pull(), new Promise<void>(() => {}));
+  void status.preload(stuck.client, [{ url: pullUrl(1), headSha: head }]);
+  const started = Date.now();
+  assert.equal(await status.cached(stuck.client, pullUrl(1), head), undefined);
+  const waited = Date.now() - started;
+  assert.ok(waited >= 240 && waited < 1000, `Waited ${waited} ms`);
+});
+
+void test('summarizeReviews matches the REST reduction', async () => {
+  const reviews = [
+    { user: { login: 'ana' }, state: 'CHANGES_REQUESTED' },
+    { user: { login: 'ana' }, state: 'APPROVED' },
+    { user: { login: 'ana' }, state: 'DISMISSED' },
+    { user: { login: 'li' }, state: 'COMMENTED' },
+    { user: { login: 'li' }, state: 'PENDING' },
+    { user: { login: 'kai' }, state: 'CHANGES_REQUESTED' },
+    { user: null, state: 'APPROVED' },
+  ];
+  const octokit = { pulls: { listReviews: () => Promise.resolve({ data: reviews }) } } as unknown as Parameters<
+    typeof getReviewStatus
+  >[0];
+  const rest = await getReviewStatus(octokit, 'o', 'r', 1);
+  assert.deepEqual(rest, { approved: 2, changesRequested: 1, commented: 1 });
+  assert.deepEqual(
+    summarizeReviews(reviews.map((review) => ({ login: review.user?.login ?? 'unknown', state: review.state }))),
+    rest
+  );
 });

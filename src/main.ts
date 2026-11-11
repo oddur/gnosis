@@ -17,6 +17,8 @@ import { createWorkflowGraphPreloader } from './workflow-graph-preloader';
 import { readWorkflowRuns, readWorkflowGraph } from './workflow-graph-service';
 import type { WorkflowGraphInput } from '../lib/workflow-graph';
 import { createCheckDetailsPreloader } from './check-details-preloader';
+import { createPrOpenPreloader, needsRefresh, queuePriority, intentPriority } from './pr-open-preloader';
+import { parseOpenTargets, type OpenTarget } from '../lib/pr-open-targets';
 import { normalizeRepositorySettings, normalizeBriefingLimit } from '../lib/repository-settings';
 import { normalizeEffort } from '../lib/effort';
 import { openReviewCheckpoint, reviewFingerprint, collectReviewTopics } from './review-checkpoint';
@@ -38,8 +40,8 @@ import { createHarnessEnvironmentStore } from './harness-environment-store';
 import { setHarnessEnvironmentLoader } from '../lib/providers/environment';
 import type { EnvironmentVariable } from '../lib/harness-environment';
 import { createChatRuns, waitForChatContext } from './chat-runs';
-import { readPrChecks, readPrChecksBatch, readCheckDetails, cachedCheckDetails, withCachedCheckDetails, readCheckLog, rerunChecks } from './pr-checks-service';
-import type { CheckTarget, CheckSelection, ChecksOptions } from '../lib/pr-checks';
+import { readPrChecks, readPrChecksBatch, readCheckDetails, cachedCheckDetails, withCachedCheckDetails, readCheckLog, rerunChecks, savedPrChecks } from './pr-checks-service';
+import { checkGroup, type CheckTarget, type CheckSelection, type ChecksOptions } from '../lib/pr-checks';
 import { createMarkdownReviewService } from './markdown-review-service';
 import type { MarkdownReviewRequest } from '../lib/markdown-review';
 import { fileClassifications, onClassificationUpdate } from './file-classification-service';
@@ -66,7 +68,7 @@ import { createLocalCloneStore } from './local-clone-store';
 import { localClones } from '../lib/local-clone';
 import type { FileChatRequest, PrFileRequest } from '../lib/pr-changes';
 import { createGitHubProfileService } from './github-profile-service';
-import { createQueueSignalsService, cachedQueueSignals } from './queue-signals-service';
+import { createQueueSignalsService, cachedQueueSignals, savedQueueSignals } from './queue-signals-service';
 import type { QueueSignalRequest, QueueSignalOptions, QueueSignals } from '../lib/queue-signals';
 import { githubCachedResponses } from '../lib/github-client';
 import { createWorkerCommandSearchService } from './command-search-service';
@@ -2921,6 +2923,85 @@ function updateCheckDetailTargets() {
     .filter(subscription => subscription.token === cachedToken && subscription.interest.kind === 'checks')
     .flatMap(subscription => subscription.interest.targets.flatMap(target => target.headSha ? [{ url: target.url, headSha: target.headSha }] : [])));
 }
+// Failing checks of a saved list whose details are missing or out of date. Hover prefetch reads at most five.
+function checksNeedingDetails(target: OpenTarget) {
+  const client = getGitHubClient(cachedToken);
+  const snapshot = savedPrChecks(client, target)?.value;
+  if (snapshot?.headSha !== target.headSha) return [];
+  return snapshot.checks
+    .filter(check => check.kind === 'check' && checkGroup(check) === 'attention' &&
+      !cachedCheckDetails(client, { url: target.url, headSha: target.headSha, id: check.id }, check, true))
+    .slice(0, 5);
+}
+// Saves status, signals, check summaries and discussions before a queue PR is opened. Queue tiers
+// spend only the automatic GraphQL budget; hover and focus prefetch run unpaced at foreground priority.
+const prOpenPreload = createPrOpenPreloader({
+  canRun: () => !!cachedToken && syncEnabled() && !githubClients.backoff(cachedToken, true, ['graphql']),
+  canIntent: () => !!cachedToken && syncEnabled() && !githubClients.backoff(cachedToken, false, ['graphql']),
+  usage: () => githubClients.automaticUsage(cachedToken, 'graphql'),
+  idleSeconds: () => powerMonitor.getSystemIdleTime(),
+  need: (target, kind) => {
+    const client = getGitHubClient(cachedToken), now = Date.now();
+    if (kind === 'details') return checksNeedingDetails(target).length > 0;
+    if (kind === 'status') return needsRefresh(kind, prStatus.saved(client, target.url), target, now);
+    if (kind === 'threads') return needsRefresh(kind, reviewThreads.saved(client, target.url), target, now);
+    if (kind === 'signals') {
+      const saved = savedQueueSignals(client, target);
+      return needsRefresh(kind, saved && { headSha: saved.value.headSha, checkedAt: saved.value.checkedAt, revalidate: saved.revalidate }, target, now);
+    }
+    const saved = savedPrChecks(client, target);
+    return needsRefresh(kind, saved && { headSha: saved.value.headSha, checkedAt: saved.value.checkedAt, revalidate: saved.revalidate,
+      running: saved.value.checks.some(check => check.status !== 'completed') }, target, now);
+  },
+  status: (targets, intent) => {
+    const client = getGitHubClient(cachedToken);
+    return (intent ? intentPriority : queuePriority)(() => prStatus.preload(client, targets));
+  },
+  signals: (targets, intent) => {
+    const client = getGitHubClient(cachedToken), requests = targets.map(({ url, headSha }) => ({ url, headSha }));
+    return (intent ? intentPriority : queuePriority)(() => getQueueSignals(client, requests, { active: intent }));
+  },
+  checks: (targets, intent) => {
+    const client = getGitHubClient(cachedToken), requests = targets.map(({ url, headSha }) => ({ url, headSha }));
+    return (intent ? intentPriority : queuePriority)(() => readPrChecksBatch(client, requests, { force: true }));
+  },
+  threads: urls => {
+    const client = getGitHubClient(cachedToken);
+    return queuePriority(() => reviewThreads.preload(client, urls));
+  },
+  threadsFull: (url, intent) => {
+    const client = getGitHubClient(cachedToken);
+    return (intent ? intentPriority : queuePriority)(() => reviewThreads.list(client, url));
+  },
+  checkDetails: target => {
+    const client = getGitHubClient(cachedToken);
+    return intentPriority(() => Promise.all(checksNeedingDetails(target).map(check =>
+      readCheckDetails(client, { url: target.url, headSha: target.headSha, id: check.id }))));
+  },
+});
+const prOpenOwners = new Set<number>();
+function prOpenOwner(event: Electron.IpcMainEvent) {
+  if (event.senderFrame !== event.sender.mainFrame) return;
+  const owner = event.sender.id;
+  if (!prOpenOwners.has(owner)) {
+    prOpenOwners.add(owner);
+    event.sender.once('destroyed', () => { prOpenOwners.delete(owner); prOpenPreload.removeOwner(String(owner)); });
+  }
+  return String(owner);
+}
+ipcMain.on('pr-open-preload', (event, raw: unknown) => {
+  const owner = prOpenOwner(event), targets = parseOpenTargets(raw, 200);
+  if (!owner || !targets) return;
+  prOpenPreload.setTargets(owner, targets);
+  if (cachedToken && syncEnabled()) void prOpenPreload.tick();
+});
+ipcMain.on('pr-open-intent', (event, raw: unknown) => {
+  const owner = prOpenOwner(event);
+  if (!owner) return;
+  if (raw === null) { prOpenPreload.setIntent(owner, null); return; }
+  const targets = parseOpenTargets(raw, 5);
+  if (targets) prOpenPreload.setIntent(owner, targets);
+});
 function publishGitHubUpdates(updates: GitHubSyncUpdate[]) {
   if (!cachedLogin) return;
   for (const update of updates) {
@@ -3047,6 +3128,7 @@ async function tickGitHubSync() {
   if (token !== syncCredential) {
     workflowGraphPreload.setTarget(undefined);
     checkDetailsPreload.clear();
+    prOpenPreload.clear();
     updateCheckDetailTargets();
     syncCredential = token; syncMetadata.clear(); syncSignals.clear(); discoveryDue = 0;
     for (const subscription of syncSubscriptions.values()) if (!subscription.owner.isDestroyed())
@@ -3059,6 +3141,7 @@ async function tickGitHubSync() {
   void githubSync.tick();
   void workflowGraphPreload.tick();
   void checkDetailsPreload.tick();
+  void prOpenPreload.tick();
   prMergeMonitor.tick();
   if (discoveryPending || Date.now() < discoveryDue) return;
   discoveryPending = true;

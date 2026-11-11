@@ -27,7 +27,7 @@ Each credential has one shared network scheduler with three priorities:
 | Priority | Work |
 | --- | --- |
 | Interactive | Opening PR details, Changes, Commits, files, comments, images, profiles, explicit searches and refreshes, file questions, task admission/retry, and submitting feedback |
-| Foreground | AI context requests and automatic status checks for the selected PR |
+| Foreground | AI context requests, automatic status checks for the selected PR, and hover and focus prefetch |
 | Background | Preloading, discovery, optional file history, automatic briefings, and status checks for other visible queue rows |
 
 Up to six requests run at the same time for each credential. Foreground and background work together use at most four of these slots, and background work uses at most two. Two slots are therefore always kept for interactive work. Interactive work gets the next free slot, then foreground work. Background work starts only when no higher tier has a queued request.
@@ -39,6 +39,10 @@ Promoted requests can use the allowance reserved for interaction. They cannot by
 Fresh HTTP cache hits bypass this scheduler and remain available during network delays and backoff.
 
 PR status and review discussions open from the last saved copy when one exists for the same head revision and is less than 24 hours old. Gnosis then refreshes it at foreground priority, outside the automatic budget, and replaces it in place. Saved copies never report mergeability, and merge readiness older than two minutes is shown as out of date. Writes, explicit refreshes and "Update changes" always read GitHub first. If the refresh fails or GitHub is rate limited, the saved copy stays with its last-checked time and an error.
+
+Gnosis also fills these saved copies ahead of time. For the first 100 PRs in priority order it saves status and review summaries, 25 PRs per GraphQL query. For the first 40 it also saves check summaries and review discussions, 5 PRs per query. This work runs at background priority and uses only the GraphQL automatic budget. It stops when that budget is half spent, when the window is hidden, after five minutes without input, and during any GitHub backoff. A saved copy is refreshed when the PR's revision or update time changes, when its activity signal changes, or after six hours.
+
+Resting the pointer or keyboard focus on a queue row for 150 ms moves that PR to the front of preparation. If its saved copies are missing or out of date, Gnosis reads them at foreground priority, outside the automatic budget. At most one such read runs at a time, and at most three start in quick succession, then one every five seconds. These reads never use the two interactive slots.
 
 Explanation preparation reports completed files, including both required sides, as “Loading files: N/M”. Cached contents use the same progress path. A rate-limited file read retains its completed work, shows the retry time in Activity, and resumes after the deadline. Cancellation remains available while waiting.
 

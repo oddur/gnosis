@@ -78,6 +78,11 @@ export function cachedQueueSignals(client: Octokit, requests: QueueSignalRequest
   const cache = githubCacheFor(client);
   return requests.flatMap(request => cache?.get(`queue-signals:v3:${queueSignalKey(request)}`, isSignals)?.value ?? []);
 }
+/** Local data only. The saved signals for one PR revision and whether a write marked them stale. */
+export function savedQueueSignals(client: Octokit, request: QueueSignalRequest) {
+  const saved = githubCacheFor(client)?.get(`queue-signals:v3:${queueSignalKey(request)}`, isSignals);
+  return saved && { value: saved.value, revalidate: saved.revalidate };
+}
 /** Visible-row reads, batched across repositories, with credential-scoped snapshots and backoff. */
 export function createQueueSignalsService(now = Date.now, revisionChanged?: (client: Octokit, url: string, headSha: string) => void) {
   const accounts = new WeakMap<Octokit, { retryAt: number; pending: Map<string, GitHubWork<QueueSignals[]>> }>();

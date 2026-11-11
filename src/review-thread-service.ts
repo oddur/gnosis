@@ -30,6 +30,24 @@ interface Page<T> {
   nodes: T[];
   pageInfo: { hasNextPage: boolean; endCursor: string | null };
 }
+const requestedReviewerFields = 'requestedReviewer { ... on User { login } }';
+/** The first page of a PR's discussion. `include` limits the feedback summary to the first page of a paginated read. */
+const pullFields = (include: string, after: string) =>
+  `headRefOid baseRefOid viewerCanUpdate state comments(first:50)${include} { nodes { ${bodyFields} } ${pageFields} } reviews(first:50)${include} { nodes { ${reviewFields} } ${pageFields} } reviewRequests(first:100)${include} { nodes { ${requestedReviewerFields} } ${pageFields} } reviewThreads(first:50${after}) { nodes { ${threadFields} } ${pageFields} }`;
+function feedbackOf(
+  pr: FeedbackPage,
+  comments: GitHubReviewComment[],
+  reviews: FeedbackReview[],
+  requests: ReviewRequest[]
+): PrFeedback {
+  return {
+    comments,
+    reviews,
+    requestedReviewers: requests.flatMap((r) => (r.requestedReviewer?.login ? [r.requestedReviewer.login] : [])),
+    viewerCanUpdate: pr.viewerCanUpdate === true,
+    state: pr.state ?? 'OPEN',
+  };
+}
 type ThreadNode = Omit<GitHubReviewThread, 'comments'> & { comments: Page<GitHubReviewComment> };
 interface Pull extends FeedbackPage {
   headRefOid: string;
@@ -127,7 +145,7 @@ export function createReviewThreadService(now = Date.now) {
     do {
       const data: { repository: { pullRequest: Pull | null } | null } = await graphql(
         client,
-        `query ReviewThreads($owner:String!,$repo:String!,$number:Int!,$cursor:String,$summary:Boolean!) { rateLimit { cost } repository(owner:$owner,name:$repo) { pullRequest(number:$number) { headRefOid baseRefOid viewerCanUpdate state comments(first:50) @include(if:$summary) { nodes { ${bodyFields} } ${pageFields} } reviews(first:50) @include(if:$summary) { nodes { ${reviewFields} } ${pageFields} } reviewRequests(first:100) @include(if:$summary) { nodes { requestedReviewer { ... on User { login } } } ${pageFields} } reviewThreads(first:50,after:$cursor) { nodes { ${threadFields} } ${pageFields} } } } }`,
+        `query ReviewThreads($owner:String!,$repo:String!,$number:Int!,$cursor:String,$summary:Boolean!) { rateLimit { cost } repository(owner:$owner,name:$repo) { pullRequest(number:$number) { ${pullFields(' @include(if:$summary)', ',after:$cursor')} } } }`,
         { ...variables, cursor, summary: cursor === null }
       );
       const pr = data.repository?.pullRequest;
@@ -152,15 +170,12 @@ export function createReviewThreadService(now = Date.now) {
           }
           return all;
         }
-        feedback = {
-          comments: await collect(pr.comments, 'comments', bodyFields),
-          reviews: await collect(pr.reviews, 'reviews', reviewFields),
-          requestedReviewers: (
-            await collect(pr.reviewRequests, 'reviewRequests', 'requestedReviewer { ... on User { login } }')
-          ).flatMap((r) => (r.requestedReviewer?.login ? [r.requestedReviewer.login] : [])),
-          viewerCanUpdate: pr.viewerCanUpdate === true,
-          state: pr.state ?? 'OPEN',
-        };
+        feedback = feedbackOf(
+          pr,
+          await collect(pr.comments, 'comments', bodyFields),
+          await collect(pr.reviews, 'reviews', reviewFields),
+          await collect(pr.reviewRequests, 'reviewRequests', requestedReviewerFields)
+        );
       }
       if (revision && (revision.headSha !== pr.headRefOid || revision.baseSha !== pr.baseRefOid))
         throw new Error('The PR changed while loading discussions. Refresh comments to try again.');
@@ -185,6 +200,21 @@ export function createReviewThreadService(now = Date.now) {
       cursor = nextCursor(pr.reviewThreads, cursor);
     } while (cursor);
     return { ...revision, threads, checkedAt: now(), ...(feedback ? { feedback } : {}) };
+  }
+  /** Keeps the discussion in memory and on disk, unless a write or account change happened since `version`. */
+  function remember(client: Octokit, prUrl: string, entry: Entry, result: GitHubReviewThreads, version: number | undefined) {
+    const cache = cacheFor(client);
+    const persistent = githubCacheFor(client);
+    entry.value = result;
+    entry.expires = now() + 60_000;
+    entry.version = version;
+    if (persistent?.version() === version)
+      persistent?.set(`review-threads:${prUrl}`, { url: prUrl, value: result, expires: entry.expires } satisfies SavedThreads);
+    while (cache.size > 50) {
+      const oldest = cache.keys().next().value;
+      if (oldest === undefined) break;
+      cache.delete(oldest);
+    }
   }
   const service = {
     invalidate(client: Octokit, prUrl: string) {
@@ -271,22 +301,83 @@ export function createReviewThreadService(now = Date.now) {
       current.pending = createGitHubWork(() => fetchThreads(client, prUrl));
       try {
         const result = await current.pending.promise;
-        if (cache.get(prUrl) === current) {
-          current.value = result;
-          current.expires = now() + 60_000;
-          current.version = version;
-          if (persistent?.version() === version) persistent?.set(key, { url: prUrl, value: result, expires: current.expires } satisfies SavedThreads);
-          while (cache.size > 50) {
-            const oldest = cache.keys().next().value;
-            if (oldest === undefined) break;
-            cache.delete(oldest);
-          }
-        }
+        if (cache.get(prUrl) === current) remember(client, prUrl, current, result, version);
         return structuredClone(result);
       } finally {
         current.pending = undefined;
         if (!current.value && cache.get(prUrl) === current) cache.delete(prUrl);
       }
+    },
+    /** Local data only. The saved record's identity and age, for deciding whether to refresh it. */
+    saved(client: Octokit, prUrl: string) {
+      const saved = githubCacheFor(client)?.get(`review-threads:${prUrl}`, isSavedThreads);
+      const value = saved?.value.value;
+      if (!saved || typeof value?.checkedAt !== 'number') return;
+      return { headSha: value.headSha, baseSha: value.baseSha, checkedAt: value.checkedAt, revalidate: saved.revalidate };
+    },
+    /**
+     * Saves the discussions of up to five PRs from one query, exactly as `list` would. A PR with more
+     * than one page of threads, replies or feedback is reported as incomplete and nothing is saved for it.
+     * PRs with a read in flight are left to that read.
+     */
+    async preload(client: Octokit, prUrls: string[]): Promise<{ saved: string[]; incomplete: string[] }> {
+      if (prUrls.length > 5) throw new Error('Preload at most five PR discussions.');
+      const cache = cacheFor(client);
+      const targets = [...new Set(prUrls)]
+        .map((url) => ({ url, ...parseUrl(url) }))
+        .filter(({ url }) => !cache.get(url)?.pending);
+      if (!targets.length) return { saved: [], incomplete: [] };
+      const persistent = githubCacheFor(client);
+      const version = persistent?.version();
+      const checkedAt = now();
+      const query = `query { rateLimit { cost } ${targets
+        .map(
+          ({ owner, repo, number }, i) =>
+            `p${i}: repository(owner:${JSON.stringify(owner)},name:${JSON.stringify(repo)}) { pullRequest(number:${number}) { ${pullFields('', '')} } }`
+        )
+        .join(' ')} }`;
+      const response = await client.request('POST /graphql', { query });
+      const result = response.data as {
+        data?: Record<string, { pullRequest: Pull | null } | null> | null;
+        errors?: { message: string; path?: (string | number)[] }[];
+      };
+      const failed = new Set<string>();
+      for (const error of result.errors ?? []) {
+        if (typeof error.path?.[0] !== 'string') throw new Error(error.message);
+        failed.add(error.path[0]);
+      }
+      if (!result.data) throw new Error('GitHub returned no review discussion data.');
+      const saved: string[] = [];
+      const incomplete: string[] = [];
+      for (const [i, { url }] of targets.entries()) {
+        const pr = failed.has(`p${i}`) ? undefined : result.data[`p${i}`]?.pullRequest;
+        if (!pr?.comments || !pr.reviews || !pr.reviewRequests) continue;
+        if (
+          [pr.comments, pr.reviews, pr.reviewRequests, pr.reviewThreads].some((page) => page.pageInfo.hasNextPage) ||
+          pr.reviewThreads.nodes.some((thread) => thread.comments.pageInfo.hasNextPage)
+        ) {
+          incomplete.push(url);
+          continue;
+        }
+        const value: GitHubReviewThreads = {
+          headSha: pr.headRefOid,
+          baseSha: pr.baseRefOid,
+          threads: pr.reviewThreads.nodes.map((thread) => ({ ...thread, comments: thread.comments.nodes })),
+          checkedAt,
+          feedback: feedbackOf(pr, pr.comments.nodes, pr.reviews.nodes, pr.reviewRequests.nodes),
+        };
+        // A read that started or finished meanwhile, or a write during this query, wins.
+        const existing = cache.get(url);
+        if (existing?.pending || (existing?.value?.checkedAt ?? 0) > checkedAt) continue;
+        if ((service.saved(client, url)?.checkedAt ?? 0) > checkedAt) continue;
+        if (persistent?.version() !== version) continue;
+        const entry: Entry = { expires: 0 };
+        cache.delete(url);
+        cache.set(url, entry);
+        remember(client, url, entry, value, version);
+        saved.push(url);
+      }
+      return { saved, incomplete };
     },
     async feedbackAction(client: Octokit, req: FeedbackAction): Promise<void> {
       const { owner, repo, number: pull_number } = parseUrl(req.prUrl);

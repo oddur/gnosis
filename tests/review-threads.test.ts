@@ -417,3 +417,88 @@ void test('a revalidation and an explicit refresh share one fetch', async () => 
   assert.deepEqual(a, b);
   assert.equal(calls.length, 1);
 });
+
+const prUrl = (n: number) => `https://github.com/o/r/pull/${n}`;
+/** A complete first page of discussion for one aliased PR. */
+const firstPage = (overrides: Record<string, unknown> = {}) => ({
+  headRefOid: 'head',
+  baseRefOid: 'base',
+  viewerCanUpdate: true,
+  state: 'OPEN',
+  comments: page([]),
+  reviews: page([]),
+  reviewRequests: page([{ requestedReviewer: { login: 'maya' } }]),
+  reviewThreads: page([{ ...thread, comments: page([comment]) }]),
+  ...overrides,
+});
+const aliased = (query: string, respond: (alias: number) => unknown) =>
+  response({
+    data: Object.fromEntries(
+      [...query.matchAll(/\bp(\d+): repository/g)].map((match) => [
+        `p${match[1]}`,
+        { pullRequest: respond(Number(match[1])) },
+      ])
+    ),
+  });
+
+void test('preload saves complete first pages', async () => {
+  const h = harness((query) => aliased(query, () => firstPage()));
+  const service = createReviewThreadService(() => 1_000);
+  const client = h.pool.client('one');
+  const result = await service.preload(client, [prUrl(1), prUrl(2)]);
+  assert.deepEqual(result, { saved: [prUrl(1), prUrl(2)], incomplete: [] });
+  assert.equal(h.calls.length, 1, 'One query for both PRs');
+  const opened = service.stale(client, prUrl(2));
+  assert.ok(opened);
+  assert.equal(opened.threads[0].comments[0].id, 'C1');
+  assert.deepEqual(opened.feedback?.requestedReviewers, ['maya']);
+  assert.equal((await service.list(client, prUrl(1))).threads.length, 1);
+  assert.equal(h.calls.length, 1, 'A preloaded discussion opens without a request');
+  assert.deepEqual(service.saved(client, prUrl(1)), { headSha: 'head', baseSha: 'base', checkedAt: 1_000, revalidate: false });
+  await assert.rejects(service.preload(client, [1, 2, 3, 4, 5, 6].map(prUrl)));
+});
+
+void test('preload reports paginated PRs as incomplete', async () => {
+  const h = harness((query) =>
+    aliased(query, (i) =>
+      [
+        firstPage({ reviewThreads: page([{ ...thread, comments: page([comment]) }], 'more-threads') }),
+        firstPage({ reviewThreads: page([{ ...thread, comments: page([comment], 'more-replies') }]) }),
+        firstPage({ comments: page([], 'more-comments') }),
+        firstPage(),
+      ][i]
+    )
+  );
+  const service = createReviewThreadService(() => 1_000);
+  const client = h.pool.client('one');
+  const result = await service.preload(client, [1, 2, 3, 4].map(prUrl));
+  assert.deepEqual(result, { saved: [prUrl(4)], incomplete: [1, 2, 3].map(prUrl) });
+  for (const n of [1, 2, 3]) assert.equal(service.stale(client, prUrl(n)), undefined, 'Nothing partial is saved');
+});
+
+void test('preload leaves pending reads alone', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const queries: string[] = [];
+  const pool = createGitHubClientPool({
+    fetch: (async (_url: string, init: RequestInit) => {
+      const query = (JSON.parse(typeof init.body === 'string' ? init.body : '{}') as { query: string }).query;
+      queries.push(query);
+      if (query.includes('ReviewThreads')) {
+        await gate;
+        return response(pr(page([{ ...thread, comments: page([comment]) }])));
+      }
+      return aliased(query, () => firstPage());
+    }) as typeof fetch,
+  });
+  const service = createReviewThreadService(() => 1_000);
+  const client = pool.client('one');
+  const reading = service.list(client, prUrl(1));
+  const batches = () => queries.filter((query) => query.includes(': repository('));
+  assert.deepEqual(await service.preload(client, [prUrl(1)]), { saved: [], incomplete: [] });
+  assert.equal(batches().length, 0, 'No query for a PR whose read is in flight');
+  assert.deepEqual(await service.preload(client, [prUrl(1), prUrl(2)]), { saved: [prUrl(2)], incomplete: [] });
+  assert.deepEqual(batches().map((query) => [...query.matchAll(/pullRequest\(number:(\d+)\)/g)].map((m) => m[1])), [['2']]);
+  release();
+  await reading;
+});

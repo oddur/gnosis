@@ -360,11 +360,13 @@ export async function getReviewStatus(
     per_page: 100,
   });
 
-  // Keep only the latest review per reviewer
+  return summarizeReviews(reviews.map((r) => ({ login: r.user?.login ?? 'unknown', state: r.state })));
+}
+
+/** Counts each reviewer's latest submitted review. Dismissed and pending reviews never replace an earlier one. */
+export function summarizeReviews(reviews: { login: string; state: string }[]): ReviewSummary {
   const latestByUser = new Map<string, string>();
-  for (const r of reviews) {
-    const login = r.user?.login ?? 'unknown';
-    const state = r.state;
+  for (const { login, state } of reviews) {
     if (state === 'DISMISSED' || state === 'PENDING') continue;
     latestByUser.set(login, state);
   }

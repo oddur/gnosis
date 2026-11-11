@@ -219,6 +219,21 @@ void test('prepared downloads survive memory eviction and restart, including fil
   } finally { await f.cleanup(); }
 });
 
+void test('commit-pinned attribute files survive memory eviction so classification does not refetch them', async () => {
+  const f = fixture();
+  try {
+    const cache = await f.open(), account = cache.scope(scope);
+    const key = `attributes:v1:o/r:${'a'.repeat(40)}:.gitattributes`;
+    account.set(key, 'linguist');
+    // Saved PR status and discussion snapshots share the 2,000-entry memory bound.
+    for (let i = 0; i < 2010; i++) account.set(`pr-status:v1:${i}`, `status-${i}`);
+    assert.equal(account.get(key, valid), undefined);
+    assert.equal(await account.getPrepared(key, valid), 'linguist');
+    await cache.close();
+    assert.equal(await (await f.open()).scope(scope).getPrepared(key, valid), 'linguist');
+  } finally { await f.cleanup(); }
+});
+
 void test('disk cache limits evict oldest prepared content and apply immediately', async () => {
   const f = fixture(), storage = createCacheStorage();
   try {

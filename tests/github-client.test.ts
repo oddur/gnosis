@@ -906,3 +906,18 @@ void test('a secondary limit is written without waiting for the debounce', async
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+void test('automaticUsage reports spent and limit', async () => {
+  const h = harness(() => json({ data: { rateLimit: { cost: 3 } } }, 200, {
+    'x-ratelimit-resource': 'graphql', 'x-ratelimit-limit': '5000', 'x-ratelimit-remaining': '4990', 'x-ratelimit-reset': '9999999',
+  }));
+  const client = h.pool.client('one');
+  assert.deepEqual(h.pool.automaticUsage('one', 'graphql'), { spent: 0, limit: 1000 });
+  await withGitHubPriority('background', () => client.request('POST /graphql', { query: 'query { rateLimit { cost } }' }));
+  assert.deepEqual(h.pool.automaticUsage('one', 'graphql'), { spent: 3, limit: 1000 }, 'GraphQL spend is in points');
+  await client.request('POST /graphql', { query: 'query { rateLimit { cost } viewer { login } }' });
+  assert.equal(h.pool.automaticUsage('one', 'graphql').spent, 3, 'Requested reads are not automatic');
+  assert.equal(h.pool.automaticUsage('two', 'graphql').spent, 0, 'Each credential has its own budget');
+  h.advance(3_600_001);
+  assert.equal(h.pool.automaticUsage('one', 'graphql').spent, 0, 'A new window starts empty');
+});

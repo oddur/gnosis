@@ -27,6 +27,16 @@ export async function readPrChecks(
   return (await readPrChecksBatch(client, [input], options))[0];
 }
 
+/** Local data only. The saved check list for one PR revision and whether a write marked it stale. */
+export function savedPrChecks(client: Octokit, input: CheckTarget) {
+  const saved = githubCacheFor(client)?.get(
+    `pr-checks:v1:${checkKey(input)}`,
+    (v): v is PrChecks =>
+      !!v && typeof v === 'object' && 'checks' in v && Array.isArray(v.checks) && 'checkedAt' in v && typeof v.checkedAt === 'number'
+  );
+  return saved && { value: saved.value, revalidate: saved.revalidate };
+}
+
 export async function readPrChecksBatch(
   client: Octokit,
   inputs: CheckTarget[],
