@@ -30,6 +30,7 @@ import type { AppLocation } from '../lib/navigation-history';
 import { ReviewWorkspace, type WorkspaceController } from './ReviewWorkspace';
 import './workspace-tabs.css';
 import { useWorkspaceListings } from '../lib/use-workspace-listings';
+import { workbenchStore } from '../lib/workbench-store';
 import { workspaceTabTitle } from '../lib/workspace-listings';
 
 const newTab = (target?: WorkspaceTarget) => newWorkspaceTab(crypto.randomUUID(), target);
@@ -96,6 +97,7 @@ export function App() {
       if (currentAccount.current === key) return;
       if (currentAccount.current) persist(currentAccount.current, latest.current);
       currentAccount.current = key;
+      workbenchStore.reset(key);
       recentlyViewed.scope(key);
       let next: WorkspaceTabsState;
       try {
