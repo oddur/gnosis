@@ -3288,9 +3288,14 @@ function runInspection<T>(event: Electron.IpcMainInvokeEvent, options: Inspectio
 ipcMain.handle('cancel-inspection', (event, id: string) => {
   if (event.senderFrame === event.sender.mainFrame && typeof id === 'string') inspectionRequests.cancel(event.sender.id, id);
 });
-const withKnownMember = (url: string, options: InspectionLoadOptions): InspectionLoadOptions => {
-  const member = options.revision && workbench.knownMember(url);
-  return member && options.revision && changesRevision(member) === changesRevision(options.revision) ? { ...options, revision: member } : options;
+/**
+ * The queue member describes the revision a read can start from. "Update changes" starts from the
+ * newest known member, and the service confirms it against GitHub before using anything it read.
+ */
+const withKnownMember = (url: string, refresh: boolean, options: InspectionLoadOptions): InspectionLoadOptions => {
+  const member = (refresh || options.revision) && workbench.knownMember(url);
+  if (!member) return options;
+  return refresh || (options.revision && changesRevision(member) === changesRevision(options.revision)) ? { ...options, revision: member } : options;
 };
 ipcMain.handle('stack-changes', (event, subject: ReviewSubject, refresh: boolean, options: InspectionLoadOptions = {}) =>
   withGitHubPriority(options.background ? 'background' : 'interactive', () => runInspection(event, options, async signal => {
@@ -3300,11 +3305,11 @@ ipcMain.handle('stack-changes', (event, subject: ReviewSubject, refresh: boolean
 ipcMain.handle('pr-changes', (event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) =>
   withGitHubPriority(options.background ? 'background' : 'interactive', () => runInspection(event, options, async signal => {
     const client = changesClient();
-    return classifySnapshot(client, await prChanges.manifest(client, url, refresh, withKnownMember(url, options), signal));
+    return classifySnapshot(client, await prChanges.manifest(client, url, refresh, withKnownMember(url, refresh, options), signal));
   })));
 ipcMain.handle('pr-commits', (event, url: string, refresh: boolean, options: InspectionLoadOptions = {}) =>
   withGitHubPriority(options.background ? 'background' : 'interactive', () => runInspection(event, options,
-    signal => prCommits.list(changesClient(), url, refresh, withKnownMember(url, options), signal))));
+    signal => prCommits.list(changesClient(), url, refresh, withKnownMember(url, refresh, options), signal))));
 const inspectionPrefetchGuard = (background: boolean) => {
   const token = getResolvedToken();
   return background ? () => {

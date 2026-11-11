@@ -362,3 +362,77 @@ void test('unviewing a historical file clears only its matching commit completio
   assert.equal(isFileViewed(alternate), true);
   assert.equal(isFileViewed(otherPr), true);
 });
+
+/** A PR whose head can move, recording the order in which reads start. */
+function revisionFixture() {
+  const base = 'b'.repeat(40);
+  let head = 'a'.repeat(40);
+  const started: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const pool = createGitHubClientPool({
+    fetch: (async (input: string) => {
+      const u = new URL(input);
+      const json = (data: unknown) =>
+        new Response(JSON.stringify(data), {
+          headers: { 'content-type': 'application/json', 'cache-control': 'no-cache' },
+        });
+      if (u.pathname.endsWith('/files')) {
+        started.push('files');
+        await gate;
+        return json([{ filename: 'a.ts', status: 'modified', sha: head, patch: '@@ -1 +1 @@\n-a\n+b', additions: 1, deletions: 1 }]);
+      }
+      if (u.pathname.includes('/compare/')) {
+        started.push(`compare:${u.pathname.split('/').pop()}`);
+        await gate;
+        return json({ merge_base_commit: { sha: base } });
+      }
+      started.push('metadata');
+      return json({
+        title: 'PR',
+        body: '',
+        user: { login: 'dev' },
+        base: { ref: 'main', sha: base, repo: { full_name: 'o/r' } },
+        head: { ref: 'feature', sha: head, repo: { full_name: 'o/r' } },
+        state: 'open',
+        labels: [],
+        changed_files: 1,
+      });
+    }) as typeof fetch,
+  });
+  return {
+    client: pool.client('one'),
+    started,
+    release,
+    base,
+    head: () => head,
+    move: (value: string) => (head = value),
+  };
+}
+void test('lists files and compares in parallel, then confirms once', async () => {
+  const f = revisionFixture();
+  const read = createPrChangesService().manifest(f.client, url, false, {
+    revision: { baseSha: f.base, headSha: f.head() },
+  });
+  for (let i = 0; i < 20 && f.started.length < 2; i++) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual(f.started.sort(), [`compare:${f.base}...${f.head()}`, 'files'], 'Files and compare start together');
+  f.release();
+  const value = await read;
+  assert.deepEqual(f.started.slice(2), ['metadata'], 'One metadata read confirms the revision');
+  assert.equal(value.metadata.headSha, f.head());
+  assert.equal(value.comparisonBase, f.base);
+});
+void test('restarts from fresh metadata when the head moved', async () => {
+  const f = revisionFixture();
+  const old = f.head();
+  f.move('c'.repeat(40));
+  f.release();
+  const value = await createPrChangesService().manifest(f.client, url, false, {
+    revision: { baseSha: f.base, headSha: old },
+  });
+  assert.equal(value.metadata.headSha, 'c'.repeat(40), 'The old head is never shown as current');
+  assert.equal(value.files[0].changeId.length > 0, true);
+  assert.deepEqual(f.started.slice(2), ['metadata', 'files', `compare:${f.base}...${'c'.repeat(40)}`, 'metadata']);
+});

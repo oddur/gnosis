@@ -10,7 +10,9 @@ import { isCacheRecord } from '../lib/github-cache';
 import { localClones } from '../lib/local-clone';
 import { createSnapshotFileLoader } from './snapshot-file-loader';
 import { changesRevision, type PrChanges, type PrFileRequest, type InspectionLoadOptions } from '../lib/pr-changes';
+import type { ChangedFile, PrMetadata } from '../lib/types';
 
+const isSha = (value: unknown): value is string => typeof value === 'string' && /^[a-f\d]{40}$/i.test(value);
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 function isSnapshot(value: unknown): value is PrChanges {
   return (
@@ -80,7 +82,25 @@ export function createPrChangesService(clones = localClones) {
       }
       const member = knownMetadataForClone(options.revision, `${owner}/${repo}`, refresh, clones);
       const memberChanges = member && await clones.read(`${owner}/${repo}`, (clone) => clone.changes(member.baseSha, member.headSha));
-      const metadata = member && memberChanges ? member : await getPrMetadataForClone(client, owner, repo, pullNumber, options.revision, clones);
+      let metadata: PrMetadata;
+      let speculated: { files: ChangedFile[]; comparisonBase: string } | undefined;
+      const revision = options.revision;
+      if (member && memberChanges) metadata = member;
+      else if (revision && !exact && isSha(revision.baseSha) && isSha(revision.headSha) && !clones.has(`${owner}/${repo}`)) {
+        // The known revision pins the comparison, so files and the merge base load together. One fresh
+        // metadata read afterwards confirms that the files belong to that revision.
+        const [listed, compared] = await Promise.allSettled([
+          getChangedFiles(client, owner, repo, pullNumber, true),
+          client.repos.compareCommits({ owner, repo, base: revision.baseSha, head: revision.headSha, per_page: 1 }),
+        ]);
+        metadata = await getPrMetadata(client, owner, repo, pullNumber, true);
+        // A moved revision discards both results and continues below from the fresh metadata.
+        if (changesRevision(metadata) === changesRevision(revision)) {
+          if (listed.status === 'rejected') throw listed.reason;
+          if (compared.status === 'rejected') throw compared.reason;
+          speculated = { files: listed.value, comparisonBase: compared.value.data.merge_base_commit.sha };
+        }
+      } else metadata = await getPrMetadataForClone(client, owner, repo, pullNumber, revision, clones);
       const key = snapshotKey(url, changesRevision(metadata));
       const existing = snapshots.get(client)?.get(key) ?? await cache?.getPrepared(key, isSnapshot);
       if (existing) {
@@ -94,13 +114,13 @@ export function createPrChangesService(clones = localClones) {
         return refreshed;
       }
       // Both sides are pinned by SHA, so a clone's answer cannot change during the read.
-      const local = memberChanges ?? await clones.read(`${owner}/${repo}`, (clone) => clone.changes(metadata.baseSha, metadata.headSha));
-      const files = local ? local.files.map(changedFileFromClone) : await getChangedFiles(client, owner, repo, pullNumber, true);
+      const local = speculated ? undefined : memberChanges ?? await clones.read(`${owner}/${repo}`, (clone) => clone.changes(metadata.baseSha, metadata.headSha));
+      const files = speculated?.files ?? (local ? local.files.map(changedFileFromClone) : await getChangedFiles(client, owner, repo, pullNumber, true));
       const filesTruncated = !local && files.length === GITHUB_PR_FILE_LIMIT &&
         (metadata.changedFileCount === undefined || metadata.changedFileCount > files.length);
       if (!local && !filesTruncated && metadata.changedFileCount !== undefined && files.length !== metadata.changedFileCount)
         throw new Error('GitHub returned an incomplete file list. Open this PR on GitHub to inspect all files.');
-      let comparisonBase = local?.mergeBase;
+      let comparisonBase = speculated?.comparisonBase ?? local?.mergeBase;
       if (!comparisonBase) {
         const { data: comparison } = await client.repos.compareCommits({
           owner,

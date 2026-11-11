@@ -362,3 +362,30 @@ void test('a newly discovered revision bypasses the previous saved commit catalo
   const next = await service.list(client, url, false, { revision: { baseSha: sha(0), headSha: sha(999) } });
   assert.equal(next.metadata.headSha, sha(999));
 });
+void test('lists commits first, then confirms once', async () => {
+  const f = fixture(),
+    service = createPrCommitsService();
+  const value = await service.list(f.pool.client('one'), url, false, {
+    revision: { baseSha: sha(0), headSha: sha(3) },
+  });
+  assert.deepEqual(
+    f.reads.map((u) => u.pathname),
+    ['/repos/o/r/pulls/1/commits', '/repos/o/r/pulls/1'],
+    'No metadata read before the list'
+  );
+  assert.equal(value.commits.length, 3);
+  assert.equal(value.metadata.headSha, sha(3));
+});
+void test('restarts commits from fresh metadata when the head moved', async () => {
+  const f = fixture(),
+    service = createPrCommitsService();
+  f.move();
+  const value = await service.list(f.pool.client('one'), url, false, {
+    revision: { baseSha: sha(0), headSha: sha(3) },
+  });
+  assert.equal(value.metadata.headSha, sha(999), 'The old head is never shown as current');
+  assert.deepEqual(
+    f.reads.map((u) => u.pathname),
+    ['/repos/o/r/pulls/1/commits', '/repos/o/r/pulls/1', '/repos/o/r/pulls/1/commits', '/repos/o/r/pulls/1']
+  );
+});
