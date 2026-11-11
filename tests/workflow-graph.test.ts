@@ -1236,14 +1236,21 @@ void test('job step expansion reroutes locally and supports REST timestamps in e
 function blobAnswer(files: Partial<Record<string, string | null>>, oversize: string[] = []) {
   return (query: string) => {
     const data: Record<string, Record<string, unknown>> = {};
-    for (const repo of query.matchAll(/(r\d+): repository\(owner:"([^"]+)",name:"([^"]+)"\) \{(.*?)\} \}(?=\s*(?:r\d+:|\}$))/gs)) {
+    for (const repo of query.matchAll(
+      /(r\d+): repository\(owner:"([^"]+)",name:"([^"]+)"\) \{(.*?)\} \}(?=\s*(?:r\d+:|\}$))/gs
+    )) {
       const fields: Record<string, unknown> = {};
       for (const field of repo[4].matchAll(/(f\d+): object\(expression:"[a-f\d]{40}:([^"]+)"\)/g)) {
         const text = files[field[2]];
         fields[field[1]] =
           typeof text !== 'string'
             ? null
-            : { text, byteSize: oversize.includes(field[2]) ? 300_000 : text.length, isTruncated: false, isBinary: false };
+            : {
+                text,
+                byteSize: oversize.includes(field[2]) ? 300_000 : text.length,
+                isTruncated: false,
+                isBinary: false,
+              };
       }
       data[repo[1]] = fields;
     }
@@ -1274,19 +1281,26 @@ void test('primes all referenced sources in one query', async () => {
 void test('falls back to REST for oversize or failed blobs', async () => {
   const h = harness();
   const files = {
-    '.github/workflows/ci.yml': 'jobs:\n  big:\n    uses: ./.github/workflows/big.yml\n  gone:\n    uses: ./.github/workflows/gone.yml\n',
+    '.github/workflows/ci.yml':
+      'jobs:\n  big:\n    uses: ./.github/workflows/big.yml\n  gone:\n    uses: ./.github/workflows/gone.yml\n',
     '.github/workflows/big.yml': 'jobs:\n  leaf:\n    name: Big\n',
     '.github/workflows/gone.yml': 'jobs:\n  leaf:\n    name: Gone\n',
   };
   h.files(files);
   h.graphql(blobAnswer({ ...files, '.github/workflows/gone.yml': null }, ['.github/workflows/big.yml']));
-  h.run.referenced_workflows = ['big', 'gone'].map((name) => ({ path: `o/r/.github/workflows/${name}.yml@${sha}`, sha }));
+  h.run.referenced_workflows = ['big', 'gone'].map((name) => ({
+    path: `o/r/.github/workflows/${name}.yml@${sha}`,
+    sha,
+  }));
   const graph = await readWorkflowGraph(h.client, { ...input, expanded: ['big', 'gone'] });
   assert.ok(graph);
   assert.ok(!graph.warnings.some((w) => w.includes('unavailable')), graph.warnings.join('\n'));
   assert.ok(graph.nodes.some((n) => n.name === 'Big') && graph.nodes.some((n) => n.name === 'Gone'));
   assert.deepEqual(
-    h.calls.filter((c) => c.includes('/contents/')).map((c) => decodeURIComponent(new URL(c).pathname).split('/contents/')[1]).sort(),
+    h.calls
+      .filter((c) => c.includes('/contents/'))
+      .map((c) => decodeURIComponent(new URL(c).pathname).split('/contents/')[1])
+      .sort(),
     ['.github/workflows/big.yml', '.github/workflows/gone.yml'],
     'Only the oversize and missing blobs use REST'
   );
@@ -1296,5 +1310,8 @@ void test('falls back to REST for oversize or failed blobs', async () => {
     throw Error('GraphQL unavailable');
   });
   assert.ok(!(await readWorkflowGraph(failed.client, input))?.warnings.some((w) => w.includes('unavailable')));
-  assert.ok(failed.calls.some((c) => c.includes('/contents/')), 'A failed query falls back to REST');
+  assert.ok(
+    failed.calls.some((c) => c.includes('/contents/')),
+    'A failed query falls back to REST'
+  );
 });
