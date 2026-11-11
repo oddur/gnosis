@@ -330,8 +330,10 @@ function PrSummaryContent({
   useEffect(() => {
     const tick = () => tickStatus(value => value + 1);
     const timer = setInterval(tick, 30_000);
+    // Sync pushes no longer re-render unchanged views, so returning to the window re-ages status at once.
     document.addEventListener('visibilitychange', tick);
-    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', tick); };
+    window.addEventListener('focus', tick);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', tick); window.removeEventListener('focus', tick); };
   }, []);
   const statusNow = Date.now();
   const stackStatus = stacked ? stackMergeStatus(item.subject, signals, checks.values, statusNow) : undefined;
