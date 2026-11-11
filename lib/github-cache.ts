@@ -19,6 +19,8 @@ interface Entry {
   savedAt: number;
   value: unknown;
   revalidate?: boolean;
+  /** The saved record, until its value is first read. Startup builds no object graph for unread entries. */
+  raw?: string;
 }
 /** Synchronous memory reads; incremental persistence belongs to the SQLite worker. */
 export function createGitHubCache(now = Date.now) {
@@ -89,11 +91,26 @@ export function createGitHubCache(now = Date.now) {
       if (prepared && storage) archived.add(entry);
     }
   }
+  /** Parse a loaded entry's value on first use. An unreadable record is dropped. */
+  function parsed(key: string, entry: Entry) {
+    if (entry.raw === undefined) return true;
+    const raw = entry.raw;
+    delete entry.raw;
+    try {
+      const saved: unknown = JSON.parse(raw);
+      if (!isCacheRecord(saved) || !('value' in saved)) throw new Error('Invalid cache entry');
+      entry.value = saved.value;
+      return true;
+    } catch {
+      remove(key);
+      return false;
+    }
+  }
   function markStale(key: string, entry: Entry) {
     if (entry.revalidate) return;
     entry.revalidate = true;
     // A pending insert must carry the flag; existing rows need only a small SQL update.
-    if (writes.get(key)?.payload) enqueue(key, JSON.stringify(entry));
+    if (writes.get(key)?.payload && parsed(key, entry)) enqueue(key, JSON.stringify(entry));
     else enqueue(key, undefined, true);
     const extra = Buffer.byteLength(',"revalidate":true');
     sizes.set(key, (sizes.get(key) ?? 0) + extra);
@@ -119,23 +136,30 @@ export function createGitHubCache(now = Date.now) {
         const opened = isCacheRecord(saved) ? saved : undefined;
         if (!opened || !Array.isArray(opened.entries)) throw new Error('Invalid cache storage response');
         timings = isCacheRecord(opened.ms) ? opened.ms : undefined;
-        for (const row of opened.entries as { entry: unknown; size: number }[]) {
-          const entry = row.entry;
+        for (const row of opened.entries as unknown[]) {
           if (
-            !isCacheRecord(entry) ||
-            typeof entry.scope !== 'string' ||
-            typeof entry.key !== 'string' ||
-            !/^[a-f0-9]{64}$/.test(entry.scope) ||
-            !/^[a-f0-9]{64}$/.test(entry.key) ||
-            typeof entry.savedAt !== 'number' ||
-            !validTime(entry.savedAt) ||
-            !('value' in entry)
+            !isCacheRecord(row) ||
+            typeof row.id !== 'string' ||
+            typeof row.scope !== 'string' ||
+            typeof row.payload !== 'string' ||
+            typeof row.size !== 'number' ||
+            typeof row.savedAt !== 'number' ||
+            !/^[a-f0-9]{64}:[a-f0-9]{64}$/.test(row.id) ||
+            !row.id.startsWith(`${row.scope}:`) ||
+            !validTime(row.savedAt)
           )
             continue;
-          const key = `${entry.scope}:${entry.key}`;
-          if (!entries.has(key)) {
-            entries.set(key, entry as unknown as Entry);
-            sizes.set(key, row.size);
+          // Entries written before the cache loaded are newer than saved ones.
+          if (!entries.has(row.id)) {
+            entries.set(row.id, {
+              scope: row.scope,
+              key: row.id.slice(row.scope.length + 1),
+              savedAt: row.savedAt,
+              value: undefined,
+              ...(row.revalidate === true ? { revalidate: true } : {}),
+              raw: row.payload,
+            });
+            sizes.set(row.id, row.size);
             bytes += row.size;
           }
         }
@@ -157,6 +181,12 @@ export function createGitHubCache(now = Date.now) {
       await storage?.setPreparedLimit(Math.max(0, next * 1024 * 1024 - MAX_BYTES), now());
       cacheSizeMB = next;
     },
+    /** Apply the disk limit, deferred from open because the first trim reads every prepared row. */
+    async trimPrepared() {
+      if (!storage) return;
+      await flush();
+      await storage.setPreparedLimit(Math.max(0, cacheSizeMB * 1024 * 1024 - MAX_BYTES), now());
+    },
     flush,
     async close() {
       try {
@@ -171,24 +201,24 @@ export function createGitHubCache(now = Date.now) {
       return {
         version: () => versions.get(scope) ?? 0,
         values<T>(validate: (value: unknown) => value is T): T[] {
-          return [...entries.values()]
-            .filter((entry) => entry.scope === scope && validTime(entry.savedAt) && validate(entry.value))
-            .map((entry) => structuredClone(entry.value) as T);
+          return [...entries]
+            .filter(([key, entry]) => entry.scope === scope && validTime(entry.savedAt) && parsed(key, entry) && validate(entry.value))
+            .map(([, entry]) => structuredClone(entry.value) as T);
         },
         get<T>(
           key: string,
           validate: (value: unknown) => value is T
         ): { value: T; savedAt: number; revalidate: boolean } | undefined {
-          const entry = entries.get(id(scope, key));
-          if (!entry || !validTime(entry.savedAt) || !validate(entry.value)) return;
+          const hash = id(scope, key), entry = entries.get(hash);
+          if (!entry || !validTime(entry.savedAt) || !parsed(hash, entry) || !validate(entry.value)) return;
           return { value: structuredClone(entry.value), savedAt: entry.savedAt, revalidate: entry.revalidate === true };
         },
         async getPrepared<T>(key: string, validate: (value: unknown) => value is T): Promise<T | undefined> {
-          const entry = entries.get(id(scope, key));
-          if (entry && validTime(entry.savedAt) && validate(entry.value)) {
+          const hash = id(scope, key), entry = entries.get(hash);
+          if (entry && validTime(entry.savedAt) && parsed(hash, entry) && validate(entry.value)) {
             // Migrate a previously downloaded revision lazily without a GitHub request.
             if (storage && isPreparedKey(key) && !archived.has(entry)) {
-              enqueue(id(scope, key), JSON.stringify(entry), false, true);
+              enqueue(hash, JSON.stringify(entry), false, true);
               archived.add(entry);
             }
             return structuredClone(entry.value);
@@ -231,7 +261,7 @@ export function createGitHubCache(now = Date.now) {
         invalidate(matches: (value: unknown) => boolean) {
           versions.set(scope, (versions.get(scope) ?? 0) + 1);
           for (const [key, entry] of [...entries])
-            if (entry.scope === scope && matches(entry.value)) markStale(key, entry);
+            if (entry.scope === scope && parsed(key, entry) && matches(entry.value)) markStale(key, entry);
           trim();
         },
       };

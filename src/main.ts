@@ -164,6 +164,7 @@ gateHandlers(ipcMain, startup, {
 });
 const launchedAt = Date.now();
 const STARTUP_REPAIR_DELAY_MS = 5_000;
+const PREPARED_TRIM_DELAY_MS = 30_000;
 
 // Injected by Electron Forge Vite plugin
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
@@ -805,6 +806,9 @@ void app.whenReady().then(async () => {
 
   // Repairs that predate this launch wait until the queue has had time to paint.
   setTimeout(() => void repairReviewsIndex(), STARTUP_REPAIR_DELAY_MS).unref();
+  setTimeout(() => {
+    githubClients.trimPrepared().catch((error: unknown) => console.warn('Could not trim the GitHub cache:', error));
+  }, PREPARED_TRIM_DELAY_MS).unref();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

@@ -32,7 +32,7 @@ parentPort.on('message', ({ id, method, args }) => {
       if (process.platform !== 'win32') fs.chmodSync(file, 0o600);
       db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=1000; CREATE TABLE IF NOT EXISTS cache (id TEXT PRIMARY KEY, payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
       db.exec('CREATE TABLE IF NOT EXISTS prepared (id TEXT PRIMARY KEY, payload TEXT NOT NULL, saved_at INTEGER NOT NULL, bytes INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS prepared_age ON prepared(saved_at)');
-      trimPrepared(now);
+      // Trimming reads every prepared row until prepared_size exists, so it waits for 'prepared-limit' after startup.
       const schema = performance.now() - started;
       if (!db.prepare("SELECT value FROM metadata WHERE key='legacy-imported'").get()) {
         let entries = [];
@@ -58,6 +58,7 @@ parentPort.on('message', ({ id, method, args }) => {
         } catch (error) { db.exec('ROLLBACK'); throw error; }
       }
       const remove = db.prepare('DELETE FROM cache WHERE id=?');
+      // Validate here, but send payloads as strings: main parses each value only when it is first read.
       const entries = db.prepare('SELECT id,payload FROM cache').all().flatMap(row => {
         try {
           const entry = JSON.parse(row.payload), size = Buffer.byteLength(row.payload);
@@ -65,11 +66,13 @@ parentPort.on('message', ({ id, method, args }) => {
             !/^[a-f0-9]{64}$/.test(entry.key) || row.id !== entry.scope + ':' + entry.key ||
             !Number.isFinite(entry.savedAt) || entry.savedAt > now || now - entry.savedAt >= retention ||
             !('value' in entry) || size > maxEntryBytes) throw new Error('Invalid cache entry');
-          return [{ entry, size }];
+          return [{ id: row.id, scope: entry.scope, savedAt: entry.savedAt, revalidate: entry.revalidate === true, size, payload: row.payload }];
         } catch { remove.run(row.id); return []; }
-      }).sort((a,b) => a.entry.savedAt - b.entry.savedAt);
+      }).sort((a,b) => a.savedAt - b.savedAt);
       result = { entries, ms: { schema: Math.round(schema), select: Math.round(performance.now() - started - schema) } };
     } else if (method === 'prepared-limit') {
+      // Size sums then read only this index instead of every prepared payload.
+      db.exec('CREATE INDEX IF NOT EXISTS prepared_size ON prepared(saved_at, bytes)');
       preparedBytes = args.bytes; trimPrepared(args.now);
     } else if (method === 'prepared-read') {
       const row = db.prepare('SELECT payload,saved_at FROM prepared WHERE id=?').get(args.id);
