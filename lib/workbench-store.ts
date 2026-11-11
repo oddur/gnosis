@@ -102,19 +102,6 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
     if (changed || statusChanged) notify();
     if (next.historyRevision === undefined || next.historyRevision !== held) void loadHistory();
   }
-  function accept(next: WorkbenchQueue, started: { epoch: number; generation: number }) {
-    if (started.generation !== generation) return;
-    if (holds > 0) {
-      dropped = true;
-      return;
-    }
-    // A write started and finished during this read, so the read may predate it.
-    if (started.epoch !== epoch) {
-      void load('snapshot').catch(() => {});
-      return;
-    }
-    commit(next.revision ? next : stampQueue(next));
-  }
   function loadHistory(force = false): Promise<void> {
     if (historyLoad) {
       if (force) historyAgain = true;
@@ -148,18 +135,34 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
     historyLoad = request;
     return request;
   }
-  /** One request per kind. A request made during a snapshot read runs once more afterwards. */
+  /** One request per kind. A snapshot read requested during another runs once more afterwards. */
   function load(kind: 'snapshot' | 'discover' | 'force'): Promise<void> {
     const current = inFlight.get(kind);
     if (current) {
-      if (kind === 'snapshot') again.add(kind);
-      return current;
+      if (kind !== 'snapshot') return current;
+      // A read requested now must observe changes made before the request, so wait for the follow-up read.
+      again.add(kind);
+      return current.catch(() => {}).then(() => inFlight.get(kind));
     }
-    const started = { epoch, generation };
     const request = (async () => {
+      let started = { epoch, generation };
       try {
-        const next = kind === 'snapshot' ? await api().workbenchSnapshot() : await api().workbenchQueue(kind === 'force');
-        accept(next, started);
+        let next = kind === 'snapshot' ? await api().workbenchSnapshot() : await api().workbenchQueue(kind === 'force');
+        // A write that started and finished during this read may be missing from it, so read once more.
+        if (started.generation === generation && !holds && started.epoch !== epoch) {
+          started = { epoch, generation };
+          next = await api().workbenchSnapshot();
+        }
+        if (started.generation !== generation) return;
+        if (holds > 0) {
+          dropped = true;
+          return;
+        }
+        if (started.epoch !== epoch) {
+          setTimeout(() => void load('snapshot').catch(() => {}), 0);
+          return;
+        }
+        commit(next.revision ? next : stampQueue(next));
       } catch (error) {
         if (started.generation === generation) setStatus({ loaded: status.loaded, error: error instanceof Error ? error.message : String(error) });
         throw error;

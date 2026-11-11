@@ -12,7 +12,7 @@ import { CommitDiffStream, type CommitDiffStreamHandle } from './CommitDiffStrea
 import { useReviewBreadcrumbs, type ReviewCrumb } from '../lib/review-breadcrumbs';
 import { PrFileInspection, changeFileKey as viewKey, type ChangeFileEntry as Entry } from './PrFileInspection';
 import { useDiffAppearance } from '../lib/use-diff-appearance';
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
   inspectionFiles as fileCache,
   fileIsReady,
@@ -134,9 +134,21 @@ export function PrChangesView({
   const [query, setQuery] = useState(''),
     [unviewed, setUnviewed] = useState(false),
     [treeOpen, setTreeOpen] = useState(() => window.innerWidth > 700);
-  useEffect(() => {
+  // A tree that closed because the window was narrow opens again the next time this tab is shown wide,
+  // as it did when tabs remounted on every visit.
+  const narrowClosed = useRef(false);
+  const treeOpenNow = useRef(treeOpen);
+  treeOpenNow.current = treeOpen;
+  // Layout effect: a kept tab misses resizes while hidden, so apply the current width before it paints.
+  useLayoutEffect(() => {
     const narrow = window.matchMedia('(max-width: 700px)');
-    const resize = () => { if (narrow.matches) setTreeOpen(false); };
+    const resize = () => {
+      if (!narrow.matches) return;
+      if (treeOpenNow.current) narrowClosed.current = true;
+      setTreeOpen(false);
+    };
+    if (narrow.matches) resize();
+    else if (narrowClosed.current) { narrowClosed.current = false; setTreeOpen(true); }
     narrow.addEventListener('change', resize);
     return () => narrow.removeEventListener('change', resize);
   }, []);

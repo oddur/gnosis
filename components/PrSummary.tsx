@@ -53,20 +53,67 @@ import type { ReviewMember } from '../lib/workbench';
  * Restores scroll positions inside a kept tab. Hidden content has no layout, so Chromium can reset
  * its scroll offsets; positions are recorded as the reader scrolls and reapplied on reveal.
  */
+/** Elements under `root` that are scrolled, including inside open shadow roots. */
+function scrolledWithin(root: Element | ShadowRoot): Element[] {
+  const found: Element[] = [];
+  for (const element of root.querySelectorAll('*')) {
+    if (element.scrollTop > 0 || element.scrollLeft > 0) found.push(element);
+    if (element.shadowRoot) found.push(...scrolledWithin(element.shadowRoot));
+  }
+  if (root instanceof Element && (root.scrollTop > 0 || root.scrollLeft > 0)) found.push(root);
+  return found;
+}
+
 function ScrollKeeper() {
   const marker = useRef<HTMLSpanElement>(null);
   const positions = useRef(new Map<Element, [number, number]>());
   useLayoutEffect(() => {
     const panel = marker.current?.closest<HTMLElement>('[role="tabpanel"]');
     if (!panel) return;
-    for (const [element, [top, left]] of positions.current)
-      if (panel.contains(element)) { element.scrollTop = top; element.scrollLeft = left; }
+    const saved = [...positions.current].filter(([element]) => panel.contains(element));
+    // Content can lay out again after it is shown, so keep applying the saved offsets for a moment
+    // until they hold, unless the reader scrolls first.
+    let restoring = saved.length > 0;
+    const apply = () => {
+      if (!restoring) return;
+      let held = true;
+      for (const [element, [top, left]] of saved) {
+        if (element.scrollTop !== top) element.scrollTop = top;
+        if (element.scrollLeft !== left) element.scrollLeft = left;
+        held &&= Math.abs(element.scrollTop - top) < 1 && Math.abs(element.scrollLeft - left) < 1;
+      }
+      return held;
+    };
+    let frames = 0;
+    let frame = 0;
+    const settle = () => {
+      if (apply() && ++frames >= 2) restoring = false;
+      else if (restoring) frame = requestAnimationFrame(settle);
+    };
+    apply();
+    if (restoring) frame = requestAnimationFrame(settle);
+    const timer = setTimeout(() => { restoring = false; }, 1000);
+    const stop = () => { restoring = false; };
     const record = (event: Event) => {
       const element = event.target;
-      if (element instanceof Element) positions.current.set(element, [element.scrollTop, element.scrollLeft]);
+      if (!restoring && element instanceof Element) positions.current.set(element, [element.scrollTop, element.scrollLeft]);
     };
     panel.addEventListener('scroll', record, { capture: true, passive: true });
-    return () => panel.removeEventListener('scroll', record, { capture: true });
+    panel.addEventListener('wheel', stop, { capture: true, passive: true });
+    panel.addEventListener('pointerdown', stop, { capture: true });
+    panel.addEventListener('keydown', stop, { capture: true });
+    return () => {
+      // Scroll events inside shadow roots do not reach the panel, so also read offsets as the tab hides.
+      // React runs this cleanup before Activity applies display:none, while offsets are still readable.
+      if (!restoring) for (const element of scrolledWithin(panel)) positions.current.set(element, [element.scrollTop, element.scrollLeft]);
+      restoring = false;
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+      panel.removeEventListener('scroll', record, { capture: true });
+      panel.removeEventListener('wheel', stop, { capture: true });
+      panel.removeEventListener('pointerdown', stop, { capture: true });
+      panel.removeEventListener('keydown', stop, { capture: true });
+    };
   }, []);
   return <span ref={marker} hidden />;
 }

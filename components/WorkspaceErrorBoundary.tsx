@@ -7,6 +7,8 @@ export class WorkspaceErrorBoundary extends Component<
   {
     children: ReactNode;
     onQueue: () => void;
+    /** Runs before a retry renders the tab again, for example to read shared data again. */
+    onRetry?: () => Promise<unknown>;
   },
   { error: Error | null; attempt: number }
 > {
@@ -26,7 +28,11 @@ export class WorkspaceErrorBoundary extends Component<
         <h1>This tab could not display the review</h1>
         <p>Your saved reviews and comments are kept. You can retry or open another tab.</p>
         <div className="workspace-recovery-actions">
-          <Button onClick={() => this.setState(({ attempt }) => ({ error: null, attempt: attempt + 1 }))}>
+          <Button onClick={() => {
+            void Promise.resolve(this.props.onRetry?.())
+              .catch(() => {})
+              .finally(() => this.setState(({ attempt }) => ({ error: null, attempt: attempt + 1 })));
+          }}>
             <RotateCcw size={15} /> Retry tab
           </Button>
           <Button variant="outline" onClick={this.props.onQueue}>

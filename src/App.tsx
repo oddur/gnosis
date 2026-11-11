@@ -268,6 +268,7 @@ export function App() {
     return () => window.removeEventListener('gnosis-storage-error', failed);
   }, []);
   const controller = () => controllers.current.get(latest.current.active);
+  const refreshQueue = useCallback(() => workbenchStore.refresh().catch(() => {}), []);
   const openActivity = useCallback(async (task: ActivityTask) => {
     await controllers.current.get(latest.current.active)?.openActivity(task);
   }, []);
@@ -336,8 +337,10 @@ export function App() {
                         <Activity mode={state.active === tab.id ? 'visible' : 'hidden'}>
                           <WorkspaceDraftBoundary value={`workspace:${account}:${tab.id}`}>
                             <WorkspaceErrorBoundary
+                              onRetry={refreshQueue}
                               onQueue={() => {
-                                change({ type: 'replace', id: tab.id, tab: newTab() });
+                                // Tabs share one queue snapshot, so read it again before replacing the failed tab.
+                                void refreshQueue().finally(() => change({ type: 'replace', id: tab.id, tab: newTab() }));
                               }}
                             >
                               <ReviewWorkspace

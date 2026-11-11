@@ -344,6 +344,14 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const [summaryErrors, setSummaryErrors] = useState<Record<string, string>>({});
   const [openingPr, setOpeningPr] = useState(false);
   const [openedItem, setOpenedItem] = useState<QueueItem | null>(null);
+  // Activity does not hide portaled content, and updates to the hidden queue wait until it is shown.
+  // So when a PR opens, hide the open filter popover at once and close it.
+  if (filtersOpen && openedItem) setFiltersOpen(false);
+  const filterPopover = useRef<HTMLElement | null>(null);
+  const hasOpenedItem = !!openedItem;
+  useLayoutEffect(() => {
+    if (filterPopover.current?.isConnected) filterPopover.current.style.display = hasOpenedItem ? 'none' : '';
+  }, [hasOpenedItem]);
   useEffect(() => { if (!openedItem) setFeedbackRequest(undefined); }, [openedItem?.subject.id]);
   const [readBusy, setReadBusy] = useState(false);
   const readAccount = useRef(auth?.login);
@@ -573,16 +581,25 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     },
     []
   );
+  // Holding an arrow key must not write storage on every row; write once the selection settles.
+  const unsavedSelection = useRef<string | null>(null);
+  const saveSelection = useCallback(() => {
+    const value = unsavedSelection.current;
+    unsavedSelection.current = null;
+    try {
+      if (value) localStorage.setItem('gnosis-queue-selection', value);
+    } catch { /* Remembering selection is optional; keep the queue usable if storage is unavailable. */ }
+  }, []);
   useEffect(() => {
     if (!selected) return;
-    const write = () => {
-      try { localStorage.setItem('gnosis-queue-selection', selected); } catch { /* Remembering selection is optional; keep the queue usable if storage is unavailable. */ }
-    };
-    // Holding an arrow key must not write storage on every row; write once it settles.
-    const timer = setTimeout(write, 300);
-    window.addEventListener('pagehide', write);
-    return () => { clearTimeout(timer); window.removeEventListener('pagehide', write); write(); };
-  }, [selected]);
+    unsavedSelection.current = selected;
+    const timer = setTimeout(saveSelection, 300);
+    return () => clearTimeout(timer);
+  }, [selected, saveSelection]);
+  useEffect(() => {
+    window.addEventListener('pagehide', saveSelection);
+    return () => { window.removeEventListener('pagehide', saveSelection); saveSelection(); };
+  }, [saveSelection]);
   useEffect(() => {
     let cancelled = false;
     const cacheKey = (url: string, sha: string) => `${auth?.login}:${url}@${sha}`;
@@ -1899,6 +1916,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                 </Popover.Trigger>
                 <Popover.Portal>
                   <Popover.Content
+                    // Activity detaches refs while hidden, so keep the last element.
+                    ref={element => { if (element) filterPopover.current = element; }}
                     className="queue-filter-popover"
                     data-combobox-container="inside"
                     align="end"
