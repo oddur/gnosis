@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { requestGitHubCacheClear, applyPendingGitHubCacheClear } from '../src/github-cache-reset';
+import { requestGitHubCacheClear, applyPendingGitHubCacheClear, hasPendingGitHubCacheClear } from '../src/github-cache-reset';
 
 function fixture() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-cache-reset-'));
@@ -95,6 +95,19 @@ void test('unreadable workbench data is never discarded together with saved brie
     assert.throws(() => requestGitHubCacheClear(f.directory));
     assert.equal(f.exists('clear-github-cache.json'), false);
     assert.equal(fs.readFileSync(path.join(f.directory, 'workbench.json'), 'utf8'), 'broken json');
+  } finally {
+    f.cleanup();
+  }
+});
+
+void test('hasPendingGitHubCacheClear', async () => {
+  const f = fixture();
+  try {
+    assert.equal(hasPendingGitHubCacheClear(f.directory), false);
+    requestGitHubCacheClear(f.directory);
+    assert.equal(hasPendingGitHubCacheClear(f.directory), true, 'Startup then clears before opening the window');
+    await applyPendingGitHubCacheClear(f.directory, async () => {});
+    assert.equal(hasPendingGitHubCacheClear(f.directory), false);
   } finally {
     f.cleanup();
   }

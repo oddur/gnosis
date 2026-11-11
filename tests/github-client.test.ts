@@ -206,6 +206,30 @@ void test('cooldowns and verified usernames survive restart without storing cred
   }
 });
 
+void test('loadBudget restores login and cooldown without the cache', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-github-budget-'));
+  const file = path.join(dir, 'budget.json');
+  try {
+    const h = harness(() =>
+      json({ message: 'API rate limit exceeded' }, 403, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1100' })
+    );
+    await h.pool.loadBudget(file);
+    h.pool.rememberLogin('secret-token', 'reviewer');
+    await assert.rejects(h.pool.client('secret-token').users.getAuthenticated(), GitHubBackoffError);
+    await h.pool.flushStorage();
+    // Startup restores these with saved data, while the cache is still opening.
+    const restart = harness(() => json({ login: 'reviewer' }));
+    await restart.pool.loadBudget(file);
+    assert.equal(restart.pool.savedLogin('secret-token'), 'reviewer');
+    await assert.rejects(restart.pool.client('secret-token').users.getAuthenticated(), GitHubBackoffError);
+    assert.equal(restart.calls.length, 0);
+    assert.equal(fs.existsSync(path.join(dir, 'github-cache.sqlite')), false, 'The cache was not opened');
+  } finally {
+    await closeCaches();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 void test('failed username lookups never become an authenticated unknown account', async () => {
   const h = harness(() =>
     json({ message: 'API rate limit exceeded' }, 403, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1100' })

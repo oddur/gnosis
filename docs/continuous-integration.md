@@ -5,6 +5,7 @@ The Checks workflow uses different browser coverage for pull requests and pushes
 | Check                                       | PR: Linux | PR: macOS / Windows | Every push to `main`: all platforms |
 | ------------------------------------------- | --------- | ------------------- | ----------------------------------- |
 | TypeScript and unit tests                   | Full      | Full                | Full                                |
+| Startup bundle                              | Yes       | No                  | Linux only                          |
 | Electron integration smoke                  | Yes       | Yes                 | Yes                                 |
 | Explainer, workbench, and D2 browser suites | Full      | Targeted smoke      | Full                                |
 | Unsigned app and installers                 | Yes       | Yes                 | Yes                                 |
@@ -14,6 +15,8 @@ A new commit on a PR cancels that PR's obsolete Checks run. Each push to `main` 
 ## Smoke coverage
 
 `npm run test:electron-smoke` starts Electron with a temporary profile and the production preload. It checks context isolation, real IPC calls, SQLite worker persistence across reopening, and native navigation events sent through the preload. The IPC handlers are test adapters; this does not launch an installed application or contact GitHub.
+
+`npm run check:startup-bundle` builds the renderer and fails if the entry chunk, or a chunk it imports, contains `@pierre/diffs`, `shiki`, `react-markdown` or `@xyflow`. These load with the screens that use them. See [Startup](startup.md).
 
 `npm run test:browser-smoke` runs the explainer sandbox tests, review navigation tests, and command palette tests. These cover playback, isolation, mouse navigation, keyboard navigation, and search in Electron. PR checks on macOS also run the native swipe navigation case. The full suites include that case on `main`.
 
@@ -30,6 +33,7 @@ These preview builds are unsigned and do not use signing, notarization, publishi
 ```sh
 npx tsc --noEmit
 npm test
+npm run check:startup-bundle
 npm run test:electron-smoke
 npm run test:browser-smoke
 ```
