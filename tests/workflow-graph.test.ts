@@ -209,7 +209,6 @@ function harness(onRequest?: (url: URL) => Promise<void>) {
     failSource = false,
     pause: Promise<void> | undefined;
   const pool = createGitHubClientPool({
-    minSpacingMs: 0,
     fetch: (async (address: string) => {
       calls.push(address);
       if (pause) await pause;

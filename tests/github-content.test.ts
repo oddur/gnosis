@@ -19,7 +19,6 @@ const snapshot = (headSha: string, repo = 'o/r'): PrChanges => ({
 void test('new revisions reuse unchanged file sides through the actual Changes loader', async () => {
   const refs: string[] = [];
   const pool = createGitHubClientPool({
-    minSpacingMs: 0,
     fetch: ((url: string) => {
       refs.push(new URL(url).searchParams.get('ref') ?? '');
       return Promise.resolve(
@@ -49,7 +48,6 @@ void test('source bytes are scoped by repository and account, while concurrent r
   const { readGitHubFile } = await import('../src/github-file-content');
   let calls = 0;
   const pool = createGitHubClientPool({
-    minSpacingMs: 0,
     fetch: (() => {
       calls++;
       return Promise.resolve(new Response('source'));
@@ -81,7 +79,6 @@ void test('shared source bytes survive restart in the existing disk cache', asyn
   let calls = 0;
   const create = () =>
     createGitHubClientPool({
-      minSpacingMs: 0,
       fetch: (() => {
         calls++;
         return Promise.resolve(new Response('immutable source'));

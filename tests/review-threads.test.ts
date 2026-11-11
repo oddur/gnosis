@@ -41,7 +41,6 @@ function harness(
 ) {
   const calls: string[] = [];
   const pool = createGitHubClientPool({
-    minSpacingMs: 0,
     fetch: ((url: string, init: RequestInit) => {
       const body = JSON.parse(typeof init.body === 'string' ? init.body : '{}') as Record<string, unknown>;
       calls.push(url);

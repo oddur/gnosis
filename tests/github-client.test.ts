@@ -19,7 +19,11 @@ function harness(respond: (url: string, headers: Headers) => Response) {
   const calls: string[] = [];
   const pool = createGitHubClientPool({
     now: () => now,
-    minSpacingMs: 0,
+    // Burst delays advance the fixed clock, so long request loops never sleep in real time.
+    sleep: (ms) => {
+      now += ms;
+      return Promise.resolve();
+    },
     fetch: ((url: string, init: RequestInit) => {
       calls.push(url);
       return Promise.resolve(respond(url, new Headers(init.headers)));
@@ -32,6 +36,11 @@ function harness(respond: (url: string, headers: Headers) => Response) {
       now += ms;
     },
   };
+}
+/** Let Octokit's async hooks reach fetch. Fails rather than hangs if the condition never holds. */
+async function settle(done: () => boolean) {
+  for (let i = 0; i < 50 && !done(); i++) await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(done(), 'Expected requests did not start');
 }
 const json = (data: unknown, status = 200, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(data), {
@@ -99,13 +108,13 @@ void test('all consumers share authenticated requests and a primary cooldown, in
   assert.equal(a, b);
   const results = await Promise.allSettled([a.users.getAuthenticated(), b.repos.get({ owner: 'o', repo: 'r' })]);
   assert.ok(results.every((r) => r.status === 'rejected' && r.reason instanceof GitHubBackoffError));
-  assert.equal(h.calls.length, 1);
+  assert.equal(h.calls.length, 2, 'Both reads start together, before either response arrives');
   await assert.rejects(b.users.getAuthenticated(), GitHubBackoffError);
-  assert.equal(h.calls.length, 1);
+  assert.equal(h.calls.length, 2);
   h.advance(101_001);
   limited = false;
   assert.equal((await b.users.getAuthenticated()).data.login, 'reviewer');
-  assert.equal(h.calls.length, 2);
+  assert.equal(h.calls.length, 3);
 });
 
 void test('secondary limits honor Retry-After and escalate repeated throttling without replaying writes', async () => {
@@ -182,6 +191,7 @@ void test('cooldowns and verified usernames survive restart without storing cred
     await h.pool.setStorage(file);
     h.pool.rememberLogin('secret-token', 'reviewer');
     await assert.rejects(h.pool.client('secret-token').users.getAuthenticated(), GitHubBackoffError);
+    await flushCaches();
     assert.equal(fs.readFileSync(file, 'utf8').includes('secret-token'), false);
     const restart = harness(() => json({ login: 'reviewer' }));
     await flushCaches();
@@ -405,7 +415,6 @@ void test('sign-out prevents an already-running read from repopulating the persi
     started = resolve;
   });
   const pool = createGitHubClientPool({
-    minSpacingMs: 0,
     fetch: (async () => {
       started();
       await gate;
@@ -455,7 +464,6 @@ void test('fresh cache hits bypass a blocked network request', async () => {
     started = resolve;
   });
   const pool = createGitHubClientPool({
-    minSpacingMs: 0,
     fetch: (async (url: string) => {
       if (url.endsWith('/slow')) {
         started();
@@ -493,39 +501,33 @@ void test('comment writes invalidate their PR without evicting unrelated PRs', a
   assert.equal(h.calls.length, 4, 'Written PR is revalidated');
 });
 
-void test('foreground requests overtake queued background reads while network access remains serial', async () => {
+void test('interactive and foreground reads start while background reads are in flight', async () => {
   const order: string[] = [];
   let release!: () => void;
-  let entered!: () => void;
   const blocked = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
   const pool = createGitHubClientPool({
-    minSpacingMs: 0,
     fetch: (async (url: string) => {
       const path = new URL(url).pathname;
       order.push(path);
-      if (path === '/first') {
-        entered();
-        await blocked;
-      }
+      if (path.endsWith('/background')) await blocked;
       return json({});
     }) as typeof fetch,
   });
   const client = pool.client('fixture');
-  const first = withGitHubPriority('background', () => client.request('GET /first'));
-  await started;
-  const second = withGitHubPriority('background', () => client.request('GET /second'));
+  // Separate resources, so automatic pacing lets both background reads start.
+  const background = [
+    withGitHubPriority('background', () => client.request('GET /background')),
+    withGitHubPriority('background', () => client.request('GET /search/background')),
+  ];
+  await settle(() => order.length === 2);
   const foreground = client.request('GET /foreground');
-  // Let Octokit's async hooks enqueue both requests before releasing the network.
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(order, ['/first']);
+  const interactive = withGitHubPriority('interactive', () => client.request('GET /interactive'));
+  await settle(() => order.length === 4);
+  assert.deepEqual(order, ['/background', '/search/background', '/foreground', '/interactive']);
   release();
-  await Promise.all([first, second, foreground]);
-  assert.deepEqual(order, ['/first', '/foreground', '/second']);
+  await Promise.all([...background, foreground, interactive]);
 });
 
 void test('background budget reservations are enforced by the shared scheduler', async () => {
@@ -569,7 +571,7 @@ void test('preloads pace early without blocking cached or interactive reads', as
   let now = 1_000_000;
   const calls: string[] = [];
   let release!: () => void;
-  const pool = createGitHubClientPool({ now: () => now, minSpacingMs: 0,
+  const pool = createGitHubClientPool({ now: () => now,
     sleep: ms => new Promise<void>(resolve => { release = () => { now += ms; resolve(); }; }),
     fetch: ((url: string) => {
       calls.push(url);
@@ -600,7 +602,7 @@ void test('preloads pace early without blocking cached or interactive reads', as
 void test('a click promotes a paced preload and cancellation stops a waiting request', async () => {
   let wake!: () => void;
   const calls: string[] = [];
-  const pool = createGitHubClientPool({ now: () => 1_000_000, minSpacingMs: 0,
+  const pool = createGitHubClientPool({ now: () => 1_000_000,
     sleep: () => new Promise<void>(resolve => { wake = resolve; }),
     fetch: ((url: string) => {
       calls.push(url);
@@ -641,7 +643,7 @@ void test('background work preserves ten percent of the standard REST allowance'
 void test('automatic downloads cannot spend more than a fifth of an hourly allowance', async () => {
   let now = 1_000_000;
   let requests = 0;
-  const pool = createGitHubClientPool({ now: () => now, minSpacingMs: 0,
+  const pool = createGitHubClientPool({ now: () => now,
     sleep: ms => { now += ms; return Promise.resolve(); },
     fetch: (() => {
       requests++;
@@ -751,4 +753,156 @@ void test('the first automatic GraphQL query charges its reported cost', async (
   await withGitHubPriority('foreground', () => withGitHubPriority('foreground', read), { automatic: true });
   await assert.rejects(withGitHubPriority('foreground', () => withGitHubPriority('foreground', read), { automatic: true }), GitHubBackoffError);
   assert.equal(h.calls.length, 1, 'Nested service priorities must not discard automatic accounting');
+});
+
+void test('interactive reads and 304 revalidations never sleep', async () => {
+  let now = 1_000_000;
+  const sleeps: number[] = [];
+  const calls: string[] = [];
+  const pool = createGitHubClientPool({
+    now: () => now,
+    sleep: (ms) => {
+      sleeps.push(ms);
+      return Promise.resolve();
+    },
+    fetch: ((url: string, init: RequestInit) => {
+      calls.push(url);
+      return Promise.resolve(
+        new Headers(init.headers).has('if-none-match')
+          ? new Response(null, { status: 304, headers: { etag: '"v1"' } })
+          : json({ ok: true }, 200, { etag: '"v1"' })
+      );
+    }) as typeof fetch,
+  });
+  const client = pool.client('one');
+  const read = (i: number) => withGitHubPriority('interactive', () => client.request(`GET /read/${i}`));
+  await Promise.all(Array.from({ length: 10 }, (_, i) => read(i)));
+  now += 60_001;
+  assert.deepEqual((await read(0)).data, { ok: true });
+  assert.equal(calls.length, 11);
+  assert.deepEqual(sleeps, []);
+});
+
+void test('a burst beyond sixty starts is delayed, not rejected', async () => {
+  const sleeps: number[] = [];
+  let calls = 0;
+  const pool = createGitHubClientPool({
+    now: () => 1_000_000,
+    sleep: (ms) => {
+      sleeps.push(ms);
+      return Promise.resolve();
+    },
+    fetch: (() => {
+      calls++;
+      return Promise.resolve(json({ ok: true }));
+    }) as typeof fetch,
+  });
+  const client = pool.client('one');
+  const results = await Promise.all(
+    Array.from({ length: 61 }, (_, i) => withGitHubPriority('interactive', () => client.request(`GET /burst/${i}`)))
+  );
+  assert.equal(results.length, 61);
+  assert.equal(calls, 61);
+  assert.deepEqual(sleeps, [100], 'Only the sixty-first start waits, for one refill');
+});
+
+void test('concurrent automatic reads cannot double the pacing rate', async () => {
+  let now = 1_000_000;
+  const calls: string[] = [];
+  const pool = createGitHubClientPool({
+    now: () => now,
+    // The pacing loop rechecks on every turn; only the clock lets it through.
+    sleep: () => new Promise((resolve) => setImmediate(resolve)),
+    fetch: ((url: string) => {
+      calls.push(url);
+      return Promise.resolve(json({ ok: true }));
+    }) as typeof fetch,
+  });
+  const client = pool.client('one');
+  const reads = ['/first', '/second'].map((route) =>
+    withGitHubPriority('background', () => client.request(`GET ${route}`))
+  );
+  for (let i = 0; i < 20; i++) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls.length, 1, 'The second slot does not start a second automatic read in the same interval');
+  now += 3_600;
+  await Promise.all(reads);
+  assert.equal(calls.length, 2);
+});
+
+void test('automatic reads in flight count against the background reserve', async () => {
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const calls: string[] = [];
+  const pool = createGitHubClientPool({
+    now: () => 1_000_000,
+    fetch: (async (url: string) => {
+      calls.push(new URL(url).pathname);
+      if (url.endsWith('/slow')) await blocked;
+      // 501 remaining leaves exactly one request above the 500-request reserve.
+      return json({}, 200, {
+        'x-ratelimit-resource': 'core',
+        'x-ratelimit-remaining': '501',
+        'x-ratelimit-limit': '5000',
+        'x-ratelimit-reset': '4600',
+      });
+    }) as typeof fetch,
+  });
+  const client = pool.client('one');
+  await client.request('GET /seed');
+  const slow = withGitHubPriority('background', () => client.request('GET /slow'));
+  await settle(() => calls.length === 2);
+  await assert.rejects(
+    withGitHubPriority('foreground', () => client.request('GET /automatic'), { automatic: true }),
+    GitHubBackoffError
+  );
+  await client.request('GET /requested');
+  assert.deepEqual(calls, ['/seed', '/slow', '/requested']);
+  release();
+  await slow;
+});
+
+void test('budget writes are debounced off the request path and flushed on demand', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-budget-debounce-'));
+  const file = path.join(dir, 'budget.json');
+  try {
+    const h = harness(() => json({ ok: true }));
+    await h.pool.setStorage(file);
+    await withGitHubPriority('background', () => h.pool.client('secret').request('GET /preload'));
+    assert.equal(fs.existsSync(file), false, 'The request completes before the budget is written');
+    await h.pool.flushStorage();
+    const saved = Object.values(JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, {
+      automatic: Record<string, { spent: number }>;
+    }>);
+    assert.equal(saved[0]?.automatic.core.spent, 1);
+  } finally {
+    await closeCaches();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+void test('a secondary limit is written without waiting for the debounce', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-budget-secondary-'));
+  const file = path.join(dir, 'budget.json');
+  try {
+    const h = harness(() => json({ message: 'secondary rate limit' }, 429, { 'retry-after': '60' }));
+    await h.pool.setStorage(file);
+    await assert.rejects(h.pool.client('secret').request('GET /limited'), GitHubBackoffError);
+    const deadline = Date.now() + 200;
+    let blockedUntil = 0;
+    while (!blockedUntil && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      try {
+        const saved = Object.values(JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, { blockedUntil: number }>);
+        blockedUntil = saved[0]?.blockedUntil ?? 0;
+      } catch {
+        /* Not written yet. */
+      }
+    }
+    assert.equal(blockedUntil, 1_061_000);
+  } finally {
+    await closeCaches();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

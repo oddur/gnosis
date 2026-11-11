@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import type { Octokit } from '@octokit/rest';
 import { layoutWorkflow } from './workflow-layout';
 import { githubCacheFor } from '../lib/github-client';
-import { createGitHubWork, joinGitHubWork, withParallelGitHubReads, type GitHubWork } from '../lib/github-scheduler';
+import { createGitHubWork, joinGitHubWork, type GitHubWork } from '../lib/github-scheduler';
 import { prActionTarget } from './pr-actions-service';
 import type { CheckTarget } from '../lib/pr-checks';
 import type {
@@ -439,7 +439,7 @@ export function readWorkflowGraph(
   input: WorkflowGraphInput,
   options: { cachedOnly?: boolean; force?: boolean } = {}
 ) {
-  return withParallelGitHubReads(() =>
-    cacheScope.run({ client, generation: githubCacheFor(client)?.version() }, () => readGraph(client, input, options))
+  return cacheScope.run({ client, generation: githubCacheFor(client)?.version() }, () =>
+    readGraph(client, input, options)
   );
 }

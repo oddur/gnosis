@@ -29,7 +29,6 @@ function fixture() {
     href = 'https://github-cloud.s3.amazonaws.com/object',
     missing = false;
   const pool = createGitHubClientPool({
-    minSpacingMs: 0,
     // eslint-disable-next-line @typescript-eslint/require-await -- asynchronous fetch mock
     fetch: (async (input: string, init?: RequestInit) => {
       const url = new URL(input);

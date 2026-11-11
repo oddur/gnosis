@@ -48,7 +48,6 @@ void test('rate-limited contents wait for GitHub and resume without losing progr
     calls = 0;
   const pool = createGitHubClientPool({
     now: () => now,
-    minSpacingMs: 0,
     fetch: (() => {
       if (++calls === 1)
         return Promise.resolve(
@@ -142,7 +141,7 @@ void test('a rate-limited merge-base lookup can recover on the same generation s
   const { GitHubDiffSource } = await import('../lib/github');
   let now = 1_000_000, comparisons = 0;
   const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } });
-  const pool = createGitHubClientPool({ now: () => now, minSpacingMs: 0, fetch: ((input: string) => {
+  const pool = createGitHubClientPool({ now: () => now, fetch: ((input: string) => {
     const path = new URL(input).pathname;
     if (path.includes('/compare/')) {
       if (++comparisons === 1) return Promise.resolve(new Response(JSON.stringify({ message: 'secondary rate limit' }), {

@@ -79,7 +79,6 @@ function harness(overrides: (path: string, init: RequestInit) => Response | unde
   const json = (value: unknown, headers?: Record<string, string>) =>
     new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json', ...headers } });
   const pool = createGitHubClientPool({
-    minSpacingMs: 0,
     fetch: ((address: string, init: RequestInit) => {
       const p = new URL(address).pathname + new URL(address).search;
       calls.push({ path: p, method: init.method ?? 'GET', priority: githubPriority() });

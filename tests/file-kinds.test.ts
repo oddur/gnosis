@@ -245,7 +245,7 @@ void test('classification and negative attribute lookups are reused after restar
       })
     );
   }) as typeof fetch;
-  let pool = createGitHubClientPool({ ...clock, minSpacingMs: 0, fetch: fetcher });
+  let pool = createGitHubClientPool({ ...clock, fetch: fetcher });
   const done = async (n: number) => {
     for (let i = 0; i < 200 && updates < n; i++) await new Promise((r) => setTimeout(r, 5));
     assert.equal(updates, n);
@@ -259,7 +259,7 @@ void test('classification and negative attribute lookups are reused after restar
     await done(1);
     assert.equal(calls, 2);
     await pool.closeStorage();
-    pool = createGitHubClientPool({ ...clock, minSpacingMs: 0, fetch: fetcher });
+    pool = createGitHubClientPool({ ...clock, fetch: fetcher });
     await pool.setStorage(path.join(dir, 'budget.json'));
     service = createFileClassificationService(() => {
       updates++;

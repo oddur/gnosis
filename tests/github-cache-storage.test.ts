@@ -162,7 +162,6 @@ void test('refreshing 25 PR signals does not serialize or synchronously rewrite 
     ])
   );
   const pool = createGitHubClientPool({
-    minSpacingMs: 0,
     fetch: (() => Promise.resolve(
       new Response(JSON.stringify({ data: responses }), {
         headers: { 'content-type': 'application/json' },

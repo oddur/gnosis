@@ -43,7 +43,6 @@ function fixture(count = 3) {
     wrongBase = false,
     cap = 0;
   const pool = createGitHubClientPool({
-    minSpacingMs: 0,
     fetch: (async (input: string) => {
       const u = new URL(input);
       reads.push(u);
@@ -263,7 +262,6 @@ void test('commit lists, comparisons, and opened files survive restart; latest c
     const request = { url, path: 'new.ts', baseSha: sha(1), headSha: sha(2), comparison: selection(2) };
     const file = await service.content(client, request);
     const pool = createGitHubClientPool({
-      minSpacingMs: 0,
       fetch: (async () => {
         throw Error('Must not fetch');
       }) as typeof fetch,

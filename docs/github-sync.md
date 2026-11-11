@@ -30,8 +30,8 @@ Each credential has one shared network scheduler with three priorities:
 | Foreground | AI context requests and automatic status checks for the selected PR |
 | Background | Preloading, discovery, optional file history, automatic briefings, and status checks for other visible queue rows |
 
-Interactive work always gets the next available slot. Foreground work runs next. Background work runs only when neither higher tier has a queued request. Large requested tasks no longer yield a slot to optional work after eight requests.
-An active network request completes before the next request starts. Priority never increases network concurrency.
+Up to six requests run at the same time for each credential. Foreground and background work together use at most four of these slots, and background work uses at most two. Two slots are therefore always kept for interactive work. Interactive work gets the next free slot, then foreground work. Background work starts only when no higher tier has a queued request.
+Writes run alone. A write waits for running requests to finish, and no other request starts until the write completes. Requests are not spaced apart. A burst of more than 60 requests is slowed to ten requests per second, which stays below GitHub's per-minute secondary limit.
 
 If the UI opens something already being prepared, it promotes the shared operation instead of waiting behind background work.
 Queued requests and later requests in that operation inherit the promotion. File downloads still occur once per side.
@@ -46,8 +46,8 @@ Automatic work has its own budget: 20% of the reported allowance per credential 
 
 This budget includes preloads, discovery, tray status, automatic briefings, and routine refreshes of visible PRs and checks. Urgent automatic reads retain foreground scheduling priority but still count against the budget. Manual refreshes, writes, user-requested explanations, and bounded follow-ups after a write can use the reserved capacity. All work still obeys GitHub's actual limits.
 
-GraphQL sync queries report their point cost. Other GraphQL reads use the observed same-window quota decrease when available, or one point until cost is known. A query already in flight can cross the local budget; later automatic queries pause. Budget persistence uses asynchronous, ordered atomic writes in Electron.
-Primary limits apply separately to REST, search, and GraphQL. Secondary limits pause all network work for the credential.
+GraphQL sync queries report their point cost. Other GraphQL reads use the observed same-window quota decrease when available, or one point until cost is known. A query already in flight can cross the local budget; later automatic queries pause. Budget counters are saved at most once per second, off the request path, and when the app quits. Rate-limit deadlines are saved immediately.
+Primary limits apply separately to REST, search, and GraphQL. Secondary limits pause all network work for the credential. Requests already in flight finish and are not retried. Failures from one throttling event count once toward the escalating delay.
 Server retry deadlines and exponential backoff still apply. Writes are never replayed automatically.
 
 The HTTP response cache permits 2,000 entries and 32 MB. Each response has a 1 MB limit and a seven-day retention limit.

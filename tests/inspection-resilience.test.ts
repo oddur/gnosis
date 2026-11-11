@@ -134,7 +134,6 @@ void test('a timed-out GitHub GET releases the scheduler and is not treated as a
   let stalls = true,
     calls = 0;
   const pool = createGitHubClientPool({
-    minSpacingMs: 0,
     readTimeoutMs: 25,
     fetch: ((_input: string, init?: RequestInit) => {
       calls++;
@@ -169,7 +168,6 @@ void test('coalesced PR inventories keep a background reader alive when the fore
   const json = (value: unknown) =>
     new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } });
   const pool = createGitHubClientPool({
-    minSpacingMs: 0,
     fetch: (async (input: string, init?: RequestInit) => {
       const path = new URL(input).pathname;
       if (path.endsWith('/files')) {
