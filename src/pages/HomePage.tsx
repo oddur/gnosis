@@ -49,6 +49,7 @@ import type { SearchDestination } from '../../lib/command-search';
 import { useSessionDraft } from '../../lib/session-drafts';
 import type { VirtualItem } from '@tanstack/react-virtual';
 import { VirtualReviewQueue } from '../../components/VirtualReviewQueue';
+import { useReviewHistory, useWorkbenchQueue, useWorkbenchStatus, workbenchStore } from '../../lib/workbench-store';
 import { GitHubIcon } from '../../lib/constants';
 import { workbenchIcons, workspaceSections } from '../../lib/interface-icons';
 import { WorkbenchIcon } from '../../components/WorkbenchIcon';
@@ -132,6 +133,12 @@ interface Props {
   initialSubjectId?: string;
   commandDestination?: { destination: Extract<SearchDestination, { kind: 'home' }>; nonce: number };
 }
+/** Each workspace tab shows its own saved view over the shared queue. */
+function withOwnView(queue: WorkbenchQueue, own: string | null | undefined): WorkbenchQueue {
+  if (!queue.savedViews || own === undefined) return queue;
+  const id = queue.savedViews.views.some(view => view.id === own) ? own : null;
+  return id === (queue.savedViews.activeId ?? null) ? queue : { ...queue, savedViews: { ...queue.savedViews, activeId: id } };
+}
 const labels = {
   starred: 'Starred',
   updated: 'Changed since AI explanation',
@@ -150,21 +157,18 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const [auth, setAuth] = useState<{ authenticated: boolean; login: string | null } | null>(null);
   useEffect(() => { if (auth) setDiscussionAccount(auth.authenticated ? auth.login ?? '' : ''); }, [auth]);
   const [prefs, setPrefs] = useState<Preferences | null>(null);
-  const ownViewId = useRef<string | null | undefined>(undefined);
-  const [queue, setQueueState] = useState<WorkbenchQueue>({ items: [], warnings: [], remaining: 0 });
-  const setQueue = useCallback((value: WorkbenchQueue | ((previous: WorkbenchQueue) => WorkbenchQueue)) => {
-    setQueueState(previous => {
-      const next = typeof value === 'function' ? value(previous) : value;
-      if (next.savedViews) {
-        if (ownViewId.current === undefined) ownViewId.current = next.savedViews.activeId;
-        const id = next.savedViews.views.some(view => view.id === ownViewId.current) ? ownViewId.current : null;
-        return { ...next, savedViews: { ...next.savedViews, activeId: id ?? null } };
-      }
-      return next;
-    });
-  }, []);
-  const [history, setHistory] = useState<ReviewHistoryEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  const storeQueue = useWorkbenchQueue();
+  const history = useReviewHistory();
+  const storeStatus = useWorkbenchStatus();
+  // The saved view this tab shows. It starts from the view that was active when the queue first loaded.
+  const [ownViewState, setOwnViewId] = useState<string | null | undefined>(undefined);
+  const ownViewId = ownViewState === undefined ? storeQueue.savedViews?.activeId : ownViewState;
+  useEffect(() => {
+    if (ownViewState === undefined && storeQueue.savedViews) setOwnViewId(storeQueue.savedViews.activeId ?? null);
+  }, [ownViewState, storeQueue.savedViews]);
+  const queue = useMemo(() => withOwnView(storeQueue, ownViewId), [storeQueue, ownViewId]);
+  const [loading, setLoading] = useState(() => !(workbenchStore.getStatus().loaded && workbenchStore.getQueue().items.length));
+  useEffect(() => { if (storeStatus.loaded && storeQueue.items.length) setLoading(false); }, [storeStatus.loaded, storeQueue.items.length]);
   const [refreshing, setRefreshing] = useState(false);
   const [queueFailed, setQueueFailed] = useState(false);
   const [initializationFailed, setInitializationFailed] = useState(false);
@@ -189,16 +193,23 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const filtersLoaded = useRef(false);
   const pendingFilters = useRef<QueueFilters | null>(null);
   const filterVersion = useRef(0);
+  // Unsaved filter edits hold the shared store, so a read from before the edit cannot replace it.
+  const filterHold = useRef<(() => void) | null>(null);
+  const holdForFilters = () => { filterHold.current ??= workbenchStore.hold(); };
+  const releaseFilters = () => { filterHold.current?.(); filterHold.current = null; };
+  useEffect(() => {
+    if (filtersLoaded.current || !storeStatus.loaded) return;
+    setFilters(normalizeQueueFilters(storeQueue.filters));
+    filtersLoaded.current = true;
+  }, [storeStatus.loaded, storeQueue.filters]);
   const [mutedOpen, setMutedOpen] = useState(false);
   const [muteBusy, setMuteBusy] = useState(false);
   const [muteError, setMuteError] = useState('');
   const muteBusyRef = useRef(false);
-  const muteVersion = useRef(0);
   const [savedView, setSavedView] = useSessionDraft('queue-saved-view', false);
   const [starBusy, setStarBusy] = useState(false);
   const [starError, setStarError] = useState('');
   const starBusyRef = useRef(false);
-  const starVersion = useRef(0);
   const starredUrls = useMemo(
     () => new Set(queue.starredPrs?.map((entry) => entry.member.url) ?? []),
     [queue.starredPrs]
@@ -208,16 +219,17 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     starBusyRef.current = true;
     setStarBusy(true);
     setStarError('');
-    starVersion.current++;
+    const release = workbenchStore.hold();
     try {
       const next = await enqueueWrite(() => window.electronAPI.workbenchStarPrs({ members, starred }));
-      setQueue(next);
+      workbenchStore.apply(next);
       setError('');
     } catch (error) {
       const message = `Could not save starred PRs: ${error instanceof Error ? error.message : String(error)}. Your stars have not changed. Try the star action again.`;
       setError(message);
       setStarError(message);
     } finally {
+      release();
       starBusyRef.current = false;
       setStarBusy(false);
     }
@@ -226,20 +238,20 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const visibleHistory = useMemo(() => history.filter(entry => !isMutedReview(entry, mutedUrls)), [history, mutedUrls]);
   const changeMutes = async (members: ReviewSubject['members'], muted: boolean) => {
     if (muteBusyRef.current) return;
-    muteBusyRef.current = true; setMuteBusy(true); setMuteError(''); muteVersion.current++;
+    muteBusyRef.current = true; setMuteBusy(true); setMuteError('');
+    const release = workbenchStore.hold();
     try {
       const next = await enqueueWrite(() => window.electronAPI.workbenchMutePrs({ members, muted }));
-      setQueue(next); setError('');
+      // Unmuting changes the saved-review revision, so the store reads saved reviews again.
+      workbenchStore.apply(next); setError('');
       if (muted) {
         setOpenedItem(null); setSelected(null);
         requestAnimationFrame(() => activeWorkspaceRoot().querySelector<HTMLButtonElement>('[title="Muted PRs"]')?.focus());
-      } else {
-        void window.electronAPI.listReviews().then(setHistory).catch(() => {});
       }
     } catch (error) {
       const message = `Could not ${muted ? 'mute' : 'unmute'} PRs: ${error instanceof Error ? error.message : String(error)}. Nothing changed. Try again.`;
       setMuteError(message); setError(message);
-    } finally { muteBusyRef.current = false; setMuteBusy(false); }
+    } finally { release(); muteBusyRef.current = false; setMuteBusy(false); }
   };
   const section = savedView
     ? 'saved'
@@ -258,6 +270,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     if (viewBusyRef.current) return;
     filterVersion.current++;
     filtersLoaded.current = true;
+    holdForFilters();
     setFilters((current) => {
       const next = normalizeQueueFilters({ ...current, ...('repo' in patch ? { repos: undefined } : {}), ...patch });
       pendingFilters.current = next;
@@ -271,13 +284,15 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     filterVersion.current++;
     const pending = pendingFilters.current;
     pendingFilters.current = null;
+    const release = workbenchStore.hold();
     try {
       const result = await enqueueWrite(async () => {
         if (pending) await window.electronAPI.workbenchSetFilters(pending);
         return window.electronAPI.workbenchViewAction(action);
       });
-      ownViewId.current = result.savedViews?.activeId ?? null;
-      setQueue(result);
+      setOwnViewId(result.savedViews?.activeId ?? null);
+      workbenchStore.apply(result);
+      releaseFilters();
       setFilters(normalizeQueueFilters(result.filters));
       filtersLoaded.current = true;
       if (
@@ -296,6 +311,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       setError(error instanceof Error ? error.message : String(error));
       throw error;
     } finally {
+      release();
       viewBusyRef.current = false;
       setViewBusy(false);
     }
@@ -351,7 +367,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     setReadBusy(true);
     try {
       const result = await enqueueWrite(() => window.electronAPI.workbenchMarkPrRead({ account, receipts, read }));
-      if (alive.current && readAccount.current === account && result.readStates) setQueue(previous => ({ ...previous, readStates: result.readStates, savedViews: result.savedViews,
+      if (alive.current && readAccount.current === account && result.readStates) workbenchStore.patch(previous => ({ ...previous, readStates: result.readStates, savedViews: result.savedViews,
         items: previous.items.map(item => ({ ...item, unreadUrls: item.subject.members.filter(m => result.readStates?.[m.url]?.unread.length).map(m => m.url) })),
         starredItems: previous.starredItems?.map(item => ({ ...item, unreadUrls: item.subject.members.filter(m => result.readStates?.[m.url]?.unread.length).map(m => m.url) })),
       }));
@@ -359,14 +375,6 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       setError(`Could not save unread progress: ${error instanceof Error ? error.message : String(error)}. Try marking the PR again.`);
     } finally { setReadBusy(false); }
   };
-  useEffect(() => {
-    if (!auth?.authenticated) return;
-    let live = true;
-    const stop = window.electronAPI.onPrReadStateChanged(() => {
-      void window.electronAPI.workbenchSnapshot().then(result => { if (live) setQueue(result); }).catch(() => {});
-    });
-    return () => { live = false; stop(); };
-  }, [auth?.authenticated, auth?.login]);
   const [positions] = useSessionDraft('queue-reading-positions', () => new Map<string, PrReadingPosition>());
   useEffect(() => {
     if (openedItem) rememberCommandDestination(auth?.login ?? 'local', `subject:${openedItem.subject.id}`);
@@ -438,71 +446,30 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     ? `${PROVIDERS[briefingSelection.provider].label} · ${PROVIDERS[briefingSelection.provider].models.find((m) => m.id === briefingSelection.model)?.label ?? briefingSelection.model}`
     : '';
 
-  const queueRefresh = useRef<Promise<void> | null>(null);
-  const pendingLocalRefresh = useRef(false);
-  const refreshVersion = useRef(0);
-  const refresh = useCallback((force = false, cachedOnly = false): Promise<void> => {
-    if (queueRefresh.current && !force) {
-      if (cachedOnly) pendingLocalRefresh.current = true;
-      return queueRefresh.current;
-    }
-    const requestVersion = ++refreshVersion.current;
-    const current = () => alive.current && requestVersion === refreshVersion.current;
-    const request = (async () => {
-    const version = filterVersion.current;
-    const starsVersion = starVersion.current;
-    const mutesVersion = muteVersion.current;
-    const applyQueue = (next: WorkbenchQueue) => {
-          if (current() && version === filterVersion.current && starsVersion === starVersion.current && mutesVersion === muteVersion.current && !muteBusyRef.current && !starBusyRef.current && !viewBusyRef.current && !pendingFilters.current) {
-            setQueue(next);
-            if (!filtersLoaded.current) {
-              const restored = normalizeQueueFilters(next.filters);
-              setFilters(restored);
-              filtersLoaded.current = true;
-            }
-            setQueueFailed(false);
-          }
-        };
+  // The store reads and dedupes; this adds the pending-filter save, the spinner and errors.
+  const refresh = useCallback(async (force = false, cachedOnly = false): Promise<void> => {
     if (force) setRefreshing(true);
     try {
-      // A failed filter save leaves local edits pending and blocks stale queue
-      // responses. An explicit retry must save those edits before reloading.
+      // A failed filter save leaves local edits pending. An explicit retry saves them before reloading.
       if (force && pendingFilters.current) {
         const pending = pendingFilters.current;
+        const version = filterVersion.current;
         await enqueueWrite(() => window.electronAPI.workbenchSetFilters(pending));
-        if (version === filterVersion.current) pendingFilters.current = null;
+        if (version === filterVersion.current) { pendingFilters.current = null; releaseFilters(); }
       }
-      // Only the first load needs an immediate snapshot. Later polls already have
-      // a visible queue; fetching both would transfer and render it twice.
-      if (!filtersLoaded.current) await window.electronAPI.workbenchSnapshot().then(next => { applyQueue(next); if (current() && next.items.length) setLoading(false); }).catch(() => {});
-      await Promise.all([
-        (cachedOnly ? window.electronAPI.workbenchSnapshot() : window.electronAPI.workbenchQueue(force)).then(applyQueue),
-        window.electronAPI.listReviews().then((entries) => {
-          if (current()) setHistory(entries);
-        }),
-      ]);
+      await workbenchStore.refresh({ discover: !cachedOnly, force });
+      if (alive.current) setQueueFailed(false);
     } catch (e) {
-      if (current()) {
+      if (alive.current) {
         setError(String(e));
         setQueueFailed(true);
       }
     } finally {
-      if (current()) {
+      if (alive.current) {
         setLoading(false);
         setRefreshing(false);
       }
     }
-    })().finally(() => {
-      if (queueRefresh.current === request) {
-        queueRefresh.current = null;
-        if (pendingLocalRefresh.current && alive.current) {
-          pendingLocalRefresh.current = false;
-          void refresh(false, true);
-        }
-      }
-    });
-    queueRefresh.current = request;
-    return request;
   }, []);
   useEffect(() => {
     onSyncStatus?.({ sync: queue.sync, onRefresh: () => void refresh(true) });
@@ -516,9 +483,10 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     try {
       const [a, p] = await Promise.all([window.electronAPI.getAuthState(), window.electronAPI.loadPreferences()]);
       if (!alive.current) return;
-      setAuth(a);
+      // Revealing a kept page initializes again; unchanged values keep their identity.
+      setAuth(previous => previous?.authenticated === a.authenticated && previous.login === a.login ? previous : a);
       onAccount?.(a.authenticated ? a.login ?? 'local' : 'local');
-      setPrefs(p);
+      setPrefs(previous => previous && JSON.stringify(previous) === JSON.stringify(p) ? previous : p);
       if (p.codeFont) applyCodeFont(p.codeFont);
       applyTheme(p.theme);
       initialized.current = true;
@@ -540,19 +508,15 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     alive.current = true;
     void initialize();
     const poll = () => { if (initialized.current && document.visibilityState !== 'hidden') void refresh(); };
-    const stop = window.electronAPI.githubSyncVersion === 1 ? window.electronAPI.onWorkbenchChanged?.(() => {
-      if (initialized.current) void refresh(false, true);
-    }) : undefined;
-    const timer = stop ? undefined : setInterval(poll, 4000);
+    // The shared store applies pushed changes. Without pushes, poll GitHub discovery instead.
+    const pushes = window.electronAPI.githubSyncVersion === 1 && !!window.electronAPI.onWorkbenchChanged;
+    const timer = pushes ? undefined : setInterval(poll, 4000);
     document.addEventListener('visibilitychange', poll);
     const afterPrAction = () => { void refresh(); setStatusAttempt(n => n + 1); };
     window.addEventListener('gnosis-pr-action-completed', afterPrAction);
     return () => {
       alive.current = false;
-      refreshVersion.current++;
-      queueRefresh.current = null;
       clearInterval(timer);
-      stop?.();
       document.removeEventListener('visibilitychange', poll);
       window.removeEventListener('gnosis-pr-action-completed', afterPrAction);
     };
@@ -567,9 +531,12 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         .then((result) => {
           if (version !== filterVersion.current) return;
           pendingFilters.current = null;
-          if (alive.current) setQueue(result);
+          releaseFilters();
+          if (alive.current) workbenchStore.apply(result);
         })
         .catch((e: unknown) => {
+          // Keep the edits pending for an explicit retry, but let other tabs keep updating.
+          if (version === filterVersion.current) releaseFilters();
           if (alive.current) setError(`Could not save queue filters: ${String(e)}`);
         });
     }, 300);
@@ -580,8 +547,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       if (pendingFilters.current) {
         const pending = pendingFilters.current;
         pendingFilters.current = null;
-        void enqueueWrite(() => window.electronAPI.workbenchSetFilters(pending)).catch(() => {});
-      }
+        void enqueueWrite(() => window.electronAPI.workbenchSetFilters(pending)).catch(() => {}).finally(releaseFilters);
+      } else releaseFilters();
     },
     []
   );
@@ -985,13 +952,14 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       summaryNavigation.current++;
       const viewId = queue.savedViews?.views.some(view => view.id === next.viewId) ? next.viewId : null;
       const viewChanged = viewId !== (queue.savedViews?.activeId ?? null);
-      ownViewId.current = viewId;
+      setOwnViewId(viewId);
       // Tab/PR history must not leave a pending filter write when filters did not change.
       if (viewChanged || JSON.stringify(filters) !== JSON.stringify(next.filters)) {
         filterVersion.current++;
         filtersLoaded.current = true;
         const restoredFilters = normalizeQueueFilters(next.filters);
         pendingFilters.current = restoredFilters;
+        holdForFilters();
         setFilters(restoredFilters);
       }
       const version = filterVersion.current;
@@ -1005,7 +973,6 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       if (queueScrollElement) queueScrollElement.scrollTop = next.scroll;
       // Restore the active saved view through the local store, in the same write queue as filters.
       if (viewChanged) {
-        setQueue(current => ({ ...current, savedViews: current.savedViews && { ...current.savedViews, activeId: viewId } }));
         void enqueueWrite(() => window.electronAPI.workbenchViewAction({ type: 'activate', id: viewId }))
           .catch((error: unknown) => { if (version === filterVersion.current) setError(`Could not restore saved view: ${String(error)}`); });
       }
@@ -1239,7 +1206,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     setGrouping(true);
     setError('');
     try {
-      setQueue(await window.electronAPI.workbenchGroup({ parent, child, action }));
+      workbenchStore.apply(await window.electronAPI.workbenchGroup({ parent, child, action }));
       setParentUrl('');
       setChildUrl('');
     } catch (e) {
@@ -1574,7 +1541,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         onRenameStack={async name => {
           const next = await enqueueWrite(() => window.electronAPI.workbenchRenameStack(summaryItem.subject.id, name, auth?.login ?? undefined));
           if (alive.current && readAccount.current === auth?.login) {
-            setQueue(next);
+            workbenchStore.apply(next);
             setOpenedItem(current => current ? resolveWorkspace(current, [...next.items, ...(next.starredItems ?? []), ...(next.stacks ?? []).map(subject => ({ subject, attention: 'other' as const }))]) : current);
           }
         }}
@@ -2059,7 +2026,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                         disabled: entry.status === 'generating', run: async () => {
                           if (confirm('Delete this saved review?')) {
                             await window.electronAPI.deleteReview(entry.id);
-                            await refresh();
+                            await workbenchStore.refresh({ history: true });
                           }
                         } }],
                     ]}>{actions => <div className="saved-row" data-queue-id={entry.id}>
@@ -2284,7 +2251,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                         onClick={() =>
                           void window.electronAPI
                             .workbenchBriefing(selectedItem.subject.id)
-                            .then(setQueue)
+                            .then(next => workbenchStore.apply(next))
                             .catch((e: unknown) => setError(String(e)))
                         }
                       >
@@ -2437,8 +2404,12 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         onPause={() => void onboarding.pause()} onApply={() => { void onboarding.apply().then(next => {
           if (!next) return;
           setPrefs(next); setOpenedItem(null); setSavedView(false); setMutedOpen(false); setSelected(null);
-          filtersLoaded.current = false; pendingFilters.current = null;
-          void refresh();
+          filtersLoaded.current = false; pendingFilters.current = null; releaseFilters();
+          void refresh().then(() => {
+            if (filtersLoaded.current) return;
+            setFilters(normalizeQueueFilters(workbenchStore.getQueue().filters));
+            filtersLoaded.current = true;
+          });
         }); }} onConnect={() => setAuthOpen(true)} login={auth?.authenticated ? auth.login : null}
         items={queue.items} saving={onboarding.saving} saveError={onboarding.error} />}
       {onboarding.tourOpen && <GuidedTour step={onboarding.state.tourStep ?? 0} stacked={summaryItem?.subject.kind === 'stack'} local={prefs?.guestMode || !auth?.authenticated}
