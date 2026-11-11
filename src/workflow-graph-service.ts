@@ -248,6 +248,110 @@ async function definitions(
   );
   return jobs;
 }
+interface SourceFile {
+  owner: string;
+  repo: string;
+  path: string;
+  sha: string;
+}
+interface Blob {
+  text: string | null;
+  byteSize: number;
+  isTruncated: boolean;
+  isBinary: boolean;
+}
+type SourceResponse = Record<string, Record<string, Blob | null> | null>;
+const sourceKey = (file: SourceFile) => `workflow-source:v1:${file.owner}/${file.repo}/${file.path}@${file.sha}`;
+const isSavedSource = (v: unknown): v is Saved<string> =>
+  !!v && typeof v === 'object' && 'value' in v && 'at' in v && typeof v.at === 'number';
+/**
+ * Reads the root workflow and every pinned reusable workflow in one GraphQL query, at most 32 files
+ * per query and 50 in total, and saves each usable blob under its REST cache key. Anything it cannot
+ * save is left for `definitions()` to read through REST. Never throws.
+ */
+async function primeWorkflowSources(client: Octokit, files: SourceFile[]): Promise<void> {
+  try {
+    const cache = githubCacheFor(client);
+    if (!cache) return;
+    const scope = cacheScope.getStore();
+    const generation = scope?.client === client ? scope.generation : cache.version();
+    const unique = [...new Map(files.map((file) => [sourceKey(file), file])).values()];
+    const saved = await Promise.all(
+      unique
+        .slice(0, 50)
+        .map(
+          async (file) =>
+            !!cache.get(sourceKey(file), isSavedSource) || !!(await cache.getPrepared(sourceKey(file), isSavedSource))
+        )
+    );
+    const missing = unique.slice(0, 50).filter((_, i) => !saved[i]);
+    const batches: SourceFile[][] = [];
+    for (let i = 0; i < missing.length; i += 32) batches.push(missing.slice(i, i + 32));
+    await Promise.all(
+      batches.map(async (batch) => {
+        const repos = [...new Set(batch.map((file) => `${file.owner}/${file.repo}`))];
+        const query = `query { rateLimit { cost } ${repos
+          .map((name, r) => {
+            const [owner, repo] = name.split('/');
+            return `r${r}: repository(owner:${JSON.stringify(owner)},name:${JSON.stringify(repo)}) { ${batch
+              .flatMap((file, f) =>
+                `${file.owner}/${file.repo}` === name
+                  ? [
+                      `f${f}: object(expression:${JSON.stringify(`${file.sha}:${file.path}`)}) { ... on Blob { text byteSize isTruncated isBinary } }`,
+                    ]
+                  : []
+              )
+              .join(' ')} }`;
+          })
+          .join('\n')} }`;
+        let data: SourceResponse | undefined;
+        try {
+          data = await client.graphql<SourceResponse>(query);
+        } catch (error) {
+          // A missing file or repository fails only its own field; keep the rest.
+          data = (error as { data?: SourceResponse }).data;
+        }
+        if (!data) return;
+        for (const [f, file] of batch.entries()) {
+          const blob = data[`r${repos.indexOf(`${file.owner}/${file.repo}`)}`]?.[`f${f}`];
+          if (
+            !blob ||
+            typeof blob.text !== 'string' ||
+            blob.isBinary ||
+            blob.isTruncated ||
+            blob.byteSize > 256_000 ||
+            cache.version() !== generation
+          )
+            continue;
+          cache.set(sourceKey(file), { value: blob.text, at: Date.now() } satisfies Saved<string>);
+        }
+      })
+    );
+  } catch {
+    /* Each source falls back to its own REST read. */
+  }
+}
+const workflowPath = /^\.github\/workflows\/[^/]+\.ya?ml$/;
+/** The root workflow and every reusable workflow the run reports with an exact revision. */
+function workflowSources(owner: string, repo: string, run: WorkflowRunInfo, references: Reference[]): SourceFile[] {
+  const files: SourceFile[] = [];
+  if (workflowPath.test(run.path) && /^[a-f\d]{40}$/i.test(run.sha))
+    files.push({ owner, repo, path: run.path, sha: run.sha });
+  for (const reference of references) {
+    const match = /^([\w.-]+)\/([\w.-]+)\/(\.github\/workflows\/[^/]+\.ya?ml)@/.exec(reference.path);
+    if (!match || !/^[a-f\d]{40}$/i.test(reference.sha)) continue;
+    const [, childOwner, childRepo, path] = match;
+    files.push({ owner: childOwner, repo: childRepo, path, sha: reference.sha });
+    // A `./` call inside the run's repository resolves at the run's revision.
+    if (
+      childOwner.toLowerCase() === owner.toLowerCase() &&
+      childRepo.toLowerCase() === repo.toLowerCase() &&
+      /^[a-f\d]{40}$/i.test(run.sha)
+    )
+      files.push({ owner, repo, path, sha: run.sha });
+  }
+  return files;
+}
 async function resolvedDefinitions(
   client: Octokit,
   owner: string,
@@ -262,6 +366,7 @@ async function resolvedDefinitions(
     `workflow-definitions:v2:${owner}/${repo}/${run.path}@${run.sha}:${fingerprint}`,
     Infinity,
     async () => {
+      await primeWorkflowSources(client, workflowSources(owner, repo, run, references));
       const warnings: string[] = [];
       const budget: DefinitionBudget = { files: new Set(), calls: 0, retryable: false };
       let jobs: WorkflowDefinitionJob[] = [];
