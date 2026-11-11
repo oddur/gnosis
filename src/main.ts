@@ -106,6 +106,9 @@ import type { DiffSource } from '../lib/diffSource';
 import { isLocalUrl } from '../lib/local-url';
 import type { PrMetadata, PrSearchResult, PrStatus, PrStatusOptions } from '../lib/types';
 import { createPrStatusService, PR_STATUS_MAX_STALE_MS } from './pr-status-service';
+import { createStatCache } from './stat-cache';
+import { deepFreeze } from '../lib/deep-freeze';
+import { isDeepStrictEqual } from 'node:util';
 import {
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_FAST_CLAUDE_MODEL,
@@ -826,38 +829,45 @@ function suggestArchiveName(entry: ReviewHistoryEntry): string {
   return `${base}.gr`;
 }
 
-function readReviewsIndex(): ReviewHistoryEntry[] {
+const reviewsIndex = createStatCache(getReviewsIndexPath, (exists): readonly ReviewHistoryEntry[] => {
+  if (!exists) return Object.freeze([]);
   try {
     const entries = JSON.parse(fs.readFileSync(getReviewsIndexPath(), 'utf-8')) as ReviewHistoryEntry[];
     // Backward compat: entries without status are completed
-    return entries.map((e) => ({ ...e, status: e.status ?? 'completed' }));
+    return deepFreeze(entries.map((e) => ({ ...e, status: e.status ?? 'completed' })));
   } catch {
-    return [];
+    return Object.freeze([]);
   }
+});
+/** Frozen and shared until the file changes. Copy entries before changing them, then write the copy. */
+function readReviewsIndex(): readonly ReviewHistoryEntry[] {
+  return reviewsIndex.get();
+}
+function writeReviewsIndex(next: readonly ReviewHistoryEntry[]): void {
+  const value = deepFreeze(next);
+  fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(value, null, 2));
+  reviewsIndex.set(value);
 }
 
 /** One-time migration: backfill summary from full review JSON into
  *  the index for entries that predate the summary field. Runs once
  *  at startup and persists results so subsequent reads are fast. */
 function backfillSummaries(): void {
-  const index = readReviewsIndex();
-  let dirty = false;
-  for (const entry of index) {
+  const saved = readReviewsIndex();
+  const index = saved.map((entry) => {
     if (!entry.summary && entry.status === 'completed') {
       try {
         const reviewPath = path.join(getReviewsDir(), `${entry.id}.json`);
         const review = JSON.parse(fs.readFileSync(reviewPath, 'utf-8')) as ReviewGuide;
-        if (review.summary) {
-          entry.summary = review.summary;
-          dirty = true;
-        }
+        if (review.summary) return { ...entry, summary: review.summary };
       } catch {
         // Review file missing or unreadable — skip
       }
     }
-  }
-  if (dirty) {
-    fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+    return entry;
+  });
+  if (index.some((entry, i) => entry !== saved[i])) {
+    writeReviewsIndex(index);
   }
 }
 
@@ -902,9 +912,7 @@ function createPendingHistoryEntry(
     prHeadSha,
     ...(unread ? { unread: true } : {}),
   };
-  const index = readReviewsIndex();
-  index.unshift(entry);
-  fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+  writeReviewsIndex([entry, ...readReviewsIndex()]);
   rebuildTrayMenu();
   notifyLocalChange('workbench-changed');
 }
@@ -913,8 +921,10 @@ function updateHistoryEntry(id: string, updates: Partial<ReviewHistoryEntry>): v
   const index = readReviewsIndex();
   const idx = index.findIndex((e) => e.id === id);
   if (idx === -1) return;
-  index[idx] = { ...index[idx], ...updates };
-  fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+  const current = index[idx];
+  // An update that changes no field writes nothing and notifies nobody.
+  if (Object.entries(updates).every(([key, value]) => isDeepStrictEqual(current[key as keyof ReviewHistoryEntry], value))) return;
+  writeReviewsIndex(index.map((entry, i) => (i === idx ? { ...entry, ...updates } : entry)));
   rebuildTrayMenu();
   notifyLocalChange('workbench-changed');
 }
@@ -1003,16 +1013,9 @@ function rebuildTrayMenu(): void {
 
 function cleanupStaleGeneratingEntries(): void {
   const index = readReviewsIndex();
-  let changed = false;
-  for (const entry of index) {
-    if (entry.status === 'generating') {
-      entry.status = 'failed';
-      entry.error = 'Generation was interrupted';
-      changed = true;
-    }
-  }
-  if (changed) {
-    fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+  if (index.some((entry) => entry.status === 'generating')) {
+    writeReviewsIndex(index.map((entry) =>
+      entry.status === 'generating' ? { ...entry, status: 'failed', error: 'Generation was interrupted' } : entry));
   }
 }
 
@@ -1070,7 +1073,14 @@ function applyBinaryOverrides(prefs: Preferences): void {
   setBinaryOverride('codex', prefs.codexPath);
 }
 
+/** Parsed and normalized `preferences.json`, frozen and shared until the file changes. */
+const preferencesFile = createStatCache(getPreferencesPath, (exists) =>
+  deepFreeze(structuredClone(exists ? readPreferencesFile() : DEFAULT_PREFERENCES)));
+/** A copy whose top-level keys a caller may replace. Nested values are frozen: replace them, never change them. */
 function loadPreferences(): Preferences {
+  return { ...preferencesFile.get() };
+}
+function readPreferencesFile(): Preferences {
   try {
     const stored = JSON.parse(fs.readFileSync(getPreferencesPath(), 'utf-8')) as Record<string, unknown>;
     // Backward compat: rename autoReviewOnRequest → proactiveMode
@@ -1105,7 +1115,7 @@ function savePreferences(prefs: Preferences): void {
   try {
   fs.writeFileSync(temporary, JSON.stringify({ ...prefs, localExplanationPreferences: normalizeLocalExplanationPreferences(prefs.localExplanationPreferences), repositorySettings: normalizeRepositorySettings(prefs.repositorySettings), repositoryBriefingDailyLimit: normalizeBriefingLimit(prefs.repositoryBriefingDailyLimit), githubCacheSizeMB: normalizeGitHubCacheMB(prefs.githubCacheSizeMB), prInactivityDays: normalizePrInactivityDays(prefs.prInactivityDays) }, null, 2));
     fs.renameSync(temporary, file);
-  } finally { fs.rmSync(temporary, { force: true }); }
+  } finally { fs.rmSync(temporary, { force: true }); preferencesFile.clear(); }
 }
 
 // ── MCP tools constants ─────────────────────────────────────────
@@ -1353,7 +1363,7 @@ ipcMain.handle('mark-review-read', (_event, id: string) => {
   const index = readReviewsIndex().map((e) =>
     e.id === id ? { ...e, unread: false, autoUpdated: false } : e
   );
-  fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+  writeReviewsIndex(index);
   rebuildTrayMenu();
   notifyLocalChange('workbench-changed');
 });
@@ -1363,8 +1373,7 @@ ipcMain.handle('delete-review', (_event, id: string) => {
   const promptPath = path.join(getReviewsDir(), `${id}-prompt.md`);
   if (fs.existsSync(reviewPath)) fs.unlinkSync(reviewPath);
   if (fs.existsSync(promptPath)) fs.unlinkSync(promptPath);
-  const index = readReviewsIndex().filter((e) => e.id !== id);
-  fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+  writeReviewsIndex(readReviewsIndex().filter((e) => e.id !== id));
   rebuildTrayMenu();
   notifyLocalChange('workbench-changed');
 });
@@ -1423,9 +1432,7 @@ ipcMain.handle('import-review', async (event): Promise<ReviewHistoryEntry | null
     imported: true,
     status: 'completed',
   };
-  const index = readReviewsIndex();
-  index.unshift(entry);
-  fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(index, null, 2));
+  writeReviewsIndex([entry, ...readReviewsIndex()]);
   rebuildTrayMenu();
   broadcastToAllWindows('new-review-in-history');
   return entry;
@@ -1438,7 +1445,7 @@ ipcMain.handle('delete-all-reviews', () => {
       if (file.endsWith('.json') || file.endsWith('-prompt.md')) fs.unlinkSync(path.join(dir, file));
     }
   }
-  fs.writeFileSync(getReviewsIndexPath(), JSON.stringify([], null, 2));
+  writeReviewsIndex([]);
   rebuildTrayMenu();
   notifyLocalChange('workbench-changed');
 });

@@ -23,7 +23,7 @@ interface Deps {
   cachedResponses?: () => { url: string; data: unknown }[];
   directory: () => string;
   queue: () => WorkbenchQueue;
-  history: () => ReviewHistoryEntry[];
+  history: () => readonly ReviewHistoryEntry[];
   account: () => string;
   ignoreBots: () => boolean;
   repositoryBotSettings?: () => Record<string, boolean>;
@@ -313,7 +313,7 @@ export function cachedGitHubDocuments(
 export interface SearchInput {
   directory: string;
   queue: WorkbenchQueue;
-  history: ReviewHistoryEntry[];
+  history: readonly ReviewHistoryEntry[];
   account: string;
   ignoreBots: boolean;
   repositoryBotSettings?: Record<string, boolean>;

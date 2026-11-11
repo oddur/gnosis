@@ -24,6 +24,8 @@ const declarations = new Set([
   'DEFAULT_PREFERENCES',
   'getPreferencesPath',
   'loadPreferences',
+  'preferencesFile',
+  'readPreferencesFile',
   'enableAnalyticsIfAllowed',
 ]);
 const startup = source.statements
@@ -146,6 +148,14 @@ async function launch(stored: string | undefined, packaged = true, platform: Nod
         return stored;
       },
     },
+    // Each read parses the stored preferences again; the stat cache has its own tests.
+    createStatCache: (_file: unknown, read: (exists: boolean) => unknown) => ({
+      get: () => read(true),
+      set() {},
+      clear() {},
+    }),
+    deepFreeze: (value: unknown) => value,
+    structuredClone,
     DEFAULT_GITHUB_CACHE_MB: 512,
     DEFAULT_PR_INACTIVITY_DAYS: 30,
     DEFAULT_CLAUDE_MODEL: 'opus',
