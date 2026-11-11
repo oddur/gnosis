@@ -1,3 +1,4 @@
+import { mark, markRenderer, note, startupSummary, startupTracing, exitAfterTrace } from './startup-trace';
 import { attachWorkspaceShortcuts } from './window-workspace-navigation';
 import {
   explanationFile,
@@ -150,6 +151,8 @@ import type {
   FreshnessResult,
   GenerateExplainerRequest,
 } from '../lib/types';
+
+mark('main-eval');
 
 // Injected by Electron Forge Vite plugin
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
@@ -314,11 +317,14 @@ function setupLogging() {
 let quitConfirmed = false;
 
 function createWindow() {
+  mark('create-window');
   const mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
+      // Sandboxed preloads cannot read main's environment.
+      additionalArguments: startupTracing ? ['--gnosis-perf-trace'] : [],
     },
   });
 
@@ -328,6 +334,7 @@ function createWindow() {
   const ownerId = mainWindow.webContents.id;
   mainWindow.on('closed', () => explainerService.cancelOwner(ownerId));
 
+  mainWindow.webContents.once('did-finish-load', () => mark('did-finish-load'));
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
     console.error('[main] Renderer failed to load:', errorCode, errorDescription);
   });
@@ -699,6 +706,7 @@ let harnessEnvironments: ReturnType<typeof createHarnessEnvironmentStore>;
 const appData = createAppDataStore();
 const rawFileFilters = createFileFilterState(appData);
 void app.whenReady().then(async () => {
+  mark('when-ready');
   setupLogging();
   harnessEnvironments = createHarnessEnvironmentStore(path.join(app.getPath('userData'), 'harness-environment.enc'), {
     available: () => safeStorage.isEncryptionAvailable() && (process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text'),
@@ -708,15 +716,23 @@ void app.whenReady().then(async () => {
   setHarnessEnvironmentLoader(() => harnessEnvironments.load());
   try {
     await appData.open(app.getPath('userData'));
+    mark('data-open');
     await applyPendingGitHubCacheClear(app.getPath('userData'), () => session.defaultSession.clearCache(), () => appData.clearGitHub());
+    mark('cache-clear');
+    mark('data-ready');
   } catch (error) {
     dialog.showErrorBox('Could not open saved data', error instanceof Error ? error.message : String(error));
     app.exit(1);
     return;
   }
-  await githubClients.setCacheSizeMB(loadPreferences().githubCacheSizeMB);
+  const startupPreferences = loadPreferences();
+  mark('prefs');
+  await githubClients.setCacheSizeMB(startupPreferences.githubCacheSizeMB);
   localClones.configure(localCloneStore.load());
-  await githubClients.setStorage(path.join(app.getPath('userData'), 'github-budget.json'));
+  note('cache-open.worker', await githubClients.setStorage(path.join(app.getPath('userData'), 'github-budget.json')));
+  mark('cache-open');
+  mark('budget');
+  mark('all-ready');
 
   // Expose packaged state to preload via env var (before creating windows)
   process.env.APP_IS_PACKAGED = app.isPackaged ? '1' : '0';
@@ -728,6 +744,7 @@ void app.whenReady().then(async () => {
   cleanupStaleGeneratingEntries();
   // Backfill summaries for reviews that predate the summary field
   backfillSummaries();
+  mark('backfill-done');
   applyBinaryOverrides(loadPreferences());
   createWindow();
   initTrayIfEnabled();
@@ -1167,6 +1184,15 @@ const LOCAL_REVIEW_TOOLS = [
 ];
 
 // ── IPC handlers ────────────────────────────────────────────────
+
+// Renderer startup marks are no-ops unless GNOSIS_PERF_TRACE is set; preload exposes perfMark only then.
+ipcMain.on('perf-mark', (_event, name: unknown, epochMs: unknown) => {
+  if (typeof name !== 'string' || typeof epochMs !== 'number') return;
+  markRenderer(name, epochMs);
+  if (name !== 'queue-painted') return;
+  console.log(`[perf] summary ${JSON.stringify(startupSummary())}`);
+  if (exitAfterTrace) app.quit();
+});
 
 ipcMain.handle('dismiss-update', (_event, version: string) => {
   dismissedUpdateVersion = version;

@@ -24,6 +24,7 @@ parentPort.on('message', ({ id, method, args }) => {
     let result;
     if (method === 'open') {
       const { file, legacy, now, maxBytes, maxEntryBytes, maxEntries, retention } = args;
+      const started = performance.now();
       preparedBytes = args.preparedBytes ?? preparedBytes;
       memoryEntryBytes = maxEntryBytes;
       fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -32,6 +33,7 @@ parentPort.on('message', ({ id, method, args }) => {
       db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=1000; CREATE TABLE IF NOT EXISTS cache (id TEXT PRIMARY KEY, payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
       db.exec('CREATE TABLE IF NOT EXISTS prepared (id TEXT PRIMARY KEY, payload TEXT NOT NULL, saved_at INTEGER NOT NULL, bytes INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS prepared_age ON prepared(saved_at)');
       trimPrepared(now);
+      const schema = performance.now() - started;
       if (!db.prepare("SELECT value FROM metadata WHERE key='legacy-imported'").get()) {
         let entries = [];
         try {
@@ -56,7 +58,7 @@ parentPort.on('message', ({ id, method, args }) => {
         } catch (error) { db.exec('ROLLBACK'); throw error; }
       }
       const remove = db.prepare('DELETE FROM cache WHERE id=?');
-      result = db.prepare('SELECT id,payload FROM cache').all().flatMap(row => {
+      const entries = db.prepare('SELECT id,payload FROM cache').all().flatMap(row => {
         try {
           const entry = JSON.parse(row.payload), size = Buffer.byteLength(row.payload);
           if (!entry || typeof entry !== 'object' || !/^[a-f0-9]{64}$/.test(entry.scope) ||
@@ -66,6 +68,7 @@ parentPort.on('message', ({ id, method, args }) => {
           return [{ entry, size }];
         } catch { remove.run(row.id); return []; }
       }).sort((a,b) => a.entry.savedAt - b.entry.savedAt);
+      result = { entries, ms: { schema: Math.round(schema), select: Math.round(performance.now() - started - schema) } };
     } else if (method === 'prepared-limit') {
       preparedBytes = args.bytes; trimPrepared(args.now);
     } else if (method === 'prepared-read') {

@@ -39,6 +39,9 @@ const storageKey = (account: string) => `gnosis-workspace-tabs:v1:${account}`;
 export function App() {
   useFileFilterSync();
   useEffect(() => {
+    window.electronAPI.perfMark?.('first-render');
+  }, []);
+  useEffect(() => {
     let live = true;
     void window.electronAPI
       .loadPreferences()

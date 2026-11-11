@@ -190,7 +190,7 @@ export function createGitHubClientPool(options: Options = {}) {
     closeStorage: async () => { await snapshots.close(); await flushBudget(); },
     async setStorage(file: string) {
       storage = file;
-      await snapshots.setStorage(path.join(path.dirname(file), 'github-cache.json'));
+      const timings = await snapshots.setStorage(path.join(path.dirname(file), 'github-cache.json'));
       try {
         const record = (value: unknown): Record<string, unknown> | undefined =>
           value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -236,6 +236,7 @@ export function createGitHubClientPool(options: Options = {}) {
       } catch {
         /* First use or an unreadable cache. */
       }
+      return timings;
     },
     savedLogin(token: string) {
       return stateFor(keyFor(token)).login;

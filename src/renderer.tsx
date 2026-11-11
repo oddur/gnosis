@@ -6,6 +6,8 @@ import { App } from './App';
 import { applyTheme } from '../lib/theme';
 import './globals.css';
 
+window.electronAPI.perfMark?.('script-start');
+
 // Apply the user's preferred theme as early as possible to avoid a
 // flash. We default to system; App.tsx loads the actual preference
 // once the renderer mounts and re-applies if it differs.
@@ -36,6 +38,7 @@ async function start() {
       // Settings recovery remains available if preferences cannot be read.
       window.electronAPI.loadPreferences().catch(() => undefined),
     ]);
+    window.electronAPI.perfMark?.('review-state');
     initializeDiffHighlighter(preferences);
     initializeChecksView(preferences);
     root.render(<App />);

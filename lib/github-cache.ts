@@ -100,9 +100,11 @@ export function createGitHubCache(now = Date.now) {
     bytes += extra;
   }
   return {
-    async setStorage(location: string) {
+    /** Resolves with the worker's open timings, for startup traces. */
+    async setStorage(location: string): Promise<Record<string, unknown> | undefined> {
       if (storage) throw new Error('GitHub cache storage is already initialized');
       const next = createCacheStorage();
+      let timings: Record<string, unknown> | undefined;
       try {
         const saved = await next.open({
           file: path.join(path.dirname(location), 'github-cache.sqlite'),
@@ -114,8 +116,10 @@ export function createGitHubCache(now = Date.now) {
           retention: RETENTION_MS,
           preparedBytes: cacheSizeMB * 1024 * 1024 - MAX_BYTES,
         });
-        if (!Array.isArray(saved)) throw new Error('Invalid cache storage response');
-        for (const row of saved as { entry: unknown; size: number }[]) {
+        const opened = isCacheRecord(saved) ? saved : undefined;
+        if (!opened || !Array.isArray(opened.entries)) throw new Error('Invalid cache storage response');
+        timings = isCacheRecord(opened.ms) ? opened.ms : undefined;
+        for (const row of opened.entries as { entry: unknown; size: number }[]) {
           const entry = row.entry;
           if (
             !isCacheRecord(entry) ||
@@ -144,6 +148,7 @@ export function createGitHubCache(now = Date.now) {
           error instanceof Error ? error.message : String(error)
         );
       }
+      return timings;
     },
     async setSizeMB(value: unknown) {
       const next = normalizeGitHubCacheMB(value);

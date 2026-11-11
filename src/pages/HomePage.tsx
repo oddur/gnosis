@@ -137,6 +137,13 @@ const labels = {
   other: 'Other changes',
 };
 
+let queuePainted = false;
+/** Startup trace: the first frame that shows queue rows or the empty state. */
+function markQueuePainted() {
+  if (queuePainted || !window.electronAPI.perfMark) return;
+  queuePainted = true;
+  requestAnimationFrame(() => requestAnimationFrame(() => window.electronAPI.perfMark?.('queue-painted')));
+}
 export function HomePage({ onAccount, navigationRestoration, onNavigationChange, onReviewOriginChange, onReviewReady, prefillPrUrl, prefillReviewId, initialSubjectId, commandDestination, explanationDestination, onShowActivity, onSyncStatus }: Props) {
   const tabs = useWorkspaceNavigation();
   const [feedbackRequest, setFeedbackRequest] = useState<FeedbackRequest>();
@@ -160,6 +167,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const queue = useMemo(() => withOwnView(storeQueue, ownViewId), [storeQueue, ownViewId]);
   const [loading, setLoading] = useState(() => !(workbenchStore.getStatus().loaded && workbenchStore.getQueue().items.length));
   useEffect(() => { if (storeStatus.loaded && storeQueue.items.length) setLoading(false); }, [storeStatus.loaded, storeQueue.items.length]);
+  useEffect(() => { if (!loading) markQueuePainted(); }, [loading]);
   const [refreshing, setRefreshing] = useState(false);
   const [queueFailed, setQueueFailed] = useState(false);
   const [initializationFailed, setInitializationFailed] = useState(false);
