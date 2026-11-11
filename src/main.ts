@@ -845,7 +845,8 @@ function readReviewsIndex(): readonly ReviewHistoryEntry[] {
   return reviewsIndex.get();
 }
 function writeReviewsIndex(next: readonly ReviewHistoryEntry[]): void {
-  const value = deepFreeze(next);
+  // New and changed entries are copied before freezing, so objects a caller still holds stay mutable.
+  const value = Object.freeze(next.map((entry) => (Object.isFrozen(entry) ? entry : deepFreeze(structuredClone(entry)))));
   fs.writeFileSync(getReviewsIndexPath(), JSON.stringify(value, null, 2));
   reviewsIndex.set(value);
 }
