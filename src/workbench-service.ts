@@ -1,5 +1,6 @@
 import { responseNeeded } from '../lib/response-needed';
 import { stampQueue } from '../lib/workbench-revision';
+import { timed } from '../lib/perf-trace';
 import type { GitHubReviewThreads } from '../lib/review-threads';
 import { repositorySettings, repositoryDiscoverySettings, subjectRecentlyUpdated, discoveryInactivityDays, subjectRepositories, localBriefingDay, briefingBudget, automaticBriefingBlock } from '../lib/repository-settings';
 import { prBadgePreview, type PrBadgePreview } from '../lib/pr-badge-preview';
@@ -265,6 +266,10 @@ export function createWorkbenchService(deps: Deps) {
     );
   }
   function view(includeHidden = false): WorkbenchQueue {
+    return timed('view', () => buildView(includeHidden), (queue) =>
+      `items=${queue.items.length} muted=${queue.mutedPrs?.length ?? 0} history=${deps.history().length}`);
+  }
+  function buildView(includeHidden: boolean): WorkbenchQueue {
     const preferences = deps.preferences();
     const s = load();
     const allMembers = [...new Map([...stars.load(s.account).map(entry => entry.member), ...s.subjects.flatMap(subject => subject.members)].map(member => [member.url, member])).values()];

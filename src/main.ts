@@ -107,6 +107,7 @@ import { isLocalUrl } from '../lib/local-url';
 import type { PrMetadata, PrSearchResult, PrStatus, PrStatusOptions } from '../lib/types';
 import { createPrStatusService, PR_STATUS_MAX_STALE_MS } from './pr-status-service';
 import { createStatCache } from './stat-cache';
+import { timed } from '../lib/perf-trace';
 import { deepFreeze } from '../lib/deep-freeze';
 import { isDeepStrictEqual } from 'node:util';
 import {
@@ -829,7 +830,7 @@ function suggestArchiveName(entry: ReviewHistoryEntry): string {
   return `${base}.gr`;
 }
 
-const reviewsIndex = createStatCache(getReviewsIndexPath, (exists): readonly ReviewHistoryEntry[] => {
+const reviewsIndex = createStatCache(getReviewsIndexPath, (exists) => timed('reviews index read', (): readonly ReviewHistoryEntry[] => {
   if (!exists) return Object.freeze([]);
   try {
     const entries = JSON.parse(fs.readFileSync(getReviewsIndexPath(), 'utf-8')) as ReviewHistoryEntry[];
@@ -838,7 +839,7 @@ const reviewsIndex = createStatCache(getReviewsIndexPath, (exists): readonly Rev
   } catch {
     return Object.freeze([]);
   }
-});
+}, (entries) => `entries=${entries.length}`));
 /** Frozen and shared until the file changes. Copy entries before changing them, then write the copy. */
 function readReviewsIndex(): readonly ReviewHistoryEntry[] {
   return reviewsIndex.get();
@@ -1012,14 +1013,18 @@ function rebuildTrayMenu(): void {
 function rebuildTrayMenuNow(): void {
   clearTimeout(trayRebuild);
   trayRebuild = undefined;
-  updateTrayMenu(workbench.visibleHistory(), {
-    onShowWindow: showOrCreateWindow,
-    onNavigateToReview: navigateToReview,
-    onOpenExternal: (url: string) => {
-      try { if (new URL(url).protocol === 'https:') void shell.openExternal(url); } catch {}
-    },
-    onQuit: () => app.quit(),
-  });
+  timed('tray', () => {
+    const reviews = workbench.visibleHistory();
+    updateTrayMenu(reviews, {
+      onShowWindow: showOrCreateWindow,
+      onNavigateToReview: navigateToReview,
+      onOpenExternal: (url: string) => {
+        try { if (new URL(url).protocol === 'https:') void shell.openExternal(url); } catch {}
+      },
+      onQuit: () => app.quit(),
+    });
+    return reviews.length;
+  }, (reviews) => `reviews=${reviews}`);
 }
 
 function cleanupStaleGeneratingEntries(): void {
@@ -1085,8 +1090,8 @@ function applyBinaryOverrides(prefs: Preferences): void {
 }
 
 /** Parsed and normalized `preferences.json`, frozen and shared until the file changes. */
-const preferencesFile = createStatCache(getPreferencesPath, (exists) =>
-  deepFreeze(structuredClone(exists ? readPreferencesFile() : DEFAULT_PREFERENCES)));
+const preferencesFile = createStatCache(getPreferencesPath, (exists) => timed('preferences read', () =>
+  deepFreeze(structuredClone(exists ? readPreferencesFile() : DEFAULT_PREFERENCES))));
 /** A copy whose top-level keys a caller may replace. Nested values are frozen: replace them, never change them. */
 function loadPreferences(): Preferences {
   return { ...preferencesFile.get() };

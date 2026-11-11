@@ -155,6 +155,7 @@ async function launch(stored: string | undefined, packaged = true, platform: Nod
       clear() {},
     }),
     deepFreeze: (value: unknown) => value,
+    timed: (_label: string, fn: () => unknown) => fn(),
     structuredClone,
     DEFAULT_GITHUB_CACHE_MB: 512,
     DEFAULT_PR_INACTIVITY_DAYS: 30,
