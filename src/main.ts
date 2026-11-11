@@ -996,12 +996,23 @@ function initTrayIfEnabled(): void {
     }
   } else if (raw.trayEnabled) {
     createTray();
-    rebuildTrayMenu();
+    rebuildTrayMenuNow();
   }
 }
 
+/** History changes come in bursts during generation, so the tray rebuilds once they settle. */
+let trayRebuild: ReturnType<typeof setTimeout> | undefined;
 function rebuildTrayMenu(): void {
-  updateTrayMenu(readReviewsIndex().filter(entry => !workbench.isMutedReview(entry)), {
+  if (trayRebuild) return;
+  trayRebuild = setTimeout(() => {
+    trayRebuild = undefined;
+    rebuildTrayMenuNow();
+  }, 250);
+}
+function rebuildTrayMenuNow(): void {
+  clearTimeout(trayRebuild);
+  trayRebuild = undefined;
+  updateTrayMenu(workbench.visibleHistory(), {
     onShowWindow: showOrCreateWindow,
     onNavigateToReview: navigateToReview,
     onOpenExternal: (url: string) => {
@@ -1304,7 +1315,7 @@ ipcMain.handle('save-preferences', async (_event, prefs: Preferences) => {
   // Toggle tray on/off
   if (prefs.trayEnabled) {
     createTray();
-    rebuildTrayMenu();
+    rebuildTrayMenuNow();
   } else {
     destroyTray();
   }

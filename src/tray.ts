@@ -2,6 +2,7 @@ import { mergeReadiness } from '../lib/merge-readiness';
 import { Tray, Menu, nativeImage, app } from 'electron';
 import path from 'path';
 import type { PrStatus, ReviewHistoryEntry } from '../lib/types';
+import { createTrayMenuSignature } from './tray-signature';
 
 let tray: Tray | null = null;
 
@@ -203,15 +204,16 @@ const PR_STATUS_TTL_MS = 5 * 60_000;
 const prStatusCache = new Map<string, { status: PrStatus; fetchedAt: number }>();
 const pendingFetches = new Set<string>();
 let statusFetcher: ((prUrl: string) => Promise<PrStatus | null>) | null = null;
-let lastReviews: ReviewHistoryEntry[] = [];
+let lastReviews: readonly ReviewHistoryEntry[] = [];
 let lastCallbacks: TrayCallbacks | null = null;
+const menuSignature = createTrayMenuSignature();
 
 export function setStatusFetcher(fetcher: (prUrl: string) => Promise<PrStatus | null>): void {
   statusFetcher = fetcher;
 }
 
 export function updateTrayMenu(
-  reviews: ReviewHistoryEntry[],
+  reviews: readonly ReviewHistoryEntry[],
   callbacks: TrayCallbacks,
 ): void {
   if (!tray) return;
@@ -277,17 +279,21 @@ export function updateTrayMenu(
   template.push({ type: 'separator' });
   template.push({ label: 'Quit Gnosis', click: onQuit });
 
-  const contextMenu = Menu.buildFromTemplate(template);
-  tray.setContextMenu(contextMenu);
+  // An unchanged menu keeps the one already shown; its handlers open the same reviews.
+  const targets = [...generating.slice(0, 4), ...recent].map((review) => [review.id, review.prUrl] as const);
+  if (menuSignature.changed(template, targets)) {
+    const contextMenu = Menu.buildFromTemplate(template);
+    tray.setContextMenu(contextMenu);
 
-  tray.removeAllListeners('click');
-  tray.removeAllListeners('right-click');
+    tray.removeAllListeners('click');
+    tray.removeAllListeners('right-click');
 
-  if (process.platform === 'darwin') {
-    tray.on('click', () => tray?.popUpContextMenu());
-    tray.on('right-click', () => tray?.popUpContextMenu());
-  } else {
-    tray.on('click', onShowWindow);
+    if (process.platform === 'darwin') {
+      tray.on('click', () => tray?.popUpContextMenu());
+      tray.on('right-click', () => tray?.popUpContextMenu());
+    } else {
+      tray.on('click', onShowWindow);
+    }
   }
 
   // Stash for rebuild after status fetch
@@ -332,5 +338,6 @@ export function destroyTray(): void {
   if (tray) {
     tray.destroy();
     tray = null;
+    menuSignature.reset();
   }
 }
