@@ -40,7 +40,7 @@ import { createHarnessEnvironmentStore } from './harness-environment-store';
 import { setHarnessEnvironmentLoader } from '../lib/providers/environment';
 import type { EnvironmentVariable } from '../lib/harness-environment';
 import { createChatRuns, waitForChatContext } from './chat-runs';
-import { readPrChecks, readPrChecksBatch, readCheckDetails, cachedCheckDetails, withCachedCheckDetails, readCheckLog, rerunChecks, savedPrChecks } from './pr-checks-service';
+import { readPrChecks, readCurrentPrChecks, readPrChecksBatch, readCheckDetails, cachedCheckDetails, withCachedCheckDetails, readCheckLog, rerunChecks, savedPrChecks } from './pr-checks-service';
 import { checkGroup, type CheckTarget, type CheckSelection, type ChecksOptions } from '../lib/pr-checks';
 import { createMarkdownReviewService } from './markdown-review-service';
 import type { MarkdownReviewRequest } from '../lib/markdown-review';
@@ -105,7 +105,7 @@ import { createDiffSource } from '../lib/diffSource';
 import type { DiffSource } from '../lib/diffSource';
 import { isLocalUrl } from '../lib/local-url';
 import type { PrMetadata, PrSearchResult, PrStatus, PrStatusOptions } from '../lib/types';
-import { createPrStatusService } from './pr-status-service';
+import { createPrStatusService, PR_STATUS_MAX_STALE_MS } from './pr-status-service';
 import {
   DEFAULT_CLAUDE_MODEL,
   DEFAULT_FAST_CLAUDE_MODEL,
@@ -1513,13 +1513,13 @@ const prStatus = createPrStatusService({
   signals: (client, requests, options) => getQueueSignals(client, requests, options),
 });
 
-async function fetchPrStatus(prUrl: string, force = false): Promise<PrStatus | null> {
+async function fetchPrStatus(prUrl: string, force = false, expectedHead?: string): Promise<PrStatus | null> {
   // Local reviews have no CI, no reviewers, no mergeability — return null so
   // callers that render PR status chrome simply show nothing.
   if (isLocalUrl(prUrl)) return null;
   const token = getResolvedToken();
   if (!token) return null;
-  const { status, metadata } = await prStatus.read(getGitHubClient(token), prUrl, force);
+  const { status, metadata } = await prStatus.read(getGitHubClient(token), prUrl, force, expectedHead);
   try {
     if (getResolvedToken() !== token) return null;
     workbench.updatePrMetadata(metadata);
@@ -1544,6 +1544,14 @@ handleInteractive('load-pr-image', (_event, url: string) => {
   return loadPrImage(getGitHubClient(token), url);
 });
 
+/** Local data only. Whether a saved status for this head can be shown while GitHub is read again. */
+function showablePrStatus(prUrl: string, headSha: string | undefined) {
+  const token = getResolvedToken();
+  const saved = token && headSha ? prStatus.saved(getGitHubClient(token), prUrl) : undefined;
+  const age = saved ? Date.now() - saved.checkedAt : -1;
+  return !!saved && saved.headSha === headSha && !saved.revalidate && age >= 0 && age < PR_STATUS_MAX_STALE_MS;
+}
+
 ipcMain.handle('get-pr-status', async (_event, prUrl: string, force: boolean = false, options?: PrStatusOptions): Promise<PrStatus | null> => {
   if (isLocalUrl(prUrl)) {
     throw new Error('Local review — no PR status available');
@@ -1554,8 +1562,12 @@ ipcMain.handle('get-pr-status', async (_event, prUrl: string, force: boolean = f
     if (!token || typeof options.headSha !== 'string') return null;
     return (await prStatus.cached(getGitHubClient(token), prUrl, options.headSha)) ?? null;
   }
-  // Opening a PR is user-driven, so its read is exempt from automatic pacing.
-  const status = await withGitHubPriority(force ? 'interactive' : 'foreground', () => fetchPrStatus(prUrl, force), { automatic: !(force || options?.opened) });
+  // Opening a PR is user-driven, so its read is exempt from automatic pacing. With nothing to show
+  // yet, it is also interactive, so it does not wait behind background reads.
+  const opened = options?.opened === true;
+  const headSha = opened && typeof options.headSha === 'string' && /^[a-f\d]{40}$/i.test(options.headSha) ? options.headSha : undefined;
+  const priority = force || (opened && !showablePrStatus(prUrl, headSha)) ? 'interactive' : 'foreground';
+  const status = await withGitHubPriority(priority, () => fetchPrStatus(prUrl, force, headSha), { automatic: !(force || opened) });
   if (!status) throw new Error('Not authenticated');
   return status;
 });
@@ -3208,17 +3220,19 @@ async function checkAccount<T>(read: (client: ReturnType<typeof changesClient>) 
   if (token !== getResolvedToken()) throw new Error('Your GitHub account changed. Open Checks again.');
   return value;
 }
-ipcMain.handle('pr-checks', (_event, input: CheckTarget, options: ChecksOptions = {}) =>
-  withGitHubPriority(options.background ? 'foreground' : 'interactive', () => checkAccount(async client => {
+ipcMain.handle('pr-checks', (_event, input: CheckTarget, options: ChecksOptions = {}) => {
+  const automatic = !!options.background && !options.opened;
+  return withGitHubPriority(automatic ? 'foreground' : 'interactive', () => checkAccount(async client => {
     if (options.cachedOnly) {
       const value = await readPrChecks(client, input, options);
       return value && withCachedCheckDetails(client, value);
     }
     const { owner, repo, pullNumber } = parsePrUrl(input.url);
-    const metadata = await getPrMetadata(client, owner, repo, pullNumber, !!options.force);
-    const value = await readPrChecks(client, { url: input.url, headSha: metadata.headSha }, options);
+    const value = await readCurrentPrChecks(client, input, options,
+      async fresh => (await getPrMetadata(client, owner, repo, pullNumber, fresh)).headSha);
     return value && withCachedCheckDetails(client, value);
-  }), { automatic: options.background }));
+  }), { automatic });
+});
 ipcMain.handle('prepare-workflow-graph', (_event, target?: CheckTarget) => {
   workflowWarmAccount = cachedToken;
   workflowGraphPreload.setTarget(target);

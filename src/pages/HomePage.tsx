@@ -638,7 +638,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
           statusSubject.members.map(async (m) => ({
             url: m.url,
             status: await (firstRead
-              ? window.electronAPI.getPrStatus(m.url, refreshNow, { opened: true })
+              ? window.electronAPI.getPrStatus(m.url, refreshNow, { opened: true, headSha: m.headSha })
               : window.electronAPI.getPrStatus(m.url, refreshNow)),
           }))
         ).then((results) => {

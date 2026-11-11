@@ -299,6 +299,10 @@ export interface PrStatus {
 /** `cachedOnly` returns the saved status for `headSha`, or null, without a GitHub request. */
 export interface PrStatusOptions {
   cachedOnly?: boolean;
+  /**
+   * The queue's head. An opened read starts checks and signals for it at once, and discards them
+   * when GitHub reports another head.
+   */
   headSha?: string;
   /** The user opened this PR. Its first read is exempt from automatic pacing. */
   opened?: boolean;

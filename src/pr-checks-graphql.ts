@@ -38,6 +38,13 @@ interface PullChecks {
 }
 type Response = Record<string, { pullRequest: PullChecks | null } | null>;
 
+/** GitHub reports a different head than the one requested, so these checks would describe another revision. */
+export class CheckHeadChanged extends Error {
+  constructor() {
+    super('New commits arrived. Refresh the PR to load its latest checks.');
+  }
+}
+
 function normalize(node: Context): PrCheck {
   const check = node.__typename === 'CheckRun';
   if (check && (!node.databaseId || !Number.isSafeInteger(node.databaseId)))
@@ -107,8 +114,7 @@ export async function readChecksGraphQL(client: Octokit, targets: CheckTarget[])
       const pr = data[`p${i}`]?.pullRequest;
       const commit = pr?.commits.nodes[0]?.commit;
       if (!pr || !commit) throw Error('GitHub could not load this PR’s checks. Refresh checks.');
-      if (pr.headRefOid !== state.target.headSha || commit.oid !== state.target.headSha)
-        throw Error('New commits arrived. Refresh the PR to load its latest checks.');
+      if (pr.headRefOid !== state.target.headSha || commit.oid !== state.target.headSha) throw new CheckHeadChanged();
       const connection = commit.statusCheckRollup?.contexts;
       for (const node of connection?.nodes ?? []) {
         if (!node) throw Error('GitHub returned incomplete checks. Refresh checks.');

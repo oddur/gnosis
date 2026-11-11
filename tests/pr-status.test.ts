@@ -176,6 +176,77 @@ void test('concurrent status reads share one fetch and an account change discard
   assert.equal(await status.cached(h.client, url, head), undefined);
 });
 
+/** A status service whose four reads record their start order and wait for `release`. */
+function speculation(reportedHead: string) {
+  const h = harness();
+  const started: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const metadata = { headSha: reportedHead, baseSha: 'c'.repeat(40), mergeable: true, mergeableState: 'clean', ...core };
+  const status = createPrStatusService({
+    metadata: async () => {
+      started.push('metadata');
+      await gate;
+      return metadata as unknown as PrMetadata;
+    },
+    reviews: () => {
+      started.push('reviews');
+      return Promise.resolve(core.reviewSummary);
+    },
+    checks: (_client, target) => {
+      started.push(`checks:${target.headSha}`);
+      return Promise.resolve(checks(target.headSha));
+    },
+    signals: (_client, requests) => {
+      started.push(`signals:${requests[0].headSha}`);
+      return Promise.resolve([signals(requests[0].headSha)]);
+    },
+    now: () => savedAt,
+  });
+  return { h, started, release, status };
+}
+
+void test('starts checks and signals with the expected head', async () => {
+  const { h, started, release, status } = speculation(head);
+  const read = status.read(h.client, url, false, head);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(started.sort(), ['checks:' + head, 'metadata', 'reviews', 'signals:' + head].sort());
+  release();
+  const result = await read;
+  assert.equal(started.length, 4, 'An unchanged head needs no second stage');
+  assert.equal(result.status.headSha, head);
+  assert.equal(result.status.checkSnapshot?.headSha, head);
+  assert.equal(result.status.signals?.headSha, head);
+});
+
+void test('discards speculative results when the head moved', async () => {
+  const { h, started, release, status } = speculation(otherHead);
+  const read = status.read(h.client, url, false, head);
+  await new Promise((resolve) => setImmediate(resolve));
+  release();
+  const result = await read;
+  assert.deepEqual(started.slice(4).sort(), [`checks:${otherHead}`, `signals:${otherHead}`]);
+  assert.equal(result.status.headSha, otherHead);
+  assert.equal(result.status.checkSnapshot?.headSha, otherHead, 'Checks are never labelled with the old head');
+  assert.equal(result.status.signals?.headSha, otherHead);
+});
+
+void test('a failed speculative read does not fail a moved-head status', async () => {
+  const h = harness();
+  const status = createPrStatusService({
+    metadata: () => Promise.resolve({ headSha: otherHead, baseSha: 'c'.repeat(40), ...core } as unknown as PrMetadata),
+    reviews: () => Promise.resolve(core.reviewSummary),
+    checks: (_client, target) => Promise.resolve(checks(target.headSha)),
+    signals: (_client, requests) =>
+      requests[0].headSha === head ? Promise.reject(new Error('old head')) : Promise.resolve([signals(otherHead)]),
+    now: () => savedAt,
+  });
+  const result = await status.read(h.client, url, false, head);
+  assert.equal(result.status.signals?.headSha, otherHead);
+});
+
 const pullUrl = (n: number) => `https://github.com/o/r/pull/${n}`;
 const pull = (overrides: Record<string, unknown> = {}) => ({
   headRefOid: head,
