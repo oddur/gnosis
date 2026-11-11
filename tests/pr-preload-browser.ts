@@ -90,8 +90,65 @@ void app.whenReady().then(async () => {
       [],
       'Reopening uses the prepared revision without a loading phase'
     );
+    // Queue rows send their PRs for preloading. Main validates full SHAs, so give the fixture's members real-looking ones.
+    await click('Review queue');
+    const pr = 'https://github.com/klang/engine/pull/151';
+    const row = "[...document.querySelectorAll('[data-queue-id]')].find(r=>r.textContent.includes('Reduce allocations'))";
+    await wait(`!!${row}`);
+    await js(`(()=>{
+      const hex=s=>{const h=Array.from(s,c=>c.charCodeAt(0).toString(16).padStart(2,'0')).join('');return h.length>=40?h.slice(-40):h.padEnd(40,'0')};
+      const load=window.electronAPI.workbenchQueue;
+      window.electronAPI.workbenchQueue=async(...args)=>{const q=await load(...args);return {...q,items:q.items.map(i=>({...i,subject:{...i.subject,members:i.subject.members.map(m=>({...m,headSha:hex(m.headSha),baseSha:hex(m.baseSha)}))}}))}};
+      window.openPreloads=[];window.openIntents=[];
+      window.electronAPI.prOpenPreload=targets=>{window.openPreloads.push(targets)};
+      window.electronAPI.prOpenIntent=targets=>{window.openIntents.push(targets)};
+      document.dispatchEvent(new Event('visibilitychange'));
+    })()`);
+    await wait(`window.openPreloads.some(targets=>targets.some(t=>t.url===${JSON.stringify(pr)}&&/^[0-9a-f]{40}$/.test(t.headSha)))`);
+    // Moving over a row and its children, then resting, sends one intent; leaving the list clears it.
+    await js(`(async()=>{
+      window.openIntents=[];
+      const row=${row};
+      for(const target of [row.querySelector('.queue-row-main'),row,row.querySelector('.queue-row-main')]){
+        target.dispatchEvent(new PointerEvent('pointerover',{bubbles:true}));await new Promise(r=>setTimeout(r,40));
+      }
+      await new Promise(r=>setTimeout(r,300));
+    })()`);
+    assert.deepEqual(
+      await js('window.openIntents.map(targets=>targets&&targets.map(t=>t.url))'),
+      [[pr]],
+      'Resting on a row sends one intent'
+    );
+    await js(`${row}.dispatchEvent(new PointerEvent('pointerout',{bubbles:true,relatedTarget:document.body}))`);
+    await wait('window.openIntents.length===2&&window.openIntents[1]===null');
+
+    // A never-opened PR shows its saved status and comments while GitHub has not answered.
+    await js(`(async()=>{
+      const url=${JSON.stringify(pr)};
+      const member=(await window.electronAPI.workbenchQueue()).items.flatMap(i=>i.subject.members).find(m=>m.url===url);
+      const saved={...(await window.electronAPI.getPrStatus(url,false)),labels:['preloaded'],mergeable:null,mergeableState:null,stale:true,headSha:member.headSha,checkedAt:Date.now()-60000};
+      window.liveReads=[];
+      window.electronAPI.getPrStatus=(u,force,options)=>options?.cachedOnly?Promise.resolve(u===url?saved:null):(window.liveReads.push('status'),new Promise(()=>{}));
+      const stamp=new Date(Date.now()-60000).toISOString();
+      const comment={id:'preloaded-1',body:'Preloaded discussion is ready.',author:{login:'maya',avatarUrl:''},createdAt:stamp,updatedAt:stamp,url:url+'#issuecomment-1'};
+      window.electronAPI.getCachedReviewThreads=async u=>u===url?{headSha:member.headSha,baseSha:member.baseSha,checkedAt:Date.now()-60000,threads:[],feedback:{comments:[comment],reviews:[],requestedReviewers:[],viewerCanUpdate:true,state:'OPEN'}}:undefined;
+      window.electronAPI.getReviewThreads=()=>(window.liveReads.push('threads'),new Promise(()=>{}));
+      // Native builds read saved copies first; preview fixtures opt in here.
+      Object.assign(window.electronAPI,{githubSyncVersion:1,watchGitHub:()=>{},onGitHubSync:()=>()=>{}});
+    })()`);
+    await js(`${row}.querySelector('.queue-row-main').click()`);
+    await wait(
+      "[...document.querySelectorAll('.briefing-panel .stack-member p')].some(p=>p.textContent.includes('CI success · 1 approvals'))"
+    );
+    assert.equal(await js("!!document.querySelector('.briefing-panel .loading-indicator')"), false, 'Status opens without a loading state');
+    assert.ok((await js<string[]>('window.liveReads')).includes('status'), 'GitHub had not answered');
+    await click('Open PR overview');
+    await click('Feedback');
+    // GitHub reads never answer here, so the comment can only come from the saved copy.
+    await wait("document.body.innerText.includes('Preloaded discussion is ready.')");
+
     console.log(
-      'Revision preload browser checks passed: first tab open, all PR files, default commit, pinned active diff, prepared revision on reopen.'
+      'Revision preload browser checks passed: first tab open, all PR files, default commit, pinned active diff, prepared revision on reopen, row intent, saved status and comments.'
     );
     win.destroy();
     app.exit(0);

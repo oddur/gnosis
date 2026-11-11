@@ -66,6 +66,11 @@ export function createPrInspectionCache(deps: Dependencies) {
   let order: string[] = [];
   let priorities = new Map<string, number>();
   let activeUrls = new Set<string>();
+  // Rows under the pointer or keyboard focus run with the active tier until the intent clears.
+  let intentUrls = new Set<string>();
+  let rankedUrls: string[] = [];
+  const prioritize = () =>
+    deps.prioritize?.([...intentUrls, ...rankedUrls.filter((url) => !intentUrls.has(url))]);
   let currentJob: Job | undefined;
   let pausedUntil = 0;
   let activitySignature = '';
@@ -257,7 +262,7 @@ export function createPrInspectionCache(deps: Dependencies) {
         const ready = order.map((id) => jobs.get(id)).filter((job): job is Job => !!job && job.retryAt <= now());
         // Re-evaluate intent between every operation. Within a tier, make both tab
         // inventories available before deep downloads; never let the backlog delay an active PR.
-        const tier = (job: Job) => priorities.get(job.revision.url) ?? 4;
+        const tier = (job: Job) => (intentUrls.has(job.revision.url) ? 0 : (priorities.get(job.revision.url) ?? 4));
         const essentials = ready.filter(job => job.stage < 5);
         const candidates = essentials.length ? essentials : ready;
         const highest = candidates.reduce((best, job) => Math.min(best, tier(job)), Infinity);
@@ -342,6 +347,7 @@ export function createPrInspectionCache(deps: Dependencies) {
         restored.clear();
         pending.clear();
         activeUrls.clear();
+        intentUrls = new Set();
         changed();
         currentJob = undefined;
         pausedUntil = 0;
@@ -363,7 +369,8 @@ export function createPrInspectionCache(deps: Dependencies) {
       }
       activeUrls = new Set(intent.active);
       order = nextOrder;
-      deps.prioritize?.(account ? ranked.map(r => r.url) : []);
+      rankedUrls = account ? ranked.map(r => r.url) : [];
+      prioritize();
       const wanted = new Set(order);
       for (const id of jobs.keys()) if (!wanted.has(id)) jobs.delete(id);
       for (const r of unique.values())
@@ -376,6 +383,12 @@ export function createPrInspectionCache(deps: Dependencies) {
         clearTimeout(timer);
         timer = undefined;
       }
+      kick();
+    },
+    /** Hover or focus intent. Work stays at background priority; the current step finishes first. */
+    setIntent(urls: string[]) {
+      intentUrls = new Set(urls);
+      prioritize();
       kick();
     },
     flush: drain,

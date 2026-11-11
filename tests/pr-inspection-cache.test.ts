@@ -5,7 +5,7 @@ import type { InspectionRevision, PrChanges } from '../lib/pr-changes';
 import type { PrCommits, PrCommit } from '../lib/pr-commits';
 import type { PrMetadata } from '../lib/types';
 const r = { url: 'https://github.com/o/r/pull/1', baseSha: 'base', headSha: 'head' };
-function fixture(options: { truncatedHead?: string; commits?: number; comparisonFiles?: boolean; onFile?: (snapshot: PrChanges, file: string) => Promise<void> } = {}) {
+function fixture(options: { truncatedHead?: string; commits?: number; comparisonFiles?: boolean; onFile?: (snapshot: PrChanges, file: string) => Promise<void>; prioritize?: (urls: string[]) => void } = {}) {
   const calls: string[] = [];
   let now = 1000,
     fail = false,
@@ -56,6 +56,7 @@ function fixture(options: { truncatedHead?: string; commits?: number; comparison
     },
     visible: () => visible,
     now: () => now,
+    prioritize: options.prioritize,
   });
   return {
     cache,
@@ -474,3 +475,32 @@ for (const commits of [0, 1]) {
     } finally { f.cache.stop(); }
   });
 }
+
+void test('setIntent runs the hovered PR before visible rows and reverts', async () => {
+  let release!: () => void;
+  let entered!: () => void;
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  let blocked = false;
+  const priorities: string[][] = [];
+  const f = fixture({ prioritize: urls => priorities.push(urls), onFile: async (snapshot) => {
+    if (snapshot.metadata.headSha === 'visible' && !blocked) {
+      blocked = true; entered(); await new Promise<void>(resolve => { release = resolve; });
+    }
+  } });
+  const visible = { ...r, url: r.url + '1', headSha: 'visible' };
+  const view = { ...r, url: r.url + '2', headSha: 'view' };
+  const hovered = { ...r, url: r.url + '3', headSha: 'hovered' };
+  try {
+    f.cache.setTargets('one', [visible, view, hovered], { visible: [visible.url], view: [view.url] });
+    const loading = f.cache.flush();
+    await waiting;
+    f.cache.setIntent([hovered.url]);
+    assert.deepEqual(priorities.at(-1), [hovered.url, visible.url, view.url], 'File downloads put the hovered PR first');
+    release(); await loading;
+    assert.equal(f.calls.filter(call => call === 'file:visible:first.ts').length, 1, 'The step in flight finishes once');
+    assert.ok(f.calls.indexOf('review:hovered') < f.calls.indexOf('file:visible:second.ts'), 'Hovered PR before visible rows');
+    assert.ok(f.calls.indexOf('review:hovered') < f.calls.indexOf('changes:view'));
+    f.cache.setIntent([]);
+    assert.deepEqual(priorities.at(-1), [visible.url, view.url, hovered.url], 'Clearing the intent restores queue order');
+  } finally { f.cache.stop(); }
+});

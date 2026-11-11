@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createGitHubCache, isCacheRecord, type GitHubCache } from './github-cache';
-import { automaticDeadline, automaticSpacing, automaticWindow, type AutomaticUsage } from './github-budget';
+import { automaticDeadline, automaticLimit, automaticSpacing, automaticWindow, type AutomaticUsage } from './github-budget';
 import {
   createGitHubScheduler,
   githubPriorityScope,
@@ -173,8 +173,18 @@ export function createGitHubClientPool(options: Options = {}) {
     if (reserveDeadline > now())
       return new GitHubBackoffError(reserveDeadline, 'Background updates paused to preserve your API allowance');
   };
+  /** Automatic spend in the current window, and its limit. Optional work can stop well before the limit. */
+  const automaticUsage = (token: string | null | undefined, resource: string) => {
+    const state = stateFor(keyFor(token));
+    const usage = state.automatic[resource];
+    return {
+      spent: usage && now() < usage.startedAt + automaticWindow(resource) ? usage.spent : 0,
+      limit: automaticLimit(resource, state.budgets[resource], !!token),
+    };
+  };
   return {
     backoff,
+    automaticUsage,
     setCacheSizeMB: (value: unknown) => snapshots.setSizeMB(value),
     flushStorage: async () => { await snapshots.flush(); await flushBudget(); },
     closeStorage: async () => { await snapshots.close(); await flushBudget(); },

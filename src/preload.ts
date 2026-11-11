@@ -1,5 +1,6 @@
 import type { WorkflowRuns, WorkflowGraph, WorkflowGraphInput } from '../lib/workflow-graph';
 import type { GitHubSyncInterest, GitHubSyncEvent } from '../lib/github-sync';
+import type { OpenTarget } from '../lib/pr-open-targets';
 import type { OnboardingState, SetupDraft } from '../lib/onboarding';
 import type { HarnessEnvironment, EnvironmentVariable } from '../lib/harness-environment';
 import type { CheckTarget, CheckSelection, ChecksOptions, PrChecks, CheckDetails, CheckLog } from '../lib/pr-checks';
@@ -48,6 +49,8 @@ import type {
 contextBridge.exposeInMainWorld('electronAPI', {
   githubSyncVersion: 1 as const,
   watchGitHub: (id: string, interest: GitHubSyncInterest | null) => ipcRenderer.send('github-sync-watch', id, interest),
+  prOpenPreload: (targets: OpenTarget[]) => ipcRenderer.send('pr-open-preload', targets),
+  prOpenIntent: (targets: OpenTarget[] | null) => ipcRenderer.send('pr-open-intent', targets),
   onGitHubSync: (callback: (event: GitHubSyncEvent) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, value: GitHubSyncEvent) => callback(value);
     ipcRenderer.on('github-sync', handler);

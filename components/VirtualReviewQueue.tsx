@@ -14,10 +14,12 @@ interface Props {
   grouped?: boolean;
   starredFirst?: boolean;
   onVisibleItemsChange?: (ids: string[]) => void;
+  /** The row under the pointer or keyboard focus, or null when neither rests on a row. */
+  onIntent?: (id: string | null) => void;
 }
 
 /** Keep expanded stacks measured and the keyboard selection mounted in large queues. */
-export function VirtualReviewQueue({ items, labels, selected, scrollElement, initialOffset, measurements, renderRow, onVisibleItemsChange, grouped = true, starredFirst = true }: Props) {
+export function VirtualReviewQueue({ items, labels, selected, scrollElement, initialOffset, measurements, renderRow, onVisibleItemsChange, onIntent, grouped = true, starredFirst = true }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const [margin, setMargin] = useState(0);
   const [focused, setFocused] = useState<string | null>(null);
@@ -110,15 +112,19 @@ export function VirtualReviewQueue({ items, labels, selected, scrollElement, ini
     <div ref={container} role="list" aria-label={`${items.length} PRs and stacks`}
       data-queue-total={items.length}
       style={virtual ? { height: virtualizer.getTotalSize(), position: 'relative' } : undefined}
+      onPointerOver={(event) => onIntent?.((event.target as HTMLElement).closest<HTMLElement>('[data-queue-id]')?.dataset.queueId ?? null)}
+      onPointerLeave={() => onIntent?.(null)}
       onFocusCapture={(event) => {
         const row = (event.target as HTMLElement).closest<HTMLElement>('[data-queue-id]');
         setFocused(row?.dataset.queueId ?? null);
+        onIntent?.(row?.dataset.queueId ?? null);
       }}
       onBlurCapture={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
           // Menus are portaled, but their entry must stay mounted while keyboard focus is inside.
           const owner = (event.relatedTarget as HTMLElement | null)?.closest<HTMLElement>('[data-queue-id]');
           setFocused(owner?.dataset.queueId ?? null);
+          onIntent?.(owner?.dataset.queueId ?? null);
         }
       }}>
       {virtual ? virtualizer.getVirtualItems().map((entry) => (

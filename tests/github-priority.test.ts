@@ -14,6 +14,7 @@ import { createPrChangesService } from '../src/pr-changes-service';
 import { createReviewThreadService } from '../src/review-thread-service';
 import { createSnapshotFileLoader } from '../src/snapshot-file-loader';
 import { createPrFileCache } from '../lib/pr-file-cache';
+import { intentPriority, queuePriority } from '../src/pr-open-preloader';
 import type { PrChanges } from '../lib/pr-changes';
 function deferred() {
   let resolve!: () => void;
@@ -548,4 +549,30 @@ void test('revalidation runs foreground, unpaced, and is promoted by an interact
   const [a, b] = await Promise.all([revalidation, refresh]);
   assert.deepEqual(a, b);
   assert.deepEqual(starts, ['foreground', 'interactive'], 'One shared read; later pages run at the joined priority');
+});
+
+void test('intent prefetch never takes an interactive slot and is not charged as automatic', async () => {
+  const gate = deferred(),
+    starts: string[] = [];
+  const pool = createGitHubClientPool({
+    fetch: (async (url: string) => {
+      starts.push(`${new URL(url).pathname} ${githubPriority()}${githubAutomatic() ? ' automatic' : ''}`);
+      await gate.promise;
+      return json({}, { 'x-ratelimit-resource': 'core', 'x-ratelimit-limit': '5000', 'x-ratelimit-remaining': '4000', 'x-ratelimit-reset': '9999999999' });
+    }) as typeof fetch,
+  });
+  const client = pool.client('account');
+  const prefetch = Array.from({ length: 6 }, (_, i) => intentPriority(() => client.request(`GET /intent-${i}`)));
+  await settle(() => starts.length === 4);
+  for (let i = 0; i < 5; i++) await turn();
+  assert.equal(starts.length, 4, 'Prefetch uses at most the four lower slots');
+  assert.ok(starts.every((start) => start.endsWith(' foreground')), 'Foreground, outside automatic pacing');
+  const clicks = withGitHubPriority('interactive', () => [client.request('GET /click-0'), client.request('GET /click-1')]);
+  await settle(() => starts.length === 6);
+  assert.deepEqual(starts.slice(4), ['/click-0 interactive', '/click-1 interactive'], 'Clicks never wait behind prefetch');
+  gate.resolve();
+  await Promise.all([...prefetch, ...clicks]);
+  assert.equal(pool.automaticUsage('account', 'core').spent, 0);
+  await queuePriority(() => client.request('GET /queue'));
+  assert.equal(pool.automaticUsage('account', 'core').spent, 1, 'Queue preloading is charged as automatic');
 });

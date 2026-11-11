@@ -33,6 +33,8 @@ import { applyTheme } from '../../lib/theme';
 import { normalizePrInactivityDays } from '../../lib/pr-inactivity';
 import type { GitHubSyncStatusProps } from '../../components/GitHubSyncStatus';
 import { inspectionData } from '../../lib/inspection-cache';
+import { createRowIntent, type RowIntent } from '../../lib/row-intent';
+import { openRows, type OpenTarget } from '../../lib/pr-open-targets';
 import { EntryActions } from '../../components/EntryActions';
 import { PrEntryActions, PrStarMarker, prEntryActionGroups, type PrGenerationActionsFor } from '../../components/PrEntryActions';
 import { MutedPrs } from '../../components/MutedPrs';
@@ -934,12 +936,28 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       unread: [...new Set([...orderedItems, ...orderedBacklog].flatMap(item => item.unreadUrls ?? []))],
       view: orderedItems.flatMap(item => item.subject.members.map(member => member.url)),
     },
+    rows: [...new Map([...(statusSubject ? [statusSubject] : []), ...[...orderedItems, ...orderedBacklog].map(item => item.subject)]
+      .map(subject => [subject.id, { id: subject.id, members: subject.members.map(({ url, headSha, baseSha, updatedAt }) => ({ url, headSha, baseSha, updatedAt })) }])).values()],
   });
+  // Status, checks and discussions are saved ahead of opening. Hover and focus intent lives in a ref, so it never re-renders.
+  const openIntent = useRef<{ rows: Map<string, OpenTarget[]>; intent: RowIntent } | null>(null);
   useEffect(() => {
     if (!auth) return;
     const preload = () => {
-      const { targets, intent } = JSON.parse(inspectionKey) as { targets: Parameters<typeof inspectionData.setTargets>[1]; intent: Parameters<typeof inspectionData.setTargets>[2] };
+      const { targets, intent, rows } = JSON.parse(inspectionKey) as { targets: Parameters<typeof inspectionData.setTargets>[1]; intent: Parameters<typeof inspectionData.setTargets>[2]; rows: Parameters<typeof openRows>[0] };
       inspectionData.setTargets(auth.authenticated ? auth.login : null, targets, intent);
+      const open = openRows(rows, intent ?? {});
+      window.electronAPI.prOpenPreload?.(auth.authenticated ? open.targets.slice(0, 200) : []);
+      openIntent.current ??= { rows: open.rows, intent: createRowIntent({
+        fire: id => {
+          const members = openIntent.current?.rows.get(id) ?? [];
+          if (!members.length) return;
+          inspectionData.setIntent(members.map(member => member.url));
+          window.electronAPI.prOpenIntent?.(members);
+        },
+        clear: () => { inspectionData.setIntent([]); window.electronAPI.prOpenIntent?.(null); },
+      }) };
+      openIntent.current.rows = open.rows;
     };
     preload();
     document.addEventListener('visibilitychange', preload);
@@ -2094,6 +2112,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                     selected={selected}
                     scrollElement={queueScrollElement}
                     onVisibleItemsChange={updateVisibleQueueIds}
+                    onIntent={id => { if (id) openIntent.current?.intent.enter(id); else openIntent.current?.intent.leave(); }}
                     measurements={queueMeasurements}
                     initialOffset={queueScrollOffset.current}
                     renderRow={row}

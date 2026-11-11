@@ -1,5 +1,6 @@
 import type { WorkflowRuns, WorkflowGraph, WorkflowGraphInput } from '../lib/workflow-graph';
 import type { GitHubSyncInterest, GitHubSyncEvent } from '../lib/github-sync';
+import type { OpenTarget } from '../lib/pr-open-targets';
 import type { OnboardingState, SetupDraft } from '../lib/onboarding';
 import type { HarnessEnvironment, EnvironmentVariable } from '../lib/harness-environment';
 import type { CheckTarget, CheckSelection, ChecksOptions, PrChecks, CheckDetails, CheckLog } from '../lib/pr-checks';
@@ -49,6 +50,8 @@ declare global {
     electronAPI: {
       githubSyncVersion?: 1;
       watchGitHub?: (id: string, interest: GitHubSyncInterest | null) => void;
+      prOpenPreload?: (targets: OpenTarget[]) => void;
+      prOpenIntent?: (targets: OpenTarget[] | null) => void;
       onGitHubSync?: (callback: (event: GitHubSyncEvent) => void) => () => void;
       onWorkbenchChanged?: (callback: () => void) => () => void;
       onActivityChanged?: (callback: () => void) => () => void;
