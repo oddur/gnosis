@@ -16,6 +16,10 @@ export function requestGitHubCacheClear(directory: string) {
   fs.mkdirSync(directory, { recursive: true });
   fs.writeFileSync(path.join(directory, marker), '1', { mode: 0o600 });
 }
+/** Startup opens the window first unless a clear is pending, because deletion must precede every request. */
+export function hasPendingGitHubCacheClear(directory: string) {
+  return fs.existsSync(path.join(directory, marker));
+}
 export async function applyPendingGitHubCacheClear(directory: string, clearBrowserCache: () => Promise<void>, clearStoredQueue?: () => Promise<void>) {
   const request = path.join(directory, marker);
   if (!fs.existsSync(request)) return false;

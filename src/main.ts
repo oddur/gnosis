@@ -1,4 +1,5 @@
 import { mark, markRenderer, note, startupSummary, startupTracing, exitAfterTrace } from './startup-trace';
+import { createStartup, gateHandlers, afterStartup } from './startup';
 import { attachWorkspaceShortcuts } from './window-workspace-navigation';
 import {
   explanationFile,
@@ -56,7 +57,7 @@ import type { MarkPrReadRequest } from '../lib/pr-read-state';
 import { createPrActionsService } from './pr-actions-service';
 import { createPrMergeMonitor } from './pr-merge-monitor';
 import type { PrActionRequest } from '../lib/pr-actions';
-import { requestGitHubCacheClear, applyPendingGitHubCacheClear } from './github-cache-reset';
+import { requestGitHubCacheClear, applyPendingGitHubCacheClear, hasPendingGitHubCacheClear } from './github-cache-reset';
 import { withGitHubPriority, githubPriority } from '../lib/github-scheduler';
 import { changesRevision, type InspectionRevision, type InspectionLoadOptions } from '../lib/pr-changes';
 import { normalizePrInactivityDays, DEFAULT_PR_INACTIVITY_DAYS } from '../lib/pr-inactivity';
@@ -82,7 +83,7 @@ import type { ActivityAction } from '../lib/activity';
 import { createWorkbenchService } from './workbench-service';
 import { fingerprint, type ReviewSubject, type ReviewSnapshot, type GroupingOverride } from '../lib/workbench';
 import type { WorkbenchRevisions } from '../lib/workbench-revision';
-import { app, autoUpdater, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell, session, net, powerMonitor } from 'electron';
+import { app, autoUpdater, BrowserWindow, dialog, ipcMain, nativeTheme, Notification, safeStorage, shell, session, net, powerMonitor } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -153,6 +154,16 @@ import type {
 } from '../lib/types';
 
 mark('main-eval');
+
+// The window opens before saved data and the GitHub cache load. Every handler registered below waits
+// for both unless listed here. Wrap before the first registration.
+const startup = createStartup();
+gateHandlers(ipcMain, startup, {
+  ungated: ['load-preferences', 'get-config', 'open-external', 'open-logs-directory', 'get-pending-update-ready', 'dismiss-update'],
+  dataOnly: ['load-review-state', 'save-review-state', 'save-file-progress', 'load-file-filters', 'load-onboarding', 'get-auth-state'],
+});
+const launchedAt = Date.now();
+const STARTUP_REPAIR_DELAY_MS = 5_000;
 
 // Injected by Electron Forge Vite plugin
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
@@ -316,11 +327,17 @@ function setupLogging() {
 
 let quitConfirmed = false;
 
+// The workbench --background colours in globals.css, so the window opens in the theme the app paints.
+const WINDOW_BACKGROUND = { light: '#fcfcfd', dark: '#171a20' };
+
 function createWindow() {
   mark('create-window');
+  const theme = loadPreferences().theme;
+  const dark = theme === 'dark' || (theme !== 'light' && nativeTheme.shouldUseDarkColors);
   const mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
+    backgroundColor: dark ? WINDOW_BACKGROUND.dark : WINDOW_BACKGROUND.light,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       // Sandboxed preloads cannot read main's environment.
@@ -714,39 +731,66 @@ void app.whenReady().then(async () => {
     decrypt: data => safeStorage.decryptString(data),
   });
   setHarnessEnvironmentLoader(() => harnessEnvironments.load());
-  try {
-    await appData.open(app.getPath('userData'));
-    mark('data-open');
-    await applyPendingGitHubCacheClear(app.getPath('userData'), () => session.defaultSession.clearCache(), () => appData.clearGitHub());
-    mark('cache-clear');
-    mark('data-ready');
-  } catch (error) {
-    dialog.showErrorBox('Could not open saved data', error instanceof Error ? error.message : String(error));
-    app.exit(1);
-    return;
-  }
-  const startupPreferences = loadPreferences();
-  mark('prefs');
-  await githubClients.setCacheSizeMB(startupPreferences.githubCacheSizeMB);
-  localClones.configure(localCloneStore.load());
-  note('cache-open.worker', await githubClients.setStorage(path.join(app.getPath('userData'), 'github-budget.json')));
-  mark('cache-open');
-  mark('budget');
-  mark('all-ready');
-
   // Expose packaged state to preload via env var (before creating windows)
   process.env.APP_IS_PACKAGED = app.isPackaged ? '1' : '0';
-
   const prefs = loadPreferences();
-  if (prefs.analytics) void trackEvent('app_started');
+  mark('prefs');
+  applyBinaryOverrides(prefs);
+  localClones.configure(localCloneStore.load());
 
-  // Mark any stale "generating" entries from a previous crash as failed
-  cleanupStaleGeneratingEntries();
-  // Backfill summaries for reviews that predate the summary field
-  backfillSummaries();
-  mark('backfill-done');
-  applyBinaryOverrides(loadPreferences());
+  const userData = app.getPath('userData');
+  const budgetFile = path.join(userData, 'github-budget.json');
+  const failStartup = (error: unknown) => {
+    startup.fail(error);
+    dialog.showErrorBox('Could not open saved data', error instanceof Error ? error.message : String(error));
+    app.exit(1);
+  };
+  // A requested cache clear deletes before the window opens, so no request can start until it is done.
+  const clearing = hasPendingGitHubCacheClear(userData);
+  if (clearing) {
+    try {
+      await appData.open(userData);
+      mark('data-open');
+      await applyPendingGitHubCacheClear(userData, () => session.defaultSession.clearCache(), () => appData.clearGitHub());
+      mark('cache-clear');
+    } catch (error) {
+      failStartup(error);
+      return;
+    }
+  }
   createWindow();
+
+  // Saved data and the GitHub cache load while the renderer boots. Handlers wait for what they read.
+  try {
+    await Promise.all([
+      (async () => {
+        if (!clearing) {
+          await appData.open(userData);
+          mark('data-open');
+        }
+        // Logins and cooldowns must be known before any GitHub request.
+        await githubClients.loadBudget(budgetFile);
+        mark('budget');
+        const token = getResolvedToken();
+        // The saved login lets the first queue snapshot show the saved queue.
+        if (token) cachedLogin ??= githubClients.savedLogin(token) ?? null;
+        startup.resolveData();
+        mark('data-ready');
+      })(),
+      (async () => {
+        await githubClients.setCacheSizeMB(prefs.githubCacheSizeMB);
+        note('cache-open.worker', await githubClients.loadCache(budgetFile));
+        mark('cache-open');
+      })(),
+    ]);
+  } catch (error) {
+    failStartup(error);
+    return;
+  }
+  startup.resolveAll();
+  mark('all-ready');
+
+  if (prefs.analytics) void trackEvent('app_started');
   initTrayIfEnabled();
   setStatusFetcher(url => withGitHubPriority('background', () => fetchPrStatus(url)));
   rebuildTrayMenu();
@@ -758,6 +802,9 @@ void app.whenReady().then(async () => {
   }
 
   if (loadPreferences().proactiveMode) startProactivePolling();
+
+  // Repairs that predate this launch wait until the queue has had time to paint.
+  setTimeout(() => void repairReviewsIndex(), STARTUP_REPAIR_DELAY_MS).unref();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -868,26 +915,51 @@ function writeReviewsIndex(next: readonly ReviewHistoryEntry[]): void {
   reviewsIndex.set(value);
 }
 
-/** One-time migration: backfill summary from full review JSON into
- *  the index for entries that predate the summary field. Runs once
- *  at startup and persists results so subsequent reads are fast. */
-function backfillSummaries(): void {
-  const saved = readReviewsIndex();
-  const index = saved.map((entry) => {
-    if (!entry.summary && entry.status === 'completed') {
-      try {
-        const reviewPath = path.join(getReviewsDir(), `${entry.id}.json`);
-        const review = JSON.parse(fs.readFileSync(reviewPath, 'utf-8')) as ReviewGuide;
-        if (review.summary) return { ...entry, summary: review.summary };
-      } catch {
-        // Review file missing or unreadable — skip
-      }
-    }
-    return entry;
-  });
-  if (index.some((entry, i) => entry !== saved[i])) {
-    writeReviewsIndex(index);
+/** Repairs left by earlier launches: generations a crash interrupted are marked failed, and
+ *  summaries that predate the index field are copied in. Runs after the queue paints, reading
+ *  off the main thread; the write re-reads the index so changes made meanwhile are kept. */
+async function repairReviewsIndex(): Promise<void> {
+  let saved: ReviewHistoryEntry[];
+  try {
+    saved = JSON.parse(await fs.promises.readFile(getReviewsIndexPath(), 'utf-8')) as ReviewHistoryEntry[];
+  } catch {
+    return;
   }
+  // Generations started in this launch are still running.
+  const interrupted = new Set(
+    saved.filter((entry) => entry.status === 'generating' && !(Date.parse(entry.savedAt) >= launchedAt)).map((entry) => entry.id)
+  );
+  const summaries = new Map<string, string>();
+  for (const entry of saved) {
+    if (entry.summary || (entry.status ?? 'completed') !== 'completed') continue;
+    try {
+      const review = JSON.parse(await fs.promises.readFile(path.join(getReviewsDir(), `${entry.id}.json`), 'utf-8')) as ReviewGuide;
+      if (review.summary) summaries.set(entry.id, review.summary);
+    } catch {
+      // Review file missing or unreadable — skip
+    }
+  }
+  mark('backfill-done');
+  if (!interrupted.size && !summaries.size) return;
+  // The cached index is frozen; changed entries are copies.
+  let changed = false;
+  const index = readReviewsIndex().map((entry) => {
+    let next = entry;
+    if (interrupted.has(entry.id) && entry.status === 'generating' && !activeGenerations.has(entry.id)) {
+      next = { ...next, status: 'failed', error: 'Generation was interrupted' };
+      changed = true;
+    }
+    const summary = summaries.get(entry.id);
+    if (summary && !next.summary && next.status === 'completed') {
+      next = { ...next, summary };
+      changed = true;
+    }
+    return next;
+  });
+  if (!changed) return;
+  writeReviewsIndex(index);
+  rebuildTrayMenu();
+  notifyLocalChange('workbench-changed');
 }
 
 // ── Background generation tracking ──────────────────────────────
@@ -1009,9 +1081,10 @@ function initTrayIfEnabled(): void {
     // First time — ask via in-app modal once the renderer is ready
     const win = BrowserWindow.getAllWindows()[0];
     if (win) {
-      win.webContents.once('did-finish-load', () => {
-        win.webContents.send('show-tray-prompt');
-      });
+      // The window now opens before startup finishes, so it may have loaded already.
+      const prompt = () => win.webContents.send('show-tray-prompt');
+      if (win.webContents.isLoading()) win.webContents.once('did-finish-load', prompt);
+      else prompt();
     }
   } else if (raw.trayEnabled) {
     createTray();
@@ -1043,14 +1116,6 @@ function rebuildTrayMenuNow(): void {
     });
     return reviews.length;
   }, (reviews) => `reviews=${reviews}`);
-}
-
-function cleanupStaleGeneratingEntries(): void {
-  const index = readReviewsIndex();
-  if (index.some((entry) => entry.status === 'generating')) {
-    writeReviewsIndex(index.map((entry) =>
-      entry.status === 'generating' ? { ...entry, status: 'failed', error: 'Generation was interrupted' } : entry));
-  }
 }
 
 // ── Preferences helpers ─────────────────────────────────────────
@@ -3066,19 +3131,19 @@ function prOpenOwner(event: Electron.IpcMainEvent) {
   }
   return String(owner);
 }
-ipcMain.on('pr-open-preload', (event, raw: unknown) => {
+ipcMain.on('pr-open-preload', afterStartup(startup, (event: Electron.IpcMainEvent, raw: unknown) => {
   const owner = prOpenOwner(event), targets = parseOpenTargets(raw, 200);
   if (!owner || !targets) return;
   prOpenPreload.setTargets(owner, targets);
   if (cachedToken && syncEnabled()) void prOpenPreload.tick();
-});
-ipcMain.on('pr-open-intent', (event, raw: unknown) => {
+}));
+ipcMain.on('pr-open-intent', afterStartup(startup, (event: Electron.IpcMainEvent, raw: unknown) => {
   const owner = prOpenOwner(event);
   if (!owner) return;
   if (raw === null) { prOpenPreload.setIntent(owner, null); return; }
   const targets = parseOpenTargets(raw, 5);
   if (targets) prOpenPreload.setIntent(owner, targets);
-});
+}));
 function publishGitHubUpdates(updates: GitHubSyncUpdate[]) {
   if (!cachedLogin) return;
   for (const update of updates) {
@@ -3167,7 +3232,7 @@ const githubSync = createGitHubSyncService({
   failed: failures => sendSyncUpdates([], failures),
 });
 const syncOwners = new Set<number>();
-ipcMain.on('github-sync-watch', (event, id: unknown, raw: unknown) => {
+ipcMain.on('github-sync-watch', afterStartup(startup, (event: Electron.IpcMainEvent, id: unknown, raw: unknown) => {
   if (event.senderFrame !== event.sender.mainFrame || typeof id !== 'string' || id.length > 100) return;
   const interest = parseGitHubSyncInterest(raw);
   if (interest === undefined) return;
@@ -3196,11 +3261,12 @@ ipcMain.on('github-sync-watch', (event, id: unknown, raw: unknown) => {
     const value = syncMetadata.get(target.url);
     return value ? [{ kind: 'metadata' as const, url: target.url, value }] : [];
   }));
-});
+}));
 let discoveryDue = 0;
 let discoveryPending = false;
 let syncWasAvailable = false;
 async function tickGitHubSync() {
+  if (!startup.ready('all')) return;
   const token = cachedToken;
   if (token !== syncCredential) {
     workflowGraphPreload.setTarget(undefined);
