@@ -566,7 +566,7 @@ void app.whenReady().then(async () => {
     await js("document.documentElement.classList.add('dark')");
     await capture('github-activity-dark-narrow');
     await js(
-      "void Object.assign(window.githubTask, {status: 'completed', detail: 'Updated with warnings — your queue may be incomplete', progress: undefined, warnings: ['Could not check which PRs depend on others in owner/repo. Showing saved relationships.'], canRetry: true})"
+      "void (window.githubTask = Object.assign({}, window.githubTask, {status: 'completed', detail: 'Updated with warnings — your queue may be incomplete', progress: undefined, warnings: ['Could not check which PRs depend on others in owner/repo. Showing saved relationships.'], canRetry: true}))"
     );
     await wait("document.querySelector('.activity-summary')?.textContent.includes('1 with warnings')");
     assert.equal(await js("document.querySelector('.activity-summary').textContent.includes('ready')"), false);
@@ -575,13 +575,13 @@ void app.whenReady().then(async () => {
     await click('Retry');
     assert.deepEqual(await js('window.githubActions'), [{ id: 'github:fixture', action: 'retry' }]);
     await js(
-      "void Object.assign(window.githubTask, {status: 'completed', detail: 'GitHub information updated', warnings: [], canRetry: false})"
+      "void (window.githubTask = Object.assign({}, window.githubTask, {status: 'completed', detail: 'GitHub information updated', warnings: [], canRetry: false}))"
     );
     await wait("document.querySelector('.activity-summary')?.textContent.includes('GitHub updated')");
     assert.equal(await js("document.querySelectorAll('.activity-actions button').length"), 0);
     assert.ok(await js("document.querySelector('.activity-task').textContent.includes('GitHub information updated')"));
     await js(
-      "void Object.assign(window.githubTask, {status: 'paused', detail: 'GitHub’s API limit was reached. GitHub requests can resume after 11:17 PM. Updates will resume automatically while the queue is open.', canRetry: false, canCancel: false})"
+      "void (window.githubTask = Object.assign({}, window.githubTask, {status: 'paused', detail: 'GitHub’s API limit was reached. GitHub requests can resume after 11:17 PM. Updates will resume automatically while the queue is open.', canRetry: false, canCancel: false}))"
     );
     await wait("document.querySelector('.activity-summary')?.textContent.includes('1 paused')");
     assert.equal(await js("document.querySelectorAll('.activity-actions button').length"), 0);

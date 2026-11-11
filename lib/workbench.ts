@@ -54,8 +54,25 @@ export interface QueueItem {
   briefing?: Briefing;
   review?: ReviewHistoryEntry;
   attention: 'updated' | 'requested' | 'other';
+  /** Content hash from `stampQueue`; equal revisions mean equal content. */
+  revision?: string;
+}
+/** One content hash per queue field that renderers memoize on. */
+export interface WorkbenchQueueParts {
+  stacks: string;
+  readStates: string;
+  mutedPrs: string;
+  starredPrs: string;
+  savedViews: string;
+  filters: string;
+  sync: string;
 }
 export interface WorkbenchQueue {
+  /** Content hash of the whole snapshot except saved reviews. */
+  revision?: string;
+  /** Content hash of the saved reviews that `listReviews` returns. */
+  historyRevision?: string;
+  parts?: WorkbenchQueueParts;
   briefingBudget?: import('./repository-settings').BriefingBudget;
   /** Locally retained hierarchy, including completed stacks outside the active queue. */
   stacks?: ReviewSubject[];

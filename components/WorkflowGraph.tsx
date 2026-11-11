@@ -482,6 +482,8 @@ export function WorkflowGraphView({
   useEffect(() => {
     const media = window.matchMedia('(max-width:1000px)');
     const change = () => setCompactSidebar(media.matches);
+    // A kept Checks tab misses resizes while hidden; apply the current width when shown.
+    change();
     media.addEventListener('change', change);
     return () => media.removeEventListener('change', change);
   }, []);

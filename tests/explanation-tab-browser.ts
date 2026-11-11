@@ -89,7 +89,7 @@ void app.whenReady().then(async () => {
       window.generationListeners=new Set();
       window.electronAPI.onActivityChanged=callback=>{window.generationListeners.add(callback);return ()=>window.generationListeners.delete(callback)};
       window.generationTask={id:'review:first-generation',kind:'review',reviewId:'first-generation',status:'running',detail:'Writing topics',progress:{completed:1,total:3}};
-      window.electronAPI.listActivity=async()=>[{...window.generationTask,reviewId:'different-review',detail:'Wrong review'},window.generationTask];
+      window.electronAPI.listActivity=async()=>[{...window.generationTask,reviewId:'different-review',detail:'Wrong review'},structuredClone(window.generationTask)];
       const q=await window.electronAPI.workbenchQueue();
       q.items.find(i=>i.subject.title.includes('Fix reconnect')).review={id:'first-generation',prUrl:'https://github.com/klang/engine/pull/150',prTitle:'Fix reconnect',author:'lena',status:'generating',savedAt:new Date().toISOString()};
     })()`);
@@ -102,12 +102,13 @@ void app.whenReady().then(async () => {
     assert.equal(await js("!!document.querySelector('.explanation-empty')"), false);
     await capture('generating-topics');
     await js(`window.activityReads=0;window.activityWaiters=[];
-      window.electronAPI.listActivity=()=>{window.activityReads++;return new Promise(resolve=>window.activityWaiters.push(()=>resolve([window.generationTask])))};
+      window.electronAPI.listActivity=()=>{window.activityReads++;return new Promise(resolve=>window.activityWaiters.push(()=>resolve([structuredClone(window.generationTask)])))};
       for(let i=0;i<100;i++)window.generationListeners.forEach(f=>f());void 0;`);
     const burstReads = await js<number>('window.activityReads');
     console.log('Generation activity requests for 100 synchronous updates:', burstReads);
     await js(
-      `window.electronAPI.listActivity=async()=>{window.activityReads++;return [window.generationTask]};window.activityWaiters.forEach(resolve=>resolve());void 0;`
+      // IPC returns a copy, so in-place edits below arrive as new tasks.
+      `window.electronAPI.listActivity=async()=>{window.activityReads++;return [structuredClone(window.generationTask)]};window.activityWaiters.forEach(resolve=>resolve());void 0;`
     );
     const settledReads = await js<number>('window.activityReads');
     console.log('Generation activity requests including catch-up:', settledReads);
@@ -133,7 +134,7 @@ void app.whenReady().then(async () => {
     );
     await wait("document.querySelector('.explanation-generating')?.textContent.includes('Progress unavailable')");
     await capture('generation-progress-unavailable');
-    await js('window.electronAPI.listActivity=async()=>[window.generationTask];void 0;');
+    await js('window.electronAPI.listActivity=async()=>[structuredClone(window.generationTask)];void 0;');
     await click('Retry progress');
     await wait("document.querySelector('.explanation-generating')?.textContent.includes('Writing overview')");
     await js(`(async()=>{
@@ -168,7 +169,7 @@ void app.whenReady().then(async () => {
       "document.querySelector('.pr-overview-tabs [data-state=active]')?.textContent==='Explanation' && !!document.querySelector('.explanation-reader')"
     );
     assert.equal(await js("document.querySelectorAll('.pr-overview-switch').length"), 0);
-    assert.equal(await js("document.querySelectorAll('h1').length"), 1);
+    assert.equal(await js("[...document.querySelectorAll('h1')].filter(h=>h.checkVisibility()).length"), 1);
     assert.equal(await js('window.starts'), 0);
     await capture('overview');
     assert.equal(await js("document.querySelector('.explanation-reading-help').open"), false);
@@ -508,7 +509,7 @@ void app.whenReady().then(async () => {
       window.electronAPI.loadReview=async()=>window.emptyReview;
       window.dispatchEvent(new CustomEvent('fixture-review-navigate',{detail:'empty-review'}));void 0;`);
     await wait("!!document.querySelector('.explanation-no-topics')");
-    assert.equal(await js("document.querySelectorAll('h1').length"), 1);
+    assert.equal(await js("[...document.querySelectorAll('h1')].filter(h=>h.checkVisibility()).length"), 1);
     assert.match(await js<string>("document.querySelector('.explanation-no-topics').textContent"), /Generate again/);
     assert.equal(await js("document.querySelectorAll('.explanation-no-topics .reading-prose').length"), 1);
     win.setSize(640, 800);

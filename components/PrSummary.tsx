@@ -21,7 +21,7 @@ import { usePrReadVisit } from '../lib/pr-read-context';
 import { PrActions } from './PrActions';
 import { ReviewBreadcrumbProvider, useReviewBreadcrumbs } from '../lib/review-breadcrumbs';
 import { ReviewBreadcrumbs } from './ReviewBreadcrumbs';
-import type { ComponentProps } from 'react';
+import { Activity, type ComponentProps, type ReactNode, type Ref, type UIEvent } from 'react';
 import { PrEntryActions, PrStarMarker, type PrGenerationActionsFor } from './PrEntryActions';
 import { PrExplanation } from './PrExplanation';
 import type { ExplanationDestination } from '../lib/explanation-workspace';
@@ -48,6 +48,99 @@ import { ReadinessBadge, ReadinessCheckedAt } from './MergeReadiness';
 import { SubjectReviewStatus } from './PrReviewStatus';
 import { useChangesComments } from './useChangesComments';
 import type { ReviewMember } from '../lib/workbench';
+
+/**
+ * Restores scroll positions inside a kept tab. Hidden content has no layout, so Chromium can reset
+ * its scroll offsets; positions are recorded as the reader scrolls and reapplied on reveal.
+ */
+/** Elements under `root` that are scrolled, including inside open shadow roots. */
+function scrolledWithin(root: Element | ShadowRoot): Element[] {
+  const found: Element[] = [];
+  for (const element of root.querySelectorAll('*')) {
+    if (element.scrollTop > 0 || element.scrollLeft > 0) found.push(element);
+    if (element.shadowRoot) found.push(...scrolledWithin(element.shadowRoot));
+  }
+  if (root instanceof Element && (root.scrollTop > 0 || root.scrollLeft > 0)) found.push(root);
+  return found;
+}
+
+function ScrollKeeper() {
+  const marker = useRef<HTMLSpanElement>(null);
+  const positions = useRef(new Map<Element, [number, number]>());
+  useLayoutEffect(() => {
+    const panel = marker.current?.closest<HTMLElement>('[role="tabpanel"]');
+    if (!panel) return;
+    const saved = [...positions.current].filter(([element]) => panel.contains(element));
+    // Content can lay out again after it is shown, so keep applying the saved offsets for a moment
+    // until they hold, unless the reader scrolls first.
+    let restoring = saved.length > 0;
+    const apply = () => {
+      if (!restoring) return;
+      let held = true;
+      for (const [element, [top, left]] of saved) {
+        if (element.scrollTop !== top) element.scrollTop = top;
+        if (element.scrollLeft !== left) element.scrollLeft = left;
+        held &&= Math.abs(element.scrollTop - top) < 1 && Math.abs(element.scrollLeft - left) < 1;
+      }
+      return held;
+    };
+    let frames = 0;
+    let frame = 0;
+    const settle = () => {
+      if (apply() && ++frames >= 2) restoring = false;
+      else if (restoring) frame = requestAnimationFrame(settle);
+    };
+    apply();
+    if (restoring) frame = requestAnimationFrame(settle);
+    const timer = setTimeout(() => { restoring = false; }, 1000);
+    const stop = () => { restoring = false; };
+    const record = (event: Event) => {
+      const element = event.target;
+      if (!restoring && element instanceof Element) positions.current.set(element, [element.scrollTop, element.scrollLeft]);
+    };
+    panel.addEventListener('scroll', record, { capture: true, passive: true });
+    panel.addEventListener('wheel', stop, { capture: true, passive: true });
+    panel.addEventListener('pointerdown', stop, { capture: true });
+    panel.addEventListener('keydown', stop, { capture: true });
+    return () => {
+      // Scroll events inside shadow roots do not reach the panel, so also read offsets as the tab hides.
+      // React runs this cleanup before Activity applies display:none, while offsets are still readable.
+      if (!restoring) for (const element of scrolledWithin(panel)) positions.current.set(element, [element.scrollTop, element.scrollLeft]);
+      restoring = false;
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+      panel.removeEventListener('scroll', record, { capture: true });
+      panel.removeEventListener('wheel', stop, { capture: true });
+      panel.removeEventListener('pointerdown', stop, { capture: true });
+      panel.removeEventListener('keydown', stop, { capture: true });
+    };
+  }, []);
+  return <span ref={marker} hidden />;
+}
+
+/**
+ * A PR tab that stays mounted after its first visit. While another tab is shown, Activity hides it
+ * and pauses its effects, including polling.
+ */
+function KeptTab({ value, tab, visited, className, children, ref, onScroll }: {
+  value: WorkspaceTab;
+  tab: WorkspaceTab;
+  visited: ReadonlySet<WorkspaceTab>;
+  className: string;
+  children: ReactNode;
+  ref?: Ref<HTMLDivElement>;
+  onScroll?: (event: UIEvent<HTMLDivElement>) => void;
+}) {
+  if (!visited.has(value)) return null;
+  return (
+    <Tabs.Content value={value} className={className} forceMount ref={ref} onScroll={onScroll}>
+      <Activity mode={tab === value ? 'visible' : 'hidden'}>
+        <ScrollKeeper />
+        {children}
+      </Activity>
+    </Tabs.Content>
+  );
+}
 
 export interface PrReviewRequest {
   id: string;
@@ -144,6 +237,19 @@ function PrSummaryContent({
   shortcutsEnabled?: boolean;
 }) {
   usePrReadVisit(item.subject.members, tab === 'summary' && item.subject.kind === 'pr', 'summary');
+  // Tabs stay mounted once visited. The set only grows while this PR is shown.
+  const [visited, setVisited] = useState<ReadonlySet<WorkspaceTab>>(() => new Set([tab]));
+  if (!visited.has(tab)) setVisited(new Set([...visited, tab]));
+  const currentTab = useRef(tab);
+  currentTab.current = tab;
+  // While this PR is hidden for a minute, behind a saved review or another workspace tab, drop its other tabs.
+  const evict = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => {
+    clearTimeout(evict.current);
+    return () => { evict.current = setTimeout(() => setVisited(new Set([currentTab.current])), 60_000); };
+  }, []);
+  // Programmatic jumps remount Feedback, which reads its initial thread and intent once.
+  const [feedbackJump, setFeedbackJump] = useState(0);
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(item.subject.name ?? '');
   const [nameBusy, setNameBusy] = useState(false);
@@ -224,8 +330,10 @@ function PrSummaryContent({
   useEffect(() => {
     const tick = () => tickStatus(value => value + 1);
     const timer = setInterval(tick, 30_000);
+    // Sync pushes no longer re-render unchanged views, so returning to the window re-ages status at once.
     document.addEventListener('visibilitychange', tick);
-    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', tick); };
+    window.addEventListener('focus', tick);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', tick); window.removeEventListener('focus', tick); };
   }, []);
   const statusNow = Date.now();
   const stackStatus = stacked ? stackMergeStatus(item.subject, signals, checks.values, statusNow) : undefined;
@@ -238,7 +346,8 @@ function PrSummaryContent({
   }, []);
   useLayoutEffect(() => {
     const element = page.current;
-    if (!element) return;
+    // The kept summary is hidden on other tabs; restore it only when shown.
+    if (!element || tab !== 'summary') return;
     position.memberUrl = activeUrl;
     const desired = position.scroll[activeUrl] ?? 0;
     restoring.current = desired > 0;
@@ -268,7 +377,8 @@ function PrSummaryContent({
     };
   }, [activeUrl, position, tab]);
   const remember = () => {
-    if (page.current && !restoring.current) position.scroll[activeUrl] = page.current.scrollTop;
+    // A hidden summary has no layout, so its scroll offset would read as zero.
+    if (tab === 'summary' && page.current && !restoring.current) position.scroll[activeUrl] = page.current.scrollTop;
   };
   const move = (direction: number) => {
     remember();
@@ -312,7 +422,7 @@ function PrSummaryContent({
   useReviewBreadcrumbs('summary', []);
   const changeScope = (id: string) => { remember(); onScopeChange?.(id); };
   const evidence = (
-    <ReviewEvidence onFeedback={url => { setFeedbackPr(url); onTabChange('feedback'); }}
+    <ReviewEvidence onFeedback={url => { setFeedbackPr(url); setFeedbackJump(n => n + 1); onTabChange('feedback'); }}
       compact={!stacked}
       key={`${account}:${item.subject.id}`}
       subject={item.subject}
@@ -447,35 +557,35 @@ function PrSummaryContent({
         </Tabs.List>
 
         </div>
-        <Tabs.Content value="changes" className="pr-changes-tab">
-          {preferences && (stacked ? <StackChangesView key={`${account}:${item.subject.id}`} subject={item.subject} preferences={preferences} account={account ?? ''} initialFile={initialFile} onOpenFeedback={(url, threadId) => { setFeedbackPr(url); setFeedbackThread(threadId); setFeedbackIntent('address'); onTabChange('feedback'); }} onOpenPr={changeScope} onOpenBrief={() => onTabChange('brief')} /> :
+        <KeptTab value="changes" tab={tab} visited={visited} className="pr-changes-tab">
+          {preferences && (stacked ? <StackChangesView key={`${account}:${item.subject.id}`} subject={item.subject} preferences={preferences} account={account ?? ''} initialFile={initialFile} onOpenFeedback={(url, threadId) => { setFeedbackPr(url); setFeedbackThread(threadId); setFeedbackIntent('address'); setFeedbackJump(n => n + 1); onTabChange('feedback'); }} onOpenPr={changeScope} onOpenBrief={() => onTabChange('brief')} /> :
             <PrChangesView
               key={item.subject.id}
               subject={item.subject}
               preferences={preferences}
               account={account ?? ''}
-              onOpenFeedback={(url, threadId) => { setFeedbackPr(url); setFeedbackThread(threadId); setFeedbackIntent('address'); onTabChange('feedback'); }}
+              onOpenFeedback={(url, threadId) => { setFeedbackPr(url); setFeedbackThread(threadId); setFeedbackIntent('address'); setFeedbackJump(n => n + 1); onTabChange('feedback'); }}
               initialFile={initialFile}
               onOpenBrief={() => onTabChange('brief')}
             />
           )}
-        </Tabs.Content>
-        <Tabs.Content value="feedback" className="pr-changes-tab">
-          <PrFeedbackView key={`${account}:${item.subject.id}:${feedbackPr ?? ''}:${feedbackRequest?.id ?? ''}`} subject={item.subject} account={account} initialPrUrl={feedbackPr} initialThreadId={feedbackThread} preferences={preferences ?? undefined} intent={feedbackIntent} onIntentHandled={() => { setFeedbackIntent(undefined); setFeedbackThread(undefined); }} onSource={item => {
+        </KeptTab>
+        <KeptTab value="feedback" tab={tab} visited={visited} className="pr-changes-tab">
+          <PrFeedbackView key={`${account}:${item.subject.id}:${feedbackPr ?? ''}:${feedbackRequest?.id ?? ''}:${feedbackJump}`} subject={item.subject} account={account} initialPrUrl={feedbackPr} initialThreadId={feedbackThread} preferences={preferences ?? undefined} intent={feedbackIntent} onIntentHandled={() => { setFeedbackIntent(undefined); setFeedbackThread(undefined); }} onSource={item => {
             if (!item.thread) return;
             setInitialFile({ url: item.member.url, headSha: item.member.headSha, path: item.thread.path, line: feedbackCodeContext(item.thread, item.headSha ? { headSha: item.headSha, baseSha: item.baseSha ?? '' } : undefined, item.member) === 'current' ? item.thread.line ?? undefined : undefined, side: item.thread.diffSide === 'LEFT' ? 'before' : 'after' }); onTabChange('changes');
           }} />
-        </Tabs.Content>
-        <Tabs.Content value="brief" className="pr-changes-tab">
+        </KeptTab>
+        <KeptTab value="brief" tab={tab} visited={visited} className="pr-changes-tab">
           <AgentBriefView key={item.subject.id} subject={item.subject} parentStack={parentStack} onOpenScope={onScopeChange ? changeScope : undefined} onOpenComment={openBriefComment} onOpenChanges={() => onTabChange('changes')} />
-        </Tabs.Content>
-        <Tabs.Content value="checks" className="pr-changes-tab">
+        </KeptTab>
+        <KeptTab value="checks" tab={tab} visited={visited} className="pr-changes-tab">
           <PrChecksView key={`${account}:${item.subject.id}`} stateKey={`${account}:${item.subject.id}`} subject={item.subject} {...checks} focus={checkFocus}
             onSource={(url, path, line, headSha) => {
               setInitialFile({ url, path, line, headSha }); onTabChange('changes');
             }} />
-        </Tabs.Content>
-        <Tabs.Content value="commits" className="pr-changes-tab">
+        </KeptTab>
+        <KeptTab value="commits" tab={tab} visited={visited} className="pr-changes-tab">
           {preferences && (
             <PrCommitsView
               key={item.subject.id}
@@ -487,7 +597,7 @@ function PrSummaryContent({
               }}
             />
           )}
-        </Tabs.Content>
+        </KeptTab>
         <Tabs.Content value="explanation" className="pr-changes-tab" forceMount>
           <PrExplanation
             item={item}
@@ -505,7 +615,7 @@ function PrSummaryContent({
             onOpenChanges={() => onTabChange('changes')}
           />
         </Tabs.Content>
-        <Tabs.Content value="summary" className="pr-summary-content" ref={page} onScroll={remember}>
+        <KeptTab value="summary" tab={tab} visited={visited} className="pr-summary-content" ref={page} onScroll={remember}>
           <div className="pr-summary-body">
             {summaryReview.panel}
             {item.subject.warnings.map((warning) => (
@@ -516,7 +626,7 @@ function PrSummaryContent({
             {stacked ? <div className="stack-summary-layout">
               <div className="stack-summary-main">
                 <StackOverview account={account} now={statusNow} checking={!signalsLoaded && !!account} onRefresh={onRetryStatus} refreshBusy={statusRefreshing || !account} item={item} signals={signals} checks={checks.values} checkErrors={checks.errors} checksBusy={checks.busy} matchingUrls={matchingUrls}
-                  onFeedback={member => { setFeedbackPr(member.url); setFeedbackIntent('address'); onTabChange('feedback'); }} onOpen={member => changeScope(member.url)} onChecks={(member, id) => { setCheckFocus({ url: member.url, id, nonce: Date.now() }); changeScope(member.url); onTabChange('checks'); }} />
+                  onFeedback={member => { setFeedbackPr(member.url); setFeedbackIntent('address'); setFeedbackJump(n => n + 1); onTabChange('feedback'); }} onOpen={member => changeScope(member.url)} onChecks={(member, id) => { setCheckFocus({ url: member.url, id, nonce: Date.now() }); changeScope(member.url); onTabChange('checks'); }} />
                 {evidence}
                 <StackBriefing briefing={item.briefing} actions={generationActions?.(item.subject.members)} onActivity={onShowActivity} onSetup={onGitHubAuth} connected={!!account} />
               </div>
@@ -549,7 +659,7 @@ function PrSummaryContent({
               onRetryStatus={onRetryStatus}
             />}
           </div>
-        </Tabs.Content>
+        </KeptTab>
       </main>
     </Tabs.Root>
   );

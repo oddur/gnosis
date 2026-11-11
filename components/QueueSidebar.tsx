@@ -165,6 +165,8 @@ export function QueueSidebar({
       setMobileOpen(false);
       setViewsOpen(false);
     };
+    // The kept queue misses resizes while hidden; apply the current width when shown.
+    setNarrow(query.matches);
     query.addEventListener('change', update);
     return () => query.removeEventListener('change', update);
   }, []);

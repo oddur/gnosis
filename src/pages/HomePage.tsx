@@ -21,13 +21,11 @@ import { OnboardingSetup } from '../../components/OnboardingSetup';
 import { GuidedTour } from '../../components/GuidedTour';
 import { focusStackPr, resolveWorkspace, matchingStackMembers } from '../../lib/stack-workspace';
 import { RecentlyViewed } from '../../components/RecentlyViewed';
-import { PrBadge } from '../../components/EntityBadge';
 import { PrListSortControl } from '../../components/PrListSortControl';
 import { normalizePrListSort, sortQueueItems, sortSavedReviews, type PrListSort } from '../../lib/pr-list-sort';
 import { useListOrder, useListScrollAnchor } from '../../lib/use-list-order';
 import { useCachedQueueSignals } from '../../lib/use-queue-signals';
 import { PrReadContext, type ViewedPr } from '../../lib/pr-read-context';
-import { UnreadPrMarker } from '../../components/UnreadPrMarker';
 import { SearchableSelect } from '../../components/SearchableSelect';
 import { applyTheme } from '../../lib/theme';
 import { normalizePrInactivityDays } from '../../lib/pr-inactivity';
@@ -36,19 +34,19 @@ import { inspectionData } from '../../lib/inspection-cache';
 import { createRowIntent, type RowIntent } from '../../lib/row-intent';
 import { openRows, type OpenTarget } from '../../lib/pr-open-targets';
 import { EntryActions } from '../../components/EntryActions';
-import { PrEntryActions, PrStarMarker, prEntryActionGroups, type PrGenerationActionsFor } from '../../components/PrEntryActions';
+import { prEntryActionGroups, type PrGenerationActionsFor } from '../../components/PrEntryActions';
 import { MutedPrs } from '../../components/MutedPrs';
 import { isMutedReview } from '../../lib/muted-prs';
 import { setDiscussionAccount } from '../../lib/review-discussion-cache';
 import { explanationItem, matchesExplanation, type ExplanationDestination } from '../../lib/explanation-workspace';
-import { GitHubAuthor } from '../../components/GitHubAuthor';
-import { QueueMetadata, PrStateIcon } from '../../components/QueueMetadata';
 import { rememberCommandDestination } from '../../lib/command-recents';
 import { useCommandCenter, useCommandScope } from '../../lib/command-center';
 import type { SearchDestination } from '../../lib/command-search';
 import { useSessionDraft } from '../../lib/session-drafts';
 import type { VirtualItem } from '@tanstack/react-virtual';
-import { VirtualReviewQueue } from '../../components/VirtualReviewQueue';
+import { VirtualReviewQueue, VirtualSavedReviews, SavedRow, type SavedRowActions } from '../../components/VirtualReviewQueue';
+import { QueueRow, type QueueRowActions } from '../../components/QueueRow';
+import { useReviewHistory, useWorkbenchQueue, useWorkbenchStatus, workbenchStore } from '../../lib/workbench-store';
 import { GitHubIcon } from '../../lib/constants';
 import { workbenchIcons, workspaceSections } from '../../lib/interface-icons';
 import { WorkbenchIcon } from '../../components/WorkbenchIcon';
@@ -68,20 +66,13 @@ import {
   describeQueueFilters,
   type QueueFilters,
 } from '../../lib/queue-filters';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Activity, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { HomeLocation, WorkspaceTab } from '../../lib/navigation-history';
 import {
   ArrowRight,
   Plus,
-  Check,
-  Square,
-  SquareCheck,
-  ChevronDown,
-  ChevronRight,
   GitPullRequest,
-  MessageSquare,
   Layers,
-  Loader2,
   RefreshCw,
   Search,
   Settings,
@@ -132,6 +123,13 @@ interface Props {
   initialSubjectId?: string;
   commandDestination?: { destination: Extract<SearchDestination, { kind: 'home' }>; nonce: number };
 }
+/** Each workspace tab shows its own saved view over the shared queue. */
+function withOwnView(queue: WorkbenchQueue, own: string | null | undefined): WorkbenchQueue {
+  if (!queue.savedViews || own === undefined) return queue;
+  const id = queue.savedViews.views.some(view => view.id === own) ? own : null;
+  return id === (queue.savedViews.activeId ?? null) ? queue : { ...queue, savedViews: { ...queue.savedViews, activeId: id } };
+}
+const NO_READ_STATES: NonNullable<WorkbenchQueue['readStates']> = {};
 const labels = {
   starred: 'Starred',
   updated: 'Changed since AI explanation',
@@ -150,21 +148,18 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const [auth, setAuth] = useState<{ authenticated: boolean; login: string | null } | null>(null);
   useEffect(() => { if (auth) setDiscussionAccount(auth.authenticated ? auth.login ?? '' : ''); }, [auth]);
   const [prefs, setPrefs] = useState<Preferences | null>(null);
-  const ownViewId = useRef<string | null | undefined>(undefined);
-  const [queue, setQueueState] = useState<WorkbenchQueue>({ items: [], warnings: [], remaining: 0 });
-  const setQueue = useCallback((value: WorkbenchQueue | ((previous: WorkbenchQueue) => WorkbenchQueue)) => {
-    setQueueState(previous => {
-      const next = typeof value === 'function' ? value(previous) : value;
-      if (next.savedViews) {
-        if (ownViewId.current === undefined) ownViewId.current = next.savedViews.activeId;
-        const id = next.savedViews.views.some(view => view.id === ownViewId.current) ? ownViewId.current : null;
-        return { ...next, savedViews: { ...next.savedViews, activeId: id ?? null } };
-      }
-      return next;
-    });
-  }, []);
-  const [history, setHistory] = useState<ReviewHistoryEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  const storeQueue = useWorkbenchQueue();
+  const history = useReviewHistory();
+  const storeStatus = useWorkbenchStatus();
+  // The saved view this tab shows. It starts from the view that was active when the queue first loaded.
+  const [ownViewState, setOwnViewId] = useState<string | null | undefined>(undefined);
+  const ownViewId = ownViewState === undefined ? storeQueue.savedViews?.activeId : ownViewState;
+  useEffect(() => {
+    if (ownViewState === undefined && storeQueue.savedViews) setOwnViewId(storeQueue.savedViews.activeId ?? null);
+  }, [ownViewState, storeQueue.savedViews]);
+  const queue = useMemo(() => withOwnView(storeQueue, ownViewId), [storeQueue, ownViewId]);
+  const [loading, setLoading] = useState(() => !(workbenchStore.getStatus().loaded && workbenchStore.getQueue().items.length));
+  useEffect(() => { if (storeStatus.loaded && storeQueue.items.length) setLoading(false); }, [storeStatus.loaded, storeQueue.items.length]);
   const [refreshing, setRefreshing] = useState(false);
   const [queueFailed, setQueueFailed] = useState(false);
   const [initializationFailed, setInitializationFailed] = useState(false);
@@ -189,16 +184,23 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const filtersLoaded = useRef(false);
   const pendingFilters = useRef<QueueFilters | null>(null);
   const filterVersion = useRef(0);
+  // Unsaved filter edits hold the shared store, so a read from before the edit cannot replace it.
+  const filterHold = useRef<(() => void) | null>(null);
+  const holdForFilters = () => { filterHold.current ??= workbenchStore.hold(); };
+  const releaseFilters = () => { filterHold.current?.(); filterHold.current = null; };
+  useEffect(() => {
+    if (filtersLoaded.current || !storeStatus.loaded) return;
+    setFilters(normalizeQueueFilters(storeQueue.filters));
+    filtersLoaded.current = true;
+  }, [storeStatus.loaded, storeQueue.filters]);
   const [mutedOpen, setMutedOpen] = useState(false);
   const [muteBusy, setMuteBusy] = useState(false);
   const [muteError, setMuteError] = useState('');
   const muteBusyRef = useRef(false);
-  const muteVersion = useRef(0);
   const [savedView, setSavedView] = useSessionDraft('queue-saved-view', false);
   const [starBusy, setStarBusy] = useState(false);
   const [starError, setStarError] = useState('');
   const starBusyRef = useRef(false);
-  const starVersion = useRef(0);
   const starredUrls = useMemo(
     () => new Set(queue.starredPrs?.map((entry) => entry.member.url) ?? []),
     [queue.starredPrs]
@@ -208,16 +210,17 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     starBusyRef.current = true;
     setStarBusy(true);
     setStarError('');
-    starVersion.current++;
+    const release = workbenchStore.hold();
     try {
       const next = await enqueueWrite(() => window.electronAPI.workbenchStarPrs({ members, starred }));
-      setQueue(next);
+      workbenchStore.apply(next);
       setError('');
     } catch (error) {
       const message = `Could not save starred PRs: ${error instanceof Error ? error.message : String(error)}. Your stars have not changed. Try the star action again.`;
       setError(message);
       setStarError(message);
     } finally {
+      release();
       starBusyRef.current = false;
       setStarBusy(false);
     }
@@ -226,20 +229,20 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const visibleHistory = useMemo(() => history.filter(entry => !isMutedReview(entry, mutedUrls)), [history, mutedUrls]);
   const changeMutes = async (members: ReviewSubject['members'], muted: boolean) => {
     if (muteBusyRef.current) return;
-    muteBusyRef.current = true; setMuteBusy(true); setMuteError(''); muteVersion.current++;
+    muteBusyRef.current = true; setMuteBusy(true); setMuteError('');
+    const release = workbenchStore.hold();
     try {
       const next = await enqueueWrite(() => window.electronAPI.workbenchMutePrs({ members, muted }));
-      setQueue(next); setError('');
+      // Unmuting changes the saved-review revision, so the store reads saved reviews again.
+      workbenchStore.apply(next); setError('');
       if (muted) {
         setOpenedItem(null); setSelected(null);
         requestAnimationFrame(() => activeWorkspaceRoot().querySelector<HTMLButtonElement>('[title="Muted PRs"]')?.focus());
-      } else {
-        void window.electronAPI.listReviews().then(setHistory).catch(() => {});
       }
     } catch (error) {
       const message = `Could not ${muted ? 'mute' : 'unmute'} PRs: ${error instanceof Error ? error.message : String(error)}. Nothing changed. Try again.`;
       setMuteError(message); setError(message);
-    } finally { muteBusyRef.current = false; setMuteBusy(false); }
+    } finally { release(); muteBusyRef.current = false; setMuteBusy(false); }
   };
   const section = savedView
     ? 'saved'
@@ -258,6 +261,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     if (viewBusyRef.current) return;
     filterVersion.current++;
     filtersLoaded.current = true;
+    holdForFilters();
     setFilters((current) => {
       const next = normalizeQueueFilters({ ...current, ...('repo' in patch ? { repos: undefined } : {}), ...patch });
       pendingFilters.current = next;
@@ -271,13 +275,15 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     filterVersion.current++;
     const pending = pendingFilters.current;
     pendingFilters.current = null;
+    const release = workbenchStore.hold();
     try {
       const result = await enqueueWrite(async () => {
         if (pending) await window.electronAPI.workbenchSetFilters(pending);
         return window.electronAPI.workbenchViewAction(action);
       });
-      ownViewId.current = result.savedViews?.activeId ?? null;
-      setQueue(result);
+      setOwnViewId(result.savedViews?.activeId ?? null);
+      workbenchStore.apply(result);
+      releaseFilters();
       setFilters(normalizeQueueFilters(result.filters));
       filtersLoaded.current = true;
       if (
@@ -296,6 +302,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       setError(error instanceof Error ? error.message : String(error));
       throw error;
     } finally {
+      release();
       viewBusyRef.current = false;
       setViewBusy(false);
     }
@@ -325,11 +332,26 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const [localOpen, setLocalOpen] = useState(false);
   const [url, setUrl] = useState(prefillPrUrl ?? '');
   const [showUrl, setShowUrl] = useState(!!prefillPrUrl);
+  // The page stays mounted behind saved reviews, so a later re-review must apply its URL here.
+  const appliedPrefill = useRef(prefillPrUrl);
+  useEffect(() => {
+    if (appliedPrefill.current === prefillPrUrl) return;
+    appliedPrefill.current = prefillPrUrl;
+    if (prefillPrUrl) { setUrl(prefillPrUrl); setShowUrl(true); }
+  }, [prefillPrUrl]);
   const [pendingStarts, setPendingStarts] = useState<Set<string>>(new Set());
   const startingReviews = useRef(new Set<string>());
   const [summaryErrors, setSummaryErrors] = useState<Record<string, string>>({});
   const [openingPr, setOpeningPr] = useState(false);
   const [openedItem, setOpenedItem] = useState<QueueItem | null>(null);
+  // Activity does not hide portaled content, and updates to the hidden queue wait until it is shown.
+  // So when a PR opens, hide the open filter popover at once and close it.
+  if (filtersOpen && openedItem) setFiltersOpen(false);
+  const filterPopover = useRef<HTMLElement | null>(null);
+  const hasOpenedItem = !!openedItem;
+  useLayoutEffect(() => {
+    if (filterPopover.current?.isConnected) filterPopover.current.style.display = hasOpenedItem ? 'none' : '';
+  }, [hasOpenedItem]);
   useEffect(() => { if (!openedItem) setFeedbackRequest(undefined); }, [openedItem?.subject.id]);
   const [readBusy, setReadBusy] = useState(false);
   const readAccount = useRef(auth?.login);
@@ -351,7 +373,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     setReadBusy(true);
     try {
       const result = await enqueueWrite(() => window.electronAPI.workbenchMarkPrRead({ account, receipts, read }));
-      if (alive.current && readAccount.current === account && result.readStates) setQueue(previous => ({ ...previous, readStates: result.readStates, savedViews: result.savedViews,
+      if (alive.current && readAccount.current === account && result.readStates) workbenchStore.patch(previous => ({ ...previous, readStates: result.readStates, savedViews: result.savedViews,
         items: previous.items.map(item => ({ ...item, unreadUrls: item.subject.members.filter(m => result.readStates?.[m.url]?.unread.length).map(m => m.url) })),
         starredItems: previous.starredItems?.map(item => ({ ...item, unreadUrls: item.subject.members.filter(m => result.readStates?.[m.url]?.unread.length).map(m => m.url) })),
       }));
@@ -359,14 +381,6 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       setError(`Could not save unread progress: ${error instanceof Error ? error.message : String(error)}. Try marking the PR again.`);
     } finally { setReadBusy(false); }
   };
-  useEffect(() => {
-    if (!auth?.authenticated) return;
-    let live = true;
-    const stop = window.electronAPI.onPrReadStateChanged(() => {
-      void window.electronAPI.workbenchSnapshot().then(result => { if (live) setQueue(result); }).catch(() => {});
-    });
-    return () => { live = false; stop(); };
-  }, [auth?.authenticated, auth?.login]);
   const [positions] = useSessionDraft('queue-reading-positions', () => new Map<string, PrReadingPosition>());
   useEffect(() => {
     if (openedItem) rememberCommandDestination(auth?.login ?? 'local', `subject:${openedItem.subject.id}`);
@@ -403,26 +417,47 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const lastStatusAttempt = useRef(0);
   const [statusRefreshing, setStatusRefreshing] = useState(false);
   const alive = useRef(true);
-  const selectedItem = [...queue.items, ...(queue.starredItems ?? [])].find(
-    (i) => i.subject.id === selected && matchesQueueFilters(i, filters, Date.now(), auth?.login)
-  );
-  const workspaceItems: QueueItem[] = [...queue.items, ...(queue.starredItems ?? [])];
-  for (const stack of queue.stacks ?? []) if (!workspaceItems.some(item => item.subject.id === stack.id))
-    workspaceItems.push({ subject: stack, attention: 'other' });
-  for (const entry of visibleHistory) if (entry.snapshot?.subject.kind === 'stack' && !workspaceItems.some(item => item.subject.id === entry.snapshot!.subject.id))
-    workspaceItems.push({ subject: entry.snapshot.subject, attention: 'other', review: entry });
-  const summarySource = openedItem && resolveWorkspace(openedItem, workspaceItems);
-  const summaryItem = summarySource && {
-    ...summarySource,
-    review:
-      visibleHistory.find((entry) => entry.id === requestedReviews[summarySource.subject.id]) ??
-      visibleHistory.find(
-        (entry) =>
-          entry.snapshot?.subject.id === summarySource.subject.id ||
-          (!entry.snapshot && entry.prUrl === summarySource.subject.members[0].url)
-      ) ??
-      (summarySource.review && matchesExplanation(summarySource.review, summarySource.subject) ? summarySource.review : undefined),
-  };
+  // Filters that depend on age use one clock per minute, so memoized lists stay stable between ticks.
+  const [clock, setClock] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setClock(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  const login = auth?.login;
+  const allItems = useMemo(() => [...queue.items, ...(queue.starredItems ?? [])], [queue.items, queue.starredItems]);
+  const itemsById = useMemo(() => {
+    const byId = new Map<string, QueueItem>();
+    for (const item of allItems) if (!byId.has(item.subject.id)) byId.set(item.subject.id, item);
+    return byId;
+  }, [allItems]);
+  const selectedItem = useMemo(() => {
+    const item = selected ? itemsById.get(selected) : undefined;
+    return item && matchesQueueFilters(item, filters, clock, login) ? item : undefined;
+  }, [itemsById, selected, filters, login, clock]);
+  const workspaceItems = useMemo(() => {
+    const result = [...allItems];
+    const ids = new Set(result.map(item => item.subject.id));
+    for (const stack of queue.stacks ?? []) if (!ids.has(stack.id)) { ids.add(stack.id); result.push({ subject: stack, attention: 'other' }); }
+    for (const entry of visibleHistory) if (entry.snapshot?.subject.kind === 'stack' && !ids.has(entry.snapshot.subject.id)) {
+      ids.add(entry.snapshot.subject.id);
+      result.push({ subject: entry.snapshot.subject, attention: 'other', review: entry });
+    }
+    return result;
+  }, [allItems, queue.stacks, visibleHistory]);
+  const summaryItem = useMemo(() => {
+    const summarySource = openedItem && resolveWorkspace(openedItem, workspaceItems);
+    return summarySource && {
+      ...summarySource,
+      review:
+        visibleHistory.find((entry) => entry.id === requestedReviews[summarySource.subject.id]) ??
+        visibleHistory.find(
+          (entry) =>
+            entry.snapshot?.subject.id === summarySource.subject.id ||
+            (!entry.snapshot && entry.prUrl === summarySource.subject.members[0].url)
+        ) ??
+        (summarySource.review && matchesExplanation(summarySource.review, summarySource.subject) ? summarySource.review : undefined),
+    };
+  }, [openedItem, workspaceItems, visibleHistory, requestedReviews]);
   const appliedExplanation = useRef<ExplanationDestination | undefined>(undefined);
   useEffect(() => {
     if (!explanationDestination || appliedExplanation.current === explanationDestination) return;
@@ -438,75 +473,36 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     ? `${PROVIDERS[briefingSelection.provider].label} · ${PROVIDERS[briefingSelection.provider].models.find((m) => m.id === briefingSelection.model)?.label ?? briefingSelection.model}`
     : '';
 
-  const queueRefresh = useRef<Promise<void> | null>(null);
-  const pendingLocalRefresh = useRef(false);
-  const refreshVersion = useRef(0);
-  const refresh = useCallback((force = false, cachedOnly = false): Promise<void> => {
-    if (queueRefresh.current && !force) {
-      if (cachedOnly) pendingLocalRefresh.current = true;
-      return queueRefresh.current;
-    }
-    const requestVersion = ++refreshVersion.current;
-    const current = () => alive.current && requestVersion === refreshVersion.current;
-    const request = (async () => {
-    const version = filterVersion.current;
-    const starsVersion = starVersion.current;
-    const mutesVersion = muteVersion.current;
-    const applyQueue = (next: WorkbenchQueue) => {
-          if (current() && version === filterVersion.current && starsVersion === starVersion.current && mutesVersion === muteVersion.current && !muteBusyRef.current && !starBusyRef.current && !viewBusyRef.current && !pendingFilters.current) {
-            setQueue(next);
-            if (!filtersLoaded.current) {
-              const restored = normalizeQueueFilters(next.filters);
-              setFilters(restored);
-              filtersLoaded.current = true;
-            }
-            setQueueFailed(false);
-          }
-        };
+  // The store reads and dedupes; this adds the pending-filter save, the spinner and errors.
+  const refresh = useCallback(async (force = false, cachedOnly = false): Promise<void> => {
     if (force) setRefreshing(true);
     try {
-      // A failed filter save leaves local edits pending and blocks stale queue
-      // responses. An explicit retry must save those edits before reloading.
+      // A failed filter save leaves local edits pending. An explicit retry saves them before reloading.
       if (force && pendingFilters.current) {
         const pending = pendingFilters.current;
+        const version = filterVersion.current;
         await enqueueWrite(() => window.electronAPI.workbenchSetFilters(pending));
-        if (version === filterVersion.current) pendingFilters.current = null;
+        if (version === filterVersion.current) { pendingFilters.current = null; releaseFilters(); }
       }
-      // Only the first load needs an immediate snapshot. Later polls already have
-      // a visible queue; fetching both would transfer and render it twice.
-      if (!filtersLoaded.current) await window.electronAPI.workbenchSnapshot().then(next => { applyQueue(next); if (current() && next.items.length) setLoading(false); }).catch(() => {});
-      await Promise.all([
-        (cachedOnly ? window.electronAPI.workbenchSnapshot() : window.electronAPI.workbenchQueue(force)).then(applyQueue),
-        window.electronAPI.listReviews().then((entries) => {
-          if (current()) setHistory(entries);
-        }),
-      ]);
+      await workbenchStore.refresh({ discover: !cachedOnly, force });
+      if (alive.current) setQueueFailed(false);
     } catch (e) {
-      if (current()) {
+      if (alive.current) {
         setError(String(e));
         setQueueFailed(true);
       }
     } finally {
-      if (current()) {
+      if (alive.current) {
         setLoading(false);
         setRefreshing(false);
       }
     }
-    })().finally(() => {
-      if (queueRefresh.current === request) {
-        queueRefresh.current = null;
-        if (pendingLocalRefresh.current && alive.current) {
-          pendingLocalRefresh.current = false;
-          void refresh(false, true);
-        }
-      }
-    });
-    queueRefresh.current = request;
-    return request;
   }, []);
+  const forceRefresh = useCallback(() => void refresh(true), [refresh]);
+  const syncStatus = queue.sync?.status, syncCheckedAt = queue.sync?.checkedAt, syncRetryAt = queue.sync?.retryAt;
   useEffect(() => {
-    onSyncStatus?.({ sync: queue.sync, onRefresh: () => void refresh(true) });
-  }, [queue.sync, refresh, onSyncStatus]);
+    onSyncStatus?.({ sync: syncStatus && { status: syncStatus, checkedAt: syncCheckedAt, retryAt: syncRetryAt }, onRefresh: forceRefresh });
+  }, [syncStatus, syncCheckedAt, syncRetryAt, forceRefresh, onSyncStatus]);
   useEffect(() => () => onSyncStatus?.(undefined), [onSyncStatus]);
   const initialize = useCallback(async () => {
     if (initializationPending.current) return;
@@ -516,9 +512,10 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     try {
       const [a, p] = await Promise.all([window.electronAPI.getAuthState(), window.electronAPI.loadPreferences()]);
       if (!alive.current) return;
-      setAuth(a);
+      // Revealing a kept page initializes again; unchanged values keep their identity.
+      setAuth(previous => previous?.authenticated === a.authenticated && previous.login === a.login ? previous : a);
       onAccount?.(a.authenticated ? a.login ?? 'local' : 'local');
-      setPrefs(p);
+      setPrefs(previous => previous && JSON.stringify(previous) === JSON.stringify(p) ? previous : p);
       if (p.codeFont) applyCodeFont(p.codeFont);
       applyTheme(p.theme);
       initialized.current = true;
@@ -540,19 +537,15 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     alive.current = true;
     void initialize();
     const poll = () => { if (initialized.current && document.visibilityState !== 'hidden') void refresh(); };
-    const stop = window.electronAPI.githubSyncVersion === 1 ? window.electronAPI.onWorkbenchChanged?.(() => {
-      if (initialized.current) void refresh(false, true);
-    }) : undefined;
-    const timer = stop ? undefined : setInterval(poll, 4000);
+    // The shared store applies pushed changes. Without pushes, poll GitHub discovery instead.
+    const pushes = window.electronAPI.githubSyncVersion === 1 && !!window.electronAPI.onWorkbenchChanged;
+    const timer = pushes ? undefined : setInterval(poll, 4000);
     document.addEventListener('visibilitychange', poll);
     const afterPrAction = () => { void refresh(); setStatusAttempt(n => n + 1); };
     window.addEventListener('gnosis-pr-action-completed', afterPrAction);
     return () => {
       alive.current = false;
-      refreshVersion.current++;
-      queueRefresh.current = null;
       clearInterval(timer);
-      stop?.();
       document.removeEventListener('visibilitychange', poll);
       window.removeEventListener('gnosis-pr-action-completed', afterPrAction);
     };
@@ -567,9 +560,12 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         .then((result) => {
           if (version !== filterVersion.current) return;
           pendingFilters.current = null;
-          if (alive.current) setQueue(result);
+          releaseFilters();
+          if (alive.current) workbenchStore.apply(result);
         })
         .catch((e: unknown) => {
+          // Keep the edits pending for an explicit retry, but let other tabs keep updating.
+          if (version === filterVersion.current) releaseFilters();
           if (alive.current) setError(`Could not save queue filters: ${String(e)}`);
         });
     }, 300);
@@ -580,15 +576,31 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       if (pendingFilters.current) {
         const pending = pendingFilters.current;
         pendingFilters.current = null;
-        void enqueueWrite(() => window.electronAPI.workbenchSetFilters(pending)).catch(() => {});
-      }
+        void enqueueWrite(() => window.electronAPI.workbenchSetFilters(pending)).catch(() => {}).finally(releaseFilters);
+      } else releaseFilters();
     },
     []
   );
-  useEffect(() => {
+  // Holding an arrow key must not write storage on every row; write once the selection settles.
+  const unsavedSelection = useRef<string | null>(null);
+  const saveSelection = useCallback(() => {
+    const value = unsavedSelection.current;
+    unsavedSelection.current = null;
     try {
-      if (selected) localStorage.setItem('gnosis-queue-selection', selected);
+      if (value) localStorage.setItem('gnosis-queue-selection', value);
     } catch { /* Remembering selection is optional; keep the queue usable if storage is unavailable. */ }
+  }, []);
+  useEffect(() => {
+    if (!selected) return;
+    unsavedSelection.current = selected;
+    const timer = setTimeout(saveSelection, 300);
+    return () => clearTimeout(timer);
+  }, [selected, saveSelection]);
+  useEffect(() => {
+    window.addEventListener('pagehide', saveSelection);
+    return () => { window.removeEventListener('pagehide', saveSelection); saveSelection(); };
+  }, [saveSelection]);
+  useEffect(() => {
     let cancelled = false;
     const cacheKey = (url: string, sha: string) => `${auth?.login}:${url}@${sha}`;
     setStatuses(
@@ -739,7 +751,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       cancelled = true;
     };
   }, [fallbackReview?.id, fallbackReview?.savedAt]);
-  const selectionFilterKey = JSON.stringify({ ...filters, sort: undefined });
+  const selectionFilterKey = useMemo(() => JSON.stringify({ ...filters, sort: undefined }), [filters]);
   const lastSelectionScroll = useRef<string | undefined>(undefined);
   useEffect(() => {
     const key = JSON.stringify([selected, loading, section, selectionFilterKey]);
@@ -887,29 +899,42 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     setError('');
     void refresh(true);
   };
-  const queueItems = filters.starredOnly ? (queue.starredItems ?? []) : queue.items;
-  const responseCandidates = filters.involvement === 'response' ? queueItems.flatMap(item => item.subject.members
-    .filter(member => member.state === 'open' && !member.merged && matchesQueueFilters({ ...item, subject: { ...item.subject, members: [member] } }, { ...filters, involvement: 'authored' }, Date.now(), auth?.login))
-    .map(member => ({ member, response: item.responses?.[member.url] }))) : [];
-  const responseMembers = responseCandidates.map(candidate => candidate.member);
-  const responseIncomplete = responseCandidates.filter(candidate => !candidate.response?.complete).length;
+  const queueItems = useMemo(() => filters.starredOnly ? (queue.starredItems ?? []) : queue.items, [filters.starredOnly, queue.items, queue.starredItems]);
+  const { responseMembers, responseIncomplete } = useMemo(() => {
+    const candidates = filters.involvement === 'response' ? queueItems.flatMap(item => item.subject.members
+      .filter(member => member.state === 'open' && !member.merged && matchesQueueFilters({ ...item, subject: { ...item.subject, members: [member] } }, { ...filters, involvement: 'authored' }, clock, login))
+      .map(member => ({ member, response: item.responses?.[member.url] }))) : [];
+    return { responseMembers: candidates.map(candidate => candidate.member), responseIncomplete: candidates.filter(candidate => !candidate.response?.complete).length };
+  }, [queueItems, filters, clock, login]);
   const refreshResponseQueue = useCallback(() => { void refresh(false, true); }, [refresh]);
-  const items = queueItems.filter((item) => matchesQueueFilters(item,
-    filters.readStatus !== 'all' && openedItem?.subject.id === item.subject.id ? { ...filters, readStatus: 'all' } : filters,
-    Date.now(), auth?.login));
-  const repos = [
+  const openedId = openedItem?.subject.id;
+  const items = useMemo(() => queueItems.filter((item) => matchesQueueFilters(item,
+    filters.readStatus !== 'all' && openedId === item.subject.id ? { ...filters, readStatus: 'all' } : filters,
+    clock, login)), [queueItems, filters, openedId, login, clock]);
+  const itemIds = useMemo(() => new Set(items.map(item => item.subject.id)), [items]);
+  const repos = useMemo(() => [
     ...new Set([...queueItems.flatMap((i) => i.subject.members.map((m) => m.repo)), ...(repo === 'all' ? [] : [repo])]),
-  ].sort();
+  ].sort(), [queueItems, repo]);
   const savedSort = savedSortOverride ?? normalizePrListSort(prefs?.savedReviewSort, true);
-  const sortSignals = useCachedQueueSignals(auth?.login ?? null,
-    [...queueItems.flatMap(item => item.subject.members), ...(savedView ? visibleHistory.flatMap(entry => entry.snapshot?.subject.members ?? []) : [])],
-    (savedView ? savedSort : filters.sort).key === 'status');
-  const saved = useListOrder(sortSavedReviews(
-    visibleHistory.filter(h => `${h.prTitle} ${h.prUrl}`.toLowerCase().includes(query.toLowerCase())), savedSort, starredUrls, sortSignals), entry => entry.id);
-  const orderedItems = useListOrder(sortQueueItems(items, filters.sort, sortSignals), item => item.subject.id);
-  const selection = useEntrySelection(orderedItems.map(item => item.subject.id),
-    JSON.stringify([auth?.login, section, mutedOpen, openedItem?.subject.id, filters, queue.savedViews?.activeId]), selected);
-  const selectedItems = orderedItems.filter(item => selection.keys.has(item.subject.id));
+  const statusSort = (savedView ? savedSort : filters.sort).key === 'status';
+  const signalMembers = useMemo(() => statusSort
+    ? [...queueItems.flatMap(item => item.subject.members), ...(savedView ? visibleHistory.flatMap(entry => entry.snapshot?.subject.members ?? []) : [])]
+    : [], [statusSort, queueItems, savedView, visibleHistory]);
+  const sortSignals = useCachedQueueSignals(auth?.login ?? null, signalMembers, statusSort);
+  const sortedSaved = useMemo(() => sortSavedReviews(
+    visibleHistory.filter(h => `${h.prTitle} ${h.prUrl}`.toLowerCase().includes(query.toLowerCase())), savedSort, starredUrls, sortSignals),
+  [visibleHistory, query, savedSort, starredUrls, sortSignals]);
+  const saved = useListOrder(sortedSaved, entry => entry.id);
+  const sortedItems = useMemo(() => sortQueueItems(items, filters.sort, sortSignals), [items, filters.sort, sortSignals]);
+  const orderedItems = useListOrder(sortedItems, item => item.subject.id);
+  const orderedIds = useMemo(() => orderedItems.map(item => item.subject.id), [orderedItems]);
+  const selectionScope = useMemo(() => JSON.stringify([auth?.login, section, mutedOpen, openedId, filters, queue.savedViews?.activeId]),
+    [auth?.login, section, mutedOpen, openedId, filters, queue.savedViews?.activeId]);
+  const selection = useEntrySelection(orderedIds, selectionScope, selected);
+  const selectionSignature = [...selection.keys].join('\n');
+  const selectedItems = useMemo(() => orderedItems.filter(item => selection.keys.has(item.subject.id)),
+    // The selection hook returns a new Set every render; its content is the signature.
+    [orderedItems, selectionSignature]);
   const multiple = selectedItems.length > 1;
   const [batchBusy, setBatchBusy] = useState(false);
   const batchRunning = useRef(false);
@@ -925,22 +950,27 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   };
   // Active and visible PRs, unread work, current view, then the remaining queue. Revision identity
   // prevents routine metadata/CI updates from repeating content downloads.
-  const orderedBacklog = sortQueueItems(queue.items, filters.sort, sortSignals);
-  const inspectionTargets = [...(statusSubject?.members ?? []),
-    ...orderedItems.flatMap(item => item.subject.members), ...orderedBacklog.flatMap(item => item.subject.members)];
-  const inspectionKey = JSON.stringify({
-    targets: inspectionTargets.map(member => ({ url: member.url, baseSha: member.baseSha, headSha: member.headSha })),
-    intent: {
-      active: statusSubject?.members.map(member => member.url) ?? [],
-      visible: orderedItems.filter(item => visibleQueueIds.includes(item.subject.id)).flatMap(item => item.subject.members.map(member => member.url)),
-      unread: [...new Set([...orderedItems, ...orderedBacklog].flatMap(item => item.unreadUrls ?? []))],
-      view: orderedItems.flatMap(item => item.subject.members.map(member => member.url)),
-    },
-    rows: [...new Map([...(statusSubject ? [statusSubject] : []), ...[...orderedItems, ...orderedBacklog].map(item => item.subject)]
-      .map(subject => [subject.id, { id: subject.id, members: subject.members.map(({ url, headSha, baseSha, updatedAt }) => ({ url, headSha, baseSha, updatedAt })) }])).values()],
-  });
+  const orderedBacklog = useMemo(() => sortQueueItems(queue.items, filters.sort, sortSignals), [queue.items, filters.sort, sortSignals]);
+  const inspectionKey = useMemo(() => {
+    const visible = new Set(visibleQueueIds);
+    const targets = [...(statusSubject?.members ?? []),
+      ...orderedItems.flatMap(item => item.subject.members), ...orderedBacklog.flatMap(item => item.subject.members)];
+    return JSON.stringify({
+      targets: targets.map(member => ({ url: member.url, baseSha: member.baseSha, headSha: member.headSha })),
+      intent: {
+        active: statusSubject?.members.map(member => member.url) ?? [],
+        visible: orderedItems.filter(item => visible.has(item.subject.id)).flatMap(item => item.subject.members.map(member => member.url)),
+        unread: [...new Set([...orderedItems, ...orderedBacklog].flatMap(item => item.unreadUrls ?? []))],
+        view: orderedItems.flatMap(item => item.subject.members.map(member => member.url)),
+      },
+      rows: [...new Map([...(statusSubject ? [statusSubject] : []), ...[...orderedItems, ...orderedBacklog].map(item => item.subject)]
+        .map(subject => [subject.id, { id: subject.id, members: subject.members.map(({ url, headSha, baseSha, updatedAt }) => ({ url, headSha, baseSha, updatedAt })) }])).values()],
+    });
+  }, [statusSubject, orderedItems, orderedBacklog, visibleQueueIds]);
   // Status, checks and discussions are saved ahead of opening. Hover and focus intent lives in a ref, so it never re-renders.
   const openIntent = useRef<{ rows: Map<string, OpenTarget[]>; intent: RowIntent } | null>(null);
+  // Stable, so the memoized queue list does not re-render for hover wiring.
+  const onQueueIntent = useCallback((id: string | null) => { if (id) openIntent.current?.intent.enter(id); else openIntent.current?.intent.leave(); }, []);
   useEffect(() => {
     if (!auth) return;
     const preload = () => {
@@ -966,13 +996,13 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
 
   const originName = savedView ? 'Saved reviews' : activeQueueView?.name ??
     ({ saved: 'Saved reviews', all: 'Review queue', starred: 'Starred', requested: 'Review requests', updated: 'Updated PRs', stacks: 'Stacks', other: 'Other changes', response: 'Needs my response' }[section]);
-  const originSignature = JSON.stringify({ name: originName, reviews: savedView ? saved.map(entry => ({ id: entry.id, title: entry.prTitle })) : [] });
+  const originSignature = useMemo(() => JSON.stringify({ name: originName, reviews: savedView ? saved.map(entry => ({ id: entry.id, title: entry.prTitle })) : [] }), [originName, savedView, saved]);
   useEffect(() => { onReviewOriginChange?.(JSON.parse(originSignature) as { name: string; reviews: { id: string; title: string }[] }); }, [originSignature, onReviewOriginChange]);
-  const summaryChoices = savedView
+  const summaryChoices = useMemo(() => savedView
     ? [...new Map(saved.map(entry => [entry.snapshot?.subject.id ?? entry.prUrl,
       { value: entry.snapshot?.subject.id ?? entry.prUrl, label: entry.prTitle, kind: entry.snapshot?.subject.kind === 'stack' ? 'stack' as const : entry.prUrl.startsWith('local:') ? undefined : 'pr' as const }])).values()]
     : orderedItems.map(item => ({ value: item.subject.id, kind: item.subject.kind === 'stack' ? 'stack' as const : 'pr' as const, label: item.subject.kind === 'stack'
-      ? `Stack · ${item.subject.title}` : `${item.subject.members[0].repo} #${item.subject.members[0].number} · ${item.subject.title}` }));
+      ? `Stack · ${item.subject.title}` : `${item.subject.members[0].repo} #${item.subject.members[0].number} · ${item.subject.title}` })), [savedView, saved, orderedItems]);
   const summaryNavigation = useRef(0);
   const restoredNavigation = useRef(0);
   const historyLocation = useRef<HomeLocation | undefined>(undefined);
@@ -985,13 +1015,14 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       summaryNavigation.current++;
       const viewId = queue.savedViews?.views.some(view => view.id === next.viewId) ? next.viewId : null;
       const viewChanged = viewId !== (queue.savedViews?.activeId ?? null);
-      ownViewId.current = viewId;
+      setOwnViewId(viewId);
       // Tab/PR history must not leave a pending filter write when filters did not change.
       if (viewChanged || JSON.stringify(filters) !== JSON.stringify(next.filters)) {
         filterVersion.current++;
         filtersLoaded.current = true;
         const restoredFilters = normalizeQueueFilters(next.filters);
         pendingFilters.current = restoredFilters;
+        holdForFilters();
         setFilters(restoredFilters);
       }
       const version = filterVersion.current;
@@ -1005,7 +1036,6 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       if (queueScrollElement) queueScrollElement.scrollTop = next.scroll;
       // Restore the active saved view through the local store, in the same write queue as filters.
       if (viewChanged) {
-        setQueue(current => ({ ...current, savedViews: current.savedViews && { ...current.savedViews, activeId: viewId } }));
         void enqueueWrite(() => window.electronAPI.workbenchViewAction({ type: 'activate', id: viewId }))
           .catch((error: unknown) => { if (version === filterVersion.current) setError(`Could not restore saved view: ${String(error)}`); });
       }
@@ -1239,7 +1269,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     setGrouping(true);
     setError('');
     try {
-      setQueue(await window.electronAPI.workbenchGroup({ parent, child, action }));
+      workbenchStore.apply(await window.electronAPI.workbenchGroup({ parent, child, action }));
       setParentUrl('');
       setChildUrl('');
     } catch (e) {
@@ -1346,151 +1376,107 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       await refresh();
     }, item => item.subject.title, 'briefings requested'),
   });
-  function row(item: QueueItem) {
-    const s = item.subject,
-      focused = selected === s.id,
-      active = selection.keys.size ? selection.keys.has(s.id) : focused;
-    const bulkTarget = multiple && active;
-    return (
-      <div key={s.id} className={`queue-item ${active ? 'is-selected' : ''} ${item.unreadUrls?.length ? 'is-unread' : ''}`}>
-        <EntryActions
-          label={bulkTarget ? `Actions for ${selectedItems.length} selected entries` : s.kind === 'stack' ? 'Stack actions' : `Actions for PR #${s.members[0].number}`}
-          groups={bulkTarget ? selectionGroups : [
-            ...(tabs ? [[{label:'Open in new tab',dismissBeforeRun:true,icon:<Plus size={15}/>,run:()=>tabs.open({kind:'home',subject:item})}]] : []),
-            ...prEntryActionGroups(entryActions(s.members)),
-          ]}
-          description={bulkTarget ? selectionDescription : undefined}
-          onBeforeOpen={() => selection.context(s.id)}
-        >{actions => <div className="queue-row">
-          {s.kind !== 'stack' ? <span className="queue-pr-gutter"><PrStateIcon member={s.members[0]} /></span> : <button
-            className="queue-disclosure"
-            aria-label={`${expanded.has(s.id) ? 'Collapse' : 'Expand'} ${s.title}`}
-            aria-expanded={expanded.has(s.id)}
-            aria-controls={`members-${s.id}`}
-            onClick={() =>
-              setExpanded((prev) => {
-                const n = new Set(prev);
-                if (n.has(s.id)) n.delete(s.id);
-                else n.add(s.id);
-                return n;
-              })
+  const latestSaved = useRef({ open, start, entryActions, tabs });
+  // Rows receive one stable action object. Each call reads this render's state.
+  const latest = useRef({ selectQueueEntry, moveSelection, activate, openResponse, selection, setOpenedItem, setOverviewTab, entryActions, tabs });
+  latest.current = { selectQueueEntry, moveSelection, activate, openResponse, selection, setOpenedItem, setOverviewTab, entryActions, tabs };
+  const rowActions = useMemo<QueueRowActions>(() => ({
+    select: (id, modifiers) => latest.current.selectQueueEntry(id, modifiers),
+    move: (direction, modifiers) => latest.current.moveSelection(direction, modifiers),
+    activate: item => latest.current.activate(item),
+    openMember: (item, member, modifiers) => {
+      if (modifiers.shiftKey || modifiers.metaKey || modifiers.ctrlKey) { latest.current.selectQueueEntry(item.subject.id, modifiers); return; }
+      setSelected(item.subject.id);
+      latest.current.activate(focusStackPr(item, member));
+    },
+    openChecks: item => { setOpenedItem(item); setOverviewTab('checks'); },
+    openResponse: (item, intent) => latest.current.openResponse(item, intent),
+    toggleExpanded: id => setExpanded(previous => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    }),
+    selectAll: () => latest.current.selection.all(),
+    toggleSelect: (id, modifiers) => latest.current.selection.select(id, modifiers),
+    clearSelection: () => {
+      if (!latest.current.selection.keys.size) return false;
+      latest.current.selection.clear();
+      return true;
+    },
+    contextSelect: id => latest.current.selection.context(id),
+    menuGroups: item => {
+      const { tabs: navigation, entryActions: actionsFor } = latest.current;
+      return [
+        ...(navigation ? [[{ label: 'Open in new tab', dismissBeforeRun: true, icon: <Plus size={15} />, run: () => navigation.open({ kind: 'home', subject: item }) }]] : []),
+        ...prEntryActionGroups(actionsFor(item.subject.members)),
+      ];
+    },
+    memberMenu: member => ({ ...latest.current.entryActions([member]), onBeforeOpen: () => latest.current.selection.clear() }),
+    registerButton: (id, node) => {
+      if (node) {
+        rowButtons.current.set(id, node);
+        if (pendingRowFocus.current === id) {
+          pendingRowFocus.current = null;
+          node.focus({ preventScroll: true });
+        }
+      } else rowButtons.current.delete(id);
+    },
+  }), []);
+  // Inputs to menu content that are not row props. Changing them re-renders rows with open menus correct.
+  const menuKey = JSON.stringify([starBusy, muteBusy, readBusy, batchBusy, auth?.authenticated, auth?.login, !!prefs, pendingStarts.size]);
+  const readStates = queue.readStates ?? NO_READ_STATES;
+  const fallbackTabStop = selected && itemIds.has(selected) ? undefined : orderedItems[0]?.subject.id;
+  const bulkMenu = multiple ? { groups: selectionGroups, description: selectionDescription } : undefined;
+  const row = useCallback((item: QueueItem) => {
+    const id = item.subject.id, focused = selected === id;
+    const active = selection.keys.size ? selection.keys.has(id) : focused;
+    const bulk = multiple && active;
+    return <QueueRow key={id} item={item} focused={focused} active={active} multiple={multiple} bulk={bulk}
+      tabStop={focused || fallbackTabStop === id} expanded={expanded.has(id)} selectedCount={selectedItems.length}
+      account={auth?.login ?? null} filters={filters} starredUrls={starredUrls} readStates={readStates}
+      menuKey={menuKey} bulkMenu={bulk ? bulkMenu : undefined} actions={rowActions} />;
+  // Selection keys are compared by content.
+  }, [selected, selectionSignature, multiple, fallbackTabStop, expanded, selectedItems.length, auth?.login, filters, starredUrls, readStates, menuKey, bulkMenu, rowActions]);
+  const sidebarCounts = useMemo(() => ({
+    response: queue.items.filter(item => matchesQueueFilters(item, { ...DEFAULT_QUEUE_FILTERS, involvement: 'response' }, clock, login)).length,
+    stacks: queue.items.filter(item => item.subject.kind === 'stack').length,
+    updated: queue.items.filter(item => item.attention === 'updated').length,
+    requested: queue.items.filter(item => item.attention === 'requested').length,
+    other: queue.items.filter(item => item.attention === 'other').length,
+  }), [queue.items, clock, login]);
+  latestSaved.current = { open, start, entryActions, tabs };
+  const savedActions = useMemo<SavedRowActions>(() => ({
+    open: entry => void latestSaved.current.open(entry),
+    retry: entry => void latestSaved.current.start(entry.prUrl),
+    menuGroups: entry => {
+      const { tabs: navigation, entryActions: actionsFor } = latestSaved.current;
+      return [
+        ...(navigation && entry.status === 'completed' ? [[{ label: 'Open in new tab', dismissBeforeRun: true, icon: <Plus size={15} />, run: () => navigation.open({ kind: 'review', reviewId: entry.id }) }]] : []),
+        ...prEntryActionGroups(actionsFor(entry.snapshot?.subject.members ?? [])),
+        [{ label: 'Export review', icon: <Download size={15} />, disabled: entry.status === 'generating',
+          run: () => window.electronAPI.exportReview(entry.id) }],
+        [{ label: 'Delete saved review', icon: <Trash2 size={15} />, destructive: true,
+          disabled: entry.status === 'generating', run: async () => {
+            if (confirm('Delete this saved review?')) {
+              await window.electronAPI.deleteReview(entry.id);
+              await workbenchStore.refresh({ history: true });
             }
-          >
-            {expanded.has(s.id) ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-          </button>}
-          <div className="queue-row-content"
-            onClick={event=>{if((event.target as HTMLElement).closest('a,button'))return;selectQueueEntry(s.id,event);}}
-            onDoubleClick={event=>{if(event.shiftKey||event.metaKey||event.ctrlKey||(event.target as HTMLElement).closest('a,button'))return;activate(item);}}>
-          <div className="queue-row-heading">
-          <button
-            className="queue-row-main"
-            ref={(node) => {
-              if (node) {
-                rowButtons.current.set(s.id, node);
-                if (pendingRowFocus.current === s.id) {
-                  pendingRowFocus.current = null;
-                  node.focus({ preventScroll: true });
-                }
-              } else rowButtons.current.delete(s.id);
-            }}
-            aria-pressed={active}
-            tabIndex={
-              focused || (!items.some((i) => i.subject.id === selected) && orderedItems[0]?.subject.id === s.id) ? 0 : -1
-            }
-            aria-describedby="queue-keyboard-help"
-            onKeyDown={(e) => {
-              if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-                e.preventDefault();
-                moveSelection(e.key === 'ArrowDown' ? 1 : -1, e);
-              } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
-                e.preventDefault(); selection.all();
-              } else if ((e.metaKey || e.ctrlKey) && e.key === ' ') {
-                e.preventDefault(); selection.select(s.id, e);
-              } else if (e.key === 'Escape' && selection.keys.size) {
-                e.preventDefault(); e.stopPropagation(); selection.clear();
-              } else if (e.key === 'Enter' && active && !e.repeat) {
-                e.preventDefault();
-                activate(item);
-              }
-            }}
-            onClick={event => {
-              if (tabs && (event.metaKey || event.ctrlKey) && !event.altKey) { event.preventDefault(); tabs.open({kind:'home',subject:item}, !event.shiftKey); return; }
-              selectQueueEntry(s.id,event);
-            }}
-            onAuxClick={event=>{if(event.button===1&&tabs){event.preventDefault();tabs.open({kind:'home',subject:item},true);}}}
-            onDoubleClick={event => {
-              if (event.shiftKey || event.metaKey || event.ctrlKey) return;
-              activate(item);
-            }}
-          >
-            <span className="queue-title-line">
-              {multiple && (active ? <SquareCheck size={16} className="queue-selection-check" aria-hidden="true" /> : <Square size={16} className="queue-selection-check" aria-hidden="true" />)}
-              {s.kind === 'stack' && <Layers size={16} aria-label="PR stack" className="queue-stack-icon" />}
-              <span className="queue-title">{s.title}</span>
-              <PrLabels members={s.members} limit={3} />
-            </span>
-          </button>
-          <UnreadPrMarker urls={s.members.map(member => member.url)} />
-          <PrStarMarker members={s.members} starredUrls={starredUrls} />
-          {actions}
-          {(item.review?.status === 'generating' ||
-            item.review?.status === 'completed' ||
-            item.briefing?.status === 'generating') && (
-            <span className={`queue-state ${item.attention === 'updated' ? 'needs-attention' : ''}`}>
-              {item.review?.status === 'generating' ? (
-                <>
-                  <Loader2 size={13} className="animate-spin" />
-                  Generating explanation
-                </>
-              ) : item.review?.status === 'completed' ? (
-                <>
-                  <Check size={13} />
-                  Explanation ready
-                </>
-              ) : item.briefing?.status === 'generating' ? (
-                <>
-                  <Loader2 size={13} className="animate-spin" />
-                  Generating briefing
-                </>
-              ) : null}
-            </span>
-          )}
-          </div>
-            <QueueMetadata onChecks={() => { setOpenedItem(item); setOverviewTab('checks'); }} subject={s} account={auth?.login ?? null} />
-            {s.kind === 'stack' && matchingStackMembers(item, filters, auth?.login).length < s.members.length && <span className="queue-stack-matches">{matchingStackMembers(item, filters, auth?.login).length} of {s.members.length} PRs match</span>}
-            {filters.involvement === 'response' && <div className="queue-response-reasons">{s.members.flatMap(member => {
-              const response = item.responses?.[member.url];
-              if (!response || !needsResponse(response) || !matchingStackMembers(item, filters, auth?.login).includes(member.url)) return [];
-              return [<span key={member.url} className="queue-response-pr">
-                {s.kind === 'stack' && <span className="queue-response-source"><GitPullRequest size={12} aria-hidden="true" />#{member.number}</span>}
-                {response.changesRequested && <button onClick={() => openResponse(focusStackPr(item, member), 'response-review')} aria-label={`Read changes requested on PR #${member.number}: ${member.title}`}><MessageSquare size={14} aria-hidden="true" />Changes requested<ArrowRight size={12} aria-hidden="true" /></button>}
-                {response.unresolvedThreads > 0 && <button onClick={() => openResponse(focusStackPr(item, member), 'response-threads')} aria-label={`Address ${response.unresolvedThreads} unresolved threads on PR #${member.number}: ${member.title}`}>{response.unresolvedThreads} unresolved {response.unresolvedThreads === 1 ? 'thread' : 'threads'}<ArrowRight size={12} aria-hidden="true" /></button>}
-              </span>];
-            })}</div>}
-            {item.briefing?.summary && <span className="queue-summary">{item.briefing.summary}</span>}
-          </div>
-        </div>}</EntryActions>
-        {expanded.has(s.id) && (
-          <div id={`members-${s.id}`}>
-            {s.members.map((m) => (
-              <PrEntryActions key={m.url} {...entryActions([m])} onBeforeOpen={selection.clear}>{actions => <div className={`queue-member ${queue.readStates?.[m.url]?.unread.length ? 'is-unread' : ''}`}>
-                <PrStateIcon member={m} />
-                <div className="queue-member-content">
-                  <button className="queue-member-title" onClick={event => { if (event.shiftKey || event.metaKey || event.ctrlKey) { selectQueueEntry(s.id, event); return; } setSelected(s.id); activate(focusStackPr(item, m)); }}>
-                    <span className="truncate">{m.title}</span>
-                    <PrLabels members={[m]} />
-                  </button>
-                  <QueueMetadata onChecks={() => { setOpenedItem(focusStackPr(item, m)); setOverviewTab('checks'); }} subject={{ id: m.url, kind: 'pr', title: m.title, members: [m], edges: [], warnings: [] }} account={auth?.login ?? null} />
-                </div>
-                <UnreadPrMarker urls={[m.url]} />
-                <PrStarMarker members={[m]} starredUrls={starredUrls} />{actions}
-              </div>}</PrEntryActions>
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  }
+          } }],
+      ];
+    },
+  }), []);
+  const savedRow = useCallback((entry: ReviewHistoryEntry) =>
+    <SavedRow key={entry.id} entry={entry} starredUrls={starredUrls} menuKey={menuKey} actions={savedActions} />,
+  [starredUrls, menuKey, savedActions]);
+  const changeReadRef = useRef(changeRead);
+  changeReadRef.current = changeRead;
+  // Every unread marker reads this context; keep its identity until read state changes.
+  const readContext = useMemo(() => ({
+    states: readStates, busy: readBusy,
+    change: (urls: string[], read: boolean, displayed?: ViewedPr[]) => changeReadRef.current(urls, read, displayed),
+    viewed: (revisions: ViewedPr[]) => { const eligible = revisions.filter(pr => !readVisit.current.manual.has(pr.url)); void changeReadRef.current(eligible.map(pr => pr.url), true, eligible); },
+  }), [readStates, readBusy]);
   const replayGettingStarted = () => {
     setSettings(false);
     onboarding.start();
@@ -1514,9 +1500,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     ) : null;
 
   return (
-    <PrReadContext.Provider value={{ states: queue.readStates ?? {}, busy: readBusy, change: changeRead,
-      viewed: revisions => { const eligible = revisions.filter(pr => !readVisit.current.manual.has(pr.url)); void changeRead(eligible.map(pr => pr.url), true, eligible); },
-    }}>
+    <PrReadContext.Provider value={readContext}>
     <div className="workbench-home">
       <header className="workbench-header">
         <a
@@ -1564,7 +1548,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         </div>
       </header>
       <UpdateBanner />
-      {summaryItem ? (
+      {summaryItem && (
         <PrSummary
         key={summaryItem.subject.id}
         item={summaryItem}
@@ -1574,7 +1558,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         onRenameStack={async name => {
           const next = await enqueueWrite(() => window.electronAPI.workbenchRenameStack(summaryItem.subject.id, name, auth?.login ?? undefined));
           if (alive.current && readAccount.current === auth?.login) {
-            setQueue(next);
+            workbenchStore.apply(next);
             setOpenedItem(current => current ? resolveWorkspace(current, [...next.items, ...(next.starredItems ?? []), ...(next.stacks ?? []).map(subject => ({ subject, attention: 'other' as const }))]) : current);
           }
         }}
@@ -1636,7 +1620,9 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         onAiSetup={() => openSettings('integrations')}
         onGitHubAuth={() => setAuthOpen(true)}
         />
-      ) : (
+      )}
+      {/* The queue stays mounted behind a PR, so returning keeps its rows, scroll and focus target. */}
+      <Activity mode={summaryItem ? 'hidden' : 'visible'}>
         <div className="workbench-body">
         <QueueSidebar
           currentReview={
@@ -1713,19 +1699,12 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                           : id === 'starred'
                             ? (queue.starredItems?.length ?? 0)
                             : id === 'response'
-                              ? queue.items.filter((item) =>
-                                  matchesQueueFilters(
-                                    item,
-                                    { ...DEFAULT_QUEUE_FILTERS, involvement: 'response' },
-                                    Date.now(),
-                                    auth?.login
-                                  )
-                                ).length
+                              ? sidebarCounts.response
                               : id === 'all'
                                 ? queue.items.length
                                 : id === 'stacks'
-                                  ? queue.items.filter((i) => i.subject.kind === 'stack').length
-                                  : queue.items.filter((i) => i.attention === id).length}
+                                  ? sidebarCounts.stacks
+                                  : sidebarCounts[id as QueueItem['attention']]}
                       </span>
                     </button>
                   </SidebarDestination>
@@ -1937,6 +1916,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                 </Popover.Trigger>
                 <Popover.Portal>
                   <Popover.Content
+                    // Activity detaches refs while hidden, so keep the last element.
+                    ref={element => { if (element) filterPopover.current = element; }}
                     className="queue-filter-popover"
                     data-combobox-container="inside"
                     align="end"
@@ -2049,46 +2030,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                 <LoadingState title="Loading review queue…" />
               ) : section === 'saved' ? (
                 saved.length ? (
-                  saved.map((entry) => (
-                    <EntryActions key={entry.id} label={`Actions for ${entry.prTitle}`} groups={[
-                      ...(tabs && entry.status==='completed' ? [[{label:'Open in new tab',dismissBeforeRun:true,icon:<Plus size={15}/>,run:()=>tabs.open({kind:'review',reviewId:entry.id})}]]:[]),
-                      ...prEntryActionGroups(entryActions(entry.snapshot?.subject.members ?? [])),
-                      [{ label: 'Export review', icon: <Download size={15} />, disabled: entry.status === 'generating',
-                        run: () => window.electronAPI.exportReview(entry.id) }],
-                      [{ label: 'Delete saved review', icon: <Trash2 size={15} />, destructive: true,
-                        disabled: entry.status === 'generating', run: async () => {
-                          if (confirm('Delete this saved review?')) {
-                            await window.electronAPI.deleteReview(entry.id);
-                            await refresh();
-                          }
-                        } }],
-                    ]}>{actions => <div className="saved-row" data-queue-id={entry.id}>
-                      <div className="queue-row-content" onClick={event=>{if((event.target as HTMLElement).closest('a,button')||entry.status==='generating')return;void (entry.status==='failed' ? start(entry.prUrl) : open(entry));}}>
-                      <button
-                        className="queue-row-main"
-                        disabled={entry.status === 'generating'}
-                        onClick={event => { if(tabs && entry.status==='completed' && (event.metaKey||event.ctrlKey))tabs.open({kind:'review',reviewId:entry.id},!event.shiftKey);else if(entry.status==='failed')void start(entry.prUrl);else void open(entry); }}
-                        onAuxClick={event=>{if(event.button===1&&tabs&&entry.status==='completed'){event.preventDefault();tabs.open({kind:'review',reviewId:entry.id},true);}}}
-                      >
-                        <span className="queue-title">{!entry.prUrl.startsWith('local:') && <SubjectIcon kind={entry.snapshot?.subject.kind === 'stack' ? 'stack' : 'pr'} />}{entry.prTitle}</span>
-                      </button>
-                        <span className="queue-meta">
-                          {entry.snapshot?.subject.kind === 'stack'
-                            ? `${entry.snapshot.subject.members.length} PR stack · `
-                            : ''}
-                          <PrBadge url={entry.prUrl} title={entry.prTitle} /> <GitHubAuthor login={entry.author}/> · {timeAgo(entry.savedAt)} ·{' '}
-                          {entry.status === 'generating'
-                            ? 'Generating explanation'
-                            : entry.status === 'failed'
-                              ? 'Generation failed'
-                              : 'Explanation ready'}
-                        </span>
-                        {entry.error && <span className="text-xs text-destructive">{entry.error}</span>}
-                      </div>
-                      <PrStarMarker members={entry.snapshot?.subject.members ?? []} starredUrls={starredUrls} />
-                      {actions}
-                    </div>}</EntryActions>
-                  ))
+                  <VirtualSavedReviews entries={saved} scrollElement={queueScrollElement} renderRow={savedRow} />
                 ) : (
                   <div className="queue-empty" role={filters.involvement === 'response' ? 'status' : undefined}>
                     <WorkbenchIcon name="history" size={24} />
@@ -2112,7 +2054,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                     selected={selected}
                     scrollElement={queueScrollElement}
                     onVisibleItemsChange={updateVisibleQueueIds}
-                    onIntent={id => { if (id) openIntent.current?.intent.enter(id); else openIntent.current?.intent.leave(); }}
+                    onIntent={onQueueIntent}
                     measurements={queueMeasurements}
                     initialOffset={queueScrollOffset.current}
                     renderRow={row}
@@ -2284,7 +2226,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
                         onClick={() =>
                           void window.electronAPI
                             .workbenchBriefing(selectedItem.subject.id)
-                            .then(setQueue)
+                            .then(next => workbenchStore.apply(next))
                             .catch((e: unknown) => setError(String(e)))
                         }
                       >
@@ -2432,13 +2374,17 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
           </>}
         </main>
         </div>
-      )}
+      </Activity>
       {onboarding.open && onboarding.state.draft && <OnboardingSetup draft={onboarding.state.draft} onChange={onboarding.change}
         onPause={() => void onboarding.pause()} onApply={() => { void onboarding.apply().then(next => {
           if (!next) return;
           setPrefs(next); setOpenedItem(null); setSavedView(false); setMutedOpen(false); setSelected(null);
-          filtersLoaded.current = false; pendingFilters.current = null;
-          void refresh();
+          filtersLoaded.current = false; pendingFilters.current = null; releaseFilters();
+          void refresh().then(() => {
+            if (filtersLoaded.current) return;
+            setFilters(normalizeQueueFilters(workbenchStore.getQueue().filters));
+            filtersLoaded.current = true;
+          });
         }); }} onConnect={() => setAuthOpen(true)} login={auth?.authenticated ? auth.login : null}
         items={queue.items} saving={onboarding.saving} saveError={onboarding.error} />}
       {onboarding.tourOpen && <GuidedTour step={onboarding.state.tourStep ?? 0} stacked={summaryItem?.subject.kind === 'stack'} local={prefs?.guestMode || !auth?.authenticated}

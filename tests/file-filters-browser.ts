@@ -143,7 +143,7 @@ void app.whenReady().then(async () => {
     assert.ok((await visibleFiles()).includes('src/worker.ts'));
     await capture('pending');
     await click('Apply updated file filters');
-    await wait("!document.querySelector('.changes-file-tree')");
+    await wait("![...document.querySelectorAll('.changes-file-tree')].some(e=>e.getClientRects().length)");
     assert.equal(
       await js("[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Review PR #150')?.disabled"),
       false
@@ -160,7 +160,7 @@ void app.whenReady().then(async () => {
     );
     await capture('empty');
     await click('Show hidden files');
-    await wait("!!document.querySelector('.changes-file-tree')");
+    await wait("[...document.querySelectorAll('.changes-file-tree')].some(e=>e.getClientRects().length)");
     // Recover a failed save without losing previous filters.
     await js("sessionStorage.setItem('fixture-fail-file-filters','yes')");
     await toggle(1);
@@ -229,7 +229,7 @@ void app.whenReady().then(async () => {
     await wait("window.electronAPI.loadFileFilters().then(s=>s.hiddenExtensions.includes(''))");
     if (await js("!!document.querySelector('.file-extension-popup')")) await click('Done');
     await close();
-    await wait("!document.querySelector('.changes-file-tree')");
+    await wait("![...document.querySelectorAll('.changes-file-tree')].some(e=>e.getClientRects().length)");
     await capture('extensions-empty');
     await click('Commits');
     await wait("!!document.querySelector('.commit-row')");
@@ -259,7 +259,7 @@ void app.whenReady().then(async () => {
     await click('Show hidden files');
     await close();
     if (await js("!document.querySelector('.changes-tree-pane')")) await js("document.querySelector('.changes-toolbar button').click()");
-    await wait("!!document.querySelector('.changes-file-tree')");
+    await wait("[...document.querySelectorAll('.changes-file-tree')].some(e=>e.getClientRects().length)");
     await pop();
     await click('File extensions');
     await js('document.querySelector(\'[aria-label="Search file extensions"]\').focus()');

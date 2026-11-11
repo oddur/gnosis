@@ -27,9 +27,11 @@ import {
   type WorkspaceTabsState,
 } from '../lib/workspace-tabs';
 import type { AppLocation } from '../lib/navigation-history';
+import type { ActivityTask } from '../lib/activity';
 import { ReviewWorkspace, type WorkspaceController } from './ReviewWorkspace';
 import './workspace-tabs.css';
 import { useWorkspaceListings } from '../lib/use-workspace-listings';
+import { workbenchStore } from '../lib/workbench-store';
 import { workspaceTabTitle } from '../lib/workspace-listings';
 
 const newTab = (target?: WorkspaceTarget) => newWorkspaceTab(crypto.randomUUID(), target);
@@ -58,6 +60,10 @@ export function App() {
   const [visited, setVisited] = useState<Set<string>>(() => new Set());
   const [activityOpen, setActivityOpen] = useState(false);
   const [syncStatus, setSyncStatus] = useState<GitHubSyncStatusProps>();
+  // Queue pages publish on every change they see; only a different status re-renders the drawer.
+  const publishSync = useCallback((next: GitHubSyncStatusProps | undefined) => setSyncStatus(previous =>
+    previous?.onRefresh === next?.onRefresh && previous?.sync?.status === next?.sync?.status &&
+    previous?.sync?.checkedAt === next?.sync?.checkedAt && previous?.sync?.retryAt === next?.sync?.retryAt ? previous : next), []);
   const controllers = useRef(new Map<string, WorkspaceController>());
   const latest = useRef(state);
   latest.current = state;
@@ -96,6 +102,7 @@ export function App() {
       if (currentAccount.current === key) return;
       if (currentAccount.current) persist(currentAccount.current, latest.current);
       currentAccount.current = key;
+      workbenchStore.reset(key);
       recentlyViewed.scope(key);
       let next: WorkspaceTabsState;
       try {
@@ -261,6 +268,10 @@ export function App() {
     return () => window.removeEventListener('gnosis-storage-error', failed);
   }, []);
   const controller = () => controllers.current.get(latest.current.active);
+  const refreshQueue = useCallback(() => workbenchStore.refresh().catch(() => {}), []);
+  const openActivity = useCallback(async (task: ActivityTask) => {
+    await controllers.current.get(latest.current.active)?.openActivity(task);
+  }, []);
   const navigation = useMemo(() => ({ open }), [open]);
   const recentNavigation = useMemo(
     () => ({
@@ -326,8 +337,10 @@ export function App() {
                         <Activity mode={state.active === tab.id ? 'visible' : 'hidden'}>
                           <WorkspaceDraftBoundary value={`workspace:${account}:${tab.id}`}>
                             <WorkspaceErrorBoundary
+                              onRetry={refreshQueue}
                               onQueue={() => {
-                                change({ type: 'replace', id: tab.id, tab: newTab() });
+                                // Tabs share one queue snapshot, so read it again before replacing the failed tab.
+                                void refreshQueue().finally(() => change({ type: 'replace', id: tab.id, tab: newTab() }));
                               }}
                             >
                               <ReviewWorkspace
@@ -339,7 +352,7 @@ export function App() {
                                 onStatus={reportStatus}
                                 onAccount={scopeAccount}
                                 setActivityOpen={setActivityOpen}
-                                onSyncStatus={setSyncStatus}
+                                onSyncStatus={publishSync}
                               />
                             </WorkspaceErrorBoundary>
                           </WorkspaceDraftBoundary>
@@ -354,9 +367,7 @@ export function App() {
               syncStatus={syncStatus}
               open={activityOpen}
               onOpenChange={setActivityOpen}
-              onOpen={async (task) => {
-                await controller()?.openActivity(task);
-              }}
+              onOpen={openActivity}
             />
             <ConflictWorkspaceHost />
             <Toaster />

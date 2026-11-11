@@ -40,7 +40,7 @@ void app.whenReady().then(async () => {
     await js(
       "[...document.querySelectorAll('.queue-row-main')].find(b=>b.textContent.includes('bounded command queue')).click()"
     );
-    await wait("[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='Open stack overview')");
+    await wait("[...document.querySelectorAll('button')].some(b=>b.textContent.trim()==='Open stack overview'&&b.checkVisibility())");
     await click('Open stack overview');
     await wait("!!document.querySelector('.pr-overview-tabs')");
   };

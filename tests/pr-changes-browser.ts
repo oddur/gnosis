@@ -119,7 +119,7 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.review-image-diff') || !!document.querySelector('.changes-code img')");
     // Search the actual shadow DOM, not an imitation of the tree.
     await js(
-      `window.deepAll=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(selector,e.shadowRoot))];window.openFile=name=>{const row=window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')===name);if(!row)throw Error('Missing tree row '+name);row.click()};void 0;`
+      `window.deepAll=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].filter(e=>e.shadowRoot).flatMap(e=>window.deepAll(selector,e.shadowRoot))];window.openFile=name=>{const row=window.deepAll('[role=treeitem]').find(e=>e.getAttribute('aria-label')===name);if(!row)throw Error('Missing tree row '+name+' in '+window.deepAll('[role=treeitem]').map(e=>e.getAttribute('aria-label')).join('|')+' trees='+document.querySelectorAll('.changes-file-tree').length+' open='+[...document.querySelectorAll('.changes-workspace')].map(e=>e.className).join(','));row.click()};void 0;`
     );
     assert.deepEqual(
       await js(`(async()=>{
@@ -410,7 +410,7 @@ void app.whenReady().then(async () => {
     window.focus();
     await wait("document.visibilityState==='visible'");
     await click('Summary');
-    await wait("!document.querySelector('.pr-changes')");
+    await wait("!document.querySelector('.pr-changes')?.checkVisibility()");
     await click('Changes');
     await wait("document.querySelector('.changes-notice')?.textContent.includes('New commits')");
     assert.equal(

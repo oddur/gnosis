@@ -82,8 +82,16 @@ void app.whenReady().then(async () => {
       'Preparing a new revision cannot replace the open diff'
     );
     assert.equal(await js('window.inspection.peekChanges(window.nextRevision).metadata.headSha'), 'new-prepared-head');
+    // Visited tabs stay mounted, so returning keeps the displayed revision and offers the update.
     await click('Summary');
     await click('Changes');
+    await wait("[...document.querySelectorAll('.changes-notice')].some(e=>e.textContent.includes('New commits are available'))");
+    assert.equal(
+      await js("window.deepAll('*').some(e=>e.children.length===0&&e.textContent.includes('newlyPreparedRevision'))"),
+      false,
+      'Returning to Changes keeps the displayed revision'
+    );
+    await js("[...document.querySelectorAll('.changes-notice button')].find(b=>b.textContent.trim()==='Update changes').click()");
     await wait("window.deepAll('*').some(e=>e.children.length===0&&e.textContent.includes('newlyPreparedRevision'))");
     assert.deepEqual(
       await js('window.loadingFlashes'),

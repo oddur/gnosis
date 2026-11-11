@@ -40,7 +40,7 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('[role=menu]')");
   };
   const progress = (count: number) =>
-    wait(`document.querySelector('.changes-progress')?.textContent.includes('${count} / 5')`);
+    wait(`[...document.querySelectorAll('.changes-progress')].find(e=>e.getClientRects().length)?.textContent.includes('${count} / 5')`);
   const query = async (value: string) => {
     await js(
       `(()=>{const e=document.querySelector('input[aria-label="Find changed files"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}))})()`

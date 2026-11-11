@@ -21,7 +21,8 @@ import { createRoot } from 'react-dom/client';
 import { imageMocks } from './review-images';
 import { threadMocks } from './review-threads';
 import '../../src/globals.css';
-import { groupSubjects, snapshot, memberPrefix, type ReviewMember, type QueueItem } from '../../lib/workbench';
+import { groupSubjects, snapshot, memberPrefix, type ReviewMember, type QueueItem, type WorkbenchQueue } from '../../lib/workbench';
+import { stampQueue } from '../../lib/workbench-revision';
 import type { Preferences, ReviewGuide, ReviewHistoryEntry } from '../../lib/types';
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_FAST_CLAUDE_MODEL } from '../../lib/models';
 import { review as example, slide, explainer } from './explainer';
@@ -602,9 +603,11 @@ const mocks = {
     window.addEventListener('fixture-activity-change', callback);
     return () => window.removeEventListener('fixture-activity-change', callback);
   },
-  onWorkbenchChanged: (callback: () => void) => {
-    window.addEventListener('fixture-workbench-change', callback);
-    return () => window.removeEventListener('fixture-workbench-change', callback);
+  onWorkbenchChanged: (callback: (revisions?: import('../../lib/workbench-revision').WorkbenchRevisions) => void) => {
+    // Tests may attach the revisions main would send as the event detail.
+    const listener = (event: Event) => callback((event as CustomEvent<import('../../lib/workbench-revision').WorkbenchRevisions | undefined>).detail ?? undefined);
+    window.addEventListener('fixture-workbench-change', listener);
+    return () => window.removeEventListener('fixture-workbench-change', listener);
   },
   getLocalClones: async () => [],
   connectLocalClone: () => Promise.resolve([]),
@@ -773,9 +776,26 @@ if (new URLSearchParams(location.search).has('github-sync')) {
   const { installSyncFixture } = await import('./github-sync');
   installSyncFixture(mocks, items);
 }
+// Main stamps every snapshot it returns. Stamp here too, after any test override, so revisions
+// always describe what the override returned. Reading saved reviews for the stamp is not counted.
+const stampedReads = new Set(['workbenchQueue', 'workbenchSnapshot', 'workbenchStarPrs', 'workbenchMutePrs', 'workbenchSetFilters',
+  'workbenchViewAction', 'workbenchMarkPrRead', 'workbenchRenameStack', 'workbenchGroup', 'workbenchBriefing']);
+const fixtureHistory = () => {
+  const fixtureWindow = window as unknown as { fixtureInternalRead?: boolean };
+  fixtureWindow.fixtureInternalRead = true;
+  try { return Promise.resolve(mocks.listReviews()); } finally { fixtureWindow.fixtureInternalRead = false; }
+};
 Object.defineProperty(window, 'electronAPI', {
   value: new Proxy(mocks, {
-    get: (target, key) => (key in target ? target[key as keyof typeof target] : () => Promise.resolve()),
+    get: (target, key) => {
+      const value: unknown = key in target ? target[key as keyof typeof target] : () => Promise.resolve();
+      if (typeof key !== 'string' || !stampedReads.has(key) || typeof value !== 'function') return value;
+      return async (...args: unknown[]) => {
+        const result = await (value as (...values: unknown[]) => unknown)(...args);
+        const queue = result as WorkbenchQueue | undefined;
+        return queue && Array.isArray(queue.items) ? stampQueue(queue, await fixtureHistory().catch(() => undefined)) : result;
+      };
+    },
   }),
 });
 if (!new URLSearchParams(location.search).has('keep-progress')) localStorage.clear();

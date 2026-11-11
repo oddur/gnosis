@@ -8,7 +8,7 @@ import type { SearchDestination } from '../lib/command-search';
 import { ReviewDraftBoundary } from '../lib/session-drafts';
 
 import type { ActivityTask } from '../lib/activity';
-import { memo, useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
+import { Activity, memo, useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { HomePage } from './pages/HomePage';
 import { ReviewPage } from './pages/ReviewPage';
 import { Button } from '../components/ui/button';
@@ -126,6 +126,9 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
   }>();
   const [explanationDestination, setExplanationDestination] = useState<ExplanationDestination>();
   const [page, setPage] = useState<Page>('home');
+  // Once shown, the queue stays mounted behind saved reviews so returning keeps its state and scroll.
+  const [homeMounted, setHomeMounted] = useState(false);
+  if (page === 'home' && !homeMounted) setHomeMounted(true);
   const [reviewOrigin, setReviewOrigin] = useState<{ name: string; reviews: { id: string; title: string }[] }>({
     name: 'Review queue',
     reviews: [],
@@ -541,7 +544,8 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
             </details>
           </div>
         )}
-        {page === 'home' && (
+        {homeMounted && (
+          <Activity mode={page === 'home' ? 'visible' : 'hidden'}>
           <HomePage
             onSyncStatus={onSyncStatus}
             onAccount={onAccount}
@@ -556,6 +560,7 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
             onNavigationChange={recordHome}
             onShowActivity={() => setActivityOpen(true)}
           />
+          </Activity>
         )}
         {page === 'review' && review && (
           <ReviewDraftBoundary

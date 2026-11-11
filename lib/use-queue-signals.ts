@@ -144,6 +144,7 @@ export function useQueueSignals(scope: string | null, requests: QueueSignalReque
 }
 
 /** Observe cached status for sorting; this hook never requests a GitHub refresh. */
+const NO_SIGNALS: QueueSignals[] = [];
 export function useCachedQueueSignals(scope: string | null, requests: QueueSignalRequest[], enabled: boolean) {
   const [state, setState] = useState<{ scope: string | null; key: string; values: QueueSignals[] }>({ scope: null, key: '', values: [] });
   const key = enabled ? JSON.stringify(requests.map(({ url, headSha }) => ({ url, headSha }))) : '';
@@ -164,5 +165,5 @@ export function useCachedQueueSignals(scope: string | null, requests: QueueSigna
     })();
     return () => { lifecycle.cancelled = true; updates.removeEventListener(scope, update); };
   }, [scope, key]);
-  return state.scope === scope && state.key === key ? state.values : [];
+  return state.scope === scope && state.key === key ? state.values : NO_SIGNALS;
 }

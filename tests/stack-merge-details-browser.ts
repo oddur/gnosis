@@ -104,10 +104,10 @@ void app.whenReady().then(async () => {
     await js("document.documentElement.style.zoom='';window.optionalMode=true;window.publishStatus()");
     await wait(`${row(122)}.textContent.includes('View check details')`);
     assert.equal(await js(`${row(122)}.querySelector('[aria-label="Merge blockers for PR #122"]')===null`), true);
-    await js("window.realNow=Date.now;Date.now=()=>window.realNow()+6*60*1000;window.dispatchEvent(new Event('fixture-pr-read-change'));void 0");
+    await js("window.realNow=Date.now;Date.now=()=>window.realNow()+6*60*1000;window.dispatchEvent(new Event('fixture-pr-read-change'));window.dispatchEvent(new Event('focus'));void 0");
     await wait(`${row(120)}.textContent.includes('Status needs refresh')`);
     assert.ok(await js(`!${row(120)}.textContent.includes('Build and test')`));
-    await js("Date.now=window.realNow;window.dispatchEvent(new Event('fixture-pr-read-change'));void 0");
+    await js("Date.now=window.realNow;window.dispatchEvent(new Event('fixture-pr-read-change'));window.dispatchEvent(new Event('focus'));void 0");
     await viewport(1280,850);
     await js(`${row(122)}.querySelector('.stack-check-result').click()`);
     await wait("document.querySelector('[role=tab]:not(.workspace-tab-select)[aria-selected=true]')?.textContent.includes('Checks') || document.querySelector('[role=tab]:not(.workspace-tab-select)[data-active]')?.textContent.includes('Checks')");

@@ -61,6 +61,14 @@ export function EntryActions({
   const [menuOpen, setMenuOpen] = useState(false);
   const contextActions = useRef<Menu.Root.Actions | null>(null);
   const menuActions = useRef<Menu.Root.Actions | null>(null);
+  // A menu revealed by Activity can keep stale internal state and stop opening from the keyboard.
+  // Layout effects run again when content is shown, so give the menu a fresh root each time.
+  const [shownCount, setShownCount] = useState(0);
+  const mounted = useRef(false);
+  useLayoutEffect(() => {
+    if (mounted.current) setShownCount((count) => count + 1);
+    mounted.current = true;
+  }, []);
   const menuId = useRef(Symbol('entry-menu'));
   useLayoutEffect(() => {
     const id = menuId.current;
@@ -143,6 +151,7 @@ export function EntryActions({
   };
   const button = (
     <Menu.Root
+      key={shownCount}
       actionsRef={menuActions}
       open={menuOpen}
       onOpenChange={(open) => {

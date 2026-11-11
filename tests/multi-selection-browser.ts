@@ -177,12 +177,13 @@ void app.whenReady().then(async () => {
     win.setSize(1280, 800);
     await wait("document.querySelectorAll('.queue-item').length===7");
     await js(
-      "void (window.deepAll=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].flatMap(e=>e.shadowRoot?window.deepAll(selector,e.shadowRoot):[])])"
+      // Kept PR tabs stay in the document while hidden; only search what is shown.
+      "void (window.deepAll=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].flatMap(e=>e.shadowRoot?window.deepAll(selector,e.shadowRoot):[])].filter(e=>root!==document||e.checkVisibility()))"
     );
     await select('Fix reconnect');
     await click('Open PR overview');
     await click('Changes');
-    await wait("!!document.querySelector('.changes-file-tree')");
+    await wait("!!document.querySelector('.pr-changes-tab[data-state=active] .changes-file-tree')");
     const treeRow = (key: string) =>
       `window.deepAll('[role=treeitem]').find(e=>e.dataset.itemPath===${JSON.stringify(key)})`;
     const treeClick = (key: string, modifiers = {}) =>
@@ -198,14 +199,14 @@ void app.whenReady().then(async () => {
     await wait("window.deepAll('[data-line]').length>0");
     await capture('files-light');
     await click('Mark selected files as viewed');
-    await wait("document.querySelector('.changes-progress')?.textContent.includes('2 / 5')");
+    await wait("document.querySelector('.pr-changes-tab[data-state=active] .changes-progress')?.textContent.includes('2 / 5')");
     // A selected directory plus its child never counts or saves the same file twice.
     await treeClick('tests/');
     await treeClick('src/other.ts', { metaKey: true });
     await context(treeRow('tests/'));
     assert.match(await js<string>("document.querySelector('[role=menu]').textContent"), /3 selected files/);
     await click('Mark selected files as viewed');
-    await wait("document.querySelector('.changes-progress')?.textContent.includes('4 / 5')");
+    await wait("document.querySelector('.pr-changes-tab[data-state=active] .changes-progress')?.textContent.includes('4 / 5')");
     // Outside the selection, a file context menu affects just that file.
     await context(treeRow('package-lock.json'));
     assert.ok(await js("document.querySelector('[role=menu]').textContent.includes('Mark file as viewed')"));
@@ -220,21 +221,21 @@ void app.whenReady().then(async () => {
     win.setSize(900, 700);
     await capture('files-dark-laptop');
     await click('Mark selected files as unviewed');
-    await wait("document.querySelector('.changes-progress')?.textContent.includes('2 / 5')");
+    await wait("document.querySelector('.pr-changes-tab[data-state=active] .changes-progress')?.textContent.includes('2 / 5')");
     await js(
       `${treeRow('src/worker.ts')}.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,composed:true}))`
     );
     await wait('!document.querySelector(\'[aria-label="Clear file selection"]\')');
     await click('Commits');
-    await wait("!!document.querySelector('.commit-row') && !!document.querySelector('.changes-file-tree')");
-    await wait("document.querySelector('.changes-progress')?.textContent.includes('0 / 5')");
+    await wait("!!document.querySelector('.commit-row') && !!document.querySelector('.pr-changes-tab[data-state=active] .changes-file-tree')");
+    await wait("document.querySelector('.pr-changes-tab[data-state=active] .changes-progress')?.textContent.includes('0 / 5')");
     await treeClick('src/other.ts');
     await treeClick('src/worker.ts', { shiftKey: true });
     await context(treeRow('src/worker.ts'));
     await click('Mark selected files as viewed');
-    await wait("document.querySelector('.changes-progress')?.textContent.includes('2 / 5')");
+    await wait("document.querySelector('.pr-changes-tab[data-state=active] .changes-progress')?.textContent.includes('2 / 5')");
     await click('Changes');
-    await wait("document.querySelector('.changes-progress')?.textContent.includes('2 / 5')");
+    await wait("document.querySelector('.pr-changes-tab[data-state=active] .changes-progress')?.textContent.includes('2 / 5')");
     console.log(
       'Multi-selection passed: queue ranges/toggles/keyboard, scoped menus, stack-preserving batches, failures, filters, file/folder selection, diff position, and commit progress.'
     );

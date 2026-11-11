@@ -53,7 +53,7 @@ declare global {
       prOpenPreload?: (targets: OpenTarget[]) => void;
       prOpenIntent?: (targets: OpenTarget[] | null) => void;
       onGitHubSync?: (callback: (event: GitHubSyncEvent) => void) => () => void;
-      onWorkbenchChanged?: (callback: () => void) => () => void;
+      onWorkbenchChanged?: (callback: (revisions?: import('../lib/workbench-revision').WorkbenchRevisions) => void) => () => void;
       onActivityChanged?: (callback: () => void) => () => void;
       clearGitHubCache: () => Promise<void>;
       getPreparedInventories: (revisions: InspectionRevision[]) => Promise<PreparedInventories>;

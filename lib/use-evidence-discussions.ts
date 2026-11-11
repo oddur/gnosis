@@ -48,7 +48,9 @@ export function useEvidenceDiscussions(
     const targets = JSON.parse(key) as { url: string; headSha: string }[];
     const lifecycle = { live: true };
     const urls = new Set(targets.map((target) => target.url));
-    setState((current) => ({
+    // Start without old failures. A kept tab runs this again when shown, and the reads below
+    // report any failure that still applies, as a newly mounted panel would.
+    setState({
       scope,
       values: Object.fromEntries(
         targets.flatMap(({ url }) => {
@@ -56,8 +58,8 @@ export function useEvidenceDiscussions(
           return saved ? [[url, saved]] : [];
         })
       ),
-      errors: current.scope === scope ? current.errors : {},
-    }));
+      errors: {},
+    });
     const unsubscribe = subscribeDiscussions((url, value) => {
       if (lifecycle.live && urls.has(url))
         setState((current) => ({
