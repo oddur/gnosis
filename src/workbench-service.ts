@@ -1,4 +1,5 @@
 import { responseNeeded } from '../lib/response-needed';
+import { stampQueue } from '../lib/workbench-revision';
 import type { GitHubReviewThreads } from '../lib/review-threads';
 import { repositorySettings, repositoryDiscoverySettings, subjectRecentlyUpdated, discoveryInactivityDays, subjectRepositories, localBriefingDay, briefingBudget, automaticBriefingBlock } from '../lib/repository-settings';
 import { prBadgePreview, type PrBadgePreview } from '../lib/pr-badge-preview';
@@ -298,7 +299,7 @@ export function createWorkbenchService(deps: Deps) {
         ).length,
       ])
     );
-    return {
+    return stampQueue({
       items,
       stacks: visibleSubjects.filter(subject => subject.kind === 'stack'),
       readStates,
@@ -311,7 +312,7 @@ export function createWorkbenchService(deps: Deps) {
       briefingBudget: briefingBudget(preferences, [...preferences.watchedRepos, ...Object.keys(preferences.repositorySettings ?? {}), ...allMembers.map(m => m.repo)], s.used, s.repositoryUsed ?? {}, now()),
       filters,
       savedViews: { ...structuredClone(views), counts },
-    };
+    }, history);
   }
   async function fetchMember(
     octokit: Octokit,
@@ -1008,7 +1009,8 @@ export function createWorkbenchService(deps: Deps) {
         ?? stars.load(s.account).find(entry => entry.member.url === url)?.member;
     },
     cached: () => view(true),
-    snapshot: (): WorkbenchQueue => deps.auth().token && deps.auth().login ? view() : { items: [], warnings: [], remaining: 0 },
+    snapshot: (): WorkbenchQueue => deps.auth().token && deps.auth().login ? view()
+      : stampQueue({ items: [], warnings: [], remaining: 0 }, deps.history().filter(entry => !isMutedReview(entry, mutedUrls()))),
     queue,
     mutedUrls,
     markPrRead(request: MarkPrReadRequest) {

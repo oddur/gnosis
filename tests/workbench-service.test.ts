@@ -1990,3 +1990,27 @@ test('response filter, saved counts, and automatic briefings share cached feedba
     assert.ok(reads >= 3, 'Snapshots consult the shared cache; no separate response store');
   } finally { s.cleanup(); }
 });
+
+void test('snapshot revisions ignore the clock and change with content', async () => {
+  const s = setup(() => Promise.resolve(''), false);
+  let now = Date.now();
+  const service = createWorkbenchService({ ...s.deps, now: () => now });
+  try {
+    await service.queue();
+    const first = service.snapshot();
+    now += 60_000;
+    const second = service.snapshot();
+    assert.ok(first.items.length && first.revision && first.historyRevision);
+    assert.notEqual(first.items[0].briefing?.updatedAt, second.items[0].briefing?.updatedAt, 'An uncached briefing reports the current time');
+    assert.equal(second.revision, first.revision);
+    assert.equal(second.items[0].revision, first.items[0].revision);
+    assert.equal(second.historyRevision, first.historyRevision);
+    service.starPrs({ members: first.items[0].subject.members, starred: true });
+    const starred = service.snapshot();
+    assert.notEqual(starred.revision, first.revision);
+    assert.notEqual(starred.parts?.starredPrs, first.parts?.starredPrs);
+    assert.equal(starred.parts?.filters, first.parts?.filters);
+  } finally {
+    s.cleanup();
+  }
+});

@@ -80,6 +80,7 @@ import type { ReviewThreadAction, ReviewCommentAction, CreateReviewCommentReques
 import type { ActivityAction } from '../lib/activity';
 import { createWorkbenchService } from './workbench-service';
 import { fingerprint, type ReviewSubject, type ReviewSnapshot, type GroupingOverride } from '../lib/workbench';
+import type { WorkbenchRevisions } from '../lib/workbench-revision';
 import { app, autoUpdater, BrowserWindow, dialog, ipcMain, Notification, safeStorage, shell, session, net, powerMonitor } from 'electron';
 import path from 'path';
 import fs from 'fs';
@@ -923,8 +924,21 @@ function notifyLocalChange(channel: string) {
   if (localChangeTimers.has(channel)) return;
   localChangeTimers.set(channel, setTimeout(() => {
     localChangeTimers.delete(channel);
-    broadcastToAllWindows(channel);
+    if (channel === 'workbench-changed') broadcastWorkbenchChanged();
+    else broadcastToAllWindows(channel);
   }, 150));
+}
+
+/** Every queue change carries its revisions, so renderers skip snapshots they already show. */
+function broadcastWorkbenchChanged(): void {
+  let revisions: WorkbenchRevisions | undefined;
+  try {
+    const queue = workbench.snapshot();
+    if (queue.revision && queue.historyRevision) revisions = { revision: queue.revision, historyRevision: queue.historyRevision };
+  } catch {
+    /* Without revisions, renderers read the snapshot once and compare it themselves. */
+  }
+  broadcastToAllWindows('workbench-changed', revisions);
 }
 
 function broadcastToAllWindows(channel: string, ...args: unknown[]): void {
@@ -1272,7 +1286,7 @@ ipcMain.handle('save-preferences', async (_event, prefs: Preferences) => {
   await githubClients.setCacheSizeMB(prefs.githubCacheSizeMB);
   savePreferences(prefs);
   broadcastToAllWindows('preferences-changed', loadPreferences());
-  broadcastToAllWindows('workbench-changed');
+  broadcastWorkbenchChanged();
   applyBinaryOverrides(prefs);
   // Restart polling so the new proactiveMode value takes effect immediately
   stopProactivePolling();

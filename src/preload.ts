@@ -1,3 +1,4 @@
+import type { WorkbenchRevisions } from '../lib/workbench-revision';
 import type { WorkflowRuns, WorkflowGraph, WorkflowGraphInput } from '../lib/workflow-graph';
 import type { GitHubSyncInterest, GitHubSyncEvent } from '../lib/github-sync';
 import type { OpenTarget } from '../lib/pr-open-targets';
@@ -56,9 +57,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('github-sync', handler);
     return () => ipcRenderer.removeListener('github-sync', handler);
   },
-  onWorkbenchChanged: (callback: () => void) => {
-    ipcRenderer.on('workbench-changed', callback);
-    return () => ipcRenderer.removeListener('workbench-changed', callback);
+  onWorkbenchChanged: (callback: (revisions?: WorkbenchRevisions) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, revisions?: WorkbenchRevisions) => callback(revisions);
+    ipcRenderer.on('workbench-changed', handler);
+    return () => ipcRenderer.removeListener('workbench-changed', handler);
   },
   onActivityChanged: (callback: () => void) => {
     ipcRenderer.on('activity-changed', callback);
