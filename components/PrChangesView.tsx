@@ -267,6 +267,16 @@ export function PrChangesView({
       clearInterval(timer);
     };
   }, [revision]);
+  // A kept tab can outlive a queue update. A newer head the queue already knows needs no GitHub check.
+  const queueHeads = subject.members.map((member) => `${member.url}:${member.headSha}`).join('|');
+  useEffect(() => {
+    if (commit || combined || !snapshots.length) return;
+    const moved = snapshots.some((snapshot) => {
+      const member = subject.members.find((m) => m.url === snapshot.url);
+      return !!member?.headSha && member.headSha !== snapshot.metadata.headSha;
+    });
+    if (moved) setNewer(true);
+  }, [queueHeads, revision]);
   const entries = useMemo<Entry[]>(
     () =>
       inTreeOrder(
