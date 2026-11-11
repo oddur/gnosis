@@ -30,7 +30,16 @@ function canonical(value: unknown): string {
       : entry
   );
 }
-const hash = (value: unknown) => contentHash(canonical(value));
+const frozenHashes = new WeakMap<object, string>();
+/** Frozen inputs cannot change, so their hash is computed once per object. */
+const hash = (value: unknown) => {
+  const frozen = !!value && typeof value === 'object' && Object.isFrozen(value);
+  const known = frozen ? frozenHashes.get(value) : undefined;
+  if (known !== undefined) return known;
+  const result = contentHash(canonical(value));
+  if (frozen) frozenHashes.set(value, result);
+  return result;
+};
 
 /**
  * Content identity for one queue entry. `briefing.updatedAt` is excluded because an uncached
@@ -44,7 +53,7 @@ export function itemRevision(item: QueueItem): string {
   });
 }
 
-export function historyRevision(history: ReviewHistoryEntry[]): string {
+export function historyRevision(history: readonly ReviewHistoryEntry[]): string {
   return hash(history);
 }
 
@@ -52,7 +61,7 @@ export function historyRevision(history: ReviewHistoryEntry[]): string {
  * Stamp a snapshot with content revisions. Item revisions are written onto the entries in place,
  * so callers that hold the same entries see current revisions; the queue itself is copied.
  */
-export function stampQueue(queue: WorkbenchQueue, history?: ReviewHistoryEntry[]): WorkbenchQueue {
+export function stampQueue(queue: WorkbenchQueue, history?: readonly ReviewHistoryEntry[]): WorkbenchQueue {
   const stamped = new Set<QueueItem>();
   const stamp = (item: QueueItem) => {
     if (!stamped.has(item)) {

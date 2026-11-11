@@ -57,14 +57,16 @@ void test('mutes persist independently of queue discovery, stay account scoped a
     store.set('Alice', { members: [member(1), member(2)], muted: true });
     store.set('alice', { members: [member(1)], muted: true });
     const restart = createMutedPrStore(() => f.directory);
-    assert.equal(restart.load('ALICE').length, 2);
-    assert.deepEqual(restart.load('bob'), []);
-    const copy = restart.load('alice');
-    copy[0].member.title = 'Changed outside store';
-    assert.equal(restart.load('alice')[0].member.title, 'PR 1');
-    restart.set('alice', { members: [member(1)], muted: false });
+    assert.equal(restart.index('ALICE').rows.length, 2);
+    assert.deepEqual(restart.index('bob').rows, []);
+    const shared = restart.index('alice').rows;
+    assert.throws(() => {
+      (shared[0].member as { title: string }).title = 'Changed outside store';
+    }, TypeError);
+    assert.equal(restart.index('alice').rows[0].member.title, 'PR 1');
+    restart.set('alice', { muted: false, urls: [member(1).url] });
     assert.deepEqual(
-      restart.load('alice').map((e) => e.member.number),
+      restart.index('alice').rows.map((e) => e.member.number),
       [2]
     );
     assert.throws(() =>
@@ -84,7 +86,7 @@ void test('failed writes leave the previous mute set intact', () => {
     fs.writeFileSync(directory, 'blocked');
     assert.throws(() => store.set('me', { members: [member(2)], muted: true }));
     assert.deepEqual(
-      store.load('me').map((e) => e.member.number),
+      store.index('me').rows.map((e) => e.member.number),
       [1]
     );
   } finally {
@@ -159,10 +161,10 @@ void test('muting projects stacks, hides saved reviews and stars, stops briefing
     busy = false;
     assert.deepEqual(service.activity(), [], 'No automatic jobs start for a fully muted queue');
     busy = true;
-    service.mutePrs({ members: [member(4)], muted: false });
+    service.mutePrs({ muted: false, urls: [member(4).url] });
     const restart = createWorkbenchService(deps);
     assert.equal(restart.cached().mutedPrs?.length, 3);
-    const restored = restart.mutePrs({ members: [parent, child, grandchild], muted: false });
+    const restored = restart.mutePrs({ muted: false, urls: [parent, child, grandchild].map((m) => m.url) });
     assert.equal(restored.items.find((i) => i.subject.kind === 'stack')?.subject.members.length, 3);
     assert.equal(restored.starredItems?.length, 1, 'Unmuting restores existing bookmarks');
     assert.equal(isMutedReview(history[0], restart.mutedUrls()), false);
@@ -226,6 +228,66 @@ void test('search removes muted saved content and recents immediately, even with
     );
     muted.clear();
     assert.ok((await search.search('Needle')).hits.length);
+  } finally {
+    f.cleanup();
+  }
+});
+void test('rows carry summary fields only', () => {
+  const f = fixture();
+  try {
+    const store = createMutedPrStore(
+      () => f.directory,
+      () => 1_000_000
+    );
+    store.set('me', { muted: true, members: [{ ...member(1), description: 'x'.repeat(10_000) }] });
+    const [row] = store.index('me').rows;
+    assert.deepEqual(Object.keys(row.member).sort(), [
+      'author',
+      'isDraft',
+      'merged',
+      'number',
+      'repo',
+      'state',
+      'title',
+      'url',
+    ]);
+    assert.ok(Object.isFrozen(row) && Object.isFrozen(row.member));
+    assert.equal(store.member('me', member(1).url)?.description.length, 10_000, 'The full PR stays available');
+    assert.equal(store.index('me'), store.index('me'), 'Reads share one index until a change is saved');
+  } finally {
+    f.cleanup();
+  }
+});
+void test('an existing v1 file loads unchanged', () => {
+  const f = fixture();
+  try {
+    const saved = [
+      { member: member(1), mutedAt: '2026-10-01T00:00:00.000Z' },
+      { member: member(2), mutedAt: '2026-10-02T00:00:00.000Z' },
+    ];
+    const first = createMutedPrStore(() => f.directory);
+    first.set('me', { muted: true, members: [member(9)] });
+    const file = fs.readdirSync(f.directory).find((name) => name.startsWith('muted-prs-'));
+    assert.ok(file);
+    // A file written before summary rows: the full PR, including its description.
+    fs.writeFileSync(path.join(f.directory, file), JSON.stringify(saved));
+    const store = createMutedPrStore(() => f.directory);
+    assert.deepEqual(
+      store.index('me').rows.map((row) => [row.member.url, row.mutedAt]),
+      saved.map((entry) => [entry.member.url, entry.mutedAt])
+    );
+    assert.deepEqual(store.member('me', member(2).url), member(2));
+    assert.equal(
+      fs.readFileSync(path.join(f.directory, file), 'utf8'),
+      JSON.stringify(saved),
+      'Reading never rewrites'
+    );
+    store.set('me', { muted: false, urls: [member(1).url] });
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(f.directory, file), 'utf8')),
+      [saved[1]],
+      'Full PRs stay on disk'
+    );
   } finally {
     f.cleanup();
   }

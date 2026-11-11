@@ -78,7 +78,8 @@ export interface WorkbenchQueue {
   stacks?: ReviewSubject[];
   readStates?: Partial<Record<string, import('./pr-read-state').PrReadState>>;
   sync?: { status: 'idle' | 'checking' | 'paused' | 'error'; checkedAt?: number; retryAt?: number };
-  mutedPrs?: import('./muted-prs').MutedPr[];
+  /** Frozen in the main process and shared between snapshots. */
+  mutedPrs?: readonly import('./muted-prs').MutedPr[];
   starredPrs?: import('./starred-prs').StarredPr[];
   starredItems?: QueueItem[];
   savedViews?: QueueViewsSnapshot;

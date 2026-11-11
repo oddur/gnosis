@@ -116,3 +116,27 @@ void test('only changed entries get a new revision', () => {
   assert.equal(after.items[0].revision, before.items[0].revision);
   assert.notEqual(after.items[1].revision, before.items[1].revision);
 });
+void test('memoizes frozen inputs only', () => {
+  let reads = 0;
+  const row = (frozen: boolean) => {
+    const value = {
+      get member() {
+        reads++;
+        return { url: member(9).url, repo: 'owner/repo', number: 9, title: 'PR 9', author: 'alice', state: 'open' as const, merged: false, isDraft: false };
+      },
+      mutedAt: 'now',
+    };
+    return frozen ? Object.freeze([Object.freeze(value)]) : [value];
+  };
+  const frozen = row(true);
+  const first = stampQueue({ ...queue(), mutedPrs: frozen });
+  const second = stampQueue({ ...queue(), mutedPrs: frozen });
+  assert.equal(first.parts?.mutedPrs, second.parts?.mutedPrs);
+  assert.equal(reads, 1, 'A frozen input is hashed once');
+  const mutable = row(false);
+  stampQueue({ ...queue(), mutedPrs: mutable });
+  stampQueue({ ...queue(), mutedPrs: mutable });
+  assert.equal(reads, 3, 'A mutable input is hashed on every stamp');
+  const frozenHistory = Object.freeze([...history]);
+  assert.equal(stampQueue(queue(), frozenHistory).historyRevision, stampQueue(queue(), history).historyRevision);
+});

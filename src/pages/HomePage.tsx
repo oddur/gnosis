@@ -36,7 +36,7 @@ import { openRows, type OpenTarget } from '../../lib/pr-open-targets';
 import { EntryActions } from '../../components/EntryActions';
 import { prEntryActionGroups, type PrGenerationActionsFor } from '../../components/PrEntryActions';
 import { MutedPrs } from '../../components/MutedPrs';
-import { isMutedReview } from '../../lib/muted-prs';
+import { isMutedReview, type MutePrRequest } from '../../lib/muted-prs';
 import { setDiscussionAccount } from '../../lib/review-discussion-cache';
 import { explanationItem, matchesExplanation, type ExplanationDestination } from '../../lib/explanation-workspace';
 import { rememberCommandDestination } from '../../lib/command-recents';
@@ -227,12 +227,14 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   };
   const mutedUrls = useMemo(() => new Set(queue.mutedPrs?.map(entry => entry.member.url) ?? []), [queue.mutedPrs]);
   const visibleHistory = useMemo(() => history.filter(entry => !isMutedReview(entry, mutedUrls)), [history, mutedUrls]);
-  const changeMutes = async (members: ReviewSubject['members'], muted: boolean) => {
+  // Muting saves the full PRs. Unmuting sends URLs; the main process restores the saved PRs.
+  const changeMutes = async (request: MutePrRequest) => {
+    const muted = request.muted;
     if (muteBusyRef.current) return;
     muteBusyRef.current = true; setMuteBusy(true); setMuteError('');
     const release = workbenchStore.hold();
     try {
-      const next = await enqueueWrite(() => window.electronAPI.workbenchMutePrs({ members, muted }));
+      const next = await enqueueWrite(() => window.electronAPI.workbenchMutePrs(request));
       // Unmuting changes the saved-review revision, so the store reads saved reviews again.
       workbenchStore.apply(next); setError('');
       if (muted) {
@@ -1320,7 +1322,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     onReview: requestPrReview,
     reviewDisabled: !auth?.authenticated,
     onStarChange: changeStars,
-    onMute: (members: QueueItem['subject']['members']) => changeMutes(members, true),
+    onMute: (members: QueueItem['subject']['members']) => changeMutes({ muted: true, members }),
     onRefresh: async () => {
       const results = await Promise.allSettled(members.map(async member => {
         const status = await window.electronAPI.getPrStatus(member.url, true);
@@ -1365,7 +1367,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     explanations: selectedItems.filter(item => !generationActions(item.subject.members).explanationDisabled),
     briefings: selectedItems.filter(item => !generationActions(item.subject.members).briefingDisabled),
     busy: batchBusy || readBusy || starBusy || muteBusy, authenticated: !!auth?.authenticated,
-    onRead: changeRead, onStar: changeStars, onMute: members => changeMutes(members, true),
+    onRead: changeRead, onStar: changeStars, onMute: members => changeMutes({ muted: true, members }),
     onRefresh: members => runBatch(members, member => entryActions([member]).onRefresh(), member => `#${member.number}`, 'PR statuses refreshed'),
     onExplain: targets => configureExplanations(
       targets.map(item => explanationRequest(item.subject.members[0].url, item.subject, undefined, item.subject.scope === 'single', false))
@@ -1574,7 +1576,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         starBusy={starBusy}
         starError={muteError || starError}
         muteBusy={muteBusy}
-        onMute={members => void changeMutes(members, true)}
+        onMute={members => void changeMutes({ muted: true, members })}
         onStarChange={(members, value) => void changeStars(members, value)}
         account={auth?.login ?? null}
         statusRefreshing={statusRefreshing}
@@ -1781,7 +1783,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
           }
         />
         <main className="workbench-main">
-          {mutedOpen ? <MutedPrs entries={queue.mutedPrs ?? []} busy={muteBusy} error={muteError} onUnmute={members => void changeMutes(members, false)} /> : <>
+          {mutedOpen ? <MutedPrs entries={queue.mutedPrs ?? []} busy={muteBusy} error={muteError} onUnmute={members => void changeMutes({ muted: false, urls: members.map(member => member.url) })} /> : <>
           <div className="queue-toolbar">
             <div>
               <h1>

@@ -26,7 +26,8 @@ import { stampQueue } from '../../lib/workbench-revision';
 import type { Preferences, ReviewGuide, ReviewHistoryEntry } from '../../lib/types';
 import { DEFAULT_CLAUDE_MODEL, DEFAULT_FAST_CLAUDE_MODEL } from '../../lib/models';
 import { review as example, slide, explainer } from './explainer';
-let fixtureMutes: import('../../lib/muted-prs').MutedPr[] = JSON.parse(sessionStorage.getItem('fixture-mutes') ?? '[]');
+// Saved like the main process: full PRs, with summary rows in each snapshot.
+let fixtureMutes: { member: import('../../lib/workbench').ReviewMember; mutedAt: string }[] = JSON.parse(sessionStorage.getItem('fixture-mutes') ?? '[]');
 const fixtureMutedUrls = () => new Set(fixtureMutes.map(entry => entry.member.url));
 let fixtureStars: import('../../lib/starred-prs').StarredPr[] = JSON.parse(sessionStorage.getItem('fixture-stars') ?? '[]');
 const filterStorageKey = 'fixture-queue-filters' + location.search;
@@ -662,10 +663,8 @@ const mocks = {
   },
   workbenchMutePrs: (request: import('../../lib/muted-prs').MutePrRequest) => {
     const entries = new Map(fixtureMutes.map(entry => [entry.member.url, entry]));
-    for (const member of request.members) {
-      if (request.muted) entries.set(member.url, { member, mutedAt: new Date().toISOString() });
-      else entries.delete(member.url);
-    }
+    if (request.muted) for (const member of request.members) entries.set(member.url, { member, mutedAt: new Date().toISOString() });
+    else for (const url of request.urls) entries.delete(url);
     fixtureMutes = [...entries.values()]; sessionStorage.setItem('fixture-mutes', JSON.stringify(fixtureMutes));
     return mocks.workbenchQueue();
   },
@@ -682,7 +681,7 @@ const mocks = {
   workbenchQueue: () =>
     Promise.resolve({
       readStates: unreadScenario ? structuredClone(fixtureReads) : undefined,
-      mutedPrs: fixtureMutes,
+      mutedPrs: fixtureMutes.map(({ member: { url, repo, number, title, author, state, merged, isDraft }, mutedAt }) => ({ member: { url, repo, number, title, author, state, merged, isDraft }, mutedAt })),
       starredPrs: fixtureStars.filter(entry => !fixtureMutedUrls().has(entry.member.url)),
       starredItems: visibleFixtureItems().filter(item=>item.starred),
       filters: queueFilters,

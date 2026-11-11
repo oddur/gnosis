@@ -1313,7 +1313,7 @@ ipcMain.handle('check-cli-installed', (_event, provider: string, refresh = false
 });
 
 ipcMain.handle('list-reviews', () => {
-  return readReviewsIndex().filter(entry => !workbench.isMutedReview(entry));
+  return workbench.visibleHistory();
 });
 
 ipcMain.handle('load-review', async (_event, id: string) => {
@@ -2446,7 +2446,8 @@ ipcMain.handle('save-review-state', (_event, value: ReviewStateWrite) => appData
 ipcMain.handle('save-file-progress', (_event, value: FileProgressPatch) => appData.saveFileProgress(value));
 ipcMain.handle('list-activity', () => {
   prMergeMonitor.tick();
-  const hiddenReviews = new Set(readReviewsIndex().filter(entry => workbench.isMutedReview(entry)).map(entry => entry.id));
+  const visibleReviews = new Set(workbench.visibleHistory().map(entry => entry.id));
+  const hiddenReviews = new Set(readReviewsIndex().flatMap(entry => visibleReviews.has(entry.id) ? [] : [entry.id]));
   return [...activities.list().filter(task => (!task.account || task.account === cachedLogin) && (!task.reviewId || !hiddenReviews.has(task.reviewId))), ...workbench.activity().filter(t=>dismissedBriefings.get(t.id)!==t.updatedAt)];
 });
 handleInteractive('activity-action', async (_event, id:string, action:ActivityAction) => {

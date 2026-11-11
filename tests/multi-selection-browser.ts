@@ -170,7 +170,7 @@ void app.whenReady().then(async () => {
     assert.equal(await js('window.selectionCalls.mutes[0].members.length'), 2);
 
     await js(
-      'window.electronAPI.workbenchMutePrs({...window.selectionCalls.mutes[0],muted:false}).then(()=>undefined)'
+      'window.electronAPI.workbenchMutePrs({muted:false,urls:window.selectionCalls.mutes[0].members.map(m=>m.url)}).then(()=>undefined)'
     );
     // The tree keeps its native selection, while modifier clicks leave the code's position alone.
     await loadWorkbenchPage(win, url);
