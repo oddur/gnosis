@@ -42,7 +42,6 @@ function fixture() {
     },
   ];
   const pool = createGitHubClientPool({
-    minSpacingMs: 0,
     fetch: (async (input: string, init?: RequestInit) => {
       const u = new URL(input);
       reads.push(u);
@@ -228,7 +227,6 @@ void test('cached inventories and opened contents survive a process restart with
     const content = await service.content(client, request);
     let reads = 0;
     const restarted = createGitHubClientPool({
-      minSpacingMs: 0,
       fetch: (async () => {
         reads++;
         throw Error('Offline');

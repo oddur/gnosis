@@ -5,7 +5,6 @@ export type GitHubPriority = 'interactive' | 'foreground' | 'background';
 const rank: Record<GitHubPriority, number> = { interactive: 2, foreground: 1, background: 0 };
 interface PriorityScope {
   priority: GitHubPriority;
-  parallelReads?: boolean;
   automatic?: boolean;
   parent?: PriorityScope;
 }
@@ -36,12 +35,6 @@ export function githubAutomatic(scope = githubPriorityScope()): boolean {
   if (scope.automatic !== undefined) return scope.automatic;
   return scope.parent ? githubAutomatic(scope.parent) : githubPriority(scope) === 'background';
 }
-/** Opt in only for independent reads on the visible workflow's critical path. */
-export const withParallelGitHubReads = <T>(operation: () => T): T =>
-  context.run({ priority: githubPriority(), parallelReads: true, parent: context.getStore() }, operation);
-export function githubParallelReads(scope = githubPriorityScope()): boolean {
-  return !!(scope.parallelReads || (scope.parent && githubParallelReads(scope.parent)));
-}
 export interface GitHubWork<T> {
   promise: Promise<T>;
   scope: PriorityScope;
@@ -53,47 +46,73 @@ export function createGitHubWork<T>(operation: () => Promise<T>): GitHubWork<T> 
 }
 export function joinGitHubWork<T>(work: GitHubWork<T>): Promise<T> {
   const priority = githubPriority();
+  const before = [work.scope.priority, work.scope.automatic];
   if (rank[priority] > rank[work.scope.priority]) {
     work.scope.priority = priority;
     work.scope.automatic = githubAutomatic();
   }
   // A user-requested generation can join an automatic foreground refresh.
   if (!githubAutomatic() && rank[priority] >= rank[work.scope.priority]) work.scope.automatic = false;
+  // A promoted task may now fit a slot its old tier could not use.
+  if (before[0] !== work.scope.priority || before[1] !== work.scope.automatic) for (const drain of [...stalled]) drain();
   return work.promise;
 }
 
-/** UI reads always take the next available slot; lower tiers share otherwise idle capacity. */
+/** Schedulers with queued work. A promotion re-drains them so a raised task starts at once. */
+const stalled = new Set<() => void>();
+const slots = 6;
+// Foreground and background together never hold more than four slots, so two stay free for UI reads.
+const lowerSlots = 4;
+const backgroundSlots = 2;
+
+/** UI reads take the next free slot; lower tiers share a subset. Exclusive tasks (writes) run alone. */
 export function createGitHubScheduler() {
-  const pending: { scope: PriorityScope; parallel: boolean; run: () => Promise<void> }[] = [];
-  let active = 0,
-    exclusive = false;
+  interface Task {
+    scope: PriorityScope;
+    exclusive: boolean;
+    run: () => Promise<void>;
+  }
+  const pending: Task[] = [];
+  const running = new Set<Task>();
+  let writing = false;
   function drain() {
-    while (pending.length && active < 3 && !exclusive) {
+    while (pending.length && !writing && running.size < slots) {
+      // Count live priorities: a promoted in-flight request frees its lower-tier slot.
+      let lower = 0,
+        background = 0;
+      for (const task of running) {
+        const priority = githubPriority(task.scope);
+        if (priority !== 'interactive') lower++;
+        if (priority === 'background') background++;
+      }
       let preferred = pending.findIndex((task) => githubPriority(task.scope) === 'interactive');
       if (preferred < 0) preferred = pending.findIndex((task) => githubPriority(task.scope) === 'foreground');
       const index = preferred < 0 ? 0 : preferred;
       const task = pending[index];
-      const parallel = task.parallel && githubPriority(task.scope) === 'interactive';
-      // Ordinary reads and all mutations retain the original exclusive ordering.
-      if (active && !parallel) return;
+      const priority = githubPriority(task.scope);
+      // A queued write is a barrier: nothing overtakes it, and it waits for running work to finish.
+      if (task.exclusive && running.size) break;
+      if (priority === 'foreground' && lower >= lowerSlots) break;
+      if (priority === 'background' && (background >= backgroundSlots || lower >= lowerSlots)) break;
       pending.splice(index, 1);
-      active++;
-      exclusive = !parallel;
+      running.add(task);
+      writing = task.exclusive;
       void context.run(task.scope, task.run).finally(() => {
-        active--;
-        if (!parallel) exclusive = false;
+        running.delete(task);
+        if (task.exclusive) writing = false;
         drain();
       });
     }
+    if (!pending.length) stalled.delete(drain);
   }
   return <T>(
     priority: GitHubPriority | PriorityScope,
     operation: () => Promise<T>,
-    options: { parallel?: boolean } = {}
+    options: { exclusive?: boolean } = {}
   ): Promise<T> =>
     new Promise((resolve, reject) => {
       pending.push({
-        parallel: options.parallel === true,
+        exclusive: options.exclusive === true,
         scope: typeof priority === 'string' ? { priority } : priority,
         run: async () => {
           try {
@@ -103,6 +122,7 @@ export function createGitHubScheduler() {
           }
         },
       });
+      stalled.add(drain);
       drain();
     });
 }

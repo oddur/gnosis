@@ -27,7 +27,6 @@ function review() {
 function fakeGitHub() {
   const reads: { url: URL; init: RequestInit }[] = [];
   const pool = createGitHubClientPool({
-    minSpacingMs: 0,
     fetch: ((input: string, init: RequestInit) => {
       const url = new URL(input);
       reads.push({ url, init });
@@ -135,7 +134,6 @@ void test('failures remain retryable and image previews obey the shared GitHub c
   const saved = review();
   saved.changedFiles[0].status = 'added';
   const pool = createGitHubClientPool({
-    minSpacingMs: 0,
     fetch: (() => {
       calls++;
       return Promise.resolve(new Response('rate limited', { status: 429, headers: { 'retry-after': '60' } }));
@@ -209,7 +207,6 @@ void test('GitHub raw media preserves binary bytes and a missing side does not h
   const bytes = Buffer.from([137, 80, 78, 71, 0, 255, 128]);
   let fail = true;
   const pool = createGitHubClientPool({
-    minSpacingMs: 0,
     fetch: ((input: string) => {
       const url = new URL(input);
       if (url.pathname.includes('/compare/'))

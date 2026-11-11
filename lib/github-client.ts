@@ -8,7 +8,6 @@ import { automaticDeadline, automaticSpacing, automaticWindow, type AutomaticUsa
 import {
   createGitHubScheduler,
   githubPriorityScope,
-  githubParallelReads,
   createGitHubWork,
   joinGitHubWork,
   githubReadSignal,
@@ -102,8 +101,12 @@ interface Options {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   fetch?: typeof fetch;
-  minSpacingMs?: number;
 }
+// GitHub allows 900 points per minute on REST endpoints: 1 per read and 5 per write.
+// The bucket lets 60 requests start at once, then 10 per second, so the worst minute costs 660 points.
+const burstCapacity = 60;
+const refillMs = 100;
+const writeCost = 5;
 /** One scheduler per credential, shared by every caller in this process. No automatic replay of writes. */
 export function createGitHubClientPool(options: Options = {}) {
   const now = options.now ?? Date.now;
@@ -113,6 +116,8 @@ export function createGitHubClientPool(options: Options = {}) {
   const snapshots = createGitHubCache(now);
   let storage: string | undefined;
   let budgetWrites = Promise.resolve();
+  let dirty = false;
+  let budgetTimer: ReturnType<typeof setTimeout> | undefined;
   const keyFor = (token?: string | null) =>
     createHash('sha256')
       .update(token || 'anonymous')
@@ -125,8 +130,12 @@ export function createGitHubClientPool(options: Options = {}) {
     }
     return state;
   };
-  const persist = () => {
-    if (!storage) return budgetWrites;
+  // Budget counters change on every request. Save them at most once per second, off the request path.
+  const flushBudget = () => {
+    if (budgetTimer) clearTimeout(budgetTimer);
+    budgetTimer = undefined;
+    if (!dirty || !storage) return budgetWrites;
+    dirty = false;
     const file = storage, payload = JSON.stringify(Object.fromEntries(states));
     budgetWrites = budgetWrites.then(async () => {
       try {
@@ -138,6 +147,12 @@ export function createGitHubClientPool(options: Options = {}) {
       }
     });
     return budgetWrites;
+  };
+  const markDirty = () => {
+    dirty = true;
+    if (budgetTimer || !storage) return;
+    budgetTimer = setTimeout(() => void flushBudget(), 1000);
+    (budgetTimer as { unref?: () => void }).unref?.();
   };
   const backoff = (token?: string | null, background = false, resources?: readonly string[]) => {
     const state = stateFor(keyFor(token));
@@ -161,8 +176,8 @@ export function createGitHubClientPool(options: Options = {}) {
   return {
     backoff,
     setCacheSizeMB: (value: unknown) => snapshots.setSizeMB(value),
-    flushStorage: async () => { await snapshots.flush(); await budgetWrites; },
-    closeStorage: async () => { await snapshots.close(); await budgetWrites; },
+    flushStorage: async () => { await snapshots.flush(); await flushBudget(); },
+    closeStorage: async () => { await snapshots.close(); await flushBudget(); },
     async setStorage(file: string) {
       storage = file;
       await snapshots.setStorage(path.join(path.dirname(file), 'github-cache.json'));
@@ -217,14 +232,16 @@ export function createGitHubClientPool(options: Options = {}) {
     },
     rememberLogin(token: string, login: string) {
       stateFor(keyFor(token)).login = login;
-      void persist();
+      dirty = true;
+      void flushBudget();
     },
     forget(token: string) {
       // Keep the cooldown: signing out and back in must not bypass GitHub's deadline.
       delete stateFor(keyFor(token)).login;
       clients.delete(keyFor(token));
       snapshots.scope(keyFor(token)).clear();
-      void persist();
+      dirty = true;
+      void flushBudget();
     },
     client(token?: string | null): Octokit {
       const key = keyFor(token);
@@ -238,8 +255,18 @@ export function createGitHubClientPool(options: Options = {}) {
       });
       const schedule = createGitHubScheduler();
       const backgroundDue = new Map<string, number>();
-      let lastRequest = 0;
-      let dispatch: Promise<void> = Promise.resolve();
+      let tokens = burstCapacity;
+      let refilled = now();
+      // Start order. A secondary limit marks every request already started as one throttling event.
+      let started = 0;
+      let secondaryMark = 0;
+      const flying: Record<string, number> = {};
+      const reserveStart = (cost: number) => {
+        const time = now();
+        tokens = Math.min(burstCapacity, tokens + Math.max(0, time - refilled) / refillMs) - cost;
+        refilled = time;
+        return tokens >= 0 ? 0 : Math.ceil(-tokens * refillMs);
+      };
       const cache = snapshots.scope(key);
       clientCaches.set(client, cache);
       const inflight = new Map<string, GitHubWork<OctokitResponse<unknown>>>();
@@ -253,7 +280,7 @@ export function createGitHubClientPool(options: Options = {}) {
         const reset = Number(headers['x-ratelimit-reset']) * 1000 + 1000;
         if ([remaining, limit, reset].every(Number.isFinite)) {
           const previous = state.budgets[resource];
-          // Parallel responses can arrive out of order. Never restore spent quota
+          // Concurrent responses can arrive out of order. Never restore spent quota
           // within one window, or replace a newer window with an older response.
           if (previous && previous.reset > reset) return;
           state.budgets[resource] = {
@@ -286,6 +313,11 @@ export function createGitHubClientPool(options: Options = {}) {
         const graphRead =
           graph && typeof requestOptions.query === 'string' && /^\s*(query\b|\{)/.test(requestOptions.query);
         const readOnly = get || graphRead;
+        const lfsDownload =
+          endpoint.method === 'POST' &&
+          url.hostname === 'github.com' &&
+          /^\/[\w.-]+\/[\w.-]+\.git\/info\/lfs\/objects\/batch$/.test(url.pathname) &&
+          (requestOptions.data as { operation?: string } | undefined)?.operation === 'download';
         const inherited = readOnly && githubReadSignal();
         if (inherited) requestOptions.request.signal = requestOptions.request.signal
           ? AbortSignal.any([inherited, requestOptions.request.signal]) : inherited;
@@ -336,11 +368,13 @@ export function createGitHubClientPool(options: Options = {}) {
             if (failed && failed.retryAt > now()) throw failed.error;
             const automatic = readOnly && githubAutomatic();
             const budget = state.budgets[resource];
-            const reserve =
-              automatic && budget ? backgroundReserve(resource, budget) : 0;
+            // Automatic reads already in flight will spend part of the reserve. Interactive reads
+            // stop only on the observed exhaustion, so they are never rejected falsely.
+            const exhausted = budget && (budget.remaining <= 0 ||
+              (automatic && budget.remaining - (flying[resource] ?? 0) <= backgroundReserve(resource, budget)));
             const deadline = Math.max(
               state.blockedUntil,
-              budget && budget.remaining <= reserve ? budget.reset : 0,
+              exhausted ? budget.reset : 0,
               automatic ? automaticDeadline(resource, state.automatic[resource], now(), budget, !!token) : 0
             );
             if (deadline > now())
@@ -351,19 +385,24 @@ export function createGitHubClientPool(options: Options = {}) {
                   : undefined
               );
           };
-          gate();
           // Pacing is not a failed operation. Release the network scheduler while
           // waiting, and resume this request so multi-request reads keep their progress.
-          if (readOnly && githubAutomatic() && (backgroundDue.get(resource) ?? 0) > now()) return paced;
-          // Reserve start times serially even when the network reads overlap.
-          const start = dispatch.then(async () => {
-            const spacing = (options.minSpacingMs ?? 100) - (now() - lastRequest);
-            if (spacing > 0) await sleep(spacing);
+          const due = () => readOnly && githubAutomatic() && (backgroundDue.get(resource) ?? 0) > now();
+          gate();
+          if (due()) return paced;
+          // Only bursts wait here. The common path starts without an await.
+          const cost = readOnly || lfsDownload ? 1 : writeCost;
+          const wait = reserveStart(cost);
+          if (wait > 0) {
+            await sleep(wait);
             gate();
-            lastRequest = now();
-          });
-          dispatch = start.catch(() => {});
-          await start;
+            if (due()) {
+              tokens += cost;
+              return paced;
+            }
+          }
+          // From here to the request, nothing awaits: the gate, the charge and the start are one step.
+          const sequence = ++started;
           const automatic = readOnly && githubAutomatic();
           const beforeBudget = state.budgets[resource];
           let graphCost: number | undefined;
@@ -374,15 +413,12 @@ export function createGitHubClientPool(options: Options = {}) {
               ? previous : { startedAt: now(), spent: 0 };
             charged.spent++;
             state.automatic[resource] = charged;
-            await persist();
+            // Reserve the pacing interval at start, so two background slots cannot double the rate.
+            backgroundDue.set(resource, now() + automaticSpacing(resource, charged, now(), state.budgets[resource], !!token));
+            markDirty();
           }
           // A failed write may still have reached GitHub. Invalidate without replaying it.
           const invalidateWrite = () => {
-            const lfsDownload =
-              endpoint.method === 'POST' &&
-              new URL(endpoint.url).hostname === 'github.com' &&
-              /^\/[\w.-]+\/[\w.-]+\.git\/info\/lfs\/objects\/batch$/.test(new URL(endpoint.url).pathname) &&
-              (requestOptions.data as { operation?: string } | undefined)?.operation === 'download';
             if (get || graphRead || lfsDownload) return;
             const match = /^\/repos\/([^/]+)\/([^/]+)\/(?:issues|pulls)(?:\/(\d+))?/.exec(
               new URL(endpoint.url).pathname
@@ -423,6 +459,7 @@ export function createGitHubClientPool(options: Options = {}) {
           const timer = readOnly ? setTimeout(() => timeout.abort(new Error('GitHub took too long to respond. Retry this PR.')), options.readTimeoutMs ?? 30_000) : undefined;
           if (readOnly) requestOptions.request.signal = requestOptions.request.signal
             ? AbortSignal.any([requestOptions.request.signal, timeout.signal]) : timeout.signal;
+          flying[resource] = (flying[resource] ?? 0) + 1;
           try {
             // Hooks share the original options object, including auth and request logging.
             if (binary) requestOptions.request.parseSuccessResponseBody = false;
@@ -504,15 +541,21 @@ export function createGitHubClientPool(options: Options = {}) {
                   reset: limited.retryAt,
                 };
               } else {
-                state.secondaryStrikes = now() - state.lastSecondary > 3_600_000 ? 1 : state.secondaryStrikes + 1;
-                state.lastSecondary = now();
+                // Requests that started before an earlier secondary limit belong to the same event.
+                if (sequence > secondaryMark) {
+                  state.secondaryStrikes = now() - state.lastSecondary > 3_600_000 ? 1 : state.secondaryStrikes + 1;
+                  state.lastSecondary = now();
+                }
+                secondaryMark = started;
                 state.blockedUntil = Math.max(
                   state.blockedUntil,
                   limited.retryAt,
                   now() + Math.min(3_600_000, 60_000 * 2 ** (state.secondaryStrikes - 1))
                 );
               }
-              await persist();
+              // Deadlines must survive a quit within the debounce interval.
+              dirty = true;
+              void flushBudget();
               throw new GitHubBackoffError(Math.max(state.blockedUntil, limited.retryAt));
             }
             if (get && [500, 502, 503, 504].includes(e.status ?? 0)) {
@@ -538,6 +581,7 @@ export function createGitHubClientPool(options: Options = {}) {
             }
             throw error;
           } finally {
+            flying[resource]--;
             if (charged) {
               const budget = state.budgets[resource];
               // GraphQL charges points, not HTTP requests. A same-window delta
@@ -551,14 +595,15 @@ export function createGitHubClientPool(options: Options = {}) {
               backgroundDue.set(resource, now() + Math.max(quotaSpacing,
                 automaticSpacing(resource, charged, now(), budget, !!token)));
             }
-            if (charged || state.budgets[resource] !== beforeBudget) await persist();
+            if (charged || state.budgets[resource] !== beforeBudget) markDirty();
             if (timer) clearTimeout(timer);
             invalidateWrite();
           }
         };
         const work = createGitHubWork(async () => {
           for (;;) {
-            const result = await schedule(githubPriorityScope(), run, { parallel: readOnly && githubParallelReads() });
+            // Writes run alone. LFS downloads are reads sent as POST.
+            const result = await schedule(githubPriorityScope(), run, { exclusive: !(readOnly || lfsDownload) });
             if (result !== paced) return result;
             // A coalesced click can promote this work. Recheck often without
             // occupying a network slot or delaying unrelated interactive requests.

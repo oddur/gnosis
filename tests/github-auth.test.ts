@@ -215,7 +215,6 @@ void test('PR access checks require contents on both source repositories and reu
   const reads: string[] = [];
   let denied = true;
   const pool = createGitHubClientPool({
-    minSpacingMs: 0,
     fetch: ((url: string) => {
       reads.push(url);
       if (url.includes('/pulls/'))

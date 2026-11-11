@@ -115,7 +115,6 @@ function member(number: number, baseSha: string, headSha: string, commits: numbe
 function github(prs: Record<number, ReviewMember>, options: { limited?: boolean } = {}) {
   const reads: string[] = [];
   const pool = createGitHubClientPool({
-    minSpacingMs: 0,
     fetch: ((input: string) => {
       const u = new URL(input);
       reads.push(u.pathname);

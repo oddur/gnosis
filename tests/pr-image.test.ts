@@ -8,7 +8,6 @@ const attachment = 'https://github.com/user-attachments/assets/01234567-89ab-cde
 void test('authenticated images coalesce, reuse memory, isolate credentials, and bypass JSON cache', async () => {
   let calls = 0;
   const pool = createGitHubClientPool({
-    minSpacingMs: 0,
     fetch: ((_url: string, init: RequestInit) => {
       calls++;
       assert.ok(new Headers(init.headers).get('authorization'));
@@ -56,7 +55,6 @@ void test('only GitHub-owned image endpoints can receive authentication', async 
 void test('image loading respects shared backoff and rejects non-image responses', async () => {
   let calls = 0;
   const pool = createGitHubClientPool({
-    minSpacingMs: 0,
     fetch: (() => {
       calls++;
       return Promise.resolve(new Response('rate limit', { status: 429, headers: { 'retry-after': '60' } }));

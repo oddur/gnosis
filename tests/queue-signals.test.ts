@@ -47,7 +47,6 @@ function harness() {
   const pool = createGitHubClientPool({
     now: () => now,
     sleep: ms => { now += ms; return Promise.resolve(); },
-    minSpacingMs: 0,
     fetch: ((_url, init) => {
       calls++;
       queries.push(typeof init?.body === 'string' ? init.body : '');

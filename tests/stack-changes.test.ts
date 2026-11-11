@@ -64,7 +64,6 @@ function fixture() {
   let stale = false,
     count = 1;
   const pool = createGitHubClientPool({
-    minSpacingMs: 0,
     fetch: ((input: string) => {
       const u = new URL(input);
       calls.push(u.pathname);

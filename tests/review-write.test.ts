@@ -21,7 +21,6 @@ function harness() {
   const writes: Record<string, unknown>[] = [];
   const headers: Headers[] = [];
   const client = createGitHubClientPool({
-    minSpacingMs: 0,
     fetch: ((url: string, init: RequestInit) => {
       headers.push(new Headers(init.headers));
       const body = JSON.parse(typeof init.body === 'string' ? init.body : '{}') as Record<string, unknown>;
