@@ -12,6 +12,7 @@
 //   --port <n>          remote debugging port (default 9222)
 //   --label <text>      label printed with each result
 //   --review <id>       open this saved review first (through the renderer's command navigation)
+//   --pr <url>          open this PR's page first, instead of a saved review
 //   --view <name>       select a review tab first: explanation, changes or summary
 //   --scroll <where>    top | section:<n> (Explanation only) | px:<n> (largest scroll container).
 //                       A comma list visits each place in order, e.g. section:10,section:9 mounts both sections.
@@ -25,6 +26,7 @@
 //   --settle <ms>       wait after navigation and scrolling (default 4000)
 //   --profile           print the top self-time functions from a CPU profile of the last run
 //   --json              print one JSON object instead of text
+//   --steps             print every step's time, work, layouts and style recalcs
 /* global console, fetch, WebSocket */
 import process from 'node:process';
 import { setTimeout } from 'node:timers';
@@ -38,6 +40,7 @@ const flag = (name) => args.includes(`--${name}`);
 const port = option('port', '9222');
 const label = option('label', 'run');
 const review = option('review');
+const pr = option('pr');
 const view = option('view');
 const scroll = option('scroll');
 const into = Number(option('into', '4000'));
@@ -83,20 +86,22 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const metrics = async () =>
   Object.fromEntries((await send('Performance.getMetrics')).metrics.map((m) => [m.name, m.value]));
 
-const navigateExpression = (reviewId) => `(async () => {
+const navigateExpression = (destination) => `(async () => {
   const shell = document.querySelector('.workspace-shell');
   if (!shell) return 'no workspace';
   const key = Object.keys(shell).find((k) => k.startsWith('__reactFiber$'));
   let fiber = shell[key];
   while (fiber && !(fiber.memoizedProps && typeof fiber.memoizedProps.navigate === 'function' && fiber.memoizedProps.commands)) fiber = fiber.return;
   if (!fiber) return 'no navigate';
-  await fiber.memoizedProps.navigate({ kind: 'review', reviewId: ${JSON.stringify(reviewId)} });
+  await fiber.memoizedProps.navigate(${JSON.stringify(destination)});
   return 'ok';
 })()`;
 const selectView = (name) => `(() => {
   const label = ${JSON.stringify(name)}.toLowerCase();
-  const tab = [...document.querySelectorAll('[role=tab]')].find((t) => t.textContent.trim().toLowerCase() === label);
+  const tab = [...document.querySelectorAll('.pr-overview-tabs [role=tab]')].find((t) => t.textContent.trim().toLowerCase() === label);
   if (!tab) return 'missing';
+  // Tabs switch on mousedown, as a pointer press does.
+  tab.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0 }));
   tab.click();
   return 'ok';
 })()`;
@@ -143,8 +148,10 @@ async function prepare() {
     for (let i = 0; i < 120 && !(await evaluate('!!document.querySelector(".workspace-shell")')); i++) await wait(250);
     await wait(1500);
   }
-  if (review) {
-    const result = await evaluate(navigateExpression(review));
+  if (review || pr) {
+    const result = await evaluate(
+      navigateExpression(review ? { kind: 'review', reviewId: review } : { kind: 'home', url: pr })
+    );
     if (result !== 'ok') throw new Error(`navigation: ${result}`);
     await wait(settle);
   }
@@ -183,6 +190,9 @@ async function sweep(withProfile) {
       await evaluate(scrollExpression(places[places.length - 1]));
       await wait(1000);
     }
+    // Collect the heap left by a reload or navigation now, so a major GC does not land inside the sweep.
+    await send('HeapProfiler.collectGarbage').catch(() => {});
+    await wait(500);
     const shape = await evaluate(describe);
     if (withProfile) {
       await send('Profiler.enable');
@@ -229,6 +239,7 @@ async function sweep(withProfile) {
       maxLayoutsPerStep: Math.max(...steps.map((s) => s.layouts)),
       maxStylesPerStep: Math.max(...steps.map((s) => s.styles)),
       profile,
+      detail: steps,
     };
   } finally {
     await send('Emulation.clearDeviceMetricsOverride').catch(() => {});
@@ -257,6 +268,11 @@ try {
     results.push(result);
     log(`[${label}] run ${run + 1}/${runs} page=${JSON.stringify(result.shape)}`);
     log(`[${label}] run ${run + 1}/${runs} steps=${result.steps} ${fmt(result)}`);
+    if (flag('steps'))
+      for (const step of result.detail)
+        log(
+          `  width=${step.width} ms=${step.ms.toFixed(1)} work=${step.work.toFixed(1)} layouts=${step.layouts} styles=${step.styles}`
+        );
   }
   const keys = [
     'p50',
@@ -282,7 +298,7 @@ try {
         runs,
         shape: last.shape,
         median: summary,
-        runsDetail: results.map((r) => ({ ...r, profile: undefined })),
+        runsDetail: results.map((r) => ({ ...r, profile: undefined, detail: undefined })),
       })
     );
   } else {
