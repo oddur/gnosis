@@ -74,7 +74,8 @@ void app.whenReady().then(async () => {
     await open();
     await fill('command-queue.ts');
     await capture('file-preview');
-    assert.ok(await js("document.querySelector('.global-command-code')?.textContent.includes('queue.acquire')"),'Code excerpts remain separate from prose');
+    assert.match(await js<string>("document.querySelector('.global-command-preview h2').textContent"), /command-queue/, 'Paths remain searchable');
+    assert.equal(await js("!!document.querySelector('.global-command-code')"), false, 'The index stores no diff contents');
     await key('Enter');
     await wait("!!document.querySelector('.workbench-review .search-arrival')");
     assert.match(

@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import type { Octokit } from '@octokit/rest';
 import { createWorkbenchService, type WorkbenchPreferences } from '../src/workbench-service';
-import { createCommandSearchService } from '../src/command-search-service';
+import { localCommandSearch } from './fixtures/search-backend';
 import { groupSubjects, type ReviewMember } from '../lib/workbench';
 import { normalizePrInactivityDays } from '../lib/pr-inactivity';
 import { DEFAULT_CLAUDE_MODEL } from '../lib/models';
@@ -102,7 +102,7 @@ void test('cached cutoff uses last update, keeps complete stacks and stars, and 
       [2],
       'Saved views cannot widen the global 30-day limit'
     );
-    const search = createCommandSearchService({
+    const search = localCommandSearch({
       directory: () => f.directory,
       queue: () => service.cached(),
       history: () => [],

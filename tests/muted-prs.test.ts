@@ -9,7 +9,7 @@ import { groupSubjects, type ReviewMember } from '../lib/workbench';
 import { isMutedReview } from '../lib/muted-prs';
 import { snapshot } from '../lib/workbench';
 import type { ReviewHistoryEntry } from '../lib/types';
-import { createCommandSearchService } from '../src/command-search-service';
+import { localCommandSearch } from './fixtures/search-backend';
 import { DEFAULT_QUEUE_FILTERS } from '../lib/queue-filters';
 import { DEFAULT_CLAUDE_MODEL } from '../lib/models';
 
@@ -203,7 +203,7 @@ void test('search removes muted saved content and recents immediately, even with
       })
     );
     const muted = new Set<string>();
-    const search = createCommandSearchService({
+    const search = localCommandSearch({
       directory: () => f.directory,
       queue: () => ({ items: [{ subject, attention: 'other' }], warnings: [], remaining: 0 }),
       history: () => history,

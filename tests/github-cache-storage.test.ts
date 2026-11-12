@@ -398,3 +398,71 @@ void test('invalidate parses only its scope', async () => {
     await f.cleanup();
   }
 });
+
+void test('new cache files use incremental auto-vacuum', async () => {
+  const f = fixture();
+  try {
+    const cache = await f.open();
+    await cache.close();
+    const { DatabaseSync } = await import('node:sqlite');
+    const db = new DatabaseSync(path.join(f.dir, 'github-cache.sqlite'));
+    assert.equal(db.prepare('PRAGMA auto_vacuum').get()?.auto_vacuum, 2);
+    db.close();
+  } finally {
+    await f.cleanup();
+  }
+});
+
+void test('maintain waits for idle before converting', async () => {
+  const f = fixture();
+  const { DatabaseSync } = await import('node:sqlite');
+  const file = path.join(f.dir, 'github-cache.sqlite');
+  const seed = new DatabaseSync(file);
+  seed.exec('CREATE TABLE cache (id TEXT PRIMARY KEY, payload TEXT NOT NULL)');
+  seed.close();
+  const storage = createCacheStorage();
+  try {
+    await storage.open({ file, legacy: f.file, now: 1000, maxBytes: 1e6, maxEntryBytes: 1e6, maxEntries: 10, retention: 1e9 });
+    const mode = () => {
+      const db = new DatabaseSync(file);
+      try {
+        return db.prepare('PRAGMA auto_vacuum').get()?.auto_vacuum;
+      } finally {
+        db.close();
+      }
+    };
+    assert.equal((await storage.maintain(5)).vacuumed, undefined);
+    assert.equal(mode(), 0, 'an active user keeps the old file');
+    assert.equal((await storage.maintain(120)).vacuumed, true);
+    assert.equal(mode(), 2);
+  } finally {
+    await storage.close();
+    await f.cleanup();
+  }
+});
+
+void test('incremental vacuum returns free pages after a prepared trim', async () => {
+  const f = fixture();
+  const file = path.join(f.dir, 'github-cache.sqlite');
+  try {
+    const cache = await f.open();
+    const big = 'x'.repeat(900_000);
+    for (let i = 0; i < 40; i++) cache.scope(scope).set(`pr-file:v2:${i}`, `${big}${i}`);
+    await cache.close();
+    const storage = createCacheStorage();
+    try {
+      await storage.open({ file, legacy: f.file, now: 1000, maxBytes: 32e6, maxEntryBytes: 1e6, maxEntries: 2000, retention: 1e9 });
+      await storage.setPreparedLimit(0, 1000);
+      const before = fs.statSync(file).size + fs.statSync(file + '-wal').size;
+      let result = await storage.maintain(0);
+      assert.ok(result.more, 'more than 16 MB is free');
+      for (let i = 0; result.more && i < 50; i++) result = await storage.maintain(0);
+      assert.ok(result.freeBytes <= 4 * 1024 * 1024, `${result.freeBytes} free bytes remain`);
+      assert.ok(result.fileBytes < before - 16 * 1024 * 1024, `${result.fileBytes} < ${before}`);
+    } finally {
+      await storage.close();
+    }
+  } finally {
+    await f.cleanup();
+  }
+});

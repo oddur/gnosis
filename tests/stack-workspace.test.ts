@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { focusStackPr, resolveWorkspace, matchingStackMembers } from '../lib/stack-workspace';
 import { DEFAULT_QUEUE_FILTERS } from '../lib/queue-filters';
-import { queueDocuments, searchDocuments } from '../lib/command-search';
+import { hydrateDestination, queueDocuments, queueSubjects, searchDocuments } from '../lib/command-search';
 import type { QueueItem, ReviewMember } from '../lib/workbench';
 const members = [1, 2].map(n => ({ url: `https://github.com/acme/core/pull/${n}`, number: n, repo: 'acme/core', title: `Change ${n}`, author: n === 1 ? 'alice' : 'bob', labels: [], description: '', baseBranch: 'main', headBranch: `feature-${n}`, state: 'open', merged: false, role: 'watched', headRepo: 'acme/core', baseRepo: 'acme/core', baseSha: 'base', headSha: `head-${n}`, createdAt: '2026-10-27', updatedAt: '2026-10-27', isDraft: false, commitCount: 1, requestedReviewers: [], requestedTeams: [], mergeable: null, mergeableState: null, autoMerge: null, milestone: null } as ReviewMember));
 const stack: QueueItem = { attention: 'other', subject: { id: 'stack:1', kind: 'stack', title: 'Whole change', members, edges: [], warnings: [] }, unreadUrls: members.map(m => m.url) };
@@ -28,19 +28,21 @@ test('exact PR search opens that PR within its stack', () => {
   const member = docs.find(d => d.id === `subject:${members[1].url}`)!;
   assert.equal(member.kind, 'pr');
   assert.equal(member.groupId, stack.subject.id);
-  assert.equal(member.destination.kind, 'home');
-  if (member.destination.kind === 'home') {
-    assert.equal(member.destination.subject?.subject.scope, 'single');
-    assert.equal(member.destination.subject?.parentStack?.id, stack.subject.id);
-  }
+  const queue = { items: [stack], remaining: 0, warnings: [] };
+  const destination = hydrateDestination(member, id => queueSubjects(queue).get(id)) as { kind: string; subject?: QueueItem };
+  assert.equal(destination.kind, 'home');
+  assert.equal(destination.subject?.subject.scope, 'single');
+  assert.equal(destination.subject?.parentStack?.id, stack.subject.id);
   assert.equal(searchDocuments(docs, '#2')[0].document.id, member.id);
 });
 
 test('retained completed stacks remain searchable outside the active queue', () => {
   const completed = { ...stack.subject, members: members.map(m => ({ ...m, state: 'closed' as const, merged: true })) };
-  const docs = queueDocuments({ items: [], stacks: [completed], warnings: [], remaining: 0 });
+  const queue = { items: [], stacks: [completed], warnings: [], remaining: 0 };
+  const docs = queueDocuments(queue);
   const result = searchDocuments(docs, '#2')[0];
   assert.equal(result.document.state, 'Merged');
-  assert.equal(result.document.destination.kind, 'home');
-  if (result.document.destination.kind === 'home') assert.equal(result.document.destination.subject?.parentStack?.id, completed.id);
+  const destination = hydrateDestination(result.document, id => queueSubjects(queue).get(id)) as { kind: string; subject?: QueueItem };
+  assert.equal(destination.kind, 'home');
+  assert.equal(destination.subject?.parentStack?.id, completed.id);
 });

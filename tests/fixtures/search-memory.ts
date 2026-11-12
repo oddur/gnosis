@@ -1,59 +1,43 @@
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import type { SearchDocument } from '../../lib/command-search';
-import { createSqliteSearchIndex } from '../../src/sqlite-search-index';
+import { SEARCH_MAX_DOCUMENTS, createSqliteSearchIndex } from '../../src/sqlite-search-index';
 
-// Legacy indexes repeated the complete stack in each cached file destination.
-// Seed on disk without materializing those copies together in JavaScript.
+// A full index, searched with a short heap: broad queries keep only the visible page.
 const db = new DatabaseSync(process.argv[2]);
 const index = createSqliteSearchIndex(db);
-const document = {
+const document: SearchDocument = {
   id: 'file',
   kind: 'file',
   title: 'needle.ts',
-  text: 'needle',
+  text: 'needle ' + 'x'.repeat(590),
   source: 'o/r #1',
   groupId: 'stack',
   groupTitle: 'Stack',
-  destination: { kind: 'home', subject: { description: 'x'.repeat(1024 * 1024) } },
+  destination: { kind: 'review', reviewId: 'r', filePath: 'needle.ts' },
 };
-const payload = JSON.stringify(document);
-const put = db.prepare(
-  'INSERT INTO search_documents(account,id,payload,title,source,author,search_text) VALUES(?,?,?,?,?,?,?)'
-);
-db.exec('BEGIN');
-for (let i = 0; i < 160; i++) put.run('alice', String(i), payload, 'needle.ts', 'o/r #1', '', 'needle');
-db.exec('COMMIT');
-if (process.argv[3] === 'replace') {
-  index.replace('alice', []);
-  assert.equal(db.prepare('SELECT count(*) AS n FROM search_documents').get()?.n, 0);
-} else if (process.argv[3] === 'broad') {
-  const documents = Array.from({ length: 160 }, (_, i) => ({ ...document, id: String(i) })) as SearchDocument[];
-  index.replace('alice', documents);
-  assert.equal(db.prepare('SELECT count(*) AS n FROM search_subjects').get()?.n, 1);
-  assert.ok(Number(db.prepare('SELECT sum(length(payload)) AS n FROM search_documents').get()?.n) < 100_000);
-  const writes = db.prepare('SELECT total_changes() AS n').get()?.n;
-  index.replace('alice', documents);
-  assert.equal(db.prepare('SELECT total_changes() AS n').get()?.n, writes);
-  // Large diff bodies must also be streamed, independently of shared navigation data.
-  const code = 'x'.repeat(1024 * 1024);
-  index.replace(
-    'alice',
-    documents.map((entry) => ({ ...entry, code }))
-  );
+const request = { account: 'alice', includeBots: true, recentIds: [], muted: [], ignoreBots: false };
+for (let feed = 0; feed < SEARCH_MAX_DOCUMENTS / 500; feed++)
+  index.apply('alice', [
+    {
+      feed: `review:${feed}`,
+      hash: 'h',
+      usedAt: feed,
+      pinned: false,
+      docs: Array.from({ length: 500 }, (_, i) => ({ ...document, id: `${feed}:${i}` })),
+    },
+  ]);
+if (process.argv[3] === 'broad') {
   for (const query of ['ne', 'needle']) {
-    const result = index.search('alice', query, true, [], 5);
-    assert.equal(result.total, 160);
+    const result = index.search({ ...request, query }, 5);
+    assert.equal(result.total, SEARCH_MAX_DOCUMENTS);
     assert.equal(result.hits.length, 5);
-    assert.deepEqual(result.hits[0].document.destination, document.destination);
-    assert.equal(result.hits[0].document.destination.kind, 'home');
-    if (result.hits[1].document.destination.kind === 'home')
-      assert.equal(result.hits[0].document.destination.subject, result.hits[1].document.destination.subject);
   }
-  index.replace('alice', []);
-  assert.equal(db.prepare('SELECT count(*) AS n FROM search_subjects').get()?.n, 0);
+} else if (process.argv[3] === 'empty') {
+  assert.equal(index.search({ ...request, query: '' }).hits.length, 0);
 } else {
-  assert.equal(index.search('alice', '', true, []).hits.length, 0);
+  index.apply('alice', Array.from({ length: SEARCH_MAX_DOCUMENTS / 500 }, (_, feed) => ({ feed: `review:${feed}`, remove: true as const })));
+  assert.equal(db.prepare('SELECT count(*) AS n FROM search_docs').get()?.n, 0);
 }
 db.close();
 console.log('bounded search memory passed');

@@ -11,7 +11,7 @@ import { emptyReadVersions, type PrReadState, type MarkPrReadRequest } from '../
 import './select-option';
 import { matchesPrInactivity, normalizePrInactivityDays } from '../../lib/pr-inactivity';
 import { withoutMutedMembers, isMutedReview } from '../../lib/muted-prs';
-import { searchHit, queueDocuments, reviewDocuments, searchDocuments, threadDocuments } from '../../lib/command-search';
+import { searchHit, queueDocuments, queueSubjects, hydrateDestination, reviewDocuments, searchDocuments, threadDocuments } from '../../lib/command-search';
 import { normalizeViews, editViewFilters, applyViewAction, activeViewFilters, type QueueViewAction } from '../../lib/saved-views';
 import { matchesQueueFilters } from '../../lib/queue-filters';
 import { normalizeQueueFilters, type QueueFilters } from '../../lib/queue-filters';
@@ -535,7 +535,9 @@ const mocks = {
     const queue=await mocks.workbenchQueue();
     const docs=[...queueDocuments(queue),...reviewDocuments(review,history[0],queue)];
     docs.push(...threadDocuments(review.prUrl,await mocks.getReviewThreads(),docs));
-    const hits=query?searchDocuments(docs,query,includeBots):docs.filter(d=>['pr','stack','view','repository'].includes(d.kind)||recentIds.includes(d.id)).sort((a,b)=>(recentIds.indexOf(a.id)<0?999:recentIds.indexOf(a.id))-(recentIds.indexOf(b.id)<0?999:recentIds.indexOf(b.id))).map(document=>searchHit(document));
+    const subjects=queueSubjects(queue);
+    const hits=(query?searchDocuments(docs,query,includeBots):docs.filter(d=>['pr','stack','view','repository'].includes(d.kind)||recentIds.includes(d.id)).sort((a,b)=>(recentIds.indexOf(a.id)<0?999:recentIds.indexOf(a.id))-(recentIds.indexOf(b.id)<0?999:recentIds.indexOf(b.id))).map(document=>searchHit(document)))
+      .map(hit=>({...hit,document:{...hit.document,destination:hydrateDestination(hit.document,id=>subjects.get(id))}}));
     return {account:'oddur',hits,total:hits.length,ignoreBots:true,warnings:[]};
   },
   commandGitHubSearch: () => Promise.resolve([{number:999,title:'Remote queue improvement',url:'https://github.com/klang/engine/pull/999',repoOwner:'klang',repoName:'engine',author:'sam',updatedAt:date,isDraft:false,role:'watched' as const}]),
@@ -614,6 +616,7 @@ const mocks = {
   connectLocalClone: () => Promise.resolve([]),
   disconnectLocalClone: () => Promise.resolve([]),
   loadPreferences: () => Promise.resolve(prefs),
+  storageSizes: () => Promise.resolve({ savedWorkBytes: 68 * 1024 * 1024, githubCacheBytes: 580 * 1024 * 1024 }),
   savePreferences: (next: Preferences) => {
     prefs = next;
     sessionStorage.setItem('fixture-checks-view', next.checksView ?? 'list');
