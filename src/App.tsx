@@ -9,7 +9,7 @@ import { WorkspaceTabs } from '../components/WorkspaceTabs';
 import { LoadingState } from '../components/LoadingState';
 import { toast, Toaster } from '../components/ui/toast';
 import { createRecentlyViewed, type RecentVisit } from '../lib/recently-viewed';
-import { readReviewState, writeReviewState } from '../lib/renderer-review-state';
+import { readReviewState, scheduleReviewStateWrite, writeReviewState } from '../lib/renderer-review-state';
 import { useFileFilterSync } from '../lib/use-raw-file-filters';
 import { WorkspaceDraftBoundary, retainWorkspaceDrafts } from '../lib/session-drafts';
 import { CommandCenter } from '../lib/command-center';
@@ -130,8 +130,8 @@ export function App() {
   }, [scopeAccount]);
   useEffect(() => {
     if (!account) return;
-    const timer = setTimeout(() => persist(account, latest.current), 500);
-    return () => clearTimeout(timer);
+    // Quit runs a pending save at once.
+    return scheduleReviewStateWrite(() => persist(account, latest.current), 500);
   }, [state, account, persist]);
   useEffect(() => {
     const save = () => {

@@ -489,3 +489,40 @@ void test('an unreadable legacy file is skipped', async () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+void test('writes made while close runs join the final flush; later ones are counted, not rejected', async () => {
+  const dir = fixture();
+  let store = createAppDataStore();
+  const warn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (message: string) => warnings.push(message);
+  try {
+    await store.open(dir);
+    const key = 'gnosis-explanation-position:quit:reading';
+    store.write('workbench:alice', queue());
+    const closing = store.close();
+    // Quit has started: a renderer save and a main-process write both arrive during the final flush.
+    const during = store.saveReviewState({ key, value: { top: 900, left: 0 } });
+    store.write('workbench:bob', queue('bob'));
+    await Promise.resolve();
+    store.patch(mutedName, { put: { one: { at: 1 } } });
+    await during;
+    await closing;
+    assert.equal(store.lostWrites(), 0);
+    // After close nothing can reach the database. The caller is not failed; the loss is counted.
+    await store.saveReviewState({ key, value: { top: 1, left: 0 } });
+    await store.saveFileProgress({ aliases: {}, marks: { late: true } });
+    store.write('workbench:carol', queue('carol'));
+    assert.equal(store.lostWrites(), 3);
+    assert.equal(warnings.length, 3);
+    store = createAppDataStore();
+    await store.open(dir);
+    assert.deepEqual((await store.loadReviewState({}))[key], { top: 900, left: 0 });
+    assert.equal((store.read('workbench:bob') as { account: string }).account, 'bob');
+    assert.deepEqual(store.take(mutedName), { entries: { one: { at: 1 } } });
+    assert.equal(store.read('workbench:carol'), undefined);
+  } finally {
+    console.warn = warn;
+    await store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -47,6 +47,16 @@ import type {
   InteractiveExplainer,
 } from '../lib/types';
 
+// Main asks every window to save pending review state before it closes saved data at quit. The listener
+// lives here, so a page that has not registered a flush yet still answers at once.
+let flushReviewState: (() => Promise<void>) | undefined;
+ipcRenderer.on('flush-review-state', (_event, id: number) => {
+  void Promise.resolve()
+    .then(() => flushReviewState?.())
+    .catch(() => {})
+    .finally(() => ipcRenderer.send('review-state-flushed', id));
+});
+
 contextBridge.exposeInMainWorld('electronAPI', {
   githubSyncVersion: 1 as const,
   watchGitHub: (id: string, interest: GitHubSyncInterest | null) => ipcRenderer.send('github-sync-watch', id, interest),
@@ -120,6 +130,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadReviewState: (legacy: Record<string,string>): Promise<Record<string,unknown>> => ipcRenderer.invoke('load-review-state',legacy),
   saveReviewState: (value: ReviewStateWrite): Promise<void> => ipcRenderer.invoke('save-review-state',value),
   saveFileProgress: (value: FileProgressPatch): Promise<void> => ipcRenderer.invoke('save-file-progress',value),
+  onFlushReviewState: (callback: () => Promise<void>) => { flushReviewState = callback; },
   listActivity: (): Promise<ActivityTask[]> => ipcRenderer.invoke('list-activity'),
   activityAction: (id:string, action:ActivityAction): Promise<void> => ipcRenderer.invoke('activity-action',id,action),
   workbenchMarkPrRead: (request: MarkPrReadRequest): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-mark-pr-read', request),
