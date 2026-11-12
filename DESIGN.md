@@ -151,7 +151,7 @@ Use 16px full-contrast prose for narrative context and review guidance. Lists ha
 ## Layout
 
 Use a viewport workspace with scrolling appropriate to each surface. Explanation uses one scrolling document; Changes, Feedback, and other inspection workspaces retain their own pane layouts. Reserve 34px at the bottom for Activity.
-The shared header has a minimum height of 56px with 10px vertical and 20px horizontal padding.
+One quiet 38px title bar row replaces the native title bar, tab strip, and workspace header. From the start: window controls, the sidebar toggle (when the screen has a sidebar), Recently viewed, Back and Forward, the workspace tabs as low-contrast 26px pills, and New tab. At least 120px of empty row after New tab always moves the window; only buttons and tab pills opt out of dragging. Search and the round account avatar sit at the end. The avatar menu holds the review queue, GitHub account, model and effort, Settings, and Help. Tabs narrow to 140px, then scroll with an open-tabs menu.
 
 | Surface | Wide layout | Narrow behavior |
 | --- | --- | --- |

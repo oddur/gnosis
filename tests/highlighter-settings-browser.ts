@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { chooseWorkspaceMenuItem } from './workspace-menu';
 
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({
@@ -21,8 +22,8 @@ void app.whenReady().then(async () => {
   };
   const active = () => js<string>("import('/lib/diff-highlighter.ts').then(m=>m.DIFF_HIGHLIGHTER)");
   const openSettings = async () => {
-    await wait("!!document.querySelector('[aria-label=Settings]')");
-    await js("document.querySelector('[aria-label=Settings]').click()");
+    await wait("!!document.querySelector('.workspace-menu-trigger')");
+    await js(chooseWorkspaceMenuItem('[aria-label="Settings"]'));
     await wait("!!document.querySelector('[role=dialog]')");
     await js(
       "[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(t=>t.textContent==='Appearance').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))"

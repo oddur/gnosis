@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
+import { chooseWorkspaceMenuItem } from './workspace-menu';
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({
     width: 1280,
@@ -36,7 +37,7 @@ void app.whenReady().then(async () => {
       `(()=>{const read=window.electronAPI.loadPreferences;window.electronAPI.loadPreferences=()=>new Promise(resolve=>{window.releaseSettings=()=>read().then(resolve)})})()`
     );
     // Use the regular Settings entry point.
-    await js(`document.querySelector('button[aria-label=Settings]').click()`);
+    await js(chooseWorkspaceMenuItem('[aria-label="Settings"]'));
     await wait(`!!document.querySelector('[role=dialog] .loading-state')`);
     await capture('settings-light');
     win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });

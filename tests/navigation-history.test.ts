@@ -84,3 +84,23 @@ void test('native app commands and Logitech macOS swipe gestures use the same hi
   assert.deepEqual(moves, [-1, 1, -1, 1]);
   assert.equal(prevented, 4);
 });
+
+void test('Back and Forward controls observe when history can move', () => {
+  const history = createNavigationHistory<string>((value) => value);
+  let notified = 0;
+  const stop = history.subscribe(() => notified++);
+  assert.equal(history.canMove(-1), false);
+  history.record('queue');
+  history.record('pr');
+  assert.equal(history.canMove(-1), true);
+  assert.equal(history.canMove(1), false);
+  const version = history.version();
+  history.move(-1);
+  assert.equal(history.canMove(1), true);
+  assert.notEqual(history.version(), version);
+  history.record('queue');
+  assert.equal(notified, 3, 'Recording the current entry again does not notify');
+  stop();
+  history.clear();
+  assert.equal(notified, 3);
+});
