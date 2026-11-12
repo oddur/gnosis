@@ -697,6 +697,9 @@ void test('briefings use persisted filters without fetching GitHub again, with a
     const restarted = createWorkbenchService(s.deps);
     assert.equal((await restarted.queue(true)).filters?.author, 'bob');
     s.prefs.autoBriefings = true;
+    // Narrowing the list to ready briefings never pauses the queued briefings it hides.
+    service.setFilters({ briefing: 'ready' });
+    assert.equal((await service.queue()).items.find((i) => i.subject.members[0].author === 'author')?.briefing?.pauseReason, undefined);
     service.setFilters({ author: 'bob', briefingScope: 'all' });
     await waitFor(2);
     assert.deepEqual(generated, [child.html_url, s.pr.html_url]);
@@ -1885,6 +1888,7 @@ test('repository automation overrides global defaults and its own limit persists
     await restarted.queue(true);
     const next = await settle(restarted, 'paused');
     assert.match(next.items[0].briefing?.pauseDetail ?? '', /limit reached for owner\/repo/);
+    assert.equal(next.items[0].briefing?.pauseReason, 'limit');
     assert.equal(calls, 1);
     restarted.retry(next.items[0].subject.id, true);
     await settle(restarted, 'ready');
@@ -1959,6 +1963,7 @@ test('a cross-repository stack spends one overall attempt and one in each reposi
     const paused = await settle(s.service, 'paused');
     assert.equal(paused.items[0].subject.kind, 'stack');
     assert.match(paused.items[0].briefing?.pauseDetail ?? '', /off for owner\/second/);
+    assert.equal(paused.items[0].briefing?.pauseReason, 'manual');
     s.prefs.repositorySettings['owner/second'] = { autoBriefings: true, briefingDailyLimit: 2 };
     const result = await settle(s.service, 'ready');
     assert.equal(result.briefingBudget?.used, 1);

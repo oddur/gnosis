@@ -163,6 +163,10 @@ export function briefingBudget(
     ),
   };
 }
+/** The kind of block `automaticBriefingBlock` returned: automatic briefings off, or a daily limit. */
+export function automaticBriefingBlockReason(block: string): 'manual' | 'limit' {
+  return block.startsWith('Automatic briefings are off') ? 'manual' : 'limit';
+}
 export function automaticBriefingBlock(
   subject: ReviewSubject,
   p: RepositoryDefaults,

@@ -73,7 +73,7 @@ export const QueueRow = memo(function QueueRow({ item, active, multiple, bulk, t
   const s = item.subject;
   const matching = s.kind === 'stack' || filters.involvement === 'response' ? matchingStackMembers(item, filters, account) : [];
   return (
-    <div className={`queue-item ${active ? 'is-selected' : ''} ${item.unreadUrls?.length ? 'is-unread' : ''}`}>
+    <div className={`queue-item ${active ? 'is-selected' : ''} ${item.unreadUrls?.length ? 'is-unread' : ''} ${item.briefing?.status === 'generating' ? 'is-briefing-generating' : ''}`}>
       <EntryActions
         label={bulk ? `Actions for ${selectedCount} selected entries` : s.kind === 'stack' ? 'Stack actions' : `Actions for PR #${s.members[0].number}`}
         groups={bulk && bulkMenu ? bulkMenu.groups : actions.menuGroups(item)}

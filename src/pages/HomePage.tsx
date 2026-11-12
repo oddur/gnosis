@@ -62,8 +62,11 @@ import {
   matchesQueueFilters,
   activeQueueFilterCount,
   describeQueueFilters,
+  countBriefings,
+  tallyBriefings,
   type QueueFilters,
 } from '../../lib/queue-filters';
+import { BriefingStatusChips, type BriefingBudgetSummary } from '../../components/BriefingStatusChips';
 import { Activity, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { HomeLocation, WorkspaceTab } from '../../lib/navigation-history';
 import {
@@ -447,7 +450,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   }, [allItems]);
   const selectedItem = useMemo(() => {
     const item = selected ? itemsById.get(selected) : undefined;
-    return item && matchesQueueFilters(item, filters, clock, login) ? item : undefined;
+    // A briefing that finishes or pauses moves its row out of a briefing filter; its open panel stays.
+    return item && matchesQueueFilters(item, { ...filters, briefing: 'all' }, clock, login) ? item : undefined;
   }, [itemsById, selected, filters, login, clock]);
   const workspaceItems = useMemo(() => {
     const result = [...allItems];
@@ -928,6 +932,20 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     filters.readStatus !== 'all' && openedId === item.subject.id ? { ...filters, readStatus: 'all' } : filters,
     clock, login)), [queueItems, filters, openedId, login, clock]);
   const itemIds = useMemo(() => new Set(items.map(item => item.subject.id)), [items]);
+  // Counts use the loaded snapshot only. Without a briefing filter, the visible entries are the scope.
+  const briefingCounts = useMemo(() => filters.briefing === 'all' ? tallyBriefings(items) : countBriefings(queueItems, filters, clock, login),
+    [items, queueItems, filters, clock, login]);
+  const latestFilterUpdate = useRef(updateFilters);
+  latestFilterUpdate.current = updateFilters;
+  const chooseBriefing = useCallback((briefing: QueueFilters['briefing']) => latestFilterUpdate.current({ briefing }), []);
+  const latestOpenSettings = useRef<() => void>(() => {});
+  const openBriefingSettings = useCallback(() => latestOpenSettings.current(), []);
+  const briefingBudget = useMemo<BriefingBudgetSummary>(() => ({
+    automatic: !prefs || prefs.autoBriefings !== false || Object.values(prefs.repositorySettings ?? {}).some(s => s.autoBriefings),
+    remaining: queue.remaining,
+    limit: queue.briefingBudget?.limit,
+    scope: filters.briefingScope,
+  }), [prefs, queue.remaining, queue.briefingBudget?.limit, filters.briefingScope]);
   const repos = useMemo(() => [
     ...new Set([...queueItems.flatMap((i) => i.subject.members.map((m) => m.repo)), ...(repo === 'all' ? [] : [repo])]),
   ].sort(), [queueItems, repo]);
@@ -1105,6 +1123,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     setSettings(true);
   };
   useSettingsShortcut(() => openSettings());
+  latestOpenSettings.current = () => openSettings('queue');
   const dismissGettingStarted = async () => {
     setShowGettingStarted(false);
     try {
@@ -1971,6 +1990,10 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
               {section === 'saved' ? `${saved.length} reviews` : `${items.length} of ${queueItems.length} items`}
             </span>}
           </div>
+          {section !== 'saved' && prefs && !loading && (
+            <BriefingStatusChips counts={briefingCounts} value={filters.briefing} budget={briefingBudget}
+              onChange={chooseBriefing} onSettings={openBriefingSettings} />
+          )}
           {section !== 'saved' && filterCount > 0 && (
             <div className="queue-active-filters">
               {describeQueueFilters(filters).map(({ key, label }) => (
@@ -2350,28 +2373,6 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
               </aside>
             )}
           </div>
-          {prefs && (
-            <footer className="workbench-footer">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={prefs.autoBriefings !== false}
-                  onChange={(e) => void savePrefs({ ...prefs, autoBriefings: e.target.checked })}
-                />
-                Automatic briefings by default
-              </label>
-              {(prefs.autoBriefings !== false || Object.values(prefs.repositorySettings ?? {}).some(s => s.autoBriefings)) && (
-                <span>
-                  {filters.briefingScope === 'matches' ? 'Matches only' : 'Matches first'}
-                    {' · '}
-                    {queue.remaining} automatic attempts left overall · Resets at midnight
-                </span>
-              )}
-              <button className="workbench-help-link ml-auto" onClick={() => openSettings('queue')}>
-                Briefing settings
-              </button>
-            </footer>
-          )}
           </>}
         </main>
         </div>

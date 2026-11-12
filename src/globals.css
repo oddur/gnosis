@@ -1704,8 +1704,6 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .grouping-controls p { color:var(--muted-foreground); margin:10px 0; }
 .grouping-controls input,.grouping-controls select { display:block; width:100%; margin-bottom:8px; background:var(--background); border:1px solid var(--border); border-radius:4px; padding:7px; }
 .grouping-controls>button { display:block; margin-top:8px; }
-.workbench-footer { display:flex; gap:14px; align-items:center; min-height:38px; padding:8px 20px; border-top:1px solid var(--border); background:var(--card); font-size:var(--type-caption); color:var(--muted-foreground); flex-wrap:wrap; }
-.workbench-footer label { display:flex; align-items:center; gap:6px; }
 .queue-url { display:flex; gap:8px; padding:0 24px 16px; }
 .queue-url input { flex:1; min-width:0; border:1px solid var(--input); border-radius:4px; padding:7px 10px; font-size:var(--type-body); }
 .workbench-notice { display:flex; gap:8px; align-items:center; padding:10px 16px; background:var(--accent); color:var(--accent-foreground); font-size:var(--type-control); line-height:1.5; }
@@ -2049,6 +2047,41 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .queue-active-filters .queue-filter-chip { display:inline-flex; align-items:center; gap:6px; margin-left:0; padding:3px 7px; border:1px solid var(--border); border-radius:4px; color:var(--foreground); max-width:100%; white-space:normal; overflow-wrap:anywhere; }
 .queue-filter-chip svg { flex-shrink:0; }
 
+/* Briefing status chips: live counts that filter the queue, quiet like the title bar pills. */
+.briefing-chips { --briefing-chip-hover: color-mix(in srgb, var(--foreground) 6%, transparent); --briefing-chip-active: color-mix(in srgb, var(--foreground) 9%, transparent); display:flex; align-items:center; flex-wrap:wrap; gap:4px 12px; padding:6px 20px 6px 24px; border-bottom:1px solid var(--border); font-size:var(--type-caption); color:var(--muted-foreground); }
+.briefing-chips-group { display:flex; align-items:center; flex-wrap:wrap; gap:2px; min-width:0; }
+.briefing-chips-label { margin-inline-end:6px; font-weight:500; }
+.briefing-chip { display:inline-flex; align-items:center; gap:6px; height:24px; padding:0 8px; border-radius:6px; font-weight:500; color:var(--muted-foreground); white-space:nowrap; transition:background-color 120ms ease-out, color 120ms ease-out; }
+.briefing-chip:hover { background:var(--briefing-chip-hover); color:var(--foreground); }
+.briefing-chip[aria-pressed=true] { background:var(--briefing-chip-active); color:var(--foreground); }
+.briefing-chip:focus-visible, .briefing-chips-settings:focus-visible { outline:2px solid var(--ring); outline-offset:-2px; }
+.briefing-chip-count { color:var(--muted-foreground); font-weight:400; }
+.briefing-chip[aria-pressed=true] .briefing-chip-count { color:var(--foreground); }
+.briefing-chip-reason { font-weight:400; color:var(--muted-foreground); }
+.briefing-chip-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; background:var(--muted-foreground); opacity:.7; }
+.briefing-chip[data-state=generating] .briefing-chip-dot { background:var(--ring); opacity:1; }
+.briefing-chip[data-state=ready] .briefing-chip-dot { background:var(--color-success); opacity:1; }
+.briefing-chip[data-state=paused] .briefing-chip-dot { background:var(--color-warning); opacity:1; }
+.briefing-chip[data-state=failed] .briefing-chip-dot { background:var(--color-danger); opacity:1; }
+.briefing-chips-budget { margin-inline-start:auto; white-space:nowrap; cursor:default; }
+.briefing-chips-settings { display:inline-flex; align-items:center; justify-content:center; width:24px; height:24px; border-radius:6px; color:var(--muted-foreground); }
+.briefing-chips-settings:hover { background:var(--briefing-chip-hover); color:var(--foreground); }
+@media (max-width:1100px) {
+  /* Narrow windows keep the chips on one scrolling line; the budget stays in the settings tooltip. */
+  .briefing-chips { flex-wrap:nowrap; }
+  .briefing-chips-group { flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; mask-image:linear-gradient(to right, #000 calc(100% - 24px), transparent); padding-inline-end:20px; }
+  .briefing-chips-label { display:none; }
+  .briefing-chips-budget { display:none; }
+  .briefing-chips-settings { margin-inline-start:auto; flex-shrink:0; }
+}
+@media (prefers-reduced-motion:reduce) { .briefing-chip { transition:none; } }
+
+/* A row whose briefing is being written carries a thin, slow shimmer along its lower edge. */
+.queue-item.is-briefing-generating { position:relative; }
+.queue-item.is-briefing-generating::after { content:''; position:absolute; inset:auto 0 -1px; height:1px; pointer-events:none; background:linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--ring) 70%, transparent) 50%, transparent 100%) no-repeat; background-size:35% 100%; animation:briefing-shimmer 2.4s ease-in-out infinite; }
+@keyframes briefing-shimmer { from { background-position:-60% 0; } to { background-position:160% 0; } }
+@media (prefers-reduced-motion:reduce) { .queue-item.is-briefing-generating::after { animation:none; background:color-mix(in srgb, var(--ring) 35%, transparent); background-size:auto; } }
+
 /* Reading hierarchy: stable titles, bounded prose, and aligned status numerals. */
 .briefing-panel h2,.workbench-overview h1,.slide-title { text-wrap:balance; overflow-wrap:anywhere; }
 .briefing-summary,.briefing-panel ul,.overview-summary,.slide-prose { max-width:var(--measure-prose); text-wrap:pretty; overflow-wrap:anywhere; }
@@ -2071,7 +2104,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .explainer-reading { font-size:var(--type-body); line-height:1.65; max-width:var(--measure-prose); }
 .explainer-section-title { font-size:var(--type-panel-title); font-weight:650; line-height:1.4; text-wrap:balance; }
 
-.queue-meta,.queue-count,.queue-state,.workbench-footer,.activity-task-meta { font-variant-numeric:tabular-nums; }
+.queue-meta,.queue-count,.queue-state,.briefing-chips,.activity-task-meta { font-variant-numeric:tabular-nums; }
 .queue-meta>span { overflow-wrap:anywhere; }
 
 /* Notifications stay above Activity and never take keyboard focus on arrival. */
