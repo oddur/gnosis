@@ -20,7 +20,7 @@ import {
 } from '../lib/workflow-navigation';
 import { readableWorkflowViewport } from '../lib/workflow-viewport';
 import { workflowEdgePath } from '../lib/workflow-edge-path';
-import { useEffect, useLayoutEffect, useId, useMemo, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   useUpdateNodeInternals,
@@ -79,8 +79,25 @@ import { SearchableSelect } from './SearchableSelect';
 import { Button } from './ui/button';
 import { timeAgo } from '../lib/utils';
 import { settledObserver } from '../lib/resize-activity';
+import { countRender } from '../lib/render-count';
+import { useElapsedNow } from '../lib/status-clock';
 
 let rememberedGrouping: WorkflowGrouping | undefined;
+const noDetails = {};
+
+/** Jobs outside the view, with status from a check snapshot newer than the graph. */
+function currentOutsideJobs(
+  item: Pick<WorkflowGraphNode, 'jobs'>,
+  snapshot: PrChecks | undefined,
+  graph: Pick<Graph, 'checkedAt'> | undefined
+) {
+  return item.jobs.map((job) => {
+    const check = snapshot?.checks.find((c) => c.id === job.checkId);
+    return check && snapshot && graph && snapshot.checkedAt > graph.checkedAt
+      ? { ...job, status: check.status, conclusion: check.conclusion }
+      : job;
+  });
+}
 
 function outcome(jobs: WorkflowJob[]) {
   if (!jobs.length) return { group: 'unknown', label: 'Not reported', Icon: Circle };
@@ -108,7 +125,11 @@ function outcome(jobs: WorkflowJob[]) {
       Icon: jobs.some((j) => j.status === 'in_progress') ? LoaderCircle : checkGroupIcons.running,
     };
   if (counts.passed)
-    return { group: 'passed', label: jobs.length === 1 ? 'Passed' : `${counts.passed} passed`, Icon: checkGroupIcons.passed };
+    return {
+      group: 'passed',
+      label: jobs.length === 1 ? 'Passed' : `${counts.passed} passed`,
+      Icon: checkGroupIcons.passed,
+    };
   return {
     group: 'skipped',
     label: jobs.length === 1 ? checkLabel({ ...jobs[0], status: 'completed' }) : `${counts.skipped} skipped / neutral`,
@@ -121,7 +142,6 @@ type JobNode = Node<
     dim: boolean;
     emphasized: boolean;
     selected: boolean;
-    now: number;
     detail?: CheckDetails;
     canRerun: boolean;
     onRerun: (mode: 'all' | 'failed') => void;
@@ -139,6 +159,7 @@ type JobNode = Node<
   'job'
 >;
 function JobCard({ id, data }: NodeProps<JobNode>) {
+  countRender('WorkflowJobCard');
   const { item } = data;
   const updateNodeInternals = useUpdateNodeInternals();
   const portSignature = item.ports?.map((port) => `${port.id}:${port.y}`).join('|');
@@ -255,7 +276,7 @@ function JobCard({ id, data }: NodeProps<JobNode>) {
             <Icon size={15} className={label === 'Running' ? 'animate-spin' : undefined} />
             <span>{label}</span>
             <span className="workflow-job-duration">
-              {item.jobs.length === 1 ? checkDuration(item.jobs[0], data.now) : ''}
+              {item.jobs.length === 1 && <ElapsedDuration value={item.jobs[0]} />}
             </span>
           </span>
         )}
@@ -274,26 +295,9 @@ function JobCard({ id, data }: NodeProps<JobNode>) {
             </span>
           </div>
           <ol aria-label={`${item.name} steps`}>
-            {visibleSteps.map((step) => {
-              const state = outcome([{ ...job, status: step.status, conclusion: step.conclusion }]);
-              const duration = checkDuration(step, data.now);
-              return (
-                <li
-                  key={step.number}
-                  className={`check-${state.group}`}
-                  title={`${step.number}. ${step.name} — ${state.label}${duration ? ` · ${duration}` : ''}`}
-                >
-                  <state.Icon
-                    size={13}
-                    className={step.status === 'in_progress' ? 'animate-spin' : undefined}
-                    aria-hidden="true"
-                  />
-                  <span className="sr-only">{state.label}: </span>
-                  <span className="workflow-step-name">{step.name}</span>
-                  <span className="workflow-step-duration">{duration}</span>
-                </li>
-              );
-            })}
+            {visibleSteps.map((step) => (
+              <WorkflowStep key={step.number} job={job} step={step} />
+            ))}
           </ol>
           {steps.length > 3 && (
             <button
@@ -429,6 +433,33 @@ function JobCard({ id, data }: NodeProps<JobNode>) {
     </ContextMenu>
   );
 }
+/** Whether the graph is in the active tab. Durations in a kept, hidden Checks tab do not tick. */
+const ClockActive = createContext(true);
+/** A job's elapsed time. While the job runs, only this label re-renders each second, not the card or graph. */
+function ElapsedDuration({ value }: { value: Parameters<typeof checkDuration>[0] }) {
+  countRender('WorkflowDuration');
+  const active = useContext(ClockActive);
+  const now = useElapsedNow(active && value.status === 'in_progress');
+  return checkDuration(value, now);
+}
+function WorkflowStep({ job, step }: { job: WorkflowJob; step: WorkflowJob['steps'][number] }) {
+  countRender('WorkflowStep');
+  const active = useContext(ClockActive);
+  const now = useElapsedNow(active && step.status === 'in_progress');
+  const state = outcome([{ ...job, status: step.status, conclusion: step.conclusion }]);
+  const duration = checkDuration(step, now);
+  return (
+    <li
+      className={`check-${state.group}`}
+      title={`${step.number}. ${step.name} — ${state.label}${duration ? ` · ${duration}` : ''}`}
+    >
+      <state.Icon size={13} className={step.status === 'in_progress' ? 'animate-spin' : undefined} aria-hidden="true" />
+      <span className="sr-only">{state.label}: </span>
+      <span className="workflow-step-name">{step.name}</span>
+      <span className="workflow-step-duration">{duration}</span>
+    </li>
+  );
+}
 const nodeTypes = { job: JobCard };
 function RoutedEdge({ id, data, markerEnd, style }: EdgeProps) {
   const points = data?.points as { x: number; y: number }[] | undefined;
@@ -441,7 +472,7 @@ const edgeTypes = { routed: RoutedEdge };
 export function WorkflowGraphView({
   subject,
   values,
-  detailCache = {},
+  detailCache = noDetails,
   filter,
   refreshNonce,
   selectedId,
@@ -471,6 +502,7 @@ export function WorkflowGraphView({
   onSelect: (snapshot: PrChecks, check: PrCheck) => void;
   onContextChange: () => void;
 }) {
+  countRender('WorkflowGraphView');
   const [hovered, setHovered] = useState<string>();
   const [focused, setFocused] = useState<string>();
   const highlight = hovered ?? focused;
@@ -845,15 +877,6 @@ export function WorkflowGraphView({
       live = false;
     };
   }, [graphKey, viewKey, active]);
-  const [now, setNow] = useState(Date.now);
-  const running = graph?.nodes.some((n) => n.jobs.some((j) => j.status === 'in_progress'));
-  useEffect(() => {
-    if (!active || !running) return;
-    const timer = setInterval(() => {
-      if (document.visibilityState !== 'hidden') setNow(Date.now());
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [running, active]);
   const canvas = useRef<HTMLDivElement>(null);
   const [canvasSize, setCanvasSize] = useState('');
   useEffect(() => {
@@ -946,19 +969,19 @@ export function WorkflowGraphView({
       })) ?? [],
     [graph, snapshot]
   );
-  const byId = new Map(displayed.map((n) => [n.id, n]));
-  const outsideJobs = (item: Pick<WorkflowGraphNode, 'jobs'>) =>
-    item.jobs.map((job) => {
-      const check = snapshot?.checks.find((c) => c.id === job.checkId);
-      return check && snapshot && graph && snapshot.checkedAt > graph.checkedAt
-        ? { ...job, status: check.status, conclusion: check.conclusion }
-        : job;
-    });
-  const outsideFailures = new Map(
-    displayed.map((node) => [
-      node.id,
-      node.outsidePrerequisites?.filter((n) => outcome(outsideJobs(n)).group === 'attention') ?? [],
-    ])
+  const byId = useMemo(() => new Map(displayed.map((n) => [n.id, n])), [displayed]);
+  const outsideJobs = (item: Pick<WorkflowGraphNode, 'jobs'>) => currentOutsideJobs(item, snapshot, graph);
+  const outsideFailures = useMemo(
+    () =>
+      new Map(
+        displayed.map((node) => [
+          node.id,
+          node.outsidePrerequisites?.filter(
+            (n) => outcome(currentOutsideJobs(n, snapshot, graph)).group === 'attention'
+          ) ?? [],
+        ])
+      ),
+    [displayed, snapshot, graph]
   );
   const revealPrerequisite = (id: string) => {
     setFocusNodeId(undefined);
@@ -967,24 +990,30 @@ export function WorkflowGraphView({
     setFocused(undefined);
     if (detailHost) onRevealContext();
   };
-  const failureSources = new Map<string, string>();
-  // Explain the prerequisite fact, not a guessed cause for skips (if/always may override it).
-  for (const edge of graph?.edges ?? []) {
-    const source = byId.get(edge.source);
-    if (source && outcome(source.jobs).group === 'attention') failureSources.set(edge.target, source.name);
-  }
+  const failureSources = useMemo(() => {
+    const sources = new Map<string, string>();
+    // Explain the prerequisite fact, not a guessed cause for skips (if/always may override it).
+    for (const edge of graph?.edges ?? []) {
+      const source = byId.get(edge.source);
+      if (source && outcome(source.jobs).group === 'attention') sources.set(edge.target, source.name);
+    }
+    return sources;
+  }, [graph, byId]);
   const toggle = (id: string) => {
     if (focusNodeId === id) setFocusNodeId(undefined);
     setHovered(undefined);
     setFocused(undefined);
     setExpanded((current) => (current.includes(id) ? current.filter((v) => v !== id) : [...current, id]));
   };
-  const related = new Set(highlight ? [highlight] : []);
-  for (const edge of graph?.edges ?? [])
-    if (edge.source === highlight || edge.target === highlight) {
-      related.add(edge.source);
-      related.add(edge.target);
-    }
+  const related = useMemo(() => {
+    const ids = new Set(highlight ? [highlight] : []);
+    for (const edge of graph?.edges ?? [])
+      if (edge.source === highlight || edge.target === highlight) {
+        ids.add(edge.source);
+        ids.add(edge.target);
+      }
+    return ids;
+  }, [graph, highlight]);
   const [rerunState, setRerunState] = useState<{ key: string; message: string; requested?: boolean }>();
   const rerunPending = useRef(false);
   const rerunScope = `${scope}:${run?.id}:${run?.attempt}`;
@@ -1007,90 +1036,110 @@ export function WorkflowGraphView({
       rerunPending.current = false;
     }
   };
-  const nodes: JobNode[] = displayed.map((item) => {
-    const job = item.jobs.length === 1 ? item.jobs[0] : undefined;
-    const check = job && snapshot && workflowJobCheck(job, snapshot.checks);
-    const saved = check ? detailCache[checkDetailsKey({ ...snapshot, id: check.id }, check)] : undefined;
-    const prepared = check && snapshot.details?.[check.id];
-    const value = prepared && (prepared.checkedAt ?? 0) >= (saved?.receivedAt ?? 0) ? prepared : saved?.value;
-    const detail = job && run ? workflowJobDetails(job, run, value) : undefined;
-    return {
-      id: item.id,
-      type: 'job',
-      position: { x: item.x, y: item.y },
-      draggable: false,
-      width: 244,
-      height: item.height ?? 112,
-      measured: { width: 244, height: item.height ?? 112 },
-      data: {
-        item,
-        detail,
-        canRerun:
-          !!job?.checkId &&
-          job.status === 'completed' &&
-          run?.status === 'completed' &&
-          detail?.job?.canRerun !== false &&
-          !(rerunState?.key === rerunScope && rerunState.requested),
-        onRerun: (mode) => {
-          if (job) void requestRerun(job, mode);
-        },
-        url: job?.url,
-        now,
-        prerequisite: failureSources.get(item.id),
-        outsidePrerequisite: outsideFailures
-          .get(item.id)
-          ?.map((n) => n.name)
-          .join(', '),
-        onRevealPrerequisite: () => {
-          const first = outsideFailures.get(item.id)?.at(0);
-          if (first) revealPrerequisite(first.id);
-        },
-        selected: !!selectedId && item.jobs.some((j) => j.checkId === selectedId),
-        emphasized:
-          (!!highlight && related.has(item.id)) ||
-          (filter === 'attention' && !!attentionJobs([item]).length) ||
-          (filter === 'running' && item.jobs.some((job) => job.status !== 'completed')),
-        dim:
-          (filter === 'attention' && !attentionJobs([item]).length) ||
-          (filter === 'running' && !item.jobs.some((job) => job.status !== 'completed')) ||
-          (!!highlight && !related.has(item.id)),
-        onHighlight: (active, input) =>
-          (input === 'pointer' ? setHovered : setFocused)((current) =>
-            active ? item.id : current === item.id ? undefined : current
-          ),
-        onExpand: () => toggle(item.id),
-        onToggleSteps: () =>
-          setExpandedSteps((current) =>
-            current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id]
-          ),
-        onToggleAnnotations: () =>
-          setExpandedAnnotations((current) =>
-            current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id]
-          ),
-        onFocusDependencies: () => {
-          setFocusNodeId(item.id);
-          setHovered(undefined);
-          setFocused(undefined);
-        },
-        onOpen: () => {
-          setNavigationNodeId(undefined);
-          if (item.collapsed) {
-            if (item.collapsed === 'skipped') setShowSkipped(true);
-            else setShowCompleted(true);
-            return;
-          }
-          if (item.expandable) {
-            toggle(item.id);
-            return;
-          }
-          const job = item.jobs.at(0);
-          if (!job || !snapshot || !graph) return;
-          const check = workflowJobCheck(job, snapshot.checks);
-          if (check) onSelect(snapshot, check);
-        },
-      },
-    };
-  });
+  const openNode = (item: WorkflowGraphNode) => {
+    setNavigationNodeId(undefined);
+    if (item.collapsed) {
+      if (item.collapsed === 'skipped') setShowSkipped(true);
+      else setShowCompleted(true);
+      return;
+    }
+    if (item.expandable) {
+      toggle(item.id);
+      return;
+    }
+    const job = item.jobs.at(0);
+    if (!job || !snapshot || !graph) return;
+    const check = workflowJobCheck(job, snapshot.checks);
+    if (check) onSelect(snapshot, check);
+  };
+  // Node callbacks read the latest handlers, so node data only changes when what the cards show changes.
+  const nodeActions = useRef({ openNode, toggle, requestRerun, revealPrerequisite });
+  nodeActions.current = { openNode, toggle, requestRerun, revealPrerequisite };
+  const nodes = useMemo<JobNode[]>(
+    () =>
+      displayed.map((item) => {
+        const job = item.jobs.length === 1 ? item.jobs[0] : undefined;
+        const check = job && snapshot && workflowJobCheck(job, snapshot.checks);
+        const saved = check ? detailCache[checkDetailsKey({ ...snapshot, id: check.id }, check)] : undefined;
+        const prepared = check && snapshot.details?.[check.id];
+        const value = prepared && (prepared.checkedAt ?? 0) >= (saved?.receivedAt ?? 0) ? prepared : saved?.value;
+        const detail = job && run ? workflowJobDetails(job, run, value) : undefined;
+        return {
+          id: item.id,
+          type: 'job',
+          position: { x: item.x, y: item.y },
+          draggable: false,
+          width: 244,
+          height: item.height ?? 112,
+          measured: { width: 244, height: item.height ?? 112 },
+          data: {
+            item,
+            detail,
+            canRerun:
+              !!job?.checkId &&
+              job.status === 'completed' &&
+              run?.status === 'completed' &&
+              detail?.job?.canRerun !== false &&
+              !(rerunState?.key === rerunScope && rerunState.requested),
+            onRerun: (mode) => {
+              if (job) void nodeActions.current.requestRerun(job, mode);
+            },
+            url: job?.url,
+            prerequisite: failureSources.get(item.id),
+            outsidePrerequisite: outsideFailures
+              .get(item.id)
+              ?.map((n) => n.name)
+              .join(', '),
+            onRevealPrerequisite: () => {
+              const first = outsideFailures.get(item.id)?.at(0);
+              if (first) nodeActions.current.revealPrerequisite(first.id);
+            },
+            selected: !!selectedId && item.jobs.some((j) => j.checkId === selectedId),
+            emphasized:
+              (!!highlight && related.has(item.id)) ||
+              (filter === 'attention' && !!attentionJobs([item]).length) ||
+              (filter === 'running' && item.jobs.some((job) => job.status !== 'completed')),
+            dim:
+              (filter === 'attention' && !attentionJobs([item]).length) ||
+              (filter === 'running' && !item.jobs.some((job) => job.status !== 'completed')) ||
+              (!!highlight && !related.has(item.id)),
+            onHighlight: (active, input) =>
+              (input === 'pointer' ? setHovered : setFocused)((current) =>
+                active ? item.id : current === item.id ? undefined : current
+              ),
+            onExpand: () => nodeActions.current.toggle(item.id),
+            onToggleSteps: () =>
+              setExpandedSteps((current) =>
+                current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id]
+              ),
+            onToggleAnnotations: () =>
+              setExpandedAnnotations((current) =>
+                current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id]
+              ),
+            onFocusDependencies: () => {
+              setFocusNodeId(item.id);
+              setHovered(undefined);
+              setFocused(undefined);
+            },
+            onOpen: () => nodeActions.current.openNode(item),
+          },
+        };
+      }),
+    [
+      displayed,
+      failureSources,
+      outsideFailures,
+      related,
+      highlight,
+      snapshot,
+      detailCache,
+      run,
+      rerunState,
+      rerunScope,
+      selectedId,
+      filter,
+    ]
+  );
   const issues = attentionJobs(displayed);
   const activeCount = new Set(displayed.flatMap((n) => n.jobs.filter((j) => j.status !== 'completed').map((j) => j.id)))
     .size;
@@ -1105,24 +1154,28 @@ export function WorkflowGraphView({
       if (check) onSelect(snapshot, check);
     }
   };
-  const edges = (graph?.edges ?? []).map((edge) => ({
-    ...edge,
-    ariaLabel: `${byId.get(edge.target)?.name ?? edge.target} requires ${byId.get(edge.source)?.name ?? edge.source}`,
-    type: 'routed',
-    sourceHandle: `source:${edge.id}`,
-    targetHandle: `target:${edge.id}`,
-    data: { points: edge.points },
-    style: highlight
-      ? edge.source === highlight || edge.target === highlight
-        ? { stroke: 'var(--ring)', strokeWidth: 2, opacity: 1 }
-        : { opacity: 0.18 }
-      : undefined,
-    markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
-    className:
-      failureSources.has(edge.target) && outcome(byId.get(edge.source)?.jobs ?? []).group === 'attention'
-        ? 'workflow-edge-failed'
-        : undefined,
-  }));
+  const edges = useMemo(
+    () =>
+      (graph?.edges ?? []).map((edge) => ({
+        ...edge,
+        ariaLabel: `${byId.get(edge.target)?.name ?? edge.target} requires ${byId.get(edge.source)?.name ?? edge.source}`,
+        type: 'routed',
+        sourceHandle: `source:${edge.id}`,
+        targetHandle: `target:${edge.id}`,
+        data: { points: edge.points },
+        style: highlight
+          ? edge.source === highlight || edge.target === highlight
+            ? { stroke: 'var(--ring)', strokeWidth: 2, opacity: 1 }
+            : { opacity: 0.18 }
+          : undefined,
+        markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
+        className:
+          failureSources.has(edge.target) && outcome(byId.get(edge.source)?.jobs ?? []).group === 'attention'
+            ? 'workflow-edge-failed'
+            : undefined,
+      })),
+    [graph, byId, highlight, failureSources]
+  );
   const toolbarControls = (
     <>
       <div className="workflow-selectors">
@@ -1429,49 +1482,53 @@ export function WorkflowGraphView({
             )}
 
             {graph?.nodes.length ? (
-              <ReactFlow<JobNode>
-                defaultViewport={(() => {
-                  const bounds = canvasBounds();
-                  return (
-                    session.viewports?.[viewportKey] ??
-                    (bounds ? readableWorkflowViewport(viewportGraph ?? graph, bounds.width, bounds.height) : undefined)
-                  );
-                })()}
-                nodes={nodes}
-                edges={edges}
-                nodeTypes={nodeTypes}
-                edgeTypes={edgeTypes}
-                onInit={setFlow}
-                onMoveEnd={(_event, viewport) => {
-                  rememberViewport(currentViewport.current.key, viewport);
-                }}
-                nodesDraggable={false}
-                nodesConnectable={false}
-                edgesFocusable={false}
-                elementsSelectable={false}
-                minZoom={0.1}
-                maxZoom={1.5}
-                panOnScroll
-                preventScrolling
-                aria-label="CI job dependencies"
-              >
-                <Controls showInteractive={false} showFitView={false} />
-                <MiniMap
-                  pannable
-                  zoomable
-                  ariaLabel="Workflow map. Drag to navigate."
-                  nodeColor={(node) => {
-                    const group = outcome(byId.get(node.id)?.jobs ?? []).group;
-                    return group === 'attention'
-                      ? 'var(--color-danger)'
-                      : group === 'running'
-                        ? 'var(--color-warning)'
-                        : 'var(--muted-foreground)';
+              <ClockActive.Provider value={active}>
+                <ReactFlow<JobNode>
+                  defaultViewport={(() => {
+                    const bounds = canvasBounds();
+                    return (
+                      session.viewports?.[viewportKey] ??
+                      (bounds
+                        ? readableWorkflowViewport(viewportGraph ?? graph, bounds.width, bounds.height)
+                        : undefined)
+                    );
+                  })()}
+                  nodes={nodes}
+                  edges={edges}
+                  nodeTypes={nodeTypes}
+                  edgeTypes={edgeTypes}
+                  onInit={setFlow}
+                  onMoveEnd={(_event, viewport) => {
+                    rememberViewport(currentViewport.current.key, viewport);
                   }}
-                  maskColor="color-mix(in srgb, var(--background) 75%, transparent)"
-                  style={{ width: 120, height: 72, background: 'var(--card)', border: '1px solid var(--border)' }}
-                />
-              </ReactFlow>
+                  nodesDraggable={false}
+                  nodesConnectable={false}
+                  edgesFocusable={false}
+                  elementsSelectable={false}
+                  minZoom={0.1}
+                  maxZoom={1.5}
+                  panOnScroll
+                  preventScrolling
+                  aria-label="CI job dependencies"
+                >
+                  <Controls showInteractive={false} showFitView={false} />
+                  <MiniMap
+                    pannable
+                    zoomable
+                    ariaLabel="Workflow map. Drag to navigate."
+                    nodeColor={(node) => {
+                      const group = outcome(byId.get(node.id)?.jobs ?? []).group;
+                      return group === 'attention'
+                        ? 'var(--color-danger)'
+                        : group === 'running'
+                          ? 'var(--color-warning)'
+                          : 'var(--muted-foreground)';
+                    }}
+                    maskColor="color-mix(in srgb, var(--background) 75%, transparent)"
+                    style={{ width: 120, height: 72, background: 'var(--card)', border: '1px solid var(--border)' }}
+                  />
+                </ReactFlow>
+              </ClockActive.Provider>
             ) : (
               <WorkflowGraphState
                 loading={loadingRuns || loadingGraph}
