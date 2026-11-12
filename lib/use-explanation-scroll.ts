@@ -41,8 +41,9 @@ export function useExplanationScroll(key: string, active = true) {
       element.scrollTop = position.current.top;
       element.scrollLeft = position.current.left;
       let visible = element.clientHeight > 0;
-      observer.current = new ResizeObserver(() => {
-        const shown = element.clientHeight > 0;
+      observer.current = new ResizeObserver((entries) => {
+        // The entry carries the size; reading clientHeight here would force a layout on every resize.
+        const shown = entries[entries.length - 1].contentRect.height > 0;
         if (shown && !visible) {
           element.scrollTop = position.current.top;
           element.scrollLeft = position.current.left;

@@ -4563,7 +4563,8 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .explanation-context summary { cursor:pointer;color:var(--muted-foreground); }
 .explanation-context .reading-prose { margin-top:12px; }
 .explanation-section { display:grid;grid-template-columns:minmax(0, 2fr) minmax(0, 3fr);gap:32px;border-bottom:1px solid var(--border);align-items:start; }
-.explanation-column { min-width:0;position:sticky;top:var(--column-top,16px); }
+/* A column taller than the viewport gets an inline top from lib/explanation-column-layout.ts. */
+.explanation-column { min-width:0;position:sticky;top:16px; }
 .explanation-section:not([data-has-code]) { grid-template-columns:minmax(0,1fr); }
 .explanation-section-text { max-width:72ch; }
 .explanation-document .review-narrative { padding:0;gap:16px; }

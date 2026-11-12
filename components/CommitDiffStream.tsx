@@ -37,9 +37,9 @@ export function CommitDiffStream({
   useLayoutEffect(() => {
     const element = headerElement.current;
     if (!element) { setHeaderHeight(0); return; }
-    const measure = () => setHeaderHeight(element.getBoundingClientRect().height);
-    measure();
-    const observer = new ResizeObserver(measure);
+    setHeaderHeight(element.getBoundingClientRect().height);
+    // Later sizes come from the observer entries, so a window resize forces no extra layout here.
+    const observer = new ResizeObserver((entries) => setHeaderHeight(entries[entries.length - 1].borderBoxSize[0].blockSize));
     observer.observe(element);
     return () => observer.disconnect();
   }, [!!header]);
