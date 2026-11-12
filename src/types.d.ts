@@ -231,6 +231,8 @@ declare global {
       >;
       platform: NodeJS.Platform;
       isPackaged: boolean;
+      /** Present only when GNOSIS_PERF_TRACE is set. */
+      perfMark?: (name: string) => void;
     };
   }
 }

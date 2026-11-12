@@ -180,3 +180,22 @@ void test('discovery shares one request per kind, and an account change forgets 
   await sleep();
   assert.equal(server.calls.snapshot, 2, 'Without subscribers the store stops listening');
 });
+
+void test('early subscriber primes the queue for a later one', async () => {
+  const server = backend();
+  const store = createWorkbenchStore(() => server.api, { delay: 5 });
+  // The renderer subscribes before review state loads, so the saved queue is read alongside it.
+  const early = store.subscribe(() => {});
+  await sleep();
+  // The first account is the one the snapshot belongs to, so scoping to it keeps the rows.
+  store.reset('reviewer');
+  let renders = 0;
+  const later = store.subscribe(() => { renders++; });
+  assert.equal(store.getStatus().loaded, true);
+  assert.equal(store.getQueue().items.length, 2, 'The first queue render has its rows');
+  await sleep();
+  assert.equal(server.calls.snapshot, 1, 'The later subscriber reads nothing');
+  assert.equal(renders, 0);
+  later();
+  early();
+});

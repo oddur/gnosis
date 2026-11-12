@@ -67,7 +67,7 @@ Contents and Git blob/tree responses pinned to a full SHA can remain fresh for 2
 Prepared changes, commits, files, and review diffs also use a separate SQLite table. Memory eviction does not delete these prepared downloads.
 The total downloaded-content budget defaults to 512 MB. **Settings → Integrations → GitHub cache → Disk cache size** offers 128 MB through 4 GB.
 The HTTP cache uses 32 MB of that budget. Prepared downloads use the remainder, with 30-day retention and a 24 MB entry limit.
-Size changes take effect immediately. The cache removes the oldest prepared downloads first. SQLite indexes and temporary journal files add disk overhead.
+Size changes take effect immediately. The cache removes the oldest prepared downloads first. At launch, the limit applies 30 seconds after startup, because the first check reads every prepared download. SQLite indexes and temporary journal files add disk overhead.
 SQLite reads, writes, parsing, and retention run in a backend worker. The renderer keeps a smaller working set.
 The cache stores response data and validators, without authentication headers or credentials.
 PR comment and review routes invalidate the affected PR and repository listings. Unrelated PR details remain fresh.
@@ -149,7 +149,7 @@ Commit lists from a clone show a GitHub username only when the author email is a
 Use **Settings → Integrations → GitHub cache → Clear cache & restart** to remove downloaded GitHub data.
 The action restarts Gnosis. Save unfinished text first. Active AI tasks must finish before the action can proceed.
 
-Deletion runs on startup before requests begin, so old in-flight responses cannot restore cleared entries.
+Deletion runs on startup before requests begin, so old in-flight responses cannot restore cleared entries. On that launch the window opens after the deletion.
 It removes the persistent GitHub response cache, discovery state, file and commit inventories, and the browser HTTP cache.
 Restarting also removes in-memory profiles, comments, statuses, images, comparisons, and prepared files.
 

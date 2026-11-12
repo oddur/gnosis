@@ -293,3 +293,108 @@ void test('cache size defaults to 512 MB and accepts only supported budgets', as
   for (const invalid of [undefined, null, '1024', NaN, -1, 0, 32, Infinity]) assert.equal(normalizeGitHubCacheMB(invalid), 512);
   for (const size of GITHUB_CACHE_SIZES_MB) assert.equal(normalizeGitHubCacheMB(size), size);
 });
+
+/** Count main-thread parses of saved records that contain `marker`. */
+function countParses(marker: string) {
+  const parse = JSON.parse;
+  let count = 0;
+  JSON.parse = ((text: string, reviver?: Parameters<typeof JSON.parse>[1]) => {
+    if (typeof text === 'string' && text.includes(marker)) count++;
+    return parse(text, reviver) as unknown;
+  }) as typeof JSON.parse;
+  return { count: () => count, restore: () => { JSON.parse = parse; } };
+}
+
+void test('loads payloads lazily and parses on first get', async () => {
+  const f = fixture();
+  let parses: ReturnType<typeof countParses> | undefined;
+  try {
+    const cache = await f.open();
+    for (const key of ['one', 'two', 'three']) cache.scope(scope).set(key, `lazy-value-${key}`);
+    await cache.close();
+    parses = countParses('lazy-value-');
+    const restart = await f.open();
+    assert.equal(parses.count(), 0, 'Startup builds no values');
+    assert.equal(restart.scope(scope).get('two', valid)?.value, 'lazy-value-two');
+    assert.equal(parses.count(), 1);
+    assert.equal(restart.scope(scope).get('two', valid)?.value, 'lazy-value-two');
+    assert.equal(parses.count(), 1, 'A value is parsed once');
+    assert.deepEqual(restart.scope(scope).values(valid).sort(), ['lazy-value-one', 'lazy-value-three', 'lazy-value-two']);
+    assert.equal(parses.count(), 3);
+  } finally {
+    parses?.restore();
+    await f.cleanup();
+  }
+});
+
+void test('entries written before load win', async () => {
+  const f = fixture();
+  try {
+    const cache = await f.open();
+    cache.scope(scope).set('pr', 'saved');
+    await cache.close();
+    const restart = createGitHubCache(() => 1000);
+    restart.scope(scope).set('pr', 'fetched during startup');
+    await restart.setStorage(f.file);
+    assert.equal(restart.scope(scope).get('pr', valid)?.value, 'fetched during startup');
+    await restart.close();
+  } finally {
+    await f.cleanup();
+  }
+});
+
+void test('open does not trim prepared; deferred trim does', async () => {
+  const f = fixture();
+  const file = path.join(f.dir, 'github-cache.sqlite');
+  const options = (preparedBytes: number) => ({ file, legacy: f.file, now: 1000, maxBytes: 32000000, maxEntryBytes: 1000000,
+    maxEntries: 2000, retention: 10000, preparedBytes });
+  const put = (key: string, time: number) => ({ id: `${scope}:${hash(key)}`, prepared: true, onlyPrepared: true,
+    payload: JSON.stringify({ scope, key: hash(key), savedAt: time, value: 'x'.repeat(500) }) });
+  const indexes = async () => {
+    const { DatabaseSync } = await import('node:sqlite');
+    const db = new DatabaseSync(file);
+    try {
+      return db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='prepared'").all().map((row) => row.name);
+    } finally {
+      db.close();
+    }
+  };
+  let storage = createCacheStorage();
+  try {
+    await storage.open(options(1500));
+    await storage.write([put('older', 900), put('newer', 1000)], 1000);
+    await storage.close();
+    storage = createCacheStorage();
+    await storage.open(options(800));
+    assert.ok(await storage.readPrepared(`${scope}:${hash('older')}`, 1000), 'Opening reads no prepared sizes');
+    assert.ok(!(await indexes()).includes('prepared_size'));
+    await storage.setPreparedLimit(800, 1000);
+    assert.equal(await storage.readPrepared(`${scope}:${hash('older')}`, 1000), undefined);
+    assert.ok(await storage.readPrepared(`${scope}:${hash('newer')}`, 1000));
+    assert.ok((await indexes()).includes('prepared_size'), 'Later size sums read only the index');
+  } finally {
+    await storage.close();
+    await f.cleanup();
+  }
+});
+
+void test('invalidate parses only its scope', async () => {
+  const f = fixture();
+  const other = 'b'.repeat(64);
+  let parses: ReturnType<typeof countParses> | undefined;
+  try {
+    const cache = await f.open();
+    cache.scope(scope).set('mine', 'scoped-value-mine');
+    for (const key of ['one', 'two']) cache.scope(other).set(key, `scoped-value-${key}`);
+    await cache.close();
+    parses = countParses('scoped-value-');
+    const restart = await f.open();
+    restart.scope(scope).invalidate((value) => value === 'scoped-value-mine');
+    assert.equal(parses.count(), 1);
+    assert.equal(restart.scope(scope).get('mine', valid)?.revalidate, true);
+    assert.equal(restart.scope(other).get('one', valid)?.revalidate, false);
+  } finally {
+    parses?.restore();
+    await f.cleanup();
+  }
+});

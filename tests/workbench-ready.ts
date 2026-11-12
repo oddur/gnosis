@@ -56,8 +56,14 @@ async function loadAndRender(window: BrowserWindow, url: string): Promise<void> 
   if (!new URL(url).pathname.startsWith('/tests/fixtures/')) return;
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
-    if (await window.webContents.executeJavaScript("Boolean(document.querySelector('#root')?.firstElementChild)"))
+    if (await window.webContents.executeJavaScript("Boolean(document.querySelector('#root')?.firstElementChild)")) {
+      // Screens load on first use. In production that is a local chunk; here the dev server compiles it,
+      // which is separate from interaction latency. Fixtures without the app skip this.
+      await window.webContents.executeJavaScript(
+        `import('/src/lazy-screens.ts').then(m => Promise.all([m.PrSummary.preload(), m.ReviewPage.preload(), m.SettingsDialog.preload()])).then(() => true, () => false)`
+      );
       return;
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(`Fixture did not render after loading ${url}`);

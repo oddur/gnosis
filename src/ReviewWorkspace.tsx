@@ -8,9 +8,10 @@ import type { SearchDestination } from '../lib/command-search';
 import { ReviewDraftBoundary } from '../lib/session-drafts';
 
 import type { ActivityTask } from '../lib/activity';
-import { Activity, memo, useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
+import { Activity, memo, Suspense, useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { HomePage } from './pages/HomePage';
-import { ReviewPage } from './pages/ReviewPage';
+import { ReviewPage } from './lazy-screens';
+import { LoadingState } from '../components/LoadingState';
 import { Button } from '../components/ui/button';
 import { UpdateBanner } from '../components/UpdateBanner';
 import type { ReviewGuide } from '../lib/types';
@@ -566,6 +567,7 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
           <ReviewDraftBoundary
             value={`${review.reviewId ?? review.prUrl}:${review.snapshot?.fingerprint ?? review.headSha ?? ''}`}
           >
+            <Suspense fallback={<LoadingState title="Opening review…" />}>
             <ReviewPage
               key={`${review.reviewId ?? review.prUrl}:${review.snapshot?.fingerprint ?? review.headSha ?? ''}`}
               review={review}
@@ -578,6 +580,7 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
               exploreInitially={destination.explore}
               onShowActivity={() => setActivityOpen(true)}
             />
+            </Suspense>
           </ReviewDraftBoundary>
         )}
       </div>

@@ -186,11 +186,19 @@ export function createGitHubClientPool(options: Options = {}) {
     backoff,
     automaticUsage,
     setCacheSizeMB: (value: unknown) => snapshots.setSizeMB(value),
+    trimPrepared: () => snapshots.trimPrepared(),
     flushStorage: async () => { await snapshots.flush(); await flushBudget(); },
     closeStorage: async () => { await snapshots.close(); await flushBudget(); },
     async setStorage(file: string) {
+      const timings = await this.loadCache(file);
+      await this.loadBudget(file);
+      return timings;
+    },
+    /** Open the response cache beside the budget file. Resolves with the worker's open timings. */
+    loadCache: (file: string) => snapshots.setStorage(path.join(path.dirname(file), 'github-cache.json')),
+    /** Restore saved logins, budgets and cooldowns. Startup loads these before any GitHub request. */
+    async loadBudget(file: string) {
       storage = file;
-      await snapshots.setStorage(path.join(path.dirname(file), 'github-cache.json'));
       try {
         const record = (value: unknown): Record<string, unknown> | undefined =>
           value !== null && typeof value === 'object' && !Array.isArray(value)

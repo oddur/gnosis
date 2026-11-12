@@ -336,4 +336,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   > => ipcRenderer.invoke('validate-local-repo', repoPath, baseRef, headRef),
   platform: process.platform,
   isPackaged: process.env.APP_IS_PACKAGED === '1',
+  // Startup marks for GNOSIS_PERF_TRACE, which main passes as an argument. Main converts the wall-clock time onto its own clock.
+  perfMark: process.argv.includes('--gnosis-perf-trace')
+    ? (name: string) => ipcRenderer.send('perf-mark', name, performance.timeOrigin + performance.now())
+    : undefined,
 });

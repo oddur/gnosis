@@ -51,7 +51,8 @@ import { GitHubIcon } from '../../lib/constants';
 import { workbenchIcons, workspaceSections } from '../../lib/interface-icons';
 import { WorkbenchIcon } from '../../components/WorkbenchIcon';
 import { PrLabels } from '../../components/PrLabels';
-import { PrSummary, type PrReadingPosition, type PrReviewRequest } from '../../components/PrSummary';
+import type { PrReadingPosition, PrReviewRequest } from '../../components/PrSummary';
+import { PrSummary, SettingsDialog, prefetchScreens } from '../lazy-screens';
 import { publishQueueSignals } from '../../lib/use-queue-signals';
 import { QueueSidebar, SidebarDestination } from '../../components/QueueSidebar';
 import { SavedViewsNav, SaveViewControls } from '../../components/SavedQueueViews';
@@ -66,7 +67,7 @@ import {
   describeQueueFilters,
   type QueueFilters,
 } from '../../lib/queue-filters';
-import { Activity, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Activity, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { HomeLocation, WorkspaceTab } from '../../lib/navigation-history';
 import {
   ArrowRight,
@@ -91,11 +92,13 @@ import {
 import { GitHubAuthDialog } from '../../components/GitHubAuthDialog';
 import { GettingStarted } from '../../components/GettingStarted';
 import { WorkbenchHelp } from '../../components/WorkbenchHelp';
-import { applyCodeFont, SettingsDialog, type SettingsSection } from '../../components/SettingsDialog';
+import type { SettingsSection } from '../../components/SettingsDialog';
+import { applyCodeFont } from '../../lib/code-font';
+import { initialPreferences } from '../../lib/startup-preferences';
 import { LocalRepoDialog } from '../../components/LocalRepoDialog';
 import { UpdateBanner } from '../../components/UpdateBanner';
 import { Button } from '../../components/ui/button';
-import { Markdown } from '../../components/Markdown';
+import { LazyMarkdown as Markdown } from '../../components/LazyMarkdown';
 import { PROVIDERS } from '../../lib/models';
 import { timeAgo } from '../../lib/utils';
 import { githubFailureMessage } from '../../lib/github-feedback';
@@ -137,6 +140,16 @@ const labels = {
   other: 'Other changes',
 };
 
+let queuePainted = false;
+/** The first frame that shows queue rows or the empty state. Other screens load after it. */
+function markQueuePainted() {
+  if (queuePainted) return;
+  queuePainted = true;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    window.electronAPI.perfMark?.('queue-painted');
+    prefetchScreens();
+  }));
+}
 export function HomePage({ onAccount, navigationRestoration, onNavigationChange, onReviewOriginChange, onReviewReady, prefillPrUrl, prefillReviewId, initialSubjectId, commandDestination, explanationDestination, onShowActivity, onSyncStatus }: Props) {
   const tabs = useWorkspaceNavigation();
   const [feedbackRequest, setFeedbackRequest] = useState<FeedbackRequest>();
@@ -160,6 +173,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   const queue = useMemo(() => withOwnView(storeQueue, ownViewId), [storeQueue, ownViewId]);
   const [loading, setLoading] = useState(() => !(workbenchStore.getStatus().loaded && workbenchStore.getQueue().items.length));
   useEffect(() => { if (storeStatus.loaded && storeQueue.items.length) setLoading(false); }, [storeStatus.loaded, storeQueue.items.length]);
+  useEffect(() => { if (!loading) markQueuePainted(); }, [loading]);
   const [refreshing, setRefreshing] = useState(false);
   const [queueFailed, setQueueFailed] = useState(false);
   const [initializationFailed, setInitializationFailed] = useState(false);
@@ -327,6 +341,9 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
   }, [initialSubjectId]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [settings, setSettings] = useState(false);
+  // The dialog loads on first open and then stays mounted, so closing it keeps its exit animation.
+  const [settingsMounted, setSettingsMounted] = useState(false);
+  useEffect(() => { if (settings) setSettingsMounted(true); }, [settings]);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('queue');
   const [showGettingStarted, setShowGettingStarted] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
@@ -512,7 +529,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     const resuming = initialized.current;
     if (!resuming) setInitializing(true);
     try {
-      const [a, p] = await Promise.all([window.electronAPI.getAuthState(), window.electronAPI.loadPreferences()]);
+      // The first page shares the preferences read at startup; revealing a kept page reads them again.
+      const [a, p] = await Promise.all([window.electronAPI.getAuthState(), resuming ? window.electronAPI.loadPreferences() : initialPreferences()]);
       if (!alive.current) return;
       // Revealing a kept page initializes again; unchanged values keep their identity.
       setAuth(previous => previous?.authenticated === a.authenticated && previous.login === a.login ? previous : a);
@@ -986,6 +1004,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
           if (!members.length) return;
           inspectionData.setIntent(members.map(member => member.url));
           window.electronAPI.prOpenIntent?.(members);
+          void PrSummary.preload();
         },
         clear: () => { inspectionData.setIntent([]); window.electronAPI.prOpenIntent?.(null); },
       }) };
@@ -1551,6 +1570,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       </header>
       <UpdateBanner />
       {summaryItem && (
+        <Suspense fallback={<LoadingState title="Opening pull request…" />}>
         <PrSummary
         key={summaryItem.subject.id}
         item={summaryItem}
@@ -1622,6 +1642,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         onAiSetup={() => openSettings('integrations')}
         onGitHubAuth={() => setAuthOpen(true)}
         />
+        </Suspense>
       )}
       {/* The queue stays mounted behind a PR, so returning keeps its rows, scroll and focus target. */}
       <Activity mode={summaryItem ? 'hidden' : 'visible'}>
@@ -2425,6 +2446,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         login={auth?.login}
         prUrl={summaryItem?.subject.members[0].url ?? (url.trim() || undefined)}
       />
+      {(settings || settingsMounted) && (
+      <Suspense fallback={null}>
       <SettingsDialog
         initialSection={settingsSection}
         onReplayOnboarding={replayGettingStarted}
@@ -2439,6 +2462,8 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
             });
         }}
       />
+      </Suspense>
+      )}
       {explanationSetup && (
         <ExplanationSetupDialog
           requests={explanationSetup.requests}

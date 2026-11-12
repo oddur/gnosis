@@ -48,7 +48,8 @@ void app.whenReady().then(async () => {
     await new Promise((resolve) => setTimeout(resolve, 80));
   };
   const openPr = async () => {
-    await wait("!!document.querySelector('.queue-item,.pr-summary-page')");
+    // A restored PR shows a loading state until its screen has loaded.
+    await wait("!!document.querySelector('.queue-item,.pr-summary-page') && !document.body.innerText.includes('Opening pull request…')");
     await js(
       "window.deepAll=(selector,root=document)=>[...root.querySelectorAll(selector),...[...root.querySelectorAll('*')].flatMap(e=>e.shadowRoot?window.deepAll(selector,e.shadowRoot):[])]; void 0"
     );

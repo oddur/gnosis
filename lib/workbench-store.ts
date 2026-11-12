@@ -9,6 +9,7 @@ export interface WorkbenchStoreApi {
   listReviews: () => Promise<ReviewHistoryEntry[]>;
   onWorkbenchChanged?: (callback: (revisions?: WorkbenchRevisions) => void) => () => void;
   onPrReadStateChanged?: (callback: () => void) => () => void;
+  perfMark?: (name: string) => void;
 }
 export interface WorkbenchStoreStatus {
   loaded: boolean;
@@ -58,6 +59,7 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
   let historyAgain = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending: { revisions?: WorkbenchRevisions; read: boolean } | undefined;
+  let snapshotMarked = false;
 
   const notify = () => { for (const listener of [...listeners]) listener(); };
   const setStatus = (next: WorkbenchStoreStatus) => {
@@ -148,6 +150,10 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
       let started = { epoch, generation };
       try {
         let next = kind === 'snapshot' ? await api().workbenchSnapshot() : await api().workbenchQueue(kind === 'force');
+        if (!snapshotMarked && kind === 'snapshot') {
+          snapshotMarked = true;
+          api().perfMark?.('snapshot-ipc');
+        }
         // A write that started and finished during this read may be missing from it, so read once more.
         if (started.generation === generation && !holds && started.epoch !== epoch) {
           started = { epoch, generation };

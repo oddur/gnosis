@@ -1,15 +1,30 @@
+import { preferencesReady } from '../lib/startup-preferences';
 import { initializeChecksView } from '../lib/checks-view';
-import { initializeDiffHighlighter } from '../lib/diff-highlighter';
 import { initializeReviewState } from '../lib/renderer-review-state';
+import { applyCodeFont } from '../lib/code-font';
+import { workbenchStore } from '../lib/workbench-store';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { applyTheme } from '../lib/theme';
 import './globals.css';
 
+window.electronAPI.perfMark?.('script-start');
+// Start the one shared preferences read first.
+const preferences = preferencesReady();
+
 // Apply the user's preferred theme as early as possible to avoid a
-// flash. We default to system; App.tsx loads the actual preference
-// once the renderer mounts and re-applies if it differs.
+// flash. We default to system and re-apply once preferences load.
 applyTheme('system');
+// Read the saved queue while review state loads, so the first queue render has its rows.
+workbenchStore.subscribe(() => {});
+void preferences.then((prefs) => {
+  if (prefs) {
+    applyTheme(prefs.theme);
+    if (prefs.codeFont) applyCodeFont(prefs.codeFont);
+  }
+  // Checks load lazily after this runs, so they never flash the other view.
+  initializeChecksView(prefs);
+});
 
 // ─── Native UI: disable web-like behaviors ─────────────────────
 window.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -31,13 +46,8 @@ if (!container) throw new Error('No #root element found');
 const root = createRoot(container);
 async function start() {
   try {
-    const [, preferences] = await Promise.all([
-      initializeReviewState(),
-      // Settings recovery remains available if preferences cannot be read.
-      window.electronAPI.loadPreferences().catch(() => undefined),
-    ]);
-    initializeDiffHighlighter(preferences);
-    initializeChecksView(preferences);
+    await initializeReviewState();
+    window.electronAPI.perfMark?.('review-state');
     root.render(<App />);
   }
   catch (error) {
