@@ -1795,6 +1795,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .pr-description>h2,.pr-description>h3,.pr-metadata>h2,.pr-metadata>h3 { font-size:var(--type-body); font-weight:650; margin:0 0 12px; }
 .pr-markdown { font-size:var(--type-prose); line-height:var(--leading-prose); width:100%; max-width:none; overflow-wrap:anywhere; text-wrap:pretty; }
 .pr-markdown>:first-child { margin-top:0; }
+/* A long description lays out only the blocks near the viewport. Tables keep visible overflow, so they are left out. */
+.pr-markdown > :not(table) { content-visibility:auto; contain-intrinsic-block-size:auto 48px; overflow-clip-margin:8px; }
 .pr-markdown pre { max-width:100%; white-space:pre; overflow-x:auto; padding:12px; border:1px solid var(--border); border-radius:5px; background:var(--muted); margin:12px 0; }
 .pr-markdown code { font-family:var(--font-mono); font-size:.9em; }
 .pr-markdown :not(pre)>code { background:var(--muted); border:1px solid var(--border); border-radius:3px; padding:.05em .35em; }

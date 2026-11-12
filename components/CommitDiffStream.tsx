@@ -1,5 +1,5 @@
 import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual';
-import { useImperativeHandle, useLayoutEffect, useRef, useState, useCallback, type ReactNode, type Ref } from 'react';
+import { memo, useImperativeHandle, useLayoutEffect, useRef, useState, useCallback, type ReactNode, type Ref } from 'react';
 import type { PrChangeFile } from '../lib/pr-changes';
 
 export interface CommitDiffStreamHandle {
@@ -87,6 +87,14 @@ export function CommitDiffStream({
       .filter((key) => !files.some((file) => file.key === key))
       .map((key) => ({ key, index: -1, start: 0, hidden: true })),
   ];
+  const jumpRef = useRef(jump);
+  jumpRef.current = jump;
+  // Stable across virtualizer renders, so measuring or moving rows does not re-render their files.
+  const viewNextUnviewed = useCallback((index: number) => {
+    const files = current.current.files;
+    const next = [...files.slice(index + 1), ...files.slice(0, index)].find((f) => !f.viewed);
+    if (next) jumpRef.current(next.key, 0, true);
+  }, []);
   function jump(key: string, offset = 0, focus = false) {
     const index = current.current.files.findIndex((f) => f.key === key);
     if (index < 0) return;
@@ -187,10 +195,7 @@ export function CommitDiffStream({
               className="commit-stream-row"
               style={{ position: 'absolute', top: item.start, left: 0, width: '100%' }}
             >
-              {renderFile(item.key, () => {
-                const next = [...files.slice(item.index + 1), ...files.slice(0, item.index)].find((f) => !f.viewed);
-                if (next) jump(next.key, 0, true);
-              })}
+              <StreamRow fileKey={item.key} index={item.index} render={renderFile} next={viewNextUnviewed} />
             </div>
           );
         })}
@@ -199,3 +204,20 @@ export function CommitDiffStream({
     </div>
   );
 }
+
+/** A row's file renders again when the stream's renderer changes, not when the virtualizer only measures or moves
+ * rows. A window resize re-measures every mounted row; re-rendering their files gave Pierre new options and made it
+ * rewrite every mounted diff on each step. */
+const StreamRow = memo(function StreamRow({
+  fileKey,
+  index,
+  render,
+  next,
+}: {
+  fileKey: string;
+  index: number;
+  render: (key: string, next: () => void) => ReactNode;
+  next: (index: number) => void;
+}) {
+  return render(fileKey, () => next(index));
+});
