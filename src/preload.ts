@@ -94,6 +94,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('history-navigate', handler);
   },
   clearGitHubCache: (): Promise<void> => ipcRenderer.invoke('clear-github-cache'),
+  storageSizes: (): Promise<{ savedWorkBytes: number; githubCacheBytes: number }> => ipcRenderer.invoke('storage-sizes'),
   getPreparedInventories: (revisions: InspectionRevision[]): Promise<PreparedInventories> => ipcRenderer.invoke('prepared-inventories', revisions),
   preparePrReview: (url: string, revision: { baseSha: string; headSha: string }): Promise<void> => ipcRenderer.invoke('prepare-pr-review', url, revision),
   getPrCommits: (url: string, refresh = false, options?: InspectionLoadOptions): Promise<PrCommits> => ipcRenderer.invoke('pr-commits', url, refresh, options),

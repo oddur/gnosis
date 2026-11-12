@@ -111,6 +111,12 @@ function SettingRow({
   );
 }
 
+function formatBytes(bytes: number): string {
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
+  return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+}
+
 export function SettingsDialog({
   open,
   onOpenChange,
@@ -122,6 +128,7 @@ export function SettingsDialog({
   const [clearingCache, setClearingCache] = useState(false);
   const [cacheError, setCacheError] = useState('');
   const [cacheSizeMB, setCacheSizeMB] = useState(DEFAULT_GITHUB_CACHE_MB);
+  const [storageSizes, setStorageSizes] = useState<{ savedWorkBytes: number; githubCacheBytes: number }>();
   const [setupError, setSetupError] = useState('');
   const [logsError, setLogsError] = useState('');
   async function clearGitHubCache() {
@@ -146,6 +153,16 @@ export function SettingsDialog({
   useEffect(() => {
     if (open) { setSection(initialSection); setAddingRepository(false); }
   }, [open, initialSection]);
+  // File sizes only: main stats the database files, without a worker request.
+  useEffect(() => {
+    if (!open || section !== 'integrations') return;
+    let live = true;
+    void Promise.resolve()
+      .then(() => window.electronAPI.storageSizes())
+      .then((sizes) => { if (live) setStorageSizes(sizes); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [open, section]);
   const [appTheme, setAppTheme] = useState<ThemeChoice>('system');
   const [diffHighlighter, setDiffHighlighter] = useState<DiffHighlighter>(DIFF_HIGHLIGHTER);
   const [codeTheme, setCodeTheme] = useState<CodeTheme>('aurora-x');
@@ -827,6 +844,12 @@ export function SettingsDialog({
                     onValueChange={value => { const size = normalizeGitHubCacheMB(Number(value)); setCacheSizeMB(size); saveField({ githubCacheSizeMB: size }); }}
                   />
                   <p className="settings-description">Keep more changes, commits, and images ready to open. Older downloads are removed when the cache is full. Takes effect immediately; saved reviews and drafts are kept.</p>
+                  {storageSizes && (
+                    <p className="settings-description" data-testid="storage-sizes">
+                      On disk: GitHub cache {formatBytes(storageSizes.githubCacheBytes)} · Saved work and search{' '}
+                      {formatBytes(storageSizes.savedWorkBytes)}
+                    </p>
+                  )}
                 </div>
                 <p className="settings-description">
                   Remove downloaded PR details, changes, commits, comments, statuses, and images. Gnosis restarts

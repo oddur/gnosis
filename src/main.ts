@@ -3412,6 +3412,16 @@ handleInteractive('rerun-checks', async (_event, input: CheckSelection & { mode:
   await checkAccount(client => rerunChecks(client, input));
   refreshAfterGitHubWrite([input.url], ['checks', 'signals'], true);
 });
+/** Settings shows these beside the cache size. File sizes only, with no worker request. */
+ipcMain.handle('storage-sizes', async () => {
+  const directory = app.getPath('userData');
+  const bytes = async (name: string) => {
+    const sizes = await Promise.all([name, `${name}-wal`].map(file => fs.promises.stat(path.join(directory, file)).then(stat => stat.size, () => 0)));
+    return sizes[0] + sizes[1];
+  };
+  const [savedWorkBytes, githubCacheBytes] = await Promise.all([bytes('workbench.sqlite'), bytes('github-cache.sqlite')]);
+  return { savedWorkBytes, githubCacheBytes };
+});
 ipcMain.handle('clear-github-cache', () => {
   if (activeGenerations.size || activeForegroundChats || workbench.isGenerating() ||
     activities.list().some(task => task.kind !== 'github' && task.status === 'running'))
