@@ -121,3 +121,76 @@ export function sliceReviewHunk(
       .join('\n'),
   };
 }
+
+/** Height of one Pierre code row, from --leading-code (1.25rem). */
+export const CODE_LINE_HEIGHT = 20;
+/** A visible range longer than this renders as several diffs, so off-screen slices can skip style and layout. */
+export const HUNK_SLICE_LIMIT = 300;
+export const HUNK_SLICE_SIZE = 200;
+
+/** Split [start, end) into slices of `size` lines when it is longer than `limit`. Source numbers are kept by
+ * sliceReviewHunk, so line numbers, annotations and deep links still address the original lines. */
+export function reviewHunkSlices(
+  start: number,
+  end: number,
+  limit = HUNK_SLICE_LIMIT,
+  size = HUNK_SLICE_SIZE
+): [number, number][] {
+  if (end - start <= limit) return [[start, end]];
+  const slices: [number, number][] = [];
+  for (let from = start; from < end; from += size) slices.push([from, Math.min(end, from + size)]);
+  return slices;
+}
+
+/** Placeholder height for `contain-intrinsic-block-size` while a diff is skipped. `auto` replaces it with the
+ * real height once the diff has rendered, so this only has to be close for diffs not yet seen. */
+export function estimateHunkBlockHeight(lines: number, lineHeight = CODE_LINE_HEIGHT) {
+  return Math.max(1, lines) * lineHeight + 8;
+}
+
+/** Placeholder height for a whole file group: its header, plus the rows it shows when expanded. Folded context
+ * counts as one bar. */
+export function estimateFileBlockHeight(
+  hunks: DiffHunk[],
+  {
+    status,
+    expanded = true,
+    contextLines = 3,
+    lineHeight = CODE_LINE_HEIGHT,
+  }: { status?: FileMetadata['status']; expanded?: boolean; contextLines?: number; lineHeight?: number } = {}
+) {
+  const header = 48;
+  if (!expanded) return header;
+  let rows = 0;
+  for (const hunk of hunks) {
+    const prepared = prepareReviewHunk(hunk, status);
+    if (!prepared) {
+      rows += hunk.content.split('\n').length;
+      continue;
+    }
+    if (prepared.singleSide) {
+      rows += prepared.lines.length;
+      continue;
+    }
+    for (const range of reviewContextRanges(prepared.lines, new Set(), new Set(), contextLines))
+      rows += range.hidden ? 1.5 : range.end - range.start;
+  }
+  return Math.round(header + rows * lineHeight + hunks.length * 8);
+}
+
+/** Placeholder height for a section's code before it mounts: each file's estimate, collapsed when viewed, plus the
+ * gaps and padding of the code column. */
+export function estimateCodeColumnHeight(
+  hunks: DiffHunk[],
+  {
+    status,
+    viewed,
+  }: { status?: (filePath: string) => FileMetadata['status'] | undefined; viewed?: (filePath: string) => boolean } = {}
+) {
+  const files = new Map<string, DiffHunk[]>();
+  for (const hunk of hunks) files.set(hunk.filePath, [...(files.get(hunk.filePath) ?? []), hunk]);
+  let height = 80;
+  for (const [filePath, fileHunks] of files)
+    height += 20 + estimateFileBlockHeight(fileHunks, { status: status?.(filePath), expanded: !viewed?.(filePath) });
+  return Math.round(height);
+}

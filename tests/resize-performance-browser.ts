@@ -1,0 +1,297 @@
+import { loadWorkbenchPage, waitForWorkbenchQueue } from './workbench-ready';
+import assert from 'node:assert/strict';
+import { app, BrowserWindow } from 'electron';
+
+/** Window resize on a large, code-heavy Explanation: each step must lay out only what is on screen, while find,
+ * deep links, sticky columns and the reading position keep working. */
+void app.whenReady().then(async () => {
+  const win = new BrowserWindow({
+    width: 1600,
+    height: 900,
+    show: true,
+    webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false },
+  });
+  const js = <T = unknown>(code: string) => win.webContents.executeJavaScript(code) as Promise<T>;
+  const wait = async (expression: string, tries = 300) => {
+    for (let i = 0; i < tries; i++) {
+      if (await js(expression)) return;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    throw Error(`Timed out: ${expression}`);
+  };
+  const click = (label: string) =>
+    js(
+      `(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.getBoundingClientRect().width&&(b.textContent.trim()===${JSON.stringify(label)}||b.getAttribute('aria-label')===${JSON.stringify(label)}));if(!b)throw Error('Missing '+${JSON.stringify(label)});b.click()})()`
+    );
+  const frames = 'new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))';
+  const find = (text: string) =>
+    new Promise<number>((resolve) => {
+      const listener = (_event: unknown, result: Electron.Result) => {
+        if (!result.finalUpdate) return;
+        win.webContents.off('found-in-page', listener);
+        resolve(result.matches);
+      };
+      win.webContents.on('found-in-page', listener);
+      win.webContents.findInPage(text);
+    });
+  const debug = win.webContents.debugger;
+  /** Choose a topic and wait for its smooth scroll to land, then for content-visibility to update. */
+  const goTo = async (section: number) => {
+    await js(`window.selectOption('[aria-label="Explanation section"]','${section}')`);
+    await wait(
+      `(()=>{const c=document.querySelector('.explanation-document');const s=document.querySelector('[data-explanation-section="${section}"]');return Math.abs(s.getBoundingClientRect().top-c.getBoundingClientRect().top)<40})()`
+    );
+    await new Promise((r) => setTimeout(r, 300));
+    await js(frames);
+  };
+  try {
+    await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
+    await waitForWorkbenchQueue(win.webContents);
+    // Ten topics. Two hold 150 files each, one of them a 3,000-line added file. Stack members give every file a
+    // PR badge, about 330 in all.
+    await js(`(()=>{const load=window.electronAPI.loadReview;window.electronAPI.loadReview=async(...args)=>{
+      const review=await load(...args);
+      const members=review.snapshot?.subject?.members??[];
+      const prefix=i=>members.length>1?'PR-'+members[i%members.length].repo.replace(/\\//g,'~')+'-'+members[i%members.length].number+'/':'';
+      const rows=(n,f)=>Array.from({length:n},(_,i)=>f(i)).join('\\n');
+      const file=(path,i)=>({filePath:prefix(i)+path,hunkHeader:'@@ -1,40 +1,41 @@',content:rows(40,j=>j===20?'-old '+i+'\\n+new '+i+'\\n+extra '+i:' line '+j+' of file '+i),language:'typescript',renderedHtml:''});
+      const huge={filePath:prefix(0)+'src/generated/huge.ts',hunkHeader:'@@ -0,0 +1,3000 @@',content:rows(3000,j=>'+export const value'+(j+1)+' = '+(j+1)+'; // marker'+(j+1)),language:'typescript',renderedHtml:''};
+      const many=(slide)=>Array.from({length:150},(_,i)=>file('src/topic'+slide+'/module'+i+'.ts',slide*1000+i));
+      const prose=(n,word)=>Array.from({length:n},(_,i)=>'Paragraph '+i+' explains how '+word+' moves through the layout service and why the wallet keeps its state.').join('\\n\\n');
+      const topic=(n,hunks,narrative)=>({...review.slides[0],id:'resize-'+n,slideNumber:n,title:'Topic '+n,narrative,diffHunks:hunks,affectedFiles:[...new Set(hunks.map(h=>h.filePath))],mermaidDiagram:null,d2Diagram:null,mechanism:null,svgIllustration:null,explainer:undefined,explainerIdea:null,inlineExplanations:[],reviewChecks:[],fileSummaries:[],educationNotes:[]});
+      const slides=Array.from({length:10},(_,i)=>{
+        const n=i+1;
+        if(n===8)return topic(n,many(8),prose(60,'the sticky column'));
+        if(n===9)return topic(n,[...many(9).slice(0,149),huge],prose(3,'the large file'));
+        if(n===10)return topic(n,[file('src/last.ts',10000)],'The last topic holds needleinlasttopic so find-in-page has to reach skipped content.');
+        return topic(n,[file('src/small'+n+'a.ts',n*10),file('src/small'+n+'b.ts',n*10+1)],prose(2,'topic '+n));
+      });
+      const changedFiles=[...new Set(slides.flatMap(s=>s.diffHunks.map(h=>h.filePath)))].map(filename=>({filename,status:filename.endsWith('huge.ts')?'added':'modified',additions:filename.endsWith('huge.ts')?3000:2,deletions:filename.endsWith('huge.ts')?0:1}));
+      return {...review,slides,changedFiles,totalFilesChanged:changedFiles.length};
+    };})()`);
+    await js("document.querySelector('.queue-item:has(.queue-disclosure) .queue-row-main').click()");
+    await click('Open AI explanation');
+    await wait("document.querySelectorAll('.explanation-section').length===10");
+    await js(`window.selectOption('[aria-label="Explanation section"]','9')`);
+    await wait(
+      '!!document.querySelector(\'[data-explanation-section="9"] [data-file-path$="huge.ts"] diffs-container\')'
+    );
+    await new Promise((r) => setTimeout(r, 1500));
+    const huge = 'document.querySelector(\'[data-explanation-section="9"] [data-file-path$="huge.ts"]\')';
+    assert.ok(
+      (await js<number>(`${huge}.querySelectorAll('diffs-container').length`)) >= 15,
+      'A 3,000-line file renders as 200-line slices'
+    );
+    // Read inside the large file, as on the real page.
+    await js(
+      `(()=>{const c=document.querySelector('.explanation-document');c.scrollTop+=${huge}.getBoundingClientRect().top-c.getBoundingClientRect().top+1500})()`
+    );
+    await new Promise((r) => setTimeout(r, 1000));
+    await js(frames);
+
+    const shape = await js<{ all: number; rendered: number; badges: number; svgs: number }>(`(()=>{
+      const all=[...document.querySelectorAll('*')];
+      return {all:all.length,rendered:all.filter(e=>e.checkVisibility({contentVisibilityAuto:true})).length,badges:document.querySelectorAll('.entity-badge').length,svgs:document.querySelectorAll('svg').length};
+    })()`);
+    console.log('Resize fixture:', JSON.stringify(shape));
+    assert.ok(shape.all > 10_000, 'The fixture is large');
+    assert.ok(shape.rendered < 4000, `Only chunks near the viewport render: ${shape.rendered} of ${shape.all}`);
+
+    debug.attach('1.3');
+    await debug.sendCommand('Performance.enable');
+    const metrics = async () =>
+      Object.fromEntries(
+        (
+          (await debug.sendCommand('Performance.getMetrics')) as { metrics: { name: string; value: number }[] }
+        ).metrics.map((m) => [m.name, m.value])
+      );
+    const height = await js<number>('innerHeight');
+    // Emulate a wide window whatever the display allows (Xvfb caps it), and stay above the 1000px media query and
+    // the reader's 850px single-column container query: crossing a breakpoint is a one-off relayout, checked below.
+    const from = 1680;
+    const emulate = (width: number) =>
+      debug.sendCommand('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 0, mobile: false });
+    await emulate(from);
+    await js(frames);
+    await new Promise((r) => setTimeout(r, 500));
+    const widths = [
+      ...Array.from({ length: 16 }, (_, i) => from - (i + 1) * 40),
+      ...Array.from({ length: 16 }, (_, i) => from - 600 + (i + 1) * 40),
+    ];
+    const steps: { width: number; ms: number; work: number; layouts: number; styles: number }[] = [];
+    await debug.sendCommand('Profiler.enable');
+    await debug.sendCommand('Profiler.setSamplingInterval', { interval: 200 });
+    await debug.sendCommand('Profiler.start');
+    try {
+      let previous = await metrics();
+      for (const width of widths) {
+        const started = await js<number>('performance.now()');
+        await emulate(width);
+        const ended = await js<number>(`${frames}.then(()=>performance.now())`);
+        const sample = await metrics();
+        steps.push({
+          width,
+          ms: ended - started,
+          work: (sample.TaskDuration - previous.TaskDuration) * 1000,
+          layouts: sample.LayoutCount - previous.LayoutCount,
+          styles: sample.RecalcStyleCount - previous.RecalcStyleCount,
+        });
+        previous = sample;
+      }
+    } finally {
+      await debug.sendCommand('Emulation.clearDeviceMetricsOverride').catch(() => {});
+    }
+    // Where the main thread spent its time, so a failed budget names its cause.
+    const { profile } = (await debug.sendCommand('Profiler.stop')) as {
+      profile: {
+        nodes: { id: number; callFrame: { functionName: string; url: string; lineNumber: number } }[];
+        samples: number[];
+        timeDeltas: number[];
+      };
+    };
+    const byId = new Map(profile.nodes.map((n) => [n.id, n.callFrame]));
+    const self = new Map<string, number>();
+    profile.samples.forEach((sample, i) => {
+      const frame = byId.get(sample);
+      if (!frame || frame.functionName === '(idle)' || frame.functionName === '(program)') return;
+      const key = `${frame.functionName || '(anonymous)'} ${frame.url.split('/').pop()?.split('?')[0]}:${frame.lineNumber + 1}`;
+      self.set(key, (self.get(key) ?? 0) + profile.timeDeltas[i] / 1000);
+    });
+    console.log(
+      'Resize sweep self time:',
+      [...self]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 12)
+        .map(([key, ms]) => `${ms.toFixed(1)} ms ${key}`)
+        .join('; ')
+    );
+    console.log(
+      'Resize sweep steps:',
+      steps.map((s) => `${s.width}:${s.ms.toFixed(0)}ms/${s.work.toFixed(0)}w/${s.layouts}L/${s.styles}S`).join(' ')
+    );
+    const times = steps.map((s) => s.ms).sort((a, b) => a - b);
+    const p90 = times[Math.floor(times.length * 0.9)];
+    const work = steps.map((s) => s.work).sort((a, b) => a - b);
+    const workP90 = work[Math.floor(work.length * 0.9)];
+    const layouts = Math.max(...steps.map((s) => s.layouts));
+    const styles = Math.max(...steps.map((s) => s.styles));
+    console.log(
+      `Resize sweep: ${steps.length} steps, p50 ${times[Math.floor(times.length / 2)].toFixed(1)} ms, p90 ${p90.toFixed(1)} ms, max ${times[times.length - 1].toFixed(1)} ms; main-thread work p90 ${workP90.toFixed(1)} ms, max ${work[work.length - 1].toFixed(1)} ms; at most ${layouts} layouts and ${styles} style recalcs per step`
+    );
+    assert.ok(layouts <= 3, `At most 3 layouts per step, saw ${layouts}`);
+    assert.ok(styles <= 4, `At most 4 style recalcs per step, saw ${styles}`);
+    // The layout and style-recalc caps above are the regression guard: they are deterministic on any machine.
+    // Wall-clock time depends on the rasterizer. Under Xvfb on a CI runner, main-thread work reached about 80 ms
+    // at p90 with only 2-3 layouts per step, against about 12 ms on a laptop. The time caps therefore only catch
+    // a return to the old behaviour (p90 150-280 ms, and a 450 ms re-render when crossing the 1000 px breakpoint).
+    assert.ok(workP90 < 140, `p90 main-thread work per step under 140 ms, saw ${workP90.toFixed(1)}`);
+    assert.ok(p90 < 160, `p90 step under 160 ms, saw ${p90.toFixed(1)}`);
+    assert.ok(work[work.length - 1] < 300, `No resize step does 300 ms of main-thread work, saw ${work[work.length - 1].toFixed(1)}`);
+
+    // Crossing the 1000px media query must not re-render the Explanation's sections and their diffs.
+    await js('window.__countRenders=true;window.__renderCounts={}');
+    try {
+      for (const width of [1040, 960, 1040]) {
+        await emulate(width);
+        await js(frames);
+      }
+    } finally {
+      await debug.sendCommand('Emulation.clearDeviceMetricsOverride').catch(() => {});
+    }
+    assert.equal(
+      await js('window.__renderCounts.SlideView??0'),
+      0,
+      'Explanation sections ignore the 1000px media query'
+    );
+    await js('window.__countRenders=false');
+
+    // Mask icons keep the controls' names and focus.
+    const icons = await js<{ svgs: number; masks: number; unnamed: number; badges: number; badgeSvgs: number }>(`(()=>{
+      const controls=[...document.querySelectorAll('.diff-context-button,.review-file-expand')];
+      return {svgs:controls.filter(c=>c.querySelector('svg')).length,masks:controls.filter(c=>c.querySelector('.icon-mask')).length,unnamed:controls.filter(c=>!c.getAttribute('aria-label')).length,badges:document.querySelectorAll('.entity-badge[aria-label]').length,badgeSvgs:document.querySelectorAll('.entity-badge:not(.entity-badge-repository) .entity-badge-icon svg').length};
+    })()`);
+    assert.equal(icons.svgs, 0, 'Context and expand buttons draw no SVG');
+    assert.ok(icons.masks > 0, 'Context and expand buttons draw a mask icon');
+    assert.equal(icons.unnamed, 0, 'Icon buttons keep their names');
+    assert.equal(icons.badgeSvgs, 0, 'Entity badges draw their glyphs as masks');
+    await js("document.querySelector('.review-file-expand').focus()");
+    assert.equal(await js("document.activeElement?.classList.contains('review-file-expand')"), true);
+
+    // Sticky columns: a narrative taller than the viewport, beside taller code, is pinned by its bottom once the
+    // frame after the resize has run. The tallest column gets no inline offset.
+    await js(`window.selectOption('[aria-label="Explanation section"]','8')`);
+    await wait('!!document.querySelector(\'[data-explanation-section="8"] .review-file-group\')');
+    await new Promise((r) => setTimeout(r, 800));
+    await js(frames);
+    const sticky = await js<{ top: string; expected: number; codeTop: string }>(`(()=>{
+      const s=document.querySelector('[data-explanation-section="8"]');
+      const text=s.querySelector('.explanation-section-text'),code=s.querySelector('.explanation-section-code');
+      const viewport=document.querySelector('.explanation-document').clientHeight;
+      return {top:text.style.top,expected:Math.min(16,Math.round(viewport-text.offsetHeight-16)),codeTop:code.style.top,text:text.offsetHeight,code:code.offsetHeight};
+    })()`);
+    // The controller uses the fractional border-box height; offsetHeight is rounded.
+    assert.ok(
+      sticky.top.endsWith('px') && Math.abs(parseFloat(sticky.top) - sticky.expected) <= 1,
+      `The tall narrative is pinned by its bottom: ${sticky.top}, expected about ${sticky.expected}px`
+    );
+    assert.equal(sticky.codeTop, '', 'The tallest column keeps the stylesheet offset');
+
+    // Find-in-page reaches text in skipped chunks, in the light DOM and inside a skipped diff slice.
+    await goTo(1);
+    assert.equal(
+      await js<boolean>(
+        'document.querySelector(\'[data-explanation-section="10"] .explanation-section-text\').checkVisibility({contentVisibilityAuto:true})'
+      ),
+      false,
+      'The last topic is skipped before searching'
+    );
+    assert.ok((await find('needleinlasttopic')) >= 1, 'Find reaches a skipped topic');
+    await wait(
+      `(()=>{const r=document.querySelector('[data-explanation-section="10"]').getBoundingClientRect();return r.bottom>0&&r.top<innerHeight})()`
+    );
+    win.webContents.stopFindInPage('clearSelection');
+    assert.ok((await find('marker2950')) >= 1, 'Find reaches a line inside a skipped slice of the large file');
+    win.webContents.stopFindInPage('clearSelection');
+
+    // A deep link to a line in a skipped slice lands on that line.
+    await goTo(1);
+    await js(`(()=>{
+      const host=[...${huge}.querySelectorAll('diffs-container')].find(h=>h.shadowRoot?.querySelector('[data-line-number="2600"]'));
+      host.shadowRoot.querySelector('[data-line-number="2600"]').scrollIntoView({block:'center'});
+    })()`);
+    await wait(`(()=>{
+      const host=[...${huge}.querySelectorAll('diffs-container')].find(h=>h.shadowRoot?.querySelector('[data-line-number="2600"]'));
+      const r=host.shadowRoot.querySelector('[data-line-number="2600"]').getBoundingClientRect();
+      const c=document.querySelector('.explanation-document').getBoundingClientRect();
+      return r.height>0&&r.top>=c.top&&r.bottom<=c.bottom;
+    })()`);
+
+    // The reading position survives leaving the tab, anchored to the large file.
+    await new Promise((r) => setTimeout(r, 500));
+    const before = await js<{ top: number; offset: number }>(
+      `(()=>{const c=document.querySelector('.explanation-document');return {top:c.scrollTop,offset:${huge}.getBoundingClientRect().top-c.getBoundingClientRect().top}})()`
+    );
+    const tab = (label: string) =>
+      js(
+        // Tabs switch on mousedown, as a pointer press does.
+        `(()=>{const b=[...document.querySelectorAll('.pr-overview-tabs button')].find(b=>b.textContent.trim()===${JSON.stringify(label)});b.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}));b.click()})()`
+      );
+    await tab('Summary');
+    await wait("document.querySelector('.explanation-document').clientHeight===0");
+    await tab('Explanation');
+    await wait(`Math.abs(document.querySelector('.explanation-document').scrollTop-${before.top})<2`);
+    assert.ok(
+      Math.abs(
+        (await js<number>(
+          `${huge}.getBoundingClientRect().top-document.querySelector('.explanation-document').getBoundingClientRect().top`
+        )) - before.offset
+      ) < 2,
+      'The large file is where the reader left it'
+    );
+    console.log('Resize performance checks passed');
+    app.exit(0);
+  } catch (error) {
+    console.error(error);
+    app.exit(1);
+  }
+});

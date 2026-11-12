@@ -6,14 +6,16 @@ import { FileDiff } from '@pierre/diffs/react';
 import { bundledLanguages } from 'shiki/langs';
 import { processFile } from '@pierre/diffs';
 import type { DiffLineAnnotation, FileDiffOptions } from '@pierre/diffs';
-import { ChevronsUpDown, FoldVertical, UnfoldVertical } from 'lucide-react';
 import { DIFF_HIGHLIGHTER } from '@/lib/diff-highlighter';
 import { CODE_THEMES } from '@/lib/constants';
 import {
   DEFAULT_DIFF_APPEARANCE,
+  HUNK_SLICE_LIMIT,
   diffContextLines,
+  estimateHunkBlockHeight,
   prepareReviewHunk,
   reviewContextRanges,
+  reviewHunkSlices,
   sliceReviewHunk,
   type DiffAppearance,
 } from '@/lib/review-diff';
@@ -222,6 +224,8 @@ function ReviewHunk({
           '--diffs-font-family': 'var(--font-mono)',
           '--diffs-font-size': 'var(--type-code)',
           '--diffs-line-height': 'var(--leading-code)',
+          // Used only while the diff is skipped by content-visibility; `auto` keeps its real height once seen.
+          containIntrinsicBlockSize: `auto ${estimateHunkBlockHeight(prepared.lines.length)}px`,
         } as CSSProperties
       }
       renderAnnotation={({ metadata: location }) => (
@@ -309,8 +313,32 @@ function FoldableReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: D
     [prepared, pinned, revealed, props.appearance?.contextLines]
   );
   // New/deleted files contain changes on every line; never fold their content.
-  if (!prepared || prepared.singleSide || (!ranges.some((range) => range.hidden) && !revealed.size)) {
-    return <ReviewHunk hunk={hunk} {...props} />;
+  const unfolded = !prepared || prepared.singleSide || (!ranges.some((range) => range.hidden) && !revealed.size);
+  // A long visible range renders as several diffs, so slices outside the viewport skip style and layout.
+  const slices = useMemo(() => {
+    const result = new Map<number, { start: number; hunk: DiffHunk }[]>();
+    if (!prepared) return result;
+    for (const range of unfolded ? [{ start: 0, end: prepared.lines.length, hidden: false }] : ranges) {
+      if (range.hidden) continue;
+      result.set(
+        range.start,
+        reviewHunkSlices(range.start, range.end).map(([start, end]) => ({
+          start,
+          hunk: sliceReviewHunk(hunk, prepared.lines, start, end),
+        }))
+      );
+    }
+    return result;
+  }, [hunk, prepared, ranges, unfolded]);
+  if (unfolded) {
+    if (!prepared || prepared.lines.length <= HUNK_SLICE_LIMIT) return <ReviewHunk hunk={hunk} {...props} />;
+    return (
+      <div className="review-context-hunk">
+        {slices.get(0)?.map((slice) => (
+          <ReviewHunk key={`slice-${slice.start}`} {...props} hunk={slice.hunk} sourceHeader={hunk.hunkHeader} />
+        ))}
+      </div>
+    );
   }
   return (
     <div ref={rootRef} className="review-context-hunk">
@@ -328,20 +356,17 @@ function FoldableReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: D
             title="Hide extra context"
             onClick={() => changeContext(() => setRevealed(new Set()))}
           >
-            <FoldVertical size={14} aria-hidden="true" />
+            <span className="icon-mask icon-fold-vertical" aria-hidden="true" />
           </button>
         </div>
       )}
       {ranges.map((range) => {
         if (!range.hidden)
-          return (
-            <ReviewHunk
-              key={`code-${range.start}`}
-              {...props}
-              hunk={sliceReviewHunk(hunk, prepared.lines, range.start, range.end)}
-              sourceHeader={hunk.hunkHeader}
-            />
-          );
+          return slices
+            .get(range.start)
+            ?.map((slice) => (
+              <ReviewHunk key={`code-${slice.start}`} {...props} hunk={slice.hunk} sourceHeader={hunk.hunkHeader} />
+            ));
         const count = range.end - range.start;
         const reveal = (all: boolean) =>
           setRevealed((current) => {
@@ -374,7 +399,7 @@ function FoldableReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: D
               title={`Show ${Math.min(count, 10)} of ${count} hidden unchanged ${count === 1 ? 'line' : 'lines'}`}
               onClick={() => changeContext(() => reveal(false))}
             >
-              <ChevronsUpDown size={14} aria-hidden="true" />
+              <span className="icon-mask icon-chevrons-up-down" aria-hidden="true" />
               <span aria-hidden="true">{count} hidden</span>
             </button>
             {count > 10 && (
@@ -385,7 +410,7 @@ function FoldableReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: D
                 title={`Show all ${count} unchanged lines`}
                 onClick={() => changeContext(() => reveal(true))}
               >
-                <UnfoldVertical size={14} aria-hidden="true" />
+                <span className="icon-mask icon-unfold-vertical" aria-hidden="true" />
               </button>
             )}
           </div>

@@ -2,6 +2,7 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 're
 import { Minus, Plus, Scan } from 'lucide-react';
 import { Button } from './ui/button';
 import { namespaceSVG } from '../lib/svg-ids';
+import { settledObserver } from '../lib/resize-activity';
 
 /** A dedicated inspection surface: fit by default, readable scale on demand. */
 export function DiagramViewport({
@@ -42,7 +43,8 @@ export function DiagramViewport({
     if (!el) return;
     const measure = () => setBox({ width: el.clientWidth, height: el.clientHeight });
     measure();
-    const observer = new ResizeObserver(measure);
+    // Fit once the window resize settles; pane changes still fit at once.
+    const observer = settledObserver(measure);
     observer.observe(el);
     return () => observer.disconnect();
   }, []);

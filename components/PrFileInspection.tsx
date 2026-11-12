@@ -136,10 +136,17 @@ export function PrFileInspection({
     const section = sectionRef.current;
     const header = section?.querySelector('.changes-file-header');
     if (!section || !header) return;
-    const measure = () =>
-      section.style.setProperty('--markdown-header-height', `${header.getBoundingClientRect().height}px`);
-    measure();
-    const observer = new ResizeObserver(measure);
+    // The toolbar mounts later inside the section, so the value stays an inherited property. Take the size from the
+    // observer entry and write only when it changes, so a resize neither forces a layout nor restyles the file.
+    let written = '';
+    const write = (height: number) => {
+      const value = `${Math.round(height)}px`;
+      if (value === written) return;
+      written = value;
+      section.style.setProperty('--markdown-header-height', value);
+    };
+    write(header.getBoundingClientRect().height);
+    const observer = new ResizeObserver((entries) => write(entries[entries.length - 1].borderBoxSize[0].blockSize));
     observer.observe(header);
     return () => observer.disconnect();
   }, [markdown]);

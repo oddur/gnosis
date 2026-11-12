@@ -78,6 +78,7 @@ import {
 import { SearchableSelect } from './SearchableSelect';
 import { Button } from './ui/button';
 import { timeAgo } from '../lib/utils';
+import { settledObserver } from '../lib/resize-activity';
 
 let rememberedGrouping: WorkflowGrouping | undefined;
 
@@ -152,7 +153,7 @@ function JobCard({ id, data }: NodeProps<JobNode>) {
     const text = annotationText.current;
     if (!text) return;
     const measure = () => setAnnotationOverflow(text.scrollHeight > text.clientHeight + 1);
-    const observer = new ResizeObserver(measure);
+    const observer = settledObserver(measure);
     observer.observe(text);
     measure();
     return () => observer.disconnect();
@@ -857,7 +858,9 @@ export function WorkflowGraphView({
   const [canvasSize, setCanvasSize] = useState('');
   useEffect(() => {
     if (!canvas.current) return;
-    const observer = new ResizeObserver(([entry]) => {
+    // The graph re-fits to the canvas once a window resize settles, not on every step of the drag.
+    const observer = settledObserver((entries) => {
+      const entry = entries[entries.length - 1];
       if (entry.contentRect.width > 0 && entry.contentRect.height > 0)
         setCanvasSize(`${Math.round(entry.contentRect.width)}x${Math.round(entry.contentRect.height)}`);
     });

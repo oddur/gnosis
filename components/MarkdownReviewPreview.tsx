@@ -321,7 +321,7 @@ export function MarkdownReviewPreview({
                   aria-label="View source for section"
                   title="View source for section"
                 >
-                  <Code2 size={14} />
+                  <span className="icon-mask icon-code-xml" aria-hidden="true" />
                 </button>
                 {assignments.get(block.id)?.map((annotation, index) => (
                   <div key={index} className="markdown-review-discussion">
