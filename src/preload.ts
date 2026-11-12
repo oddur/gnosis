@@ -23,7 +23,13 @@ import type { LocalSearchResponse } from './command-search-service';
 import type { GitHubDevicePrompt } from '../lib/github-auth';
 import type { QueueViewAction } from '../lib/saved-views';
 import type { QueueFilters } from '../lib/queue-filters';
-import type { GitHubReviewThread, GitHubReviewThreads, ReviewThreadAction, ReviewCommentAction, CreateReviewCommentRequest } from '../lib/review-threads';
+import type {
+  GitHubReviewThread,
+  GitHubReviewThreads,
+  ReviewThreadAction,
+  ReviewCommentAction,
+  CreateReviewCommentRequest,
+} from '../lib/review-threads';
 import type { ActivityTask, ActivityAction } from '../lib/activity';
 import type { WorkbenchQueue, GroupingOverride, ReviewSnapshot, ReviewSubject } from '../lib/workbench';
 import { contextBridge, ipcRenderer } from 'electron';
@@ -65,42 +71,68 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onGitHubSync: (callback: (event: GitHubSyncEvent) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, value: GitHubSyncEvent) => callback(value);
     ipcRenderer.on('github-sync', handler);
-    return () => ipcRenderer.removeListener('github-sync', handler);
+    return () => {
+      // Return nothing: removeListener returns ipcRenderer itself, which must not cross the context bridge.
+      ipcRenderer.removeListener('github-sync', handler);
+    };
   },
   onWorkbenchChanged: (callback: (revisions?: WorkbenchRevisions) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, revisions?: WorkbenchRevisions) => callback(revisions);
     ipcRenderer.on('workbench-changed', handler);
-    return () => ipcRenderer.removeListener('workbench-changed', handler);
+    return () => {
+      // Return nothing: removeListener returns ipcRenderer itself, which must not cross the context bridge.
+      ipcRenderer.removeListener('workbench-changed', handler);
+    };
   },
   onActivityChanged: (callback: () => void) => {
     ipcRenderer.on('activity-changed', callback);
-    return () => ipcRenderer.removeListener('activity-changed', callback);
+    return () => {
+      // Return nothing: removeListener returns ipcRenderer itself, which must not cross the context bridge.
+      ipcRenderer.removeListener('activity-changed', callback);
+    };
   },
-  getPrBadgePreview: (url: string): Promise<import('../lib/pr-badge-preview').PrBadgePreview | null> => ipcRenderer.invoke('pr-badge-preview', url),
+  getPrBadgePreview: (url: string): Promise<import('../lib/pr-badge-preview').PrBadgePreview | null> =>
+    ipcRenderer.invoke('pr-badge-preview', url),
   loadFileFilters: (): Promise<FileFilterState> => ipcRenderer.invoke('load-file-filters'),
-  updateFileFilters: (action: FileFilterAction): Promise<FileFilterState> => ipcRenderer.invoke('update-file-filters', action),
-  getFileClassifications: (request: PrFileRequest): Promise<Record<string,FileKinds>> => ipcRenderer.invoke('file-classifications', request),
-  onFileFiltersChanged: (callback: (state:FileFilterState)=>void) => {
-    const handler=(_event:Electron.IpcRendererEvent,state:FileFilterState)=>callback(state);
-    ipcRenderer.on('file-filters-changed',handler);return ()=>ipcRenderer.removeListener('file-filters-changed',handler);
+  updateFileFilters: (action: FileFilterAction): Promise<FileFilterState> =>
+    ipcRenderer.invoke('update-file-filters', action),
+  getFileClassifications: (request: PrFileRequest): Promise<Record<string, FileKinds>> =>
+    ipcRenderer.invoke('file-classifications', request),
+  onFileFiltersChanged: (callback: (state: FileFilterState) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: FileFilterState) => callback(state);
+    ipcRenderer.on('file-filters-changed', handler);
+    return () => ipcRenderer.removeListener('file-filters-changed', handler);
   },
-  onFileClassificationsChanged: (callback: (key:string,kinds:Record<string,FileKinds>)=>void) => {
-    const handler=(_event:Electron.IpcRendererEvent,value:{key:string;kinds:Record<string,FileKinds>})=>callback(value.key,value.kinds);
-    ipcRenderer.on('file-classifications-changed',handler);return ()=>ipcRenderer.removeListener('file-classifications-changed',handler);
+  onFileClassificationsChanged: (callback: (key: string, kinds: Record<string, FileKinds>) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, value: { key: string; kinds: Record<string, FileKinds> }) =>
+      callback(value.key, value.kinds);
+    ipcRenderer.on('file-classifications-changed', handler);
+    return () => ipcRenderer.removeListener('file-classifications-changed', handler);
   },
-  onWorkspaceShortcut: (callback: (action: NonNullable<ReturnType<typeof import('../lib/workspace-tabs').workspaceShortcut>>) => void) => {
+  onWorkspaceShortcut: (
+    callback: (action: NonNullable<ReturnType<typeof import('../lib/workspace-tabs').workspaceShortcut>>) => void
+  ) => {
     const handler = (_event: Electron.IpcRendererEvent, action: unknown) => {
-      if (['new','close','reopen','next','previous'].includes(String(action)) || typeof action === 'number' && action >= 1 && action <= 9)
+      if (
+        ['new', 'close', 'reopen', 'next', 'previous'].includes(String(action)) ||
+        (typeof action === 'number' && action >= 1 && action <= 9)
+      )
         callback(action as NonNullable<ReturnType<typeof import('../lib/workspace-tabs').workspaceShortcut>>);
     };
     ipcRenderer.on('workspace-shortcut', handler);
-    return () => ipcRenderer.removeListener('workspace-shortcut', handler);
+    return () => {
+      // Return nothing: removeListener returns ipcRenderer itself, which must not cross the context bridge.
+      ipcRenderer.removeListener('workspace-shortcut', handler);
+    };
   },
   isFullScreen: (): Promise<boolean> => ipcRenderer.invoke('window-full-screen'),
   onFullScreenChange: (callback: (fullScreen: boolean) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, value: unknown) => callback(value === true);
     ipcRenderer.on('window-full-screen', handler);
-    return () => ipcRenderer.removeListener('window-full-screen', handler);
+    return () => {
+      // Return nothing: removeListener returns ipcRenderer itself, which must not cross the context bridge.
+      ipcRenderer.removeListener('window-full-screen', handler);
+    };
   },
   setWindowChromeTheme: (dark: boolean) => ipcRenderer.send('window-chrome-theme', dark),
   onHistoryNavigate: (callback: (direction: -1 | 1) => void) => {
@@ -108,57 +140,94 @@ contextBridge.exposeInMainWorld('electronAPI', {
       if (direction === -1 || direction === 1) callback(direction);
     };
     ipcRenderer.on('history-navigate', handler);
-    return () => ipcRenderer.removeListener('history-navigate', handler);
+    return () => {
+      // Return nothing: removeListener returns ipcRenderer itself, which must not cross the context bridge.
+      ipcRenderer.removeListener('history-navigate', handler);
+    };
   },
   clearGitHubCache: (): Promise<void> => ipcRenderer.invoke('clear-github-cache'),
-  storageSizes: (): Promise<{ savedWorkBytes: number; githubCacheBytes: number }> => ipcRenderer.invoke('storage-sizes'),
-  getPreparedInventories: (revisions: InspectionRevision[]): Promise<PreparedInventories> => ipcRenderer.invoke('prepared-inventories', revisions),
-  preparePrReview: (url: string, revision: { baseSha: string; headSha: string }): Promise<void> => ipcRenderer.invoke('prepare-pr-review', url, revision),
-  getPrCommits: (url: string, refresh = false, options?: InspectionLoadOptions): Promise<PrCommits> => ipcRenderer.invoke('pr-commits', url, refresh, options),
-  getCommitComparison: (selection: CommitSelection, background?: boolean): Promise<PrChanges> => ipcRenderer.invoke('commit-comparison', selection, background),
-  renderMarkdownReview: (request: MarkdownReviewRequest | ExplanationMarkdownRequest): Promise<MarkdownReview> => ipcRenderer.invoke('markdown-review', request),
-  getStackChanges: (subject: ReviewSubject, refresh = false, options?: InspectionLoadOptions): Promise<PrChanges> => ipcRenderer.invoke('stack-changes', subject, refresh, options),
-  getPrChanges: (url: string, refresh = false, options?: InspectionLoadOptions): Promise<PrChanges> => ipcRenderer.invoke('pr-changes', url, refresh, options),
+  storageSizes: (): Promise<{ savedWorkBytes: number; githubCacheBytes: number }> =>
+    ipcRenderer.invoke('storage-sizes'),
+  getPreparedInventories: (revisions: InspectionRevision[]): Promise<PreparedInventories> =>
+    ipcRenderer.invoke('prepared-inventories', revisions),
+  preparePrReview: (url: string, revision: { baseSha: string; headSha: string }): Promise<void> =>
+    ipcRenderer.invoke('prepare-pr-review', url, revision),
+  getPrCommits: (url: string, refresh = false, options?: InspectionLoadOptions): Promise<PrCommits> =>
+    ipcRenderer.invoke('pr-commits', url, refresh, options),
+  getCommitComparison: (selection: CommitSelection, background?: boolean): Promise<PrChanges> =>
+    ipcRenderer.invoke('commit-comparison', selection, background),
+  renderMarkdownReview: (request: MarkdownReviewRequest | ExplanationMarkdownRequest): Promise<MarkdownReview> =>
+    ipcRenderer.invoke('markdown-review', request),
+  getStackChanges: (subject: ReviewSubject, refresh = false, options?: InspectionLoadOptions): Promise<PrChanges> =>
+    ipcRenderer.invoke('stack-changes', subject, refresh, options),
+  getPrChanges: (url: string, refresh = false, options?: InspectionLoadOptions): Promise<PrChanges> =>
+    ipcRenderer.invoke('pr-changes', url, refresh, options),
   cancelInspection: (requestId: string): Promise<void> => ipcRenderer.invoke('cancel-inspection', requestId),
-  getPrChangeFile: (request: PrFileRequest, background?: boolean): Promise<PrFileContents> => ipcRenderer.invoke('pr-change-file', request, background),
-  checkPrChanges: (url: string): Promise<{ baseSha: string; headSha: string }> => ipcRenderer.invoke('pr-changes-revision', url),
+  getPrChangeFile: (request: PrFileRequest, background?: boolean): Promise<PrFileContents> =>
+    ipcRenderer.invoke('pr-change-file', request, background),
+  checkPrChanges: (url: string): Promise<{ baseSha: string; headSha: string }> =>
+    ipcRenderer.invoke('pr-changes-revision', url),
   cancelChat: (requestId: string): Promise<void> => ipcRenderer.invoke('cancel-chat', requestId),
   onFileChatProgress: (callback: (event: { requestId: string; chunk: string }) => void): (() => void) => {
-    const listener = (_event: Electron.IpcRendererEvent, value: { requestId: string; chunk: string }) => callback(value);
+    const listener = (_event: Electron.IpcRendererEvent, value: { requestId: string; chunk: string }) =>
+      callback(value);
     ipcRenderer.on('file-chat-progress', listener);
-    return () => ipcRenderer.removeListener('file-chat-progress', listener);
+    return () => {
+      // Return nothing: removeListener returns ipcRenderer itself, which must not cross the context bridge.
+      ipcRenderer.removeListener('file-chat-progress', listener);
+    };
   },
   askPrFile: (request: FileChatRequest): Promise<string> => ipcRenderer.invoke('ask-pr-file', request),
-  getGitHubProfile: (login:string):Promise<GitHubProfile> => ipcRenderer.invoke('get-github-profile',login),
-  getQueueSignals: (requests: QueueSignalRequest[], options?: QueueSignalOptions): Promise<QueueSignals[]> => ipcRenderer.invoke('get-queue-signals', requests, options),
-  commandSearch: (query: string, includeBots = false, recentIds: string[] = []): Promise<LocalSearchResponse> => ipcRenderer.invoke('command-search', query, includeBots, recentIds),
+  getGitHubProfile: (login: string): Promise<GitHubProfile> => ipcRenderer.invoke('get-github-profile', login),
+  getQueueSignals: (requests: QueueSignalRequest[], options?: QueueSignalOptions): Promise<QueueSignals[]> =>
+    ipcRenderer.invoke('get-queue-signals', requests, options),
+  commandSearch: (query: string, includeBots = false, recentIds: string[] = []): Promise<LocalSearchResponse> =>
+    ipcRenderer.invoke('command-search', query, includeBots, recentIds),
   commandGitHubSearch: (query: string): Promise<PrSearchResult[]> => ipcRenderer.invoke('command-github-search', query),
   reviewStateStorageVersion: 1 as const,
-  loadReviewState: (legacy: Record<string,string>): Promise<Record<string,unknown>> => ipcRenderer.invoke('load-review-state',legacy),
-  saveReviewState: (value: ReviewStateWrite): Promise<void> => ipcRenderer.invoke('save-review-state',value),
-  saveFileProgress: (value: FileProgressPatch): Promise<void> => ipcRenderer.invoke('save-file-progress',value),
-  onFlushReviewState: (callback: () => Promise<void>) => { flushReviewState = callback; },
+  loadReviewState: (legacy: Record<string, string>): Promise<Record<string, unknown>> =>
+    ipcRenderer.invoke('load-review-state', legacy),
+  saveReviewState: (value: ReviewStateWrite): Promise<void> => ipcRenderer.invoke('save-review-state', value),
+  saveFileProgress: (value: FileProgressPatch): Promise<void> => ipcRenderer.invoke('save-file-progress', value),
+  onFlushReviewState: (callback: () => Promise<void>) => {
+    flushReviewState = callback;
+  },
   listActivity: (): Promise<ActivityTask[]> => ipcRenderer.invoke('list-activity'),
-  activityAction: (id:string, action:ActivityAction): Promise<void> => ipcRenderer.invoke('activity-action',id,action),
-  workbenchMarkPrRead: (request: MarkPrReadRequest): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-mark-pr-read', request),
+  activityAction: (id: string, action: ActivityAction): Promise<void> =>
+    ipcRenderer.invoke('activity-action', id, action),
+  workbenchMarkPrRead: (request: MarkPrReadRequest): Promise<WorkbenchQueue> =>
+    ipcRenderer.invoke('workbench-mark-pr-read', request),
   onPrReadStateChanged: (callback: () => void) => {
     const handler = () => callback();
     ipcRenderer.on('pr-read-state-changed', handler);
-    return () => ipcRenderer.removeListener('pr-read-state-changed', handler);
+    return () => {
+      // Return nothing: removeListener returns ipcRenderer itself, which must not cross the context bridge.
+      ipcRenderer.removeListener('pr-read-state-changed', handler);
+    };
   },
-  workbenchSnapshot: (withSignals?: boolean): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-snapshot', withSignals),
-  workbenchRenameStack: (id: string, name: string, account?: string): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-rename-stack', id, name, account),
-  workbenchMutePrs: (request: MutePrRequest): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-mute-prs', request),
-  workbenchStarPrs: (request: StarPrRequest): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-star-prs', request),
-  workbenchViewAction: (action: QueueViewAction): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-view-action', action),
-  workbenchSetFilters: (filters: QueueFilters): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-set-filters', filters),
+  workbenchSnapshot: (withSignals?: boolean): Promise<WorkbenchQueue> =>
+    ipcRenderer.invoke('workbench-snapshot', withSignals),
+  workbenchRenameStack: (id: string, name: string, account?: string): Promise<WorkbenchQueue> =>
+    ipcRenderer.invoke('workbench-rename-stack', id, name, account),
+  workbenchMutePrs: (request: MutePrRequest): Promise<WorkbenchQueue> =>
+    ipcRenderer.invoke('workbench-mute-prs', request),
+  workbenchStarPrs: (request: StarPrRequest): Promise<WorkbenchQueue> =>
+    ipcRenderer.invoke('workbench-star-prs', request),
+  workbenchViewAction: (action: QueueViewAction): Promise<WorkbenchQueue> =>
+    ipcRenderer.invoke('workbench-view-action', action),
+  workbenchSetFilters: (filters: QueueFilters): Promise<WorkbenchQueue> =>
+    ipcRenderer.invoke('workbench-set-filters', filters),
   workbenchQueue: (force = false): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-queue', force),
-  workbenchGroup: (correction: GroupingOverride): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-group', correction),
+  workbenchGroup: (correction: GroupingOverride): Promise<WorkbenchQueue> =>
+    ipcRenderer.invoke('workbench-group', correction),
   workbenchBriefing: (id: string): Promise<WorkbenchQueue> => ipcRenderer.invoke('workbench-briefing', id),
-  workbenchFreshness: (snapshot: ReviewSnapshot): Promise<FreshnessResult> => ipcRenderer.invoke('workbench-freshness', snapshot),
-  generateExplainer: (req: GenerateExplainerRequest): Promise<InteractiveExplainer> => ipcRenderer.invoke('generate-explainer', req),
+  workbenchFreshness: (snapshot: ReviewSnapshot): Promise<FreshnessResult> =>
+    ipcRenderer.invoke('workbench-freshness', snapshot),
+  generateExplainer: (req: GenerateExplainerRequest): Promise<InteractiveExplainer> =>
+    ipcRenderer.invoke('generate-explainer', req),
   cancelExplainer: (req: GenerateExplainerRequest): Promise<void> => ipcRenderer.invoke('cancel-explainer', req),
-  getExplanationSetup: (req: GenerateReviewRequest): Promise<import('../lib/explanation-options').ExplanationSetup> => ipcRenderer.invoke('explanation-setup', req),
+  getExplanationSetup: (req: GenerateReviewRequest): Promise<import('../lib/explanation-options').ExplanationSetup> =>
+    ipcRenderer.invoke('explanation-setup', req),
   startReview: (req: GenerateReviewRequest): Promise<StartReviewResult> => ipcRenderer.invoke('start-review', req),
   cancelReview: (reviewId: string): Promise<void> => ipcRenderer.invoke('cancel-review', reviewId),
   getConfig: (): Promise<{ githubToken: string | null }> => ipcRenderer.invoke('get-config'),
@@ -244,23 +313,36 @@ contextBridge.exposeInMainWorld('electronAPI', {
   offChatToolUse: (): void => {
     ipcRenderer.removeAllListeners('chat-tool-use');
   },
-  conflictResolution: (request: import('../lib/conflict-resolution').ConflictRequest): Promise<import('../lib/conflict-resolution').ConflictReply> => ipcRenderer.invoke('conflict-resolution', request),
-  getPrActionState: (url: string, force = false): Promise<import('../lib/pr-actions').PrActionState> => ipcRenderer.invoke('get-pr-action-state', url, force),
-  getStackMergePlan: (urls: string[]): Promise<import('../lib/pr-actions').PrMergePlan> => ipcRenderer.invoke('get-stack-merge-plan', urls),
-  performPrAction: (request: import('../lib/pr-actions').PrActionRequest): Promise<import('../lib/pr-actions').PrActionResult> => ipcRenderer.invoke('perform-pr-action', request),
+  conflictResolution: (
+    request: import('../lib/conflict-resolution').ConflictRequest
+  ): Promise<import('../lib/conflict-resolution').ConflictReply> => ipcRenderer.invoke('conflict-resolution', request),
+  getPrActionState: (url: string, force = false): Promise<import('../lib/pr-actions').PrActionState> =>
+    ipcRenderer.invoke('get-pr-action-state', url, force),
+  getStackMergePlan: (urls: string[]): Promise<import('../lib/pr-actions').PrMergePlan> =>
+    ipcRenderer.invoke('get-stack-merge-plan', urls),
+  performPrAction: (
+    request: import('../lib/pr-actions').PrActionRequest
+  ): Promise<import('../lib/pr-actions').PrActionResult> => ipcRenderer.invoke('perform-pr-action', request),
   submitReview: (req: SubmitReviewRequest): Promise<{ reviewUrl: string; droppedCommentCount: number }> =>
     ipcRenderer.invoke('submit-review', req),
   checkPrFreshness: (prUrl: string, headSha: string | undefined): Promise<FreshnessResult> =>
     ipcRenderer.invoke('check-pr-freshness', prUrl, headSha),
   loadOnboarding: (): Promise<OnboardingState> => ipcRenderer.invoke('load-onboarding'),
-  saveOnboarding: (state: OnboardingState, account: string | null): Promise<void> => ipcRenderer.invoke('save-onboarding', state, account),
-  applyOnboarding: (draft: SetupDraft, account: string | null): Promise<Preferences> => ipcRenderer.invoke('apply-onboarding', draft, account),
+  saveOnboarding: (state: OnboardingState, account: string | null): Promise<void> =>
+    ipcRenderer.invoke('save-onboarding', state, account),
+  applyOnboarding: (draft: SetupDraft, account: string | null): Promise<Preferences> =>
+    ipcRenderer.invoke('apply-onboarding', draft, account),
   loadHarnessEnvironment: (): Promise<HarnessEnvironment> => ipcRenderer.invoke('load-harness-environment'),
-  saveHarnessEnvironment: (provider: import('../lib/models').Provider, variables: EnvironmentVariable[]): Promise<void> => ipcRenderer.invoke('save-harness-environment', provider, variables),
+  saveHarnessEnvironment: (
+    provider: import('../lib/models').Provider,
+    variables: EnvironmentVariable[]
+  ): Promise<void> => ipcRenderer.invoke('save-harness-environment', provider, variables),
   onPreferencesChanged: (callback: (prefs: Preferences) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, prefs: Preferences) => callback(prefs);
     ipcRenderer.on('preferences-changed', handler);
-    return () => { ipcRenderer.removeListener('preferences-changed', handler); };
+    return () => {
+      ipcRenderer.removeListener('preferences-changed', handler);
+    };
   },
   loadPreferences: (): Promise<Preferences> => ipcRenderer.invoke('load-preferences'),
   savePreferences: (prefs: Preferences): Promise<void> => ipcRenderer.invoke('save-preferences', prefs),
@@ -268,23 +350,44 @@ contextBridge.exposeInMainWorld('electronAPI', {
   searchRepos: (query: string): Promise<RepoSearchResult[]> => ipcRenderer.invoke('search-repos', query),
   reRenderHunks: (review: ReviewGuide): Promise<ReviewGuide> => ipcRenderer.invoke('re-render-hunks', review),
   prepareWorkflowGraph: (target?: CheckTarget): Promise<void> => ipcRenderer.invoke('prepare-workflow-graph', target),
-  getWorkflowRuns: (target: CheckTarget, options?: ChecksOptions): Promise<WorkflowRuns | undefined> => ipcRenderer.invoke('workflow-runs', target, options),
-  getWorkflowGraph: (input: WorkflowGraphInput, options?: ChecksOptions): Promise<WorkflowGraph | undefined> => ipcRenderer.invoke('workflow-graph', input, options),
-  getPrChecks: (target: CheckTarget, options?: ChecksOptions): Promise<PrChecks | undefined> => ipcRenderer.invoke('pr-checks', target, options),
-  getCachedCheckDetails: (target: CheckSelection): Promise<CheckDetails | undefined> => ipcRenderer.invoke('cached-check-details', target),
-  getCheckDetails: (target: CheckSelection, options?: { force?: boolean }): Promise<CheckDetails> => ipcRenderer.invoke('check-details', target, options),
+  getWorkflowRuns: (target: CheckTarget, options?: ChecksOptions): Promise<WorkflowRuns | undefined> =>
+    ipcRenderer.invoke('workflow-runs', target, options),
+  getWorkflowGraph: (input: WorkflowGraphInput, options?: ChecksOptions): Promise<WorkflowGraph | undefined> =>
+    ipcRenderer.invoke('workflow-graph', input, options),
+  getPrChecks: (target: CheckTarget, options?: ChecksOptions): Promise<PrChecks | undefined> =>
+    ipcRenderer.invoke('pr-checks', target, options),
+  getCachedCheckDetails: (target: CheckSelection): Promise<CheckDetails | undefined> =>
+    ipcRenderer.invoke('cached-check-details', target),
+  getCheckDetails: (target: CheckSelection, options?: { force?: boolean }): Promise<CheckDetails> =>
+    ipcRenderer.invoke('check-details', target, options),
   getCheckLog: (target: CheckSelection): Promise<CheckLog> => ipcRenderer.invoke('check-log', target),
-  rerunChecks: (target: CheckSelection & { mode: 'failed' | 'all' }): Promise<void> => ipcRenderer.invoke('rerun-checks', target),
-  getPrStatus: (prUrl: string, force?: boolean, options?: PrStatusOptions): Promise<PrStatus | null> => ipcRenderer.invoke('get-pr-status', prUrl, force, options),
+  rerunChecks: (target: CheckSelection & { mode: 'failed' | 'all' }): Promise<void> =>
+    ipcRenderer.invoke('rerun-checks', target),
+  getPrStatus: (prUrl: string, force?: boolean, options?: PrStatusOptions): Promise<PrStatus | null> =>
+    ipcRenderer.invoke('get-pr-status', prUrl, force, options),
   getPrMetadata: (prUrl: string): Promise<PrMetadata> => ipcRenderer.invoke('get-pr-metadata', prUrl),
-  loadReviewImages: (reviewId: string, filePath: string, downloadLfs = false): Promise<import('../lib/review-images').ReviewImageComparison> => ipcRenderer.invoke('load-review-images', reviewId, filePath, downloadLfs),
+  loadReviewImages: (
+    reviewId: string,
+    filePath: string,
+    downloadLfs = false
+  ): Promise<import('../lib/review-images').ReviewImageComparison> =>
+    ipcRenderer.invoke('load-review-images', reviewId, filePath, downloadLfs),
   loadPrImage: (url: string): Promise<string> => ipcRenderer.invoke('load-pr-image', url),
-  getCachedReviewThreads: (prUrl: string): Promise<GitHubReviewThreads | undefined> => ipcRenderer.invoke('cached-review-threads', prUrl),
-  feedbackAction: (req: import('../lib/review-threads').FeedbackAction): Promise<void> => ipcRenderer.invoke('feedback-action', req),
-  getReviewThreads: (prUrl: string, refresh?: boolean, options?: { revalidate?: boolean }): Promise<GitHubReviewThreads> => ipcRenderer.invoke('get-review-threads', prUrl, refresh, options),
-  createReviewComment: (req: CreateReviewCommentRequest): Promise<void> => ipcRenderer.invoke('create-review-comment', req),
-  reviewCommentAction: (req: ReviewCommentAction): Promise<GitHubReviewThread> => ipcRenderer.invoke('review-comment-action', req),
-  reviewThreadAction: (req: ReviewThreadAction): Promise<GitHubReviewThread> => ipcRenderer.invoke('review-thread-action', req),
+  getCachedReviewThreads: (prUrl: string): Promise<GitHubReviewThreads | undefined> =>
+    ipcRenderer.invoke('cached-review-threads', prUrl),
+  feedbackAction: (req: import('../lib/review-threads').FeedbackAction): Promise<void> =>
+    ipcRenderer.invoke('feedback-action', req),
+  getReviewThreads: (
+    prUrl: string,
+    refresh?: boolean,
+    options?: { revalidate?: boolean }
+  ): Promise<GitHubReviewThreads> => ipcRenderer.invoke('get-review-threads', prUrl, refresh, options),
+  createReviewComment: (req: CreateReviewCommentRequest): Promise<void> =>
+    ipcRenderer.invoke('create-review-comment', req),
+  reviewCommentAction: (req: ReviewCommentAction): Promise<GitHubReviewThread> =>
+    ipcRenderer.invoke('review-comment-action', req),
+  reviewThreadAction: (req: ReviewThreadAction): Promise<GitHubReviewThread> =>
+    ipcRenderer.invoke('review-thread-action', req),
   onUpdateAvailable: (callback: (info: UpdateInfo) => void): void => {
     ipcRenderer.on('update-available', (_event, info: UpdateInfo) => callback(info));
   },
@@ -323,10 +426,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPrFiles: (prUrl: string): Promise<ChangedFile[]> => ipcRenderer.invoke('get-pr-files', prUrl),
   pickRepoDir: (): Promise<string | null> => ipcRenderer.invoke('pick-repo-dir'),
   getLocalClones: (): Promise<import('../lib/local-clone').LocalCloneStatus[]> => ipcRenderer.invoke('local-clones'),
-  connectLocalClone: (repo: string, directory: string): Promise<import('../lib/local-clone').LocalCloneStatus[]> => ipcRenderer.invoke('connect-local-clone', repo, directory),
-  disconnectLocalClone: (repo: string): Promise<import('../lib/local-clone').LocalCloneStatus[]> => ipcRenderer.invoke('disconnect-local-clone', repo),
+  connectLocalClone: (repo: string, directory: string): Promise<import('../lib/local-clone').LocalCloneStatus[]> =>
+    ipcRenderer.invoke('connect-local-clone', repo, directory),
+  disconnectLocalClone: (repo: string): Promise<import('../lib/local-clone').LocalCloneStatus[]> =>
+    ipcRenderer.invoke('disconnect-local-clone', repo),
   listRepoRefs: (
-    repoPath: string,
+    repoPath: string
   ): Promise<{
     branches: string[];
     tags: string[];
@@ -337,7 +442,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   validateLocalRepo: (
     repoPath: string,
     baseRef: string,
-    headRef: string,
+    headRef: string
   ): Promise<
     | {
         ok: true;
