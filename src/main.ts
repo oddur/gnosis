@@ -72,8 +72,7 @@ import type { FileChatRequest, PrFileRequest } from '../lib/pr-changes';
 import { createGitHubProfileService } from './github-profile-service';
 import { createQueueSignalsService, cachedQueueSignals, savedQueueSignals } from './queue-signals-service';
 import type { QueueSignalRequest, QueueSignalOptions, QueueSignals } from '../lib/queue-signals';
-import { githubCachedResponses } from '../lib/github-client';
-import { createWorkerCommandSearchService } from './command-search-service';
+import { createSearchIndexer } from './command-search-service';
 import type { QueueViewAction } from '../lib/saved-views';
 import { createActivityService } from './activity-service';
 import { createReviewThreadService } from './review-thread-service';
@@ -1044,6 +1043,7 @@ function broadcastWorkbenchChanged(): void {
     /* Without revisions, renderers read the snapshot once and compare it themselves. */
   }
   broadcastToAllWindows('workbench-changed', revisions);
+  searchIndex.queueChanged();
 }
 
 function broadcastToAllWindows(channel: string, ...args: unknown[]): void {
@@ -2815,9 +2815,12 @@ handleInteractive('get-github-profile', (_event, login:string) => {
   return getGitHubProfile(getGitHubClient(token),login);
 });
 const reviewThreads = createReviewThreadService();
-const commandSearch = createWorkerCommandSearchService({
+const SEARCH_INDEX_DELAY_MS = 3_000;
+/** Incremental: the cache hook and queue changes send only changed feeds to the saved-work worker. */
+const searchIndex = createSearchIndexer({
+  backend: { feeds: account => appData.searchFeeds(account), apply: (account, ops) => appData.searchApply(account, ops), search: request => appData.search(request) },
+  ready: () => startup.all,
   directory: getReviewsDir,
-  cachedResponses: () => { const token=getResolvedToken(); return token?githubCachedResponses(getGitHubClient(token)):[]; },
   queue: () => workbench.cached(),
   history: readReviewsIndex,
   mutedUrls: () => workbench.mutedUrls(),
@@ -2825,9 +2828,15 @@ const commandSearch = createWorkerCommandSearchService({
   ignoreBots: () => loadPreferences().ignoreDependabotPrs !== false,
   repositoryBotSettings: () => Object.fromEntries(Object.entries(loadPreferences().repositorySettings ?? {}).filter(([, s]) => s.ignoreDependabotPrs !== undefined).map(([repo, s]) => [repo, s.ignoreDependabotPrs as boolean])),
   threads: (url) => { const token = getResolvedToken(); return token ? reviewThreads.cached(getGitHubClient(token), url) : undefined; },
-}, request => appData.search(request));
+  onApply: stats => note('search-apply', stats),
+  onSearch: ({ ms, main, first, hits }) => {
+    if (startupTracing) console.log(`[perf] command-search ${ms.toFixed(1)}ms main=${main.toFixed(1)} first=${first} hits=${hits}`);
+  },
+});
+githubClients.onCacheChange(change => searchIndex.cacheChanged(change));
+void startup.all.then(() => setTimeout(() => void searchIndex.start().catch((error: unknown) => console.warn('Could not build the search index:', error)), SEARCH_INDEX_DELAY_MS).unref(), () => {});
 ipcMain.handle('command-search', (_event, query: string, includeBots: boolean, recentIds: string[]) =>
-  commandSearch.search(query, includeBots === true, Array.isArray(recentIds) ? recentIds.filter(id=>typeof id==='string').slice(0,20) : []));
+  searchIndex.search(query, includeBots === true, Array.isArray(recentIds) ? recentIds.filter(id=>typeof id==='string').slice(0,20) : []));
 handleInteractive('command-github-search', async (_event, query: string) => {
   const token = getResolvedToken();
   if (!token || !cachedLogin) throw new Error('Connect GitHub to search beyond this computer.');

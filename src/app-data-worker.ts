@@ -4,8 +4,8 @@ import {
   type FileProgressPatch,
   type ReviewStateWrite,
 } from '../lib/review-state';
-import { createSqliteSearchIndex } from './sqlite-search-index';
-import { createCommandSearchService, type SearchRequest, type SearchInput } from './command-search-service';
+import { clearSearchIndex, createSqliteSearchIndex, type SqliteSearchIndex } from './sqlite-search-index';
+import type { LocalSearchResponse, SearchOp, SearchRequest } from './command-search-service';
 import { parentPort } from 'node:worker_threads';
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
@@ -20,6 +20,8 @@ type Request = { id: number } & (
   | { method: 'write'; args: [string, unknown][] }
   | { method: 'close' | 'clear-github'; args?: undefined }
   | { method: 'search'; args: SearchRequest }
+  | { method: 'search-feeds'; args: { account: string } }
+  | { method: 'search-apply'; args: { account: string; ops: SearchOp[] } }
   | { method: 'review-load'; args: Record<string, string> }
   | { method: 'review-save'; args: ReviewStateWrite }
   | { method: 'progress-save'; args: FileProgressPatch }
@@ -142,11 +144,12 @@ function states() {
     )
   );
 }
-let searchInput: SearchInput | undefined;
-let searchService: ReturnType<typeof createCommandSearchService> | undefined;
+let searchIndex: SqliteSearchIndex | undefined;
+/** Created on first use: `open` never touches the search tables. */
+const search = () => (searchIndex ??= createSqliteSearchIndex(db));
 let chain = Promise.resolve();
 port.on('message', (request: Request) => {
-  chain = chain.then(async () => {
+  chain = chain.then(() => {
     const { id, method, args } = request;
     try {
       let result: unknown;
@@ -178,10 +181,7 @@ port.on('message', (request: Request) => {
       } else if (method === 'clear-github') {
         transaction(() => {
           // Search also contains derived GitHub text; it can be rebuilt from surviving saved reviews.
-          if (db.prepare("SELECT name FROM sqlite_master WHERE name='search_documents'").get())
-            db.exec('DELETE FROM search_documents');
-          if (db.prepare("SELECT name FROM sqlite_master WHERE name='search_subjects'").get())
-            db.exec('DELETE FROM search_subjects');
+          clearSearchIndex(db);
           for (const { name } of db
             .prepare("SELECT DISTINCT name FROM records WHERE name LIKE 'workbench:%'")
             .all() as {
@@ -196,8 +196,7 @@ port.on('message', (request: Request) => {
             write(name, { ...retained, subjects: [] });
           }
         });
-        searchService = undefined;
-        searchInput = undefined;
+        searchIndex = undefined;
         result = states();
       } else if (method === 'review-load') {
         if (!db.prepare('SELECT id FROM migrations WHERE id=?').get('review-state-v1'))
@@ -247,30 +246,16 @@ port.on('message', (request: Request) => {
           }
         });
       } else if (method === 'search') {
-        if (args.input) searchInput = args.input;
-        if (!searchInput || searchInput.account !== args.account)
-          throw new Error('Search index is not ready for this account');
-        searchInput.muted = args.muted;
-        searchInput.ignoreBots = args.ignoreBots;
-        searchInput.repositoryBotSettings = args.repositoryBotSettings;
-        const current = () => {
-          if (!searchInput) throw new Error('Search data unavailable');
-          return searchInput;
-        };
-        if (!searchService)
-          searchService = createCommandSearchService({
-            index: createSqliteSearchIndex(db),
-            directory: () => current().directory,
-            queue: () => current().queue,
-            history: () => current().history,
-            account: () => current().account,
-            ignoreBots: () => current().ignoreBots,
-            repositoryBotSettings: () => current().repositoryBotSettings ?? {},
-            mutedUrls: () => new Set(current().muted),
-            cachedResponses: () => current().cachedResponses,
-            threads: (url) => current().threads[url],
-          });
-        result = await searchService.search(args.query, args.includeBots, args.recentIds);
+        const found = search().search(args);
+        result = {
+          account: args.account,
+          ...found,
+          ignoreBots: args.ignoreBots || Object.values(args.repositoryBotSettings ?? {}).some(Boolean),
+        } satisfies LocalSearchResponse;
+      } else if (method === 'search-feeds') {
+        result = { feeds: search().feeds(args.account) };
+      } else if (method === 'search-apply') {
+        result = search().apply(args.account, args.ops);
       } else {
         if (opened) db.close();
       }
