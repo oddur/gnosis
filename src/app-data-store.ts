@@ -251,10 +251,22 @@ export function createAppDataStore() {
     async close() {
       if (!worker) return;
       const active = worker;
-      await flush();
-      await call('close');
-      worker = undefined;
-      await active.terminate();
+      // A failed final save must still release the database: report it, but always stop the worker.
+      let failure: unknown;
+      try {
+        await flush();
+      } catch (error) {
+        failure = error;
+      }
+      try {
+        await call('close');
+      } catch (error) {
+        failure ??= error;
+      } finally {
+        worker = undefined;
+        await active.terminate();
+      }
+      if (failure) throw failure;
     },
   };
 }
