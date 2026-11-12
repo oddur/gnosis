@@ -382,6 +382,10 @@ Individual Checks graph nodes show a compact step list with status icons, names,
 
 Stack merge guidance separates confirmed blockers from missing or stale merge status. Its heading names the number of blocking PRs, or uses a neutral question icon for unconfirmed status. Show a confirmed-ready count, concrete reasons beside titled PR links, and a Refresh merge status action for incomplete evidence. List known blockers before uncertain information. If all unknown PRs share the same reason, state it once. Never present missing merge information as a confirmed blocker.
 
+### Step cards
+
+[StepCard](components/StepCard.tsx) shows the plan for a PR action with several consequential steps before anything runs: stack merges, conflict resolution, and restacks. A single PR merge, branch update, or draft change keeps its one confirmation. The title sits beside a quiet `n / N` pill; each step has a status icon, a label, and one muted detail line, and the current step uses the `secondary` surface. Status is also given as text. Errors appear in the failing step with a retry that only reads again; writes are never resent. Skip appears only on optional steps, such as restacking dependents before it starts. Enter continues ordinary steps; a push or merge needs its own button. Step changes move focus to the step and are announced politely. The shape follows Beautiful UI's Approval Card (MIT); no code is copied.
+
 ### Loading feedback
 
 Use `LoadingState` for an empty pane and its compact variant for file previews or small panels. The shared three-node signal comes from the Checks graph. Use `LoadingIndicator` for inline work and refreshes; keep cached content visible. Show the actual operation in plain text. Do not simulate completion percentages or cycle through invented phases.
