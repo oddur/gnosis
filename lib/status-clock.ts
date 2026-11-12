@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { isResizing } from './resize-activity';
 
 export interface StatusClockHost {
   now: () => number;
@@ -8,6 +9,8 @@ export interface StatusClockHost {
   window?: EventTarget;
   /** Receives `visibilitychange`. */
   document?: EventTarget;
+  /** While true, interval ticks are skipped. Focus and visibility changes still tick. */
+  paused?: () => boolean;
 }
 
 const browserHost = (): StatusClockHost => ({
@@ -32,7 +35,9 @@ export function createStatusClock(host: () => StatusClockHost = browserHost, int
   };
   const start = () => {
     const current = host();
-    const timer = current.setInterval(tick, interval);
+    const timer = current.setInterval(() => {
+      if (!current.paused?.()) tick();
+    }, interval);
     current.window?.addEventListener('focus', tick);
     current.document?.addEventListener('visibilitychange', tick);
     return () => {
@@ -73,4 +78,23 @@ export const statusClock = createStatusClock();
 /** The shared status time. The component renders again when it ticks. */
 export function useStatusNow() {
   return useSyncExternalStore(statusClock.subscribe, statusClock.getSnapshot);
+}
+
+/**
+ * One 1-second clock for the elapsed time of running CI jobs and steps. It runs only while a running
+ * duration label is mounted, and skips ticks while the window is hidden or being resized.
+ */
+export const elapsedClock = createStatusClock(
+  () => ({
+    ...browserHost(),
+    paused: () => document.visibilityState === 'hidden' || isResizing(),
+  }),
+  1000
+);
+
+const idle = () => () => {};
+
+/** The shared elapsed-time clock. The component renders again each second, but only while `running`. */
+export function useElapsedNow(running: boolean) {
+  return useSyncExternalStore(running ? elapsedClock.subscribe : idle, elapsedClock.getSnapshot);
 }
