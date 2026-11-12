@@ -14,6 +14,7 @@ import { readReviewState, writeReviewState } from '../lib/renderer-review-state'
 import { useFileFilterSync } from '../lib/use-raw-file-filters';
 import { WorkspaceDraftBoundary, retainWorkspaceDrafts } from '../lib/session-drafts';
 import { CommandCenter } from '../lib/command-center';
+import { useDiffLayoutShortcuts } from '../lib/use-diff-layout-shortcuts';
 import { hasVisibleModal, WorkspaceNavigation } from '../lib/workspace-navigation';
 import {
   initialWorkspaceTabs,
@@ -36,6 +37,12 @@ import { workspaceTabTitle } from '../lib/workspace-listings';
 
 const newTab = (target?: WorkspaceTarget) => newWorkspaceTab(crypto.randomUUID(), target);
 const storageKey = (account: string) => `gnosis-workspace-tabs:v1:${account}`;
+/** Diff layout keys and commands need the command center, so they live inside it. */
+function DiffLayoutShortcuts() {
+  useDiffLayoutShortcuts();
+  return null;
+}
+
 export function App() {
   useFileFilterSync();
   useWindowChrome();
@@ -294,6 +301,7 @@ export function App() {
               })),
             ]}
           >
+            <DiffLayoutShortcuts />
             <a
               href="#main-content"
               className="sr-only focus:not-sr-only focus:fixed focus:top-12 focus:left-3 focus:z-[100] focus:bg-background focus:p-3"

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { readReviewState, writeReviewState } from './renderer-review-state';
+import { captureDiffLineAnchor, diffLineAnchorTop, followScrollAnchor } from './diff-layout';
 
 export function explanationPositionKey(id: string, pane: string) {
   return `gnosis-explanation-position:${id}:${pane}`;
@@ -73,18 +74,19 @@ export function captureExplanationAnchor(container: HTMLElement): ExplanationAnc
   return { section: index, offset: line - 1 - section.getBoundingClientRect().top };
 }
 
+/** The section, or the file in its code column, that an anchor points at. */
+function anchorElement(container: HTMLElement, anchor: ExplanationAnchor) {
+  const section = container.querySelector<HTMLElement>(`:scope > [data-explanation-section="${anchor.section}"]`);
+  if (!section || !anchor.filePath) return section ?? undefined;
+  return [...section.querySelectorAll<HTMLElement>(fileSelector)].find(
+    (element) => element.dataset.filePath === anchor.filePath
+  );
+}
+
 /** The scrollTop that puts the anchor back where it was, or undefined while its content is not mounted yet. */
 export function explanationAnchorTop(container: HTMLElement, anchor: ExplanationAnchor) {
-  const section = container.querySelector<HTMLElement>(`:scope > [data-explanation-section="${anchor.section}"]`);
-  if (!section) return undefined;
-  let target: HTMLElement = section;
-  if (anchor.filePath) {
-    const file = [...section.querySelectorAll<HTMLElement>(fileSelector)].find(
-      (element) => element.dataset.filePath === anchor.filePath
-    );
-    if (!file) return undefined;
-    target = file;
-  }
+  const target = anchorElement(container, anchor);
+  if (!target) return undefined;
   return (
     container.scrollTop + target.getBoundingClientRect().top - container.getBoundingClientRect().top + anchor.offset
   );
@@ -160,6 +162,26 @@ export function useExplanationScroll(key: string, active = true) {
     stopRestore.current = stop;
     frame = requestAnimationFrame(step);
   }, []);
+  /** Keep the reader's place while code changes height in place, as when diffs switch layout. In a long code
+   * column the diff line at the top stays put; otherwise the section does. */
+  const preserve = useCallback(() => {
+    const element = node.current;
+    if (!element || element.clientHeight === 0) return;
+    const anchor = captureExplanationAnchor(element);
+    if (!anchor) return;
+    const file = anchor.filePath ? anchorElement(element, anchor) : undefined;
+    const line = file ? captureDiffLineAnchor(file, element.getBoundingClientRect().top) : undefined;
+    stopRestore.current?.();
+    const stop = followScrollAnchor(element, () => {
+      const target = line && anchorElement(element, anchor);
+      return (target && diffLineAnchorTop(element, target, line)) ?? explanationAnchorTop(element, anchor);
+    });
+    const cancel = () => {
+      stop();
+      if (stopRestore.current === cancel) stopRestore.current = undefined;
+    };
+    stopRestore.current = cancel;
+  }, []);
   const ref = useCallback(
     (element: HTMLDivElement | null) => {
       observer.current?.disconnect();
@@ -215,7 +237,7 @@ export function useExplanationScroll(key: string, active = true) {
     },
     [save]
   );
-  return { node, ref, onScroll };
+  return { node, ref, onScroll, preserve };
 }
 
 const positions = new Map<string, ExplanationPosition>();

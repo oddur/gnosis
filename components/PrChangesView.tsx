@@ -12,6 +12,7 @@ import { CommitDiffStream, type CommitDiffStreamHandle } from './CommitDiffStrea
 import { useReviewBreadcrumbs, type ReviewCrumb } from '../lib/review-breadcrumbs';
 import { PrFileInspection, changeFileKey as viewKey, type ChangeFileEntry as Entry } from './PrFileInspection';
 import { useDiffAppearance } from '../lib/use-diff-appearance';
+import { publishDiffLayout, useBeforeDiffLayoutChange, useDiffLayout, useDiffLayoutTarget } from '../lib/use-diff-layout';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
   inspectionFiles as fileCache,
@@ -165,6 +166,7 @@ export function PrChangesView({
   const [prefs, setPrefs] = useState(preferences),
     [preferenceError, setPreferenceError] = useState('');
   const appearance = useDiffAppearance(prefs.diffAppearance);
+  const layout = useDiffLayout(prefs.diffLayout);
   const contextLines = diffContextLines(appearance);
   const writes = useRef(Promise.resolve());
   useEffect(
@@ -483,6 +485,15 @@ export function PrChangesView({
     ],
     true
   );
+  function changeLayout(diffLayout: Preferences['diffLayout']) {
+    publishDiffLayout(diffLayout);
+    savePreferences({ diffLayout });
+  }
+  useDiffLayoutTarget(workspace, changeLayout);
+  // Keep the line at the top of the stream in place while every file re-renders in the other layout.
+  useBeforeDiffLayoutChange(() => {
+    if (workspace.current?.checkVisibility()) stream.current?.keepAnchor();
+  });
   function savePreferences(patch: Partial<Preferences>) {
     setPrefs((p) => ({ ...p, ...patch }));
     setPreferenceError('');
@@ -520,6 +531,7 @@ export function PrChangesView({
     <section
       ref={workspace}
       className="pr-changes"
+      data-diff-layout={layout}
       aria-label={commit ? 'Commit changes' : 'PR changes'}
       onKeyDown={(e) => {
         if (e.key === 'Escape' && treeOpen && window.innerWidth <= 700) {
@@ -578,8 +590,8 @@ export function PrChangesView({
           tests={[...kinds.values()].filter((k) => k.test.value).length}
         />
         <DiffAppearanceMenu
-          layout={prefs.diffLayout}
-          onLayoutChange={(diffLayout) => savePreferences({ diffLayout })}
+          layout={layout}
+          onLayoutChange={changeLayout}
           value={appearance}
           onChange={(diffAppearance) => savePreferences({ diffAppearance })}
         />

@@ -7,6 +7,8 @@ import { inspectionData } from '../lib/inspection-cache';
 import { feedbackCodeContext, type FeedbackItem } from '../lib/feedback';
 import type { Preferences } from '../lib/types';
 import type { usePrDiscussions } from '../lib/use-pr-discussions';
+import { publishDiffLayout, useDiffLayout, useDiffLayoutTarget } from '../lib/use-diff-layout';
+import { toast } from './ui/toast';
 
 /** The saved hunk is immediate. Wider inspection is explicit and reuses the Changes cache. */
 export function FeedbackCodeContext({
@@ -34,6 +36,24 @@ export function FeedbackCodeContext({
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   const [chat, setChat] = useState<string>();
+  const layout = useDiffLayout(preferences?.diffLayout);
+  // Diff layout keys also work on the full file. Feedback has no appearance menu, so save the choice here.
+  useDiffLayoutTarget(
+    fullContext,
+    (diffLayout) => {
+      publishDiffLayout(diffLayout);
+      void window.electronAPI
+        .loadPreferences()
+        .then((current) => window.electronAPI.savePreferences({ ...current, diffLayout }))
+        .catch(() =>
+          toast.add({
+            title: 'Could not save the diff layout',
+            description: 'Open diffs use it until you close Gnosis.',
+          })
+        );
+    },
+    fullFile && !!preferences
+  );
   const context = feedbackCodeContext(
     thread,
     item.headSha ? { headSha: item.headSha, baseSha: item.baseSha ?? '' } : undefined,
@@ -125,7 +145,7 @@ export function FeedbackCodeContext({
           </p>
         ))}
       {fullFile && preferences && (
-        <div className="feedback-full-file" ref={fullContext}>
+        <div className="feedback-full-file" ref={fullContext} data-diff-layout={entry ? layout : undefined}>
           <p>
             {earlier
               ? `File at ${revision.headSha.slice(0, 7)} — the earlier comment is not attached to these lines.`
