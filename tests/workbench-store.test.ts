@@ -4,6 +4,7 @@ import { groupSubjects, type QueueItem, type ReviewMember, type WorkbenchQueue }
 import { historyRevision, stampQueue, type WorkbenchRevisions } from '../lib/workbench-revision';
 import { createWorkbenchStore } from '../lib/workbench-store';
 import type { ReviewHistoryEntry } from '../lib/types';
+import type { QueueSignals } from '../lib/queue-signals';
 
 const member = (n: number): ReviewMember => ({
   number: n,
@@ -198,4 +199,81 @@ void test('early subscriber primes the queue for a later one', async () => {
   assert.equal(renders, 0);
   later();
   early();
+});
+
+/** Main adds saved status only when asked, after stamping, as the snapshot handler does. */
+function savedSignalsBackend() {
+  const server = backend();
+  const requests: boolean[] = [];
+  const signal = (n: number): QueueSignals => ({
+    url: member(n).url, headSha: member(n).headSha, checkedAt: 1_000 + n, comments: n, checks: { state: 'success', passed: 1, total: 1 },
+  });
+  const snapshot = server.api.workbenchSnapshot;
+  const api = {
+    ...server.api,
+    workbenchSnapshot: async (withSignals?: boolean) => {
+      requests.push(withSignals === true);
+      const queue = await snapshot();
+      return withSignals ? { ...queue, savedSignals: { account: 'reviewer', values: [signal(1), signal(2)] } } : queue;
+    },
+  };
+  return { server, api, requests, signal };
+}
+
+void test('first snapshot requests saved signals and publishes them before the first notify', async () => {
+  const { api, requests, signal } = savedSignalsBackend();
+  const published: { account: string; values: QueueSignals[] }[] = [];
+  const store = createWorkbenchStore(() => api, { delay: 5, onSavedSignals: (account, values) => published.push({ account, values }) });
+  const seen: number[] = [];
+  const stop = store.subscribe(() => seen.push(published.length));
+  await sleep();
+  assert.deepEqual(requests, [true]);
+  assert.deepEqual(published, [{ account: 'reviewer', values: [signal(1), signal(2)] }]);
+  assert.equal(seen[0], 1, 'Rows read saved status in the same commit as the queue');
+  stop();
+});
+
+void test('savedSignals never enters the queue or changes identity', async () => {
+  const { server, api } = savedSignalsBackend();
+  const store = createWorkbenchStore(() => api, { delay: 5, onSavedSignals: () => {} });
+  const stop = store.subscribe(() => {});
+  await sleep();
+  const queue = store.getQueue();
+  assert.equal('savedSignals' in queue, false);
+  assert.equal(queue.revision, stampQueue(structuredClone(server.state.queue), server.state.history).revision);
+  let renders = 0;
+  const counted = store.subscribe(() => { renders++; });
+  // The same content read again without saved status keeps every identity.
+  server.push();
+  await sleep();
+  assert.equal(store.getQueue(), queue);
+  assert.equal(renders, 0);
+  counted();
+  stop();
+});
+
+void test('later snapshots do not request signals', async () => {
+  const { server, api, requests } = savedSignalsBackend();
+  const store = createWorkbenchStore(() => api, { delay: 5, onSavedSignals: () => {} });
+  const stop = store.subscribe(() => {});
+  await sleep();
+  server.push();
+  await sleep();
+  await store.refresh();
+  assert.deepEqual(requests, [true, false, false]);
+  stop();
+});
+
+void test('reset requests them again', async () => {
+  const { api, requests } = savedSignalsBackend();
+  const accounts: string[] = [];
+  const store = createWorkbenchStore(() => api, { delay: 5, onSavedSignals: (account) => accounts.push(account) });
+  const stop = store.subscribe(() => {});
+  await sleep();
+  store.reset('first');
+  store.reset('second');
+  await sleep();
+  assert.deepEqual(requests, [true, true], 'A new account has no queue shown yet');
+  assert.equal(accounts.length, 2);
+  stop();
 });

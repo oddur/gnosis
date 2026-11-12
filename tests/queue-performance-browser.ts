@@ -13,6 +13,13 @@ void app.whenReady().then(async () => {
     throw Error(`Timed out: ${expression}`);
   };
   const click = (text: string) => js(`[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(text)})?.click()`);
+  // Milliseconds from the click to the first frame that shows the PR page.
+  const openOverview = () => js<number>(`new Promise(resolve => {
+    const started = performance.now();
+    [...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='Open PR overview').click();
+    const check = () => document.querySelector('.pr-summary-page') ? resolve(Math.round(performance.now() - started)) : requestAnimationFrame(check);
+    check();
+  })`);
   try {
     const url = process.env.GNOSIS_WORKBENCH_URL;
     if (!url) throw Error('Missing fixture URL');
@@ -85,8 +92,7 @@ void app.whenReady().then(async () => {
     await js("document.querySelector('.queue-toolbar button[aria-label]').click()");
     await new Promise((resolve) => setTimeout(resolve, 300));
     assert.ok(Math.abs(await js<number>("document.querySelector('.queue-list').scrollTop") - offset) < 2, 'Cache refresh retains scroll position');
-    await click('Open PR overview');
-    await wait("!!document.querySelector('.pr-summary-page')");
+    const coldOpen = await openOverview();
     const returnFrames = await js<Array<{ rows: number; visible: number; loading: boolean }>>(`new Promise(resolve => {
       const frames = [];
       // Returning must use the queue already in memory, even if backend reads stall.
@@ -166,8 +172,8 @@ void app.whenReady().then(async () => {
     assert.ok(oneChanged.snapshots <= 1 && oneChanged.reviews === 0, 'One changed entry reads one snapshot: ' + JSON.stringify(oneChanged));
     // Opening a PR and returning reveals the same queue: same row node, same scroll, no reload.
     await js(`window.keptRow=document.querySelector('[data-queue-id="synthetic-525"] .queue-row-main');window.keptScroll=document.querySelector('.queue-list').scrollTop;window.resetCounts();`);
-    await click('Open PR overview');
-    await wait("!!document.querySelector('.pr-summary-page')");
+    const secondOpen = await openOverview();
+    console.log('Open PR overview to PR page (ms):', JSON.stringify({ cold: coldOpen, second: secondOpen }));
     await js("document.querySelector('.pr-summary-page button').click()");
     await wait("!document.querySelector('.pr-summary-page')&&!!document.querySelector('.queue-list')?.checkVisibility()");
     await settle();
@@ -214,7 +220,16 @@ void app.whenReady().then(async () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.equal(await js("document.querySelector('.pr-changes')===window.keptChanges"), true, 'Changes stays mounted across tabs');
     assert.equal(await js<number>('window.keptScroller.scrollTop'), changesScroll, 'Changes keeps its scroll position');
-    console.log('Large queue passed: bounded DOM, dynamic stacks, offscreen keyboard navigation, refresh/return scroll restoration, resize, filtering, sync push render counts, kept queue and PR tabs.');
+    // A status tick re-renders only status. Focus also asks the store for a snapshot, which changes nothing.
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    await js('window.__renderCounts={};window.__countRenders=true;window.dispatchEvent(new Event("focus"))');
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const tick = await js<Partial<Record<string, number>>>('window.__countRenders=false;window.__renderCounts');
+    console.log('Status tick render counts:', JSON.stringify(tick));
+    assert.ok((tick.PrStatusLine ?? 0) >= 1, 'The status line re-ages on focus: ' + JSON.stringify(tick));
+    for (const name of ['PrSummaryContent', 'PrChangesView', 'PrFeedbackView', 'PrExplanation', 'PrDetails', 'Markdown', 'CommentMarkdown'])
+      assert.equal(tick[name] ?? 0, 0, `${name} does not render on a status tick: ` + JSON.stringify(tick));
+    console.log('Large queue passed: bounded DOM, dynamic stacks, offscreen keyboard navigation, refresh/return scroll restoration, resize, filtering, sync push render counts, kept queue and PR tabs, status-only ticks.');
     win.destroy(); app.exit(0);
   } catch (error) {
     console.error(error); win.destroy(); app.exit(1);
