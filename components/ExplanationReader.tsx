@@ -13,6 +13,7 @@ import { SearchableSelect } from './SearchableSelect';
 import { Markdown } from './Markdown';
 import { Button } from './ui/button';
 import { explanationPositionKey, useExplanationScroll } from '../lib/use-explanation-scroll';
+import { useBeforeDiffLayoutChange } from '../lib/use-diff-layout';
 import { createColumnLayout, type ColumnLayout } from '../lib/explanation-column-layout';
 import { estimateCodeColumnHeight } from '../lib/review-diff';
 import type { ReviewGuide, Slide } from '../lib/types';
@@ -53,6 +54,9 @@ export function ExplanationReader({
 }: Props) {
   const id = `${review.reviewId ?? review.prUrl}:${review.snapshot?.fingerprint ?? review.headSha ?? ''}`;
   const reading = useExplanationScroll(explanationPositionKey(id, 'reading'), active);
+  useBeforeDiffLayoutChange(() => {
+    if (active) reading.preserve();
+  });
   // One observer and one frame of writes for every sticky column, instead of one forced layout per section.
   // Ref cleanups unobserve each element, so a hidden or closed tab leaves nothing observed.
   const [columnLayout] = useState(() => createColumnLayout());

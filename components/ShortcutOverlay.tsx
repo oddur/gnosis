@@ -1,4 +1,5 @@
 import { useRef } from 'react';
+import { DIFF_LAYOUT_KEYS } from '../lib/diff-layout';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 
 interface Props {
@@ -31,8 +32,9 @@ const groups: ShortcutGroup[] = [
     heading: 'Reviewing',
     shortcuts: [
       { keys: 'c', label: 'Open or focus chat for current section or file' },
-      { keys: 'u', label: 'Switch to unified diff' },
-      { keys: 's', label: 'Switch to split diff' },
+      { keys: DIFF_LAYOUT_KEYS.toggle, label: 'Switch between split and unified diff' },
+      { keys: DIFF_LAYOUT_KEYS.unified, label: 'Switch to unified diff' },
+      { keys: DIFF_LAYOUT_KEYS.split, label: 'Switch to split diff' },
     ],
   },
   {

@@ -82,6 +82,21 @@ void app.whenReady().then(async () => {
       await js<string>("document.querySelector('.search-arrival').getAttribute('data-file-path')"),
       /command-queue/
     );
+    // The palette switches diff layout wherever a diff is on screen.
+    const layout = "document.querySelector('.workbench-review').dataset.diffLayout";
+    const startLayout = await js<string>(layout);
+    await open();
+    await fill('> split and unified');
+    assert.match(
+      await js<string>("document.querySelector('.global-command-results').textContent"),
+      /Switch between split and unified diff\s*d/
+    );
+    await key('Enter');
+    await wait(`${layout}==='${startLayout === 'split' ? 'unified' : 'split'}'`);
+    await open();
+    await fill('> split and unified');
+    await key('Enter');
+    await wait(`${layout}==='${startLayout}'`);
     await open();
     await fill('> ask about');
     await key('Enter');

@@ -259,9 +259,55 @@ void app.whenReady().then(async () => {
     await wait(
       "window.electronAPI.loadPreferences().then(p=>p.diffLayout==='unified'&&p.diffAppearance.contextLines===3)"
     );
+    assert.match(
+      await js<string>("document.querySelector('.diff-layout-hint').textContent"),
+      /Press d to switch, or u and s to choose/,
+      'The layout option names its shortcuts'
+    );
     await js(
       "document.querySelector('[aria-label=\"Diff appearance\"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
     );
+    // d switches the explanation's diffs and saves the choice as the menu does. The reader keeps their section.
+    const pressKey = (key: string) =>
+      js<boolean>(
+        `(()=>{const e=new KeyboardEvent('keydown',{key:${JSON.stringify(key)},bubbles:true,cancelable:true});window.dispatchEvent(e);return e.defaultPrevented})()`
+      );
+    const reviewLayout = "document.querySelector('.workbench-review').dataset.diffLayout";
+    await wait("!document.querySelector('[aria-label=\"Diff layout\"]')");
+    await js('document.activeElement?.blur()');
+    const readingSection = `(()=>{const c=document.querySelector('.explanation-document');const top=c.getBoundingClientRect().top+1;return [...c.querySelectorAll(':scope > [data-explanation-section]')].filter(s=>s.getBoundingClientRect().top<=top).at(-1)?.dataset.explanationSection})()`;
+    await js("document.querySelector('.explanation-document').scrollTop=600");
+    await new Promise((r) => setTimeout(r, 150));
+    const sectionBefore = await js<string | undefined>(readingSection);
+    assert.equal(await js(reviewLayout), 'unified');
+    assert.equal(await pressKey('d'), true);
+    await wait(`${reviewLayout}==='split'`);
+    await wait("window.electronAPI.loadPreferences().then(p=>p.diffLayout==='split')");
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal(await js(readingSection), sectionBefore, 'Switching layout keeps the reading position');
+    await pressKey('s');
+    assert.equal(await js(reviewLayout), 'split', 's chooses split; it does not toggle');
+    // The cheatsheet lists the toggle. Layout keys wait while it, or any other modal, is open.
+    await pressKey('?');
+    await wait(
+      "document.querySelector('.shortcut-dialog')?.textContent.includes('Switch between split and unified diff')"
+    );
+    assert.equal(await pressKey('d'), false);
+    assert.equal(await js(reviewLayout), 'split', 'Layout keys do nothing while a modal is open');
+    await js(
+      "document.querySelector('.shortcut-dialog').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
+    );
+    await wait("!document.querySelector('.shortcut-dialog')");
+    // Every open view follows the saved layout: Changes opens split, and u switches both back.
+    await click('Changes');
+    await wait("!!document.querySelector('.changes-file-tree')");
+    await wait("document.querySelector('.pr-changes')?.dataset.diffLayout==='split'");
+    await js('document.activeElement?.blur()');
+    await pressKey('u');
+    await wait("document.querySelector('.pr-changes').dataset.diffLayout==='unified'");
+    await wait("window.electronAPI.loadPreferences().then(p=>p.diffLayout==='unified')");
+    await click('Explanation');
+    await wait(`${reviewLayout}==='unified'`);
     await click('Changes');
     await wait("!!document.querySelector('.changes-file-tree')");
     await js("document.querySelectorAll('.changes-member')[1]?.click()");

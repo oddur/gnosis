@@ -5,6 +5,7 @@ import { Popover } from 'radix-ui';
 import { SlidersHorizontal } from 'lucide-react';
 import { Button } from './ui/button';
 import { DEFAULT_DIFF_APPEARANCE, diffContextLines, type DiffAppearance } from '@/lib/review-diff';
+import { DIFF_LAYOUT_KEYS } from '@/lib/diff-layout';
 
 const inlineDescriptions: Record<DiffAppearance['inline'], string> = {
   'word-alt': 'Highlights whole words using enhanced matching.',
@@ -27,6 +28,7 @@ export function DiffAppearanceMenu({
 }) {
   const descriptionId = useId();
   const contextDescriptionId = useId();
+  const layoutDescriptionId = useId();
   const change = (next: DiffAppearance) => {
     publishDiffAppearance(next);
     onChange(next);
@@ -53,18 +55,26 @@ export function DiffAppearanceMenu({
           <h3 className="font-semibold text-sm mb-1">Diff appearance</h3>
           <p className="text-xs text-muted-foreground mb-4">Applies to all diffs. Saved automatically.</p>
           <div className="space-y-3 text-sm">
-            <label className="flex items-center justify-between gap-3">
-              Layout
-              <select
-                aria-label="Diff layout"
-                className="rounded border bg-background px-2 py-1"
-                value={layout}
-                onChange={(e) => onLayoutChange(e.target.value as Preferences['diffLayout'])}
-              >
-                <option value="unified">Unified</option>
-                <option value="split">Split</option>
-              </select>
-            </label>
+            <div>
+              <label className="flex items-center justify-between gap-3">
+                Layout
+                <select
+                  aria-label="Diff layout"
+                  aria-describedby={layoutDescriptionId}
+                  className="rounded border bg-background px-2 py-1"
+                  value={layout}
+                  onChange={(e) => onLayoutChange(e.target.value as Preferences['diffLayout'])}
+                >
+                  <option value="unified">Unified</option>
+                  <option value="split">Split</option>
+                </select>
+              </label>
+              <p id={layoutDescriptionId} className="diff-layout-hint text-xs text-muted-foreground leading-relaxed mt-1">
+                Press <kbd className="kbd">{DIFF_LAYOUT_KEYS.toggle}</kbd> to switch, or{' '}
+                <kbd className="kbd">{DIFF_LAYOUT_KEYS.unified}</kbd> and <kbd className="kbd">{DIFF_LAYOUT_KEYS.split}</kbd>{' '}
+                to choose.
+              </p>
+            </div>
             <div>
               <label className="flex items-center justify-between gap-3">
                 Show surrounding lines

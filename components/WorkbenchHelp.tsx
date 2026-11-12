@@ -212,6 +212,10 @@ export function WorkbenchHelp({ onGettingStarted, onWalkthrough }: { onGettingSt
               <kbd>{window.electronAPI.platform === 'darwin' ? '⌘\\' : 'Ctrl+\\'}</kbd> shows or hides the queue sidebar.
               In a review, press <kbd>?</kbd> for its keyboard shortcuts.
             </p>
+            <p>
+              In any diff, <kbd>d</kbd> switches between split and unified layouts. <kbd>u</kbd> and <kbd>s</kbd> choose
+              one.
+            </p>
           </details>
         </Popover.Content>
       </Popover.Portal>
