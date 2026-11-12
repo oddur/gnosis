@@ -34,12 +34,48 @@ void app.whenReady().then(async () => {
     await loadWorkbenchPage(win, url);
     await waitForWorkbenchQueue(win.webContents);
     if (process.env.GNOSIS_TABS_BENCH !== '1') {
-      await wait(`document.querySelector('.workspace-tabs-tip')!==null`);
+      // The keep-open hint lives in New tab's tooltip, so the row stays free to move the window.
       await capture('first-tab');
-      await js(`document.querySelector('[aria-label="Dismiss tab tip"]').click()`);
+      assert.match(await js<string>(`document.querySelector('[aria-label="New tab"]').title`), /click a PR to keep it open/);
+      // With 12 tabs in a 1100px window, at least 120px of the row still moves the window.
+      await js(
+        `sessionStorage.setItem('fixture-workspace-tabs',JSON.stringify({version:1,active:'tab-0',tabs:Array.from({length:12},(_,i)=>({id:'tab-'+i,title:i?'Review title '+i+' '+'long words '.repeat(4):'Review queue',label:i?'#'+i:'Queue',detail:'team/repository',section:'queue'}))}));`
+      );
+      win.setSize(1100, 850);
       await win.loadURL(url);
+      await wait('document.querySelectorAll(".workspace-tab").length===12');
       await waitForWorkbenchQueue(win.webContents);
-      assert.equal(await js(`!!document.querySelector('.workspace-tabs-tip')`), false);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const drag = await js<{ region: string; gap: number; interactive: number; width: number; zone: boolean }>(`(()=>{
+        const row=document.querySelector('.app-titlebar');
+        const r=row.getBoundingClientRect();
+        const region=el=>getComputedStyle(el).getPropertyValue('-webkit-app-region');
+        const visible=[...row.querySelectorAll('*')].filter(el=>el.checkVisibility()&&el.getClientRects().length);
+        // Any visible control must opt out of dragging, or clicks on it would move the window.
+        const interactive=visible.filter(el=>el.matches('button,a,input,select,[role=tab]')&&region(el)!=='no-drag').length;
+        // Electron applies regions in document order with unclipped boxes: drag adds, no-drag removes.
+        const left=Math.floor(r.left),cells=new Array(Math.ceil(r.width)).fill(true);
+        for(const el of visible){
+          const value=region(el);
+          if(value!=='drag'&&value!=='no-drag')continue;
+          const b=el.getBoundingClientRect();
+          if(!b.width||!b.height)continue;
+          for(let x=Math.max(0,Math.floor(b.left)-left);x<Math.min(cells.length,Math.ceil(b.right)-left);x++)cells[x]=value==='drag';
+        }
+        let gap=0,run=0,end=0;
+        for(let x=0;x<cells.length;x++){run=cells[x]?run+1:0;if(run>gap){gap=run;end=x+left;}}
+        // The widest run sits between New tab and Search.
+        const plus=document.querySelector('[aria-label="New tab"]').getBoundingClientRect();
+        const search=[...row.querySelectorAll('.workspace-menu-search')].find(b=>b.checkVisibility()).getBoundingClientRect();
+        return {region:region(row),gap,interactive,width:innerWidth,zone:end-gap+1>=plus.right&&end<=search.left};
+      })()`);
+      assert.equal(drag.region, 'drag', 'The title bar row is a drag region');
+      assert.equal(drag.width, 1100);
+      assert.equal(drag.interactive, 0, 'Every visible title bar control opts out of dragging');
+      assert.ok(drag.gap >= 120, `At least 120px of contiguous drag area with 12 tabs, saw ${drag.gap}`);
+      assert.ok(drag.zone, 'The reserved drag area sits between New tab and Search');
+      await capture('drag-zone-12-tabs');
+      win.setSize(1280, 850);
     }
     await js(
       `sessionStorage.setItem('fixture-workspace-tabs',JSON.stringify({version:1,active:'tab-0',tabs:Array.from({length:40},(_,i)=>({id:'tab-'+i,title:i?'修正 reconnect — مراجعة '+i+' '+('Long review title '.repeat(8)):'Review queue',label:i?'#'+i:'Queue',detail:'team/repository',section:'queue'}))}));`

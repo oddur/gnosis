@@ -1,6 +1,7 @@
 import { mark, markRenderer, note, startupSummary, startupTracing, exitAfterTrace } from './startup-trace';
 import { createStartup, gateHandlers, afterStartup } from './startup';
 import { attachWorkspaceShortcuts } from './window-workspace-navigation';
+import { attachWindowChrome, registerWindowChromeIpc, windowChromeOptions } from './window-chrome';
 import {
   explanationFile,
   explanationExclusion,
@@ -338,6 +339,7 @@ function createWindow() {
     width: 1400,
     height: 900,
     backgroundColor: dark ? WINDOW_BACKGROUND.dark : WINDOW_BACKGROUND.light,
+    ...windowChromeOptions(dark),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       // Sandboxed preloads cannot read main's environment.
@@ -347,6 +349,7 @@ function createWindow() {
 
   protectExplainerFrames(mainWindow);
   attachWorkspaceShortcuts(mainWindow);
+  attachWindowChrome(mainWindow);
   attachWindowHistoryNavigation(mainWindow, direction => mainWindow.webContents.send('history-navigate', direction));
   const ownerId = mainWindow.webContents.id;
   mainWindow.on('closed', () => explainerService.cancelOwner(ownerId));
@@ -1287,6 +1290,8 @@ const LOCAL_REVIEW_TOOLS = [
 ];
 
 // ── IPC handlers ────────────────────────────────────────────────
+
+registerWindowChromeIpc();
 
 // Renderer startup marks are no-ops unless GNOSIS_PERF_TRACE is set; preload exposes perfMark only then.
 ipcMain.on('perf-mark', (_event, name: unknown, epochMs: unknown) => {

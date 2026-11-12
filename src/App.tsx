@@ -6,6 +6,7 @@ import { ActivityDrawer } from '../components/ActivityDrawer';
 import type { GitHubSyncStatusProps } from '../components/GitHubSyncStatus';
 import { WorkspaceErrorBoundary } from '../components/WorkspaceErrorBoundary';
 import { WorkspaceTabs } from '../components/WorkspaceTabs';
+import { TitlebarRoot, TitlebarScope, useWindowChrome } from '../components/AppTitlebar';
 import { LoadingState } from '../components/LoadingState';
 import { toast, Toaster } from '../components/ui/toast';
 import { createRecentlyViewed, type RecentVisit } from '../lib/recently-viewed';
@@ -37,6 +38,9 @@ const newTab = (target?: WorkspaceTarget) => newWorkspaceTab(crypto.randomUUID()
 const storageKey = (account: string) => `gnosis-workspace-tabs:v1:${account}`;
 export function App() {
   useFileFilterSync();
+  useWindowChrome();
+  const [titlebarLeading, setTitlebarLeading] = useState<HTMLDivElement | null>(null);
+  const [titlebarTrailing, setTitlebarTrailing] = useState<HTMLDivElement | null>(null);
   useEffect(() => {
     window.electronAPI.perfMark?.('first-render');
     // A restored PR tab opens its summary first.
@@ -292,7 +296,7 @@ export function App() {
           >
             <a
               href="#main-content"
-              className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[100] focus:bg-background focus:p-3"
+              className="sr-only focus:not-sr-only focus:fixed focus:top-12 focus:left-3 focus:z-[100] focus:bg-background focus:p-3"
             >
               Skip to content
             </a>
@@ -306,14 +310,17 @@ export function App() {
                 reopen={reopen}
                 move={move}
                 closeOthers={closeOthers}
+                leadingRef={setTitlebarLeading}
+                trailingRef={setTitlebarTrailing}
               />
+              <TitlebarRoot leading={titlebarLeading} trailing={titlebarTrailing}>
               <div id="main-content" tabIndex={-1}>
                 {!account ? (
                   <LoadingState title="Opening workspace…" />
                 ) : (
                   state.tabs.map((tab) => (
+                    <TitlebarScope key={tab.id} active={state.active === tab.id}>
                     <div
-                      key={tab.id}
                       data-workspace-active={state.active === tab.id}
                       className="workspace-panel"
                       id={`workspace-panel-${tab.id}`}
@@ -348,9 +355,11 @@ export function App() {
                         </Activity>
                       )}
                     </div>
+                    </TitlebarScope>
                   ))
                 )}
               </div>
+              </TitlebarRoot>
             </div>
             <ActivityDrawer
               syncStatus={syncStatus}

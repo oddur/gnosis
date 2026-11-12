@@ -10,6 +10,7 @@ import { ReviewDraftBoundary } from '../lib/session-drafts';
 import type { ActivityTask } from '../lib/activity';
 import { Activity, memo, Suspense, useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { HomePage } from './pages/HomePage';
+import { TitlebarHistory, TitlebarScope } from '../components/AppTitlebar';
 import { ReviewPage } from './lazy-screens';
 import { LoadingState } from '../components/LoadingState';
 import { Button } from '../components/ui/button';
@@ -546,6 +547,7 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
           </div>
         )}
         {homeMounted && (
+          <TitlebarScope active={page === 'home'}>
           <Activity mode={page === 'home' ? 'visible' : 'hidden'}>
           <HomePage
             onSyncStatus={onSyncStatus}
@@ -562,8 +564,10 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
             onShowActivity={() => setActivityOpen(true)}
           />
           </Activity>
+          </TitlebarScope>
         )}
         {page === 'review' && review && (
+          <TitlebarScope active>
           <ReviewDraftBoundary
             value={`${review.reviewId ?? review.prUrl}:${review.snapshot?.fingerprint ?? review.headSha ?? ''}`}
           >
@@ -575,6 +579,7 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
               onSelectReview={(id) => void navigate({ kind: 'review', reviewId: id })}
               commandDestination={reviewCommand}
               onBack={handleBack}
+              onNavigateHome={(target) => void navigate({ ...target, kind: 'home' })}
               onReReview={handleReReview}
               initialSlideId={destination.slideId}
               exploreInitially={destination.explore}
@@ -582,8 +587,10 @@ export const ReviewWorkspace = memo(function ReviewWorkspace({
             />
             </Suspense>
           </ReviewDraftBoundary>
+          </TitlebarScope>
         )}
       </div>
+      <TitlebarHistory history={navigationHistory} move={(direction) => void moveHistory(direction)} />
     </>
   );
 });

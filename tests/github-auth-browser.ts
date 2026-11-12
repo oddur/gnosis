@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { githubAccessMessage } from '../lib/github-auth';
+import { chooseWorkspaceMenuItem, workspaceMenuTrigger } from './workspace-menu';
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({
     width: 1100,
@@ -116,15 +117,15 @@ void app.whenReady().then(async () => {
     );
     await capture('device-narrow');
     assert.equal(
-      await js('document.querySelector(\'[data-github-account]\').getBoundingClientRect().width > 20'),
+      await js(`${workspaceMenuTrigger}.getBoundingClientRect().width > 20`),
       true
     );
     await js('window.approveDevice()');
     await wait(
-      "!document.querySelector('.github-auth-dialog') && document.querySelector('[data-github-account]').textContent==='oddur'"
+      `!document.querySelector('.github-auth-dialog') && ${workspaceMenuTrigger}.getAttribute('aria-label').endsWith('GitHub account: oddur')`
     );
     assert.equal(await js("!!document.querySelector('.workbench-connect')"), false);
-    await js('document.querySelector(\'[data-github-account]\').click()');
+    await js(chooseWorkspaceMenuItem('[data-github-account]'));
     await wait("document.querySelector('.github-auth-dialog')?.textContent.includes('Connected as oddur')");
     assert.equal(await js("document.querySelector('#github-auth-token')?.value ?? ''"), '');
     await capture('account');
@@ -148,7 +149,7 @@ void app.whenReady().then(async () => {
       false,
       'Explicit local mode must survive reopening'
     );
-    await js(`document.querySelector('[data-github-account]').click()`);
+    await js(chooseWorkspaceMenuItem('[data-github-account]'));
     await wait("!!document.querySelector('.github-auth-dialog')");
     await click('Sign in through browser');
     await wait("!document.querySelector('.github-auth-dialog')");

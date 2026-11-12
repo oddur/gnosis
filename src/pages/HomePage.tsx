@@ -8,7 +8,6 @@ import { LoadingState, LoadingIndicator } from '../../components/LoadingState';
 import { SubjectIcon } from '../../components/SubjectIcon';
 import { useSettingsShortcut } from '../../lib/use-settings-shortcut';
 import { preferencesUpdated } from '../../lib/use-repository-settings';
-import { ModelEffortSelect } from '../../components/ModelEffortSelect';
 import { normalizeEffort } from '../../lib/effort';
 import { mergePrStatus } from '../../lib/merge-pr-status';
 import { useEntrySelection } from '../../lib/use-entry-selection';
@@ -20,7 +19,6 @@ import { useOnboarding } from '../../lib/use-onboarding';
 import { OnboardingSetup } from '../../components/OnboardingSetup';
 import { GuidedTour } from '../../components/GuidedTour';
 import { focusStackPr, resolveWorkspace, matchingStackMembers } from '../../lib/stack-workspace';
-import { RecentlyViewed } from '../../components/RecentlyViewed';
 import { PrListSortControl } from '../../components/PrListSortControl';
 import { normalizePrListSort, sortQueueItems, sortSavedReviews, type PrListSort } from '../../lib/pr-list-sort';
 import { useListOrder, useListScrollAnchor } from '../../lib/use-list-order';
@@ -47,7 +45,6 @@ import type { VirtualItem } from '@tanstack/react-virtual';
 import { VirtualReviewQueue, VirtualSavedReviews, SavedRow, type SavedRowActions } from '../../components/VirtualReviewQueue';
 import { QueueRow, type QueueRowActions } from '../../components/QueueRow';
 import { useReviewHistory, useWorkbenchQueue, useWorkbenchStatus, workbenchStore } from '../../lib/workbench-store';
-import { GitHubIcon } from '../../lib/constants';
 import { workbenchIcons, workspaceSections } from '../../lib/interface-icons';
 import { WorkbenchIcon } from '../../components/WorkbenchIcon';
 import { PrLabels } from '../../components/PrLabels';
@@ -76,7 +73,6 @@ import {
   Layers,
   RefreshCw,
   Search,
-  Settings,
   Upload,
   X,
   FolderGit2,
@@ -91,7 +87,7 @@ import {
 } from 'lucide-react';
 import { GitHubAuthDialog } from '../../components/GitHubAuthDialog';
 import { GettingStarted } from '../../components/GettingStarted';
-import { WorkbenchHelp } from '../../components/WorkbenchHelp';
+import { TitlebarScope, WorkspaceMenu } from '../../components/AppTitlebar';
 import type { SettingsSection } from '../../components/SettingsDialog';
 import { applyCodeFont } from '../../lib/code-font';
 import { initialPreferences } from '../../lib/startup-preferences';
@@ -1187,6 +1183,10 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       if (target.onboarding === 'setup') onboarding.start(); else onboarding.startTour();
       return;
     }
+    if (target.account) {
+      setAuthOpen(true);
+      return;
+    }
     if (target.settings) {
       openSettings(target.settings as SettingsSection);
       return;
@@ -1520,54 +1520,31 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
       </section>
     ) : null;
 
+  // Search and the account menu sit at the end of the title bar while this page is shown.
+  const workspaceMenu = (
+    <WorkspaceMenu
+      onHome={() => {
+        setOpenedItem(null);
+        setSavedView(false);
+        updateFilters({ attention: 'all', kind: 'all', involvement: filters.involvement === 'response' ? 'all' : filters.involvement });
+      }}
+      model={prefs ? {
+        provider: prefs.provider, model: prefs.model,
+        effort: normalizeEffort(prefs.provider, prefs.model, prefs.effort, prefs.thinking),
+        onChange: selection => { void savePrefs({ ...prefs, ...selection }); },
+      } : undefined}
+      onSearch={() => commandCenter?.open()}
+      onGettingStarted={replayGettingStarted}
+      onWalkthrough={() => onboarding.startTour()}
+      onSettings={() => openSettings()}
+      account={{ login: auth?.login, onClick: () => setAuthOpen(true) }}
+    />
+  );
+
   return (
     <PrReadContext.Provider value={readContext}>
     <div className="workbench-home">
-      <header className="workbench-header">
-        <a
-          href="#"
-          className="workbench-brand"
-          onClick={(e) => {
-            e.preventDefault();
-            setOpenedItem(null);
-            setSavedView(false);
-            updateFilters({ attention: 'all', kind: 'all', involvement: filters.involvement === 'response' ? 'all' : filters.involvement });
-          }}
-        >
-          Gnosis
-        </a>
-        <RecentlyViewed />
-        <div className="workbench-header-controls ml-auto flex items-center gap-2">
-          {prefs && (
-            <ModelEffortSelect provider={prefs.provider} model={prefs.model}
-              effort={normalizeEffort(prefs.provider, prefs.model, prefs.effort, prefs.thinking)}
-              onChange={selection => { void savePrefs({ ...prefs, ...selection }); }} />
-          )}
-          <button
-            className="workbench-command-trigger"
-            onClick={() => commandCenter?.open()}
-            title="Search and navigate (⌘K / Ctrl K)"
-          >
-            <Search size={15} />
-            <span>Search</span>
-            <kbd className="kbd">{window.electronAPI.platform === 'darwin' ? '⌘ K' : 'Ctrl K'}</kbd>
-          </button>
-          <WorkbenchHelp onGettingStarted={replayGettingStarted} onWalkthrough={() => onboarding.startTour()} />
-          <button className="workbench-icon" title={window.electronAPI.platform === 'darwin' ? 'Settings (⌘,)' : 'Settings (Ctrl+,)'} aria-label="Settings" onClick={() => openSettings()}>
-            <Settings size={17} />
-          </button>
-          <button
-            className="workbench-help-trigger"
-            aria-label={auth?.login ? `GitHub account: ${auth.login}` : 'Connect GitHub'}
-            data-github-account
-            title={auth?.login ? `GitHub: ${auth.login}` : 'Connect GitHub'}
-            onClick={() => setAuthOpen(true)}
-          >
-            <GitHubIcon width={16} height={16} />
-            <span className="account-name">{auth?.login ?? 'Connect GitHub'}</span>
-          </button>
-        </div>
-      </header>
+      {workspaceMenu}
       <UpdateBanner />
       {summaryItem && (
         <Suspense fallback={<LoadingState title="Opening pull request…" />}>
@@ -1645,6 +1622,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         </Suspense>
       )}
       {/* The queue stays mounted behind a PR, so returning keeps its rows, scroll and focus target. */}
+      <TitlebarScope active={!summaryItem}>
       <Activity mode={summaryItem ? 'hidden' : 'visible'}>
         <div className="workbench-body">
         <QueueSidebar
@@ -2398,6 +2376,7 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
         </main>
         </div>
       </Activity>
+      </TitlebarScope>
       {onboarding.open && onboarding.state.draft && <OnboardingSetup draft={onboarding.state.draft} onChange={onboarding.change}
         onPause={() => void onboarding.pause()} onApply={() => { void onboarding.apply().then(next => {
           if (!next) return;

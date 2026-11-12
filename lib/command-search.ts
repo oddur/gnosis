@@ -12,6 +12,8 @@ export type SearchDestination =
       viewId?: string;
       settings?: string;
       onboarding?: 'setup' | 'tour';
+      /** Opens the GitHub account dialog. */
+      account?: boolean;
       local?: boolean;
       subject?: QueueItem;
       url?: string;

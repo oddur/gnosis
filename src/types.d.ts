@@ -135,6 +135,11 @@ declare global {
       onFileClassificationsChanged: (callback:(key:string,kinds:Record<string,FileKinds>)=>void) => () => void;
       onWorkspaceShortcut: (callback: (action: NonNullable<ReturnType<typeof import('../lib/workspace-tabs').workspaceShortcut>>) => void) => () => void;
       onHistoryNavigate: (callback: (direction: -1 | 1) => void) => () => void;
+      /** Whether macOS has hidden the traffic lights for full screen. Absent in browser fixtures. */
+      isFullScreen?: () => Promise<boolean>;
+      onFullScreenChange?: (callback: (fullScreen: boolean) => void) => () => void;
+      /** Recolours the Windows and Linux caption buttons drawn over the title bar row. */
+      setWindowChromeTheme?: (dark: boolean) => void;
       offReviewNavigate: () => void;
       sendSlideChat: (req: SendSlideChatRequest) => Promise<string>;
       onChatProgress: (callback: (chunk: string) => void) => void;
