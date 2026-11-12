@@ -2,6 +2,7 @@ import { normalizeGitHubCacheMB, DEFAULT_GITHUB_CACHE_MB } from './github-cache-
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { createCacheStorage, type CacheWrite } from './sqlite-cache-storage';
+import { deepFreeze } from './deep-freeze';
 
 const MAX_BYTES = 32_000_000;
 const MAX_ENTRY_BYTES = 1_000_000;
@@ -28,13 +29,19 @@ interface Entry {
   /** The saved record, until its value is first read. Startup builds no object graph for unread entries. */
   raw?: string;
 }
-/** Synchronous memory reads; incremental persistence belongs to the SQLite worker. */
+/**
+ * Synchronous memory reads; incremental persistence belongs to the SQLite worker.
+ * Every value that `get`, `values` and `getPrepared` return is deeply frozen and shared. Never change it:
+ * call `structuredClone` first.
+ */
 export function createGitHubCache(now = Date.now) {
   const entries = new Map<string, Entry>();
   const archived = new WeakSet<Entry>();
   const sizes = new Map<string, number>();
   const versions = new Map<string, number>();
   const writes = new Map<string, CacheWrite>();
+  /** Batches handed to the worker and not yet settled, in the order the worker applies them. */
+  const inflight = new Set<CacheWrite[]>();
   let storage: ReturnType<typeof createCacheStorage> | undefined;
   let cacheSizeMB = DEFAULT_GITHUB_CACHE_MB;
   let bytes = 0,
@@ -70,10 +77,15 @@ export function createGitHubCache(now = Date.now) {
     if (!storage || !writes.size) return pending;
     const batch = [...writes.values()];
     writes.clear();
+    inflight.add(batch);
     const target = storage;
-    pending = pending.catch(() => {}).then(() => target.write(batch, now()));
+    pending = pending
+      .catch(() => {})
+      .then(() => target.write(batch, now()))
+      .finally(() => inflight.delete(batch));
     return pending;
   }
+  // `remove` and `remember` are the only functions that add or drop entries. Keep them small.
   function remove(key: string) {
     bytes -= sizes.get(key) ?? 0;
     sizes.delete(key);
@@ -88,10 +100,10 @@ export function createGitHubCache(now = Date.now) {
       remove(oldest);
     }
   }
-  function remember(key: string, entry: Entry, persist: boolean, prepared = false) {
+  /** `payload` is the entry's saved record, serialized once by the caller. */
+  function remember(key: string, entry: Entry, payload: string, persist: boolean, prepared = false) {
     // Size only the changed record, never serialize the whole cache on a write.
-    const payload = JSON.stringify(entry),
-      size = Buffer.byteLength(payload);
+    const size = Buffer.byteLength(payload);
     bytes -= sizes.get(key) ?? 0;
     sizes.delete(key);
     entries.delete(key);
@@ -115,7 +127,8 @@ export function createGitHubCache(now = Date.now) {
     try {
       const saved: unknown = JSON.parse(raw);
       if (!isCacheRecord(saved) || !('value' in saved)) throw new Error('Invalid cache entry');
-      entry.value = saved.value;
+      // Parsed once, then frozen and shared by every reader.
+      entry.value = deepFreeze(saved.value);
       return true;
     } catch {
       remove(key);
@@ -126,11 +139,41 @@ export function createGitHubCache(now = Date.now) {
     if (entry.revalidate) return;
     entry.revalidate = true;
     // A pending insert must carry the flag; existing rows need only a small SQL update.
-    if (writes.get(key)?.payload && parsed(key, entry)) enqueue(key, JSON.stringify(entry));
-    else enqueue(key, undefined, true);
+    if (writes.get(key)?.payload) {
+      // An unread record gains the flag as text, without parsing its value.
+      if (entry.raw !== undefined) entry.raw = entry.raw.slice(0, -1) + ',"revalidate":true}';
+      enqueue(key, entry.raw ?? JSON.stringify(entry));
+    } else enqueue(key, undefined, true);
     const extra = Buffer.byteLength(',"revalidate":true');
     sizes.set(key, (sizes.get(key) ?? 0) + extra);
     bytes += extra;
+  }
+  /** The value of a saved prepared record, when it belongs to this scope and is recent enough. */
+  function preparedValue<T>(scope: string, saved: unknown, validate: (value: unknown) => value is T): T | undefined {
+    if (
+      !isCacheRecord(saved) ||
+      saved.scope !== scope ||
+      typeof saved.savedAt !== 'number' ||
+      saved.savedAt > now() ||
+      now() - saved.savedAt >= PREPARED_RETENTION_MS ||
+      !validate(saved.value)
+    )
+      return;
+    return deepFreeze(saved.value);
+  }
+  /**
+   * The newest queued or unsettled write to a prepared row, in the order the worker applies them:
+   * a payload, `null` for a delete or clear, or `undefined` when nothing pending touches the row.
+   */
+  function pendingPrepared(scope: string, hash: string): string | null | undefined {
+    let found: string | null | undefined;
+    for (const operations of [...inflight, [...writes.values()]])
+      for (const operation of operations) {
+        if (operation.id !== (operation.clearPrepared ? scope : hash)) continue;
+        if (operation.clearPrepared || operation.deletePrepared) found = null;
+        else if (operation.prepared && operation.payload) found = operation.payload;
+      }
+    return found;
   }
   return {
     /** Resolves with the worker's open timings, for startup traces. */
@@ -226,7 +269,7 @@ export function createGitHubCache(now = Date.now) {
         values<T>(validate: (value: unknown) => value is T): T[] {
           return [...entries]
             .filter(([key, entry]) => entry.scope === scope && validTime(entry.savedAt) && parsed(key, entry) && validate(entry.value))
-            .map(([, entry]) => structuredClone(entry.value) as T);
+            .map(([, entry]) => entry.value as T);
         },
         get<T>(
           key: string,
@@ -234,35 +277,51 @@ export function createGitHubCache(now = Date.now) {
         ): { value: T; savedAt: number; revalidate: boolean } | undefined {
           const hash = id(scope, key), entry = entries.get(hash);
           if (!entry || !validTime(entry.savedAt) || !parsed(hash, entry) || !validate(entry.value)) return;
-          return { value: structuredClone(entry.value), savedAt: entry.savedAt, revalidate: entry.revalidate === true };
+          return { value: entry.value, savedAt: entry.savedAt, revalidate: entry.revalidate === true };
         },
         async getPrepared<T>(key: string, validate: (value: unknown) => value is T): Promise<T | undefined> {
           const hash = id(scope, key), entry = entries.get(hash);
+          // The saved record, before parsing drops it. Archiving reuses it instead of serializing again.
+          const raw = entry?.raw;
           if (entry && validTime(entry.savedAt) && parsed(hash, entry) && validate(entry.value)) {
             // Migrate a previously downloaded revision lazily without a GitHub request.
             if (storage && isPreparedKey(key) && !archived.has(entry)) {
-              enqueue(hash, JSON.stringify(entry), false, true);
+              enqueue(hash, raw ?? JSON.stringify(entry), false, true);
               archived.add(entry);
             }
-            return structuredClone(entry.value);
+            return entry.value;
           }
           if (!storage || !isPreparedKey(key)) return;
+          // A queued or unsettled write answers without waiting for the worker, including items too
+          // large for the memory cache.
+          const queued = pendingPrepared(scope, hash);
+          if (queued === null) return;
+          if (queued !== undefined) {
+            try {
+              return preparedValue(scope, JSON.parse(queued), validate);
+            } catch {
+              return;
+            }
+          }
           const version = versions.get(scope) ?? 0;
-          // Ordered with pending writes, including items too large for the memory cache.
-          const target = storage;
-          await flush().catch(() => {});
-          const saved = await target.readPrepared(id(scope, key), now()).catch(() => undefined);
-          if (version !== (versions.get(scope) ?? 0) || !isCacheRecord(saved) || saved.scope !== scope ||
-            typeof saved.savedAt !== 'number' || saved.savedAt > now() || now() - saved.savedAt >= PREPARED_RETENTION_MS ||
-            !validate(saved.value)) return;
-          return saved.value;
+          const saved = await storage.readPrepared(hash, now()).catch(() => undefined);
+          if (version !== (versions.get(scope) ?? 0)) return;
+          return preparedValue(scope, saved, validate);
         },
-        set(key: string, value: unknown) {
-          const hash = id(scope, key);
-          const stored = structuredClone(value);
-          remember(hash, { scope, key: hash.split(':')[1], savedAt: now(), value: stored }, true, isPreparedKey(key));
+        /**
+         * Saves a copy. The caller keeps its object and may change it: the value is serialized once now
+         * and parsed on first read. With `owned`, the caller hands the value over instead: it is frozen in
+         * place and shared, so the caller must never change it again.
+         */
+        set(key: string, value: unknown, owned = false) {
+          const hash = id(scope, key),
+            savedAt = now(),
+            record = { scope, key: hash.split(':')[1], savedAt, value: owned ? deepFreeze(value) : value };
+          const payload = JSON.stringify(record);
+          remember(hash, owned ? record : { ...record, value: undefined, raw: payload }, payload, true, isPreparedKey(key));
           trim();
-          if (listeners.size) changed({ scope, id: hash, value: stored });
+          // Listeners read the value synchronously and must not change it.
+          if (listeners.size) changed({ scope, id: hash, value: record.value });
         },
         delete(key: string) {
           versions.set(scope, (versions.get(scope) ?? 0) + 1);
