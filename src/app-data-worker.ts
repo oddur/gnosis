@@ -4,7 +4,14 @@ import {
   type FileProgressPatch,
   type ReviewStateWrite,
 } from '../lib/review-state';
-import { clearSearchIndex, createSqliteSearchIndex, type SqliteSearchIndex } from './sqlite-search-index';
+import {
+  SEARCH_INDEX_MIGRATION,
+  clearSearchIndex,
+  createSqliteSearchIndex,
+  dropLegacySearchIndex,
+  type SqliteSearchIndex,
+} from './sqlite-search-index';
+import { maintainDatabase, type MaintainState } from './sqlite-maintain';
 import type { LocalSearchResponse, SearchOp, SearchRequest } from './command-search-service';
 import { parentPort } from 'node:worker_threads';
 import { DatabaseSync } from 'node:sqlite';
@@ -15,6 +22,8 @@ const port = parentPort;
 if (!port) throw new Error('Storage must run in a worker');
 let opened = false;
 let db: DatabaseSync;
+let file = '';
+const maintenance: MaintainState = {};
 type Request = { id: number } & (
   | { method: 'open'; args: { directory: string } }
   | { method: 'write'; args: [string, unknown][] }
@@ -22,6 +31,7 @@ type Request = { id: number } & (
   | { method: 'search'; args: SearchRequest }
   | { method: 'search-feeds'; args: { account: string } }
   | { method: 'search-apply'; args: { account: string; ops: SearchOp[] } }
+  | { method: 'maintain'; args: { idleSeconds: number } }
   | { method: 'review-load'; args: Record<string, string> }
   | { method: 'review-save'; args: ReviewStateWrite }
   | { method: 'progress-save'; args: FileProgressPatch }
@@ -155,12 +165,13 @@ port.on('message', (request: Request) => {
       let result: unknown;
       if (method === 'open') {
         fs.mkdirSync(args.directory, { recursive: true });
-        const file = path.join(args.directory, 'workbench.sqlite');
+        file = path.join(args.directory, 'workbench.sqlite');
         db = new DatabaseSync(file);
         opened = true;
         if (process.platform !== 'win32') fs.chmodSync(file, 0o600);
+        // New files start in incremental mode. An existing file keeps its mode until `maintain` converts it.
         db.exec(
-          'PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=2000; CREATE TABLE IF NOT EXISTS records (name TEXT NOT NULL,id TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(name,id)); CREATE TABLE IF NOT EXISTS migrations (id TEXT PRIMARY KEY)'
+          'PRAGMA auto_vacuum=INCREMENTAL; PRAGMA journal_mode=WAL; PRAGMA journal_size_limit=16777216; PRAGMA synchronous=FULL; PRAGMA busy_timeout=2000; CREATE TABLE IF NOT EXISTS records (name TEXT NOT NULL,id TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(name,id)); CREATE TABLE IF NOT EXISTS migrations (id TEXT PRIMARY KEY)'
         );
         if (!db.prepare('SELECT id FROM migrations WHERE id=?').get('legacy-state-v1'))
           transaction(() => {
@@ -256,6 +267,15 @@ port.on('message', (request: Request) => {
         result = { feeds: search().feeds(args.account) };
       } else if (method === 'search-apply') {
         result = search().apply(args.account, args.ops);
+      } else if (method === 'maintain') {
+        // One bounded step per request, so saved-work writes queue behind at most one step.
+        if (!db.prepare('SELECT id FROM migrations WHERE id=?').get(SEARCH_INDEX_MIGRATION)) {
+          transaction(() => {
+            dropLegacySearchIndex(db);
+            db.prepare('INSERT INTO migrations VALUES (?)').run(SEARCH_INDEX_MIGRATION);
+          });
+          result = { more: true, fileBytes: 0, freeBytes: 0 };
+        } else result = maintainDatabase(db, file, { idleSeconds: args.idleSeconds, label: 'saved work' }, maintenance);
       } else {
         if (opened) db.close();
       }

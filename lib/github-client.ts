@@ -188,6 +188,7 @@ export function createGitHubClientPool(options: Options = {}) {
     setCacheSizeMB: (value: unknown) => snapshots.setSizeMB(value),
     trimPrepared: () => snapshots.trimPrepared(),
     onCacheChange: (listener: Parameters<typeof snapshots.onChange>[0]) => snapshots.onChange(listener),
+    maintainCache: (idleSeconds: number) => snapshots.maintain(idleSeconds),
     flushStorage: async () => { await snapshots.flush(); await flushBudget(); },
     closeStorage: async () => { await snapshots.close(); await flushBudget(); },
     async setStorage(file: string) {

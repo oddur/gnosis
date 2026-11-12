@@ -806,7 +806,12 @@ void app.whenReady().then(async () => {
   // Repairs that predate this launch wait until the queue has had time to paint.
   setTimeout(() => void repairReviewsIndex(), STARTUP_REPAIR_DELAY_MS).unref();
   setTimeout(() => {
-    githubClients.trimPrepared().catch((error: unknown) => console.warn('Could not trim the GitHub cache:', error));
+    void githubClients.trimPrepared().catch((error: unknown) => console.warn('Could not trim the GitHub cache:', error))
+      .then(() => {
+        storageMaintenance = true;
+        setInterval(() => void maintainStorage(), STORAGE_MAINTENANCE_INTERVAL_MS).unref();
+        return maintainStorage();
+      });
   }, PREPARED_TRIM_DELAY_MS).unref();
 
   app.on('activate', () => {
@@ -815,6 +820,35 @@ void app.whenReady().then(async () => {
     if (!proactiveInterval && loadPreferences().proactiveMode) startProactivePolling();
   });
 });
+
+const STORAGE_MAINTENANCE_INTERVAL_MS = 10 * 60_000;
+let storageMaintenance = false;
+let maintaining: Promise<void> | undefined;
+/**
+ * Return free pages to the file system, one bounded worker step at a time. Never at startup or on
+ * the cache-clear path: it starts after the deferred trim, then repeats every ten minutes.
+ */
+function maintainStorage(): Promise<void> {
+  if (!storageMaintenance) return Promise.resolve();
+  maintaining ??= (async () => {
+    const stores = [
+      ['saved work', (idle: number) => appData.maintain(idle)],
+      ['GitHub cache', (idle: number) => githubClients.maintainCache(idle)],
+    ] as const;
+    for (const [name, step] of stores) {
+      for (let steps = 0; steps < 1000; steps++) {
+        const result = await step(powerMonitor.getSystemIdleTime());
+        note('storage', { store: name, ...result });
+        if (!result?.more) break;
+        // Let other saved-work and cache requests run between steps.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+  })()
+    .catch((error: unknown) => console.warn('Could not compact local storage:', error instanceof Error ? error.message : String(error)))
+    .finally(() => { maintaining = undefined; });
+  return maintaining;
+}
 
 let cacheFlushed = false;
 let cacheFlushing = false;
@@ -1406,6 +1440,7 @@ ipcMain.handle('load-preferences', () => {
 
 ipcMain.handle('save-preferences', async (_event, prefs: Preferences) => {
   await githubClients.setCacheSizeMB(prefs.githubCacheSizeMB);
+  void maintainStorage();
   savePreferences(prefs);
   broadcastToAllWindows('preferences-changed', loadPreferences());
   broadcastWorkbenchChanged();

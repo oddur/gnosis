@@ -204,6 +204,8 @@ export function createGitHubCache(now = Date.now) {
       await storage.setPreparedLimit(Math.max(0, cacheSizeMB * 1024 * 1024 - MAX_BYTES), now());
     },
     flush,
+    /** One space-reclaim step in the cache worker. */
+    maintain: (idleSeconds: number) => storage?.maintain(idleSeconds),
     /** The stored value is passed read-only and uncloned. Listeners must not keep or change it. */
     onChange(listener: (change: CacheChange) => void): () => void {
       listeners.add(listener);
