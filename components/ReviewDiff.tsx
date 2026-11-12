@@ -6,7 +6,6 @@ import { FileDiff } from '@pierre/diffs/react';
 import { bundledLanguages } from 'shiki/langs';
 import { processFile } from '@pierre/diffs';
 import type { DiffLineAnnotation, FileDiffOptions } from '@pierre/diffs';
-import { ChevronsUpDown, FoldVertical, UnfoldVertical } from 'lucide-react';
 import { DIFF_HIGHLIGHTER } from '@/lib/diff-highlighter';
 import { CODE_THEMES } from '@/lib/constants';
 import {
@@ -357,7 +356,7 @@ function FoldableReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: D
             title="Hide extra context"
             onClick={() => changeContext(() => setRevealed(new Set()))}
           >
-            <FoldVertical size={14} aria-hidden="true" />
+            <span className="icon-mask icon-fold-vertical" aria-hidden="true" />
           </button>
         </div>
       )}
@@ -400,7 +399,7 @@ function FoldableReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: D
               title={`Show ${Math.min(count, 10)} of ${count} hidden unchanged ${count === 1 ? 'line' : 'lines'}`}
               onClick={() => changeContext(() => reveal(false))}
             >
-              <ChevronsUpDown size={14} aria-hidden="true" />
+              <span className="icon-mask icon-chevrons-up-down" aria-hidden="true" />
               <span aria-hidden="true">{count} hidden</span>
             </button>
             {count > 10 && (
@@ -411,7 +410,7 @@ function FoldableReviewHunk({ hunk, ...props }: Omit<Props, 'hunks'> & { hunk: D
                 title={`Show all ${count} unchanged lines`}
                 onClick={() => changeContext(() => reveal(true))}
               >
-                <UnfoldVertical size={14} aria-hidden="true" />
+                <span className="icon-mask icon-unfold-vertical" aria-hidden="true" />
               </button>
             )}
           </div>

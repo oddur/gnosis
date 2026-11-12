@@ -1,7 +1,7 @@
 import { MarkdownViewSwitch } from './MarkdownViewSwitch';
 import { PrBadge } from './EntityBadge';
 import { DiffStats } from './DiffStats';
-import { ChevronDown, ChevronRight, MessageSquare } from 'lucide-react';
+import { MessageSquare } from 'lucide-react';
 import { FilePathLink } from './FilePathLink';
 import { prepareReviewHunk } from '@/lib/review-diff';
 import type { DiffHunk, FileMetadata } from '@/lib/types';
@@ -79,7 +79,7 @@ export function ReviewFileHeader({
               aria-controls={contentId}
               onClick={onToggleExpanded}
             >
-              {expanded ? <ChevronDown size={14} aria-hidden="true" /> : <ChevronRight size={14} aria-hidden="true" />}
+              <span className={`icon-mask ${expanded ? 'icon-chevron-down' : 'icon-chevron-right'}`} aria-hidden="true" />
             </button>
           )}
           {source && (
