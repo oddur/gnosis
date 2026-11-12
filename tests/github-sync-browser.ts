@@ -48,7 +48,7 @@ void app.whenReady().then(async () => {
       void 0;
     }`);
     await state('idle');
-    assert.equal(await js("!!document.querySelector('.workbench-header .github-sync-status')"), false);
+    assert.equal(await js("!!document.querySelector('.app-titlebar .github-sync-status')"), false);
     await js("document.querySelector('.activity-trigger').click()");
     await wait("!!document.querySelector('.activity-drawer .github-sync-status')");
     await wait("document.querySelector('.github-sync-status')?.textContent.includes('Checked 1m ago')");

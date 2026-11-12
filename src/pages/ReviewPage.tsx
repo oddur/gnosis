@@ -2,7 +2,8 @@ import { activeWorkspaceRoot } from '../../lib/workspace-navigation';
 import { useSettingsShortcut } from '../../lib/use-settings-shortcut';
 import { watchGitHub } from '../../lib/watch-github';
 import { usePrDiscussions } from '../../lib/use-pr-discussions';
-import { RecentlyViewed } from '../../components/RecentlyViewed';
+import { WorkspaceMenu } from '../../components/AppTitlebar';
+import { normalizeEffort } from '../../lib/effort';
 import { ReviewBreadcrumbProvider, useReviewBreadcrumbs } from '../../lib/review-breadcrumbs';
 import { ReviewBreadcrumbs } from '../../components/ReviewBreadcrumbs';
 import { SearchableSelect } from '../../components/SearchableSelect';
@@ -36,7 +37,6 @@ import { SlideView } from '../../components/SlideView';
 import { ExplainerView } from '../../components/ExplainerView';
 import { toast } from '../../components/ui/toast';
 import { SlideChatSheet } from '../../components/SlideChatSheet';
-import { WorkbenchHelp } from '../../components/WorkbenchHelp';
 import { SettingsDialog } from '../../components/SettingsDialog';
 import { ShortcutOverlay } from '../../components/ShortcutOverlay';
 import { CommandPalette, type Command } from '../../components/CommandPalette';
@@ -57,6 +57,8 @@ interface Props {
   initialPreferences?: Preferences;
   onOpenChanges?: () => void;
   onBack: () => void;
+  /** Opens a queue destination in this workspace; the title bar uses it for home, setup and account actions. */
+  onNavigateHome?: (target: Extract<SearchDestination, { kind: 'home' }>) => void;
   onReReview: (prUrl: string, previousReviewId?: string) => void;
   regenerating?: boolean;
   initialSlideId?: string;
@@ -94,6 +96,7 @@ function saveChecks(review: ReviewGuide, checked: Set<string>) {
 function ReviewPageContent({
   review: initialReview,
   onBack,
+  onNavigateHome,
   onReReview,
   regenerating = false,
   initialSlideId,
@@ -849,17 +852,6 @@ function ReviewPageContent({
           onChange={handleDiffAppearanceChange}
         />
       </div>
-      {!embedded && (
-        <>
-          <button
-            onClick={() => (commandCenter ? commandCenter.open() : setPaletteOpen(true))}
-            title="Search and navigate (⌘K / Ctrl K)"
-          >
-            Search <kbd className="kbd">{window.electronAPI.platform === 'darwin' ? '⌘ K' : 'Ctrl K'}</kbd>
-          </button>
-          <WorkbenchHelp />
-        </>
-      )}
       <Button
         variant="outline"
         size="sm"
@@ -903,9 +895,32 @@ function ReviewPageContent({
       data-diff-layout={review.slides.length > 0 ? diffLayout : undefined}
     >
       {!embedded && (
+        <WorkspaceMenu
+          onHome={() => (onNavigateHome ? onNavigateHome({ kind: 'home', section: 'all' }) : onBack())}
+          model={
+            prefs
+              ? {
+                  provider: prefs.provider,
+                  model: prefs.model,
+                  effort: normalizeEffort(prefs.provider, prefs.model, prefs.effort, prefs.thinking),
+                  onChange: (selection) => savePreferencePatch(selection),
+                }
+              : undefined
+          }
+          onSearch={() => (commandCenter ? commandCenter.open() : setPaletteOpen(true))}
+          onGettingStarted={onNavigateHome && (() => onNavigateHome({ kind: 'home', onboarding: 'setup' }))}
+          onWalkthrough={onNavigateHome && (() => onNavigateHome({ kind: 'home', onboarding: 'tour' }))}
+          onSettings={() => setSettingsOpen(true)}
+          account={{
+            login: currentLogin,
+            onClick: () =>
+              onNavigateHome ? onNavigateHome({ kind: 'home', account: true }) : setSettingsOpen(true),
+          }}
+        />
+      )}
+      {!embedded && (
         <div className="pr-summary-toolbar">
           <div className="pr-summary-toolbar-inner">
-            <RecentlyViewed />
             <ReviewBreadcrumbs
               scope="explanation"
               base={[

@@ -1,4 +1,4 @@
-import { useId, useRef } from 'react';
+import { useId, useRef, type ReactElement } from 'react';
 import { Popover } from 'radix-ui';
 import { CircleHelp, X } from 'lucide-react';
 
@@ -76,20 +76,39 @@ const terms = [
   ],
 ] as const;
 
-export function WorkbenchHelp({ onGettingStarted, onWalkthrough }: { onGettingStarted?: () => void; onWalkthrough?: () => void }) {
+export function WorkbenchHelp({
+  onGettingStarted,
+  onWalkthrough,
+  open,
+  onOpenChange,
+  anchor,
+}: {
+  onGettingStarted?: () => void;
+  onWalkthrough?: () => void;
+  /** Controlled use: a menu opens help, which then attaches to `anchor` instead of its own trigger. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  anchor?: ReactElement;
+}) {
   const titleId = useId();
   const replaying = useRef(false);
   return (
     <Popover.Root
-      onOpenChange={(open) => {
-        if (open) replaying.current = false;
+      open={open}
+      onOpenChange={(next) => {
+        if (next) replaying.current = false;
+        onOpenChange?.(next);
       }}
     >
-      <Popover.Trigger asChild>
-        <button className="workbench-help-trigger" title="Help and terminology" aria-label="Help and terminology">
-          <CircleHelp size={16} /> <span>Help</span>
-        </button>
-      </Popover.Trigger>
+      {anchor ? (
+        <Popover.Anchor asChild>{anchor}</Popover.Anchor>
+      ) : (
+        <Popover.Trigger asChild>
+          <button className="workbench-help-trigger" title="Help and terminology" aria-label="Help and terminology">
+            <CircleHelp size={16} /> <span>Help</span>
+          </button>
+        </Popover.Trigger>
+      )}
       <Popover.Portal>
         <Popover.Content
           className="workbench-help"

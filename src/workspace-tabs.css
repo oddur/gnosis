@@ -17,43 +17,161 @@
 .workspace-panel[hidden] {
   display: none;
 }
-.workspace-tabs {
-  height: 39px;
+/*
+ * One quiet title bar row replaces the native title bar, the tab strip and the workspace header.
+ * The row moves the window; only its buttons and tab pills opt out, with tight hit areas, so the
+ * gaps between them and a reserved zone after New tab stay draggable. macOS draws its traffic
+ * lights over the start of the row (hidden in full screen); Windows and Linux draw caption
+ * buttons over the end, which the Window Controls Overlay variables measure.
+ */
+:root {
+  --app-titlebar-height: 38px;
+  --app-titlebar-start: 8px;
+  --app-titlebar-end: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+  /* Empty space after New tab that always moves the window, however many tabs are open. */
+  --app-titlebar-drag-zone: 120px;
+  --app-titlebar-icon: color-mix(in srgb, var(--muted-foreground) 85%, transparent);
+  --app-titlebar-hover: color-mix(in srgb, var(--foreground) 7%, transparent);
+  --app-titlebar-active: color-mix(in srgb, var(--foreground) 10%, transparent);
+}
+:root[data-platform='darwin'] {
+  --app-titlebar-start: 80px;
+  --app-titlebar-end: 0px;
+}
+:root[data-platform='darwin'][data-full-screen] {
+  --app-titlebar-start: 8px;
+}
+.app-titlebar {
+  height: var(--app-titlebar-height);
   flex-shrink: 0;
   display: flex;
-  align-items: stretch;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
+  padding-inline: var(--app-titlebar-start) calc(var(--app-titlebar-end) + 10px);
   background: var(--sidebar);
   border-bottom: 1px solid var(--border);
+  position: relative;
+  user-select: none;
+  -webkit-app-region: drag;
+}
+/* Only the controls themselves opt out; their gaps and the row's padding still move the window. */
+.app-titlebar :is(button, a, input, select, .workspace-tab) {
   -webkit-app-region: no-drag;
+}
+/* Menus and dialogs can cover the row; drag regions would otherwise take their clicks. */
+:is([data-radix-popper-content-wrapper], [role='menu'], [role='listbox'], [role='dialog'], [role='alertdialog']) {
+  -webkit-app-region: no-drag;
+}
+body:has([role='dialog'][aria-modal='true'], [role='alertdialog']) .app-titlebar {
+  -webkit-app-region: no-drag;
+}
+.app-titlebar-leading,
+.app-titlebar-slot,
+.app-titlebar-history,
+.app-titlebar-sidebar-toggle {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 2px;
+}
+.app-titlebar-slot[hidden] {
+  display: none;
+}
+/* The page's sidebar toggle comes first, then the workspace's history and Back/Forward. */
+.app-titlebar-history {
+  order: 1;
+}
+.app-titlebar-window-controls {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--app-titlebar-start);
+  -webkit-app-region: drag;
+}
+.app-titlebar-drag {
+  flex: 1 0 var(--app-titlebar-drag-zone);
+  min-width: var(--app-titlebar-drag-zone);
+  align-self: stretch;
+  -webkit-app-region: drag;
+}
+.app-titlebar :is(.app-titlebar-button, .recent-history-trigger, .workspace-new-tab, .workspace-tab-menu) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--app-titlebar-icon);
+  flex-shrink: 0;
+  cursor: default;
+}
+.app-titlebar :is(.app-titlebar-button, .recent-history-trigger, .workspace-new-tab, .workspace-tab-menu) svg {
+  width: 15px;
+  height: 15px;
+}
+.app-titlebar
+  :is(.app-titlebar-button, .recent-history-trigger, .workspace-new-tab, .workspace-tab-menu):hover:not(:disabled),
+.app-titlebar :is(.recent-history-trigger, .workspace-tab-menu)[data-state='open'] {
+  background: var(--app-titlebar-hover);
+  color: var(--foreground);
+}
+.app-titlebar .app-titlebar-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.app-titlebar :is(button, a):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+.workspace-tabs {
+  flex: 0 1 auto;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
 }
 .workspace-tabs-list {
   display: flex;
+  align-items: center;
+  align-self: stretch;
   min-width: 0;
   overflow: auto;
   scrollbar-width: none;
   gap: 4px;
-  padding: 3px 8px 0;
+}
+.workspace-tabs-list[data-overflow='end'] {
+  mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+}
+.workspace-tabs-list[data-overflow='start'] {
+  mask-image: linear-gradient(to left, #000 calc(100% - 20px), transparent);
+}
+.workspace-tabs-list[data-overflow='both'] {
+  mask-image: linear-gradient(to right, transparent, #000 20px, #000 calc(100% - 20px), transparent);
+}
+/* The open-tabs menu appears only when tabs overflow the strip. */
+.workspace-tabs:not(:has(.workspace-tabs-list[data-overflow])) .workspace-tab-menu {
+  display: none;
 }
 .workspace-tab {
   display: flex;
   align-items: center;
-  flex-shrink: 0;
-  width: 240px;
-  min-width: 0;
-  border: 1px solid transparent;
-  border-bottom: 0;
-  border-radius: 6px 6px 0 0;
+  /* Pills narrow together before the strip scrolls. */
+  flex: 0 1 200px;
+  max-width: 220px;
+  min-width: 140px;
+  height: 26px;
+  border-radius: 6px;
   color: var(--muted-foreground);
 }
 .workspace-tab:hover {
-  background: var(--accent);
+  background: var(--app-titlebar-hover);
+  color: var(--foreground);
 }
 .workspace-tab[data-active='true'] {
-  background: var(--background);
+  background: var(--app-titlebar-active);
   color: var(--foreground);
-  border-color: var(--border);
-  box-shadow: inset 0 2px var(--ring);
 }
 .workspace-tab > [role='tab'] {
   display: flex;
@@ -61,70 +179,56 @@
   gap: 6px;
   min-width: 0;
   flex: 1;
-  height: 35px;
-  padding: 0 8px;
+  height: 100%;
+  padding: 0 2px 0 8px;
   text-align: left;
   font-size: 12px;
-  font-weight: 550;
-  cursor: pointer;
+  font-weight: 500;
+  cursor: default;
 }
 .workspace-tab svg {
   flex-shrink: 0;
-  width: 15px;
-  height: 15px;
+  width: 14px;
+  height: 14px;
 }
 .workspace-tab-title {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The PR number stays in the tab's name and tooltip; the pill shows the title. */
 .workspace-tab-number {
-  flex-shrink: 0;
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--muted-foreground);
+  display: none;
 }
 .workspace-tab-close {
-  padding: 5px;
-  margin-right: 4px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-.workspace-tab-close:hover {
-  background: var(--muted);
-  color: var(--foreground);
-}
-.workspace-new-tab {
-  min-width: 36px;
-  flex-shrink: 0;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
-}
-.workspace-tab-menu {
-  align-self: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 3px;
   flex-shrink: 0;
-  margin: 0 8px 0 auto;
+  border-radius: 4px;
+  color: var(--app-titlebar-icon);
+  opacity: 0;
 }
-.workspace-tabs button:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: -2px;
+.workspace-tab:is(:hover, :focus-within, [data-active='true']) .workspace-tab-close {
+  opacity: 1;
 }
-.workspace-tabs button:hover {
+.workspace-tab-close:hover {
+  background: var(--app-titlebar-hover);
   color: var(--foreground);
 }
-@media (max-width: 1000px) {
-  .workspace-tab {
-    width: 210px;
-  }
+.workspace-tab-close svg {
+  width: 12px;
+  height: 12px;
+}
+.workspace-new-tab {
+  margin-inline-start: 2px;
 }
 /* Keep code and conversation space useful on short laptop windows. */
 @media (max-height: 750px) {
-  .workspace-shell .workbench-header {
-    min-height: 48px;
-    padding-block: 6px;
-  }
   .workspace-shell .feedback-conversation-header {
     padding-block: 6px;
   }
@@ -143,27 +247,6 @@
   }
 }
 
-.workspace-tabs-tip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-inline-start: 12px;
-  white-space: nowrap;
-  color: var(--muted-foreground);
-  font-size: 12px;
-}
-.workspace-tabs-tip kbd {
-  font: inherit;
-  color: var(--foreground);
-}
-.workspace-tabs-tip button {
-  padding: 6px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-.workspace-tabs-tip button:hover {
-  background: var(--accent);
-}
 .entry-menu.workspace-open-tabs-menu:has(.entry-menu-description) {
   width: min(420px, var(--available-width), calc(100vw - 24px));
   max-width: min(420px, var(--available-width));
@@ -191,10 +274,6 @@
   text-align: start;
   margin: 0;
 }
-.workspace-tab-close {
-  min-width: 26px;
-  min-height: 26px;
-}
 .workspace-tab-error {
   color: var(--danger);
 }
@@ -209,11 +288,6 @@
 @media (prefers-reduced-motion: reduce) {
   .workspace-tab-spinner {
     animation: none;
-  }
-}
-@media (max-width: 1000px) {
-  .workspace-tabs-tip {
-    display: none;
   }
 }
 .workspace-recovery {
@@ -321,4 +395,121 @@
 /* The tab strip uses a row of space; keep dependency lists dense without shrinking type. */
 .workspace-shell .stack-status-table .stack-overview-member {
   padding-block: 5px;
+}
+
+/* Full-window dialogs start below the row, clear of the traffic lights and caption buttons. */
+:root .mermaid-dialog {
+  top: calc(var(--app-titlebar-height) + 8px);
+  height: calc(100dvh - var(--app-titlebar-height) - 24px);
+}
+@media (max-width: 760px) {
+  :root .settings-dialog {
+    top: calc(var(--app-titlebar-height) + 4px);
+    height: calc(100dvh - var(--app-titlebar-height) - 16px);
+    max-height: calc(100dvh - var(--app-titlebar-height) - 16px);
+  }
+}
+
+/* Search and the account avatar close the row, beside the Windows and Linux caption buttons. */
+.app-titlebar-trailing,
+.workspace-menu {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 4px;
+}
+.workspace-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+.workspace-menu-avatar {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--foreground) 12%, transparent);
+  transition: box-shadow 120ms ease-out;
+}
+.workspace-menu-trigger:is(:hover, [data-state='open']) .workspace-menu-avatar {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--foreground) 22%, transparent);
+}
+.workspace-menu-trigger:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 0;
+}
+.workspace-menu-avatar-empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--secondary);
+  color: var(--muted-foreground);
+}
+.workspace-menu-popup {
+  z-index: 70;
+  min-width: 240px;
+  max-width: min(320px, calc(100vw - 24px));
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  font-size: var(--type-control);
+}
+.workspace-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  outline: none;
+  cursor: default;
+}
+.workspace-menu-item > svg,
+.workspace-menu-icon,
+.workspace-menu-check {
+  width: 15px;
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+.workspace-menu-item[data-highlighted],
+.workspace-menu-item[data-state='open'] {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.workspace-menu-item[data-highlighted] > svg {
+  color: inherit;
+}
+.workspace-menu-detail,
+.workspace-menu-shortcut {
+  margin-left: auto;
+  padding-left: 12px;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: var(--type-caption);
+  white-space: nowrap;
+}
+.workspace-menu-label {
+  padding: 6px 8px 4px;
+  color: var(--muted-foreground);
+  font-size: var(--type-caption);
+}
+.workspace-menu-separator {
+  height: 1px;
+  margin: 4px;
+  background: var(--border);
+}
+/* Keyboard focus outlines the whole pill, close button included. */
+.app-titlebar .workspace-tab > [role='tab']:focus-visible {
+  outline: none;
+}
+.workspace-tab:has(> [role='tab']:focus-visible) {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
 }

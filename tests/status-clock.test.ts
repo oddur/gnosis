@@ -73,3 +73,21 @@ void test('timer stops with the last unsubscribe', () => {
   assert.equal(clock.getSnapshot(), host.time);
   assert.equal(clock.getSnapshot(), clock.getSnapshot(), 'Consecutive reads agree');
 });
+
+void test('paused interval ticks are skipped', () => {
+  const host = fakeHost();
+  let paused = true;
+  const clock = createStatusClock(() => ({ ...(host as StatusClockHost), paused: () => paused }), 1000);
+  let ticks = 0;
+  const stop = clock.subscribe(() => ticks++);
+  host.fire();
+  assert.equal(ticks, 0, 'A paused clock does not tick');
+  host.document.dispatchEvent(new Event('visibilitychange'));
+  assert.equal(ticks, 1, 'Becoming visible still ticks');
+  paused = false;
+  host.time += 1000;
+  host.fire();
+  assert.equal(ticks, 2);
+  assert.equal(clock.getSnapshot(), host.time);
+  stop();
+});

@@ -107,7 +107,7 @@ void app.whenReady().then(async () => {
     await open();
     await fill('> go to review queue');
     await key('Enter');
-    await wait("!!document.querySelector('.workbench-header')&&!document.querySelector('.workbench-review')");
+    await wait("!!document.querySelector('.app-titlebar .workspace-menu-trigger')&&!document.querySelector('.workbench-review')");
     await open();
     await fill('#120');
     await click('Resume review');

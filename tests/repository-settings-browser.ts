@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { chooseWorkspaceMenuItem } from './workspace-menu';
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({ width: 1280, height: 850, show: true, webPreferences: { backgroundThrottling: false } });
   win.webContents.on('console-message', ({ level, message }) => { if (level === 'error') console.error(message); });
@@ -89,7 +90,7 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('.repository-settings-dialog')");
     assert.equal(await js("document.querySelector('[aria-label=\"Copy repository: klang/engine\"]').classList.contains('repository-color-blue')"), true);
     await capture('queue-light');
-    await click('[aria-label="Settings"]');
+    await js(chooseWorkspaceMenuItem('[aria-label="Settings"]'));
     await js("[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(t=>t.textContent==='Repositories').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
     await click('[aria-label="Configure klang/engine"]');
     await js("document.documentElement.classList.add('dark')");
@@ -110,7 +111,7 @@ void app.whenReady().then(async () => {
     await click('[data-slot=dialog-close]');
     await js("(async()=>{const p=await window.electronAPI.loadPreferences();await window.electronAPI.savePreferences({...p,watchedRepos:Array.from({length:60},(_,i)=>'team/repository-'+String(i).padStart(2,'0'))})})()");
     win.setSize(1280,850);
-    await click('[aria-label="Settings"]');
+    await js(chooseWorkspaceMenuItem('[aria-label="Settings"]'));
     await js("[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(t=>t.textContent==='Repositories').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
     await wait("document.querySelectorAll('.settings-repositories > .repository-settings-list .repository-settings-row').length===60");
     await capture('many-repositories-dark');

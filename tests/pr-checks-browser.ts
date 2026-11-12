@@ -249,6 +249,12 @@ void app.whenReady().then(async () => {
       `document.querySelector('[aria-current=step] .check-step-duration').textContent!==${JSON.stringify(initialTime)}`
     );
     assert.equal(await js('window.stepDetailCalls'), initialCalls, 'Timer must not request GitHub data');
+    // Each tick re-renders only the running step's duration label, not the step list.
+    await js('window.__renderCounts={};window.__countRenders=true');
+    await new Promise((resolve) => setTimeout(resolve, 2200));
+    const stepRenders = await js<Partial<Record<string, number>>>('window.__countRenders=false;window.__renderCounts');
+    assert.ok((stepRenders.CheckStepDuration ?? 0) >= 2, 'The running step duration ticks');
+    assert.equal(stepRenders.CheckJobSteps ?? 0, 0, 'Clock ticks do not re-render the step list');
     win.setContentSize(1280, 800);
     await capture('running-desktop');
     win.setContentSize(900, 760);
