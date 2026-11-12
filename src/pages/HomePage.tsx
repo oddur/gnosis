@@ -1297,10 +1297,10 @@ export function HomePage({ onAccount, navigationRestoration, onNavigationChange,
     {
       '/': () => searchInput.current?.focus(),
       j: (e) => {
-        if (!(e.target instanceof HTMLElement) || !e.target.closest('.activity-shell')) moveSelection(1);
+        if (!(e.target instanceof HTMLElement) || !e.target.closest('.activity-drawer, .activity-capsule')) moveSelection(1);
       },
       k: (e) => {
-        if (!(e.target instanceof HTMLElement) || !e.target.closest('.activity-shell')) moveSelection(-1);
+        if (!(e.target instanceof HTMLElement) || !e.target.closest('.activity-drawer, .activity-capsule')) moveSelection(-1);
       },
     },
     { enabled: !mutedOpen && !onboarding.open && !onboarding.tourOpen && !settings && !localOpen && !openedItem && !authOpen && !connectionRequired && section !== 'saved' }

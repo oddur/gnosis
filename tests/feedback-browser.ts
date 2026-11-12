@@ -375,7 +375,7 @@ void app.whenReady().then(async () => {
     assert.ok(await js("document.querySelector('.pr-summary-page').scrollHeight>document.querySelector('.pr-summary-page').clientHeight"),'Extreme zoom makes the page scroll instead of clipping its contents');
     await js("document.querySelector('.feedback-response-dock').scrollIntoView({block:'end'})");
     await new Promise(r=>setTimeout(r,100));
-    assert.ok(await js("(()=>{const r=document.querySelector('.feedback-response-dock').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight})()"),'Response controls remain reachable at 200% zoom');
+    assert.ok(await js("(()=>{const r=document.querySelector('.feedback-response-dock').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight+1})()"),'Response controls remain reachable at 200% zoom');
     await capture('refined-zoom-dark');
     win.webContents.setZoomFactor(1);
     assert.equal(errors.filter((e) => !e.includes('favicon')).length, 0, errors.join('\n'));

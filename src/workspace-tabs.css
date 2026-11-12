@@ -1,5 +1,5 @@
 .workspace-shell {
-  height: calc(100dvh - 34px);
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -408,6 +408,73 @@ body:has([role='dialog'][aria-modal='true'], [role='alertdialog']) .app-titlebar
     height: calc(100dvh - var(--app-titlebar-height) - 16px);
     max-height: calc(100dvh - var(--app-titlebar-height) - 16px);
   }
+}
+
+/*
+ * Activity sits just before Search as a quiet capsule, present only while work runs or a result
+ * is unseen. It follows the row's low-contrast controls; status color is limited to the marks.
+ */
+.app-titlebar .activity-capsule {
+  order: -1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  padding: 0 9px 0 7px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--card) 65%, transparent);
+  color: var(--muted-foreground);
+  font-size: var(--type-caption);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: default;
+  animation: activity-capsule-in 160ms ease-out;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+@keyframes activity-capsule-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+.app-titlebar .activity-capsule:hover,
+.app-titlebar .activity-capsule[aria-expanded='true'] {
+  background: var(--app-titlebar-active);
+  color: var(--foreground);
+}
+.app-titlebar .activity-capsule:focus-visible {
+  outline-offset: 1px;
+}
+.activity-capsule-part {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.activity-capsule-part[data-tone='running'] {
+  color: var(--foreground);
+}
+.activity-capsule-part[data-tone='failed'] {
+  color: var(--color-danger);
+}
+.activity-capsule-part[data-tone='ready'] {
+  color: var(--color-success);
+}
+.activity-capsule .task-glyph {
+  width: 12px;
+  height: 12px;
+}
+/* The title bar stays still: the capsule's running mark rests as ◐, and "N running" says the rest.
+   A mark that turned forever would also cost style work on every frame of a window resize. */
+.activity-capsule .task-glyph[data-status='running'] {
+  padding: 1.5px;
+  animation: none;
+}
+.activity-capsule .task-glyph svg {
+  width: 8px;
+  height: 8px;
 }
 
 /* Search and the account avatar close the row, beside the Windows and Linux caption buttons. */

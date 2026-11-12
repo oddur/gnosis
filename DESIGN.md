@@ -150,8 +150,8 @@ Use 16px full-contrast prose for narrative context and review guidance. Lists ha
 
 ## Layout
 
-Use a viewport workspace with scrolling appropriate to each surface. Explanation uses one scrolling document; Changes, Feedback, and other inspection workspaces retain their own pane layouts. Reserve 34px at the bottom for Activity.
-One quiet 38px title bar row replaces the native title bar, tab strip, and workspace header. From the start: window controls, the sidebar toggle (when the screen has a sidebar), Recently viewed, Back and Forward, the workspace tabs as low-contrast 26px pills, and New tab. At least 120px of empty row after New tab always moves the window; only buttons and tab pills opt out of dragging. Search and the round account avatar sit at the end. The avatar menu holds the review queue, GitHub account, model and effort, Settings, and Help. Tabs narrow to 140px, then scroll with an open-tabs menu.
+Use a viewport workspace with scrolling appropriate to each surface. Explanation uses one scrolling document; Changes, Feedback, and other inspection workspaces retain their own pane layouts. The workspace reaches the bottom edge of the window; Activity lives in the title bar.
+One quiet 38px title bar row replaces the native title bar, tab strip, and workspace header. From the start: window controls, the sidebar toggle (when the screen has a sidebar), Recently viewed, Back and Forward, the workspace tabs as low-contrast 26px pills, and New tab. At least 120px of empty row after New tab always moves the window; only buttons and tab pills opt out of dragging. The Activity capsule, Search, and the round account avatar sit at the end. The capsule appears only while work runs or a failure or result is unseen. The avatar menu holds the review queue, Activity (⌘⇧A), GitHub account, model and effort, Settings, and Help. Tabs narrow to 140px, then scroll with an open-tabs menu.
 
 | Surface | Wide layout | Narrow behavior |
 | --- | --- | --- |
@@ -180,7 +180,7 @@ Exact shadow values are recorded in the sidecar. Dialogs use a translucent backg
 Use subtly curved rectangular controls and thin borders. The base radius supplies derived library button and card radii.
 Recorded pixel derivatives assume a 16px root font size; runtime components retain their CSS calculations.
 Custom controls use the control radius; fields and navigation use the field radius.
-Activity uses the drawer radius on its upper corners. The settings dialog retains square outer corners.
+The Activity panel uses the drawer radius; its title bar capsule is fully rounded. The settings dialog retains square outer corners.
 
 ## Components
 
@@ -284,10 +284,12 @@ Selecting a job opens and focuses the existing output, steps, annotations, logs,
 
 A sticky header identifies the source PR and file in each code group. It uses a panel surface and 9px by 12px padding.
 Keep source attribution distinct from the destination for submitting a review.
-Activity anchors background work below the workspace; its drawer shows task names, progress, status, and actions.
-The drawer is at most 430px wide and stays within the viewport with a 24px width allowance.
-Progress width changes use a 180ms ease-out transition; indeterminate progress uses a 1.5s cycle.
-Reduced motion removes these transitions while preserving progress and status information.
+Activity is a 24px capsule in the title bar, before Search: “◐ 2 running”, “✕ 1 failed”, “✓ 1 ready”. It shows only while work runs or a failure or result is unseen; opening Activity marks results seen. Preparing PRs and refreshing GitHub never bring it up on their own. The avatar menu and ⌘⇧A / Ctrl+Shift+A always open Activity.
+The capsule opens a panel below the title bar, at most 440px wide and within the viewport with a 24px allowance. The panel lists every task as Task Rows with cancel, retry, open, and dismiss actions.
+
+**Task Rows** ([TaskRows](components/TaskRows.tsx)) show a parent task with a status mark, title, and short facts, and its subtasks indented beside a thin rule. Marks differ in shape as well as color: hollow (waiting), turning half-filled ring (running), filled check (done), filled cross (failed), dashed (cancelled), and each carries a text label for assistive technology. Failures show their real error inline on the row that failed, on a danger surface. A finished group folds into one line with a toggle such as “6 topics”. The pattern follows “Task Rows” in Beautiful UI (MIT); the implementation is Gnosis's own.
+Progress width changes use a 180ms ease-out transition; indeterminate progress uses a 1.5s cycle; the running mark turns once per 1.4s in rows and rests as ◐ in the quiet title bar capsule.
+Reduced motion removes these transitions and stops the running mark as a still ◐, preserving progress and status information.
 
 ### Feedback
 
@@ -327,7 +329,7 @@ Compact the shared header in Feedback while keeping PR actions visible. Keep Rep
 
 Generate opens a compact explanation setup dialog before starting the model. Styles and independent generated/test exclusions are visible first; file and folder choices, search, and hidden-extension tags are disclosed on demand. Explicit file choices override rules. Remember repository defaults only on explicit opt-in at generation; regeneration restores choices from the displayed explanation. Keep setup, loading, and error states keyboard accessible with a stable footer and a scrollable body. Bulk starts share one setup dialog and retry only unfinished targets.
 
-While an explanation is being generated, use the shared animated loading state in an empty pane. Show its live Activity stage and actual completed-topic count. Regeneration keeps the saved explanation visible with a compact status above it. Coalesce activity notifications into one in-flight read plus a catch-up read, suspend reads in hidden tabs, and recover with Retry progress when local activity is unavailable. A generated result with no sections retains its overview and offers Generate again and Changes.
+While an explanation is being generated, show its stages as Task Rows in an empty pane: read PR and context, plan topics, write topics (each planned topic with its own status), check text, write overview, render code, with elapsed time in the header. A finished topic offers Read, which opens it in the reader while the rest are written; unwritten topics show placeholders and the explanation updates in place when it is saved. A failed build keeps its rows with each error inline. A screen reader hears phase changes and the outcome, not each tick. Regeneration keeps the saved explanation visible with a compact status above it and a Show progress disclosure for the rows. Coalesce activity notifications into one in-flight read plus a catch-up read, suspend reads in hidden tabs, and recover with Retry progress when local activity is unavailable. A generated result with no sections retains its overview and offers Generate again and Changes.
 
 [ExplanationReader](components/ExplanationReader.tsx) presents the overview, paired sections, and ending in one vertical scroll surface. Keep the compact section picker, Previous/Next section controls, shared Viewed count, and review actions above it. Inline explanations, Diff appearance, and Ask a question are global toolbar controls; do not repeat them in each section. Keep navigation and actions on one row when space allows, wrapping only in narrower containers. Next section stops at the last section and never changes Viewed state or submits a review. Explicit section jumps scroll smoothly unless reduced motion is enabled; restoring a saved position remains immediate. Code is directly available beside its explanation, without an Inspect code gate. Each section owns its prose and evidence; file and line links target that section even when a path recurs elsewhere.
 

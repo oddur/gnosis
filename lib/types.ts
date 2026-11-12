@@ -120,6 +120,9 @@ export interface Slide {
   explainer?: InteractiveExplainer;
   /** Snapshot of relevant source at review time, used only on demand. */
   explainerContext?: string;
+  /** Only in an explanation that is still generating: a topic that is not written yet. */
+  draftStatus?: 'queued' | 'writing' | 'failed';
+  draftError?: string;
 }
 
 // Intermediate types for raw AI response (before hunk resolution)
@@ -269,6 +272,11 @@ export interface ReviewGuide {
   // the Remaining Changes section (files not in any slide) and by
   // file age/churn badges on diff headers.
   changedFiles?: FileMetadata[];
+  /**
+   * Present while the explanation is still generating. Finished topics are drafts: their text is
+   * checked and the overview is rewritten before the explanation is saved.
+   */
+  draft?: { completed: number; total: number };
 }
 
 export interface PrStatus {
