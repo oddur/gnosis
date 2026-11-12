@@ -5,7 +5,9 @@
 //   node scripts/measure-resize.mjs --port 9344 --review <id> --scroll section:9 --runs 3 --label step-1
 //
 // One step changes the emulated viewport width and waits two animation frames, so resize observers,
-// style, layout and paint all run. The sweep goes from --from down by --delta in --step increments and back.
+// style, layout and paint all run. Waiting two frames puts a floor of one to two frame intervals (about
+// 17-33 ms at 60 Hz) under the step time, so `work` also reports the main thread's busy time per step
+// (TaskDuration). A step whose work fits in one frame reads about 33 ms or less. The sweep goes from --from down by --delta in --step increments and back.
 // Options:
 //   --port <n>          remote debugging port (default 9222)
 //   --label <text>      label printed with each result
@@ -200,6 +202,8 @@ async function sweep(withProfile) {
         ms: t1 - t0,
         layouts: (sample.LayoutCount ?? 0) - (previous.LayoutCount ?? 0),
         styles: (sample.RecalcStyleCount ?? 0) - (previous.RecalcStyleCount ?? 0),
+        // Main-thread busy time, including this script's own small evaluate tasks.
+        work: ((sample.TaskDuration ?? 0) - (previous.TaskDuration ?? 0)) * 1000,
       });
       previous = sample;
     }
@@ -207,12 +211,16 @@ async function sweep(withProfile) {
     const profile = withProfile ? (await send('Profiler.stop')).profile : undefined;
     const d = (k) => ((after[k] ?? 0) - (before[k] ?? 0)) * 1000;
     const times = steps.map((s) => s.ms).sort((a, b) => a - b);
+    const work = steps.map((s) => s.work).sort((a, b) => a - b);
     return {
       shape,
       steps: steps.length,
       p50: percentile(times, 0.5),
       p90: percentile(times, 0.9),
       max: times[times.length - 1],
+      workP50: percentile(work, 0.5),
+      workP90: percentile(work, 0.9),
+      workMax: work[work.length - 1],
       layout: d('LayoutDuration'),
       style: d('RecalcStyleDuration'),
       script: d('ScriptDuration'),
@@ -239,7 +247,7 @@ function topSelfTime(profile, count = 18) {
 }
 
 const fmt = (r) =>
-  `p50=${r.p50.toFixed(0)} p90=${r.p90.toFixed(0)} max=${r.max.toFixed(0)} layout=${r.layout.toFixed(0)}ms style=${r.style.toFixed(0)}ms script=${r.script.toFixed(0)}ms layouts=${r.layouts} styleRecalcs=${r.styleRecalcs} (max/step ${r.maxLayoutsPerStep}/${r.maxStylesPerStep})`;
+  `p50=${r.p50.toFixed(0)} p90=${r.p90.toFixed(0)} max=${r.max.toFixed(0)} work p50=${r.workP50.toFixed(1)} p90=${r.workP90.toFixed(1)} max=${r.workMax.toFixed(1)} layout=${r.layout.toFixed(0)}ms style=${r.style.toFixed(0)}ms script=${r.script.toFixed(0)}ms layouts=${r.layouts} styleRecalcs=${r.styleRecalcs} (max/step ${r.maxLayoutsPerStep}/${r.maxStylesPerStep})`;
 const results = [];
 try {
   await send('Performance.enable');
@@ -254,6 +262,9 @@ try {
     'p50',
     'p90',
     'max',
+    'workP50',
+    'workP90',
+    'workMax',
     'layout',
     'style',
     'script',
