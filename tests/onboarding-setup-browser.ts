@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { chooseWorkspaceMenuItem } from './workspace-menu';
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({
     width: 1280,
@@ -164,7 +165,9 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('.setup-dialog')");
     assert.equal(await js("window.electronAPI.loadPreferences().then(p=>p.model==='claude-opus-5-5' && p.proactiveProvider==='codex' && p.proactiveModel==='gpt-6.1-terra' && p.proactiveReviewOverrides && p.effort==='xhigh' && p.proactiveEffort==='medium')"), true);
     await js("window.selectOption('[aria-label=\"Review model\"]', 'gpt-6.1-sol')");
-    await wait("document.querySelector('[aria-label=\"Review model\"]')?.textContent.includes('GPT-6.1 Sol')");
+    await js('window.openModelMenu()');
+    await wait("document.querySelector('.workspace-menu-popup [aria-label=\"Review model\"]')?.textContent.includes('GPT-6.1 Sol')");
+    await js('window.closeModelMenu()');
     assert.equal(await js("window.electronAPI.loadPreferences().then(p=>p.proactiveReviewOverrides && p.proactiveModel==='gpt-6.1-terra')"), true, 'queue model changes preserve the briefing choice');
     assert.equal(
       await js("Object.values(JSON.parse(sessionStorage.getItem('fixture-views'+location.search))).length>0"),
@@ -192,7 +195,7 @@ void app.whenReady().then(async () => {
     await capture('tour-explanation');
     await js("document.dispatchEvent(new KeyboardEvent('keyup',{key:'Escape',keyCode:27,bubbles:true,cancelable:true}))");
     await wait("!document.querySelector('.gnosis-tour')");
-    await click('Help and terminology');
+    await js(chooseWorkspaceMenuItem('[aria-label="Help and terminology"]'));
     await click('Run setup again');
     await current('Choose queue views');
     await js("document.documentElement.classList.add('dark')");
@@ -227,8 +230,8 @@ void app.whenReady().then(async () => {
     await wait("!document.querySelector('.setup-dialog')");
     await js("sessionStorage.removeItem('ftue-auth')");
     win.reload();
-    await wait("document.body.innerText.includes('Help') && !document.querySelector('.setup-dialog')");
-    await click('Help and terminology');
+    await wait("!!document.querySelector('.workspace-menu-trigger') && !document.querySelector('.setup-dialog')");
+    await js(chooseWorkspaceMenuItem('[aria-label="Help and terminology"]'));
     await click('Show walkthrough');
     await wait("document.querySelector('.driver-popover-title')?.textContent==='Review local changes'");
     assert.equal(await js("document.querySelector('.driver-active-element')?.getAttribute('data-tour')"), 'local');

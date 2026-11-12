@@ -1,5 +1,41 @@
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/** The review model lives in the title bar's account menu, under Model. Opens that submenu. */
+async function openModelMenu() {
+  const trigger = [...document.querySelectorAll<HTMLButtonElement>('.workspace-menu-trigger')].find((b) => b.checkVisibility());
+  if (!trigger) throw Error('Missing app menu');
+  if (trigger.getAttribute('data-state') !== 'open')
+    trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerType: 'mouse', button: 0 }));
+  for (let i = 0; i < 160; i++) {
+    const sub = document.querySelector<HTMLElement>('.workspace-menu-popup [aria-label="Review model"]');
+    if (sub && document.querySelector('.workspace-menu-popup [data-model]')) return trigger;
+    if (sub && sub.getAttribute('data-state') !== 'open') {
+      sub.focus();
+      sub.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }));
+    }
+    await pause(25);
+  }
+  throw Error('Model menu did not open');
+}
+async function closeModelMenu(trigger: HTMLElement) {
+  trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerType: 'mouse', button: 0 }));
+  for (let i = 0; i < 160 && document.querySelector('.workspace-menu-popup'); i++) await pause(25);
+}
+async function chooseInModelMenu(selector: string) {
+  const trigger = await openModelMenu();
+  const item = document.querySelector<HTMLElement>(`.workspace-menu-popup ${selector}`);
+  if (!item) throw Error(`Missing model menu item ${selector}`);
+  item.click();
+  await pause(50);
+  await closeModelMenu(trigger);
+}
+
 /** Drive the real native select or searchable combobox from browser suites. */
 Object.assign(window, {
+  openModelMenu,
+  closeModelMenu: async () => {
+    const trigger = document.querySelector<HTMLElement>('.workspace-menu-trigger[data-state="open"]');
+    if (trigger) await closeModelMenu(trigger);
+  },
   selectLabels: async (names: string[]) => {
     const trigger = document.querySelector<HTMLButtonElement>('[aria-label="GitHub labels"]');
     if (!trigger) throw Error('Missing label picker');
@@ -24,6 +60,8 @@ Object.assign(window, {
     throw Error('Label picker did not close');
   },
   selectEffort: async (label: string, value: string) => {
+    if (label === 'Review model' && !document.querySelector('.model-picker-trigger[aria-label="Review model"]'))
+      return chooseInModelMenu(`[data-effort="${value}"]`);
     const trigger = [...document.querySelectorAll<HTMLButtonElement>('.model-picker-trigger')].find(el => el.getAttribute('aria-label') === label);
     if (!trigger) throw Error(`Missing model picker: ${label}`);
     if (trigger.getAttribute('aria-expanded') !== 'true') trigger.click();
@@ -43,6 +81,8 @@ Object.assign(window, {
     throw Error(`Missing effort: ${value}`);
   },
   selectOption: async (selector: string, value: string) => {
+    if (selector === '[aria-label="Review model"]' && !document.querySelector(`.model-picker-trigger${selector}`))
+      return chooseInModelMenu(`[data-model="${value}"]`);
     const control = document.querySelector(selector);
     if (control instanceof HTMLButtonElement && control.classList.contains('model-picker-trigger')) {
       if (control.getAttribute('aria-expanded') !== 'true') control.click();

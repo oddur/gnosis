@@ -1,6 +1,7 @@
 import { mark, markRenderer, note, startupSummary, startupTracing, exitAfterTrace } from './startup-trace';
 import { createStartup, gateHandlers, afterStartup } from './startup';
 import { attachWorkspaceShortcuts } from './window-workspace-navigation';
+import { attachWindowChrome, registerWindowChromeIpc, windowChromeOptions } from './window-chrome';
 import {
   explanationFile,
   explanationExclusion,
@@ -53,6 +54,7 @@ import { loadReviewContents, startReviewFileMetadata } from '../lib/review-prepa
 import { normalizeGitHubCacheMB, DEFAULT_GITHUB_CACHE_MB } from '../lib/github-cache-settings';
 import type { ReviewStateWrite, FileProgressPatch } from '../lib/review-state';
 import { createAppDataStore } from './app-data-store';
+import { createRendererFlush, saveWorkBeforeQuit } from './quit-flush';
 import type { MarkPrReadRequest } from '../lib/pr-read-state';
 import { createPrActionsService } from './pr-actions-service';
 import { createPrMergeMonitor } from './pr-merge-monitor';
@@ -338,6 +340,7 @@ function createWindow() {
     width: 1400,
     height: 900,
     backgroundColor: dark ? WINDOW_BACKGROUND.dark : WINDOW_BACKGROUND.light,
+    ...windowChromeOptions(dark),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       // Sandboxed preloads cannot read main's environment.
@@ -347,6 +350,7 @@ function createWindow() {
 
   protectExplainerFrames(mainWindow);
   attachWorkspaceShortcuts(mainWindow);
+  attachWindowChrome(mainWindow);
   attachWindowHistoryNavigation(mainWindow, direction => mainWindow.webContents.send('history-navigate', direction));
   const ownerId = mainWindow.webContents.id;
   mainWindow.on('closed', () => explainerService.cancelOwner(ownerId));
@@ -852,6 +856,8 @@ function maintainStorage(): Promise<void> {
 
 let cacheFlushed = false;
 let cacheFlushing = false;
+const rendererFlush = createRendererFlush();
+ipcMain.on('review-state-flushed', (_event, id: unknown) => rendererFlush.acknowledge(id));
 app.on('before-quit', (event) => {
   if (!quitConfirmed && activeGenerations.size > 0) {
     event.preventDefault();
@@ -881,7 +887,12 @@ app.on('before-quit', (event) => {
     if (!cacheFlushing) {
       cacheFlushing = true;
       // User drafts and progress must finish before quitting; only disposable cache has a deadline.
-      void appData.close()
+      // Windows send their pending review state first, so the final flush includes it.
+      void saveWorkBeforeQuit({
+        targets: BrowserWindow.getAllWindows().map((win) => win.webContents),
+        flush: (targets) => rendererFlush.flush(targets),
+        close: () => appData.close(),
+      })
         .then(() => Promise.race([githubClients.closeStorage(), new Promise(resolve => setTimeout(resolve, 1500))])
           .catch((error: unknown) => console.warn('Disposable cache flush failed:',error)))
         .then(() => { cacheFlushed = true; app.quit(); })
@@ -1287,6 +1298,8 @@ const LOCAL_REVIEW_TOOLS = [
 ];
 
 // ── IPC handlers ────────────────────────────────────────────────
+
+registerWindowChromeIpc();
 
 // Renderer startup marks are no-ops unless GNOSIS_PERF_TRACE is set; preload exposes perfMark only then.
 ipcMain.on('perf-mark', (_event, name: unknown, epochMs: unknown) => {

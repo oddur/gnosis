@@ -16,6 +16,8 @@ let currentChoice: ThemeChoice = 'dark';
 
 function apply(isDark: boolean) {
   root.classList.toggle('dark', isDark);
+  // Some browser fixtures render without the preload API.
+  (window as Partial<Window>).electronAPI?.setWindowChromeTheme?.(isDark);
 }
 
 function detachMediaListener() {

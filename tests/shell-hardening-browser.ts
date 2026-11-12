@@ -54,7 +54,7 @@ void app.whenReady().then(async () => {
     await click('Retry loading Gnosis');
     await waitForWorkbenchQueue(win.webContents);
     await js("document.querySelector('.queue-row-main').click()");
-    assert.equal(await js("!!document.querySelector('.workbench-header')"), true);
+    assert.equal(await js("!!document.querySelector('.app-titlebar .workspace-menu-trigger')"), true);
     // A newer notification wins even if its older load finishes last.
     await js(
       `(async()=>{window.baseReview=await window.electronAPI.loadReview('fixture');window.loads={};window.electronAPI.loadReview=id=>new Promise((resolve,reject)=>{window.loads[id]={resolve,reject}});window.dispatchEvent(new CustomEvent('fixture-review-navigate',{detail:'slow-old'}));window.dispatchEvent(new CustomEvent('fixture-review-navigate',{detail:'fast-new'}));})()`

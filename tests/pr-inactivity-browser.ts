@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { chooseWorkspaceMenuItem } from './workspace-menu';
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({
     width: 1280,
@@ -79,7 +80,7 @@ void app.whenReady().then(async () => {
     await closeSettings();
     await waitForWorkbenchQueue(win.webContents);
     await click('Star PR #150');
-    await click('Settings');
+    await js(chooseWorkspaceMenuItem('[aria-label="Settings"]'));
     await wait("!!document.querySelector('.pr-inactivity-setting')");
     await setDays('30');
     await wait('window.electronAPI.loadPreferences().then(p=>p.prInactivityDays===30)');
@@ -87,7 +88,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelectorAll('.queue-item').length===7");
     await click('Unstar PR #150');
     await wait("document.querySelectorAll('.queue-item').length===6");
-    await click('Settings');
+    await js(chooseWorkspaceMenuItem('[aria-label="Settings"]'));
     await wait("!!document.querySelector('.pr-inactivity-setting')");
     await js("document.querySelector('.pr-inactivity-setting input[type=checkbox]').click()");
     await wait('window.electronAPI.loadPreferences().then(p=>p.prInactivityDays===0)');
@@ -97,7 +98,7 @@ void app.whenReady().then(async () => {
     await wait("document.querySelectorAll('.queue-item').length===7");
     win.reload();
     await wait("document.querySelectorAll('.queue-item').length===7");
-    await click('Settings');
+    await js(chooseWorkspaceMenuItem('[aria-label="Settings"]'));
     await wait("!!document.querySelector('.pr-inactivity-setting')");
     assert.equal(await js("document.querySelector('.pr-inactivity-setting input[type=checkbox]').checked"), true);
     await js("document.querySelector('.pr-inactivity-setting input[type=checkbox]').click()");

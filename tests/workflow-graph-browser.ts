@@ -477,6 +477,21 @@ void app
         `(()=>{const variants=${JSON.stringify(variants)},read=window.electronAPI.getWorkflowGraph;window.electronAPI.getWorkflowGraph=async(input,options)=>({...await read(input,options),...variants[\`\${input.showSkipped!==false}:\${input.showCompleted!==false}\`]});document.querySelector('[aria-label="Refresh checks"]').click();})()`
       );
       await wait("document.querySelectorAll('.workflow-job').length===23");
+      // A running job's elapsed time ticks every second; only its duration label re-renders, not the graph or cards.
+      const runningDuration = `document.querySelector('[data-id="build-macos"] .workflow-job-duration')?.textContent ?? ''`;
+      await wait(`!document.querySelector('.workflow-updating .animate-spin') && /\\d+s$/.test(${runningDuration})`);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const durationBefore = await js<string>(runningDuration);
+      await js('window.__renderCounts={};window.__countRenders=true');
+      await new Promise((resolve) => setTimeout(resolve, 3200));
+      const tickRenders = await js<Partial<Record<string, number>>>(
+        'window.__countRenders=false;window.__renderCounts'
+      );
+      console.log('Workflow graph renders over 3 s of a running job:', JSON.stringify(tickRenders));
+      assert.notEqual(await js<string>(runningDuration), durationBefore, 'The running job duration keeps ticking');
+      assert.ok((tickRenders.WorkflowDuration ?? 0) >= 2, 'The duration label re-renders each second');
+      assert.equal(tickRenders.WorkflowGraphView ?? 0, 0, 'Clock ticks do not re-render the graph');
+      assert.equal(tickRenders.WorkflowJobCard ?? 0, 0, 'Clock ticks do not re-render job cards');
       await openView();
       await js(
         "[...document.querySelectorAll('.workflow-visibility label')].find(l=>l.textContent==='Show skipped').querySelector('input').click()"

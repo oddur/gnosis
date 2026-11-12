@@ -79,6 +79,8 @@ declare global {
       loadReviewState: (legacy: Record<string,string>) => Promise<Record<string,unknown>>;
       saveReviewState: (value: ReviewStateWrite) => Promise<void>;
       saveFileProgress: (value: FileProgressPatch) => Promise<void>;
+      /** Main calls this at quit, before it closes saved data. The promise ends when pending saves are answered. */
+      onFlushReviewState: (callback: () => Promise<void>) => void;
       listActivity: () => Promise<ActivityTask[]>;
       activityAction: (id:string, action:ActivityAction) => Promise<void>;
       workbenchSnapshot: (withSignals?: boolean) => Promise<WorkbenchQueue>;
@@ -135,6 +137,11 @@ declare global {
       onFileClassificationsChanged: (callback:(key:string,kinds:Record<string,FileKinds>)=>void) => () => void;
       onWorkspaceShortcut: (callback: (action: NonNullable<ReturnType<typeof import('../lib/workspace-tabs').workspaceShortcut>>) => void) => () => void;
       onHistoryNavigate: (callback: (direction: -1 | 1) => void) => () => void;
+      /** Whether macOS has hidden the traffic lights for full screen. Absent in browser fixtures. */
+      isFullScreen?: () => Promise<boolean>;
+      onFullScreenChange?: (callback: (fullScreen: boolean) => void) => () => void;
+      /** Recolours the Windows and Linux caption buttons drawn over the title bar row. */
+      setWindowChromeTheme?: (dark: boolean) => void;
       offReviewNavigate: () => void;
       sendSlideChat: (req: SendSlideChatRequest) => Promise<string>;
       onChatProgress: (callback: (chunk: string) => void) => void;

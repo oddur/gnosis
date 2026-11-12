@@ -1,10 +1,13 @@
 import { defaultRangeExtractor, useVirtualizer } from '@tanstack/react-virtual';
 import { memo, useImperativeHandle, useLayoutEffect, useRef, useState, useCallback, type ReactNode, type Ref } from 'react';
 import type { PrChangeFile } from '../lib/pr-changes';
+import { captureDiffLineAnchor, diffLineAnchorTop, followScrollAnchor } from '../lib/diff-layout';
 
 export interface CommitDiffStreamHandle {
   scrollToFile: (key: string) => void;
   preservePosition: () => void;
+  /** Keep the diff line at the top of the stream in place while files change height, as on a layout switch. */
+  keepAnchor: () => void;
 }
 interface StreamFile {
   key: string;
@@ -98,13 +101,36 @@ export function CommitDiffStream({
   function jump(key: string, offset = 0, focus = false) {
     const index = current.current.files.findIndex((f) => f.key === key);
     if (index < 0) return;
+    stopFollowing.current?.();
     pending.current = { key, offset, focus, until: Date.now() + 1500 };
     // Publish the target even if scrolling does not move the viewport. A layout
     // effect may have restored the previous position before this deferred jump.
     current.current.onPosition(key, offset);
     virtual.scrollToIndex(index, { align: 'start' });
   }
-  useImperativeHandle(ref, () => ({ scrollToFile: jump, preservePosition: () => {
+  const stopFollowing = useRef<() => void>(undefined);
+  useLayoutEffect(() => () => stopFollowing.current?.(), []);
+  function keepAnchor() {
+    const el = viewport.current;
+    if (!el || !el.clientHeight) return;
+    const top = el.getBoundingClientRect().top;
+    // Rows are absolutely positioned, so find the one under the top edge by geometry.
+    const row = [...el.querySelectorAll<HTMLElement>('.commit-stream-row:not([hidden])')].find((row) => {
+      const bounds = row.getBoundingClientRect();
+      return bounds.top <= top + 1 && bounds.bottom > top + 1;
+    });
+    // The commit message above the first file does not change with the layout.
+    if (!row?.dataset.file) return;
+    const key = row.dataset.file;
+    const anchor = captureDiffLineAnchor(row, top);
+    pending.current = undefined;
+    stopFollowing.current?.();
+    stopFollowing.current = followScrollAnchor(el, () => {
+      const current = el.querySelector<HTMLElement>(`.commit-stream-row[data-file="${CSS.escape(key)}"]`);
+      return current ? diffLineAnchorTop(el, current, anchor) : undefined;
+    });
+  }
+  useImperativeHandle(ref, () => ({ scrollToFile: jump, keepAnchor, preservePosition: () => {
     if (pending.current) return;
     const top = viewport.current?.scrollTop ?? 0;
     const item = virtual.getVirtualItems().find(row => row.end > top + 2);

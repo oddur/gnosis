@@ -2,11 +2,14 @@ import { activeWorkspaceRoot } from '../../lib/workspace-navigation';
 import { useSettingsShortcut } from '../../lib/use-settings-shortcut';
 import { watchGitHub } from '../../lib/watch-github';
 import { usePrDiscussions } from '../../lib/use-pr-discussions';
-import { RecentlyViewed } from '../../components/RecentlyViewed';
+import { WorkspaceMenu } from '../../components/AppTitlebar';
+import { normalizeEffort } from '../../lib/effort';
 import { ReviewBreadcrumbProvider, useReviewBreadcrumbs } from '../../lib/review-breadcrumbs';
 import { ReviewBreadcrumbs } from '../../components/ReviewBreadcrumbs';
 import { SearchableSelect } from '../../components/SearchableSelect';
 import { useDiffAppearance } from '../../lib/use-diff-appearance';
+import { publishDiffLayout, useDiffLayout, useDiffLayoutTarget } from '../../lib/use-diff-layout';
+import { DIFF_LAYOUT_KEYS } from '../../lib/diff-layout';
 import { refreshDiscussion } from '../../lib/review-discussion-cache';
 import { useChangesComments } from '../../components/useChangesComments';
 import { useExplanationComments } from '../../lib/use-explanation-comments';
@@ -34,7 +37,6 @@ import { SlideView } from '../../components/SlideView';
 import { ExplainerView } from '../../components/ExplainerView';
 import { toast } from '../../components/ui/toast';
 import { SlideChatSheet } from '../../components/SlideChatSheet';
-import { WorkbenchHelp } from '../../components/WorkbenchHelp';
 import { SettingsDialog } from '../../components/SettingsDialog';
 import { ShortcutOverlay } from '../../components/ShortcutOverlay';
 import { CommandPalette, type Command } from '../../components/CommandPalette';
@@ -55,6 +57,8 @@ interface Props {
   initialPreferences?: Preferences;
   onOpenChanges?: () => void;
   onBack: () => void;
+  /** Opens a queue destination in this workspace; the title bar uses it for home, setup and account actions. */
+  onNavigateHome?: (target: Extract<SearchDestination, { kind: 'home' }>) => void;
   onReReview: (prUrl: string, previousReviewId?: string) => void;
   regenerating?: boolean;
   initialSlideId?: string;
@@ -92,6 +96,7 @@ function saveChecks(review: ReviewGuide, checked: Set<string>) {
 function ReviewPageContent({
   review: initialReview,
   onBack,
+  onNavigateHome,
   onReReview,
   regenerating = false,
   initialSlideId,
@@ -170,7 +175,10 @@ function ReviewPageContent({
   const [chatQuotedCode, setChatQuotedCode] = useState<string | null>(null);
   const [chatProvider, setChatProvider] = useState<Provider>(initialPreferences?.provider ?? 'claude');
   const [chatModel, setChatModel] = useState<ModelId>(initialPreferences?.model ?? DEFAULT_FAST_CLAUDE_MODEL);
-  const [diffLayout, setDiffLayout] = useState<Preferences['diffLayout']>(initialPreferences?.diffLayout ?? 'unified');
+  const [savedDiffLayout, setDiffLayout] = useState<Preferences['diffLayout']>(
+    initialPreferences?.diffLayout ?? 'unified'
+  );
+  const diffLayout = useDiffLayout(savedDiffLayout);
   const [prefs, setPrefs] = useState<Preferences | null>(initialPreferences ?? null);
   const preferenceWrites = useRef(Promise.resolve());
   const pendingPreferences = useRef<Partial<Preferences>>({});
@@ -488,6 +496,7 @@ function ReviewPageContent({
 
   const handleDiffLayoutChange = useCallback(
     (layout: Preferences['diffLayout']) => {
+      publishDiffLayout(layout);
       setDiffLayout(layout);
       savePreferencePatch({ diffLayout: layout });
     },
@@ -532,13 +541,7 @@ function ReviewPageContent({
       // Sequences and bookends
       'g g': () => handleJumpTo(0),
       G: () => handleJumpTo(review.slides.length),
-      // Diff layout — only valid on a real slide, not the overview
-      u: () => {
-        if (currentSlide > 0) handleDiffLayoutChange('unified');
-      },
-      s: () => {
-        if (currentSlide > 0) handleDiffLayoutChange('split');
-      },
+      // Diff layout keys (d, u, s) work in every diff view; see use-diff-layout-shortcuts.
       // Global
       'cmd+k': () => (commandCenter ? commandCenter.open() : setPaletteOpen(true)),
       'ctrl+k': () => (commandCenter ? commandCenter.open() : setPaletteOpen(true)),
@@ -549,9 +552,10 @@ function ReviewPageContent({
       map[String(n)] = () => handleJumpTo(n);
     }
     return map;
-  }, [handlePrev, handleNext, handleJumpTo, handleDiffLayoutChange, currentSlide, review.slides.length]);
+  }, [handlePrev, handleNext, handleJumpTo, review.slides.length]);
 
   useKeyboardShortcuts(shortcutMap, { enabled: active && !exploreOpen });
+  useDiffLayoutTarget(reviewRoot, handleDiffLayoutChange);
   useKeyboardShortcuts(
     {
       c: () => {
@@ -606,10 +610,19 @@ function ReviewPageContent({
     if (currentSlide > 0) {
       commands.push(
         {
+          id: 'diff-layout',
+          icon: workspaceSections.changes.icon,
+          label: 'Switch between split and unified diff',
+          hint: DIFF_LAYOUT_KEYS.toggle,
+          group: 'Reviewing',
+          keywords: 'toggle diff layout split unified side by side inline',
+          perform: () => handleDiffLayoutChange(diffLayout === 'split' ? 'unified' : 'split'),
+        },
+        {
           id: 'unified',
           icon: workspaceSections.changes.icon,
           label: 'Switch to unified diff',
-          hint: 'u',
+          hint: DIFF_LAYOUT_KEYS.unified,
           group: 'Reviewing',
           keywords: 'diff layout combine',
           perform: () => handleDiffLayoutChange('unified'),
@@ -618,7 +631,7 @@ function ReviewPageContent({
           id: 'split',
           icon: workspaceSections.changes.icon,
           label: 'Switch to split diff',
-          hint: 's',
+          hint: DIFF_LAYOUT_KEYS.split,
           group: 'Reviewing',
           keywords: 'diff layout side by side',
           perform: () => handleDiffLayoutChange('split'),
@@ -672,7 +685,7 @@ function ReviewPageContent({
     );
 
     return commands;
-  }, [review.slides, currentSlide, comments.length, handleJumpTo, handleDiffLayoutChange, onBack, openChat]);
+  }, [review.slides, currentSlide, comments.length, handleJumpTo, handleDiffLayoutChange, diffLayout, onBack, openChat]);
 
   useEffect(() => {
     if (review.reviewId && currentLogin)
@@ -686,7 +699,8 @@ function ReviewPageContent({
     active
       ? [
           ...paletteCommands
-            .filter((c) => ['chat', 'submit', 'unified', 'split'].includes(c.id))
+            // The app registers diff layout commands for every diff view.
+            .filter((c) => ['chat', 'submit'].includes(c.id))
             .map((c) => ({ ...c, id: `review:${c.id}` })),
           ...(currentSlide > 0
             ? [
@@ -838,17 +852,6 @@ function ReviewPageContent({
           onChange={handleDiffAppearanceChange}
         />
       </div>
-      {!embedded && (
-        <>
-          <button
-            onClick={() => (commandCenter ? commandCenter.open() : setPaletteOpen(true))}
-            title="Search and navigate (⌘K / Ctrl K)"
-          >
-            Search <kbd className="kbd">{window.electronAPI.platform === 'darwin' ? '⌘ K' : 'Ctrl K'}</kbd>
-          </button>
-          <WorkbenchHelp />
-        </>
-      )}
       <Button
         variant="outline"
         size="sm"
@@ -886,11 +889,38 @@ function ReviewPageContent({
     </div>
   );
   return (
-    <div ref={reviewRoot} className="workbench-review flex flex-col h-full overflow-hidden">
+    <div
+      ref={reviewRoot}
+      className="workbench-review flex flex-col h-full overflow-hidden"
+      data-diff-layout={review.slides.length > 0 ? diffLayout : undefined}
+    >
+      {!embedded && (
+        <WorkspaceMenu
+          onHome={() => (onNavigateHome ? onNavigateHome({ kind: 'home', section: 'all' }) : onBack())}
+          model={
+            prefs
+              ? {
+                  provider: prefs.provider,
+                  model: prefs.model,
+                  effort: normalizeEffort(prefs.provider, prefs.model, prefs.effort, prefs.thinking),
+                  onChange: (selection) => savePreferencePatch(selection),
+                }
+              : undefined
+          }
+          onSearch={() => (commandCenter ? commandCenter.open() : setPaletteOpen(true))}
+          onGettingStarted={onNavigateHome && (() => onNavigateHome({ kind: 'home', onboarding: 'setup' }))}
+          onWalkthrough={onNavigateHome && (() => onNavigateHome({ kind: 'home', onboarding: 'tour' }))}
+          onSettings={() => setSettingsOpen(true)}
+          account={{
+            login: currentLogin,
+            onClick: () =>
+              onNavigateHome ? onNavigateHome({ kind: 'home', account: true }) : setSettingsOpen(true),
+          }}
+        />
+      )}
       {!embedded && (
         <div className="pr-summary-toolbar">
           <div className="pr-summary-toolbar-inner">
-            <RecentlyViewed />
             <ReviewBreadcrumbs
               scope="explanation"
               base={[

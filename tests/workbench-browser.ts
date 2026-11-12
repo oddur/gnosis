@@ -6,6 +6,7 @@ import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { chooseWorkspaceMenuItem } from './workspace-menu';
 app.on('window-all-closed', () => {});
 void app.whenReady().then(async () => {
   const window = new BrowserWindow({
@@ -67,7 +68,7 @@ void app.whenReady().then(async () => {
       true,
       'The explanation model must preserve the separate briefing selection'
     );
-    await js(`document.querySelector('[aria-label="Settings"]').click()`);
+    await js(chooseWorkspaceMenuItem('[aria-label="Settings"]'));
     await wait(`!!document.querySelector('[aria-label="Ignore Dependabot PRs"]')`);
     assert.equal(
       await js(`document.querySelector('[aria-label="Ignore Dependabot PRs"]').getAttribute('aria-checked')`),
@@ -76,7 +77,7 @@ void app.whenReady().then(async () => {
     await js(`document.querySelector('[aria-label="Ignore Dependabot PRs"]').click()`);
     assert.equal(await js(`window.electronAPI.loadPreferences().then(p=>p.ignoreDependabotPrs)`), false);
     await js(`document.querySelector('[data-slot="dialog-close"]').click()`);
-    await js(`document.querySelector('[aria-label="Settings"]').click()`);
+    await js(chooseWorkspaceMenuItem('[aria-label="Settings"]'));
     await wait(
       `document.querySelector('[aria-label="Ignore Dependabot PRs"]')?.getAttribute('aria-checked') === 'false'`
     );
@@ -443,7 +444,7 @@ void app.whenReady().then(async () => {
     }
     await wait("!!document.querySelector('.workbench-connect')");
     assert.equal(await js("!!document.querySelector('.getting-started')"), false, 'Dismissal persists on reopening');
-    await js('document.querySelector(\'[aria-label="Help and terminology"]\').click()');
+    await js(chooseWorkspaceMenuItem('[aria-label="Help and terminology"]'));
     await wait("!!document.querySelector('.workbench-help')");
     await js("[...document.querySelectorAll('.workbench-help summary')].find(s=>s.textContent === 'Stack').click()");
     await capture('help-light');
@@ -454,8 +455,9 @@ void app.whenReady().then(async () => {
       "document.querySelector('.workbench-help button').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
     );
     await wait("!document.querySelector('.workbench-help')");
-    assert.equal(await js("document.activeElement?.getAttribute('aria-label')"), 'Help and terminology');
-    await js('document.querySelector(\'[aria-label="Help and terminology"]\').click()');
+    // Help opens from the app menu, so closing it returns focus to that menu's button.
+    assert.equal(await js("document.activeElement?.classList.contains('workspace-menu-trigger')"), true);
+    await js(chooseWorkspaceMenuItem('[aria-label="Help and terminology"]'));
     await click('Run setup again');
     await wait("!!document.querySelector('.setup-dialog') && !document.querySelector('.workbench-help')");
     await js("document.querySelector('.setup-choice input').click()");
@@ -498,7 +500,7 @@ void app.whenReady().then(async () => {
     window.setSize(800, 700);
     await js("document.documentElement.classList.add('dark')");
     await capture('onboarding-narrow-dark');
-    await js('document.querySelector(\'[aria-label="Help and terminology"]\').click()');
+    await js(chooseWorkspaceMenuItem('[aria-label="Help and terminology"]'));
     await wait("!!document.querySelector('.workbench-help')");
     await capture('help-narrow-dark');
     assert.ok(await js("document.querySelector('.workbench-help').getBoundingClientRect().right <= innerWidth"));
@@ -506,7 +508,7 @@ void app.whenReady().then(async () => {
     // At 200% zoom, help remains bounded and internally scrollable.
     window.webContents.setZoomFactor(2);
     await capture('help-zoom');
-    assert.ok(await js("[...document.querySelectorAll('.workbench-header button')].filter(b=>b.checkVisibility()).every(b=>b.getBoundingClientRect().right<=innerWidth)"), 'Header controls remain reachable at 200% zoom');
+    assert.ok(await js("[...document.querySelectorAll('.app-titlebar button')].filter(b=>b.checkVisibility()).every(b=>b.getBoundingClientRect().right<=innerWidth)"), 'Header controls remain reachable at 200% zoom');
     assert.ok(await js("document.querySelector('.workbench-help').getBoundingClientRect().right <= innerWidth"));
     assert.ok(await js("document.querySelector('.workbench-help').getBoundingClientRect().bottom <= innerHeight"));
     window.webContents.setZoomFactor(1);
@@ -538,7 +540,7 @@ void app.whenReady().then(async () => {
     await wait("!!document.querySelector('.briefing-panel')");
     await click('Open AI explanation');
     await wait("!!document.querySelector('.workbench-review')");
-    await js('document.querySelector(\'[aria-label="Help and terminology"]\').click()');
+    await js(chooseWorkspaceMenuItem('[aria-label="Help and terminology"]'));
     await wait("!!document.querySelector('.workbench-help')");
     assert.ok(await js("document.querySelector('.workbench-help').textContent.includes('Source PR')"));
     await js('document.querySelector(\'[aria-label="Close help"]\').click()');

@@ -4,6 +4,7 @@ import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { chooseWorkspaceMenuItem } from './workspace-menu';
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({
     width: 1280,
@@ -73,7 +74,7 @@ void app.whenReady().then(async () => {
     await click('AI setup');
     await wait("!!document.querySelector('#ai-setup-title')");
     await js("document.querySelector('[data-slot=dialog-close]').click()");
-    await js('document.querySelector(\'[aria-label="Help and terminology"]\').click()');
+    await js(chooseWorkspaceMenuItem('[aria-label="Help and terminology"]'));
     await click('Run setup again');
     await wait("!!document.querySelector('.setup-dialog') && !!document.querySelector('.pr-summary-page')");
     await click('Finish later');
@@ -123,7 +124,7 @@ void app.whenReady().then(async () => {
     win.webContents.setZoomFactor(1);
     await wait("!!document.querySelector('.workbench-connect')");
     assert.equal(await js("!!document.querySelector('.getting-started')"), false);
-    await js('document.querySelector(\'[aria-label="Help and terminology"]\').click()');
+    await js(chooseWorkspaceMenuItem('[aria-label="Help and terminology"]'));
     await wait("!!document.querySelector('.workbench-help')");
     assert.equal(
       await js(

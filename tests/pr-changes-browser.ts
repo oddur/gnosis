@@ -164,6 +164,63 @@ void app.whenReady().then(async () => {
       false,
       'Reply editors open on demand'
     );
+    // d switches every diff between split and unified, saves the choice, and keeps the same line of the same file
+    // at the top of the stream. Pierre's line index is shared by both layouts.
+    const pressKey = (key: string, target = 'window') =>
+      js<boolean>(
+        `(()=>{const e=new KeyboardEvent('keydown',{key:${JSON.stringify(key)},bubbles:true,cancelable:true,composed:true});${target}.dispatchEvent(e);return e.defaultPrevented})()`
+      );
+    await js(`window.streamTop=()=>{
+      const stream=document.querySelector('.commit-diff-stream');const top=stream.getBoundingClientRect().top;
+      const row=[...stream.querySelectorAll('.commit-stream-row:not([hidden])')].find(r=>{const b=r.getBoundingClientRect();return b.top<=top+1&&b.bottom>top+1});
+      const lines=[...(row?.querySelector('diffs-container')?.shadowRoot?.querySelectorAll('[data-line-index]')??[])].map(e=>({e,r:e.getBoundingClientRect()})).filter(l=>l.r.height>0&&l.r.bottom>top);
+      const line=lines.sort((a,b)=>a.r.top-b.r.top)[0];
+      return {file:row?.dataset.file,line:line&&line.e.dataset.lineIndex.split(',')[0],offset:line&&Math.round(line.r.top-top),
+        layout:document.querySelector('.pr-changes').dataset.diffLayout,active:document.querySelector('.commit-stream-row[data-active=true]')?.dataset.file,
+        split:!!row?.querySelector('diffs-container')?.shadowRoot?.querySelector('[data-code][data-deletions]')};
+    };void 0`);
+    await js(`(()=>{const stream=document.querySelector('.commit-diff-stream');const row=document.querySelector('.commit-stream-row[data-file="src/worker.ts"]');
+      const line=[...row.querySelector('diffs-container').shadowRoot.querySelectorAll('[data-line-index]')].find(e=>e.getAttribute('data-line-type')==='change-addition');
+      stream.scrollTop+=line.getBoundingClientRect().top-stream.getBoundingClientRect().top-6;})()`);
+    await new Promise((r) => setTimeout(r, 150));
+    const beforeSwitch = await js<{ file: string; line: string; offset: number; layout: string; active: string }>(
+      'window.streamTop()'
+    );
+    assert.equal(beforeSwitch.file, 'src/worker.ts');
+    assert.equal(beforeSwitch.layout, 'unified');
+    assert.equal(await pressKey('d', "document.querySelector('.commit-diff-stream')"), true);
+    await wait("window.streamTop().layout==='split' && window.streamTop().split");
+    await wait("window.electronAPI.loadPreferences().then(p=>p.diffLayout==='split')");
+    await new Promise((r) => setTimeout(r, 500));
+    const afterSwitch = await js<typeof beforeSwitch>('window.streamTop()');
+    assert.equal(afterSwitch.file, beforeSwitch.file, 'The same file stays in view');
+    assert.equal(afterSwitch.active, beforeSwitch.active);
+    assert.equal(afterSwitch.line, beforeSwitch.line, 'The same diff line stays at the top');
+    assert.ok(
+      Math.abs(afterSwitch.offset - beforeSwitch.offset) <= 2,
+      `The line stays in place: ${JSON.stringify([beforeSwitch, afterSwitch])}`
+    );
+    // Never while typing: the file search keeps its letters and the layout does not change.
+    const search = "document.querySelector('.changes-tree-controls input:not([type])')";
+    assert.equal(await pressKey('d', search), false);
+    assert.equal(await pressKey('u', search), false);
+    assert.equal(await js("document.querySelector('.pr-changes').dataset.diffLayout"), 'split');
+    await click('Diff appearance');
+    await wait("document.querySelector('[aria-label=\"Diff layout\"]')?.value==='split'");
+    assert.match(await js<string>("document.querySelector('.diff-layout-hint').textContent"), /Press d to switch/);
+    await js(
+      "document.querySelector('[aria-label=\"Diff appearance\"]').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))"
+    );
+    await wait("!document.querySelector('[aria-label=\"Diff layout\"]')");
+    await pressKey('u');
+    await wait("window.streamTop().layout==='unified' && !window.streamTop().split");
+    await wait("window.electronAPI.loadPreferences().then(p=>p.diffLayout==='unified')");
+    await new Promise((r) => setTimeout(r, 500));
+    assert.equal(
+      (await js<typeof beforeSwitch>('window.streamTop()')).line,
+      beforeSwitch.line,
+      'Switching back returns to the same line'
+    );
     await js(
       `window.treeCount=path=>window.deepAll('[role=treeitem]').find(e=>e.getAttribute('data-item-path')===path)?.querySelector('[title*="GitHub"]')?.title;void 0;`
     );
