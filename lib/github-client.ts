@@ -364,6 +364,8 @@ export function createGitHubClientPool(options: Options = {}) {
         const local = fresh();
         if (local) {
           if (requestOptions.request.signal?.aborted) return Promise.reject(new Error('GitHub request was aborted'));
+          // Cached responses are frozen and shared. Each caller gets one private copy, as Octokit
+          // pagination edits `data` in place.
           return Promise.resolve(structuredClone(local));
         }
         const shared = deduplicate ? inflight.get(requestKey) : undefined;
@@ -380,7 +382,8 @@ export function createGitHubClientPool(options: Options = {}) {
             cached.freshUntil <= stored.savedAt + freshFor
           ) {
             if (requestOptions.request.signal?.aborted) throw new Error('GitHub request was aborted');
-            return structuredClone(cached.response);
+            // Copied once, when the result reaches the caller.
+            return cached.response;
           }
           const gate = () => {
             requestOptions.request.signal?.throwIfAborted();
@@ -513,10 +516,11 @@ export function createGitHubClientPool(options: Options = {}) {
                   )
                 );
                 const data: unknown = response.data;
+                // The cache owns and freezes `data`; the caller receives a copy below.
                 cache.set(requestKey, {
                   response: { status: response.status, url: response.url || endpoint.url, headers, data },
                   freshUntil: freshness(response.headers, now(), immutable),
-                });
+                }, true);
               } else cache.delete(requestKey);
             }
             return response;
@@ -527,8 +531,9 @@ export function createGitHubClientPool(options: Options = {}) {
             observe(e.response?.headers ?? {});
             if (e.status === 304 && cached) {
               unavailable.delete(requestKey);
+              // Shares the frozen saved data; the caller receives a copy below.
               const response = {
-                ...structuredClone(cached.response),
+                ...cached.response,
                 headers: { ...cached.response.headers, ...e.response?.headers },
               } as OctokitResponse<unknown>;
               if (/\bno-store\b/i.test(response.headers['cache-control'] ?? '')) cache.delete(requestKey);
@@ -545,7 +550,7 @@ export function createGitHubClientPool(options: Options = {}) {
                     },
                   },
                   freshUntil: freshness(response.headers, now(), immutable),
-                });
+                }, true);
               return response;
             }
             if (get && [401, 403, 404].includes(e.status ?? 0) && !githubRateLimit(error, now()))
@@ -639,6 +644,7 @@ export function createGitHubClientPool(options: Options = {}) {
             })
             .catch(() => {});
         }
+        // The one copy per caller. Octokit pagination deletes keys from `data` in place.
         return result.then((response) => structuredClone(response));
       });
       clients.set(key, client);

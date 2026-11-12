@@ -29,7 +29,7 @@ function normalizeExtensions(value: unknown): string[] {
       ]
     : [];
 }
-export function createFileFilterState(storage: StateStorage) {
+export function createFileFilterState(storage: Pick<StateStorage, 'read' | 'write' | 'flush'>) {
   const key = 'diff-file-filters:v1';
   return {
     read(): FileFilterState {

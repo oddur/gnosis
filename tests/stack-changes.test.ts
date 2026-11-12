@@ -259,7 +259,8 @@ void test('saved comparisons can be restored by a new service but remain account
     },
   });
   const value = await restored.read(f.client, subject);
-  assert.deepEqual(value, saved);
+  // The cache stores JSON, so fields set to `undefined` are absent, as after a restart.
+  assert.deepEqual(value, JSON.parse(JSON.stringify(saved)));
   assert.equal(reads, 0);
   assert.ok(saved.stackComparison);
   const other = createGitHubClientPool().client('another-account');

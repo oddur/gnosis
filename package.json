@@ -31,6 +31,7 @@
     "eval:illustrations": "tsx scripts/evaluate-illustrations.ts",
     "benchmark:highlights": "node scripts/benchmark-highlights.mjs",
     "benchmark:queue": "tsx scripts/benchmark-queue-rebuild.ts",
+    "benchmark:cache-stores": "tsx scripts/benchmark-cache-and-stores.ts",
     "prepare:mergiraf": "node scripts/prepare-mergiraf.mjs",
     "prestart": "npm run prepare:mergiraf",
     "prepackage": "npm run prepare:mergiraf",

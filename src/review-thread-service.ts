@@ -292,7 +292,8 @@ export function createReviewThreadService(now = Date.now) {
         saved.value.expires > now() &&
         saved.value.expires <= now() + 60_000
       )
-        return saved.value.value;
+        // Callers such as `act` and `comment` edit the result. The cached value is frozen and shared.
+        return structuredClone(saved.value.value);
       if (!refresh && entry?.value && entry.expires > now() && (!persistent || entry.version === version))
         return structuredClone(entry.value);
       entry = { expires: 0 };

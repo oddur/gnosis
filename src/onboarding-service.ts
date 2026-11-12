@@ -4,7 +4,7 @@ import type { Preferences } from '../lib/types';
 import type { StateStorage } from './app-data-store';
 
 export function createOnboardingService(deps: {
-  storage: StateStorage;
+  storage: Pick<StateStorage, 'read' | 'write' | 'flush'>;
   account: () => string | null;
   preferences: () => Preferences;
   savePreferences: (preferences: Preferences) => void;

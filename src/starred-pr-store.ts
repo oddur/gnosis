@@ -1,6 +1,6 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { createHash } from 'node:crypto';
+import type { StateStorage } from './app-data-store';
+import { deepFreeze } from '../lib/deep-freeze';
 import type { ReviewMember } from '../lib/workbench';
 import type { StarredPr, StarPrRequest } from '../lib/starred-prs';
 
@@ -38,38 +38,52 @@ function validMember(value: unknown): value is ReviewMember {
   );
 }
 
-/** User bookmarks have a lifetime independent of GitHub discovery and its cache. */
-export function createStarredPrStore(directory: () => string, now = Date.now) {
-  const accounts = new Map<string, StarredPr[]>();
-  const file = (account: string) =>
-    path.join(directory(), `starred-prs-${createHash('sha256').update(account.toLowerCase()).digest('hex')}.json`);
-  const load = (account: string): StarredPr[] => {
+/** One saved row. `seq` keeps the order PRs were first starred in. */
+interface SavedStarredPr extends StarredPr {
+  seq: number;
+}
+interface StarredIndex {
+  entries: readonly Readonly<StarredPr>[];
+  seq: ReadonlyMap<string, number>;
+}
+export const starredPrsName = (account: string) =>
+  `starred-prs:${createHash('sha256').update(account.toLowerCase()).digest('hex')}`;
+
+/**
+ * User bookmarks have a lifetime independent of GitHub discovery and its cache. `load` returns one
+ * frozen, shared list per account, replaced only when a change is saved; a change saves only its rows.
+ */
+export function createStarredPrStore(storage: StateStorage, now = Date.now) {
+  const accounts = new Map<string, StarredIndex>();
+  const indexOf = (entries: SavedStarredPr[]): StarredIndex => ({
+    entries: deepFreeze(entries.map(({ member, starredAt }) => ({ member, starredAt }))),
+    seq: new Map(entries.map((entry) => [entry.member.url, entry.seq])),
+  });
+  const saved = (index: StarredIndex): SavedStarredPr[] =>
+    index.entries.map((entry) => ({ ...entry, seq: index.seq.get(entry.member.url) ?? 0 }));
+  const index = (account: string): StarredIndex => {
     const key = account.toLowerCase();
     const cached = accounts.get(key);
-    if (cached) return structuredClone(cached);
-    let entries: StarredPr[] = [];
-    try {
-      const value: unknown = JSON.parse(fs.readFileSync(file(account), 'utf8'));
-      if (Array.isArray(value))
-        entries = value.filter((entry: unknown): entry is StarredPr => {
-          if (!entry || typeof entry !== 'object') return false;
-          const value = entry as Record<string, unknown>;
-          return typeof value.starredAt === 'string' && validMember(value.member);
-        });
-    } catch {
-      /* First use or an unreadable bookmark file. */
-    }
-    entries = [...new Map(entries.map((entry) => [entry.member.url, entry])).values()];
-    accounts.set(key, entries);
-    return structuredClone(entries);
+    if (cached) return cached;
+    const value = storage.take(starredPrsName(account));
+    const rows = value && typeof value === 'object' ? (value as { entries?: unknown }).entries : undefined;
+    const entries = (rows && typeof rows === 'object' ? Object.values(rows) : [])
+      .filter((entry: unknown): entry is SavedStarredPr => {
+        if (!entry || typeof entry !== 'object') return false;
+        const value = entry as Record<string, unknown>;
+        return typeof value.starredAt === 'string' && typeof value.seq === 'number' && validMember(value.member);
+      })
+      .sort((a, b) => a.seq - b.seq);
+    const result = indexOf([...new Map(entries.map((entry) => [entry.member.url, entry])).values()]);
+    accounts.set(key, result);
+    return result;
   };
-  const save = (account: string, entries: StarredPr[]) => {
-    fs.mkdirSync(directory(), { recursive: true });
-    fs.writeFileSync(file(account) + '.tmp', JSON.stringify(entries), { mode: 0o600 });
-    fs.renameSync(file(account) + '.tmp', file(account));
-    accounts.set(account.toLowerCase(), structuredClone(entries));
-    return structuredClone(entries);
+  const commit = (account: string, entries: SavedStarredPr[], put: Record<string, SavedStarredPr>, remove: string[]) => {
+    storage.patch(starredPrsName(account), { put, remove });
+    accounts.set(account.toLowerCase(), indexOf(entries));
   };
+  /** Frozen and shared: never change it. */
+  const load = (account: string): readonly Readonly<StarredPr>[] => index(account).entries;
   return {
     load,
     set(account: string, request: StarPrRequest) {
@@ -81,22 +95,40 @@ export function createStarredPrStore(directory: () => string, now = Date.now) {
         !request.members.every(validMember)
       )
         throw new Error('Choose valid GitHub PRs to star.');
-      const entries = new Map(load(account).map((entry) => [entry.member.url, entry]));
+      const entries = new Map(saved(index(account)).map((entry) => [entry.member.url, entry]));
+      let next = Math.max(-1, ...[...entries.values()].map((entry) => entry.seq)) + 1;
+      const put: Record<string, SavedStarredPr> = {};
+      const remove: string[] = [];
       for (const member of request.members) {
-        if (request.starred)
-          entries.set(member.url, {
-            member,
-            starredAt: entries.get(member.url)?.starredAt ?? new Date(now()).toISOString(),
-          });
-        else entries.delete(member.url);
+        const previous = entries.get(member.url);
+        if (request.starred) {
+          // The request is this store's own copy from IPC, so it is frozen in place, not copied.
+          const entry = {
+            seq: previous?.seq ?? next++,
+            member: deepFreeze(member),
+            starredAt: previous?.starredAt ?? new Date(now()).toISOString(),
+          };
+          entries.set(member.url, entry);
+          put[member.url] = entry;
+        } else if (entries.delete(member.url)) remove.push(member.url);
       }
-      return save(account, [...entries.values()]);
+      if (Object.keys(put).length || remove.length) commit(account, [...entries.values()], put, remove);
+      return load(account);
     },
+    /** Saves newer details of starred PRs. Only the members passed in are compared. */
     update(account: string, members: ReviewMember[]) {
-      const latest = new Map(members.map((member) => [member.url, member]));
-      const previous = load(account);
-      const next = previous.map((entry) => ({ ...entry, member: latest.get(entry.member.url) ?? entry.member }));
-      if (JSON.stringify(next) !== JSON.stringify(previous)) save(account, next);
+      const current = index(account);
+      const entries = new Map(saved(current).map((entry) => [entry.member.url, entry]));
+      const put: Record<string, SavedStarredPr> = {};
+      for (const member of members) {
+        const entry = entries.get(member.url);
+        if (!entry || JSON.stringify(member) === JSON.stringify(entry.member)) continue;
+        // Queue members stay mutable in the live workbench state, so the store freezes its own copy.
+        const next = { ...entry, member: deepFreeze(structuredClone(member)) };
+        entries.set(member.url, next);
+        put[member.url] = next;
+      }
+      if (Object.keys(put).length) commit(account, [...entries.values()], put, []);
     },
   };
 }

@@ -24,7 +24,7 @@ interface Context {
   token: string;
 }
 interface Deps {
-  storage: StateStorage;
+  storage: Pick<StateStorage, 'read' | 'write' | 'flush'>;
   directory: () => string;
   context: () => Context;
   read: (url: string) => Promise<PrActionState>;

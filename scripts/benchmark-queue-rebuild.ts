@@ -17,6 +17,8 @@ import type { ReviewHistoryEntry } from '../lib/types';
 import { DEFAULT_CLAUDE_MODEL } from '../lib/models';
 import { createStatCache } from '../src/stat-cache';
 import { deepFreeze } from '../lib/deep-freeze';
+import { createMemoryStorage } from '../src/app-data-store';
+import { mutedPrsName } from '../src/muted-pr-store';
 
 const SUBJECTS = 400,
   MUTED = 649,
@@ -58,18 +60,18 @@ function main() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-queue-benchmark-'));
   try {
     const subjects = groupSubjects(Array.from({ length: SUBJECTS }, (_, i) => member(i + 1)));
-    fs.writeFileSync(
-      path.join(directory, 'workbench.json'),
-      JSON.stringify({ account: 'me', subjects, overrides: [], briefs: {}, day: '', used: 0 })
-    );
     // About 4 KB per muted PR, as on the measured profile (2.6 MB for 649 entries).
     const muted = Array.from({ length: MUTED }, (_, i) => ({
+      seq: i,
       member: member(10_000 + i, 4_000),
       mutedAt: new Date(now).toISOString(),
     }));
-    fs.writeFileSync(
-      path.join(directory, `muted-prs-${createHash('sha256').update('me').digest('hex')}.json`),
-      JSON.stringify(muted)
+    // Saved app data, as `appData` loads it: the queue, and muted PRs as one row each.
+    const storage = createMemoryStorage(
+      new Map([
+        ['workbench:me', JSON.stringify({ account: 'me', subjects, overrides: [], briefs: {}, day: '', used: 0 })],
+        [mutedPrsName('me'), JSON.stringify({ entries: Object.fromEntries(muted.map((entry) => [entry.member.url, entry])) })],
+      ])
     );
     // Saved reviews of queue PRs and of PRs that left the queue, with their subject snapshots.
     const history: ReviewHistoryEntry[] = Array.from({ length: HISTORY }, (_, i) => {
@@ -118,6 +120,7 @@ function main() {
       : { history: () => index.get(), preferences: () => ({ ...preferences.get() }) };
     const service = createWorkbenchService({
       directory: () => directory,
+      storage,
       auth: () => ({ login: 'me', token: 'token' }),
       busy: () => true,
       client: () => {

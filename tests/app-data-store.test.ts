@@ -308,3 +308,184 @@ void test('new saved-work files use incremental auto-vacuum', async () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+
+const mutedName = `muted-prs:${'1'.repeat(64)}`;
+/** Records every row the worker inserts, updates or deletes. */
+function audit(dir: string) {
+  const db = new DatabaseSync(path.join(dir, 'workbench.sqlite'));
+  db.exec(
+    "CREATE TABLE audit (id TEXT); CREATE TRIGGER audit_put AFTER INSERT ON records BEGIN INSERT INTO audit VALUES('put:'||new.id); END; CREATE TRIGGER audit_update AFTER UPDATE ON records BEGIN INSERT INTO audit VALUES('update:'||new.id); END; CREATE TRIGGER audit_delete AFTER DELETE ON records BEGIN INSERT INTO audit VALUES('delete:'||old.id); END"
+  );
+  return {
+    rows: () => (db.prepare('SELECT id FROM audit').all() as { id: string }[]).map((row) => row.id).sort(),
+    close: () => {
+      db.exec('DROP TRIGGER audit_put; DROP TRIGGER audit_update; DROP TRIGGER audit_delete; DROP TABLE audit');
+      db.close();
+    },
+  };
+}
+void test('patch writes only the listed rows', async () => {
+  const dir = fixture();
+  let store = createAppDataStore();
+  try {
+    await store.open(dir);
+    store.patch(mutedName, { put: { a: { seq: 0 }, b: { seq: 1 }, c: { seq: 2 } } });
+    await store.flush();
+    const changes = audit(dir);
+    store.patch(mutedName, { put: { b: { seq: 1, title: 'changed' } }, remove: ['c'] });
+    await store.flush();
+    assert.deepEqual(changes.rows(), ['delete:entry:c', 'update:entry:b']);
+    changes.close();
+    // Only unread progress, mutes and stars accept row changes.
+    store.patch('workbench:alice', { put: { a: 1 } });
+    await assert.rejects(store.flush(), /Invalid saved change/);
+    await store.close().catch(() => {});
+    store = createAppDataStore();
+    await store.open(dir);
+    assert.deepEqual(store.take(mutedName), { entries: { a: { seq: 0 }, b: { seq: 1, title: 'changed' } } });
+  } finally {
+    await store.close().catch(() => {});
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+void test('patches coalesce and survive a failed flush', async () => {
+  const dir = fixture();
+  let store = createAppDataStore();
+  try {
+    await store.open(dir);
+    store.patch(mutedName, { put: { a: { v: 1 }, b: { v: 1 } } });
+    store.patch(mutedName, { put: { a: { v: 2 } }, remove: ['b'] });
+    await store.flush();
+    const db = new DatabaseSync(path.join(dir, 'workbench.sqlite'));
+    db.exec("CREATE TRIGGER fail_write BEFORE UPDATE ON records BEGIN SELECT RAISE(ABORT,'simulated disk failure'); END");
+    store.patch(mutedName, { put: { a: { v: 3 }, c: { v: 1 } } });
+    await assert.rejects(store.flush(), /simulated disk failure/);
+    // A newer change to the same row wins over the failed one; other failed rows are kept.
+    store.patch(mutedName, { put: { a: { v: 4 } }, remove: ['d'] });
+    db.exec('DROP TRIGGER fail_write');
+    db.close();
+    await store.flush();
+    await store.close();
+    store = createAppDataStore();
+    await store.open(dir);
+    assert.deepEqual(store.take(mutedName), { entries: { a: { v: 4 }, c: { v: 1 } } });
+  } finally {
+    await store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+void test('close reports a failed final save and still stops the worker', async () => {
+  const dir = fixture();
+  let store = createAppDataStore();
+  try {
+    await store.open(dir);
+    store.patch('workbench:alice', { put: { a: 1 } }); // rejected by the worker on every flush
+    await assert.rejects(store.close(), /Invalid saved change/);
+    // The worker is gone, so the database is released (Windows refuses to delete an open file).
+    await store.close();
+    store = createAppDataStore();
+    await store.open(dir);
+  } finally {
+    await store.close().catch(() => {});
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+void test('take hands over without a copy', async () => {
+  const dir = fixture();
+  let store = createAppDataStore();
+  try {
+    await store.open(dir);
+    store.patch(mutedName, { put: { a: { v: 1 } } });
+    await store.close();
+    store = createAppDataStore();
+    await store.open(dir);
+    const read = store.read(mutedName);
+    assert.notEqual(read, store.read(mutedName), 'Reads are private copies');
+    const taken = store.take(mutedName) as { entries: Record<string, unknown> };
+    assert.deepEqual(taken, read);
+    assert.equal(store.take(mutedName), undefined, 'The store that took it owns it');
+    assert.equal(store.read(mutedName), undefined);
+    store.patch(mutedName, { put: { b: { v: 2 } } });
+    assert.deepEqual(Object.keys(taken.entries), ['a'], 'Patches never touch a taken state');
+    // A GitHub cache reset keeps the rows and does not hand them out again.
+    await store.clearGitHub();
+    assert.equal(store.take(mutedName), undefined);
+    await store.close();
+    store = createAppDataStore();
+    await store.open(dir);
+    assert.deepEqual(store.take(mutedName), { entries: { a: { v: 1 }, b: { v: 2 } } });
+  } finally {
+    await store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+const legacyHash = 'a'.repeat(64);
+void test('legacy store files import once and are renamed', async () => {
+  const dir = fixture();
+  const member = (n: number) => ({ url: `https://github.com/o/r/pull/${n}`, description: `Description ${n}` });
+  const muted = [
+    { member: member(2), mutedAt: 'm2' },
+    { member: member(1), mutedAt: 'm1' },
+    { member: member(2), mutedAt: 'm2-again' },
+    { broken: true },
+  ];
+  const starred = [{ member: member(3), starredAt: 's3' }];
+  const views = { views: [{ id: 'v', name: 'Mine' }], activeId: 'v' };
+  fs.writeFileSync(path.join(dir, `muted-prs-${legacyHash}.json`), JSON.stringify(muted));
+  fs.writeFileSync(path.join(dir, `starred-prs-${legacyHash}.json`), JSON.stringify(starred));
+  fs.writeFileSync(path.join(dir, `queue-views-${legacyHash}.json`), JSON.stringify(views));
+  let store = createAppDataStore();
+  try {
+    await store.open(dir);
+    assert.deepEqual(store.read(`muted-prs:${legacyHash}`), {
+      entries: {
+        [member(2).url]: { member: member(2), mutedAt: 'm2-again', seq: 0 },
+        [member(1).url]: { member: member(1), mutedAt: 'm1', seq: 1 },
+      },
+    });
+    assert.deepEqual(store.read(`starred-prs:${legacyHash}`), {
+      entries: { [member(3).url]: { member: member(3), starredAt: 's3', seq: 0 } },
+    });
+    assert.deepEqual(store.read(`queue-views:${legacyHash}`), views);
+    for (const name of ['muted-prs', 'starred-prs', 'queue-views']) {
+      assert.equal(fs.existsSync(path.join(dir, `${name}-${legacyHash}.json`)), false);
+      assert.ok(fs.existsSync(path.join(dir, `${name}-${legacyHash}.json.migrated`)), 'Kept as a backup');
+    }
+    await store.close();
+    // Restoring a file by hand does not import it over newer changes.
+    fs.writeFileSync(path.join(dir, `starred-prs-${legacyHash}.json`), JSON.stringify([]));
+    store = createAppDataStore();
+    await store.open(dir);
+    assert.equal(
+      Object.keys((store.read(`starred-prs:${legacyHash}`) as { entries: object }).entries).length,
+      1
+    );
+  } finally {
+    await store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+void test('an unreadable legacy file is skipped', async () => {
+  const dir = fixture();
+  fs.writeFileSync(path.join(dir, `muted-prs-${legacyHash}.json`), '{ not json');
+  fs.writeFileSync(path.join(dir, `queue-views-${legacyHash}.json`), JSON.stringify(['not', 'views']));
+  fs.writeFileSync(path.join(dir, `starred-prs-${legacyHash}.json`), JSON.stringify([]));
+  const store = createAppDataStore();
+  try {
+    await store.open(dir);
+    assert.equal(store.read(`muted-prs:${legacyHash}`), undefined);
+    assert.equal(store.read(`queue-views:${legacyHash}`), undefined);
+    assert.deepEqual(store.read(`starred-prs:${legacyHash}`), { entries: {} });
+    assert.equal(
+      fs.readFileSync(path.join(dir, `muted-prs-${legacyHash}.json`), 'utf8'),
+      '{ not json',
+      'Left in place, unchanged'
+    );
+    assert.ok(fs.existsSync(path.join(dir, `queue-views-${legacyHash}.json`)));
+    assert.ok(fs.existsSync(path.join(dir, `starred-prs-${legacyHash}.json.migrated`)));
+  } finally {
+    await store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
