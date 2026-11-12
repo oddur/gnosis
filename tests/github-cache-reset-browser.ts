@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { app, BrowserWindow } from 'electron';
+import { chooseWorkspaceMenuItem } from './workspace-menu';
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({
     width: 1280,
@@ -25,7 +26,7 @@ void app.whenReady().then(async () => {
   try {
     await loadWorkbenchPage(win, `${process.env.GNOSIS_WORKBENCH_URL}?pr-summary`);
     await wait("document.querySelectorAll('.queue-item').length>0");
-    await click('Settings');
+    await js(chooseWorkspaceMenuItem('[aria-label="Settings"]'));
     await wait("!!document.querySelector('[role=dialog] [role=tab]:not(.workspace-tab-select)')");
     await click('Integrations');
     await wait("!!document.querySelector('#github-cache-title')");

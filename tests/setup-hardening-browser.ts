@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { chooseWorkspaceMenuItem } from './workspace-menu';
 
 void app.whenReady().then(async () => {
   const win = new BrowserWindow({
@@ -62,7 +63,7 @@ void app.whenReady().then(async () => {
       window.electronAPI.startReview=async r=>{window.reviewStarts.push(r);return {reviewId:'local-test'}};
     })()`);
 
-    await click('Settings');
+    await js(chooseWorkspaceMenuItem('[aria-label="Settings"]'));
     await wait("!!document.querySelector('.settings-tabs')");
     await click('Review');
     await fill('.settings-panel[data-state=active] textarea', 'Keep cancellation safe 日本語 🧪');
@@ -74,7 +75,7 @@ void app.whenReady().then(async () => {
       'Escape saves focused text before closing'
     );
 
-    await click('Settings');
+    await js(chooseWorkspaceMenuItem('[aria-label="Settings"]'));
     await wait("!!document.querySelector('.settings-tabs')");
     await click('Review');
     await js('window.saveFails=true');

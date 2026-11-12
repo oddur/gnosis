@@ -96,6 +96,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('workspace-shortcut', handler);
     return () => ipcRenderer.removeListener('workspace-shortcut', handler);
   },
+  isFullScreen: (): Promise<boolean> => ipcRenderer.invoke('window-full-screen'),
+  onFullScreenChange: (callback: (fullScreen: boolean) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, value: unknown) => callback(value === true);
+    ipcRenderer.on('window-full-screen', handler);
+    return () => ipcRenderer.removeListener('window-full-screen', handler);
+  },
+  setWindowChromeTheme: (dark: boolean) => ipcRenderer.send('window-chrome-theme', dark),
   onHistoryNavigate: (callback: (direction: -1 | 1) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, direction: unknown) => {
       if (direction === -1 || direction === 1) callback(direction);

@@ -40,6 +40,13 @@ export function locationKey(location: AppLocation): string {
 export function createNavigationHistory<T>(key: (value: T) => string, limit = 100) {
   let entries: T[] = [];
   let index = -1;
+  // Back and Forward controls subscribe; the version changes whenever either could change.
+  let version = 0;
+  const listeners = new Set<() => void>();
+  const changed = () => {
+    version++;
+    listeners.forEach((listener) => listener());
+  };
   return {
     record(value: T) {
       if (index >= 0 && key(entries[index]) === key(value)) {
@@ -50,22 +57,36 @@ export function createNavigationHistory<T>(key: (value: T) => string, limit = 10
       entries.push(value);
       if (entries.length > limit) entries.shift();
       index = entries.length - 1;
+      changed();
     },
     move(direction: HistoryDirection): T | undefined {
       const next = index + direction;
       if (next < 0 || next >= entries.length) return;
       index = next;
+      changed();
       return entries[index];
     },
+    canMove: (direction: HistoryDirection) => index + direction >= 0 && index + direction < entries.length,
     current: () => entries[index] as T | undefined,
     restore(value: T) {
       const previous = entries.indexOf(value);
-      if (previous >= 0) index = previous;
+      if (previous >= 0 && previous !== index) {
+        index = previous;
+        changed();
+      }
     },
     clear() {
       entries = [];
       index = -1;
+      changed();
     },
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    version: () => version,
   };
 }
 

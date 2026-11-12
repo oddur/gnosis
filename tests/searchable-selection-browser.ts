@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { app, BrowserWindow } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { chooseWorkspaceMenuItem } from './workspace-menu';
 
 app.on('window-all-closed', () => {});
 void app.whenReady().then(async () => {
@@ -109,7 +110,7 @@ void app.whenReady().then(async () => {
     await wait("window.electronAPI.workbenchQueue().then(q=>q.filters.labels.names.includes('bug'))");
     await key('Escape');
     await click('[aria-label="Close filters"]');
-    await click('[aria-label="Settings"]');
+    await js(chooseWorkspaceMenuItem('[aria-label="Settings"]'));
     await wait("!!document.querySelector('[role=dialog]')");
     await js(
       "[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(t=>t.textContent==='Appearance').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))"
@@ -136,10 +137,10 @@ void app.whenReady().then(async () => {
     assert.equal(await js("window.electronAPI.loadPreferences().then(p=>p.effort)"), 'ultra');
     await js("window.selectOption('[aria-label=\"Review model\"]', 'gpt-6-luna')");
     assert.equal(await js("window.electronAPI.loadPreferences().then(p=>p.effort)"), 'max');
-    await click('[aria-label="Review model"]');
-    assert.equal(await js("!!document.querySelector('.model-picker-reasoning input[value=ultra]')"), false);
-    await key('Escape');
-    await click('[aria-label="Settings"]');
+    await js('window.openModelMenu()');
+    assert.equal(await js("!!document.querySelector('.workspace-menu-popup [data-effort=ultra]')"), false);
+    await js('window.closeModelMenu()');
+    await js(chooseWorkspaceMenuItem('[aria-label="Settings"]'));
     await wait("!!document.querySelector('[aria-label=\"Use a different model for briefings\"]')");
     await js("window.selectEffort('Briefing model', 'medium')");
     await js("[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(e=>e.textContent==='Review').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
@@ -149,7 +150,7 @@ void app.whenReady().then(async () => {
     await capture('effort-settings-dark');
     await click('[data-slot=dialog-close]');
     assert.equal(await js("window.electronAPI.loadPreferences().then(p=>p.effort==='xhigh'&&p.proactiveEffort==='medium')"), true);
-    await click('[aria-label="Settings"]');
+    await js(chooseWorkspaceMenuItem('[aria-label="Settings"]'));
     await wait("document.querySelector('[aria-label=\"Briefing model\"] .model-picker-effort')?.textContent==='Medium'");
     await capture('briefing-effort-dark');
     await click('[data-slot=dialog-close]');
@@ -182,8 +183,12 @@ void app.whenReady().then(async () => {
     await click('[aria-label="Close filters"]');
     win.setContentSize(1280, 800);
     win.webContents.setZoomFactor(2);
-    await click('[aria-label="Review model"]');
-    await click('[aria-label="Review model selection"]');
+    // The review model moved into the account menu; Settings keeps the searchable model field.
+    await js(chooseWorkspaceMenuItem('[aria-label="Settings"]'));
+    await js("[...document.querySelectorAll('[role=tab]:not(.workspace-tab-select)')].find(e=>e.textContent==='Review').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
+    await wait("!!document.querySelector('[aria-label=\"Explanation model\"]')");
+    await click('[aria-label="Explanation model"]');
+    await click('[aria-label="Explanation model selection"]');
     await wait("!!document.querySelector('[data-slot=combobox-content]')");
     await capture('zoom-dark');
     assert.ok(

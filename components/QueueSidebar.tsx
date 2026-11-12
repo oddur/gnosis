@@ -15,6 +15,7 @@ import { useKeyboardShortcuts } from '../lib/use-keyboard-shortcuts';
 import { Popover } from 'radix-ui';
 import { Bookmark, ChevronRight, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from './ui/tooltip';
+import { TitlebarPortal } from './AppTitlebar';
 
 const storageKey = 'gnosis-sidebar-layout:v1';
 type Section = 'reviews' | 'views' | 'tools';
@@ -285,15 +286,15 @@ export function QueueSidebar({
     <TooltipProvider delayDuration={350}>
       <nav ref={sidebar} className="workbench-sidebar" aria-label="Workspace" data-collapsed={collapsed}>
         <Popover.Root open={mobileOpen} onOpenChange={setMobileOpen} modal>
-          <div className="sidebar-toolbar">
-            {!collapsed && <span>Workspace</span>}
+          {/* The toggle sits in the title bar row, before history and Back/Forward. */}
+          <TitlebarPortal>
             <Popover.Anchor asChild>
-              <span>
+              <span className="app-titlebar-sidebar-toggle">
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
                       ref={toggle}
-                      className="sidebar-toggle"
+                      className="sidebar-toggle app-titlebar-button"
                       aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
                       aria-expanded={!collapsed || mobileOpen}
                       aria-keyshortcuts={mac ? 'Meta+\\' : 'Control+\\'}
@@ -302,19 +303,19 @@ export function QueueSidebar({
                       {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
                     </button>
                   </TooltipTrigger>
-                  <TooltipContent side="right">
+                  <TooltipContent side="bottom">
                     {collapsed ? 'Expand sidebar' : 'Collapse sidebar'} <kbd>{shortcut}</kbd>
                   </TooltipContent>
                 </Tooltip>
               </span>
             </Popover.Anchor>
-          </div>
+          </TitlebarPortal>
           <Popover.Portal>
             <Popover.Content
               className="sidebar-popup"
-              side="right"
+              side="bottom"
               align="start"
-              sideOffset={12}
+              sideOffset={8}
               collisionPadding={8}
               aria-label="Workspace navigation"
               onCloseAutoFocus={(event) => {
