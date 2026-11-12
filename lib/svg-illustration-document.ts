@@ -146,7 +146,18 @@ const SVG_PLAYER_RUNTIME = String.raw`
         if(d.command==='theme')theme(d.dark===true);
         if(d.command==='focus'){focusIds=Array.isArray(d.ids)?d.ids.filter(id=>semanticIds.has(id)):[];focus();}
         if(d.command==='validate'){
-          // Let the parent's aspect-ratio resize reach this frame before measuring label size.
+          // The parent resizes this frame to the illustration's aspect ratio just before asking.
+          // That resize reaches a sandboxed frame asynchronously, and on a slow machine it can
+          // arrive after a couple of frames. Measuring at the old size scales labels down and
+          // reports them as too small, so wait until the pane has the size the parent set.
+          const size=d.size;
+          if(size){
+            const deadline=Date.now()+5000;
+            while(Math.abs(innerWidth-size.width)>1||Math.abs(innerHeight-size.height)>1){
+              if(Date.now()>deadline)throw Error('Illustration pane stayed '+innerWidth+'×'+innerHeight+'px instead of '+Math.round(size.width)+'×'+Math.round(size.height)+'px');
+              await new Promise(resolve=>setTimeout(resolve,16));
+            }
+          }
           await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
           const issues=[],positions=new Map();
           for(let s=0;s<frames.length;s++)for(let i=0;i<frames[s].length;i++){
