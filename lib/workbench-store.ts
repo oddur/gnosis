@@ -2,9 +2,12 @@ import { useSyncExternalStore } from 'react';
 import type { QueueItem, WorkbenchQueue, WorkbenchQueueParts } from './workbench';
 import type { ReviewHistoryEntry } from './types';
 import { historyRevision, stampQueue, type WorkbenchRevisions } from './workbench-revision';
+import type { QueueSignals } from './queue-signals';
+import { publishQueueSignals } from './queue-signal-store';
 
 export interface WorkbenchStoreApi {
-  workbenchSnapshot: () => Promise<WorkbenchQueue>;
+  /** With `withSignals`, the saved PR status for the queue's rows comes with the snapshot. */
+  workbenchSnapshot: (withSignals?: boolean) => Promise<WorkbenchQueue>;
   workbenchQueue: (force?: boolean) => Promise<WorkbenchQueue>;
   listReviews: () => Promise<ReviewHistoryEntry[]>;
   onWorkbenchChanged?: (callback: (revisions?: WorkbenchRevisions) => void) => () => void;
@@ -27,6 +30,8 @@ interface Options {
   focus?: (listener: () => void) => () => void;
   /** Coalescing delay for change notifications. */
   delay?: number;
+  /** Receives the saved PR status that comes with the first snapshot, before the queue is shown. */
+  onSavedSignals?: (account: string, values: QueueSignals[]) => void;
 }
 
 const EMPTY_QUEUE: WorkbenchQueue = Object.freeze({ items: Object.freeze([]) as unknown as QueueItem[], warnings: Object.freeze([]) as unknown as string[], remaining: 0 });
@@ -149,7 +154,8 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
     const request = (async () => {
       let started = { epoch, generation };
       try {
-        let next = kind === 'snapshot' ? await api().workbenchSnapshot() : await api().workbenchQueue(kind === 'force');
+        // Until a queue is shown, ask for saved status too, so the first rows show their badges.
+        let next = kind === 'snapshot' ? await api().workbenchSnapshot(!status.loaded) : await api().workbenchQueue(kind === 'force');
         if (!snapshotMarked && kind === 'snapshot') {
           snapshotMarked = true;
           api().perfMark?.('snapshot-ipc');
@@ -157,7 +163,7 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
         // A write that started and finished during this read may be missing from it, so read once more.
         if (started.generation === generation && !holds && started.epoch !== epoch) {
           started = { epoch, generation };
-          next = await api().workbenchSnapshot();
+          next = await api().workbenchSnapshot(!status.loaded);
         }
         if (started.generation !== generation) return;
         if (holds > 0) {
@@ -168,7 +174,10 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
           setTimeout(() => void load('snapshot').catch(() => {}), 0);
           return;
         }
-        commit(next.revision ? next : stampQueue(next));
+        // Saved status is not part of the queue: it never reaches its identity or revisions.
+        const { savedSignals, ...queued } = next;
+        if (savedSignals) options.onSavedSignals?.(savedSignals.account, savedSignals.values);
+        commit(queued.revision ? queued : stampQueue(queued));
       } catch (error) {
         if (started.generation === generation) setStatus({ loaded: status.loaded, error: error instanceof Error ? error.message : String(error) });
         throw error;
@@ -289,6 +298,7 @@ export function createWorkbenchStore(api: () => WorkbenchStoreApi, options: Opti
 export type WorkbenchStore = ReturnType<typeof createWorkbenchStore>;
 
 export const workbenchStore = createWorkbenchStore(() => window.electronAPI, {
+  onSavedSignals: publishQueueSignals,
   focus: (listener) => {
     window.addEventListener('focus', listener);
     return () => window.removeEventListener('focus', listener);
