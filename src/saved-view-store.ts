@@ -1,6 +1,5 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import type { StateStorage } from './app-data-store';
 import {
   normalizeViews,
   applyViewAction,
@@ -9,29 +8,21 @@ import {
   type QueueViewsState,
 } from '../lib/saved-views';
 
-export function createSavedViewStore(directory: () => string) {
+export const queueViewsName = (account: string) =>
+  `queue-views:${createHash('sha256').update(account.toLowerCase()).digest('hex')}`;
+export function createSavedViewStore(storage: StateStorage) {
   const states = new Map<string, QueueViewsState>();
-  const file = (account: string) =>
-    path.join(directory(), `queue-views-${createHash('sha256').update(account.toLowerCase()).digest('hex')}.json`);
   const load = (account: string, fallback?: unknown) => {
     const key = account.toLowerCase();
     let state = states.get(key);
     if (!state) {
-      let saved: unknown;
-      try {
-        saved = JSON.parse(fs.readFileSync(file(account), 'utf8'));
-      } catch {
-        /* First use or unreadable file. */
-      }
-      state = normalizeViews(saved, fallback);
+      state = normalizeViews(storage.take(queueViewsName(account)), fallback);
       states.set(key, state);
     }
     return state;
   };
   const save = (account: string, next: QueueViewsState) => {
-    fs.mkdirSync(directory(), { recursive: true });
-    fs.writeFileSync(file(account) + '.tmp', JSON.stringify(next), { mode: 0o600 });
-    fs.renameSync(file(account) + '.tmp', file(account));
+    storage.write(queueViewsName(account), next);
     states.set(account.toLowerCase(), next);
     return next;
   };

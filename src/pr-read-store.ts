@@ -1,6 +1,4 @@
 import type { StateStorage } from './app-data-store';
-import fs from 'node:fs';
-import path from 'node:path';
 import { createHash } from 'node:crypto';
 import {
   emptyReadVersions,
@@ -45,17 +43,16 @@ interface Draft {
 }
 const validUrl = (url: string) => /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(url);
 /** Durable user progress. Cache eviction and stack regrouping never change its identity. */
-export function createPrReadStore(directory: () => string, now = Date.now, storage?: StateStorage) {
+export function createPrReadStore(storage: StateStorage, now = Date.now) {
   const accounts = new Map<string, State>();
-  const file = (account: string) =>
-    path.join(directory(), `pr-read-${createHash('sha256').update(account.toLowerCase()).digest('hex')}.json`);
+  const name = (account: string) => `pr-read-${createHash('sha256').update(account.toLowerCase()).digest('hex')}.json`;
   function load(account: string): State {
     const key = account.toLowerCase();
     if (!accounts.has(key)) {
       let state: State = { initialized: false, entries: {} };
       try {
         // Validate persisted data before trusting its shape.
-        const saved = storage ? storage.read(path.basename(file(account))) : JSON.parse(fs.readFileSync(file(account), 'utf8'));
+        const saved = storage.read(name(account));
         if (saved === undefined) throw Object.assign(new Error('No saved progress'), { code: 'ENOENT' });
         const parsed = saved as State;
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- runtime JSON validation
@@ -114,17 +111,13 @@ export function createPrReadStore(directory: () => string, now = Date.now, stora
     };
     fn(draft);
     const next: State = { initialized: draft.initialized, entries };
-    if (
-      next.initialized === previous.initialized &&
-      [...touched].every((url) => JSON.stringify(entries[url]) === JSON.stringify(previous.entries[url]))
-    )
-      return false;
-    if (storage) storage.write(path.basename(file(account)), next);
-    else {
-      fs.mkdirSync(directory(), { recursive: true });
-      fs.writeFileSync(file(account) + '.tmp', JSON.stringify(next), { mode: 0o600 });
-      fs.renameSync(file(account) + '.tmp', file(account));
-    }
+    const changed = [...touched].filter((url) => JSON.stringify(entries[url]) !== JSON.stringify(previous.entries[url]));
+    if (next.initialized === previous.initialized && !changed.length) return false;
+    // Only the touched entries are saved. The header is tiny and always sent, so a first save creates it.
+    storage.patch(name(account), {
+      header: { initialized: next.initialized },
+      put: Object.fromEntries(changed.flatMap((url) => (entries[url] ? [[url, entries[url]]] : []))),
+    });
     accounts.set(account.toLowerCase(), next);
     return true;
   }

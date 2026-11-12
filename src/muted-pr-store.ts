@@ -1,6 +1,5 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { createHash } from 'node:crypto';
+import type { StateStorage } from './app-data-store';
 import type { ReviewMember } from '../lib/workbench';
 import type { MutedPr, MutedPrSummary, MutePrRequest } from '../lib/muted-prs';
 import { deepFreeze } from '../lib/deep-freeze';
@@ -43,11 +42,15 @@ interface StoredMutedPr {
   member: ReviewMember;
   mutedAt: string;
 }
+/** One saved row. `seq` keeps the order PRs were first muted in. */
+interface SavedMutedPr extends StoredMutedPr {
+  seq: number;
+}
 interface MutedIndex {
   urls: ReadonlySet<string>;
   rows: readonly MutedPr[];
   members: ReadonlyMap<string, Readonly<ReviewMember>>;
-  entries: readonly StoredMutedPr[];
+  entries: readonly SavedMutedPr[];
 }
 const summary = ({ url, repo, number, title, author, state, merged, isDraft }: ReviewMember): MutedPrSummary => ({
   url,
@@ -59,7 +62,8 @@ const summary = ({ url, repo, number, title, author, state, merged, isDraft }: R
   merged,
   isDraft,
 });
-function indexOf(entries: StoredMutedPr[]): MutedIndex {
+/** `entries` must be in `seq` order. */
+function indexOf(entries: SavedMutedPr[]): MutedIndex {
   const frozen = deepFreeze(entries);
   return Object.freeze({
     urls: new Set(frozen.map((entry) => entry.member.url)),
@@ -68,41 +72,32 @@ function indexOf(entries: StoredMutedPr[]): MutedIndex {
     entries: frozen,
   });
 }
+export const mutedPrsName = (account: string) =>
+  `muted-prs:${createHash('sha256').update(account.toLowerCase()).digest('hex')}`;
 
 /**
- * User muted PRs have a lifetime independent of GitHub discovery and its cache. The file keeps each
- * full PR, because its description is part of the briefing key after an unmute. Reads share one frozen
- * index per account, rebuilt only when a change is saved.
+ * User muted PRs have a lifetime independent of GitHub discovery and its cache. Each full PR is saved,
+ * because its description is part of the briefing key after an unmute. Reads share one frozen index per
+ * account, rebuilt only when a change is saved; a change saves only the rows it touches.
  */
-export function createMutedPrStore(directory: () => string, now = Date.now) {
+export function createMutedPrStore(storage: StateStorage, now = Date.now) {
   const accounts = new Map<string, MutedIndex>();
-  const file = (account: string) =>
-    path.join(directory(), `muted-prs-${createHash('sha256').update(account.toLowerCase()).digest('hex')}.json`);
   const load = (account: string): MutedIndex => {
     const key = account.toLowerCase();
     const cached = accounts.get(key);
     if (cached) return cached;
-    let entries: StoredMutedPr[] = [];
-    try {
-      const value: unknown = JSON.parse(fs.readFileSync(file(account), 'utf8'));
-      if (Array.isArray(value))
-        entries = value.filter((entry: unknown): entry is StoredMutedPr => {
-          if (!entry || typeof entry !== 'object') return false;
-          const value = entry as Record<string, unknown>;
-          return typeof value.mutedAt === 'string' && validMember(value.member);
-        });
-    } catch {
-      /* First use or an unreadable mute file. */
-    }
+    const saved = storage.take(mutedPrsName(account));
+    const rows = saved && typeof saved === 'object' ? (saved as { entries?: unknown }).entries : undefined;
+    const entries = (rows && typeof rows === 'object' ? Object.values(rows) : [])
+      .filter((entry: unknown): entry is SavedMutedPr => {
+        if (!entry || typeof entry !== 'object') return false;
+        const value = entry as Record<string, unknown>;
+        return typeof value.mutedAt === 'string' && typeof value.seq === 'number' && validMember(value.member);
+      })
+      .sort((a, b) => a.seq - b.seq);
     const index = indexOf([...new Map(entries.map((entry) => [entry.member.url, entry])).values()]);
     accounts.set(key, index);
     return index;
-  };
-  const save = (account: string, entries: StoredMutedPr[]) => {
-    fs.mkdirSync(directory(), { recursive: true });
-    fs.writeFileSync(file(account) + '.tmp', JSON.stringify(entries), { mode: 0o600 });
-    fs.renameSync(file(account) + '.tmp', file(account));
-    accounts.set(account.toLowerCase(), indexOf(entries));
   };
   return {
     /** Muted URLs and the rows the Muted PRs page shows. Frozen and shared: never change them. */
@@ -125,14 +120,25 @@ export function createMutedPrStore(directory: () => string, now = Date.now) {
       /* eslint-enable @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unnecessary-boolean-literal-compare */
       if (!valid) throw new Error('Choose valid GitHub PRs to mute.');
       const entries = new Map(load(account).entries.map((entry) => [entry.member.url, entry]));
+      let next = Math.max(-1, ...[...entries.values()].map((entry) => entry.seq)) + 1;
+      const put: Record<string, SavedMutedPr> = {};
+      const remove: string[] = [];
       if (request.muted)
-        for (const member of request.members)
-          entries.set(member.url, {
+        for (const member of request.members) {
+          const previous = entries.get(member.url);
+          // A re-mute keeps its place and its original time.
+          const entry = {
+            seq: previous?.seq ?? next++,
             member: structuredClone(member),
-            mutedAt: entries.get(member.url)?.mutedAt ?? new Date(now()).toISOString(),
-          });
-      else for (const url of request.urls) entries.delete(url);
-      save(account, [...entries.values()]);
+            mutedAt: previous?.mutedAt ?? new Date(now()).toISOString(),
+          };
+          entries.set(member.url, entry);
+          put[member.url] = entry;
+        }
+      else for (const url of request.urls) if (entries.delete(url)) remove.push(url);
+      if (!Object.keys(put).length && !remove.length) return;
+      storage.patch(mutedPrsName(account), { put, remove });
+      accounts.set(account.toLowerCase(), indexOf([...entries.values()]));
     },
   };
 }

@@ -1,8 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
+import { createMemoryStorage } from '../src/app-data-store';
 import {
   normalizeViews,
   editViewFilters,
@@ -58,23 +56,21 @@ void test('names, ordering and deletion are deterministic and invalid actions do
   assert.equal(state.views.length, 2);
 });
 void test('view order, active selection and drafts persist separately for each GitHub account', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-views-'));
-  try {
-    const store = createSavedViewStore(() => dir);
+  const saved = new Map<string, string>();
+  {
+    const store = createSavedViewStore(createMemoryStorage(saved));
     store.load('alice', { repo: 'org/repo' });
     const created = store.act('alice', { type: 'create', name: 'Mine' });
     store.edit('alice', { involvement: 'mine', status: 'draft' });
     store.load('bob');
     assert.equal(store.load('bob').views.length, 0);
-    const restart = createSavedViewStore(() => dir);
-    const saved = restart.load('ALICE');
-    assert.equal(saved.activeId, created.activeId);
-    assert.equal(activeViewFilters(saved).status, 'draft');
-    assert.equal(saved.views[0].filters.repo, 'org/repo');
-    assert.ok(viewIsModified(saved.views[0]));
+    const restart = createSavedViewStore(createMemoryStorage(saved));
+    const views = restart.load('ALICE');
+    assert.equal(views.activeId, created.activeId);
+    assert.equal(activeViewFilters(views).status, 'draft');
+    assert.equal(views.views[0].filters.repo, 'org/repo');
+    assert.ok(viewIsModified(views.views[0]));
     assert.equal(restart.load('bob').views.length, 0);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
@@ -106,14 +102,14 @@ void test('multiple label names and matching mode survive saved views and cleari
 });
 
 void test('target branch views persist across restart and keep independent drafts', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-target-views-'));
-  try {
-    const store = createSavedViewStore(() => dir);
+  const saved = new Map<string, string>();
+  {
+    const store = createSavedViewStore(createMemoryStorage(saved));
     store.load('alice');
     store.edit('alice', { targetBranch: 'release/*' });
     const created = store.act('alice', { type: 'create', name: 'All hot fixes' });
     store.edit('alice', { targetBranch: 'release/2.*' });
-    const restored = createSavedViewStore(() => dir).load('alice');
+    const restored = createSavedViewStore(createMemoryStorage(saved)).load('alice');
     assert.equal(restored.activeId, created.activeId);
     assert.equal(restored.views[0].filters.targetBranch, 'release/*');
     assert.equal(activeViewFilters(restored).targetBranch, 'release/2.*');
@@ -121,7 +117,5 @@ void test('target branch views persist across restart and keep independent draft
     assert.ok(created.activeId);
     const reset = applyViewAction(restored, { type: 'reset', id: created.activeId }, () => 'unused');
     assert.equal(activeViewFilters(reset).targetBranch, 'release/*');
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
