@@ -14,6 +14,7 @@ import { Markdown } from './Markdown';
 import { Button } from './ui/button';
 import { explanationPositionKey, useExplanationScroll } from '../lib/use-explanation-scroll';
 import { createColumnLayout, type ColumnLayout } from '../lib/explanation-column-layout';
+import { estimateCodeColumnHeight } from '../lib/review-diff';
 import type { ReviewGuide, Slide } from '../lib/types';
 
 export interface ExplanationReaderHandle {
@@ -108,6 +109,16 @@ export function ExplanationReader({
     ],
     [review]
   );
+  // Unmounted code reserves its estimated height, so the scrollbar and saved positions stay close to the real page.
+  const reserves = useMemo(() => {
+    const statuses = new Map(review.changedFiles?.map((file) => [file.filename, file.status]));
+    return review.slides.map((slide) =>
+      estimateCodeColumnHeight(slide.diffHunks, {
+        status: (path) => statuses.get(path),
+        viewed: (path) => viewedFiles.has(path),
+      })
+    );
+  }, [review, viewedFiles]);
   const covered = useMemo(() => new Set(review.slides.flatMap((s) => s.diffHunks.map((h) => h.filePath))), [review]);
   const remaining = files.filter((f) => !viewedFiles.has(f));
   const uncovered = files.filter((f) => !covered.has(f));
@@ -218,6 +229,7 @@ export function ExplanationReader({
           code={renderCode(s, i + 1)}
           tool={inspected === i + 1 ? tool : undefined}
           layout={columnLayout}
+          reserve={reserves[i]}
         />
       ))}
       <section className="explanation-ending" aria-label="End of explanation">
@@ -316,8 +328,10 @@ function PairedSection({
   code,
   tool,
   layout,
+  reserve,
 }: {
   layout: ColumnLayout;
+  reserve: number;
   index: number;
   title: string;
   hasCode: boolean;
@@ -373,7 +387,11 @@ function PairedSection({
         >
           {hasCode && (
             <div hidden={!!tool}>
-              {mounted ? code : <div className="explanation-code-reserve" aria-hidden="true" />}
+              {mounted ? (
+                code
+              ) : (
+                <div className="explanation-code-reserve" style={{ height: reserve }} aria-hidden="true" />
+              )}
             </div>
           )}
           {tool && <div className="review-tool-slot">{tool}</div>}

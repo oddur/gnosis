@@ -3085,6 +3085,8 @@ input::placeholder,textarea::placeholder { color:var(--muted-foreground); opacit
 .markdown-review-document th { font-weight:600; background:var(--muted); }
 .markdown-review-document img { max-width:100%; max-height:480px; object-fit:contain; }
 .markdown-review-block { position:relative; padding:4px 12px; margin:8px -12px; border-radius:4px; scroll-margin-block:120px; }
+/* Long Markdown previews lay out only the blocks near the viewport. The margin keeps the source link (right:-8px) and its focus ring visible. */
+.markdown-review-block { content-visibility:auto; contain-intrinsic-block-size:auto 80px; overflow-clip-margin:12px; }
 .markdown-review-block:focus-visible { outline:2px solid var(--ring); outline-offset:3px; }
 .markdown-block-label { display:flex; align-items:center; gap:4px; font-size:var(--type-caption); font-weight:600; color:var(--muted-foreground); }
 .markdown-block-content>:first-child { margin-top:.35em; }
@@ -4565,6 +4567,13 @@ button .loading-indicator,button .loading-spinner { color:inherit; }
 .explanation-section { display:grid;grid-template-columns:minmax(0, 2fr) minmax(0, 3fr);gap:32px;border-bottom:1px solid var(--border);align-items:start; }
 /* A column taller than the viewport gets an inline top from lib/explanation-column-layout.ts. */
 .explanation-column { min-width:0;position:sticky;top:16px; }
+/* Chunks outside the viewport skip style, layout and paint. They stay in the DOM, so find-in-page, focus, selection
+   and deep links still reach them. Estimates hold their place until a chunk is first seen; `auto` then keeps its
+   real height. The clip margin keeps focus rings and edge controls visible under paint containment. */
+.explanation-document > :is(.explanation-introduction,.explanation-section,.explanation-ending) { content-visibility:auto;contain-intrinsic-block-size:auto 900px; }
+.explanation-document .review-file-group { content-visibility:auto;contain-intrinsic-block-size:auto 480px;overflow-clip-margin:8px; }
+.explanation-document .review-diff > .review-context-hunk { content-visibility:auto;contain-intrinsic-block-size:auto 400px; }
+.explanation-document :is(.review-diff,.review-context-hunk) > diffs-container { display:block;content-visibility:auto;contain-intrinsic-block-size:auto 200px; }
 .explanation-section:not([data-has-code]) { grid-template-columns:minmax(0,1fr); }
 .explanation-section-text { max-width:72ch; }
 .explanation-document .review-narrative { padding:0;gap:16px; }

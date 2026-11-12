@@ -18,7 +18,12 @@ import { findReviewLine } from './ReviewDiff';
 import { ReviewSelectionActions } from './ReviewSelectionActions';
 import { ReviewFileDiscussion } from './ReviewFileDiscussion';
 import { DiffAppearanceMenu } from './DiffAppearanceMenu';
-import { DEFAULT_DIFF_APPEARANCE, type DiffAppearance } from '@/lib/review-diff';
+import {
+  DEFAULT_DIFF_APPEARANCE,
+  diffContextLines,
+  estimateFileBlockHeight,
+  type DiffAppearance,
+} from '@/lib/review-diff';
 import { ReviewFileHeader } from './ReviewFileHeader';
 import { normalizeInlineExplanations } from '@/lib/inline-explanations';
 import { FileTypeIcon } from './FileTypeIcon';
@@ -455,6 +460,18 @@ export function SlideView({
     }
     return groups;
   }, [slide.diffHunks, slide.affectedFiles]);
+  // Placeholder heights for files that content-visibility skips; `auto` keeps the real height once a file is seen.
+  const contextLines = diffContextLines(diffAppearance);
+  const fileEstimates = useMemo(
+    () =>
+      new Map(
+        groupedHunks.map(({ filePath, hunks }) => [
+          filePath,
+          estimateFileBlockHeight(hunks, { status: fileMetadataMap?.get(filePath)?.status, contextLines }),
+        ])
+      ),
+    [groupedHunks, fileMetadataMap, contextLines]
+  );
   const allFilesViewed = groupedHunks.length > 0 && groupedHunks.every(({ filePath }) => viewedFiles?.has(filePath));
   const isLastTopic = slideNumber === totalSlides;
   const rightPanelRef = useRef<HTMLDivElement>(null);
@@ -843,7 +860,14 @@ export function SlideView({
         );
 
         return (
-          <div key={filePath} className="review-file-group flex flex-col gap-0" data-file-path={filePath}>
+          <div
+            key={filePath}
+            className="review-file-group flex flex-col gap-0"
+            data-file-path={filePath}
+            style={{
+              containIntrinsicBlockSize: `auto ${expanded ? (fileEstimates.get(filePath) ?? 48) : 48}px`,
+            }}
+          >
             <ReviewFileHeader
               markdownPreview={isMarkdownFile(filePath) && !lfsResource}
               expanded={expanded}

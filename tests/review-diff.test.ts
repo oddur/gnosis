@@ -6,6 +6,12 @@ import {
   sliceReviewHunk,
   diffContextLines,
   DEFAULT_DIFF_APPEARANCE,
+  CODE_LINE_HEIGHT,
+  HUNK_SLICE_LIMIT,
+  estimateCodeColumnHeight,
+  estimateFileBlockHeight,
+  estimateHunkBlockHeight,
+  reviewHunkSlices,
 } from '../lib/review-diff';
 import type { DiffHunk } from '../lib/types';
 const hunk = (hunkHeader: string, content: string, filePath = 'src/file.ts'): DiffHunk => ({
@@ -143,4 +149,58 @@ void test('surrounding-line preferences preserve source coordinates and pinned r
   assert.equal(diffContextLines(), 3);
   assert.equal(diffContextLines({ ...DEFAULT_DIFF_APPEARANCE, contextLines: NaN }), 3);
   assert.equal(diffContextLines({ ...DEFAULT_DIFF_APPEARANCE, contextLines: 10 }), 10);
+});
+
+void test('long visible ranges split into 200-line slices that keep source line numbers', () => {
+  assert.deepEqual(reviewHunkSlices(0, HUNK_SLICE_LIMIT), [[0, HUNK_SLICE_LIMIT]]);
+  assert.deepEqual(reviewHunkSlices(10, 511), [
+    [10, 210],
+    [210, 410],
+    [410, 511],
+  ]);
+  // A 3,000-line added file: each slice is its own diff, numbered from where it starts in the file.
+  const added = hunk('@@ -0,0 +1,3000 @@', Array.from({ length: 3000 }, (_, i) => `+line ${i + 1}`).join('\n'));
+  const prepared = prepareReviewHunk(added, 'added');
+  assert.ok(prepared?.singleSide);
+  const slices = reviewHunkSlices(0, prepared.lines.length).map(([start, end]) =>
+    prepareReviewHunk(sliceReviewHunk(added, prepared.lines, start, end), 'added')
+  );
+  assert.equal(slices.length, 15);
+  assert.equal(slices[0]?.lines[0].headLineNumber, 1);
+  assert.equal(slices[7]?.lines[0].headLineNumber, 1401);
+  assert.equal(slices[7]?.lines[0].text, 'line 1401');
+  assert.equal(slices[14]?.lines.at(-1)?.headLineNumber, 3000);
+  assert.ok(slices.every((slice) => slice?.singleSide && slice.lines.every((l) => l.type === 'add')));
+  assert.match(slices[7]?.patch ?? '', /@@ -0,0 \+1401,200 @@/);
+  // Annotations route by line number, so the slice that owns line 1450 is the one that shows it.
+  const owner = slices.findIndex((slice) => slice?.lines.some((l) => l.headLineNumber === 1450));
+  assert.equal(owner, 7);
+  // A modified hunk keeps both sides' numbers across a slice seam.
+  const modified = hunk(
+    '@@ -100,400 +200,401 @@',
+    Array.from({ length: 400 }, (_, i) => (i === 250 ? '-old\n+new\n+extra' : ` same ${i}`)).join('\n')
+  );
+  const lines = prepareReviewHunk(modified)?.lines ?? [];
+  const second = prepareReviewHunk(sliceReviewHunk(modified, lines, 200, 400));
+  assert.ok(second);
+  assert.equal(second.lines[0].baseLineNumber, 300);
+  assert.equal(second.lines[0].headLineNumber, 400);
+  assert.equal(second.lines.find((l) => l.type === 'add')?.headLineNumber, 450);
+});
+
+void test('placeholder heights follow the shown rows, folded context and collapsed files', () => {
+  assert.equal(estimateHunkBlockHeight(10), 10 * CODE_LINE_HEIGHT + 8);
+  const added = hunk('@@ -0,0 +1,100 @@', Array.from({ length: 100 }, (_, i) => `+${i}`).join('\n'));
+  assert.equal(estimateFileBlockHeight([added], { status: 'added' }), 48 + 100 * CODE_LINE_HEIGHT + 8);
+  assert.equal(estimateFileBlockHeight([added], { status: 'added', expanded: false }), 48);
+  // One change in 41 lines shows 3 lines either side; the two folded runs count as bars.
+  const folded = hunk(
+    '@@ -1,41 +1,41 @@',
+    Array.from({ length: 41 }, (_, i) => (i === 20 ? '-a\n+b' : ` c${i}`)).join('\n')
+  );
+  assert.equal(estimateFileBlockHeight([folded]), Math.round(48 + (8 + 3) * CODE_LINE_HEIGHT + 8));
+  const column = estimateCodeColumnHeight([added, { ...folded, filePath: 'other.ts' }], {
+    viewed: (path) => path === 'other.ts',
+  });
+  assert.equal(column, 80 + 20 + (48 + 100 * CODE_LINE_HEIGHT + 8) + 20 + 48);
 });
