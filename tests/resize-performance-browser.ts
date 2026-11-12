@@ -180,11 +180,13 @@ void app.whenReady().then(async () => {
     );
     assert.ok(layouts <= 3, `At most 3 layouts per step, saw ${layouts}`);
     assert.ok(styles <= 4, `At most 4 style recalcs per step, saw ${styles}`);
-    // Each step waits two frames. Under Xvfb's software rasterizer a frame takes longer than 16 ms to present, so
-    // the step time has a floor near 50 ms there. Main-thread work is the stable measure for the loose CI cap; the
-    // step time cap still catches a step that re-renders, such as the 450 ms media-query re-render.
-    assert.ok(workP90 < 50, `p90 main-thread work per step under 50 ms, saw ${workP90.toFixed(1)}`);
-    assert.ok(p90 < 100, `p90 step under 100 ms, saw ${p90.toFixed(1)}`);
+    // The layout and style-recalc caps above are the regression guard: they are deterministic on any machine.
+    // Wall-clock time depends on the rasterizer. Under Xvfb on a CI runner, main-thread work reached about 80 ms
+    // at p90 with only 2-3 layouts per step, against about 12 ms on a laptop. The time caps therefore only catch
+    // a return to the old behaviour (p90 150-280 ms, and a 450 ms re-render when crossing the 1000 px breakpoint).
+    assert.ok(workP90 < 140, `p90 main-thread work per step under 140 ms, saw ${workP90.toFixed(1)}`);
+    assert.ok(p90 < 160, `p90 step under 160 ms, saw ${p90.toFixed(1)}`);
+    assert.ok(work[work.length - 1] < 300, `No resize step does 300 ms of main-thread work, saw ${work[work.length - 1].toFixed(1)}`);
 
     // Crossing the 1000px media query must not re-render the Explanation's sections and their diffs.
     await js('window.__countRenders=true;window.__renderCounts={}');
