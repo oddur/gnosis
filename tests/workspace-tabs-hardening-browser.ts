@@ -38,10 +38,11 @@ void app.whenReady().then(async () => {
       await capture('first-tab');
       assert.match(await js<string>(`document.querySelector('[aria-label="New tab"]').title`), /click a PR to keep it open/);
       // With 12 tabs in a 1100px window, at least 120px of the row still moves the window.
+      // Size the page, not the frame: setSize includes the Windows border, which leaves innerWidth 1084.
       await js(
         `sessionStorage.setItem('fixture-workspace-tabs',JSON.stringify({version:1,active:'tab-0',tabs:Array.from({length:12},(_,i)=>({id:'tab-'+i,title:i?'Review title '+i+' '+'long words '.repeat(4):'Review queue',label:i?'#'+i:'Queue',detail:'team/repository',section:'queue'}))}));`
       );
-      win.setSize(1100, 850);
+      win.setContentSize(1100, 850);
       await win.loadURL(url);
       await wait('document.querySelectorAll(".workspace-tab").length===12');
       await waitForWorkbenchQueue(win.webContents);
@@ -79,7 +80,7 @@ void app.whenReady().then(async () => {
       assert.ok(drag.capsule, 'The Activity capsule is visible, just before Search');
       assert.ok(drag.zone, 'The reserved drag area sits between New tab and the Activity capsule');
       await capture('drag-zone-12-tabs');
-      win.setSize(1280, 850);
+      win.setContentSize(1280, 850);
     }
     await js(
       `sessionStorage.setItem('fixture-workspace-tabs',JSON.stringify({version:1,active:'tab-0',tabs:Array.from({length:40},(_,i)=>({id:'tab-'+i,title:i?'修正 reconnect — مراجعة '+i+' '+('Long review title '.repeat(8)):'Review queue',label:i?'#'+i:'Queue',detail:'team/repository',section:'queue'}))}));`

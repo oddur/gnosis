@@ -39,7 +39,8 @@ void app.whenReady().then(async () => {
     await js(
       `document.querySelector('[aria-label="Actions for PR #${number}"]').closest('.queue-item').querySelector('.queue-row-main').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))`
     );
-    await wait('!!document.querySelector(".pr-overview-heading")');
+    // Views stay mounted behind the queue, so a hidden heading from an earlier visit does not count.
+    await wait(`[...document.querySelectorAll('.pr-overview-heading')].some(h=>h.checkVisibility())`);
   };
   const back = async () => {
     await click('Review queue');
@@ -140,7 +141,7 @@ void app.whenReady().then(async () => {
     await capture('unread-filter');
     await open(152);
     await wait(`${unread(152)}.then(n=>n===0)`);
-    assert.ok(await js("document.querySelector('.pr-overview-heading').textContent.includes('Add trace context')"));
+    assert.ok(await js("[...document.querySelectorAll('.pr-overview-heading')].find(h=>h.checkVisibility()).textContent.includes('Add trace context')"));
     assert.match(
       await js<string>("document.querySelector('.pr-queue-navigation')?.textContent ?? document.body.innerText"),
       /2/,

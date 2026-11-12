@@ -61,7 +61,11 @@ void app.whenReady().then(async () => {
         `${mode} menu closes after opening a foreground tab`
       );
       await js(`document.querySelectorAll('.workspace-tab-select')[0].click()`);
-      await wait(`!!${root}.querySelector('.queue-list')`);
+      // Activating a tab moves focus to it on the next frame. Wait for that, or the move can land after the
+      // keyboard opens the menu below and close it again, which happens when frames are slow (macOS CI).
+      await wait(
+        `!!${root}.querySelector('.queue-list') && document.activeElement===document.querySelectorAll('.workspace-tab-select')[0]`
+      );
       assert.equal(
         await js(`document.querySelectorAll('[role=menu]').length`),
         0,

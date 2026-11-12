@@ -381,9 +381,9 @@ void app.whenReady().then(async () => {
     const sticky = await js<{ offset: number; text: string }>(`(() => {
       const pane = document.querySelector('.explanation-document');
       const header = document.querySelector('.review-file-context');
-      return { offset: header.getBoundingClientRect().top - pane.getBoundingClientRect().top, text: header.textContent };
+      return { offset: header.getBoundingClientRect().top - pane.getBoundingClientRect().top, text: header.textContent, top: pane.scrollTop, max: pane.scrollHeight - pane.clientHeight, group: header.parentElement.getBoundingClientRect().bottom - pane.getBoundingClientRect().top };
     })()`);
-    assert.ok(Math.abs(sticky.offset) < 2, 'Source header must stay pinned during diff scroll');
+    assert.ok(Math.abs(sticky.offset) < 2, `Source header must stay pinned during diff scroll: ${JSON.stringify({ ...sticky, text: undefined })}`);
     assert.equal(await js("document.querySelector('.review-file-context .source-attribution .entity-badge')?.textContent"), '#121');
     assert.match(sticky.text, /command-queue.ts/);
     assert.match(sticky.text, /Limits pending commands/);
