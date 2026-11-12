@@ -1757,6 +1757,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .pr-queue-navigation button { min-width:28px; min-height:28px; display:grid; place-items:center; border-radius:4px; }
 .pr-queue-navigation button:hover:not(:disabled) { background:var(--accent); color:var(--accent-foreground); }
 .pr-queue-navigation button:disabled { opacity:.35; cursor:default; }
+/* Size containment, not inline-size: .pr-stack-nav sizes itself with 100cqh. */
 .pr-summary-content { flex:1; min-height:0; width:100%; container-type:size; overflow:auto; scrollbar-gutter:stable; padding:16px var(--pr-frame-inset) 32px; }
 .pr-summary-content[data-state=inactive] { display:none; }
 .pr-overview-heading { flex-shrink:0; padding:12px var(--pr-frame-inset) 0; }
@@ -1907,7 +1908,8 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 @media(prefers-reduced-motion:reduce) { .activity-shell * { animation:none!important; transition:none!important; } }
 
 /* Persistent context and task-based controls in the review workbench. */
-.review-file-context { position:sticky; top:0; z-index:20; padding:9px 12px; background:var(--card); border:1px solid var(--border); border-radius:5px 5px 0 0; }
+/* Each file group is its own stacking context under content-visibility, so the header only has to clear Pierre's own layers (z-index up to 4). */
+.review-file-context { position:sticky; top:0; z-index:5; padding:9px 12px; background:var(--card); border:1px solid var(--border); border-radius:5px 5px 0 0; }
 .review-file-heading { display:flex; flex-wrap:wrap; align-items:center; gap:6px 12px; }
 .review-file-identity { display:flex; align-items:center; gap:8px; min-width:0; flex:1 1 180px; }
 .review-file-details { display:flex; align-items:center; gap:10px; color:var(--muted-foreground); font-size:var(--type-caption); white-space:nowrap; }
