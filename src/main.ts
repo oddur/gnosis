@@ -72,8 +72,7 @@ import type { FileChatRequest, PrFileRequest } from '../lib/pr-changes';
 import { createGitHubProfileService } from './github-profile-service';
 import { createQueueSignalsService, cachedQueueSignals, savedQueueSignals } from './queue-signals-service';
 import type { QueueSignalRequest, QueueSignalOptions, QueueSignals } from '../lib/queue-signals';
-import { githubCachedResponses } from '../lib/github-client';
-import { createWorkerCommandSearchService } from './command-search-service';
+import { createSearchIndexer } from './command-search-service';
 import type { QueueViewAction } from '../lib/saved-views';
 import { createActivityService } from './activity-service';
 import { createReviewThreadService } from './review-thread-service';
@@ -807,7 +806,12 @@ void app.whenReady().then(async () => {
   // Repairs that predate this launch wait until the queue has had time to paint.
   setTimeout(() => void repairReviewsIndex(), STARTUP_REPAIR_DELAY_MS).unref();
   setTimeout(() => {
-    githubClients.trimPrepared().catch((error: unknown) => console.warn('Could not trim the GitHub cache:', error));
+    void githubClients.trimPrepared().catch((error: unknown) => console.warn('Could not trim the GitHub cache:', error))
+      .then(() => {
+        storageMaintenance = true;
+        setInterval(() => void maintainStorage(), STORAGE_MAINTENANCE_INTERVAL_MS).unref();
+        return maintainStorage();
+      });
   }, PREPARED_TRIM_DELAY_MS).unref();
 
   app.on('activate', () => {
@@ -816,6 +820,35 @@ void app.whenReady().then(async () => {
     if (!proactiveInterval && loadPreferences().proactiveMode) startProactivePolling();
   });
 });
+
+const STORAGE_MAINTENANCE_INTERVAL_MS = 10 * 60_000;
+let storageMaintenance = false;
+let maintaining: Promise<void> | undefined;
+/**
+ * Return free pages to the file system, one bounded worker step at a time. Never at startup or on
+ * the cache-clear path: it starts after the deferred trim, then repeats every ten minutes.
+ */
+function maintainStorage(): Promise<void> {
+  if (!storageMaintenance) return Promise.resolve();
+  maintaining ??= (async () => {
+    const stores = [
+      ['saved work', (idle: number) => appData.maintain(idle)],
+      ['GitHub cache', (idle: number) => githubClients.maintainCache(idle)],
+    ] as const;
+    for (const [name, step] of stores) {
+      for (let steps = 0; steps < 1000; steps++) {
+        const result = await step(powerMonitor.getSystemIdleTime());
+        note('storage', { store: name, ...result });
+        if (!result?.more) break;
+        // Let other saved-work and cache requests run between steps.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+  })()
+    .catch((error: unknown) => console.warn('Could not compact local storage:', error instanceof Error ? error.message : String(error)))
+    .finally(() => { maintaining = undefined; });
+  return maintaining;
+}
 
 let cacheFlushed = false;
 let cacheFlushing = false;
@@ -1044,6 +1077,7 @@ function broadcastWorkbenchChanged(): void {
     /* Without revisions, renderers read the snapshot once and compare it themselves. */
   }
   broadcastToAllWindows('workbench-changed', revisions);
+  searchIndex.queueChanged();
 }
 
 function broadcastToAllWindows(channel: string, ...args: unknown[]): void {
@@ -1406,6 +1440,7 @@ ipcMain.handle('load-preferences', () => {
 
 ipcMain.handle('save-preferences', async (_event, prefs: Preferences) => {
   await githubClients.setCacheSizeMB(prefs.githubCacheSizeMB);
+  void maintainStorage();
   savePreferences(prefs);
   broadcastToAllWindows('preferences-changed', loadPreferences());
   broadcastWorkbenchChanged();
@@ -2815,9 +2850,12 @@ handleInteractive('get-github-profile', (_event, login:string) => {
   return getGitHubProfile(getGitHubClient(token),login);
 });
 const reviewThreads = createReviewThreadService();
-const commandSearch = createWorkerCommandSearchService({
+const SEARCH_INDEX_DELAY_MS = 3_000;
+/** Incremental: the cache hook and queue changes send only changed feeds to the saved-work worker. */
+const searchIndex = createSearchIndexer({
+  backend: { feeds: account => appData.searchFeeds(account), apply: (account, ops) => appData.searchApply(account, ops), search: request => appData.search(request) },
+  ready: () => startup.all,
   directory: getReviewsDir,
-  cachedResponses: () => { const token=getResolvedToken(); return token?githubCachedResponses(getGitHubClient(token)):[]; },
   queue: () => workbench.cached(),
   history: readReviewsIndex,
   mutedUrls: () => workbench.mutedUrls(),
@@ -2825,9 +2863,15 @@ const commandSearch = createWorkerCommandSearchService({
   ignoreBots: () => loadPreferences().ignoreDependabotPrs !== false,
   repositoryBotSettings: () => Object.fromEntries(Object.entries(loadPreferences().repositorySettings ?? {}).filter(([, s]) => s.ignoreDependabotPrs !== undefined).map(([repo, s]) => [repo, s.ignoreDependabotPrs as boolean])),
   threads: (url) => { const token = getResolvedToken(); return token ? reviewThreads.cached(getGitHubClient(token), url) : undefined; },
-}, request => appData.search(request));
+  onApply: stats => note('search-apply', stats),
+  onSearch: ({ ms, main, first, hits }) => {
+    if (startupTracing) console.log(`[perf] command-search ${ms.toFixed(1)}ms main=${main.toFixed(1)} first=${first} hits=${hits}`);
+  },
+});
+githubClients.onCacheChange(change => searchIndex.cacheChanged(change));
+void startup.all.then(() => setTimeout(() => void searchIndex.start().catch((error: unknown) => console.warn('Could not build the search index:', error)), SEARCH_INDEX_DELAY_MS).unref(), () => {});
 ipcMain.handle('command-search', (_event, query: string, includeBots: boolean, recentIds: string[]) =>
-  commandSearch.search(query, includeBots === true, Array.isArray(recentIds) ? recentIds.filter(id=>typeof id==='string').slice(0,20) : []));
+  searchIndex.search(query, includeBots === true, Array.isArray(recentIds) ? recentIds.filter(id=>typeof id==='string').slice(0,20) : []));
 handleInteractive('command-github-search', async (_event, query: string) => {
   const token = getResolvedToken();
   if (!token || !cachedLogin) throw new Error('Connect GitHub to search beyond this computer.');
@@ -3367,6 +3411,16 @@ handleInteractive('check-log', (_event, input: CheckSelection) => checkAccount(c
 handleInteractive('rerun-checks', async (_event, input: CheckSelection & { mode: 'failed' | 'all' }) => {
   await checkAccount(client => rerunChecks(client, input));
   refreshAfterGitHubWrite([input.url], ['checks', 'signals'], true);
+});
+/** Settings shows these beside the cache size. File sizes only, with no worker request. */
+ipcMain.handle('storage-sizes', async () => {
+  const directory = app.getPath('userData');
+  const bytes = async (name: string) => {
+    const sizes = await Promise.all([name, `${name}-wal`].map(file => fs.promises.stat(path.join(directory, file)).then(stat => stat.size, () => 0)));
+    return sizes[0] + sizes[1];
+  };
+  const [savedWorkBytes, githubCacheBytes] = await Promise.all([bytes('workbench.sqlite'), bytes('github-cache.sqlite')]);
+  return { savedWorkBytes, githubCacheBytes };
 });
 ipcMain.handle('clear-github-cache', () => {
   if (activeGenerations.size || activeForegroundChats || workbench.isGenerating() ||

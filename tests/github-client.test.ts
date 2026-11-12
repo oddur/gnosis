@@ -945,3 +945,33 @@ void test('automaticUsage reports spent and limit', async () => {
   h.advance(3_600_001);
   assert.equal(h.pool.automaticUsage('one', 'graphql').spent, 0, 'A new window starts empty');
 });
+
+void test('cache change hook fires on set, delete and clear, not on eviction', async () => {
+  const { createGitHubCache } = await import('../lib/github-cache');
+  const pool = createGitHubClientPool();
+  assert.equal(typeof pool.onCacheChange, 'function', 'the client pool exposes the hook');
+  const cache = createGitHubCache(() => 1000);
+  const changes: { scope: string; id: string; value?: unknown }[] = [];
+  const stop = cache.onChange((change) => changes.push(change));
+  const scope = cache.scope('a'.repeat(64));
+  const value = { response: { url: 'u', data: [1] } };
+  scope.set('one', value);
+  assert.equal(changes.length, 1);
+  assert.deepEqual(changes[0].value, value);
+  assert.notEqual(changes[0].value, value, 'the stored copy, not the caller object');
+  scope.delete('one');
+  assert.deepEqual(changes[1], { scope: 'a'.repeat(64), id: changes[0].id });
+  scope.set('two', 2);
+  scope.revalidate();
+  scope.invalidate(() => true);
+  assert.equal(changes.length, 3, 'revalidation is not a change');
+  // The memory cap evicts the oldest entries without firing.
+  for (let i = 0; i < 2100; i++) scope.set(`bulk${i}`, i);
+  assert.equal(changes.length, 3 + 2100);
+  assert.equal(changes.some((change) => change.value === undefined && change.id !== '*' && changes.indexOf(change) > 2), false);
+  scope.clear();
+  assert.deepEqual(changes.at(-1), { scope: 'a'.repeat(64), id: '*' });
+  stop();
+  scope.set('after', 1);
+  assert.equal(changes.at(-1)?.id, '*');
+});

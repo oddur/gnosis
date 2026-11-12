@@ -13,6 +13,12 @@ const RETENTION_MS = 7 * 24 * 60 * 60_000;
 export function isCacheRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
+/** A change to a scope. No `value` means removed; id `'*'` means the whole scope was cleared. */
+export interface CacheChange {
+  scope: string;
+  id: string;
+  value?: unknown;
+}
 interface Entry {
   scope: string;
   key: string;
@@ -34,6 +40,16 @@ export function createGitHubCache(now = Date.now) {
   let bytes = 0,
     scheduled = false;
   let pending: Promise<unknown> = Promise.resolve();
+  const listeners = new Set<(change: CacheChange) => void>();
+  /** Fires from `set`, `delete` and `clear` only, never from trimming, eviction or revalidation. */
+  function changed(change: CacheChange) {
+    for (const listener of listeners)
+      try {
+        listener(change);
+      } catch (error) {
+        console.warn('GitHub cache listener failed:', error instanceof Error ? error.message : String(error));
+      }
+  }
   const id = (scope: string, key: string) => `${scope}:${createHash('sha256').update(key).digest('hex')}`;
   const validTime = (time: number) => Number.isFinite(time) && time <= now() && now() - time < RETENTION_MS;
   function enqueue(key: string, payload: string | null | undefined, revalidate = false, prepared = false) {
@@ -188,6 +204,13 @@ export function createGitHubCache(now = Date.now) {
       await storage.setPreparedLimit(Math.max(0, cacheSizeMB * 1024 * 1024 - MAX_BYTES), now());
     },
     flush,
+    /** One space-reclaim step in the cache worker. */
+    maintain: (idleSeconds: number) => storage?.maintain(idleSeconds),
+    /** The stored value is passed read-only and uncloned. Listeners must not keep or change it. */
+    onChange(listener: (change: CacheChange) => void): () => void {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
     async close() {
       try {
         await flush();
@@ -236,14 +259,17 @@ export function createGitHubCache(now = Date.now) {
         },
         set(key: string, value: unknown) {
           const hash = id(scope, key);
-          remember(hash, { scope, key: hash.split(':')[1], savedAt: now(), value: structuredClone(value) }, true, isPreparedKey(key));
+          const stored = structuredClone(value);
+          remember(hash, { scope, key: hash.split(':')[1], savedAt: now(), value: stored }, true, isPreparedKey(key));
           trim();
+          if (listeners.size) changed({ scope, id: hash, value: stored });
         },
         delete(key: string) {
           versions.set(scope, (versions.get(scope) ?? 0) + 1);
           const hash = id(scope, key);
           remove(hash);
           if (storage) writes.set(`prepared:${hash}`, { id: hash, deletePrepared: true });
+          if (listeners.size) changed({ scope, id: hash });
         },
         clear() {
           versions.set(scope, (versions.get(scope) ?? 0) + 1);
@@ -252,6 +278,7 @@ export function createGitHubCache(now = Date.now) {
             writes.set(`clear-prepared:${scope}`, { id: scope, clearPrepared: true });
             void flush().catch(() => {});
           }
+          if (listeners.size) changed({ scope, id: '*' });
         },
         revalidate() {
           versions.set(scope, (versions.get(scope) ?? 0) + 1);

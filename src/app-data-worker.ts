@@ -4,8 +4,15 @@ import {
   type FileProgressPatch,
   type ReviewStateWrite,
 } from '../lib/review-state';
-import { createSqliteSearchIndex } from './sqlite-search-index';
-import { createCommandSearchService, type SearchRequest, type SearchInput } from './command-search-service';
+import {
+  SEARCH_INDEX_MIGRATION,
+  clearSearchIndex,
+  createSqliteSearchIndex,
+  dropLegacySearchIndex,
+  type SqliteSearchIndex,
+} from './sqlite-search-index';
+import { maintainDatabase, type MaintainState } from './sqlite-maintain';
+import type { LocalSearchResponse, SearchOp, SearchRequest } from './command-search-service';
 import { parentPort } from 'node:worker_threads';
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
@@ -15,11 +22,16 @@ const port = parentPort;
 if (!port) throw new Error('Storage must run in a worker');
 let opened = false;
 let db: DatabaseSync;
+let file = '';
+const maintenance: MaintainState = {};
 type Request = { id: number } & (
   | { method: 'open'; args: { directory: string } }
   | { method: 'write'; args: [string, unknown][] }
   | { method: 'close' | 'clear-github'; args?: undefined }
   | { method: 'search'; args: SearchRequest }
+  | { method: 'search-feeds'; args: { account: string } }
+  | { method: 'search-apply'; args: { account: string; ops: SearchOp[] } }
+  | { method: 'maintain'; args: { idleSeconds: number } }
   | { method: 'review-load'; args: Record<string, string> }
   | { method: 'review-save'; args: ReviewStateWrite }
   | { method: 'progress-save'; args: FileProgressPatch }
@@ -142,22 +154,24 @@ function states() {
     )
   );
 }
-let searchInput: SearchInput | undefined;
-let searchService: ReturnType<typeof createCommandSearchService> | undefined;
+let searchIndex: SqliteSearchIndex | undefined;
+/** Created on first use: `open` never touches the search tables. */
+const search = () => (searchIndex ??= createSqliteSearchIndex(db));
 let chain = Promise.resolve();
 port.on('message', (request: Request) => {
-  chain = chain.then(async () => {
+  chain = chain.then(() => {
     const { id, method, args } = request;
     try {
       let result: unknown;
       if (method === 'open') {
         fs.mkdirSync(args.directory, { recursive: true });
-        const file = path.join(args.directory, 'workbench.sqlite');
+        file = path.join(args.directory, 'workbench.sqlite');
         db = new DatabaseSync(file);
         opened = true;
         if (process.platform !== 'win32') fs.chmodSync(file, 0o600);
+        // New files start in incremental mode. An existing file keeps its mode until `maintain` converts it.
         db.exec(
-          'PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=2000; CREATE TABLE IF NOT EXISTS records (name TEXT NOT NULL,id TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(name,id)); CREATE TABLE IF NOT EXISTS migrations (id TEXT PRIMARY KEY)'
+          'PRAGMA auto_vacuum=INCREMENTAL; PRAGMA journal_mode=WAL; PRAGMA journal_size_limit=16777216; PRAGMA synchronous=FULL; PRAGMA busy_timeout=2000; CREATE TABLE IF NOT EXISTS records (name TEXT NOT NULL,id TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(name,id)); CREATE TABLE IF NOT EXISTS migrations (id TEXT PRIMARY KEY)'
         );
         if (!db.prepare('SELECT id FROM migrations WHERE id=?').get('legacy-state-v1'))
           transaction(() => {
@@ -178,10 +192,7 @@ port.on('message', (request: Request) => {
       } else if (method === 'clear-github') {
         transaction(() => {
           // Search also contains derived GitHub text; it can be rebuilt from surviving saved reviews.
-          if (db.prepare("SELECT name FROM sqlite_master WHERE name='search_documents'").get())
-            db.exec('DELETE FROM search_documents');
-          if (db.prepare("SELECT name FROM sqlite_master WHERE name='search_subjects'").get())
-            db.exec('DELETE FROM search_subjects');
+          clearSearchIndex(db);
           for (const { name } of db
             .prepare("SELECT DISTINCT name FROM records WHERE name LIKE 'workbench:%'")
             .all() as {
@@ -196,8 +207,7 @@ port.on('message', (request: Request) => {
             write(name, { ...retained, subjects: [] });
           }
         });
-        searchService = undefined;
-        searchInput = undefined;
+        searchIndex = undefined;
         result = states();
       } else if (method === 'review-load') {
         if (!db.prepare('SELECT id FROM migrations WHERE id=?').get('review-state-v1'))
@@ -247,30 +257,25 @@ port.on('message', (request: Request) => {
           }
         });
       } else if (method === 'search') {
-        if (args.input) searchInput = args.input;
-        if (!searchInput || searchInput.account !== args.account)
-          throw new Error('Search index is not ready for this account');
-        searchInput.muted = args.muted;
-        searchInput.ignoreBots = args.ignoreBots;
-        searchInput.repositoryBotSettings = args.repositoryBotSettings;
-        const current = () => {
-          if (!searchInput) throw new Error('Search data unavailable');
-          return searchInput;
-        };
-        if (!searchService)
-          searchService = createCommandSearchService({
-            index: createSqliteSearchIndex(db),
-            directory: () => current().directory,
-            queue: () => current().queue,
-            history: () => current().history,
-            account: () => current().account,
-            ignoreBots: () => current().ignoreBots,
-            repositoryBotSettings: () => current().repositoryBotSettings ?? {},
-            mutedUrls: () => new Set(current().muted),
-            cachedResponses: () => current().cachedResponses,
-            threads: (url) => current().threads[url],
+        const found = search().search(args);
+        result = {
+          account: args.account,
+          ...found,
+          ignoreBots: args.ignoreBots || Object.values(args.repositoryBotSettings ?? {}).some(Boolean),
+        } satisfies LocalSearchResponse;
+      } else if (method === 'search-feeds') {
+        result = { feeds: search().feeds(args.account) };
+      } else if (method === 'search-apply') {
+        result = search().apply(args.account, args.ops);
+      } else if (method === 'maintain') {
+        // One bounded step per request, so saved-work writes queue behind at most one step.
+        if (!db.prepare('SELECT id FROM migrations WHERE id=?').get(SEARCH_INDEX_MIGRATION)) {
+          transaction(() => {
+            dropLegacySearchIndex(db);
+            db.prepare('INSERT INTO migrations VALUES (?)').run(SEARCH_INDEX_MIGRATION);
           });
-        result = await searchService.search(args.query, args.includeBots, args.recentIds);
+          result = { more: true, fileBytes: 0, freeBytes: 0 };
+        } else result = maintainDatabase(db, file, { idleSeconds: args.idleSeconds, label: 'saved work' }, maintenance);
       } else {
         if (opened) db.close();
       }

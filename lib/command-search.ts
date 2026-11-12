@@ -15,6 +15,10 @@ export type SearchDestination =
       local?: boolean;
       subject?: QueueItem;
       url?: string;
+      /** Stored form: main replaces this with the current queue subject before a hit is returned. */
+      subjectId?: string;
+      /** Stored form: the stack member to focus once `subjectId` is resolved. */
+      focusUrl?: string;
     }
   | {
       kind: 'review';
@@ -44,6 +48,34 @@ export interface SearchDocument {
   botHidden?: boolean;
   destination: SearchDestination;
   reviewId?: string;
+  /** Every PR this document belongs to, so a mute of any of them hides it. Index only. */
+  memberUrls?: string[];
+  /** For GitHub comments: the thread, so the index can link the comment to a saved review file. */
+  thread?: { path: string; line?: number; side?: 'LEFT' | 'RIGHT'; id: string };
+}
+export const SEARCH_TITLE_CHARS = 300;
+export const SEARCH_TEXT_CHARS = 600;
+export const SEARCH_PREVIEW_CHARS = 300;
+function clip(value: string, max: number): string {
+  if (value.length <= max) return value;
+  const cut = value.slice(0, max);
+  // Do not leave half of a surrogate pair at the end.
+  return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
+}
+/**
+ * The index keeps bounded metadata and a snippet, never diffs or full descriptions. Every document
+ * builder returns its documents through this, so the index size depends on the document count only.
+ */
+export function boundDocument(document: SearchDocument): SearchDocument {
+  const bounded: SearchDocument = {
+    ...document,
+    title: clip(document.title, SEARCH_TITLE_CHARS),
+    text: clip(document.text.replace(/\s+/g, ' ').trim(), SEARCH_TEXT_CHARS),
+  };
+  delete bounded.code;
+  if (document.preview !== undefined) bounded.preview = clip(document.preview, SEARCH_PREVIEW_CHARS);
+  else delete bounded.preview;
+  return bounded;
 }
 export interface SearchSnapshot {
   account: string;
@@ -134,62 +166,78 @@ export function searchDocuments(documents: SearchDocument[], query: string, incl
     })
     .sort((a, b) => b.score - a.score || a.document.title.localeCompare(b.document.title));
 }
-export function queueDocuments(queue: WorkbenchQueue): SearchDocument[] {
-  const docs: SearchDocument[] = [];
+/** Queue entries that search can open, by subject id: the queue, starred work and retained stacks. */
+export function queueSubjects(queue: WorkbenchQueue): Map<string, QueueItem> {
   const items: QueueItem[] = [...queue.items, ...(queue.starredItems ?? [])];
-  for (const subject of queue.stacks ?? []) if (!items.some(item => item.subject.id === subject.id))
-    items.push({ subject, attention: 'other' });
-  for (const item of new Map(items.map(item => [item.subject.id, item])).values()) {
-    const s = item.subject;
-    const source = s.members.map((m) => `${m.repo} #${m.number}`).join(' · ');
-    const common = {
-      sourceUrl: s.members.length === 1 ? s.members[0].url : undefined,
-      groupId: s.id,
-      groupTitle: s.title,
-      source,
-      author: s.members.map((m) => m.author).join(' '),
-      bot: s.members.every((m) => isDependabot(m.author)),
-      state: s.members.every((m) => m.merged)
-        ? 'Merged'
-        : s.members.every((m) => m.state === 'closed')
-          ? 'Closed'
-          : s.members.some((m) => m.isDraft)
-            ? 'Draft'
-            : 'Open',
-      reviewId: item.review?.status === 'failed' || item.review?.status === 'generating' ? undefined : item.review?.id,
-    };
-    docs.push({
-      ...common,
-      id: `subject:${s.id}`,
-      kind: s.kind,
-      title: s.title,
-      preview:
-        item.briefing?.summary ||
-        [...new Set(s.members.map(m=>m.description.replace(/\s+/g,' ').trim()).filter(Boolean))].join('\n\n'),
-      text: s.members
-        .map((m) => `${m.title}\n${m.description}\n${m.labels.join(' ')} ${m.baseBranch} ${m.headBranch}`)
-        .join('\n'),
-      destination: { kind: 'home', subject: item },
-    });
-    if (s.kind === 'stack') for (const member of s.members) docs.push({
-      ...common, id: `subject:${member.url}`, kind: 'pr', title: member.title,
-      source: `${member.repo} #${member.number}`, sourceUrl: member.url,
-      author: member.author, bot: isDependabot(member.author),
-      state: member.merged ? 'Merged' : member.state === 'closed' ? 'Closed' : member.isDraft ? 'Draft' : 'Open',
-      reviewId: undefined,
-      preview: member.description, text: `${member.description} ${member.labels.join(' ')} ${member.baseBranch} ${member.headBranch}`,
-      destination: { kind: 'home', subject: focusStackPr(item, member) },
-    });
-    if (item.briefing?.summary)
+  for (const subject of queue.stacks ?? [])
+    if (!items.some((item) => item.subject.id === subject.id)) items.push({ subject, attention: 'other' });
+  return new Map(items.map((item) => [item.subject.id, item]));
+}
+const memberLine = (m: QueueItem['subject']['members'][number]) =>
+  `${m.title} ${m.repo} #${m.number} ${m.author} ${m.labels.join(' ')} ${m.baseBranch} ${m.headBranch}`;
+/** One queue subject. Labels and branches come before descriptions, so the bounded snippet keeps them. */
+export function subjectDocuments(item: QueueItem): SearchDocument[] {
+  const docs: SearchDocument[] = [];
+  const s = item.subject;
+  const source = s.members.map((m) => `${m.repo} #${m.number}`).join(' · ');
+  const descriptions = [...new Set(s.members.map((m) => m.description.replace(/\s+/g, ' ').trim()).filter(Boolean))];
+  const common = {
+    sourceUrl: s.members.length === 1 ? s.members[0].url : undefined,
+    memberUrls: s.members.map((m) => m.url),
+    groupId: s.id,
+    groupTitle: s.title,
+    source,
+    author: s.members.map((m) => m.author).join(' '),
+    bot: s.members.every((m) => isDependabot(m.author)),
+    state: s.members.every((m) => m.merged)
+      ? 'Merged'
+      : s.members.every((m) => m.state === 'closed')
+        ? 'Closed'
+        : s.members.some((m) => m.isDraft)
+          ? 'Draft'
+          : 'Open',
+    reviewId: item.review?.status === 'failed' || item.review?.status === 'generating' ? undefined : item.review?.id,
+  };
+  docs.push({
+    ...common,
+    id: `subject:${s.id}`,
+    kind: s.kind,
+    title: s.title,
+    preview: item.briefing?.summary || descriptions.join('\n\n'),
+    text: [...s.members.map(memberLine), ...descriptions].join('\n'),
+    destination: { kind: 'home', subjectId: s.id },
+  });
+  if (s.kind === 'stack')
+    for (const member of s.members)
       docs.push({
         ...common,
-        id: `briefing:${s.id}`,
-        kind: 'briefing',
-        title: `Briefing · ${s.title}`,
-        text: item.briefing.summary,
-        destination: { kind: 'home', subject: item },
+        id: `subject:${member.url}`,
+        kind: 'pr',
+        title: member.title,
+        source: `${member.repo} #${member.number}`,
+        sourceUrl: member.url,
+        author: member.author,
+        bot: isDependabot(member.author),
+        state: member.merged ? 'Merged' : member.state === 'closed' ? 'Closed' : member.isDraft ? 'Draft' : 'Open',
+        reviewId: undefined,
+        preview: member.description,
+        text: `${member.labels.join(' ')} ${member.baseBranch} ${member.headBranch}\n${member.description}`,
+        destination: { kind: 'home', subjectId: s.id, focusUrl: member.url },
       });
-  }
+  if (item.briefing?.summary)
+    docs.push({
+      ...common,
+      id: `briefing:${s.id}`,
+      kind: 'briefing',
+      title: `Briefing · ${s.title}`,
+      text: item.briefing.summary,
+      destination: { kind: 'home', subjectId: s.id },
+    });
+  return docs.map(boundDocument);
+}
+/** Saved views and repositories: everything in the queue that is not a subject. */
+export function queueMetaDocuments(queue: WorkbenchQueue): SearchDocument[] {
+  const docs: SearchDocument[] = [];
   for (const view of queue.savedViews?.views ?? [])
     docs.push({
       id: `view:${view.id}`,
@@ -212,14 +260,39 @@ export function queueDocuments(queue: WorkbenchQueue): SearchDocument[] {
       source: 'Repository',
       destination: { kind: 'home', repo },
     });
-  return docs;
+  return docs.map(boundDocument);
 }
+export function queueDocuments(queue: WorkbenchQueue): SearchDocument[] {
+  return [...[...queueSubjects(queue).values()].flatMap(subjectDocuments), ...queueMetaDocuments(queue)];
+}
+/**
+ * Replace a stored `subjectId` with the current queue entry, focused on a stack member when the
+ * document names one. A subject that has left the queue opens its PR by URL instead.
+ */
+export function hydrateDestination(
+  document: SearchDocument,
+  find: (subjectId: string) => QueueItem | undefined
+): SearchDestination {
+  const destination = document.destination;
+  if (destination.kind !== 'home' || !destination.subjectId) return destination;
+  const { subjectId, focusUrl, ...rest } = destination;
+  const item = find(subjectId);
+  const member = focusUrl ? item?.subject.members.find((m) => m.url === focusUrl) : undefined;
+  if (item && !focusUrl) return { ...rest, subject: item };
+  if (item && member) return { ...rest, subject: item.subject.kind === 'stack' ? focusStackPr(item, member) : item };
+  const url = focusUrl ?? rest.url ?? document.sourceUrl ?? document.memberUrls?.[0];
+  return url ? { kind: 'home', url } : { kind: 'home' };
+}
+/**
+ * Saved review documents. With a queue, a queued PR keeps the queue's group and skips its own PR
+ * document. Without one (the index worker), the index hides that document at query time instead.
+ */
 export function reviewDocuments(
   review: ReviewGuide,
-  entry: ReviewHistoryEntry,
-  queue: WorkbenchQueue
+  entry: Pick<ReviewHistoryEntry, 'id' | 'prUrl' | 'prTitle' | 'author' | 'prState'>,
+  queue?: WorkbenchQueue
 ): SearchDocument[] {
-  const queued = queue.items.find(
+  const queued = queue?.items.find(
     (i) => i.subject.id === review.snapshot?.subject.id || i.subject.members.some((m) => m.url === entry.prUrl)
   );
   const subject = queued?.subject ?? review.snapshot?.subject;
@@ -227,6 +300,7 @@ export function reviewDocuments(
   const common = {
     groupId,
     sourceUrl: subject?.kind === 'stack' ? undefined : entry.prUrl,
+    memberUrls: [...new Set([entry.prUrl, ...(review.snapshot?.subject.members.map((m) => m.url) ?? [])])],
     groupTitle: subject?.title ?? entry.prTitle,
     source: subject?.members.map((m) => `${m.repo} #${m.number}`).join(' · ') ?? entry.prUrl,
     author: entry.author,
@@ -243,7 +317,7 @@ export function reviewDocuments(
       title: entry.prTitle,
       text: `${review.prDescription}\n${review.summary}`,
       destination: subject
-        ? { kind: 'home', subject: { subject, review: entry, attention: 'other' } }
+        ? { kind: 'home', subjectId: subject.id, url: entry.prUrl }
         : { kind: 'review', reviewId: entry.id, slideId: 'overview' },
     });
   docs.push({
@@ -273,26 +347,18 @@ export function reviewDocuments(
       destination,
     });
     for (const filePath of new Set([...slide.affectedFiles, ...slide.diffHunks.map((h) => h.filePath)])) {
-      const member = sourceForPath(review, filePath).member;
+      const { member, path } = sourceForPath(review, filePath);
+      const summaries = (slide.fileSummaries ?? []).filter((f) => f.filePath === filePath).map((f) => f.summary);
+      // Paths and summaries only: diff hunks are not searchable.
       docs.push({
         ...common,
         source: member ? `${member.repo} #${member.number}` : common.source,
         sourceUrl: member?.url ?? (subject?.kind !== 'stack' ? entry.prUrl : undefined),
         id: `file:${entry.id}:${slide.id}:${filePath}`,
         kind: 'file',
-        title: sourceForPath(review, filePath).path,
-        preview: (slide.fileSummaries ?? [])
-          .filter((f) => f.filePath === filePath)
-          .map((f) => f.summary)
-          .join('\n'),
-        code: slide.diffHunks
-          .filter((h) => h.filePath === filePath)
-          .map((h) => h.content)
-          .join('\n'),
-        text: [
-          ...(slide.fileSummaries ?? []).filter((f) => f.filePath === filePath).map((f) => f.summary),
-          ...slide.diffHunks.filter((h) => h.filePath === filePath).map((h) => h.content),
-        ].join('\n'),
+        title: path,
+        preview: summaries.join('\n'),
+        text: [path, ...summaries].join('\n'),
         destination: { ...destination, filePath },
       });
     }
@@ -319,7 +385,16 @@ export function reviewDocuments(
         destination: { ...destination, explore: true },
       });
   }
-  return docs;
+  return docs.map(boundDocument);
+}
+/** The saved review file a GitHub comment's thread belongs to, if `documents` holds one. */
+export function threadFile(url: string, path: string, documents: readonly SearchDocument[], stack = false) {
+  return documents.find(
+    (d) =>
+      d.kind === 'file' &&
+      (d.sourceUrl === url || (!d.sourceUrl && !stack)) &&
+      (d.title === path || d.title.endsWith('/' + path))
+  );
 }
 export function threadDocuments(
   url: string,
@@ -328,29 +403,28 @@ export function threadDocuments(
 ): SearchDocument[] {
   const parent = documents.find((d) => d.kind === 'pr' || d.kind === 'stack');
   if (!parent) return [];
-  return threads.threads.flatMap((thread) =>
-    thread.comments.map((comment) => {
-      const file = documents.find(
-        (d) =>
-          d.kind === 'file' &&
-          (d.sourceUrl === url || (!d.sourceUrl && parent.kind !== 'stack')) &&
-          (d.title === thread.path || d.title.endsWith('/' + thread.path))
-      );
-      const destination =
-        file?.destination.kind === 'review'
-          ? { ...file.destination, line: thread.line ?? undefined, side: thread.diffSide, threadId: thread.id }
-          : parent.destination;
-      return {
-        ...parent,
-        id: `comment:${comment.id}`,
-        kind: 'comment' as const,
-        title: `${thread.path} · ${comment.author?.login ?? 'GitHub comment'}`,
-        text: comment.body,
-        author: comment.author?.login,
-        source: file?.source ?? url,
-        sourceUrl: url,
-        destination,
-      };
-    })
-  );
+  return threads.threads
+    .flatMap((thread) =>
+      thread.comments.map((comment): SearchDocument => {
+        const file = threadFile(url, thread.path, documents, parent.kind === 'stack');
+        const destination =
+          file?.destination.kind === 'review'
+            ? { ...file.destination, line: thread.line ?? undefined, side: thread.diffSide, threadId: thread.id }
+            : parent.destination;
+        return {
+          ...parent,
+          id: `comment:${comment.id}`,
+          kind: 'comment' as const,
+          title: `${thread.path} · ${comment.author?.login ?? 'GitHub comment'}`,
+          text: comment.body,
+          preview: undefined,
+          author: comment.author?.login,
+          source: file?.source ?? url,
+          sourceUrl: url,
+          destination,
+          thread: { path: thread.path, line: thread.line ?? undefined, side: thread.diffSide, id: thread.id },
+        };
+      })
+    )
+    .map(boundDocument);
 }

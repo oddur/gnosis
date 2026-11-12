@@ -156,6 +156,42 @@ Restarting also removes in-memory profiles, comments, statuses, images, comparis
 Saved reviews, briefings, bookmarks, muted PRs, saved views, grouping choices, preferences, and sign-in remain.
 Daily briefing usage and GitHub cooldowns remain. The queue fetches fresh data under the existing API limits.
 
+## Command search
+
+Command search reads a SQLite index in the saved-work worker (`workbench.sqlite`). It never sends a request.
+
+**What it indexes.** Each document holds bounded metadata only: a title of at most 300 characters, a 600-character snippet with collapsed whitespace, and a 300-character preview. It stores no diff hunks, patches or full descriptions.
+- **PRs and stacks:** title, `repo #n`, authors, labels, and base and head branches, then the start of the description.
+- **Files:** the path and the start of the file summary.
+- **Comments, topics, insights, briefings and explainers:** a snippet.
+
+Searching for text inside a diff therefore finds nothing. Paths and summaries still match.
+
+**Feeds.** Documents are grouped into feeds, and main sends a feed only when the hash of its documents changes:
+
+| Feed | Source |
+| --- | --- |
+| `queue:<subject id>`, `queue:meta` | The queue, after each `workbench-changed`, debounced 1 s. Pinned: never evicted. |
+| `http:<cache id>` | A cached `/pulls/n`, `/files` or `/comments` response, from the GitHub cache's change hook. |
+| `threads:<PR URL>` | Cached review threads: once at the first build, then from the change hook. |
+| `review:<id>` | A saved review. The worker stats the file and rebuilds it only when it changed. |
+
+Main sends changes after 500 ms without new events, or after 2 s at most, in messages of up to 500 documents. The first build runs 3 s after startup; a search that comes earlier waits for it. Responses cached before an upgrade are not read back; they return to search when GitHub data refreshes.
+
+**Cap.** Each account keeps at most 6,000 documents. Above that, the oldest unpinned documents are removed. A removed feed keeps its hash, so main does not send it again while it is unchanged.
+
+**Query time.** Mutes, Dependabot rules and queue precedence apply when you search, so they never need a rebuild. A cached PR or saved review is hidden when the queue holds the same URL, and its other results join the queue entry's group. Results store a subject ID; main replaces it with the current queue entry for the returned page only.
+
+## Disk space
+
+Both SQLite stores use incremental auto-vacuum and limit the WAL to 16 MB after each checkpoint. New files start in that mode.
+An existing file converts once, with one `VACUUM` in its worker. The conversion runs only when free disk space is at least twice the live data plus 256 MB. The GitHub cache also waits until the computer has been idle for 60 seconds. If space is short or the step fails, Gnosis logs a warning and tries again on the next launch. A crash during `VACUUM` leaves the original file.
+After that, each maintenance step returns at most 8 MB of free pages, and runs while more than 4 MB stays free. Maintenance starts after the 30-second cache trim, repeats every 10 minutes and runs after the cache size changes. It never runs at startup or while a cache clear is applied.
+
+**Settings → Integrations** shows the size on disk of the GitHub cache and of saved work and search, each including its WAL file.
+
+Clearing the cache also empties the search index. The next launch rebuilds it from the queue and saved reviews.
+
 ## Evidence
 
 A service test uses 415 unchanged PRs. After sixteen minutes, it makes zero detail requests and one repository-list request.

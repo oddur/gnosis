@@ -63,6 +63,9 @@ export function createCacheStorage() {
     setPreparedLimit: (bytes: number, now: number) => call('prepared-limit', { bytes, now }),
     readPrepared: (id: string, now: number) => call('prepared-read', { id, now }),
     write: (operations: CacheWrite[], now: number) => call('write', { operations, now }),
+    /** One space-reclaim step. The first converts the file to incremental auto-vacuum once idle. */
+    maintain: (idleSeconds: number) =>
+      call('maintain', { idleSeconds }) as Promise<{ more: boolean; fileBytes: number; freeBytes: number; vacuumed?: boolean }>,
     async close() {
       try {
         await call('close');

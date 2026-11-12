@@ -5,6 +5,8 @@ const { DatabaseSync } = require('node:sqlite');
 const fs = require('node:fs');
 const path = require('node:path');
 let db;
+let file;
+const maintenance = {};
 let preparedBytes = 512 * 1024 * 1024 - 32_000_000;
 let memoryEntryBytes = 1_000_000;
 const preparedRetention = 30 * 24 * 60 * 60 * 1000;
@@ -19,18 +21,56 @@ function trimPrepared(now) {
     }
   }
 }
+// Space reclaim. src/sqlite-maintain.ts holds the same steps for saved work; keep the two in step.
+const MB = 1024 * 1024;
+function pragma(name) { return Number(Object.values(db.prepare('PRAGMA ' + name).get() ?? {})[0] ?? 0); }
+function fileSize(name) { try { return fs.statSync(name).size; } catch { return 0; } }
+function maintain(idleSeconds) {
+  let more = false, vacuumed = false;
+  const pageSize = pragma('page_size');
+  if (pragma('auto_vacuum') !== 2) {
+    // Converting copies the whole cache, so it waits until the user has been away for a minute.
+    if (!maintenance.vacuumSkipped && idleSeconds >= 60) {
+      const live = (pragma('page_count') - pragma('freelist_count')) * pageSize;
+      try {
+        const stats = fs.statfsSync(path.dirname(file));
+        if (stats.bavail * stats.bsize < 2 * live + 256 * MB) {
+          maintenance.vacuumSkipped = true;
+          console.warn('Not compacting the GitHub cache: it needs ' + Math.ceil((2 * live + 256 * MB) / MB) + ' MB free disk space.');
+        } else {
+          db.exec('PRAGMA auto_vacuum=INCREMENTAL'); db.exec('VACUUM'); db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+          vacuumed = more = true;
+        }
+      } catch (error) {
+        maintenance.vacuumSkipped = true;
+        console.warn('Could not compact the GitHub cache:', error.message);
+      }
+    }
+  } else {
+    const free = pragma('freelist_count') * pageSize;
+    if (free >= 16 * MB || (maintenance.draining && free > 4 * MB)) {
+      db.exec('PRAGMA incremental_vacuum(2000)');
+      maintenance.draining = pragma('freelist_count') * pageSize > 4 * MB;
+      more = maintenance.draining;
+    } else maintenance.draining = false;
+  }
+  if (fileSize(file + '-wal') > 16 * MB) db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+  return { more, fileBytes: fileSize(file) + fileSize(file + '-wal'), freeBytes: pragma('freelist_count') * pageSize, ...(vacuumed ? { vacuumed } : {}) };
+}
 parentPort.on('message', ({ id, method, args }) => {
   try {
     let result;
     if (method === 'open') {
-      const { file, legacy, now, maxBytes, maxEntryBytes, maxEntries, retention } = args;
+      const { legacy, now, maxBytes, maxEntryBytes, maxEntries, retention } = args;
+      file = args.file;
       const started = performance.now();
       preparedBytes = args.preparedBytes ?? preparedBytes;
       memoryEntryBytes = maxEntryBytes;
       fs.mkdirSync(path.dirname(file), { recursive: true });
       db = new DatabaseSync(file);
       if (process.platform !== 'win32') fs.chmodSync(file, 0o600);
-      db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=1000; CREATE TABLE IF NOT EXISTS cache (id TEXT PRIMARY KEY, payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+      // New files start in incremental mode. An existing file keeps its mode until 'maintain' converts it.
+      db.exec('PRAGMA auto_vacuum=INCREMENTAL; PRAGMA journal_mode=WAL; PRAGMA journal_size_limit=16777216; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=1000; CREATE TABLE IF NOT EXISTS cache (id TEXT PRIMARY KEY, payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
       db.exec('CREATE TABLE IF NOT EXISTS prepared (id TEXT PRIMARY KEY, payload TEXT NOT NULL, saved_at INTEGER NOT NULL, bytes INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS prepared_age ON prepared(saved_at)');
       // Trimming reads every prepared row until prepared_size exists, so it waits for 'prepared-limit' after startup.
       const schema = performance.now() - started;
@@ -109,6 +149,8 @@ parentPort.on('message', ({ id, method, args }) => {
         if (prepared) trimPrepared(args.now);
         db.exec('COMMIT');
       } catch (error) { db.exec('ROLLBACK'); throw error; }
+    } else if (method === 'maintain') {
+      result = maintain(args.idleSeconds);
     } else if (method === 'close') { db?.close(); db = undefined; }
     else throw new Error('Unknown cache storage operation');
     parentPort.postMessage({ id, result });

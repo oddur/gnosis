@@ -56,6 +56,8 @@ declare global {
       onWorkbenchChanged?: (callback: (revisions?: import('../lib/workbench-revision').WorkbenchRevisions) => void) => () => void;
       onActivityChanged?: (callback: () => void) => () => void;
       clearGitHubCache: () => Promise<void>;
+      /** Database file sizes, including their write-ahead logs. */
+      storageSizes: () => Promise<{ savedWorkBytes: number; githubCacheBytes: number }>;
       getPreparedInventories: (revisions: InspectionRevision[]) => Promise<PreparedInventories>;
       preparePrReview: (url: string, revision: { baseSha: string; headSha: string }) => Promise<void>;
       getPrCommits: (url: string, refresh?: boolean, options?: InspectionLoadOptions) => Promise<PrCommits>;

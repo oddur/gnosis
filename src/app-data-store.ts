@@ -1,5 +1,6 @@
 import type { ReviewStateWrite, FileProgressPatch } from '../lib/review-state';
-import type { SearchRequest, LocalSearchResponse } from './command-search-service';
+import type { MaintainResult } from './sqlite-maintain';
+import type { SearchRequest, LocalSearchResponse, SearchOp } from './command-search-service';
 import { Worker } from 'node:worker_threads';
 import path from 'node:path';
 
@@ -115,6 +116,11 @@ export function createAppDataStore() {
       await call('progress-save', value);
     },
     search: (request: SearchRequest) => call<LocalSearchResponse>('search', request),
+    searchFeeds: async (account: string) => (await call<{ feeds: [string, string][] }>('search-feeds', { account })).feeds,
+    searchApply: (account: string, ops: SearchOp[]) =>
+      call<{ evicted: number; docs: number }>('search-apply', { account, ops }),
+    /** One space-reclaim step in the worker. Call again while `more` is true. */
+    maintain: (idleSeconds: number) => call<MaintainResult>('maintain', { idleSeconds }),
     async clearGitHub() {
       await flush();
       values = await call<Record<string, unknown>>('clear-github');

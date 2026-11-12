@@ -11,7 +11,9 @@ Gnosis opens its window before saved data and the GitHub cache have loaded. The 
    - **Saved data:** the app data store, then GitHub logins, budgets and cooldowns, then the saved login for the stored token. This is the `data` phase.
    - **The GitHub cache:** the SQLite worker validates saved responses and sends them as strings. Main parses each one the first time it is read.
 5. When both finish (the `all` phase), start the tray, updates, proactive polling and analytics.
-6. Five seconds later, mark generations that a crash interrupted as failed and copy missing summaries into the review index. Thirty seconds later, apply the GitHub cache's disk limit.
+6. Three seconds later, build the command-search index: main sends only the feeds that changed since the last launch.
+7. Five seconds later, mark generations that a crash interrupted as failed and copy missing summaries into the review index.
+8. Thirty seconds later, apply the GitHub cache's disk limit, then run storage maintenance: drop the old search tables once, convert each database to incremental auto-vacuum once, and return free pages. Each step runs in a worker, never on the main thread.
 
 ## IPC handlers wait for the stores
 
@@ -46,5 +48,9 @@ Electron Forge needs stdin kept open. Main logs each mark in milliseconds since 
 | `first-render` | The app rendered for the first time. |
 | `snapshot-ipc` | The first saved queue snapshot arrived. |
 | `queue-painted` | The first frame that shows queue rows or the empty state. |
+| `search-apply` | One batch of search-index changes: feeds, documents, evictions and worker time. |
+| `storage` | One maintenance step: the store, its file size, free pages and whether it converted. |
+
+Each palette search also prints `[perf] command-search <ms>ms main=<ms> first=<bool> hits=<n>`. `main` is the main-thread time, and `first` marks a search that waited for the first index build.
 
 Without the variable nothing is logged, and the renderer has no `perfMark`.
