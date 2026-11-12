@@ -341,6 +341,16 @@ if (polishScenario) {
   review.slides[1].title =
     'Adapt batches without changing order or allowing a busy producer to monopolize the worker during cancellation';
 }
+const briefingChipsScenario = new URLSearchParams(location.search).has('briefing-chips');
+if (briefingChipsScenario) {
+  // One entry per briefing state, so every chip has a count and the generating row shimmers.
+  const limit = 'Overall daily automatic briefing limit reached. Resets at midnight. You can generate a briefing manually.';
+  items[1].briefing = { key: 'chips-generating', status: 'generating', updatedAt: date };
+  items[2].briefing = { key: 'chips-queued', status: 'queued', updatedAt: date };
+  items[3].briefing = { key: 'chips-paused-1', status: 'paused', pauseReason: 'limit', pauseDetail: limit, updatedAt: date };
+  items[4].briefing = { key: 'chips-paused-2', status: 'paused', pauseReason: 'limit', pauseDetail: limit, updatedAt: date };
+  items[5].briefing = { key: 'chips-failed', status: 'failed', error: 'The model did not answer.', updatedAt: date };
+}
 if (new URLSearchParams(location.search).has('inactivity')) {
   const daysAgo = (days: number) => new Date(Date.now() - days * 86400000).toISOString();
   items[0].subject.members[0].updatedAt = daysAgo(150);
@@ -691,7 +701,8 @@ const mocks = {
       savedViews: { ...savedViews, counts: Object.fromEntries(savedViews.views.map(view => [view.id, items.filter(item => matchesQueueFilters(item, view.filters, Date.now(), 'oddur')).length])) },
       items: onboardingScenario && !fixtureStarted && !JSON.parse(sessionStorage.getItem('fixture-onboarding') ?? '{}').completed ? [] : visibleFixtureItems(),
       warnings: [],
-      remaining: polishScenario ? 0 : 7,
+      remaining: polishScenario || briefingChipsScenario ? 0 : 7,
+      ...(briefingChipsScenario ? { briefingBudget: { limit: 10, used: 10, remaining: 0, resetsAt: date, repositories: {} } } : {}),
     }),
   onHistoryNavigate: (callback: (direction: -1 | 1) => void) => {
     const handler = (event: Event) => callback((event as CustomEvent<-1 | 1>).detail);

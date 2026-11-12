@@ -73,6 +73,18 @@ export function QueueFilterPanel({
         ['failed', 'Generation failed'],
       ],
     },
+    {
+      key: 'briefing',
+      label: 'Briefing',
+      options: [
+        ['all', 'Any state'],
+        ['generating', 'Generating'],
+        ['queued', 'Queued'],
+        ['ready', 'Ready'],
+        ['paused', 'Paused'],
+        ['failed', 'Failed'],
+      ],
+    },
   ];
   return (
     <section id="queue-filter-panel" className="queue-filter-panel" aria-label="Queue filters">
