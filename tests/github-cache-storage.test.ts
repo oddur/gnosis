@@ -466,3 +466,129 @@ void test('incremental vacuum returns free pages after a prepared trim', async (
     await f.cleanup();
   }
 });
+
+
+const isRecord = (v: unknown): v is { files: { path: string }[] } =>
+  !!v && typeof v === 'object' && Array.isArray((v as { files?: unknown }).files);
+
+void test('get returns one frozen value without copying', () => {
+  const cache = createGitHubCache(() => 1000).scope(scope);
+  cache.set('pr', { files: [{ path: 'a.ts' }] });
+  const first = cache.get('pr', isRecord)?.value;
+  assert.ok(first);
+  assert.equal(cache.get('pr', isRecord)?.value, first, 'Every reader shares one value');
+  assert.equal(cache.values(isRecord)[0], first);
+  assert.ok(Object.isFrozen(first) && Object.isFrozen(first.files[0]));
+  assert.throws(() => {
+    first.files[0].path = 'b.ts';
+  }, TypeError);
+});
+
+void test("set keeps the caller's object mutable", () => {
+  const cache = createGitHubCache(() => 1000).scope(scope);
+  const value = { files: [{ path: 'a.ts' }] };
+  cache.set('pr', value);
+  value.files[0].path = 'changed.ts';
+  value.files.push({ path: 'added.ts' });
+  assert.ok(!Object.isFrozen(value));
+  assert.deepEqual(cache.get('pr', isRecord)?.value, { files: [{ path: 'a.ts' }] });
+});
+
+void test('owned set freezes in place', () => {
+  const cache = createGitHubCache(() => 1000).scope(scope);
+  const value = { files: [{ path: 'a.ts' }] };
+  cache.set('pr', value, true);
+  assert.ok(Object.isFrozen(value) && Object.isFrozen(value.files[0]));
+  assert.equal(cache.get('pr', isRecord)?.value, value, 'The owned value is shared, not copied');
+});
+
+void test('a loaded raw entry is parsed once', async () => {
+  const f = fixture();
+  let parses: ReturnType<typeof countParses> | undefined;
+  try {
+    const cache = await f.open();
+    cache.scope(scope).set('one', 'parsed-once-value');
+    await cache.close();
+    parses = countParses('parsed-once-value');
+    const restart = (await f.open()).scope(scope);
+    for (let i = 0; i < 3; i++) assert.equal(restart.get('one', valid)?.value, 'parsed-once-value');
+    restart.values(valid);
+    assert.equal(parses.count(), 1);
+    // A value saved in this session is serialized once and parsed on its first read too.
+    restart.set('two', 'parsed-once-value-two');
+    restart.get('two', valid);
+    restart.get('two', valid);
+    assert.equal(parses.count(), 2);
+  } finally {
+    parses?.restore();
+    await f.cleanup();
+  }
+});
+
+void test('getPrepared serves a pending large write without flushing', async () => {
+  const f = fixture();
+  try {
+    const cache = await f.open(),
+      account = cache.scope(scope);
+    const large = { files: [{ path: 'x'.repeat(1_100_000) }] };
+    account.set('pr-changes:v2:large', large);
+    assert.equal(account.get('pr-changes:v2:large', isRecord), undefined, 'Too large for the memory cache');
+    const flushed = cache.flush().then(() => 'flushed');
+    const read = account.getPrepared('pr-changes:v2:large', isRecord);
+    assert.equal(await Promise.race([read.then(() => 'read'), flushed]), 'read', 'The read does not wait for the write');
+    const value = await read;
+    assert.deepEqual(value, large);
+    assert.ok(Object.isFrozen(value.files[0]));
+    await flushed;
+    // Settled writes are read from disk, and are frozen too.
+    const saved = await account.getPrepared('pr-changes:v2:large', isRecord);
+    assert.deepEqual(saved, large);
+    assert.ok(Object.isFrozen(saved.files));
+  } finally {
+    await f.cleanup();
+  }
+});
+
+void test('getPrepared honours a pending delete and clear', async () => {
+  const f = fixture();
+  try {
+    const cache = await f.open(),
+      account = cache.scope(scope);
+    const large = 'y'.repeat(1_100_000);
+    account.set('pr-file:v2:one', large);
+    account.set('pr-file:v2:two', large);
+    await cache.flush();
+    account.delete('pr-file:v2:one');
+    assert.equal(await account.getPrepared('pr-file:v2:one', valid), undefined, 'A queued delete wins');
+    assert.equal(await account.getPrepared('pr-file:v2:two', valid), large);
+    account.clear();
+    assert.equal(await account.getPrepared('pr-file:v2:two', valid), undefined, 'An unsettled clear wins');
+    account.set('pr-file:v2:two', 'z'.repeat(1_100_000));
+    assert.equal(await account.getPrepared('pr-file:v2:two', valid), 'z'.repeat(1_100_000), 'A later write wins');
+    await cache.flush();
+    assert.equal(await account.getPrepared('pr-file:v2:one', valid), undefined);
+    assert.equal(await account.getPrepared('pr-file:v2:two', valid), 'z'.repeat(1_100_000));
+  } finally {
+    await f.cleanup();
+  }
+});
+
+void test('stale flag is added to a pending raw insert', async () => {
+  const f = fixture();
+  let parses: ReturnType<typeof countParses> | undefined;
+  try {
+    const cache = await f.open(),
+      account = cache.scope(scope);
+    parses = countParses('stale-raw-value');
+    account.set('one', 'stale-raw-value');
+    account.revalidate();
+    assert.equal(parses.count(), 0, 'Marking stale does not parse the value');
+    assert.deepEqual(account.get('one', valid), { value: 'stale-raw-value', savedAt: 1000, revalidate: true });
+    await cache.close();
+    const restart = await f.open();
+    assert.deepEqual(restart.scope(scope).get('one', valid), { value: 'stale-raw-value', savedAt: 1000, revalidate: true });
+  } finally {
+    parses?.restore();
+    await f.cleanup();
+  }
+});

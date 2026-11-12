@@ -975,3 +975,62 @@ void test('cache change hook fires on set, delete and clear, not on eviction', a
   scope.set('after', 1);
   assert.equal(changes.at(-1)?.id, '*');
 });
+
+
+void test('a caller may change a cached response without changing the cache', async () => {
+  const h = harness(() => json({ items: [{ name: 'saved' }] }, 200, { etag: '"v1"' }));
+  const client = h.pool.client('one');
+  type Items = { items: { name: string }[] };
+  const downloaded = (await client.request('GET /repos/o/r/pulls/1')).data as Items;
+  downloaded.items[0].name = 'changed by the first caller';
+  downloaded.items.push({ name: 'added' });
+  const hit = (await client.request('GET /repos/o/r/pulls/1')).data as Items;
+  assert.equal(h.calls.length, 1, 'The second read is a memory hit');
+  assert.deepEqual(hit, { items: [{ name: 'saved' }] });
+  hit.items[0].name = 'changed by the second caller';
+  const again = (await client.request('GET /repos/o/r/pulls/1')).data as Items;
+  assert.deepEqual(again, { items: [{ name: 'saved' }] });
+  const [cached] = githubCachedResponses(client);
+  assert.ok(Object.isFrozen(cached.data), 'The cache keeps the value it owns frozen');
+  assert.notEqual(again, cached.data, 'Each caller receives its own copy');
+});
+
+void test('a 304 shares the saved data', async () => {
+  let saved = false;
+  const h = harness((_url, headers) =>
+    saved && headers.get('if-none-match') === '"v1"'
+      ? new Response(null, { status: 304, headers: { etag: '"v1"', 'cache-control': 'max-age=60' } })
+      : json({ items: [{ name: 'saved' }] }, 200, { etag: '"v1"', 'cache-control': 'max-age=0' })
+  );
+  const client = h.pool.client('one');
+  await client.request('GET /repos/o/r/pulls/1');
+  saved = true;
+  const before = githubCachedResponses(client)[0].data;
+  const revalidated = await client.request('GET /repos/o/r/pulls/1');
+  assert.equal(h.calls.length, 2);
+  assert.equal(revalidated.status, 200);
+  assert.deepEqual(revalidated.data, { items: [{ name: 'saved' }] });
+  const after = githubCachedResponses(client);
+  assert.equal(after.length, 1);
+  assert.equal(after[0].data, before, 'The revalidated entry keeps the frozen saved data');
+  (revalidated.data as { items: unknown[] }).items.length = 0;
+  assert.deepEqual(after[0].data, { items: [{ name: 'saved' }] }, 'The caller changed only its copy');
+  await client.request('GET /repos/o/r/pulls/1');
+  assert.equal(h.calls.length, 2, 'The 304 renewed the freshness window');
+});
+
+void test('paginate over a cached total_count response', async () => {
+  // Pagination reads the response URL, which a constructed Response lacks.
+  const h = harness((url) =>
+    Object.defineProperty(json({ total_count: 2, check_runs: [{ id: 1 }, { id: 2 }] }, 200, { etag: '"v1"' }), 'url', {
+      value: url,
+    })
+  );
+  const client = h.pool.client('one');
+  const read = () => client.paginate(client.checks.listForRef, { owner: 'o', repo: 'r', ref: 'main', per_page: 100 });
+  // Pagination deletes `total_count` and replaces `data` in place, so it must never see the cached value.
+  assert.deepEqual(await read(), [{ id: 1 }, { id: 2 }]);
+  assert.deepEqual(await read(), [{ id: 1 }, { id: 2 }]);
+  assert.equal(h.calls.length, 1, 'The second read is a memory hit');
+  assert.deepEqual(githubCachedResponses(client)[0].data, { total_count: 2, check_runs: [{ id: 1 }, { id: 2 }] });
+});

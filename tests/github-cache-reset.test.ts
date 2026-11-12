@@ -4,6 +4,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { requestGitHubCacheClear, applyPendingGitHubCacheClear, hasPendingGitHubCacheClear } from '../src/github-cache-reset';
+import { createAppDataStore } from '../src/app-data-store';
+import { createMutedPrStore } from '../src/muted-pr-store';
+import { createStarredPrStore } from '../src/starred-pr-store';
+import { createSavedViewStore } from '../src/saved-view-store';
+import type { ReviewMember } from '../lib/workbench';
 
 function fixture() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'gnosis-cache-reset-'));
@@ -109,6 +114,52 @@ void test('hasPendingGitHubCacheClear', async () => {
     await applyPendingGitHubCacheClear(f.directory, async () => {});
     assert.equal(hasPendingGitHubCacheClear(f.directory), false);
   } finally {
+    f.cleanup();
+  }
+});
+
+void test('mutes, stars and saved views survive a GitHub cache reset', async () => {
+  const f = fixture();
+  const member = (number: number) =>
+    ({
+      number,
+      repo: 'o/r',
+      headRepo: 'o/r',
+      baseRepo: 'o/r',
+      url: `https://github.com/o/r/pull/${number}`,
+      title: `PR ${number}`,
+      description: `Description ${number}`,
+      author: 'author',
+      role: 'watched',
+      baseBranch: 'main',
+      headBranch: `feature-${number}`,
+      baseSha: 'base',
+      headSha: 'head',
+      merged: false,
+      state: 'open',
+      createdAt: '2026-10-22',
+      updatedAt: '2026-10-22',
+      labels: [],
+      isDraft: false,
+      requestedReviewers: [],
+      requestedTeams: [],
+    }) as unknown as ReviewMember;
+  let data = createAppDataStore();
+  try {
+    await data.open(f.directory);
+    createMutedPrStore(data).set('me', { muted: true, members: [member(1)] });
+    createStarredPrStore(data).set('me', { starred: true, members: [member(2)] });
+    const views = createSavedViewStore(data).act('me', { type: 'create', name: 'Mine' });
+    await data.close();
+    requestGitHubCacheClear(f.directory);
+    data = createAppDataStore();
+    await data.open(f.directory);
+    await applyPendingGitHubCacheClear(f.directory, () => Promise.resolve(), () => data.clearGitHub());
+    assert.equal(createMutedPrStore(data).member('me', member(1).url)?.description, 'Description 1');
+    assert.deepEqual(createStarredPrStore(data).load('me').map((entry) => entry.member.number), [2]);
+    assert.equal(createSavedViewStore(data).load('me').activeId, views.activeId);
+  } finally {
+    await data.close();
     f.cleanup();
   }
 });

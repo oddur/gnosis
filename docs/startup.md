@@ -8,8 +8,8 @@ Gnosis opens its window before saved data and the GitHub cache have loaded. The 
 2. If a GitHub cache clear is pending, open saved data and delete the cache first. This keeps the rule that deletion finishes before any GitHub request starts. It is the only case where the window waits.
 3. Open the window. Its background colour matches the theme, so it does not flash white.
 4. Load two things in parallel:
-   - **Saved data:** the app data store, then GitHub logins, budgets and cooldowns, then the saved login for the stored token. This is the `data` phase.
-   - **The GitHub cache:** the SQLite worker validates saved responses and sends them as strings. Main parses each one the first time it is read.
+   - **Saved data:** the app data store, then GitHub logins, budgets and cooldowns, then the saved login for the stored token. This is the `data` phase. The app data store also holds muted PRs, starred PRs, saved views and unread progress. On the first launch after an upgrade, it imports their old JSON files once and renames each to `*.json.migrated`.
+   - **The GitHub cache:** the SQLite worker validates saved responses and sends them as strings. Main parses each one the first time it is read, then freezes it and shares it with every reader.
 5. When both finish (the `all` phase), start the tray, updates, proactive polling and analytics.
 6. Three seconds later, build the command-search index: main sends only the feeds that changed since the last launch.
 7. Five seconds later, mark generations that a crash interrupted as failed and copy missing summaries into the review index.

@@ -13,7 +13,7 @@ GNOSIS_PERF_TRACE=1 npm run benchmark:queue
 The script generates a local profile with no GitHub access:
 
 - 400 single-PR queue subjects;
-- 649 muted PRs with 4 KB descriptions, 2.9 MB on disk, close to the 2.6 MB profile measured in #252;
+- 649 muted PRs with 4 KB descriptions, 2.9 MB in total, close to the 2.6 MB profile measured in #252. Since #259 they are saved app data rows, which the script keeps in memory;
 - 512 saved reviews with subject snapshots, a 3.5 MB index.
 
 It builds the queue once, then times 30 more rebuilds. It also times filtering the saved reviews by mutes, which the tray did on each rebuild.
@@ -31,7 +31,7 @@ Measured on 2026-11-12, Apple M5 Max, macOS arm64, Node 25.9.0. Three runs each.
 
 "Before" is the same script at `83a4564`, with the saved-review index and preferences read from disk on every call, as `src/main.ts` did then. That commit had no trace, so the script's own timer measured it. With `--uncached`, the current code takes about 21 ms: the muted index and history lookup account for most of the gain, and the file caches for the rest.
 
-The traced first rebuild takes about 40 ms. It parses the muted file and records the read baseline once. Later rebuilds print lines such as:
+The traced first rebuild takes about 40 ms. It builds the muted index and records the read baseline once. Later rebuilds print lines such as:
 
 ```text
 [perf] view 9.3ms items=400 muted=649 history=512
